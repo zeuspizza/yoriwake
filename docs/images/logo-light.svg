@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-19 0 576 576" width="576" height="576" role="img" aria-label="yoriwake">
+  <!-- logo.svg for light backgrounds: same geometry, darker Y/W and green (each >= 3:1 on white) -->
+  <defs>
+    <radialGradient id="core" cx="0.42" cy="0.36" r="0.68">
+      <stop offset="0" stop-color="#7fe8b8"/>
+      <stop offset="0.5" stop-color="#1fae77"/>
+      <stop offset="1" stop-color="#15805a"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#1fae77" stop-opacity="0.45"/>
+      <stop offset="0.5" stop-color="#1fae77" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#1fae77" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect class="bg" x="-19" width="576" height="576" fill="#ffffff"/>
+  <g stroke="#858991" stroke-width="5" stroke-linecap="round">
+    <line x1="156.3" y1="93.7" x2="211.2" y2="111.8"/>
+    <line x1="328.6" y1="104.2" x2="296.0" y2="122.6"/>
+    <line x1="211.2" y1="111.8" x2="257.3" y2="137.2"/>
+    <line x1="211.2" y1="111.8" x2="301.1" y2="170.3"/>
+    <line x1="123.1" y1="137.2" x2="153.8" y2="177.2"/>
+    <line x1="123.1" y1="137.2" x2="182.9" y2="226.1"/>
+    <line x1="257.3" y1="137.2" x2="301.1" y2="170.3"/>
+    <line x1="339.9" y1="143.4" x2="301.1" y2="170.3"/>
+    <line x1="218.1" y1="151.3" x2="182.9" y2="226.1"/>
+    <line x1="370.8" y1="172.8" x2="338.7" y2="204.5"/>
+    <line x1="153.8" y1="177.2" x2="182.9" y2="226.1"/>
+    <line x1="207.9" y1="179.7" x2="182.9" y2="226.1"/>
+    <line x1="338.7" y1="204.5" x2="329.2" y2="246.7"/>
+    <line x1="291.4" y1="217.2" x2="260.7" y2="265.4"/>
+  </g>
+  <g fill="#858991">
+    <circle cx="257.5" cy="44.8" r="12.8"/>
+    <circle cx="186.4" cy="63.2" r="12.8"/>
+    <circle cx="333.2" cy="65.4" r="12.8"/>
+    <circle cx="225.0" cy="73.9" r="12.8"/>
+    <circle cx="293.1" cy="78.1" r="12.7"/>
+    <circle cx="156.3" cy="93.7" r="12.9"/>
+    <circle cx="257.6" cy="97.6" r="12.9"/>
+    <circle cx="368.0" cy="103.7" r="12.7"/>
+    <circle cx="328.6" cy="104.2" r="12.8"/>
+    <circle cx="211.2" cy="111.8" r="13.2"/>
+    <circle cx="296.0" cy="122.6" r="13.0"/>
+    <circle cx="174.7" cy="136.7" r="12.8"/>
+    <circle cx="123.1" cy="137.2" r="12.8"/>
+    <circle cx="257.3" cy="137.2" r="13.2"/>
+    <circle cx="392.4" cy="136.9" r="12.8"/>
+    <circle cx="339.9" cy="143.4" r="12.9"/>
+    <circle cx="218.1" cy="151.3" r="12.8"/>
+    <circle cx="301.1" cy="170.3" r="16.4"/>
+    <circle cx="370.8" cy="172.8" r="13.0"/>
+    <circle cx="153.8" cy="177.2" r="16.4"/>
+    <circle cx="257.6" cy="176.8" r="12.9"/>
+    <circle cx="207.9" cy="179.7" r="13.0"/>
+    <circle cx="338.7" cy="204.5" r="13.1"/>
+    <circle cx="291.4" cy="217.2" r="13.0"/>
+    <circle cx="182.9" cy="226.1" r="16.4"/>
+    <circle cx="329.2" cy="246.7" r="12.9"/>
+    <circle cx="260.7" cy="265.4" r="13.1"/>
+  </g>
+  <path fill="#4a5060" fill-rule="evenodd" d="M211.0,481.5 L210.5,375.0 L98.5,207.0 L99.0,205.5 L127.0,205.5 L182.0,288.5 L237.0,205.5 L265.5,206.0 L197.5,310.0 L234.5,368.0 L234.5,468.0 L211.0,481.5 Z M254.0,366.5 L218.5,312.0 L218.5,309.0 L232.0,288.5 L254.0,321.5 L295.0,259.5 L321.5,301.0 L324.0,302.5 L386.5,208.0 L389.0,205.5 L417.5,206.0 L324.0,346.5 L295.0,303.5 L254.0,366.5 Z M282.0,441.5 L280.5,441.0 L280.5,368.0 L299.0,341.5 L312.5,362.0 L311.5,366.0 L304.5,375.0 L304.5,428.0 L282.0,441.5 Z"/>
+  <circle cx="257.5" cy="527" r="62" fill="url(#halo)"/>
+  <rect x="254.5" y="418" width="6" height="88" rx="3" fill="#178a5e"/>
+  <circle cx="257.5" cy="410" r="12.5" fill="#178a5e"/>
+  <circle cx="257.5" cy="527" r="26" fill="url(#core)"/>
+</svg>
