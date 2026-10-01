@@ -1,0 +1,7 @@
+# A registry that reaches a class by name, the way a plugin system does. There is no bytecode edge
+# from any test to dev.demo.Epsilon; this string is the only reference that exists.
+tasks:
+  - type: dev.demo.Epsilon
+    methods:
+      - label
+      - twice

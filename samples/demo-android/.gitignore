@@ -1,0 +1,5 @@
+# No wrapper of its own, like the other samples: it uses the repository's wrapper.
+# Machine-specific: the SDK location comes from ANDROID_HOME (or ANDROID_SDK_ROOT).
+local.properties
+build/
+.gradle/

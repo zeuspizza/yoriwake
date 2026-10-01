@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "state": "NARROWING ONLY",
+  "headline": "NARROWING ONLY: a line",
+  "counts": {
+    "lines": 12,
+    "malformed": 1,
+    "testRecords": 10,
+    "nonTestRecords": 1
+  },
+  "provenance": {
+    "captureCommit": "abcdef1",
+    "ageDays": 3,
+    "writingPluginVersion": null
+  },
+  "distribution": {
+    "tests": 10,
+    "classes": 4,
+    "unattributableTests": 1,
+    "unattributableShare": 0.1,
+    "meanShare": 0.25,
+    "medianTestsPerClass": 2,
+    "medianShare": 0.2,
+    "p90Share": 0.6,
+    "p99Share": 0.9,
+    "maxShare": 0.9,
+    "hubClassesOverHalf": 1,
+    "startupClasses": 0,
+    "hubs": [
+      { "class": "com.acme.Hub", "tests": 9, "share": 0.9 },
+      { "class": "com.acme.Other", "tests": 6, "share": 0.6 }
+    ]
+  },
+  "recordedTime": {
+    "nanos": 2500000000,
+    "records": 10,
+    "recordsWithoutDuration": 1,
+    "workers": 2,
+    "duplicatedIds": 1,
+    "isSuiteDuration": false,
+    "instrumented": true
+  },
+  "blockers": [
+    { "token": "not-on-junit-platform", "detail": "the task runs TestNG", "remedy": "Move to the JUnit Platform." },
+    { "token": "com.acme.Hub", "detail": "a detail", "remedy": null }
+  ],
+  "lines": [
+    "a line",
+    "27.3% of tests"
+  ]
+}

@@ -1,0 +1,90 @@
+name: Bug report
+description: Something yoriwake did wrong, or did not do.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every field is optional. Fill in what you can; a partial report is better than none.
+        Security issues go through the security policy, not here.
+
+  - type: dropdown
+    id: missed-test
+    attributes:
+      label: Did a test that should have run NOT run?
+      description: >-
+        The most important question on this form. A skipped test that would have failed is the
+        one defect this tool must never have. If you are not sure, say so.
+      options:
+        - "Yes"
+        - "No"
+        - "Not sure"
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        What you ran, what you expected, what you got. If a test was skipped, name it and the
+        change that should have selected it. If you cannot share names, describe the shape.
+    validations:
+      required: false
+
+  - type: textarea
+    id: configuring-line
+    attributes:
+      label: The configuring line
+      description: >-
+        The `[yoriwake] :<task> map=... scope=...` line from the build log (run with
+        `--console=plain`). If there is none, say so: that is information too.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: audit
+    attributes:
+      label: Audit output
+      description: >-
+        The output of `./gradlew yoriwakeAudit<Task>` (for example `yoriwakeAuditTest`). It runs no
+        tests and takes about a second. If the task does not exist or fails, paste that instead.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: audit.json and decisions.tsv
+      description: >-
+        Attach both from `.gradle/yoriwake/<task>-<hash>/`. They contain your class names, test
+        names and paths: redact them before attaching, or say here that you would rather share
+        them privately. If the files do not exist, say which is missing.
+    validations:
+      required: false
+
+  - type: input
+    id: gradle
+    attributes:
+      label: Gradle version
+      description: From `./gradlew --version`, if you have it.
+    validations:
+      required: false
+
+  - type: input
+    id: jdk
+    attributes:
+      label: JDK
+      description: Vendor and version running the tests, if you know it.
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      description: For example macOS 15, Ubuntu 24.04, Windows 11.
+    validations:
+      required: false

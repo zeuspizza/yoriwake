@@ -1,0 +1,13 @@
+yoriwake
+Copyright 2026 The yoriwake authors
+
+This product bundles ASM (BSD-3-Clause), relocated under io.github.zeuspizza.yoriwake.shaded.asm
+in the agent, and again under io.github.zeuspizza.yoriwake.shaded.plugin.asm in the plugin.
+Its licence is META-INF/licenses/ASM-LICENSE.txt in each jar, and
+agent/src/main/resources/META-INF/licenses/ASM-LICENSE.txt in the source tree.
+
+The plugin jar bundles JaCoCo's org.jacoco.core (EPL-2.0), Copyright (c) 2009, 2024 Mountainminds
+GmbH & Co. KG and Contributors, relocated under io.github.zeuspizza.yoriwake.shaded.plugin.jacoco.core.
+Its licence is META-INF/licenses/JACOCO-LICENSE.txt and its source is named in
+META-INF/licenses/JACOCO-SOURCE.txt, both in the plugin jar; in the source tree they are under
+plugin/src/main/resources/META-INF/licenses/. Source: https://github.com/jacoco/jacoco

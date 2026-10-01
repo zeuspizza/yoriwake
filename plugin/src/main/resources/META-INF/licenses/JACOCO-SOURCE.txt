@@ -1,0 +1,9 @@
+JaCoCo ${jacocoVersion} (org.jacoco:org.jacoco.core), relocated in this jar under
+io.github.zeuspizza.yoriwake.shaded.plugin.jacoco.core.
+
+Copyright (c) 2009, 2024 Mountainminds GmbH & Co. KG and Contributors.
+Made available under the Eclipse Public License 2.0, whose text is JACOCO-LICENSE.txt next to this
+file. SPDX-License-Identifier: EPL-2.0
+
+Source code: https://github.com/jacoco/jacoco/tree/v${jacocoVersion}
+Also available from Maven Central as org.jacoco:org.jacoco.core:${jacocoVersion}:sources.

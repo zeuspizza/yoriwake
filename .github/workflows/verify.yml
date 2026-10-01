@@ -1,0 +1,149 @@
+name: verify
+
+# Builds and tests the plugin, then checks the thing a local run cannot: that a coverage map built
+# on one machine selects correctly on another, from a cold checkout.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only, no secrets, and triggered by pull_request rather than pull_request_target, so a
+# fork's code cannot reach anything.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and test on linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew build --console=plain
+      - run: python3 .github/test_ci.py
+
+  capture:
+    name: build a map
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: publish the plugin locally
+        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+
+      - name: run the sample suite, capturing coverage
+        run: ./gradlew -p samples/demo test --console=plain
+
+      # Not `find`: it does not exist on the Windows runner, and this step has to read the same on
+      # every operating system the workflow crosses. `.github/ci.py` is the one interpreter
+      # every job already needs, because assert_selection.py decides them.
+      - name: check a map was actually written
+        shell: bash
+        run: |
+          set -eu
+          map=$(python3 .github/ci.py find-map samples/demo)
+          grep -q "dev.demo.Alpha" "$map"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-map
+          path: samples/demo/.gradle/yoriwake
+          include-hidden-files: true
+          retention-days: 1
+
+  select:
+    name: select on another machine
+    needs: capture
+    runs-on: ubuntu-latest
+    steps:
+      # A fresh checkout on a different runner, with no build outputs and no map of its own. This is
+      # the CI shape: restore the map, change something, run only what the change can reach.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-map
+          path: samples/demo/.gradle/yoriwake
+
+      - name: publish the plugin locally
+        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+
+      # Not `sed -i`: its flags differ between GNU and BSD, Windows has neither, and `sed` exits 0
+      # when nothing matches. ci.py refuses a mutation that did not apply.
+      - name: break Alpha so its tests fail
+        shell: bash
+        run: |
+          set -eu
+          python3 .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
+          git diff --name-only
+
+      # The mutation makes tests fail, so a non-zero exit is expected here; the assertion below
+      # is what decides the job. Gradle's own failure is still visible in the log.
+      - name: run only the tests the change can reach
+        run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
+
+      - name: the change's own tests ran and failed, the unrelated ones did not
+        run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py
+
+  # The cross-OS case: the map captured on Linux above, selected against on Windows. Manual only
+  # while Windows support is unverified; it becomes a pull-request job once it has passed.
+  select-on-windows:
+    name: select on windows, against a map captured on linux
+    needs: capture
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      # Before the checkout: a clone that already dropped long-path files looks complete and cannot
+      # be repaired afterwards.
+      - name: allow long paths
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-map
+          path: samples/demo/.gradle/yoriwake
+
+      # `shell: bash` on every step: the Windows runner defaults to pwsh, which would take a
+      # different path (`gradlew.bat`) from every other job.
+      - name: publish the plugin locally
+        shell: bash
+        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+
+      - name: break Alpha so its tests fail
+        shell: bash
+        run: python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
+
+      # The mutation makes tests fail, so a non-zero exit is expected; the assertion decides the job.
+      - name: run only the tests the change can reach
+        shell: bash
+        run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
+
+      # YORIWAKE_REQUIRE_DECISIONS=1, which the local check also sets: without a decision record the
+      # assertion silently skips its whole WHY half, and a run that selected nothing looks the same
+      # as one that selected correctly. Windows is where that write is most likely to fail quietly,
+      # because MAX_PATH bites the `<task>-<hash>` directory the record lives in.
+      - name: the change's own tests ran and failed, the unrelated ones did not
+        shell: bash
+        run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py

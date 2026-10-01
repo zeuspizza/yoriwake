@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "state": "NO CONCLUSION",
+  "headline": "NARROWING ONLY: a line",
+  "counts": {
+    "lines": 12,
+    "malformed": 1,
+    "testRecords": 10,
+    "nonTestRecords": 1
+  },
+  "provenance": {
+    "captureCommit": null,
+    "ageDays": null,
+    "writingPluginVersion": null
+  },
+  "distribution": null,
+  "recordedTime": {
+    "nanos": 0,
+    "records": 0,
+    "recordsWithoutDuration": 0,
+    "workers": null,
+    "duplicatedIds": 0,
+    "isSuiteDuration": false,
+    "instrumented": true
+  },
+  "blockers": [
+
+  ],
+  "lines": [
+    "a line",
+    "27.3% of tests"
+  ]
+}

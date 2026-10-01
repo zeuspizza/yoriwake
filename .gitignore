@@ -1,0 +1,9 @@
+.gradle/
+build/
+.kotlin/
+.idea/
+*.exec
+*.ic
+!gradle-wrapper.jar
+__pycache__/
+*.pyc

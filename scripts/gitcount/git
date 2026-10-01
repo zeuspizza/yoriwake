@@ -1,0 +1,20 @@
+#!/bin/sh
+# Counts every git invocation this build makes, then delegates to the real git.
+#
+# Put this directory first on PATH to count. It is the only instrument that sees the git calls
+# Gradle re-executes on its own to validate a configuration-cache entry -- those happen outside
+# plugin code, so an in-plugin counter is blind to them.
+#
+# The daemon keeps the PATH it was started with: stop running daemons first, and trust a count only
+# if this log shows at least one delegated line. Git commands differ widely in cost, so a bare total
+# is not a per-call cost.
+#
+# The delegate is named, not guessed: a missing one would fail every git call, and a build whose git
+# fails forces every test.
+REAL=${YORIWAKE_REAL_GIT:-/usr/bin/git}
+if [ ! -x "$REAL" ]; then
+  echo "yoriwake-gitcount: no git to delegate to at '$REAL'; set YORIWAKE_REAL_GIT" >&2
+  exit 127
+fi
+echo "$*" >> "${YORIWAKE_GIT_LOG:-/tmp/yoriwake-git.log}"
+exec "$REAL" "$@"
