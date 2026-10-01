@@ -41,8 +41,9 @@ plugins {
 - **It can still skip a test that would have failed.** That takes a dependency it cannot see:
   state another process, a database, the network or a file keeps between test JVMs, or a reviewed
   native library handed a class file's path as data, or your own code on the test JVM's boot class
-  path ([the list](docs/reference.md#what-is-not-supported)). Keep a full run after merge or nightly;
-  it catches what selection missed.
+  path or in a JDK module it patches or upgrades
+  ([the list](docs/reference.md#what-is-not-supported)). Keep a full run after merge or nightly; it
+  catches what selection missed.
 - **Tests that depend on a class without executing it are kept, at a cost.** For code a JVM runs
   once, reflection and class-file readers, every test at or after the changed class's first load,
   execution or read in the same test JVM runs. In a suite that runs in one JVM that can be most of
@@ -75,8 +76,10 @@ that learns from build history; this one is local, free, and decides from record
 - **`git` on `PATH`.** Without it no change set can be computed, and every selecting run is a full
   run.
 - **Gradle 8.14 or newer, 9.x included.** The test suite runs on 8.14 and 9.8.0. Other versions are
-  untested; below 8.14 the plugin declines.
+  untested; below 8.14 the plugin declines on a JDK 21 daemon, and on an older daemon JDK it fails
+  to resolve, so the build fails.
 - **A project applying `java`, an Android plugin, or Kotlin Multiplatform with a JVM target.**
+  Kotlin Multiplatform is unverified: no functional test applies it yet.
   [Supported hosts](docs/reference.md#supported-hosts).
 
 ## Try it

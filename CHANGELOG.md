@@ -27,7 +27,8 @@ directory and is not read; the first full run captures a new one in `.gradle/yor
   vintage engine, Spock 2). Kotest 5 specs are captured and always run under selection.
 - Attaches to projects applying `java`, `com.android.application`, `com.android.library`,
   `com.android.test` or `com.android.dynamic-feature`, and to Kotlin Multiplatform modules with a
-  JVM target. See [supported hosts](docs/reference.md#supported-hosts).
+  JVM target (unverified: no functional test applies Kotlin Multiplatform yet). See
+  [supported hosts](docs/reference.md#supported-hosts).
 - Capture without selection for plain JUnit 4 and TestNG.
 - `-Pyoriwake.isolatedCapture`, which records the map with a fresh test JVM per test class.
   `yoriwakeExplain<Task>` says whether a map was recorded `isolated`, `shared` or `mixed`.

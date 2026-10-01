@@ -212,8 +212,10 @@ gives the library, and the class that calls `System.load` or `System.loadLibrary
 - **`git` on the daemon's `PATH`.** A git that cannot be started is a change set that cannot be
   computed, so every selecting run is a full run and says so.
 - **Gradle: 8.14 or newer, 9.x included.** The functional suite runs on 8.14, the plugin's compile
-  floor, and on 9.8.0. No other version is tested. Below 8.14 the plugin declines: every run is a
-  full run, and the audit reports `gradle-too-old`.
+  floor, and on 9.8.0. No other version is tested. Below 8.14, on a JDK 21 daemon, the plugin
+  declines: every run is a full run, and the audit reports `gradle-too-old`. On an older daemon JDK
+  the plugin does not resolve at all: its metadata asks for JVM 21, so the build fails. Gradle
+  before 8.5 cannot run on JDK 21 (Gradle's compatibility matrix), so it always takes this path.
 
 ### Supported hosts
 
@@ -224,6 +226,10 @@ The plugin attaches to a project that applies one of these:
   `com.android.dynamic-feature`, for their unit-test tasks;
 - `org.jetbrains.kotlin.multiplatform`, for a module with a JVM target: a `src/jvmMain` or
   `src/jvmTest` directory beside at least one `<target>Main` source directory.
+
+Kotlin Multiplatform is unverified. The plugin attaches by that directory layout, and no
+functional test applies the Kotlin Multiplatform plugin yet; one is planned for 0.3. Selection is
+as safe there as anywhere, but which module shapes it reads correctly has not been proven.
 
 On any other project with test tasks it declines by name. Nothing is captured or selected there,
 every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blocker:
@@ -271,8 +277,9 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   it can deselect tests the map holds, and its decisions are written beside the outer launcher's.
   A launcher running on agent classes another class loader defined is never filtered.
 - **Gradle older than 8.14.** API the plugin reads is missing there, and reading around the gap
-  could skip a test that should run. The plugin declines: every run is a full run, and the audit
-  reports `gradle-too-old`.
+  could skip a test that should run. On a JDK 21 daemon the plugin declines: every run is a full
+  run, and the audit reports `gradle-too-old`. On an older daemon JDK Gradle cannot resolve the
+  plugin, because its metadata asks for JVM 21: the build fails loudly rather than running in full.
 - **Gradle Isolated Projects.** The instrumentation scope is derived by reading every project in the
   build, which Isolated Projects forbids. The plugin detects it and declines: every run is a full
   run, and the audit reports `isolated-projects`.
@@ -293,9 +300,10 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
 - **Your own classes on the boot class path.** A native library load, a class definition or a
   foreign-function call is judged by the class that makes it, and a class the bootstrap or platform
   loader loaded counts as the JDK's own. Classes a build adds with `-Xbootclasspath/a` (or a
-  `Boot-Class-Path` agent jar) load there too, so what they do is not recorded, and a test that
-  depends on it can be skipped. Keep such code off the test JVM's boot class path, or run those
-  suites with `-Pyoriwake.disabled=true`.
+  `Boot-Class-Path` agent jar) load there too, and so do the classes of a JDK module a build
+  patches with `--patch-module` or replaces with `--upgrade-module-path`. What they do is not
+  recorded, and a test that depends on it can be skipped. Keep such code off the test JVM's boot
+  class path and out of the JDK's modules, or run those suites with `-Pyoriwake.disabled=true`.
 - **Your own JaCoCo coverage report.** To record each test's coverage, the agent takes JaCoCo's
   execution data and resets it around every test. The test task's JaCoCo destination file then
   holds only what ran after the last test, so `jacocoTestReport`, `jacocoTestCoverageVerification`
