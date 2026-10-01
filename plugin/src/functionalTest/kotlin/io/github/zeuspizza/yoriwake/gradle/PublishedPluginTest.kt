@@ -23,7 +23,11 @@ class PublishedPluginTest {
         },
     )
 
-    private val artifact = File(repository, "io/github/zeuspizza/yoriwake-gradle-plugin/0.1.0-SNAPSHOT")
+    private val version = requireNotNull(System.getProperty("yoriwake.pluginVersion")) {
+        "the build did not say which version it published; run this through Gradle"
+    }
+
+    private val artifact = File(repository, "io/github/zeuspizza/yoriwake-gradle-plugin/$version")
 
     /** The one timestamped file of a kind; the build empties the repository before publishing. */
     private fun published(dir: File, kind: String, accept: (String) -> Boolean): File {
@@ -67,7 +71,7 @@ class PublishedPluginTest {
     fun `the plugin marker points at the renamed artifact`() {
         val marker = File(
             repository,
-            "io/github/zeuspizza/yoriwake/io.github.zeuspizza.yoriwake.gradle.plugin/0.1.0-SNAPSHOT",
+            "io/github/zeuspizza/yoriwake/io.github.zeuspizza.yoriwake.gradle.plugin/$version",
         )
         val pom = pom(marker)
 
@@ -162,7 +166,7 @@ class PublishedPluginTest {
             plugins {
                 java
                 jacoco
-                id("io.github.zeuspizza.yoriwake") version "0.1.0-SNAPSHOT"
+                id("io.github.zeuspizza.yoriwake") version "$version"
             }
             repositories { mavenCentral() }
             dependencies {

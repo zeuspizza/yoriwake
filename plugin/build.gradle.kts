@@ -239,6 +239,8 @@ testing {
                         systemProperty("yoriwake.functional.gradleVersion", functionalGradleVersions.getValue(name))
                         dependsOn("publishAllPublicationsToBuildLocalRepository")
                         systemProperty("yoriwake.localRepository", localRepository.get().asFile.absolutePath)
+                        // The version this build publishes, release or snapshot, for the published-plugin test.
+                        systemProperty("yoriwake.pluginVersion", project.version.toString())
                     }
                 }
             }
