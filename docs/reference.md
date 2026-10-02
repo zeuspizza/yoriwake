@@ -80,7 +80,11 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - the map's age cannot be established (no capture stamp, or one that cannot be related to the
   base);
 - a changed path coverage cannot see: a build script, a settings file, a version catalog, a
-  resource;
+  resource. That includes a file your tests write into the source tree outside `build/`, such as
+  a `derby.log`: untracked and ignored files count, so every later run forces on it. If no test
+  reads the file back, have the tests write it under `build/` (for Derby, set
+  `derby.stream.error.file`); if one does, leave it where it is, because a file under `build/` is
+  never seen as a change;
 - a changed class the map has never recorded, because uncovered and unrecordable look the same. A
   test class this task runs is the exception: discovery runs it whatever the map knows;
 - a changed class whose annotations, on the class or any member and with their values, differ from
