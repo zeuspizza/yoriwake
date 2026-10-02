@@ -41,7 +41,8 @@ plugins {
 - **It can still skip a test that would have failed.** That takes a dependency it cannot see:
   state another process, a database, the network or a file keeps between test JVMs, or a reviewed
   native library handed a class file's path as data, or your own code on the test JVM's boot class
-  path or in a JDK module it patches or upgrades
+  path or in a JDK module it patches or upgrades, or a file a build step generates from git state or
+  the clock
   ([the list](docs/reference.md#what-is-not-supported)). Keep a full run after merge or nightly; it
   catches what selection missed.
 - **Tests that depend on a class without executing it are kept, at a cost.** For code a JVM runs

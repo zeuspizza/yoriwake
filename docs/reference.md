@@ -21,7 +21,9 @@ guess.
   directories of this build's projects, and a `build/` directory beside any other Gradle build
   script (`buildSrc`, an included build, a project a TestKit test wrote). A change reaches a test
   that reads such a file through the tracked sources that produce it. A file put there by hand,
-  which no tracked source produces, is never seen as a change.
+  which no tracked source produces, is never seen as a change, and neither is a change to a file a
+  build step generates there from git state, the clock or the environment (a `git.properties`, a
+  build date or revision in a manifest).
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
   now and always runs one the map has never seen.
@@ -273,6 +275,11 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   - a class inside a dependency jar that names one of your test classes. The JVM resolves such a
     reference without a call the agent can see, and the check that nothing else names a test class
     searches this build's own classes and jars and every resource, not the classes of dependencies.
+- **Files a build step generates from outside the sources.** A file under a build directory is
+  build state and never a change, so one generated from git state, the clock or the environment
+  (a `git.properties`, a build date or revision stamped into a manifest) can change while every
+  tracked source stays the same. A test that asserts on its content is skipped when nothing else
+  selects it. Pin such tests.
 - **A nested JUnit launcher the agent cannot tell apart.** A launcher a test starts from the test
   class path itself, not from a class loader of its own, is recognised as nested because the outer
   test plan is still executing, which the agent learns through its JUnit Platform listener. With
