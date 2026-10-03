@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import org.gradle.testkit.runner.GradleRunner
 import org.junit.jupiter.api.Test
@@ -142,6 +143,7 @@ class RefusalFunctionalTest : FunctionalTestSupport() {
         fixture: String = "src/test/resources/fixture.txt",
         edit: String = """File(root, "$fixture").writeText("two")""",
         forceTracked: List<String> = emptyList(),
+        ignoredFixture: Boolean = false,
         vararg extra: Pair<String, String>,
     ) {
         val editsLater = minimalBuild + """
@@ -168,6 +170,12 @@ class RefusalFunctionalTest : FunctionalTestSupport() {
             *extra,
         )
         committed(dir)
+        if (ignoredFixture) {
+            // Ignored and untracked: only the listing and the snapshot see it, never `git diff`.
+            File(dir, ".git/info/exclude").appendText("$fixture\n")
+            git(dir, "rm", "-q", "--cached", fixture)
+            git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "ignored")
+        }
         if (forceTracked.isNotEmpty()) {
             git(dir, "add", "-f", *forceTracked.toTypedArray())
             git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "forced")
@@ -215,6 +223,102 @@ class RefusalFunctionalTest : FunctionalTestSupport() {
         assertContains(ranTests(dir), "dev.sample.AaFixtureTest", output)
         assertEquals("change-set-stale", decisionNotes(dir)["refusal-kind"], output)
     }
+
+    @Test
+    fun `an ignored fixture rewritten after configuration runs the whole suite`(@TempDir dir: File) {
+        // A tracked edit is caught by the fresh `git diff` whatever the listing does. An ignored
+        // fixture is seen only by the fresh listing and the snapshot it is compared against, so
+        // this is what fails if the staleness check stops listing the tree again.
+        capturedWithAFixtureEditedLater(dir, fixture = "fixtures/fixture.local", ignoredFixture = true)
+
+        val output = runner(dir, "editFixture", "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD")
+            .build().output
+
+        assertContains(ranTests(dir), "dev.sample.AaFixtureTest", output)
+        assertEquals("change-set-stale", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `an ignored fixture rewritten after configuration runs the whole suite without the configuration cache too`(
+        @TempDir dir: File,
+    ) {
+        capturedWithAFixtureEditedLater(dir, fixture = "fixtures/fixture.local", ignoredFixture = true)
+
+        val output = GradleRunner.create()
+            .withProjectDir(dir)
+            .withPluginClasspath()
+            .withGradleVersion(FunctionalGradle.version)
+            .withTestKitDir(FunctionalGradle.testKitDir())
+            .withArguments(
+                "editFixture", "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD",
+                "--no-configuration-cache", "--stacktrace", "--no-watch-fs",
+            )
+            .forwardOutput()
+            .build().output
+
+        assertContains(ranTests(dir), "dev.sample.AaFixtureTest", output)
+        assertEquals("change-set-stale", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `a task between two test tasks that adds an ignored file makes the later one run everything`(
+        @TempDir dir: File,
+    ) {
+        // The listing is shared by every task while configuring, never at execution: a task that
+        // writes into the tree between two `Test` tasks is seen by the later one's own listing.
+        fun module(extraBuild: String, vararg extra: Pair<String, String>) =
+            arrayOf("build.gradle.kts" to minimalBuild + extraBuild, oneClass, oneTest, secondClass,
+                secondTest, classOrderByName, *extra)
+        build(dir, "build.gradle.kts" to "")
+        File(dir, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\ninclude(\"a\", \"b\")\n")
+        build(File(dir, "a").also { it.mkdirs() }, *module(""))
+        build(
+            File(dir, "b").also { it.mkdirs() },
+            *module(
+                """
+
+                val addFixture by tasks.registering {
+                    val root = layout.projectDirectory.asFile
+                    mustRunAfter(":a:test")
+                    doLast { File(root, "data/new.local").apply { parentFile.mkdirs() }.writeText("new") }
+                }
+                tasks.test { mustRunAfter(addFixture) }
+                """.trimIndent(),
+                ".gitignore" to "data/\n",
+                "src/test/java/dev/sample/AaReadsTest.java" to """
+                    package dev.sample;
+                    import org.junit.jupiter.api.Test;
+                    import static org.junit.jupiter.api.Assertions.assertTrue;
+                    class AaReadsTest {
+                        @Test void reads() { assertTrue(new java.io.File("data").isDirectory()); }
+                    }
+                """.trimIndent(),
+            ),
+        )
+        // build() rewrote each module's settings file; the root's is the one that counts.
+        File(dir, "a/settings.gradle.kts").delete()
+        File(dir, "b/settings.gradle.kts").delete()
+        File(dir, "b/data/seed.local").also { it.parentFile.mkdirs() }.writeText("seed")
+        committed(dir)
+        runner(dir, "test").build()
+        listOf("a", "b").forEach { name ->
+            changeBeta(File(dir, name))
+            File(dir, "$name/build/test-results").deleteRecursively()
+        }
+
+        val output = runner(dir, ":a:test", ":b:addFixture", ":b:test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD")
+            .build().output
+
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(File(dir, "a")), output)
+        assertEquals(null, refusalKind(dir, ":a:test"), output)
+        assertContains(ranTests(File(dir, "b")), "dev.sample.AaReadsTest", output)
+        assertEquals("change-set-stale", refusalKind(dir, ":b:test"), output)
+    }
+
+    /** The run-wide refusal note in a task's decision record, null when it did not refuse. */
+    private fun refusalKind(dir: File, taskPath: String): String? =
+        File(MapLocation.forTask(File(dir, ".gradle"), taskPath), "decisions.tsv").readLines()
+            .firstOrNull { it.startsWith("#!refusal-kind\t") }?.substringAfter('\t')
 
     @Test
     fun `a tracked file under a build directory edited after configuration runs the whole suite`(
