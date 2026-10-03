@@ -70,23 +70,39 @@ internal object WorkingTree {
 
     private fun isExcluded(
         path: String,
-        excluded: Collection<String>,
+        excluded: Set<String>,
         isGradleBuild: (String) -> Boolean,
     ): Boolean {
         val directories = path.split('/').dropLast(1)
         // `.kotlin` is the Kotlin Gradle plugin's state beside `.gradle`: a marker per live
         // compiler session, so every run that starts a new daemon would otherwise force.
         return ".gradle" in directories || ".kotlin" in directories || ".git" in directories ||
-            excluded.any { path == it || path.startsWith("$it/") } ||
+            isUnderExcluded(path, excluded) ||
             directories.indices.any { i ->
                 directories[i] == "build" && isGradleBuild(directories.subList(0, i).joinToString("/"))
             }
     }
 
+    /**
+     * Whether [path] is one of [excluded] or below one: the path itself and each prefix ending at
+     * a `/`, looked up. Its cost follows the path's depth, not the project count, which on a build
+     * with hundreds of projects and a quarter of a million ignored files is minutes.
+     */
+    private fun isUnderExcluded(path: String, excluded: Set<String>): Boolean {
+        if (path in excluded) return true
+        var slash = path.indexOf('/')
+        while (slash >= 0) {
+            if (path.substring(0, slash) in excluded) return true
+            slash = path.indexOf('/', slash + 1)
+        }
+        return false
+    }
+
     /** Whether a path is build output or Gradle's own state, as the listing below leaves out. */
     fun buildState(rootDir: File, excluded: Collection<String>): (String) -> Boolean {
         val isGradleBuild = gradleBuildAt(rootDir)
-        return { path -> isExcluded(path, excluded, isGradleBuild) }
+        val excludedSet = excluded.toHashSet()
+        return { path -> isExcluded(path, excludedSet, isGradleBuild) }
     }
 
     private val BUILD_SCRIPTS =
@@ -127,8 +143,9 @@ internal object WorkingTree {
                 excluded.map { ":(exclude,literal)$it" }
         ) ?: return null
         val isGradleBuild = gradleBuildAt(rootDir)
+        val excludedSet = excluded.toHashSet()
         val paths = (tracked.split('\u0000') +
-            untracked.split('\u0000').filterNot { isExcluded(it, excluded, isGradleBuild) })
+            untracked.split('\u0000').filterNot { isExcluded(it, excludedSet, isGradleBuild) })
             .filter(String::isNotEmpty)
             .distinct()
         // A non-UTF-8 name decodes to U+FFFD and would read as a file that is always absent.
