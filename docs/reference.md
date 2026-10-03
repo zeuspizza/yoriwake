@@ -109,7 +109,11 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - a changed Kotlin source in a build that emits no `SourceDebugExtension` (see [Kotlin](#kotlin)).
 
 It also leaves a task alone when a test filter (`--tests`, `include`, `exclude`) is already in
-place: a filtered run does not speak for the whole suite, and does not date the map. A run that
+place: a filtered run does not speak for the whole suite, and does not date the map. That includes
+a filter the build script sets on the task (`filter.includeTestsMatching`,
+`filter.excludeTestsMatching`): every run of that task is filtered, so its map is never dated and
+every selecting run refuses with `stamp-absent` and runs the whole suite, while still recording
+coverage. Selection is off for such a task until the filter moves out of the build script. A run that
 leaves tests out by tag or engine (`includeTags`, `excludeTags`, `includeEngines`,
 `excludeEngines`), JUnit 4 category or TestNG group does not speak for the whole suite either, but
 it does date the map: the tests it left out drop out of the map, so the next selecting run runs

@@ -65,6 +65,10 @@ plugins {
   suite with hidden coupling can pass under selection and fail on a full run.
 - **It declines some builds.** Gradle's Isolated Projects and JUnit in-JVM parallelism: every run is
   a full run, nothing is captured, and the plugin says so.
+- **A test filter in the build script switches selection off for that task.** With
+  `filter.includeTestsMatching` or `filter.excludeTestsMatching` set on the task, every run is a full
+  run that still records coverage
+  ([details](docs/reference.md#when-it-refuses-to-select)).
 
 Measured figures will be published with the first release.
 
