@@ -61,9 +61,9 @@ plugins {
 - **Selection needs the JUnit Platform.** JUnit 4 narrows only through the vintage engine; plain
   JUnit 4 and TestNG are captured but always run in full.
 - **It has never run on Windows.**
-- **Very large builds can spend minutes configuring a selecting run.** Hundreds of test tasks with
-  hundreds of thousands of untracked or ignored files (spring-boot: 5 to 8 minutes)
-  ([details](docs/reference.md#what-is-not-supported)).
+- **Very large builds pay a git listing per test task.** Each test task a selecting or recording
+  run executes lists the untracked and ignored files with git: about 9 seconds on spring-boot, so
+  minutes across hundreds of test tasks ([details](docs/reference.md#what-is-not-supported)).
 - **Order-dependent tests are not protected.** Selection changes which tests run together, so a
   suite with hidden coupling can pass under selection and fail on a full run.
 - **It declines some builds.** Gradle's Isolated Projects and JUnit in-JVM parallelism: every run is

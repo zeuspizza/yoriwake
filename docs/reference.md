@@ -251,13 +251,15 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
 
 ## What is not supported
 
-- **Large multi-project builds with many untracked or ignored files.** While configuring, a
-  selecting run filters the working tree's untracked and ignored files once per `Test` task. With
-  hundreds of test tasks and hundreds of thousands of such files (`node_modules`, TestKit output
-  under `buildSrc/build`, caches) that takes minutes: on spring-boot (527 test tasks, about 250,000
-  ignored files) 5 to 8 minutes per selecting run, several times its test run. The configuration
-  cache does not hide it, because an edit to the tree invalidates its entry. Recording and full runs,
-  and builds with few test tasks or a clean tree, are unaffected.
+- **Large multi-project builds with many untracked or ignored files, at execution.** While
+  configuring, a selecting run lists the working tree once per build. Every `Test` task that a
+  selecting or recording run then executes lists it again with git, ignored files included, so it
+  never selects on, or records against, a tree an earlier task changed. That costs what `git
+  ls-files --others` costs on the tree, once per executing task: up to about 9 seconds on
+  spring-boot (about 265,000 untracked and ignored files, most of them TestKit output under
+  `buildSrc/build`; plugin at `c7e17cc`, measured 2026-10-03). Across all 527 of its test tasks that
+  comes to over an hour (computed, not measured). Builds with few test tasks or a clean tree are
+  unaffected.
 - **Order-dependent tests.** Selection removes tests, so it changes what ran before what. Coverage
   cannot see that dependency. Pin the ones you know about: `@Tag("yoriwake-always-run")`,
   `yoriwake { alwaysRun.add("com.acme.FlakyTest") }`, or `-Pyoriwake.alwaysRun=<glob>`. A pin only
