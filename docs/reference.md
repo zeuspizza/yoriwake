@@ -257,7 +257,7 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   never selects on, or records against, a tree an earlier task changed. That costs what `git
   ls-files --others` costs on the tree, once per executing task: up to about 9 seconds on
   spring-boot (about 265,000 untracked and ignored files, most of them TestKit output under
-  `buildSrc/build`; plugin at `c7e17cc`, measured 2026-10-03). Across all 527 of its test tasks that
+  `buildSrc/build`; measured 2026-10-03 with this release). Across all 527 of its test tasks that
   comes to over an hour (computed, not measured). Builds with few test tasks or a clean tree are
   unaffected.
 - **Order-dependent tests.** Selection removes tests, so it changes what ran before what. Coverage

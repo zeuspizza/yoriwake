@@ -71,5 +71,5 @@ directory and is not read; the first full run captures a new one in `.gradle/yor
 - A selecting run lists the working tree's untracked and ignored files once per build while
   configuring, instead of once per test task. On builds with hundreds of test tasks and many ignored
   files this took minutes: configuring a selecting run of spring-boot's `:core:spring-boot:test`
-  took 668 s with the plugin at `9d396ab` and 11 s at `c7e17cc` (median of three interleaved runs
-  each, 2026-10-03). What it selects is unchanged. **Your map:** left alone.
+  took 668 s before this change and 11 s after it (median of three interleaved runs each,
+  2026-10-03). What it selects is unchanged. **Your map:** left alone.
