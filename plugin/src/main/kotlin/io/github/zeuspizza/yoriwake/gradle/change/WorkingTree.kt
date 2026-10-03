@@ -1,7 +1,9 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
@@ -134,7 +136,12 @@ internal object WorkingTree {
         rootDir: File,
         excluded: Collection<String>,
         git: (List<String>) -> String? = { ChangeDetection.rawGit(rootDir, it) },
-    ): List<String>? {
+    ): List<String>? = askGit(excluded, git)?.let { filter(rootDir, excluded, it) }
+
+    /** git's two answers [listing] is filtered from, NUL-separated as git printed them. */
+    private class GitListing(val tracked: String, val untracked: String)
+
+    private fun askGit(excluded: Collection<String>, git: (List<String>) -> String?): GitListing? {
         val tracked = git(listOf("diff", "--name-only", "--no-renames", "--relative", "-z", "HEAD"))
             ?: return null
         // The pathspecs only spare git the walk; the filter below is what decides.
@@ -142,14 +149,40 @@ internal object WorkingTree {
             listOf("ls-files", "-z", "--others", "--", ".", ":(exclude,glob)**/.gradle/**") +
                 excluded.map { ":(exclude,literal)$it" }
         ) ?: return null
+        return GitListing(tracked, untracked)
+    }
+
+    private fun filter(rootDir: File, excluded: Collection<String>, said: GitListing): List<String>? {
         val isGradleBuild = gradleBuildAt(rootDir)
         val excludedSet = excluded.toHashSet()
-        val paths = (tracked.split('\u0000') +
-            untracked.split('\u0000').filterNot { isExcluded(it, excludedSet, isGradleBuild) })
+        val paths = (said.tracked.split('\u0000') +
+            said.untracked.split('\u0000').filterNot { isExcluded(it, excludedSet, isGradleBuild) })
             .filter(String::isNotEmpty)
             .distinct()
         // A non-UTF-8 name decodes to U+FFFD and would read as a file that is always absent.
         return if (paths.any { '�' in it }) null else paths
+    }
+
+    /**
+     * [listing] while configuring, NUL-joined, and null when git could not list the tree. Every
+     * `Test` task of a build asks with the same root, excluded directories and memoised git
+     * answers, so the build filters once instead of once per task.
+     */
+    fun configuredListing(
+        rootDir: File,
+        excluded: List<String>,
+        memo: BuildMemo?,
+        git: (List<String>) -> String?,
+    ): String? {
+        // Asked outside the memo's compute: git there would hold the memo's lock across a subprocess.
+        val said = askGit(excluded, git)
+        val filtered = { said?.let { filter(rootDir, excluded, it) }?.joinToString("\u0000") }
+        memo ?: return filtered()
+        // The root and the excluded directories both: the memo is shared across included builds,
+        // and a build handed another's listing would not see its own new files.
+        val key = YoriwakePlugin.WORKTREE_KEY + rootDir.path + "\u0000" +
+            excluded.joinToString("\u0000")
+        return memo.value(key) { memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered) }
     }
 
     /** The two snapshots a capture may write; which one is decided once the run is over. */

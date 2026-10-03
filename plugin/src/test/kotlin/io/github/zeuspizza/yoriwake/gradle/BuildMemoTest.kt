@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
@@ -168,6 +169,75 @@ class BuildMemoTest {
             assertNull(ChangeDetection.changedPaths(providers, notARepo, "HEAD", memo))
             assertNull(ChangeDetection.head(providers, notARepo, memo))
             assertTrue(memo.failed(), "a git that could not answer must be reportable")
+        } finally {
+            notARepo.deleteRecursively()
+        }
+    }
+
+    /** The working-tree listing exactly as a selecting `Test` task asks for it while configuring. */
+    private fun configuredListing(memo: BuildMemo, root: File, excluded: List<String>): List<String>? {
+        val providers = ProjectBuilder.builder().build().providers
+        return WorkingTree.configuredListing(root, excluded, memo) {
+            ChangeDetection.cachedRawGit(providers, root, memo, it)
+        }?.split('\u0000')?.filter(String::isNotEmpty)
+    }
+
+    private fun committed(prefix: String, body: (File) -> Unit) = repo(prefix) { dir, git ->
+        git(arrayOf("init"))
+        File(dir, "a.txt").writeText("one")
+        git(arrayOf("add", "."))
+        git(arrayOf("-c", "user.email=t@e.com", "-c", "user.name=t", "commit", "-m", "first"))
+        body(dir)
+    }
+
+    @Test
+    fun `two builds in one memo each get their own working-tree listing`() {
+        // An included build shares the root build's memo. Handed the root's listing, it would not
+        // see its own new ignored files, and a test that reads one would be skipped.
+        val memo = memo()
+        committed("yoriwake-root") { root ->
+            File(root, "root-only.local").writeText("x")
+            committed("yoriwake-included") { included ->
+                File(included, "included-only.local").writeText("x")
+
+                assertEquals(listOf("root-only.local"), configuredListing(memo, root, emptyList()))
+                assertEquals(listOf("included-only.local"), configuredListing(memo, included, emptyList()))
+            }
+        }
+    }
+
+    @Test
+    fun `the same root with a different excluded list gets its own listing`() {
+        val memo = memo()
+        committed("yoriwake-excluded") { root ->
+            File(root, "a/x.local").also { it.parentFile.mkdirs() }.writeText("x")
+            File(root, "b/y.local").also { it.parentFile.mkdirs() }.writeText("x")
+
+            assertEquals(listOf("b/y.local"), configuredListing(memo, root, listOf("a")))
+            assertEquals(listOf("a/x.local"), configuredListing(memo, root, listOf("b")))
+        }
+    }
+
+    @Test
+    fun `one build root is listed once however many tasks ask`() {
+        val memo = memo()
+        committed("yoriwake-once") { root ->
+            File(root, "new.local").writeText("x")
+
+            repeat(3) { assertEquals(listOf("new.local"), configuredListing(memo, root, emptyList())) }
+
+            assertEquals(1L, memo.counts()[YoriwakePlugin.WORKTREE_LISTING_COUNTER], "the tree was filtered per ask")
+        }
+    }
+
+    @Test
+    fun `a git that cannot list the tree is memoised as no answer, not an empty one`() {
+        // Empty would mean nothing beyond HEAD moved, and license a skip; no answer refuses.
+        val notARepo = java.nio.file.Files.createTempDirectory("yoriwake-unlisted").toFile()
+        try {
+            val memo = memo()
+            repeat(2) { assertNull(configuredListing(memo, notARepo, emptyList())) }
+            assertEquals(1L, memo.counts()[YoriwakePlugin.WORKTREE_LISTING_COUNTER])
         } finally {
             notARepo.deleteRecursively()
         }

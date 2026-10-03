@@ -269,6 +269,7 @@ public abstract class YoriwakePlugin : Plugin<Project> {
         /** Key prefixes for [BuildMemo.value]. Distinct, because one map holds both. */
         internal const val SCOPE_KEY = "scope:"
         internal const val FACTS_KEY = "projectFacts:"
+        internal const val WORKTREE_KEY = "worktreeListing:"
 
         internal const val TEST_TASKS_COUNTER = "testTasksConfigured"
 
@@ -278,6 +279,8 @@ public abstract class YoriwakePlugin : Plugin<Project> {
         internal const val WALK_COUNTER = "allprojectsWalk"
         internal const val SOURCE_FILES_OPENED_COUNTER = "sourceFilesOpened"
         internal const val CLASSPATH_FACTS_COUNTER = "classpathFacts"
+        /** The working tree listed and filtered at configuration: once per build, however many tasks ask. */
+        internal const val WORKTREE_LISTING_COUNTER = "worktreeListing"
 
         /** Where `yoriwakeExplain` writes the decision for a machine to read. */
         internal const val EXPLANATION_FILE = "explain.json"

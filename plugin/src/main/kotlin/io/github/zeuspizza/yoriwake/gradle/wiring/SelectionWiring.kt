@@ -564,7 +564,7 @@ private fun applyCaptureDecision(
 /** [WorkingTree.drift] through a value source; one that could not be obtained is unlisted. */
 private fun worktreeDrift(project: Project, mapDir: File, buildMemo: BuildMemo?): WorkingTree.Drift {
     val excluded = WorkingTree.excluded(project.rootDir, projectFacts(project, buildMemo).buildDirs.values)
-    val listed = WorkingTree.listing(project.rootDir, excluded) {
+    val listed = WorkingTree.configuredListing(project.rootDir, excluded, buildMemo) {
         ChangeDetection.cachedRawGit(project.providers, project.rootDir, buildMemo, it)
     }
     return WorkingTree.decode(
@@ -573,7 +573,7 @@ private fun worktreeDrift(project: Project, mapDir: File, buildMemo: BuildMemo?)
                 it.parameters.rootDir.set(project.rootDir.absolutePath)
                 it.parameters.mapDir.set(mapDir.absolutePath)
                 // Left unset for an unlisted tree, which the source reads as exactly that.
-                listed?.let { paths -> it.parameters.listed.set(paths.joinToString("\u0000")) }
+                listed?.let { joined -> it.parameters.listed.set(joined) }
             }.get()
         }.getOrNull()
     )

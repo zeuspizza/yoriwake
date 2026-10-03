@@ -28,10 +28,10 @@ class ConfigurationWorkGuardTest {
             // Only a selecting build asks git at configuration time, so only there is memoising per
             // build rather than per `Test` task observable.
             val small = observe(
-                fixture(File(tmp, "small-$version"), subprojects = 3), version, SELECTING,
+                withIgnoredTree(fixture(File(tmp, "small-$version"), subprojects = 3)), version, SELECTING,
             )
             val large = observe(
-                fixture(File(tmp, "large-$version"), subprojects = 6), version, SELECTING,
+                withIgnoredTree(fixture(File(tmp, "large-$version"), subprojects = 6)), version, SELECTING,
             )
 
             // Pinned, not only compared: a command added to both fixtures would still agree.
@@ -55,8 +55,12 @@ class ConfigurationWorkGuardTest {
                 "Gradle $version: classpathFacts per Test task grew with the project count",
             )
 
-            // Build-wide derivations: exactly once per build.
-            listOf(YoriwakePlugin.DERIVE_SCOPE_COUNTER, YoriwakePlugin.WALK_COUNTER).forEach { counter ->
+            // Build-wide derivations: exactly once per build. The working-tree listing among them:
+            // filtered once per `Test` task, it took minutes on a build with hundreds of tasks.
+            listOf(
+                YoriwakePlugin.DERIVE_SCOPE_COUNTER, YoriwakePlugin.WALK_COUNTER,
+                YoriwakePlugin.WORKTREE_LISTING_COUNTER,
+            ).forEach { counter ->
                 assertEquals(1L, small.count(counter), "Gradle $version: $counter, 3 subprojects")
                 assertEquals(1L, large.count(counter), "Gradle $version: $counter, 6 subprojects")
             }
@@ -75,10 +79,28 @@ class ConfigurationWorkGuardTest {
         }
     }
 
+    /**
+     * Untracked and ignored files of the kinds a large build carries: TestKit projects under
+     * buildSrc's output, each a Gradle build of its own, and a `node_modules` tree.
+     */
+    private fun withIgnoredTree(dir: File): File {
+        (1..2_000).forEach { i ->
+            val project = File(dir, "buildSrc/build/tmp/test/work/p${i % 100}")
+            File(project, "settings.gradle").also { it.parentFile.mkdirs() }.writeText("")
+            File(project, "src/main/java/G$i.java").also { it.parentFile.mkdirs() }.writeText("class G$i {}")
+            File(dir, "node_modules/pkg${i % 50}/f$i.js").also { it.parentFile.mkdirs() }.writeText("")
+        }
+        // Ignored without editing `.gitignore`, which would add a tracked change to the build.
+        File(dir, ".git/info/exclude").appendText("node_modules/\n")
+        return dir
+    }
+
     /** Every file the scope derivation is entitled to open, counted from the fixture itself. */
     private fun sourceFileCount(dir: File): Long =
         dir.walkTopDown()
+            // Not the TestKit projects under buildSrc's output: they are no project of this build.
             .filter { it.isFile && it.extension == "java" && it.path.contains("/src/main/") }
+            .filterNot { it.relativeTo(dir).invariantSeparatorsPath.startsWith("buildSrc/build/") }
             .count().toLong()
 
     @Test

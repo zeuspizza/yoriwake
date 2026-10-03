@@ -245,6 +245,61 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a root build and an included build each select on their own working tree`(@TempDir dir: File) {
+        // Siblings in one repository, so neither build's listing holds the other's files. Only the
+        // listing sees a new ignored file, and a new path coverage cannot see runs everything. So
+        // the root build, with one, runs everything, and the included build, without, narrows;
+        // handed the other's listing, either one would do the opposite.
+        val main = File(dir, "main").also { it.mkdirs() }
+        val inc = File(dir, "inc").also { it.mkdirs() }
+        listOf(main to "main", inc to "inc").forEach { (root, name) ->
+            build(
+                root, "build.gradle.kts" to minimalBuild, oneClass, classOrderByName,
+                "src/test/java/dev/sample/OtherTest.java" to """
+                    package dev.sample;
+                    import org.junit.jupiter.api.Test;
+                    import static org.junit.jupiter.api.Assertions.assertEquals;
+                    class OtherTest {
+                        @Test void passes() { assertEquals(2, 1 + 1); }
+                    }
+                """.trimIndent(),
+                "src/test/java/dev/sample/ReadingTest.java" to """
+                    package dev.sample;
+                    import java.io.File;
+                    import java.nio.file.Files;
+                    import org.junit.jupiter.api.Test;
+                    import static org.junit.jupiter.api.Assertions.assertEquals;
+                    class ReadingTest {
+                        @Test void readsItsData() throws Exception {
+                            for (File f : new File("data").listFiles()) Files.readAllBytes(f.toPath());
+                            assertEquals(2, new Alpha().twice(1));
+                        }
+                    }
+                """.trimIndent(),
+            )
+            File(root, "settings.gradle.kts").writeText("rootProject.name = \"$name\"\n")
+            File(root, ".gitignore").writeText("build/\n.gradle/\ndata/\n")
+            File(root, "data/seed.local").also { it.parentFile.mkdirs() }.writeText("seed")
+        }
+        File(main, "settings.gradle.kts").appendText("includeBuild(\"../inc\")\n")
+        git(dir, "init")
+        commit(dir, "base")
+        runner(main, "test", ":inc:test").build()
+
+        File(main, "data/new.local").writeText("new")
+        listOf(main, inc).forEach { root ->
+            File(root, oneClass.first).writeText(oneClass.second.replace("n * 2", "n + n"))
+            File(root, "build/test-results").deleteRecursively()
+        }
+
+        val output = runner(main, "test", ":inc:test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD")
+            .build().output
+
+        assertEquals(setOf("dev.sample.OtherTest", "dev.sample.ReadingTest"), ranTests(main), output)
+        assertEquals(setOf("dev.sample.ReadingTest"), ranTests(inc), output)
+    }
+
+    @Test
     fun `a change set longer than a command line still starts the test JVM, and runs everything`(
         @TempDir dir: File,
     ) {
