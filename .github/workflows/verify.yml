@@ -41,8 +41,11 @@ jobs:
       - name: publish the plugin locally
         run: ./gradlew :plugin:publishToMavenLocal --console=plain
 
+      # Isolated, one test JVM per test class: the sample's classes all run in one JVM, so a shared
+      # capture keeps every test that ran after the changed class first loaded, and the selection
+      # below could not show that unrelated tests are skipped.
       - name: run the sample suite, capturing coverage
-        run: ./gradlew -p samples/demo test --console=plain
+        run: ./gradlew -p samples/demo test -Pyoriwake.isolatedCapture --console=plain
 
       # Not `find`: it does not exist on the Windows runner, and this step has to read the same on
       # every operating system the workflow crosses. `.github/ci.py` is the one interpreter
