@@ -71,6 +71,11 @@ and which class forces a full run if one does.
 
 ## How it works
 
+Gradle's incremental build reruns a test task whenever any of its inputs changed, and then runs all
+of it. yoriwake adds incremental testing inside the task: Gradle runs tests only for changed
+classes, meaning the tests whose recorded coverage reaches them. It is test impact analysis for
+Gradle, decided from per-test coverage rather than from build history.
+
 ```mermaid
 flowchart LR
     A["full run<br>(JaCoCo, one record per test)"] --> M[(".gradle/yoriwake<br>coverage map")]
@@ -134,10 +139,12 @@ the build is to configure more than by how long its tests take. Before adopting,
 
 - An AI agent's or a developer's edit-test loop, on a suite that takes more than a couple of
   minutes.
-- Pull-request CI, with the full suite still running after merge, nightly or before a release.
+- Pull-request CI, to skip unaffected tests in CI, with the full suite still running after merge,
+  nightly or before a release.
 
 It is not a better version of Develocity Predictive Test Selection, which is a hosted service that
-learns from build history. This one is local, free, and decides from recorded coverage.
+learns from build history. This one is local, free, safety-first test selection: it decides from
+recorded coverage and runs everything when it cannot prove a narrower run safe.
 
 ## When not to use it
 
