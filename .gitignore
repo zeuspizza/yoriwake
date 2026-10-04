@@ -7,3 +7,7 @@ build/
 !gradle-wrapper.jar
 __pycache__/
 *.pyc
+
+# Agent instruction files stay local.
+CLAUDE.md
+AGENTS.md
