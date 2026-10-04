@@ -13,7 +13,7 @@ Every release entry states what it does to a coverage map you already have, as o
 
 See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
-## [Unreleased]
+## [0.1.0] - 2026-10-04
 
 First release. **Your map:** none exists yet; the first full run records one.
 
@@ -33,3 +33,5 @@ First release. **Your map:** none exists yet; the first full run records one.
   in `decisions.tsv`; `audit.json` and `explain.json`.
 - Pinning with `@Tag("yoriwake-always-run")`, `yoriwake { alwaysRun }` and `-Pyoriwake.alwaysRun`.
 - `-Pyoriwake.isolatedCapture`, which records the map with a fresh test JVM per test class.
+
+[0.1.0]: https://github.com/zeuspizza/yoriwake/releases/tag/v0.1.0
