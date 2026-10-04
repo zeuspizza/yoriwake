@@ -13,7 +13,7 @@ needed, once in full.
   least once. In 26 of the 32, and corpus-wide, the median change ran 100%.
 
 Per project, sorted by how much of the suite its changes ran on average, lowest first. The columns
-sum to the headlines; the raw results files stay private with the harness until it is published.
+sum to the headlines; the raw results files are not published.
 
 | project | tests | changes | forced | ran under 100% | median % of the suite run | under 100%: min–median | miss-possible changes | missed of induced | note |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
@@ -64,7 +64,7 @@ sum to the headlines; the raw results files stay private with the harness until 
 - **spring-test** is out of the selection columns. Its build script sets
   `filter.excludeTestsMatching("*TestCase")`, and the 0.1.0 plugin never stamps a map recorded under
   a build-script test filter, so all 8 changes were refused. It carries no narrowing evidence; its 8
-  are among the 214 forced. Fixed in 0.2.
+  are among the 214 forced.
 - **Fixtures** (this repository's own sample builds) are shown and counted in no figure: not in the
   projects, the codebases, the charts, the recall or the recording overhead.
 - Not swept: anki-android (JUnit in-JVM parallelism, which the plugin declines) and kafka-core
@@ -203,8 +203,7 @@ measure your own build, see [the audit's payback question](reference.md#properti
 ## The corpus
 
 A codebase is one upstream repository; projects drawn from the same one count once. The pool is
-**libraries-first**: two Android applications and no server-side application yet. Applications
-join in 0.3.
+**libraries-first**: two Android applications and no server-side application yet.
 
 | project | codebase | module | kind | upstream commit | Gradle | daemon | load average |
 |---|---|---|---|---|---|---|---|
@@ -261,7 +260,7 @@ join in 0.3.
   JUnit 4 through the vintage engine via an init script. gradle and junit5:
   `-Dorg.gradle.isolated-projects=false` (gradle also `--dependency-verification=off`). iceberg and
   duckduckgo-android: `--no-configure-on-demand` (duckduckgo-android with five source files staged).
-  glide: `-Pyoriwake.internal.classSelection`, an unsupported internal property, on a plain JUnit 4
+  glide: an unsupported internal setting, on a plain JUnit 4
   suite that runs in full anyway. armeria `-PnoLint`; detekt and detekt-junk `-PenablePTS=false`;
   kafka `-x checkstyleMain -x spotbugsMain`; micronaut-core `-Pmicronaut.jacoco.enabled=true`.
 - **Edits are generated**, small and single-file; a real change set is usually wider and runs more
@@ -278,7 +277,7 @@ join in 0.3.
   recorded edge to the change, passes alone with and without it, and has passed and failed identical
   full runs before: a timing flake the harness counts by design. mockk's 2 are a harness defect (two
   mutations share a label, so the row was judged against the other's failures; the 2 names are JUnit
-  `executionError` class entries on a row that ran every test), fixed in the harness for 0.2.
+  `executionError` class entries on a row that ran every test).
 - **Limits found after the sweep are outside this sample**, because no test class or build step was
   edited: an edited test class JaCoCo could not instrument, and a file a build step generates from
   git state. Both are in the [reference](reference.md#what-is-not-supported).

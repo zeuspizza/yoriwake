@@ -238,7 +238,7 @@ The plugin attaches to a project that applies one of these:
   `src/jvmTest` directory beside at least one `<target>Main` source directory.
 
 Kotlin Multiplatform is unverified. The plugin attaches by that directory layout, and no
-functional test applies the Kotlin Multiplatform plugin yet; one is planned for 0.3. Selection is
+functional test applies the Kotlin Multiplatform plugin yet. Selection is
 as safe there as anywhere, but which module shapes it reads correctly has not been proven.
 
 On any other project with test tasks it declines by name. Nothing is captured or selected there,
