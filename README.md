@@ -17,14 +17,19 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/selected-share-dark.svg">
-  <img alt="Share of the test suite each change ran, one row per project" src="docs/images/selected-share.svg">
+  <img alt="Share of the test suite each change ran, one row per project that ran under 100% on at least one change" src="docs/images/selected-share.svg">
 </picture>
 
 <p align="center"><sub>
   Share of the suite each change ran: 426 changes in 32 projects from 27 codebases, at
-  <code>30be0e8</code>. Each dot is a change that ran less than 100% of the suite, placed at the % of its tests it ran; the count on the right is the changes that ran 100%. 357 of the 426 ran 100% of the suite; 69 ran
+  <code>30be0e8</code>. The chart shows the 16 projects where at least one change ran less than
+  100% of the suite: each dot is such a change, placed at the % of its tests it ran; the count on
+  the right is the project's changes that ran 100%. 357 of the 426 ran 100% of the suite; 69 ran
   less than 100%, and the median of those ran 95% of it. 16 of the 32 projects narrowed at least
-  one change. Tests, not seconds; see <a href="docs/benchmarks.md">the methodology</a>.
+  one change. The other 16 projects ran 100% of the suite on every change: armeria, arrow,
+  detekt-junk, duckduckgo-android, glide, grails-core, iceberg, junit5, kafka, kestra,
+  kotlinx-serialization, micrometer, micronaut-core, mockito, mockito-junit4 and mockk. Tests, not
+  seconds; see <a href="docs/benchmarks.md">the methodology</a>.
 </sub></p>
 
 ```kotlin
