@@ -146,7 +146,8 @@ class ConfigurationWorkGuardTest {
         val filtered = observe(dir, GRADLE_VERSIONS.first(), CONFIGURE_ONLY + listOf("--tests", "dev.Nothing"), expectGit = false)
 
         assertEquals(
-            setOf("rev-parse HEAD", "rev-parse --git-path"), ordinary.gitCommands,
+            // HEAD and its reflogs, and the tree's listing: tracked changes, untracked files, tracked paths.
+            setOf("rev-parse HEAD", "rev-parse --git-path", "diff --name-only", "ls-files -z"), ordinary.gitCommands,
             "a build with no -Pyoriwake.select asked git more than where its capture starts",
         )
         assertEquals(ordinary.gitCalls, larger.gitCalls, "the capture's start was read once per Test task")

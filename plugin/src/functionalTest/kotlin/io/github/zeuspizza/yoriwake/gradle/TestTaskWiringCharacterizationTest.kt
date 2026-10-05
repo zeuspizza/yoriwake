@@ -235,7 +235,6 @@ class TestTaskWiringCharacterizationTest {
               +file .gradle/yoriwake/test-7f007aca/ran.marker
             #6 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/capture-head.pending
-              +file .gradle/yoriwake/test-7f007aca/worktree-snapshot.dated
             #7 Execute doFirst {} action
               +file .gradle/yoriwake-agent/yoriwake-agent.jar
             #8 Execute doFirst {} action
@@ -285,7 +284,6 @@ class TestTaskWiringCharacterizationTest {
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/raw-schema-version
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/touches.tsv
             #8 Execute doFirst {} action
-              -file .gradle/yoriwake/test-7f007aca/worktree-snapshot.dated
             #9 Execute doFirst {} action
             #10 Execute doFirst {} action
               -file build/jacoco/test.exec

@@ -599,6 +599,141 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         assertEquals(emptyMap(), mapFiles(dir))
     }
 
+    // A path touched during a dating capture is unknown until the next one. AReaderTest reads a tracked
+    // file and runs before anything loads Alpha, so only that file's unknown mark can select it once
+    // Alpha changes.
+
+    private val dataFile = "data.txt" to "one"
+
+    private val readerTest = "src/test/java/dev/sample/AReaderTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertFalse;
+        class AReaderTest {
+            @Test void reads() throws Exception {
+                assertFalse(java.nio.file.Files.readString(java.nio.file.Path.of("data.txt")).isEmpty());
+            }
+        }
+    """.trimIndent()
+
+    /** Captured once cleanly, then once under -Pact; returns what the selecting run after an Alpha change ran. */
+    private fun readerAfterAnActingCapture(dir: File, action: String, between: () -> Unit = {}): Set<String> {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest, classOrderByName, dataFile, readerTest,
+            actingTest(action),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        runner(dir, "test", "-Pact").build()
+        between()
+        changeAlpha(dir)
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.select").build()
+        return ranTests(dir)
+    }
+
+    private val readData = "java.nio.file.Path.of(\"data.txt\")"
+
+    @Test
+    fun `a file edited during a capture stays in the change set until the next capture`(@TempDir dir: File) {
+        // Restored before the selecting run, so only the mark the capture left can name it.
+        val ran = readerAfterAnActingCapture(
+            dir, "java.nio.file.Files.writeString($readData, \"two\");",
+            between = { git(dir, "checkout", "--", "data.txt") },
+        )
+
+        assertTrue("dev.sample.AReaderTest" in ran, "ran $ran")
+    }
+
+    @Test
+    fun `a tracked file rewritten and restored during a capture stays in the change set until the next capture`(
+        @TempDir dir: File,
+    ) {
+        val ran = readerAfterAnActingCapture(
+            dir,
+            "java.nio.file.Files.writeString($readData, \"two\"); Thread.sleep(20); " +
+                "java.nio.file.Files.writeString($readData, \"one\");",
+        )
+
+        assertTrue("dev.sample.AReaderTest" in ran, "ran $ran")
+    }
+
+    @Test
+    fun `a stash and pop during a capture keeps the stashed file in the change set`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest, classOrderByName, dataFile, readerTest,
+            actingTest("git(\"stash\"); git(\"stash\", \"pop\");"),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        File(dir, "data.txt").writeText("two")
+        runner(dir, "test", "-Pact").build()
+        changeAlpha(dir)
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        assertTrue("dev.sample.AReaderTest" in ranTests(dir), "ran ${ranTests(dir)}")
+    }
+
+    @Test
+    fun `a resource edited after it was copied for the tests stays in the change set`(@TempDir dir: File) {
+        // The tests read the copy processResources made; the edit after it is in the tree, not in what
+        // they saw. Read before compilation, the tree's start tells the two apart.
+        build(
+            dir,
+            "build.gradle.kts" to actingBuild(
+                """
+                tasks.processResources {
+                    val act = providers.gradleProperty("act").isPresent
+                    val source = file("src/main/resources/message.txt")
+                    doLast { if (act) source.writeText("edited after the copy") }
+                }
+                """.trimIndent(),
+            ),
+            oneClass, oneTest, classOrderByName,
+            "src/main/resources/message.txt" to "hello",
+            "src/test/java/dev/sample/AResourceTest.java" to """
+                package dev.sample;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertNotNull;
+                class AResourceTest {
+                    @Test void reads() { assertNotNull(getClass().getResource("/message.txt")); }
+                }
+            """.trimIndent(),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        File(dir, "src/main/resources/message.txt").writeText("hello again")
+        commit(dir, "a resource change, so processResources runs")
+        runner(dir, "test", "-Pact").build()
+        git(dir, "checkout", "--", "src/main/resources/message.txt")
+        changeAlpha(dir)
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        assertTrue("dev.sample.AResourceTest" in ranTests(dir), "ran ${ranTests(dir)}")
+    }
+
+    @Test
+    fun `a capture whose start reading of the tree is missing writes no snapshot`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
+            actingTest(
+                "for (java.io.File map : new java.io.File(\".gradle/yoriwake\").listFiles()) " +
+                    "new java.io.File(map, \"${WorkingTree.STATS_PENDING_FILE}\").delete();",
+            ),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+
+        runner(dir, "test", "-Pact").build()
+        assertFalse(File(mapDirOf(dir), WorkingTree.SNAPSHOT_FILE).isFile, "a capture with no start stats kept a snapshot")
+        changeAlpha(dir)
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        assertEquals("snapshot-absent", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE])
+    }
+
     private fun changeAlpha(dir: File) = File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
         """
         package dev.sample;

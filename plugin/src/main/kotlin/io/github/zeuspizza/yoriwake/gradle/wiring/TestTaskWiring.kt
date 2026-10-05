@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
+import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -357,40 +358,47 @@ internal class TestTaskWiring(internal val settings: Settings) {
         buildMemo: BuildMemo?,
         startReading: String?,
     ) {
-        val rootDir = project.rootDir
-        val excluded = WorkingTree.excluded(rootDir, projectFacts(project, buildMemo).buildDirs.values)
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
-        val fullRun = fullRunMarker(recordsDir)
-        val parallelRefused = parallelRefusalMarker(recordsDir)
-        val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE)
         val dated = pendingSnapshot(recordsDir, dates = true)
         val undated = pendingSnapshot(recordsDir, dates = false)
+        val stats = pendingStats(recordsDir)
         val head = pendingHead(recordsDir)
-        test.doFirst { task ->
-            // Deleted first, whatever happens next: one left by an earlier run describes its tree.
-            dated.delete()
+        // The tree, like HEAD, is read before compilation, at configuration: an edit between the two
+        // would otherwise be in the snapshot while the compiled classes predate it.
+        if (startReading != null) {
+            startTree(project, mapDir, buildMemo)
+        }
+        test.doFirst {
+            // One left by an earlier build describes its tree. Written only by the 0.1 decode.
             undated.delete()
             head.delete()
-            // Without it the decode removes the stamp, and the next run refuses and captures.
-            startReading?.let { reading -> runCatching { writeAtomically(head, reading) } }
-            if (parallelRefused.exists() || (selecting && !fullRun.exists())) {
+            if (startReading == null) {
+                // No start reading this build: the decode removes the stamp and the snapshot, and the
+                // next run refuses and captures.
+                dated.delete()
+                stats.delete()
                 return@doFirst
             }
-            // A missing pending file makes the decode drop the snapshot and the next run capture,
-            // so nothing here may throw.
-            runCatching {
-                val previous = if (snapshot.isFile) snapshot.readText() else null
-                dated.parentFile.mkdirs()
-                WorkingTree.capture(rootDir, excluded, previous)?.let { captured ->
-                    writeAtomically(dated, captured.dated)
-                    captured.undated?.let { writeAtomically(undated, it) }
-                }
-            }.onFailure {
-                task.logger.warn(
-                    "[yoriwake] ${task.path}: could not observe the working tree ($it), so this capture " +
-                        "records no snapshot and the next selecting run refuses and captures again."
-                )
-            }
+            runCatching { writeAtomically(head, startReading) }
+        }
+    }
+
+    /** [WorkingTree.StartSource] for this map, over the git answers the build lists once. */
+    private fun startTree(project: Project, mapDir: File, memo: BuildMemo?) {
+        val rootDir = project.rootDir
+        val excluded = WorkingTree.excluded(rootDir, projectFacts(project, memo).buildDirs.values)
+        val git = { arguments: List<String> -> ChangeDetection.cachedRawGit(project.providers, rootDir, memo, arguments) }
+        val listed = WorkingTree.configuredListing(rootDir, excluded, memo, git)
+        val tracked = git(listOf("ls-files", "-z"))
+        runCatching {
+            project.providers.of(WorkingTree.StartSource::class.java) {
+                it.parameters.rootDir.set(rootDir.absolutePath)
+                it.parameters.mapDir.set(mapDir.absolutePath)
+                // Unset when git could not answer, which the source reads as exactly that.
+                listed?.let { joined -> it.parameters.listed.set(joined) }
+                tracked?.let { said -> it.parameters.tracked.set(said) }
+                it.parameters.excluded.set(excluded.joinToString("\u0000"))
+            }.get()
         }
     }
 
@@ -669,6 +677,9 @@ private fun frameworkFilter(test: Test): String? {
 
 /** The start reading of HEAD and its reflogs; see [CaptureStart]. */
 internal fun pendingHead(recordsDir: File) = File(recordsDir.parentFile, CaptureStart.PENDING_FILE)
+
+/** The stat tokens of the tracked paths where the capture started; see [WorkingTree.startStats]. */
+internal fun pendingStats(recordsDir: File) = File(recordsDir.parentFile, WorkingTree.STATS_PENDING_FILE)
 
 internal fun pendingSnapshot(recordsDir: File, dates: Boolean) =
     File(recordsDir.parentFile, WorkingTree.SNAPSHOT_FILE + if (dates) ".dated" else ".undated")

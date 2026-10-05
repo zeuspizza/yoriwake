@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -13,6 +14,7 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
+import io.github.zeuspizza.yoriwake.gradle.wiring.pendingStats
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingSnapshot
 import io.github.zeuspizza.yoriwake.gradle.wiring.ranMarker
 import org.gradle.api.DefaultTask
@@ -85,7 +87,7 @@ internal abstract class DecodeTask : DefaultTask() {
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
         val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         val datedSnapshot = pendingSnapshot(CoverageDecoder.recordsDir(mapDir), dates = true)
-        val undatedSnapshot = pendingSnapshot(CoverageDecoder.recordsDir(mapDir), dates = false)
+        val startStats = pendingStats(CoverageDecoder.recordsDir(mapDir))
         // Before the ran-marker check: this run did work but declined to capture, and a
         // decode would merge older records into a map it must not touch.
         if (parallelRefused.delete()) {
@@ -226,12 +228,13 @@ internal abstract class DecodeTask : DefaultTask() {
                         }
                     }
                 }.getOrNull(),
-                // Asked only once records were merged. A missing pending file removes the
+                // Asked only once records were merged, which only a dating capture does. Every path
+                // touched since the start reading is unknown. A missing start file removes the
                 // snapshot, and the next run refuses.
                 worktreeSnapshot = {
-                    (if (datesMap) datedSnapshot else undatedSnapshot)
-                        .takeIf(File::isFile)
-                        ?.let { runCatching { it.readText() }.getOrNull() }
+                    val read = { file: File -> file.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() } }
+                    val reobserved = WorkingTree.reobserve(rootDir, read(datedSnapshot), read(startStats))
+                    reobserved?.undated
                 },
                 isolated = isolated.getOrElse(false),
             )

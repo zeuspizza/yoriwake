@@ -235,6 +235,72 @@ class WorkingTreeTest {
         assertNull(captured(root).undated)
     }
 
+    // Where a capture starts and where it ends: a path touched in between is unknown, even when its
+    // content returned.
+
+    private fun tracked(root: File): List<String> =
+        ProcessBuilder("git", "ls-files", "-z").directory(root).start().inputStream.bufferedReader().readText()
+            .split('\u0000').filter(String::isNotEmpty)
+
+    private fun started(root: File): Pair<String, String> =
+        WorkingTree.startSnapshot(root, assertNotNull(WorkingTree.listing(root, emptyList())), null) to
+            WorkingTree.startStats(root, tracked(root), emptyList())
+
+    /** A write that leaves the bytes as they were, late enough to move the stat. */
+    private fun rewriteSame(file: File) {
+        val bytes = file.readBytes()
+        Thread.sleep(20)
+        file.writeBytes(bytes)
+    }
+
+    private fun reobserved(root: File, start: Pair<String, String>) =
+        assertNotNull(WorkingTree.parse(assertNotNull(WorkingTree.reobserve(root, start.first, start.second)).undated)).entries
+
+    @Test
+    fun `a capture where nothing moved ends with the snapshot it started with`(@TempDir dir: File) {
+        val root = repo(dir)
+        File(root, "fixture.local").writeText("one")
+        val start = started(root)
+
+        assertEquals(assertNotNull(WorkingTree.parse(start.first)).entries, reobserved(root, start))
+    }
+
+    @Test
+    fun `an untracked file rewritten with the same content during a capture is unknown`(@TempDir dir: File) {
+        val root = repo(dir)
+        val fixture = File(root, "fixture.local").also { it.writeText("one") }
+        val start = started(root)
+
+        rewriteSame(fixture)
+
+        assertEquals(WorkingTree.Unknown, reobserved(root, start)["fixture.local"])
+    }
+
+    @Test
+    fun `a tracked file rewritten and restored during a capture is unknown`(@TempDir dir: File) {
+        val root = repo(dir)
+        val source = File(root, "src/main/java/A.java")
+        val start = started(root)
+
+        source.writeText("class A { int edited; }")
+        Thread.sleep(20)
+        source.writeText("class A {}")
+
+        val entries = reobserved(root, start)
+        assertEquals(WorkingTree.Unknown, entries["src/main/java/A.java"])
+        // And a selecting run then reports it, though it equals HEAD again.
+        assertContains(moved(root, assertNotNull(WorkingTree.reobserve(root, start.first, start.second)).undated), "src/main/java/A.java")
+    }
+
+    @Test
+    fun `a capture without its start reading of the tree writes no snapshot`(@TempDir dir: File) {
+        val root = repo(dir)
+        val start = started(root)
+
+        assertNull(WorkingTree.reobserve(root, start.first, null))
+        assertNull(WorkingTree.reobserve(root, null, start.second))
+    }
+
     @Test
     fun `a path with a tab, a newline or a percent sign survives the file`(@TempDir dir: File) {
         val paths = listOf("a\tb.local", "c\nd.local", "e%09f.local", "g\rh.local")

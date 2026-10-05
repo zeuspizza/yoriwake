@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.gradle.change
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
@@ -32,7 +33,13 @@ internal object WorkingTree {
     /** Beside `capture-commit`, and written under the same gate: see [CoverageDecoder.decode]. */
     const val SNAPSHOT_FILE = "worktree-snapshot"
 
+    /** Beside the pending snapshot: every tracked path's stat token where a capture starts. */
+    const val STATS_PENDING_FILE = "capture-stats.pending"
+
     private const val HEADER = "yoriwake-worktree-snapshot 1"
+    private const val STATS_HEADER = "yoriwake-capture-stats 1"
+    private const val TOKEN_ABSENT = "-"
+    private const val TOKEN_UNREADABLE = "?"
     private const val FOOTER = "end"
 
     /**
@@ -219,6 +226,140 @@ internal object WorkingTree {
             }))
         }
         return Captured(dated, undated)
+    }
+
+    /** The tree a capture's tests will see, from paths already [listing]ed, as a dated snapshot. */
+    fun startSnapshot(rootDir: File, listed: List<String>, previousText: String?): String {
+        // Taken BEFORE anything is observed, so a file touched during the walk is racy, not trusted.
+        val now = System.currentTimeMillis()
+        val previous = previousText?.let(::parse)
+        return render(Snapshot(now, listed.associateWith { observe(rootDir, it, previous) }))
+    }
+
+    /**
+     * The stat token of every path HEAD pins, beside the directories left out of the listing, so the
+     * end of a capture can see a tracked file that was rewritten and restored during it.
+     */
+    fun startStats(rootDir: File, tracked: List<String>, excluded: Collection<String>): String {
+        val isBuildState = buildState(rootDir, excluded)
+        val kept = tracked.filterNot(isBuildState)
+        return buildString {
+            append(STATS_HEADER).append('\t').append(escape(excluded.joinToString("\u0000"))).append('\n')
+            kept.forEach { path -> append(tokenOf(rootDir, path)).append('\t').append(escape(path)).append('\n') }
+            append(FOOTER).append('\t').append(kept.size).append('\n')
+        }
+    }
+
+    private fun parseStats(text: String): Pair<List<String>, Map<String, String>>? = runCatching {
+        val lines = text.split('\n').dropLastWhile(String::isEmpty)
+        val header = lines.first().split('\t')
+        require(header.size == 2 && header[0] == STATS_HEADER)
+        val footer = lines.last().split('\t')
+        require(footer.size == 2 && footer[0] == FOOTER)
+        val body = lines.subList(1, lines.size - 1)
+        require(body.size == footer[1].toInt())
+        val excluded = unescape(header[1]).split('\u0000').filter(String::isNotEmpty)
+        excluded to body.associate { line ->
+            val (token, path) = line.split('\t').also { require(it.size == 2) }
+            unescape(path) to token
+        }
+    }.getOrNull()
+
+    private fun tokenOf(rootDir: File, path: String): String =
+        when (val stat = stat(File(rootDir, path).toPath())) {
+            null -> TOKEN_ABSENT
+            UNREADABLE -> TOKEN_UNREADABLE
+            else -> stat.first
+        }
+
+    /** The snapshot a dating capture writes once its tests have run; see [reobserve]. */
+    class Reobserved(val undated: String)
+
+    /**
+     * The tree at the end of a capture, against [startText] and [statsText] read where it started:
+     * every path whose stat token or content moved in between is written unknown, even when its
+     * content returned, so later selecting runs keep it in their change set until the next capture.
+     * Null when either start file is missing or unreadable, or the tree cannot be listed: the
+     * snapshot is then removed, and the next run refuses and captures.
+     */
+    fun reobserve(
+        rootDir: File,
+        startText: String?,
+        statsText: String?,
+        git: (List<String>) -> String? = { ChangeDetection.rawGit(rootDir, it) },
+    ): Reobserved? {
+        val start = startText?.let(::parse) ?: return null
+        val (excluded, stats) = statsText?.let(::parseStats) ?: return null
+        val listed = listing(rootDir, excluded, git) ?: return null
+        val now = System.currentTimeMillis()
+        val entries = HashMap<String, State>()
+        (start.entries.keys + listed).forEach { path ->
+            val recorded = start.entries[path]
+            val current = observe(rootDir, path, start)
+            entries[path] = if (recorded != null && untouched(recorded, current)) current else Unknown
+        }
+        stats.forEach { (path, token) ->
+            if (path !in entries && touched(token, tokenOf(rootDir, path))) entries[path] = Unknown
+        }
+        return Reobserved(render(Snapshot(now, entries)))
+    }
+
+    /** As [same], and for a file present at both ends its stat token too: touched counts, not only changed. */
+    private fun untouched(a: State, b: State): Boolean = when {
+        a is Present && b is Present -> !touched(a.stat, b.stat) && a.sha == b.sha
+        else -> same(a, b)
+    }
+
+    /**
+     * Whether a path was touched between two stat tokens: a write moves its mtime and ctime even when
+     * the content returned. The one comparison for paths the snapshot lists and paths HEAD pins.
+     */
+    private fun touched(startToken: String, nowToken: String) = startToken != nowToken
+
+    /**
+     * Writes a capture's start reading of the tree beside the map at configuration time, before the
+     * build compiles anything: [startSnapshot] and [startStats]. A reusing build re-obtains it before
+     * any task runs, which is the point; its value is constant, so the files a build writes into the
+     * tree never cost it its stored entry. The paths are parameters, listed once per build by the
+     * caller through git answers the configuration cache already re-checks.
+     */
+    internal abstract class StartSource : ValueSource<String, StartSource.Parameters> {
+
+        interface Parameters : ValueSourceParameters {
+            val rootDir: Property<String>
+            val mapDir: Property<String>
+            /** NUL-joined; unset when git could not list the tree. */
+            val listed: Property<String>
+            /** NUL-joined tracked paths; unset when git could not list them. */
+            val tracked: Property<String>
+            /** NUL-joined. */
+            val excluded: Property<String>
+        }
+
+        override fun obtain(): String {
+            val rootDir = File(parameters.rootDir.get())
+            val mapDir = File(parameters.mapDir.get())
+            val dated = File(mapDir, "$SNAPSHOT_FILE.dated")
+            val stats = File(mapDir, STATS_PENDING_FILE)
+            // Gone unless written below: a missing file makes the decode drop the snapshot.
+            dated.delete()
+            stats.delete()
+            val split = { joined: String? -> joined?.split('\u0000')?.filter(String::isNotEmpty) }
+            val listed = split(parameters.listed.orNull) ?: return WRITTEN
+            val tracked = split(parameters.tracked.orNull) ?: return WRITTEN
+            val excluded = split(parameters.excluded.orNull).orEmpty()
+            val previous = File(mapDir, SNAPSHOT_FILE).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
+            val snapshot = startSnapshot(rootDir, listed, previous)
+            val statsText = startStats(rootDir, tracked, excluded)
+            mapDir.mkdirs()
+            writeAtomically(dated, snapshot)
+            writeAtomically(stats, statsText)
+            return WRITTEN
+        }
+
+        private companion object {
+            const val WRITTEN = "written"
+        }
     }
 
     /**
