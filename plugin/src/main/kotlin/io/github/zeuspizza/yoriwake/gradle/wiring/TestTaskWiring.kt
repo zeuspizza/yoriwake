@@ -243,7 +243,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         isolateWhileCapturing(test)
         refuseInJvmParallelism(test, mapDir)
         recordTaskFacts(test, mapDir)
-        configureSelection(project, test, mapDir, effectiveScope, buildMemo)
+        configureSelection(project, test, mapDir, buildMemo)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
         // Decided at execution time, since Gradle applies --tests after afterEvaluate. `wholeTask`
         // also requires recording: only a recording run produces a loaded-class union.
@@ -593,11 +593,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 // vintage-engine JVM both paths would steal each other's coverage windows.
                 task.systemProperty(JUNIT4_HOOK_PROPERTY, "true")
             }
-            // Class-granular deselection through Gradle's filter; see excludeDeselectedClasses.
+            // Only the Platform's in-JVM filter deselects, so a task off it runs everything.
             if (selecting) {
                 task.logger.lifecycle(
-                    "[yoriwake] ${task.path} does not run on the JUnit Platform, so selection is " +
-                        "class-granular rather than per test. Coverage is captured either way."
+                    "[yoriwake] ${task.path} does not run on the JUnit Platform, so selection runs every test."
                 )
             }
         }

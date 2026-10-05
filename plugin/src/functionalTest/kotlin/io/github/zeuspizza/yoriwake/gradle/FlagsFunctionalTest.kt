@@ -112,4 +112,48 @@ class FlagsFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
     }
+
+    private val testngBuild = junit4Build
+        .replace("""testImplementation("junit:junit:4.13.2")""", """testImplementation("org.testng:testng:7.10.2")""")
+        .replace("useJUnit()", "useTestNG()")
+
+    private val testngTests = arrayOf(
+        "src/test/java/dev/sample/AlphaTest.java" to """
+            package dev.sample;
+            import org.testng.annotations.Test;
+            import static org.testng.Assert.assertEquals;
+            public class AlphaTest {
+                @Test public void passes() { assertEquals(new Alpha().twice(1), 2); }
+            }
+        """.trimIndent(),
+        "src/test/java/dev/sample/BetaTest.java" to """
+            package dev.sample;
+            import org.testng.annotations.Test;
+            import static org.testng.Assert.assertEquals;
+            public class BetaTest {
+                @Test public void passes() { assertEquals(new Beta().thrice(1), 3); }
+            }
+        """.trimIndent(),
+    )
+
+    private fun retiredFlagRunsEverything(dir: File, buildScript: String, vararg tests: Pair<String, String>) {
+        capturedWithAlphaChanged(dir, buildScript, *tests)
+        File(dir, "build/test-results").deleteRecursively()
+
+        val result = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.internal.classSelection").build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":test")?.outcome)
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
+        assertContains(result.output, ":test does not run on the JUnit Platform, so selection runs every test.")
+    }
+
+    @Test
+    fun `a retired internal flag no longer narrows a plain JUnit 4 build`(@TempDir dir: File) {
+        retiredFlagRunsEverything(dir, junit4Build, *junit4Tests)
+    }
+
+    @Test
+    fun `a retired internal flag no longer narrows a plain TestNG build`(@TempDir dir: File) {
+        retiredFlagRunsEverything(dir, testngBuild, *testngTests)
+    }
 }

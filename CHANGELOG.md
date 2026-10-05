@@ -15,6 +15,12 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Changed
+
+- A JUnit 4 or TestNG task off the JUnit Platform now says on a selecting run that it runs every
+  test. Before, it said selection was class-granular and that coverage was captured either way;
+  neither was so. **Your map:** left alone.
+
 ### Fixed
 
 - An edited test class that JaCoCo could not instrument (a method over the JVM's 64 KiB limit once
