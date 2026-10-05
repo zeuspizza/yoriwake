@@ -440,7 +440,8 @@ class CoverageDecoderTest {
         // Mixing two record formats in one file produces a map that parses and means something else.
         records(dir, "1", Triple("alpha", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
         CoverageDecoder.decode(dir, listOf("com.acme"))
-        File(dir, AgentContract.MAP_SCHEMA_VERSION_FILE).writeText("999\n")
+        // The previous version, literally: a 0.1.0 map may hold records merged without being dated.
+        File(dir, AgentContract.MAP_SCHEMA_VERSION_FILE).writeText("6\n")
         CoverageDecoder.recordsDir(dir).deleteRecursively()
 
         records(dir, "1", Triple("beta", "SUCCESSFUL", execData("com.acme.B" to booleanArrayOf(true))))

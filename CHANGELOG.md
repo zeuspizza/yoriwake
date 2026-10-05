@@ -23,6 +23,14 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A filtered (`--tests`, IDE runs, a build-script filter), fail-fast or interrupted run no longer
+  updates the map. Before, it merged its records without moving the map's commit, so a later revert
+  of what it saw could skip a test. It keeps only the failures it saw, as failed. A capture during
+  which HEAD or its reflog moves, or a tracked file is touched, is caught too: HEAD and the tree are
+  read before compilation, and a path touched during the capture stays in the change set until the
+  next one. A file the tests create outside the build directory now forces a full run on a fresh
+  checkout, such as a CI runner's. **Your map:** discarded. A map written by 0.1.0 is rebuilt by the
+  first full run of each task.
 - An edited test class that JaCoCo could not instrument (a method over the JVM's 64 KiB limit once
   instrumented, or class files newer than the JaCoCo release reads) now runs every test of it the
   map knows; before, a test the edit made fail could be skipped. Decision records name the rule

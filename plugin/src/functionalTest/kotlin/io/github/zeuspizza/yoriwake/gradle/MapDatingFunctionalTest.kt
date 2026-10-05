@@ -734,6 +734,25 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         assertEquals("snapshot-absent", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE])
     }
 
+    @Test
+    fun `a map from 0_1_0 is rebuilt before selection`(@TempDir dir: File) {
+        // A 0.1.0 map may hold records a filtered or interrupted capture merged without dating them,
+        // and nothing on disk tells them apart, so it is not selected from. The literal 6, never the
+        // constant: the test is that this version is refused.
+        // Beta changes and BetaTest runs last, so a map that is read narrows to BetaTest alone.
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest, classOrderByName)
+        committed(dir)
+        runner(dir, "test").build()
+        File(mapDirOf(dir), AgentContract.MAP_SCHEMA_VERSION_FILE).writeText("6\n")
+        changeBeta(dir)
+        File(dir, "build/test-results").deleteRecursively()
+
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
+        assertEquals("${AgentContract.MAP_SCHEMA_VERSION}", File(mapDirOf(dir), AgentContract.MAP_SCHEMA_VERSION_FILE).readText().trim())
+    }
+
     private fun changeAlpha(dir: File) = File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
         """
         package dev.sample;
