@@ -11,12 +11,14 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERT
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
+import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.CONFIGURE_COUNTER
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.TEST_TASKS_COUNTER
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
+import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -191,7 +193,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val recording = settings.loaded
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         test.systemProperty(RECORDS_DIR_PROPERTY, recordsDir.absolutePath)
-        observeWorkingTree(project, test, mapDir, selecting, buildMemo)
+        observeWorkingTree(project, test, mapDir, selecting, buildMemo, startReading(project, buildMemo))
         discardPreviousRecords(test, recordsDir)
 
         // Opt-in (-Pyoriwake.internal.loaded): a second -javaagent learns which classes the test
@@ -255,6 +257,15 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val datesTheMap = project.provider {
             (unfiltered.get() || filterVerdict.get().byFramework) && !test.failFast
         }
+        // Why a run that cannot date the map left it as it was; empty when it can.
+        val undatedReason = project.provider {
+            val verdict = filterVerdict.get()
+            when {
+                test.failFast -> "--fail-fast"
+                !verdict.unfiltered && !verdict.byFramework -> "filtered by ${verdict.detail}"
+                else -> ""
+            }
+        }
 
         // The packages the union may speak for, resolved lazily once every project is evaluated.
         val loadedScope = project.provider { allProjectPackages(project) }
@@ -262,7 +273,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         configured[test.name] = Configured(
             mapDir, scope, scopeOutcome,
             DecodeTask.Inputs(
-                mapDir, scopeOutcome, selecting, wholeTask, loadedScope, datesTheMap,
+                mapDir, scopeOutcome, selecting, wholeTask, loadedScope, datesTheMap, undatedReason,
                 // What JaCoCo actually instruments, read back off the task so the host's excludes
                 // are in it. See EffectiveScope.
                 effectiveScope,
@@ -344,6 +355,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         mapDir: File,
         selecting: Boolean,
         buildMemo: BuildMemo?,
+        startReading: String?,
     ) {
         val rootDir = project.rootDir
         val excluded = WorkingTree.excluded(rootDir, projectFacts(project, buildMemo).buildDirs.values)
@@ -353,10 +365,14 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE)
         val dated = pendingSnapshot(recordsDir, dates = true)
         val undated = pendingSnapshot(recordsDir, dates = false)
+        val head = pendingHead(recordsDir)
         test.doFirst { task ->
             // Deleted first, whatever happens next: one left by an earlier run describes its tree.
             dated.delete()
             undated.delete()
+            head.delete()
+            // Without it the decode removes the stamp, and the next run refuses and captures.
+            startReading?.let { reading -> runCatching { writeAtomically(head, reading) } }
             if (parallelRefused.exists() || (selecting && !fullRun.exists())) {
                 return@doFirst
             }
@@ -378,6 +394,28 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
     }
 
+
+    /**
+     * HEAD and its reflogs before this build compiles anything, for a run that can date the map.
+     * Read at configuration through a value source, so a reusing build re-obtains it first and
+     * reconfigures when it moved; a run whose command line filters or fails fast cannot date the
+     * map and skips the reading, and that cost. Once per build, however many `Test` tasks it has:
+     * every task reads the same repository.
+     */
+    private fun startReading(project: Project, memo: BuildMemo?): String? {
+        val arguments = project.gradle.startParameter.taskRequests.flatMap { it.args }
+        if ("--tests" in arguments || "--fail-fast" in arguments) {
+            return null
+        }
+        val read = {
+            runCatching {
+                project.providers.of(CaptureStart.Source::class.java) {
+                    it.parameters.rootDir.set(project.rootDir.absolutePath)
+                }.get()
+            }.getOrNull()
+        }
+        return memo?.value(YoriwakePlugin.CAPTURE_START_KEY + project.rootDir.path, read) ?: read()
+    }
 
     /**
      * Reports what is actually in effect, read back from the task at execution time rather than
@@ -628,6 +666,9 @@ private fun frameworkFilter(test: Test): String? {
     return filters.filter { it.second.isNotEmpty() }.takeIf { it.isNotEmpty() }
         ?.joinToString(" ") { (name, values) -> "$name=$values" }
 }
+
+/** The start reading of HEAD and its reflogs; see [CaptureStart]. */
+internal fun pendingHead(recordsDir: File) = File(recordsDir.parentFile, CaptureStart.PENDING_FILE)
 
 internal fun pendingSnapshot(recordsDir: File, dates: Boolean) =
     File(recordsDir.parentFile, WorkingTree.SNAPSHOT_FILE + if (dates) ".dated" else ".undated")

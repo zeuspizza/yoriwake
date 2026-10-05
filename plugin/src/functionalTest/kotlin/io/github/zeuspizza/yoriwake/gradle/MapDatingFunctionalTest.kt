@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
@@ -15,6 +16,29 @@ import kotlin.test.assertTrue
 
 /** When a capture dates the map, and the runs that must leave it undated. */
 class MapDatingFunctionalTest : FunctionalTestSupport() {
+
+    @Test
+    fun `a fail-fast capture leaves the map byte-identical`(@TempDir dir: File) {
+        // Byte-identical but for the failure it saw, which only ever runs a test.
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
+            actingTest("throw new AssertionError(\"fails\");"),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        val before = mapFiles(dir)
+
+        val output = runner(dir, "test", "--fail-fast", "-Pact").buildAndFail().output
+
+        assertContains(output, "--fail-fast, so this run's coverage was not kept and the map is as it was")
+        val after = mapFiles(dir)
+        assertEquals(before - AgentContract.COVERAGE_FILE, after - AgentContract.COVERAGE_FILE)
+        val lines = { files: Map<String, List<Byte>> ->
+            String(files.getValue(AgentContract.COVERAGE_FILE).toByteArray()).lines().filter(String::isNotBlank)
+        }
+        assertEquals(lines(before).filterNot { "ZActTest" in it }, lines(after).filterNot { "ZActTest" in it })
+        assertTrue(lines(after).single { "ZActTest" in it && "[method:" in it }.startsWith("FAILED"))
+    }
 
     @Test
     fun `a fail-fast capture does not date the map`(@TempDir dir: File) {
@@ -106,6 +130,7 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         val narrowed = runner(dir, "test", "-Pyoriwake.select").build().output
 
         assertContains(narrowed, "narrowing, so nothing is instrumented")
+        assertFalse(narrowed.contains("was not kept"), "a narrowed selecting run is not a capture: $narrowed")
         assertEquals(setOf("dev.sample.GammaTest"), ranTests(dir))
         assertEquals(
             second,
@@ -148,10 +173,13 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
             """.trimIndent()
         )
         commit(dir, "a test that halts the JVM")
+        val before = mapFiles(dir)
         val output = runner(dir, "test").buildAndFail().output
 
         assertEquals(complete, captureStamp(dir), "a capture whose JVM died mid-plan dated the map")
         assertContains(output, "did not finish its run")
+        assertContains(output, "did not finish, so this run's coverage was not kept and the map is as it was")
+        assertEquals(before, mapFiles(dir), "a capture whose JVM died mid-plan changed the map")
     }
 
     @Test
@@ -399,6 +427,184 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
             """.trimIndent(),
         )
     }
+
+    // A capture that cannot date the map leaves it as it was. ZActTest acts on the repository during
+    // the run only under -Pact, so the same sources capture cleanly first.
+
+    /** Every file the decode writes, by name, with its bytes. */
+    private fun mapFiles(dir: File): Map<String, List<Byte>> = listOf(
+        AgentContract.COVERAGE_FILE, AgentContract.POSITIONS_FILE, AgentContract.FIRST_TOUCH_FILE,
+        AgentContract.NAMED_TOUCH_FILE, AgentContract.JVM_MODE_FILE, AgentContract.SCOPE_FILE,
+        AgentContract.EFFECTIVE_SCOPE_FILE, AgentContract.MAP_SCHEMA_VERSION_FILE, AgentContract.LOADED_FILE,
+        AgentContract.LOADED_PROVENANCE_FILE, AgentContract.LOADED_SCOPE_FILE, CoverageDecoder.CAPTURE_COMMIT_FILE,
+        CoverageDecoder.CONSTANTS_FILE, CoverageDecoder.CLASS_DIGESTS_FILE, CoverageDecoder.ANNOTATION_DIGESTS_FILE,
+        WorkingTree.SNAPSHOT_FILE,
+    ).mapNotNull { name -> File(mapDirOf(dir), name).takeIf(File::isFile)?.let { name to it.readBytes().toList() } }
+        .toMap()
+
+    private fun actingBuild(extra: String = "") = minimalBuild.replace(
+        "tasks.test { useJUnitPlatform() }",
+        "tasks.test { useJUnitPlatform(); systemProperty(\"act\", project.hasProperty(\"act\").toString()) }\n$extra",
+    )
+
+    /** A test that runs [action] (Java statements) during the run, under `-Pact` only. */
+    private fun actingTest(action: String) = "src/test/java/dev/sample/ZActTest.java" to """
+        package dev.sample;
+        import java.util.*;
+        import org.junit.jupiter.api.Test;
+        class ZActTest {
+            static void git(String... args) throws Exception {
+                List<String> command = new ArrayList<>(List.of("git", "-c", "user.email=t@e.com", "-c", "user.name=t"));
+                command.addAll(List.of(args));
+                if (new ProcessBuilder(command).inheritIO().start().waitFor() != 0) {
+                    throw new IllegalStateException(String.join(" ", args));
+                }
+            }
+            @Test void acts() throws Exception { if (Boolean.getBoolean("act")) { $action } }
+        }
+    """.trimIndent()
+
+    /** A repository whose HEAD keeps no reflog, so only the HEAD comparison can see a commit. */
+    private fun committedWithoutReflogs(dir: File) {
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        git(dir, "config", "core.logAllRefUpdates", "false")
+        commit(dir, "base")
+    }
+
+    @Test
+    fun `a commit during a capture in a repository without reflogs leaves the map as it was`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
+            actingTest("java.nio.file.Files.writeString(java.nio.file.Path.of(\"touched.txt\"), \"x\"); git(\"add\", \"touched.txt\"); git(\"commit\", \"-m\", \"during the run\");"),
+        )
+        committedWithoutReflogs(dir)
+        runner(dir, "test").build()
+        val before = mapFiles(dir)
+
+        val output = runner(dir, "test", "-Pact").build().output
+
+        assertContains(output, "during the run, so this run's coverage was not kept and the map is as it was")
+        assertContains(output, "HEAD moved from ")
+        assertEquals(before, mapFiles(dir))
+    }
+
+    @Test
+    fun `a checkout to another branch and back during a capture leaves the map as it was`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
+            actingTest("git(\"checkout\", \"-b\", \"other\"); git(\"checkout\", \"-\");"),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        val before = mapFiles(dir)
+
+        val output = runner(dir, "test", "-Pact").build().output
+
+        assertContains(output, "HEAD's reflog changed during the run, so this run's coverage was not kept")
+        assertEquals(before, mapFiles(dir))
+    }
+
+    @Test
+    fun `a dating capture in a repository without reflogs still dates the map`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest)
+        committedWithoutReflogs(dir)
+        runner(dir, "test").build()
+        changeAlpha(dir)
+        commit(dir, "a change")
+
+        runner(dir, "test").build()
+
+        assertEquals(head(dir), captureStamp(dir))
+    }
+
+    @Test
+    fun `a HEAD git cannot read at the decode leaves the map as it was`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
+            actingTest("java.nio.file.Files.writeString(java.nio.file.Path.of(\".git/HEAD\"), \"not a ref\");"),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        val before = mapFiles(dir)
+
+        val output = runner(dir, "test", "-Pact").build().output
+
+        assertContains(output, "to something unreadable during the run")
+        assertEquals(before, mapFiles(dir))
+    }
+
+    @Test
+    fun `a capture whose start reading of HEAD is missing removes the stamp`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
+            actingTest(
+                "for (java.io.File map : new java.io.File(\".gradle/yoriwake\").listFiles()) " +
+                    "new java.io.File(map, \"${io.github.zeuspizza.yoriwake.gradle.change.CaptureStart.PENDING_FILE}\").delete();",
+            ),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+
+        runner(dir, "test", "-Pact").build()
+        assertEquals(null, captureStamp(dir), "a capture with no start reading kept a stamp")
+        changeAlpha(dir)
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        assertEquals("stamp-absent", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE])
+    }
+
+    @Test
+    fun `a commit during compilation leaves the map as it was`(@TempDir dir: File) {
+        // Read before compilation, HEAD names the commit the compiled classes came from.
+        build(
+            dir,
+            "build.gradle.kts" to actingBuild(
+                """
+                tasks.compileJava {
+                    val act = providers.gradleProperty("act").isPresent
+                    val root = rootDir
+                    doLast {
+                        if (act) {
+                            File(root, "touched.txt").writeText("x")
+                            ProcessBuilder("git", "add", "touched.txt").directory(root).start().waitFor()
+                            ProcessBuilder("git", "-c", "user.email=t@e.com", "-c", "user.name=t", "commit", "-m", "during compilation")
+                                .directory(root).start().waitFor()
+                        }
+                    }
+                }
+                """.trimIndent(),
+            ),
+            oneClass, oneTest,
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        val before = mapFiles(dir)
+        changeAlpha(dir)
+        commit(dir, "a change, so compilation runs")
+
+        val output = runner(dir, "test", "-Pact").build().output
+
+        assertContains(output, "HEAD moved from ")
+        assertEquals(before, mapFiles(dir))
+    }
+
+    @Test
+    fun `a filtered run on a task with no map writes no map file`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest)
+        committed(dir)
+
+        runner(dir, "test", "--tests", "dev.sample.AlphaTest").build()
+
+        assertEquals(emptyMap(), mapFiles(dir))
+    }
+
+    private fun changeAlpha(dir: File) = File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
+        """
+        package dev.sample;
+        public class Alpha { public int twice(int n) { return n + n; } }
+        """.trimIndent()
+    )
 
     /** The test id of every record in the map. */
     private fun mapIds(dir: File): List<String> =

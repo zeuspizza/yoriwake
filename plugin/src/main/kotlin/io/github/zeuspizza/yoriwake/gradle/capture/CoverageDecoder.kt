@@ -19,6 +19,8 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_SCHEMA_VERS
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MODE_ISOLATED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MODE_SHARED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NAMED_TOUCH_FILE
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_NOT_A_TEST
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_SUCCESSFUL
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_UNKNOWN
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PLAN_COMPLETE_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.POSITIONS_FILE
@@ -241,6 +243,40 @@ internal object CoverageDecoder {
             mapTests = mapTestRecords.size,
             workers = workers.size,
         )
+    }
+
+    /**
+     * What a capture that does not date the map keeps of its records: the tests it saw fail, marked
+     * as failed, so they run until a capture sees them pass. Their coverage and every other record
+     * stay as they were, so nothing in the map describes a newer commit than its stamp; a failure is
+     * an outcome, and it only ever runs a test. A failing test the map does not hold is added with no
+     * coverage, which runs it as surely. Returns how many tests were marked.
+     */
+    fun carryFailures(mapDir: File): Int {
+        val failed = LinkedHashMap<String, String>()
+        recordsDir(mapDir).listFiles { f: File -> f.isDirectory && f.name.startsWith(WORKER_DIR_PREFIX) }
+            .orEmpty().sortedBy(File::getName).forEach { worker ->
+                File(worker, INDEX_FILE).takeIf(File::isFile)?.readLines().orEmpty().forEach { line ->
+                    // sequence, durationNanos, byteCount, outcome, testId
+                    val parts = Tsv.split(line)
+                    if (parts.size != 5) return@forEach
+                    val (outcome, testId) = parts[3] to parts[4]
+                    val attributable = !testId.startsWith(CLASS_SCOPED_RECORD_PREFIX) && testId != UNATTRIBUTED_RECORD_ID
+                    if (attributable && outcome != OUTCOME_SUCCESSFUL && outcome != OUTCOME_NOT_A_TEST) {
+                        failed.putIfAbsent(testId, outcome)
+                    }
+                }
+            }
+        if (failed.isEmpty()) return 0
+        val existing = existingLines(mapDir)
+        // No map of this version: every test runs anyway.
+        if (existing.isEmpty()) return 0
+        val held = existing.mapTo(HashSet(), ::testIdOf)
+        val marked = existing.map { line ->
+            failed[testIdOf(line)]?.let { outcome -> outcome + line.substring(line.indexOf('\t')) } ?: line
+        } + failed.filterKeys { it !in held }.map { (id, outcome) -> Tsv.join(outcome, "0", "", id) }
+        writeAtomically(File(mapDir, COVERAGE_FILE), marked.joinToString("\n", postfix = "\n"))
+        return failed.size
     }
 
     /**

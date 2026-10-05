@@ -295,6 +295,9 @@ internal object WorkingTree {
 
     private val UNREADABLE = Pair("", 0L)
 
+    /** [stat]'s token for one file, null when it is not a regular file or cannot be read. */
+    internal fun statToken(file: Path): String? = stat(file)?.takeIf { it !== UNREADABLE }?.first
+
     /** (stat token, mtime in millis), null when absent, [UNREADABLE] for anything but a file. */
     private fun stat(file: Path): Pair<String, Long>? = try {
         // ctime and inode where the platform has them: `cp -p` can restore an mtime and a size,

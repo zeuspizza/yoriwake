@@ -234,6 +234,7 @@ class TestTaskWiringCharacterizationTest {
             #5 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/ran.marker
             #6 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
               +file .gradle/yoriwake/test-7f007aca/worktree-snapshot.dated
             #7 Execute doFirst {} action
               +file .gradle/yoriwake-agent/yoriwake-agent.jar
