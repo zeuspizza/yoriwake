@@ -211,8 +211,8 @@ Written only when `rules` is `complete` or `from-refused-inputs`, with one line 
 recorded, never read back: the selector decides first and computes these apart from that decision.
 Each rule is evaluated on its own, beneath a full run or a refusal too, so the line under a
 full-run row says what the selection would have been without whatever forced it. The selection
-coverage alone makes is every row whose line names a rule outside the `shares-jvm-*` family and
-`class-granularity`.
+coverage alone makes, with the known tests of an edited test class (`own-class-changed`), is every
+row whose line names a rule outside the `shares-jvm-*` family and `class-granularity`.
 
 | Constant | Rule | The test runs because |
 |---|---|---|

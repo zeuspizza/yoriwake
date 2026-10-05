@@ -290,4 +290,22 @@ class RulesTest {
         assertEquals("own-class-changed", uninstrumented.tokens(id("dev.EditedTest")))
         assertEquals(AgentContract.RULE_NONE, uninstrumented.tokens(id("dev.OtherTest"), Verdict.SKIPPED))
     }
+
+    @Test
+    fun `own-class-changed needs the class to be both an own test class and changed`(@TempDir dir: File) {
+        val tests = listOf(id("dev.EditedTest") to "dev.Calc,dev.EditedTest")
+
+        val changedNotOwn = decide(
+            map(File(dir, "changed"), tests),
+            AgentContract.CHANGED_CLASSES_PROPERTY to "dev.EditedTest",
+        )
+        val ownNotChanged = decide(
+            map(File(dir, "own"), tests),
+            AgentContract.CHANGED_CLASSES_PROPERTY to "dev.Calc",
+            AgentContract.OWN_TEST_CLASSES_PROPERTY to "dev.EditedTest",
+        )
+
+        assertEquals("reaches-change", changedNotOwn.tokens(id("dev.EditedTest")))
+        assertEquals("reaches-change", ownNotChanged.tokens(id("dev.EditedTest")))
+    }
 }

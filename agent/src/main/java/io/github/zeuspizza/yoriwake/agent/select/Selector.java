@@ -709,11 +709,22 @@ public final class Selector {
         return known;
     }
 
-    /** Whether the test is one of a changed own test class's, as {@link #testClassOf} names it. */
+    /**
+     * Whether the test is one of a changed own test class's, as {@link #testClassOf} names it. A
+     * static nested class is discovered on its own, so its id names {@code Outer$Inner}.
+     */
     private static boolean ofChangedOwnClass(
             String testId, Collection<String> ownTestClasses, Collection<String> changedClassPrefixes) {
         String name = testClassOf(testId);
-        return name != null && ownTestClasses.contains(name) && changedClassPrefixes.contains(name);
+        if (name == null) {
+            return false;
+        }
+        for (String prefix : changedClassPrefixes) {
+            if (ownTestClasses.contains(prefix) && (name.equals(prefix) || name.startsWith(prefix + "$"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

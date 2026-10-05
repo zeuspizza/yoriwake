@@ -1327,6 +1327,19 @@ class SelectorTest {
     }
 
     @Test
+    fun `a static nested class's test is a test of the edited outer class`(@TempDir dir: File) {
+        // Discovered as a class of its own, so its id names the binary name, not the outer class.
+        val inner = "[engine:junit-jupiter]/[class:com.acme.EditedTest\$Inner]/[method:t()]"
+        val decision = decide(
+            editedThenLater(dir, "com.acme.Calc", Triple(inner, "SUCCESSFUL", "com.acme.Calc")),
+            changed = listOf("com.acme.EditedTest"),
+            exempt = listOf("com.acme.EditedTest"),
+        )
+
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(inner))
+    }
+
+    @Test
     fun `a test id with no class segment is dated by its class's discovery load as before`(@TempDir dir: File) {
         val vintage = "[engine:junit-vintage]/[runner:com.acme.EditedTest]/[test:t(com.acme.EditedTest)]"
         val decision = decide(
