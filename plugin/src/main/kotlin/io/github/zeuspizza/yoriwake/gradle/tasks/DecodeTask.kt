@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.bytecode.DigestScan
 import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
@@ -86,8 +87,8 @@ internal abstract class DecodeTask : DefaultTask() {
         val marker = ranMarker(CoverageDecoder.recordsDir(mapDir))
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
         val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
-        val datedSnapshot = pendingSnapshot(CoverageDecoder.recordsDir(mapDir), dates = true)
-        val startStats = pendingStats(CoverageDecoder.recordsDir(mapDir))
+        val datedSnapshot = pendingSnapshot(mapDir)
+        val startStats = pendingStats(mapDir)
         // Before the ran-marker check: this run did work but declined to capture, and a
         // decode would merge older records into a map it must not touch.
         if (parallelRefused.delete()) {
@@ -110,10 +111,10 @@ internal abstract class DecodeTask : DefaultTask() {
         // The HEAD the tests saw, read before the build compiled anything; null when it could not be
         // read, which removes the stamp so the next run refuses. HEAD even on a dirty tree: the
         // working-tree snapshot beside the stamp covers what HEAD does not pin.
-        val start = CaptureStart.decode(
-            pendingHead(CoverageDecoder.recordsDir(mapDir)).takeIf(File::isFile)
-                ?.let { runCatching { it.readText() }.getOrNull() }
+        val pending = CaptureStart.Pending.decode(
+            pendingHead(mapDir).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
         )
+        val start = pending?.reading
         val now = CaptureStart.read(rootDir)
         val captureCommit = start?.head
         // Records span two commits once either moved, and no single diff covers both. A HEAD that
@@ -140,7 +141,7 @@ internal abstract class DecodeTask : DefaultTask() {
         }
         val datesMap = observedEverything && unfinished.isEmpty() && !headMoved && !reflogMoved
         val hasWorkerRecords = CoverageDecoder.recordsDir(mapDir).listFiles().orEmpty()
-            .any { it.name.startsWith("worker-") }
+            .any { it.isDirectory && it.name.startsWith(AgentContract.WORKER_DIR_PREFIX) }
         // Merged undated, these records would describe code the stamp's commit does not hold, and a
         // later change that undoes it would be in no diff. Kept, the map stays at one commit.
         if (!datesMap && hasWorkerRecords) {
@@ -151,13 +152,14 @@ internal abstract class DecodeTask : DefaultTask() {
                 unfinished.isNotEmpty() -> "${unfinished.joinToString()} did not finish"
                 headMoved -> "HEAD moved from ${startHead ?: "nothing"} to ${headNow ?: "something unreadable"} during the run"
                 startReflogs.first != reflogsNow.first -> "HEAD's reflog changed during the run"
-                else -> "the stash's reflog changed during the run"
+                startReflogs.second != reflogsNow.second -> "the stash's reflog changed during the run"
+                else -> "the run could not be dated"
             }
             val failures = runCatching { CoverageDecoder.carryFailures(mapDir) }.getOrElse { problem ->
                 logger.warn("[yoriwake] $taskPath could not mark this run's failures in the map ($problem)")
                 0
             }
-            val kept = if (failures == 0) "" else ", except that the $failures test(s) it saw fail are marked failed"
+            val kept = if (failures == 0) "" else ", except that the $failures test(s) it saw fail or skip keep that outcome"
             if (reason == null) {
                 logger.info("[yoriwake] $taskPath selected part of the suite, so its records were not kept$kept")
             } else {
@@ -229,12 +231,14 @@ internal abstract class DecodeTask : DefaultTask() {
                     }
                 }.getOrNull(),
                 // Asked only once records were merged, which only a dating capture does. Every path
-                // touched since the start reading is unknown. A missing start file removes the
-                // snapshot, and the next run refuses.
+                // touched since the start reading is unknown. A start file that is missing, or that
+                // another build has rewritten since, removes the snapshot, and the next run refuses.
                 worktreeSnapshot = {
-                    val read = { file: File -> file.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() } }
-                    val reobserved = WorkingTree.reobserve(rootDir, read(datedSnapshot), read(startStats))
-                    reobserved?.undated
+                    WorkingTree.reobserve(
+                        rootDir,
+                        WorkingTree.readStart(datedSnapshot, pending?.snapshotId),
+                        WorkingTree.readStart(startStats, pending?.statsId),
+                    )?.undated
                 },
                 isolated = isolated.getOrElse(false),
             )

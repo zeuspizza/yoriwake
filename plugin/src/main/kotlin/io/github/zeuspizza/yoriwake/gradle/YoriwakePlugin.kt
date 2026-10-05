@@ -271,6 +271,7 @@ public abstract class YoriwakePlugin : Plugin<Project> {
         internal const val FACTS_KEY = "projectFacts:"
         internal const val WORKTREE_KEY = "worktreeListing:"
         internal const val CAPTURE_START_KEY = "captureStart:"
+        internal const val CAPTURE_STATS_KEY = "captureStats:"
 
         internal const val TEST_TASKS_COUNTER = "testTasksConfigured"
 

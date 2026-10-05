@@ -217,8 +217,7 @@ internal object CoverageDecoder {
         writeConstants(mapDir, constants, datesTheMap)
         writeDigestTable(File(mapDir, CLASS_DIGESTS_FILE), classDigests, datesTheMap)
         writeDigestTable(File(mapDir, ANNOTATION_DIGESTS_FILE), annotationDigests, datesTheMap)
-        // Not gated on datesTheMap: a partial capture amends the snapshot, because the records it
-        // merged saw this tree.
+        // Asked only by a dating capture: no other merges records.
         worktreeSnapshot?.let { observe ->
             val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE)
             observe()?.let { writeAtomically(snapshot, it) } ?: snapshot.delete()
@@ -246,11 +245,11 @@ internal object CoverageDecoder {
     }
 
     /**
-     * What a capture that does not date the map keeps of its records: the tests it saw fail, marked
-     * as failed, so they run until a capture sees them pass. Their coverage and every other record
-     * stay as they were, so nothing in the map describes a newer commit than its stamp; a failure is
-     * an outcome, and it only ever runs a test. A failing test the map does not hold is added with no
-     * coverage, which runs it as surely. Returns how many tests were marked.
+     * What a capture that does not date the map keeps of its records: the outcome of every test it
+     * saw end without succeeding (failed, aborted or skipped), so a failing test runs until a capture
+     * sees it pass. Their coverage and every other record stay as they were, so nothing in the map
+     * describes a newer commit than its stamp; an outcome only ever runs a test. Such a test the map
+     * does not hold is added with no coverage, which runs it as surely. Returns how many were marked.
      */
     fun carryFailures(mapDir: File): Int {
         val failed = LinkedHashMap<String, String>()
@@ -271,9 +270,11 @@ internal object CoverageDecoder {
         val existing = existingLines(mapDir)
         // No map of this version: every test runs anyway.
         if (existing.isEmpty()) return 0
-        val held = existing.mapTo(HashSet(), ::testIdOf)
+        // The map holds ids escaped, the records' index as Tsv.split returned them.
+        val idOf = { line: String -> Tsv.unescape(testIdOf(line)) }
+        val held = existing.mapTo(HashSet(), idOf)
         val marked = existing.map { line ->
-            failed[testIdOf(line)]?.let { outcome -> outcome + line.substring(line.indexOf('\t')) } ?: line
+            failed[idOf(line)]?.let { outcome -> outcome + line.substring(line.indexOf('\t')) } ?: line
         } + failed.filterKeys { it !in held }.map { (id, outcome) -> Tsv.join(outcome, "0", "", id) }
         writeAtomically(File(mapDir, COVERAGE_FILE), marked.joinToString("\n", postfix = "\n"))
         return failed.size

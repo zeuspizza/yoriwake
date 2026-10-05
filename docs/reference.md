@@ -34,7 +34,7 @@ guess.
 - **Refresh.** A narrowed run does not update the map; only a capture that ran the whole suite,
   finished, and kept HEAD and its reflog where they were from before compilation to the end writes
   it. A filtered, fail-fast or interrupted run leaves the map as it was, except that a test it saw
-  fail is marked failed. A change large enough to force a full run refreshes the map as a side effect,
+  fail or skip keeps that outcome. A change large enough to force a full run refreshes the map as a side effect,
   except a map [recorded in isolation](#recording-each-test-class-in-its-own-jvm). A run of the
   whole suite drops the record of any test it did not report, such as a deleted test or one under a
   class whose setup failed, so that test runs until a capture sees it again.
@@ -51,6 +51,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test selecting against <sha> (<origin>): N changed classes, M paths coverage cannot see` | selection is active, and against which base |
 | `of N tests discovered: reaches-change=… skipped=…` | how many tests each rule decided |
 | `:test map updated: N records captured, M known` | a capture completed |
+| `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
 
@@ -296,6 +297,10 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   (a `git.properties`, a build date or revision stamped into a manifest) can change while every
   tracked source stays the same. A test that asserts on its content is skipped when nothing else
   selects it. Pin such tests.
+- **Build steps that write into the working tree.** A file outside the build directories that a
+  build step writes during a capture, such as a generator writing into `src/`, was touched while the
+  tests ran, so it counts as changed on every selecting run until a capture in which nothing writes
+  it, and the tests that reach it always run.
 - **A nested JUnit launcher the agent cannot tell apart.** A launcher a test starts from the test
   class path itself, not from a class loader of its own, is recognised as nested because the outer
   test plan is still executing, which the agent learns through its JUnit Platform listener. With

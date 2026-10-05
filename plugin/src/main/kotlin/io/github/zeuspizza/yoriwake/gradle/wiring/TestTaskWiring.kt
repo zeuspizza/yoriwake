@@ -358,58 +358,58 @@ internal class TestTaskWiring(internal val settings: Settings) {
         buildMemo: BuildMemo?,
         startReading: String?,
     ) {
-        val recordsDir = CoverageDecoder.recordsDir(mapDir)
-        val dated = pendingSnapshot(recordsDir, dates = true)
-        val undated = pendingSnapshot(recordsDir, dates = false)
-        val stats = pendingStats(recordsDir)
-        val head = pendingHead(recordsDir)
+        val dated = pendingSnapshot(mapDir)
+        val stats = pendingStats(mapDir)
+        val head = pendingHead(mapDir)
         // The tree, like HEAD, is read before compilation, at configuration: an edit between the two
         // would otherwise be in the snapshot while the compiled classes predate it.
         if (startReading != null) {
             startTree(project, mapDir, buildMemo)
         }
         test.doFirst {
-            // One left by an earlier build describes its tree. Written only by the 0.1 decode.
-            undated.delete()
+            // One left by an earlier build describes its tree; the undated one only 0.1 wrote.
             head.delete()
-            if (startReading == null) {
+            File(mapDir, WorkingTree.SNAPSHOT_FILE + ".undated").delete()
+            val reading = startReading?.let(CaptureStart::decode)
+            if (reading == null) {
                 // No start reading this build: the decode removes the stamp and the snapshot, and the
                 // next run refuses and captures.
                 dated.delete()
-                stats.delete()
                 return@doFirst
             }
-            runCatching { writeAtomically(head, startReading) }
+            val pending = CaptureStart.Pending(reading, WorkingTree.startId(dated), WorkingTree.startId(stats))
+            runCatching { writeAtomically(head, pending.encode()) }
         }
     }
 
-    /** [WorkingTree.StartSource] for this map, over the git answers the build lists once. */
     private fun startTree(project: Project, mapDir: File, memo: BuildMemo?) {
         val rootDir = project.rootDir
         val excluded = WorkingTree.excluded(rootDir, projectFacts(project, memo).buildDirs.values)
         val git = { arguments: List<String> -> ChangeDetection.cachedRawGit(project.providers, rootDir, memo, arguments) }
         val listed = WorkingTree.configuredListing(rootDir, excluded, memo, git)
+        // Asked outside the memo's compute below: git memoises through the same map.
         val tracked = git(listOf("ls-files", "-z"))
+        val stats = {
+            project.providers.of(WorkingTree.StatsSource::class.java) {
+                it.parameters.rootDir.set(rootDir.absolutePath)
+                it.parameters.file.set(pendingStats(mapDir).absolutePath)
+                // Unset when git could not answer, which the source reads as exactly that.
+                tracked?.let { said -> it.parameters.tracked.set(said) }
+                it.parameters.excluded.set(excluded.joinToString("\u0000"))
+            }
+        }
+        // One provider per build, so its stat of every tracked file runs once, not once per task.
+        runCatching { (memo?.provider(YoriwakePlugin.CAPTURE_STATS_KEY + rootDir.path, stats) ?: stats()).get() }
         runCatching {
             project.providers.of(WorkingTree.StartSource::class.java) {
                 it.parameters.rootDir.set(rootDir.absolutePath)
                 it.parameters.mapDir.set(mapDir.absolutePath)
-                // Unset when git could not answer, which the source reads as exactly that.
+                it.parameters.file.set(pendingSnapshot(mapDir).absolutePath)
                 listed?.let { joined -> it.parameters.listed.set(joined) }
-                tracked?.let { said -> it.parameters.tracked.set(said) }
-                it.parameters.excluded.set(excluded.joinToString("\u0000"))
             }.get()
         }
     }
 
-
-    /**
-     * HEAD and its reflogs before this build compiles anything, for a run that can date the map.
-     * Read at configuration through a value source, so a reusing build re-obtains it first and
-     * reconfigures when it moved; a run whose command line filters or fails fast cannot date the
-     * map and skips the reading, and that cost. Once per build, however many `Test` tasks it has:
-     * every task reads the same repository.
-     */
     private fun startReading(project: Project, memo: BuildMemo?): String? {
         val arguments = project.gradle.startParameter.taskRequests.flatMap { it.args }
         if ("--tests" in arguments || "--fail-fast" in arguments) {
@@ -676,13 +676,16 @@ private fun frameworkFilter(test: Test): String? {
 }
 
 /** The start reading of HEAD and its reflogs; see [CaptureStart]. */
-internal fun pendingHead(recordsDir: File) = File(recordsDir.parentFile, CaptureStart.PENDING_FILE)
+internal fun pendingHead(mapDir: File) = File(mapDir, CaptureStart.PENDING_FILE)
 
-/** The stat tokens of the tracked paths where the capture started; see [WorkingTree.startStats]. */
-internal fun pendingStats(recordsDir: File) = File(recordsDir.parentFile, WorkingTree.STATS_PENDING_FILE)
+/**
+ * The stat tokens of the tracked paths where the capture started, shared by the build's maps; see
+ * [WorkingTree.startStats].
+ */
+internal fun pendingStats(mapDir: File) = File(mapDir.parentFile.parentFile, WorkingTree.STATS_PENDING_FILE)
 
-internal fun pendingSnapshot(recordsDir: File, dates: Boolean) =
-    File(recordsDir.parentFile, WorkingTree.SNAPSHOT_FILE + if (dates) ".dated" else ".undated")
+/** The tree where the capture started; see [WorkingTree.startSnapshot]. */
+internal fun pendingSnapshot(mapDir: File) = File(mapDir, WorkingTree.SNAPSHOT_FILE + ".dated")
 
 /**
  * Written when the test task actually executes. A finalizer also runs for UP-TO-DATE,

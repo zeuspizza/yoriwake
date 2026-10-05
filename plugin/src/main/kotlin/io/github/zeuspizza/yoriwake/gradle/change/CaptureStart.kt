@@ -41,6 +41,24 @@ internal object CaptureStart {
     }
 
     /**
+     * What the test task leaves its decode: the [Reading], and the ids of the start files of the tree
+     * its own build wrote, so the decode reads no other build's; see [WorkingTree.startId].
+     */
+    class Pending(val reading: Reading, val snapshotId: String?, val statsId: String?) {
+        fun encode(): String = listOf(reading.encode(), snapshotId.orEmpty(), statsId.orEmpty()).joinToString("\n")
+
+        companion object {
+            /** Null for anything [encode] did not write. */
+            fun decode(text: String?): Pending? {
+                val lines = text?.split("\n") ?: return null
+                if (lines.size != 5) return null
+                val reading = CaptureStart.decode(lines.take(3).joinToString("\n")) ?: return null
+                return Pending(reading, lines[3].ifEmpty { null }, lines[4].ifEmpty { null })
+            }
+        }
+    }
+
+    /**
      * The reflog's stat token, at the path git names, so a linked worktree reads its own. A token
      * that could not be read is unique, so it never compares equal: an unreadable reflog discards.
      */

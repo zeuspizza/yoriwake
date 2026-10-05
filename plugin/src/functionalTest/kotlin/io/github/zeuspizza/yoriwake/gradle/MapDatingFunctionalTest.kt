@@ -719,8 +719,7 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         build(
             dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
             actingTest(
-                "for (java.io.File map : new java.io.File(\".gradle/yoriwake\").listFiles()) " +
-                    "new java.io.File(map, \"${WorkingTree.STATS_PENDING_FILE}\").delete();",
+                "new java.io.File(\".gradle/${WorkingTree.STATS_PENDING_FILE}\").delete();",
             ),
         )
         committed(dir)
@@ -732,6 +731,48 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         runner(dir, "test", "-Pyoriwake.select").build()
 
         assertEquals("snapshot-absent", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE])
+    }
+
+    @Test
+    fun `a capture whose start snapshot another build rewrote writes no snapshot`(@TempDir dir: File) {
+        // As a build configuring the same project during the capture does: the file is there, but
+        // its id is not the one this build wrote.
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
+            actingTest(
+                "for (java.io.File map : new java.io.File(\".gradle/yoriwake\").listFiles()) { " +
+                    "java.io.File start = new java.io.File(map, \"${WorkingTree.SNAPSHOT_FILE}.dated\"); " +
+                    "String text = java.nio.file.Files.readString(start.toPath()); " +
+                    "java.nio.file.Files.writeString(start.toPath(), " +
+                    "\"yoriwake-start\\tanother\" + text.substring(text.indexOf('\\n'))); }",
+            ),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+
+        runner(dir, "test", "-Pact").build()
+        assertFalse(File(mapDirOf(dir), WorkingTree.SNAPSHOT_FILE).isFile, "a capture read another build's start")
+        changeAlpha(dir)
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        assertEquals("snapshot-absent", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE])
+    }
+
+    @Test
+    fun `a stash kept during a capture leaves the map as it was`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest, classOrderByName, dataFile, readerTest,
+            actingTest("git(\"stash\");"),
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        val before = mapFiles(dir)
+        File(dir, "data.txt").writeText("two")
+
+        val output = runner(dir, "test", "-Pact").build().output
+
+        assertContains(output, "reflog changed during the run")
+        assertEquals(before, mapFiles(dir))
     }
 
     @Test

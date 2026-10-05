@@ -9,7 +9,6 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -44,7 +43,7 @@ class WorkingTreeTest {
     }
 
     private fun captured(root: File, excluded: List<String> = emptyList(), previous: String? = null) =
-        assertNotNull(WorkingTree.capture(root, excluded, previous))
+        WorkingTree.startSnapshot(root, assertNotNull(WorkingTree.listing(root, excluded)), previous)
 
     private fun moved(root: File, snapshot: String, excluded: List<String> = emptyList()): Set<String> =
         assertIs<WorkingTree.Drift.Moved>(WorkingTree.drift(root, mapDir(root, snapshot), excluded)).paths
@@ -56,7 +55,7 @@ class WorkingTreeTest {
         val root = repo(dir)
         val source = File(root, "src/main/java/A.java")
         source.writeText("class A { int edited; }")
-        val snapshot = captured(root).dated
+        val snapshot = captured(root)
         source.writeText("class A {}")
 
         assertEquals(setOf("src/main/java/A.java"), moved(root, snapshot))
@@ -70,7 +69,7 @@ class WorkingTreeTest {
         File(root, "edited.local").writeText("one")
         File(root, "removed.local").writeText("gone soon")
         File(root, "untouched.local").writeText("same")
-        val snapshot = captured(root).dated
+        val snapshot = captured(root)
 
         File(root, "edited.local").writeText("two")
         File(root, "removed.local").delete()
@@ -145,7 +144,7 @@ class WorkingTreeTest {
             )
         )
 
-        val recaptured = assertNotNull(WorkingTree.parse(captured(root, previous = previous).dated))
+        val recaptured = assertNotNull(WorkingTree.parse(captured(root, previous = previous)))
 
         assertEquals("0".repeat(64), (recaptured.entries["fixture.local"] as WorkingTree.Present).sha)
     }
@@ -162,7 +161,7 @@ class WorkingTreeTest {
         val source = File(root, "src/main/java/A.java")
         source.writeText("class A { int edited; }")
         File(root, "src/test/resources/fixture.local").also { it.parentFile.mkdirs() }.writeText("one")
-        val snapshot = captured(root).dated
+        val snapshot = captured(root)
         assertEquals(
             setOf("src/main/java/A.java", "src/test/resources/fixture.local"),
             assertNotNull(WorkingTree.parse(snapshot)).entries.keys,
@@ -186,7 +185,7 @@ class WorkingTreeTest {
         val absent = WorkingTree.drift(root, mapDir(root, snapshot = null), emptyList())
         assertEquals(RefusalKind.SNAPSHOT_ABSENT, assertIs<WorkingTree.Drift.Unknown>(absent).kind)
 
-        val whole = captured(root).dated
+        val whole = captured(root)
         // Cut short: one line fewer still parses line by line, which is why the footer counts.
         val truncated = whole.lines().filterNot { it.startsWith("end") }.joinToString("\n")
         val damaged = WorkingTree.drift(root, mapDir(root, truncated), emptyList())
@@ -199,40 +198,13 @@ class WorkingTreeTest {
     @Test
     fun `a git that cannot list the tree is no answer, not an empty one`(@TempDir dir: File) {
         val root = repo(dir)
-        val snapshot = captured(root).dated
+        val snapshot = captured(root)
 
         assertEquals(
             WorkingTree.Drift.Unlisted,
             WorkingTree.drift(root, mapDir(root, snapshot), emptyList()) { null },
         )
-        assertNull(WorkingTree.capture(root, emptyList(), null) { null })
-    }
-
-    @Test
-    fun `a partial capture marks what it saw differently as unknown until a full one`(
-        @TempDir dir: File,
-    ) {
-        // Its merged records saw THIS tree and the rest saw the previous one, so a path on which the
-        // two differ cannot be vouched for in either state.
-        val root = repo(dir)
-        File(root, "fixture.local").writeText("one")
-        File(root, "steady.local").writeText("same")
-        val first = captured(root).dated
-
-        File(root, "fixture.local").writeText("two")
-        File(root, "new.local").writeText("new")
-        val partial = assertNotNull(captured(root, previous = first).undated)
-        val entries = assertNotNull(WorkingTree.parse(partial)).entries
-
-        assertEquals(WorkingTree.Unknown, entries["fixture.local"])
-        assertEquals(WorkingTree.Unknown, entries["new.local"])
-        assertIs<WorkingTree.Present>(entries["steady.local"])
-        // And an unknown path reports even once it returns to the state the older records saw.
-        File(root, "fixture.local").writeText("one")
-        assertContains(moved(root, partial), "fixture.local")
-        assertFalse("steady.local" in moved(root, partial))
-        // With no previous snapshot to amend, a partial capture has nothing to write.
-        assertNull(captured(root).undated)
+        assertNull(WorkingTree.listing(root, emptyList()) { null })
     }
 
     // Where a capture starts and where it ends: a path touched in between is unknown, even when its
@@ -290,6 +262,28 @@ class WorkingTreeTest {
         assertEquals(WorkingTree.Unknown, entries["src/main/java/A.java"])
         // And a selecting run then reports it, though it equals HEAD again.
         assertContains(moved(root, assertNotNull(WorkingTree.reobserve(root, start.first, start.second)).undated), "src/main/java/A.java")
+    }
+
+    @Test
+    fun `a tracked file deleted during a capture is unknown`(@TempDir dir: File) {
+        val root = repo(dir)
+        val start = started(root)
+
+        File(root, "src/main/java/A.java").delete()
+
+        assertEquals(WorkingTree.Unknown, reobserved(root, start)["src/main/java/A.java"])
+    }
+
+    @Test
+    fun `a start file is read only by the build that wrote it`(@TempDir dir: File) {
+        val file = File(dir, "start")
+        file.writeText("yoriwake-start\tmine\ncontent")
+
+        assertEquals("content", WorkingTree.readStart(file, "mine"))
+        // Rewritten by another build configuring meanwhile, or never written by this one.
+        assertNull(WorkingTree.readStart(file, "theirs"))
+        assertNull(WorkingTree.readStart(file, null))
+        assertNull(WorkingTree.readStart(File(dir, "absent"), "mine"))
     }
 
     @Test

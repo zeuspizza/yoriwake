@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
+import org.gradle.api.logging.Logging
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
@@ -15,6 +16,8 @@ import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -33,8 +36,13 @@ internal object WorkingTree {
     /** Beside `capture-commit`, and written under the same gate: see [CoverageDecoder.decode]. */
     const val SNAPSHOT_FILE = "worktree-snapshot"
 
-    /** Beside the pending snapshot: every tracked path's stat token where a capture starts. */
-    const val STATS_PENDING_FILE = "capture-stats.pending"
+    /**
+     * Every tracked path's stat token where a capture starts, once per build for every map. Beside
+     * the maps' directory, not in it, which holds only maps.
+     */
+    const val STATS_PENDING_FILE = "yoriwake-capture-stats.pending"
+
+    private const val START_ID = "yoriwake-start"
 
     private const val HEADER = "yoriwake-worktree-snapshot 1"
     private const val STATS_HEADER = "yoriwake-capture-stats 1"
@@ -192,42 +200,6 @@ internal object WorkingTree {
         return memo.value(key) { memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered) }
     }
 
-    /** The two snapshots a capture may write; which one is decided once the run is over. */
-    class Captured(
-        /** For a capture that re-observed the whole suite: the tree as it is. */
-        val dated: String,
-        /**
-         * For one that did not: its records span this tree and the previous snapshot's, so every
-         * path where the two disagree is written as unknown until a full capture. Null with no
-         * previous snapshot to amend.
-         */
-        val undated: String?,
-    )
-
-    /** Null when the tree could not be listed; the snapshot is then removed and the next run refuses. */
-    fun capture(
-        rootDir: File,
-        excluded: Collection<String>,
-        previousText: String?,
-        git: (List<String>) -> String? = { ChangeDetection.rawGit(rootDir, it) },
-    ): Captured? {
-        // Taken BEFORE anything is observed, so a file touched during the walk is racy, not trusted.
-        val now = System.currentTimeMillis()
-        val listed = listing(rootDir, excluded, git) ?: return null
-        val previous = previousText?.let(::parse)
-        val observed = HashMap<String, State>()
-        val state = { path: String -> observed.getOrPut(path) { observe(rootDir, path, previous) } }
-        val dated = render(Snapshot(now, listed.associateWith(state)))
-        val undated = previous?.let {
-            render(Snapshot(now, (it.entries.keys + listed).associateWith { path ->
-                val recorded = it.entries[path]
-                val current = state(path)
-                if (recorded != null && same(recorded, current)) current else Unknown
-            }))
-        }
-        return Captured(dated, undated)
-    }
-
     /** The tree a capture's tests will see, from paths already [listing]ed, as a dated snapshot. */
     fun startSnapshot(rootDir: File, listed: List<String>, previousText: String?): String {
         // Taken BEFORE anything is observed, so a file touched during the walk is racy, not trusted.
@@ -317,19 +289,72 @@ internal object WorkingTree {
     private fun touched(startToken: String, nowToken: String) = startToken != nowToken
 
     /**
+     * Which start file this daemon last wrote at each path, by the id written into it. A daemon runs
+     * one build at a time, so the test task reads here the id its own configuration wrote, and the
+     * decode reads a start file only if it still carries that id: another build configuring the
+     * same project meanwhile rewrites the file, and the capture is then not dated from it.
+     */
+    private val startIds = ConcurrentHashMap<String, String>()
+
+    /** The id [file] was last written with by this daemon, or null. */
+    fun startId(file: File): String? = startIds[file.path]
+
+    private fun writeStart(file: File, text: String) {
+        val id = UUID.randomUUID().toString()
+        startIds.remove(file.path)
+        file.parentFile.mkdirs()
+        writeAtomically(file, "$START_ID\t$id\n$text")
+        startIds[file.path] = id
+    }
+
+    /** [file]'s content if it was written with [id], else null. */
+    fun readStart(file: File, id: String?): String? {
+        id ?: return null
+        val text = file.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() } ?: return null
+        val header = "$START_ID\t$id\n"
+        return if (text.startsWith(header)) text.removePrefix(header) else null
+    }
+
+    /**
      * Writes a capture's start reading of the tree beside the map at configuration time, before the
-     * build compiles anything: [startSnapshot] and [startStats]. A reusing build re-obtains it before
-     * any task runs, which is the point; its value is constant, so the files a build writes into the
-     * tree never cost it its stored entry. The paths are parameters, listed once per build by the
-     * caller through git answers the configuration cache already re-checks.
+     * build compiles anything: [startSnapshot]. A reusing build re-obtains it before any task runs,
+     * which is the point; its value is constant, so the files a build writes into the tree never cost
+     * it its stored entry. The paths are a parameter, listed once per build by the caller through git
+     * answers the configuration cache already re-checks.
      */
     internal abstract class StartSource : ValueSource<String, StartSource.Parameters> {
 
         interface Parameters : ValueSourceParameters {
             val rootDir: Property<String>
             val mapDir: Property<String>
+            /** Where the snapshot is written. */
+            val file: Property<String>
             /** NUL-joined; unset when git could not list the tree. */
             val listed: Property<String>
+        }
+
+        override fun obtain(): String {
+            val file = File(parameters.file.get())
+            // Gone unless written below: a missing file makes the decode drop the snapshot.
+            startIds.remove(file.path)
+            file.delete()
+            val listed = parameters.listed.orNull?.split('\u0000')?.filter(String::isNotEmpty) ?: return WRITTEN
+            runCatching {
+                val mapDir = File(parameters.mapDir.get())
+                val previous = File(mapDir, SNAPSHOT_FILE).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
+                writeStart(file, startSnapshot(File(parameters.rootDir.get()), listed, previous))
+            }.onFailure { logger.warn("[yoriwake] could not read the working tree where a capture starts ($it); its map will not be dated") }
+            return WRITTEN
+        }
+    }
+
+    /** [startStats] at configuration time, once per build for all its maps; as [StartSource]. */
+    internal abstract class StatsSource : ValueSource<String, StatsSource.Parameters> {
+
+        interface Parameters : ValueSourceParameters {
+            val rootDir: Property<String>
+            /** Where the stats are written. */
+            val file: Property<String>
             /** NUL-joined tracked paths; unset when git could not list them. */
             val tracked: Property<String>
             /** NUL-joined. */
@@ -337,30 +362,21 @@ internal object WorkingTree {
         }
 
         override fun obtain(): String {
-            val rootDir = File(parameters.rootDir.get())
-            val mapDir = File(parameters.mapDir.get())
-            val dated = File(mapDir, "$SNAPSHOT_FILE.dated")
-            val stats = File(mapDir, STATS_PENDING_FILE)
-            // Gone unless written below: a missing file makes the decode drop the snapshot.
-            dated.delete()
-            stats.delete()
+            val file = File(parameters.file.get())
+            startIds.remove(file.path)
+            file.delete()
             val split = { joined: String? -> joined?.split('\u0000')?.filter(String::isNotEmpty) }
-            val listed = split(parameters.listed.orNull) ?: return WRITTEN
             val tracked = split(parameters.tracked.orNull) ?: return WRITTEN
-            val excluded = split(parameters.excluded.orNull).orEmpty()
-            val previous = File(mapDir, SNAPSHOT_FILE).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
-            val snapshot = startSnapshot(rootDir, listed, previous)
-            val statsText = startStats(rootDir, tracked, excluded)
-            mapDir.mkdirs()
-            writeAtomically(dated, snapshot)
-            writeAtomically(stats, statsText)
+            runCatching {
+                writeStart(file, startStats(File(parameters.rootDir.get()), tracked, split(parameters.excluded.orNull).orEmpty()))
+            }.onFailure { logger.warn("[yoriwake] could not read the tracked files where a capture starts ($it); its map will not be dated") }
             return WRITTEN
         }
-
-        private companion object {
-            const val WRITTEN = "written"
-        }
     }
+
+    private const val WRITTEN = "written"
+
+    private val logger = Logging.getLogger(WorkingTree::class.java)
 
     /**
      * What a selecting run must add to its change set, against the map in [mapDir].
