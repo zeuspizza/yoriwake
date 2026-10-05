@@ -13,6 +13,15 @@ Every release entry states what it does to a coverage map you already have, as o
 
 See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
+## [Unreleased]
+
+### Fixed
+
+- An edited test class that JaCoCo could not instrument (a method over the JVM's 64 KiB limit once
+  instrumented, or class files newer than the JaCoCo release reads) now runs every test of it the
+  map knows; before, a test the edit made fail could be skipped. Decision records name the rule
+  `own-class-changed`. **Your map:** left alone.
+
 ## [0.1.0] - 2026-10-04
 
 First release. **Your map:** none exists yet; the first full run records one.
@@ -34,4 +43,5 @@ First release. **Your map:** none exists yet; the first full run records one.
 - Pinning with `@Tag("yoriwake-always-run")`, `yoriwake { alwaysRun }` and `-Pyoriwake.alwaysRun`.
 - `-Pyoriwake.isolatedCapture`, which records the map with a fresh test JVM per test class.
 
+[Unreleased]: https://github.com/zeuspizza/yoriwake/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/zeuspizza/yoriwake/releases/tag/v0.1.0

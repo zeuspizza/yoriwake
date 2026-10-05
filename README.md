@@ -161,9 +161,8 @@ details of each.
   network or a file keeps between test JVMs; a reviewed native library handed a class file's path
   as data; the JDK's class-loading internals called by reflection; a dependency jar naming one of
   your test classes; your own code on the test JVM's boot class path or in a JDK module it patches
-  or upgrades; a file a build step generates from git state or the clock; an edited test class
-  JaCoCo could not instrument (Gradle 8.14 with tests on JDK 26 or later, or a method too large
-  once instrumented). Keep a full run after merge or nightly.
+  or upgrades; a file a build step generates from git state or the clock. Keep a full run after
+  merge or nightly.
 - **Order-dependent tests.** Selection changes which tests run together. Pin the ones you know
   with `@Tag("yoriwake-always-run")` or `yoriwake { alwaysRun.add(...) }`.
 - **Very large builds pay a git listing per test task.** Each test task a selecting or recording

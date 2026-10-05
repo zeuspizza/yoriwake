@@ -8,6 +8,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
  */
 public enum Rule {
     REACHES_CHANGE(AgentContract.RULE_REACHES_CHANGE),
+    OWN_CLASS_CHANGED(AgentContract.RULE_OWN_CLASS_CHANGED),
     CHANGED_BYTES(AgentContract.RULE_CHANGED_BYTES),
     CLASS_SETUP(AgentContract.RULE_CLASS_SETUP),
     SHARES_JVM_CHANGED_CLASS(AgentContract.RULE_SHARES_JVM_CHANGED_CLASS),

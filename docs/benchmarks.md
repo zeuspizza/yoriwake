@@ -280,5 +280,6 @@ A codebase is one upstream repository; projects drawn from the same one count on
   `executionError` class entries on a row that ran every test).
 - **Limits found after the sweep are outside this sample**, because no test class or build step was
   edited: an edited test class JaCoCo could not instrument, and a file a build step generates from
-  git state. Both are in the [reference](reference.md#what-is-not-supported).
+  git state. The first is fixed since 0.1.0; the second is in the
+  [reference](reference.md#what-is-not-supported).
 - A figure from an earlier plugin commit is not comparable and is not quoted.

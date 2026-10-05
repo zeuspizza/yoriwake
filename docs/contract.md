@@ -218,6 +218,7 @@ coverage alone makes is every row whose line names a rule outside the `shares-jv
 |---|---|---|
 | `RULES_LINE_PREFIX` | `#+` | Starts every rule line |
 | `RULE_REACHES_CHANGE` | `reaches-change` | Its own coverage holds a changed class |
+| `RULE_OWN_CLASS_CHANGED` | `own-class-changed` | Its own test class changed, and the map holds it as a test of that class |
 | `RULE_CHANGED_BYTES` | `changed-bytes` | Its own coverage holds a class whose bytes changed with no changed source behind them |
 | `RULE_CLASS_SETUP` | `class-setup` | A class-scoped record of its class reaches the change |
 | `RULE_SHARES_JVM_CHANGED_CLASS` | `shares-jvm-changed-class` | It ran at or after its JVM first touched a changed class or its file |
