@@ -136,8 +136,9 @@ class FlagsFunctionalTest : FunctionalTestSupport() {
         """.trimIndent(),
     )
 
+    // One JVM per class, so no shared-JVM rule selects BetaTest and only running everything does.
     private fun retiredFlagRunsEverything(dir: File, buildScript: String, vararg tests: Pair<String, String>) {
-        capturedWithAlphaChanged(dir, buildScript, *tests)
+        capturedWithAlphaChanged(dir, buildScript.replace("tasks.test {", "tasks.test { forkEvery = 1;"), *tests)
         File(dir, "build/test-results").deleteRecursively()
 
         val result = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.internal.classSelection").build()
