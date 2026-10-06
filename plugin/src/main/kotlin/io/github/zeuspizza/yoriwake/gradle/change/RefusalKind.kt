@@ -63,6 +63,18 @@ internal enum class RefusalKind(val token: String) {
      * listed again then: the change set no longer describes the tree the tests see.
      */
     CHANGE_SET_STALE("change-set-stale"),
+
+    /**
+     * A run given a trusted-map list found the map not named there: no trusted run vouched for it.
+     * The next recording on the default branch, listed by the caller, fixes this.
+     */
+    MAP_UNVERIFIED("map-unverified"),
+
+    /**
+     * The trusted-map list names the map with another digest: its content is not what a trusted
+     * run recorded. The next recording on the default branch replaces it.
+     */
+    MAP_UNTRUSTED("map-untrusted"),
     ;
 
     companion object {
