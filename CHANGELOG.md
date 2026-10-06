@@ -57,6 +57,17 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   map knows; before, a test the edit made fail could be skipped. Decision records name the rule
   `own-class-changed`. **Your map:** left alone.
 
+- A native library load, a hidden-class definition or a foreign-function call made by your own
+  code on the test JVM's boot class path (`-Xbootclasspath/a`, a `Boot-Class-Path` agent jar, or
+  `appendToBootstrapClassLoaderSearch`, as Mockito's inline mock maker does) is now recorded.
+  Before, every class the bootstrap or platform loader defined counted as the JDK's own, so a test
+  that depended on what such a class did could be skipped. Now only a class the runtime image holds
+  in a `java.*` or `jdk.*` module does. A test JVM that patches a JDK module (`--patch-module`) or
+  upgrades one (`--upgrade-module-path`), or whose own arguments cannot be read, counts every class
+  touched and narrows nothing. **Your map:** discarded with the same rebuild as the map format
+  version 7 this release already carries: a map written by 0.1.0 is rebuilt by the first full run
+  of each task.
+
 ## [0.1.0] - 2026-10-04
 
 First release. **Your map:** none exists yet; the first full run records one.

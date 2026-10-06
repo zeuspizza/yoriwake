@@ -311,16 +311,26 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   through `FileInputStream`, `RandomAccessFile`, `ZipFile` and the default file-system provider
   (which `Files`, `FileChannel` and a direct provider call all reach), every lookup by name through
   a public API, every child process, and every native library load and use of the foreign-function
-  API. A test is skipped, when nothing else selects it, if it depends on a changed class only
-  through:
+  API. A library load, a class definition or a foreign-function call counts as the JDK's own only
+  when the class making it is one the runtime image holds in a `java.*` or `jdk.*` module. A class
+  on `-Xbootclasspath/a`, in a `Boot-Class-Path` agent jar, or appended through
+  `appendToBootstrapClassLoaderSearch` (as Mockito's inline mock maker does) is yours, and what it
+  does is recorded. A test JVM that patches a JDK module (`--patch-module`) or upgrades one
+  (`--upgrade-module-path`), or whose own arguments cannot be read, counts every class touched from
+  its start, so it narrows nothing: code inside a JDK module calls that module's internals without
+  a call the agent can see. A test is skipped, when nothing else selects it, if it depends on a
+  changed class only through:
   - a [reviewed native library](#native-libraries) given the path of a class file or jar as data,
     such as a database file or directory a test names. The review found no other way for one to
     read a class file;
-  - the JDK's class-loading internals called by reflection (a native lookup such as
-    `Class.forName0`, or a class loader's protected `loadClass(String, boolean)`), which needs
-    `java.base` opened to your code. No public entry point is on that path, a native method cannot
-    be wrapped once its class is loaded, and code generators reflect into class loaders routinely
-    to define classes, so forcing on such reflection would widen ordinary suites;
+  - the JDK's class-loading or library-loading internals called by reflection (a native lookup
+    such as `Class.forName0`, a class loader's protected `loadClass(String, boolean)`, or
+    `ClassLoader.loadLibrary`), which needs `java.base` opened to your code. A class your code
+    defines into a JDK package that way reaches them with no further flag, and one it defines under
+    the exact name of a JDK class not yet loaded counts as that JDK class. No public entry point is
+    on that path, a native method cannot be wrapped once its class is loaded, and code generators
+    reflect into class loaders routinely to define classes, so forcing on such reflection would
+    widen ordinary suites;
   - a class inside a dependency jar that names one of your test classes. The JVM resolves such a
     reference without a call the agent can see, and the check that nothing else names a test class
     searches this build's own classes and jars and every resource, not the classes of dependencies.
@@ -380,13 +390,15 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   rewrites one on every run keeps it there. A file the tests create outside the build directory is
   in the change set of every fresh checkout that lacks it, such as a CI runner's, which then runs
   everything. See [Files written into the source tree](#files-written-into-the-source-tree).
-- **Your own classes on the boot class path.** A native library load, a class definition or a
-  foreign-function call is judged by the class that makes it, and a class the bootstrap or platform
-  loader loaded counts as the JDK's own. Classes a build adds with `-Xbootclasspath/a` (or a
-  `Boot-Class-Path` agent jar) load there too, and so do the classes of a JDK module a build
-  patches with `--patch-module` or replaces with `--upgrade-module-path`. What they do is not
-  recorded, and a test that depends on it can be skipped. Keep such code off the test JVM's boot
-  class path and out of the JDK's modules, or run those suites with `-Pyoriwake.disabled=true`.
+- **Java agents that rewrite JDK methods.** An agent the build attaches to the test JVM can insert
+  a call into a JDK class's bytecode, which then runs as the JDK's own code, and can remove the
+  hooks yoriwake's agent relies on. Such calls are not recorded, and a test that depends on them can
+  be skipped. Such agents are trusted as the JDK is.
+- **Runtime images holding more than the JDK, and exploded JDK builds.** A class the runtime image
+  holds outside the `java.*` and `jdk.*` modules (JavaFX in some distributions) counts as yours, so
+  a native library it loads makes every later test in that JVM run after any change. An exploded
+  JDK build's classes are not in an image, so all of them count as yours. Both select wider, never
+  narrower.
 - **Your own JaCoCo coverage report.** To record each test's coverage, the agent takes JaCoCo's
   execution data and resets it around every test. The test task's JaCoCo destination file then
   holds only what ran after the last test, so `jacocoTestReport`, `jacocoTestCoverageVerification`

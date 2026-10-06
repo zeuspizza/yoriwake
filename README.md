@@ -160,9 +160,8 @@ details of each.
   have failed when the dependency is one it cannot see: state another process, a database, the
   network or a file keeps between test JVMs; a reviewed native library handed a class file's path
   as data; the JDK's class-loading internals called by reflection; a dependency jar naming one of
-  your test classes; your own code on the test JVM's boot class path or in a JDK module it patches
-  or upgrades; a file a build step generates from git state or the clock. Keep a full run after
-  merge or nightly.
+  your test classes; a file a build step generates from git state or the clock. Keep a full run
+  after merge or nightly.
 - **Order-dependent tests.** Selection changes which tests run together. Pin the ones you know
   with `@Tag("yoriwake-always-run")` or `yoriwake { alwaysRun.add(...) }`.
 - **Very large builds pay a git listing per test task.** Each test task a selecting or recording
