@@ -224,21 +224,22 @@ class TestTaskWiringCharacterizationTest {
               prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
               jvmArgs []
             #0 Execute doFirst {} action
-              log [yoriwake] :test map=<project>/.gradle/yoriwake/test-7f007aca scope=derived(dev.sample.*) includes=[dev.sample.*] nolocation=true exclloaders=[sun.reflect.DelegatingClassLoader, jdk.internal.reflect.DelegatingClassLoader] agent=true forks=1 unfiltered=yes (task includes=[] excludes=[])
             #1 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/task-facts
+              log [yoriwake] :test map=<project>/.gradle/yoriwake/test-7f007aca scope=derived(dev.sample.*) includes=[dev.sample.*] nolocation=true exclloaders=[sun.reflect.DelegatingClassLoader, jdk.internal.reflect.DelegatingClassLoader] agent=true forks=1 unfiltered=yes (task includes=[] excludes=[])
             #2 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/task-facts
             #3 Execute doFirst {} action
-              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #4 Execute doFirst {} action
+              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #5 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/ran.marker
             #6 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
+              +file .gradle/yoriwake/test-7f007aca/ran.marker
             #7 Execute doFirst {} action
-              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
             #8 Execute doFirst {} action
-            #9 Execute executeTests
+              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+            #9 Execute doFirst {} action
+            #10 Execute executeTests
         """.trimIndent()
         assertEquals(expected, captureActions.trimEnd())
     }
@@ -254,21 +255,22 @@ class TestTaskWiringCharacterizationTest {
               prop yoriwake.select.classGranularity=false
               jvmArgs []
             #0 Execute doFirst {} action
-              log [yoriwake] :test map=<project>/.gradle/yoriwake/test-7f007aca scope=derived(dev.sample.*) includes=[dev.sample.*] nolocation=true exclloaders=[sun.reflect.DelegatingClassLoader, jdk.internal.reflect.DelegatingClassLoader] agent=true forks=1 unfiltered=yes (task includes=[] excludes=[])
             #1 Execute doFirst {} action
+              log [yoriwake] :test map=<project>/.gradle/yoriwake/test-7f007aca scope=derived(dev.sample.*) includes=[dev.sample.*] nolocation=true exclloaders=[sun.reflect.DelegatingClassLoader, jdk.internal.reflect.DelegatingClassLoader] agent=true forks=1 unfiltered=yes (task includes=[] excludes=[])
             #2 Execute doFirst {} action
+            #3 Execute doFirst {} action
               prop yoriwake.change.accountedFor=false
               prop yoriwake.internal.capture.outputDir=
               +file .gradle/yoriwake/test-7f007aca/change-set
               log [yoriwake] :test: compared 4 compiled classes against 4 the map recorded: 0 changed with no source change behind them
               log [yoriwake] :test selecting against <sha> (merge base with main): 1 changed classes, 0 paths coverage cannot see
               log [yoriwake] :test: narrowing, so nothing is instrumented and the map is left alone. A partial run cannot produce a map worth keeping.
-            #3 Execute doFirst {} action
             #4 Execute doFirst {} action
             #5 Execute doFirst {} action
-              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #6 Execute doFirst {} action
+              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #7 Execute doFirst {} action
+            #8 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/ran.marker
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv.<pid>-<n>.part
@@ -283,11 +285,11 @@ class TestTaskWiringCharacterizationTest {
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/plan-complete
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/raw-schema-version
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/touches.tsv
-            #8 Execute doFirst {} action
             #9 Execute doFirst {} action
             #10 Execute doFirst {} action
+            #11 Execute doFirst {} action
               -file build/jacoco/test.exec
-            #11 Execute executeTests
+            #12 Execute executeTests
         """.trimIndent()
         assertEquals(expected, selectActions.trimEnd())
     }

@@ -1,6 +1,9 @@
 audit-blocker	classes-absent-from-map
 audit-blocker	classpath-unresolved-here
 audit-blocker	decode-refused
+audit-blocker	develocity-test-distribution
+audit-blocker	develocity-test-selection
+audit-blocker	develocity-undetermined
 audit-blocker	framework-unknown
 audit-blocker	git-unavailable
 audit-blocker	gradle-too-old
@@ -59,6 +62,9 @@ refusal-kind	change-set-stale
 refusal-kind	change-set-unreadable
 refusal-kind	constant-changed
 refusal-kind	constant-unrecorded
+refusal-kind	develocity-test-distribution
+refusal-kind	develocity-test-selection
+refusal-kind	develocity-undetermined
 refusal-kind	in-jvm-parallelism
 refusal-kind	map-untrusted
 refusal-kind	map-unverified

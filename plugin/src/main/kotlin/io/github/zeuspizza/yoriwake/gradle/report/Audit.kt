@@ -78,6 +78,9 @@ internal object Audit {
         CLASSPATH_UNRESOLVED_HERE("classpath-unresolved-here"),
         INLINE_SCAN_INCOMPLETE("inline-scan-incomplete"),
         CLASSES_ABSENT_FROM_MAP("classes-absent-from-map"),
+        DEVELOCITY_TEST_DISTRIBUTION(RefusalKind.DEVELOCITY_TEST_DISTRIBUTION.token, declined = true),
+        DEVELOCITY_TEST_SELECTION(RefusalKind.DEVELOCITY_TEST_SELECTION.token, declined = true),
+        DEVELOCITY_UNDETERMINED(RefusalKind.DEVELOCITY_UNDETERMINED.token, declined = true),
     }
 
     /**
@@ -99,6 +102,8 @@ internal object Audit {
          * answering from older records; distinct from "recorded no coverage".
          */
         val decodeRefused: String? = null,
+        /** The token of the last run's decline under Develocity, or null when it did not decline. */
+        val develocity: String? = null,
     ) {
         companion object {
             const val FILE = "task-facts"
@@ -124,13 +129,14 @@ internal object Audit {
                     recordedCoverage = fields["recordedCoverage"]?.toBooleanStrictOrNull(),
                     workers = fields["workers"]?.toIntOrNull()?.takeIf { it > 0 },
                     decodeRefused = fields["decodeRefused"]?.takeIf { it.isNotEmpty() },
+                    develocity = fields["develocity"]?.takeIf { it.isNotEmpty() },
                 )
             }
 
-            fun write(mapDir: File, framework: String, parallelism: String?) {
+            fun write(mapDir: File, framework: String, parallelism: String?, develocity: String? = null) {
                 update(mapDir) { previous ->
                     // Carried forward: written in `doFirst`, before this run records anything.
-                    previous.copy(framework = framework, parallelism = parallelism)
+                    previous.copy(framework = framework, parallelism = parallelism, develocity = develocity)
                 }
             }
 
@@ -166,7 +172,8 @@ internal object Audit {
                             "recordedCoverage=${next.recordedCoverage?.toString().orEmpty()}\n" +
                             "workers=${next.workers?.toString().orEmpty()}\n" +
                             // One line: the file is `key=value` per line.
-                            "decodeRefused=${next.decodeRefused.orEmpty().replace('\n', ' ')}\n",
+                            "decodeRefused=${next.decodeRefused.orEmpty().replace('\n', ' ')}\n" +
+                            "develocity=${next.develocity.orEmpty()}\n",
                     )
                 }
             }

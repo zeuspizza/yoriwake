@@ -13,6 +13,7 @@ import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
+import io.github.zeuspizza.yoriwake.gradle.wiring.develocityRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
@@ -88,8 +89,19 @@ internal abstract class DecodeTask : DefaultTask() {
         val marker = ranMarker(CoverageDecoder.recordsDir(mapDir))
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
         val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
+        val develocityDeclined = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         val datedSnapshot = pendingSnapshot(mapDir)
         val startStats = pendingStats(mapDir)
+        // First: Develocity ran or chose this run's tests, and nothing of ours acted on it.
+        if (develocityDeclined.delete()) {
+            marker.delete()
+            parallelRefused.delete()
+            fullRunMarker.delete()
+            logger.lifecycle(
+                "[yoriwake] $taskPath: Develocity declined this run, so the map is left exactly as it was."
+            )
+            return
+        }
         // Before the ran-marker check: this run did work but declined to capture, and a
         // decode would merge older records into a map it must not touch.
         if (parallelRefused.delete()) {

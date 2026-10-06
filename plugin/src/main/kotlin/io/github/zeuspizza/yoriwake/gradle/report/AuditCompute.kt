@@ -402,6 +402,19 @@ internal fun Audit.blockers(
             )
         )
     }
+    facts.develocity?.let { token ->
+        Audit.BlockerKind.entries.firstOrNull { it.token == token && it.declined }?.let { kind ->
+            add(
+                Blocker(
+                    kind,
+                    "the last run of this task was declined: Develocity runs or chooses its tests " +
+                        "($token), so the plugin neither selects nor records here",
+                    "turn the Develocity feature off for this task to use yoriwake on it; the " +
+                        "decline's console line names the setting",
+                )
+            )
+        }
+    }
     facts.parallelism?.let { source ->
         add(
             Blocker(

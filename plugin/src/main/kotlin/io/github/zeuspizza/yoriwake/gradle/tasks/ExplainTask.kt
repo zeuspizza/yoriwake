@@ -25,6 +25,7 @@ import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
+import io.github.zeuspizza.yoriwake.gradle.wiring.DevelocityDetection
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
 import org.gradle.api.DefaultTask
@@ -54,6 +55,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val explicitBase: Property<String>
+
+    /** What the run would decline under Develocity, encoded; empty when it would not. */
+    @get:Input
+    @get:Optional
+    abstract val develocity: Property<String>
 
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
@@ -97,6 +103,17 @@ internal abstract class ExplainTask : DefaultTask() {
             logger.lifecycle(
                 "[yoriwake] $taskPath: $detail. Nothing is captured or selected for this task, so " +
                     "there is no selection to explain."
+            )
+            return
+        }
+        // Before anything else, as the run declines before anything else.
+        DevelocityDetection.decode(develocity.orNull)?.let { (kind, reason) ->
+            logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
+            writeUnanswered(
+                mapDir, taskPath, explicitBase.orNull ?: "",
+                io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                reason,
+                refusalKind = kind.token,
             )
             return
         }
@@ -280,6 +297,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     return@register
                 }
                 task.explicitBase.set(settings.base)
+                task.develocity.set(project.provider { DevelocityDetection.detect { test.extensions.findByName(it) }.encode() })
                 val trusted = trustedDigest(project, settings, mapDir)
                 task.checksProvenance.set(trusted != null)
                 trusted?.digest?.let(task.listedDigest::set)
