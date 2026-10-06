@@ -119,11 +119,13 @@ class DevelocityFunctionalTest : FunctionalTestSupport() {
     fun `a declined run starts its test JVM without the yoriwake agent`(@TempDir dir: File) {
         recorded(dir, standInBuild())
 
-        runDeclined(dir, "-Ptd", "-Pyoriwake.internal.loaded")
-
-        val args = probe(dir).lines().first { it.startsWith("args=") }
-        // The host's JaCoCo agent stays; yoriwake's own, added at configuration on this run, goes.
-        assertFalse("yoriwake-agent" in args, args)
+        // Attached in an action on an ordinary run, and at configuration on one recording loaded
+        // classes; the host's JaCoCo agent stays either way.
+        for (args in listOf(arrayOf("-Ptd"), arrayOf("-Ptd", "-Pyoriwake.internal.loaded"))) {
+            runDeclined(dir, *args)
+            val jvm = probe(dir).lines().first { it.startsWith("args=") }
+            assertFalse("yoriwake-agent" in jvm, "${args.toList()}: $jvm")
+        }
     }
 
     @Test
@@ -139,10 +141,8 @@ class DevelocityFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `a declined selecting run leaves an unlisted map byte-identical`(@TempDir dir: File) {
-        // The map is of unknown age (no capture stamp), and the trusted-map list does not name it:
-        // the fallback and the provenance check would each act alone; neither may.
+        // The trusted-map list does not name the map, so the provenance check would clear it.
         recorded(dir, standInBuild())
-        File(mapDir(dir), "capture-commit").delete()
         val before = mapState(dir)
         val list = File(dir, "build/trusted.tsv").also { it.writeText("") }
         changeBeta(dir)
@@ -150,7 +150,21 @@ class DevelocityFunctionalTest : FunctionalTestSupport() {
         val output = runDeclined(dir, "-Ppts", "-Pyoriwake.select", "-Pyoriwake.trustedMaps=${list.absolutePath}")
 
         assertLeftAlone(dir, before, output, "develocity-test-selection")
-        assertFalse("map-unverified" in output || "stamp-absent" in output, output)
+        assertFalse("map-unverified" in output, output)
+    }
+
+    @Test
+    fun `a declined selecting run on a map of unknown age writes nothing`(@TempDir dir: File) {
+        // No capture stamp: the unknown-age fallback would capture and date the map.
+        recorded(dir, standInBuild())
+        File(mapDir(dir), "capture-commit").delete()
+        val before = mapState(dir)
+        changeBeta(dir)
+
+        val output = runDeclined(dir, "-Ppts", "-Pyoriwake.select")
+
+        assertLeftAlone(dir, before, output, "develocity-test-selection")
+        assertFalse("stamp-absent" in output || "capture clears it" in output, output)
     }
 
     @Test
