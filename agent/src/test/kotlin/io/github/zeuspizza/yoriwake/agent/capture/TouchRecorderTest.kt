@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Paths
+import java.util.function.Consumer
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -124,6 +125,18 @@ class TouchRecorderTest {
         recorder.library(arrayOf<Any>(Class.forName("java.sql.Driver"), "net"))
 
         assertEquals(emptyList(), drained(recorder))
+    }
+
+    @Test
+    fun `a native library a class on the boot class path loads touches every class`() {
+        val recorder = TouchRecorder()
+        recorder.library(arrayOf<Any>(standin.boot.BootCaller::class.java, "codec"))
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to
+                "a native library that is not on the reviewed list was loaded: " + System.mapLibraryName("codec")),
+            drained(recorder),
+        )
     }
 
     @Test
@@ -336,5 +349,31 @@ class TouchRecorderTest {
         val defined = TouchRecorder()
         call.invoke(null, Runnable { defined.defined(classBytes("com/acme/Generated")) })
         assertEquals(listOf(AgentContract.TOUCH_DEFINED to "com.acme.Generated"), drained(defined))
+    }
+
+    @Test
+    fun `native code and hidden classes a class on the boot class path reaches are recorded`() {
+        val native = TouchRecorder()
+        standin.boot.BootCaller.call(Consumer { native.nativeCode(null) }, "value")
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
+            drained(native),
+        )
+
+        val defined = TouchRecorder()
+        standin.boot.BootCaller.call(Consumer { defined.defined(it) }, classBytes("com/acme/Generated"))
+        assertEquals(listOf(AgentContract.TOUCH_DEFINED to "com.acme.Generated"), drained(defined))
+    }
+
+    @Test
+    fun `a class that only carries a proxy's name is judged as the caller`() {
+        // JDK code calls the spoof, so passing the spoof over would judge that JDK code instead.
+        val recorder = TouchRecorder()
+        java.util.stream.Stream.of<Any>("value").forEach(com.sun.proxy.`Spoof$1`(Consumer { recorder.nativeCode(null) }))
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
+            drained(recorder),
+        )
     }
 }

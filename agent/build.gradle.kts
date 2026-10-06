@@ -90,8 +90,79 @@ dependencies {
     "captureScriptImplementation"("org.testng:testng:7.10.2")
 }
 
+// Classes on the boot class path, which the JDK's own loader defines from no file of the image.
+val bootFixture: SourceSet by sourceSets.creating
+tasks.named<JavaCompile>(bootFixture.compileJavaTaskName) { options.release = 11 }
+val bootFixtureJar by tasks.registering(Jar::class) {
+    from(bootFixture.output)
+    archiveFileName = "boot-fixture.jar"
+    destinationDirectory = layout.buildDirectory.dir("bootFixture")
+}
+dependencies { testCompileOnly(bootFixture.output) }
+
+fun Test.withBootFixture() {
+    val jar = bootFixtureJar.flatMap { it.archiveFile }
+    inputs.file(jar).withPropertyName("bootFixture").withNormalizer(ClasspathNormalizer::class)
+    jvmArgumentProviders += CommandLineArgumentProvider { listOf("-Xbootclasspath/a:" + jar.get().asFile.path) }
+}
+
+// Which classes count as the JDK's depends on the JDK, so these run on the one
+// `-Pyoriwake.agent.jdk` names, compiled for the oldest test JVM the agent supports.
+val agentJdk = providers.gradleProperty("yoriwake.agent.jdk").orElse("21")
+val identityLauncher = javaToolchains.launcherFor { languageVersion = agentJdk.map { JavaLanguageVersion.of(it) } }
+
+val jdkIdentity: SourceSet by sourceSets.creating {
+    compileClasspath += sourceSets.main.get().output + bootFixture.output
+    runtimeClasspath += sourceSets.main.get().output
+}
+tasks.named<JavaCompile>(jdkIdentity.compileJavaTaskName) { options.release = 11 }
+dependencies {
+    "jdkIdentityImplementation"(platform("org.junit:junit-bom:5.11.4"))
+    "jdkIdentityImplementation"("org.junit.jupiter:junit-jupiter")
+    "jdkIdentityRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+    "jdkIdentityImplementation"("org.ow2.asm:asm:9.10.1")
+}
+
+val imageFixtures by tasks.registering(JavaExec::class) {
+    javaLauncher = identityLauncher
+    classpath = jdkIdentity.runtimeClasspath
+    mainClass = "io.github.zeuspizza.yoriwake.agent.capture.ImageFixtures"
+    val out = layout.buildDirectory.dir(agentJdk.map { "imageFixtures/$it" })
+    outputs.dir(out)
+    argumentProviders += CommandLineArgumentProvider { listOf(out.get().asFile.path) }
+}
+
+fun Test.onAgentJdk(testClasses: List<String>) {
+    testClassesDirs = jdkIdentity.output.classesDirs
+    classpath = jdkIdentity.runtimeClasspath
+    javaLauncher = identityLauncher
+    useJUnitPlatform()
+    filter { testClasses.forEach { includeTestsMatching("io.github.zeuspizza.yoriwake.agent.capture.$it") } }
+    // No coverage agent: it would put a class of its own on the boot loader, and nothing reads it.
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+}
+
+val jdkIdentityTest by tasks.registering(Test::class) {
+    onAgentJdk(listOf("JdkIdentityTest"))
+    val fixtures = imageFixtures.map { it.outputs.files.singleFile }
+    inputs.files(imageFixtures).withPropertyName("imageFixtures")
+    jvmArgumentProviders += CommandLineArgumentProvider {
+        listOf("--patch-module=java.base=" + fixtures.get().resolve("patch"),
+            "--upgrade-module-path=" + fixtures.get().resolve("upgrade"))
+    }
+}
+
+val jdkNestTest by tasks.registering(Test::class) {
+    onAgentJdk(listOf("JdkNestTest", "JdkBranchTest"))
+    withBootFixture()
+    jvmArgs("--add-opens", "java.base/java.lang=ALL-UNNAMED")
+}
+
+tasks.check { dependsOn(jdkIdentityTest, jdkNestTest) }
+
 tasks.test {
     useJUnitPlatform()
+    withBootFixture()
     // AgentContractTest checks this page, so an edit to it alone must rerun the tests.
     inputs.file(rootProject.file("docs/contract.md"))
         .withPropertyName("contractDoc")
