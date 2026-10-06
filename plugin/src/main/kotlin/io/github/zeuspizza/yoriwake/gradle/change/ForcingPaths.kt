@@ -31,7 +31,9 @@ internal object ForcingPaths {
         val unnamed: Int,
     ) {
         companion object {
-            val NONE = Classified(emptyMap(), emptyMap(), emptyMap(), 0)
+            fun unnamed(count: Int) = Classified(emptyMap(), emptyMap(), emptyMap(), count)
+
+            val NONE = unnamed(0)
         }
     }
 
@@ -47,7 +49,7 @@ internal object ForcingPaths {
         captured: () -> Map<String, WorkingTree.Move>?,
     ): Classified {
         if (forcing.isEmpty()) return Classified.NONE
-        val headTracks = tracked(forcing) ?: return Classified(emptyMap(), emptyMap(), emptyMap(), forcing.size)
+        val headTracks = tracked(forcing) ?: return Classified.unnamed(forcing.size)
         val moves by lazy { captured().orEmpty() }
         val origins = sortedMapOf<String, Origin>()
         val sourceDirOf = mutableMapOf<String, String>()
@@ -72,8 +74,18 @@ internal object ForcingPaths {
         )
     }
 
-    /** [classify] against the tree at [rootDir] and the record beside [mapDir]'s current snapshot. */
+    /**
+     * [classify] against the tree at [rootDir] and the record beside [mapDir]'s current snapshot;
+     * [Classified.NONE] if anything fails, since a failing explanation must never fail the run.
+     */
     fun classify(
+        rootDir: File,
+        mapDir: File,
+        forcing: Collection<String>,
+        sourceDirs: Collection<String>,
+    ): Classified = runCatching { classifyTree(rootDir, mapDir, forcing, sourceDirs) }.getOrDefault(Classified.NONE)
+
+    private fun classifyTree(
         rootDir: File,
         mapDir: File,
         forcing: Collection<String>,

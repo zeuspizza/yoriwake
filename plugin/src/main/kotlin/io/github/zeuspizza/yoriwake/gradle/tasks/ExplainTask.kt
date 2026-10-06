@@ -246,11 +246,9 @@ internal abstract class ExplainTask : DefaultTask() {
                 "(${established.testClasses.size} of them this task's own test classes, " +
                 "from ${facts.testOutputs.files.count { it.isDirectory }} test output dirs)"
         )
-        val forcing = runCatching {
-            ForcingPaths.classify(
-                rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs,
-            )
-        }.getOrDefault(ForcingPaths.Classified.NONE)
+        val forcing = ForcingPaths.classify(
+            rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs,
+        )
         // Written before anything is logged, through the same function the run uses, so
         // the file never disagrees with the log or the run.
         val capture = decideCapture(
