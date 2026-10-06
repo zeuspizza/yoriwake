@@ -297,7 +297,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     return@register
                 }
                 task.explicitBase.set(settings.base)
-                task.develocity.set(project.provider { DevelocityDetection.detect { test.extensions.findByName(it) }.encode() })
+                task.develocity.set(DevelocityDetection.provider(project, test))
                 val trusted = trustedDigest(project, settings, mapDir)
                 task.checksProvenance.set(trusted != null)
                 trusted?.digest?.let(task.listedDigest::set)

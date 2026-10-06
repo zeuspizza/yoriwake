@@ -329,8 +329,10 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   enabled when it runs, through the `develocity` task extension (Develocity 3.17+), the
   `distribution` or `predictiveSelection` extensions of the Gradle Enterprise plugin, or
   `-Dpts.enabled=true`, is declined: yoriwake neither selects nor records there, its agent is not
-  attached, none of its paths reach the test JVM, the host's JaCoCo is left as the host set it, and
-  the map is left exactly as it was. Test Distribution may run the tests on other machines, and
+  attached, none of its paths reach the test JVM, the host's JaCoCo stays switched on, and the map is
+  left exactly as it was. The JaCoCo scope yoriwake sets at configuration (its includes when the
+  host sets none, classes with no code-source location, the excluded reflection class loaders)
+  still applies, as on a task it declines for any other reason. Test Distribution may run the tests on other machines, and
   even run locally it records only part of the suite's coverage; Predictive Test Selection leaves
   out tests yoriwake would keep. The console names the feature and the setting that turns it off
   for the task, and the audit reports `develocity-test-distribution`, `develocity-test-selection`,

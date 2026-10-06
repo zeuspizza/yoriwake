@@ -89,9 +89,9 @@ internal fun Audit.audit(
             "$taskPath: no map at $mapDir, so there is nothing to audit.",
             detail = arrayOf(
                 if (declined) {
-                    "No map will appear for this task, because the plugin declined to " +
-                        "configure it at all -- see the blocker below. Running " +
-                        "`$captureTask` again changes nothing."
+                    "No map will appear for this task, because the plugin declines it -- " +
+                        "see the blocker below. Running `$captureTask` again changes nothing " +
+                        "until that changes."
                 } else {
                     "Run `$captureTask` once to capture one, then run this again. A first " +
                         "run with no map is the expected state, not a fault."

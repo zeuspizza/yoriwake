@@ -612,21 +612,25 @@ internal class TestTaskWiring(internal val settings: Settings) {
      * off. Registered last, so its action runs first.
      */
     private fun declineUnderDevelocity(project: Project, test: Test, mapDir: File, agent: File?) {
-        // Read off the task's extensions in a provider: Gradle resolves it when it stores the
-        // configuration cache, after every `whenReady` hook. `Task.extensions` from an action would
-        // break the cache.
-        val develocity = project.provider {
-            DevelocityDetection.detect { test.extensions.findByName(it) }.encode()
-        }
+        val develocity = DevelocityDetection.provider(project, test)
         val agentArgument = agent?.let { "-javaagent:" + it.absolutePath }
+        val marker = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         test.doFirst {
-            val (kind, reason) = DevelocityDetection.decode(develocity.orNull) ?: return@doFirst
+            val (kind, reason) = DevelocityDetection.decode(develocity.orNull) ?: run {
+                // One a declined run left when its decode never ran must not discard this capture.
+                marker.delete()
+                return@doFirst
+            }
             // The decode returns on it, so a run that captured nothing on purpose is not reported
             // as one whose listener never loaded.
             runCatching {
-                val marker = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
                 marker.parentFile.mkdirs()
                 marker.writeText(kind.token + "\n")
+            }.onFailure {
+                test.logger.warn(
+                    "[yoriwake] ${test.path}: could not record the Develocity decline ($it). Nothing is " +
+                        "captured either way; its decode may report that nothing was recorded."
+                )
             }
             refuse(test, kind, reason)
             test.systemProperty(RECORDS_DIR_PROPERTY, "")
@@ -751,10 +755,13 @@ internal fun ranMarker(recordsDir: File) = File(recordsDir.parentFile, "ran.mark
  */
 internal fun parallelRefusalMarker(recordsDir: File) = File(recordsDir.parentFile, "parallel-refused.marker")
 
-/** Written by a run declined under Develocity; see [TestTaskWiring.declineUnderDevelocity]'s caller. */
+/**
+ * Written by a run declined under Develocity, so the decode finalizer can tell "captured nothing on
+ * purpose" from "the listener never loaded".
+ */
 internal fun develocityRefusalMarker(recordsDir: File) = File(recordsDir.parentFile, "develocity-declined.marker")
 
-private val DEVELOCITY_REFUSALS = setOf(
+internal val DEVELOCITY_REFUSALS = setOf(
     RefusalKind.DEVELOCITY_TEST_DISTRIBUTION,
     RefusalKind.DEVELOCITY_TEST_SELECTION,
     RefusalKind.DEVELOCITY_UNDETERMINED,

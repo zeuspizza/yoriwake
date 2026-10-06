@@ -78,6 +78,7 @@ internal object Audit {
         CLASSPATH_UNRESOLVED_HERE("classpath-unresolved-here"),
         INLINE_SCAN_INCOMPLETE("inline-scan-incomplete"),
         CLASSES_ABSENT_FROM_MAP("classes-absent-from-map"),
+        // Declined by the last run rather than at configuration, but as final: no capture happens.
         DEVELOCITY_TEST_DISTRIBUTION(RefusalKind.DEVELOCITY_TEST_DISTRIBUTION.token, declined = true),
         DEVELOCITY_TEST_SELECTION(RefusalKind.DEVELOCITY_TEST_SELECTION.token, declined = true),
         DEVELOCITY_UNDETERMINED(RefusalKind.DEVELOCITY_UNDETERMINED.token, declined = true),

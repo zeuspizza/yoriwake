@@ -24,8 +24,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Fixed
 
 - A test task on which Develocity Test Distribution or Predictive Test Selection is enabled is now
-  declined: yoriwake neither selects nor records there, attaches no agent, and leaves the host's
-  JaCoCo and the map exactly as they were, under `develocity-test-distribution`,
+  declined: yoriwake neither selects nor records there, attaches no agent, leaves the host's JaCoCo
+  switched on and the map exactly as it was, under `develocity-test-distribution`,
   `develocity-test-selection` or `develocity-undetermined`. Before, Test Distribution recorded part
   of the suite's coverage into the map, and Predictive Test Selection could leave out a test
   yoriwake kept. **Your map:** left alone.

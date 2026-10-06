@@ -86,6 +86,15 @@ class DevelocityDetectionTest {
     }
 
     @Test
+    fun `a feature read as on names its own remedy though another cannot be read`() {
+        class HalfBroken {
+            fun getTestDistribution(): Any = Feature(ProjectBuilder.builder().build().objects.property(Boolean::class.java).value(true))
+            fun getPredictiveTestSelection(): Any = throw IllegalStateException("unreadable")
+        }
+        assertEquals(RefusalKind.DEVELOCITY_TEST_DISTRIBUTION, detect("develocity" to HalfBroken())?.first)
+    }
+
+    @Test
     fun `an enabled value that is not a boolean is undetermined`() {
         class Odd { fun getEnabled() = "yes" }
         assertEquals(RefusalKind.DEVELOCITY_UNDETERMINED, detect("distribution" to Odd())?.first)

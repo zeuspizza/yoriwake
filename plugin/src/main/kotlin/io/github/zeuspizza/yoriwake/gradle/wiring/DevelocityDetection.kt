@@ -50,8 +50,14 @@ internal object DevelocityDetection {
                 val first = DevelocityFeature.entries.first { it in features }
                 val named = features.sortedBy { it.ordinal }.joinToString(" and ") { "Develocity ${it.label}" }
                 val off = features.sortedBy { it.ordinal }.joinToString("; ") { it.switchOff }
+                // "Declines" must not read as "every test runs": under PTS, Develocity still leaves some out.
+                val stillChooses = if (DevelocityFeature.TEST_SELECTION in features) {
+                    "; Develocity still chooses which test classes run"
+                } else {
+                    ""
+                }
                 return first.kind to "$named is enabled on this task, so yoriwake declines: it neither " +
-                    "selects nor records here (turn it off for this task to use yoriwake: $off)"
+                    "selects nor records here$stillChooses (turn it off for this task to use yoriwake: $off)"
             }
     }
 
@@ -65,11 +71,12 @@ internal object DevelocityDetection {
     /** [extension] looks a task extension up by name, as `test.extensions.findByName` does. */
     fun detect(extension: (String) -> Any?): Detected {
         val on = mutableSetOf<DevelocityFeature>()
+        var unread: Undetermined? = null
         for (feature in DevelocityFeature.entries) {
             val shapes = listOfNotNull(
                 extension("develocity")?.let { develocity ->
                     runCatching { call(develocity, feature.modern) }
-                        .getOrElse { return Undetermined(feature, describe(it)) }
+                        .getOrElse { unread = unread ?: Undetermined(feature, describe(it)); null }
                 },
                 extension(feature.legacy),
             )
@@ -78,12 +85,24 @@ internal object DevelocityDetection {
                     // -Dpts.enabled=true reaches only this twin, where the runtime class has it.
                     readFlag(shape, "getEnabled", required = true) == true ||
                         readFlag(shape, "getEnabledFromSystemProperty", required = false) == true
-                }.getOrElse { return Undetermined(feature, describe(it)) }
+                }.getOrElse { unread = unread ?: Undetermined(feature, describe(it)); false }
                 if (enabled) on += feature
             }
         }
-        return if (on.isEmpty()) Off else On(on)
+        // A feature read as on names its own remedy; an unreadable one declines all the same.
+        return when {
+            on.isNotEmpty() -> On(on)
+            else -> unread ?: Off
+        }
     }
+
+    /**
+     * [detect] on [test]'s extensions as a provider: Gradle resolves it when it stores the
+     * configuration cache, after every `whenReady` hook. `Task.extensions` from an action would
+     * break the cache.
+     */
+    fun provider(project: org.gradle.api.Project, test: org.gradle.api.Task): Provider<String> =
+        project.provider { detect { test.extensions.findByName(it) }.encode() }
 
     /** What [Detected.encode] wrote, as its refusal; null for nothing on or text it did not write. */
     fun decode(text: String?): Pair<RefusalKind, String>? {

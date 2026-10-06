@@ -308,11 +308,8 @@ internal fun TestTaskWiring.configureSelection(
 
 /** The kinds an action of the run itself decides; a later action leaves the run as they set it. */
 private val EXECUTION_REFUSALS =
-    setOf(
-        RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED,
-        RefusalKind.DEVELOCITY_TEST_DISTRIBUTION, RefusalKind.DEVELOCITY_TEST_SELECTION,
-        RefusalKind.DEVELOCITY_UNDETERMINED,
-    ).map { it.token }
+    setOf(RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED)
+        .map { it.token } + DEVELOCITY_REFUSALS
 
 private fun refusedAtExecution(test: Test) =
     test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in EXECUTION_REFUSALS

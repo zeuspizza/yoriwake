@@ -113,6 +113,7 @@ class DevelocityFunctionalTest : FunctionalTestSupport() {
 
         assertLeftAlone(dir, before, output, "develocity-test-selection")
         assertContains(output, "Develocity Predictive Test Selection is enabled on this task")
+        assertContains(output, "Develocity still chooses which test classes run")
     }
 
     @Test
