@@ -21,7 +21,7 @@ internal object ForcingPaths {
     }
 
     /**
-     * [origins] for the forcing paths that got one; a path HEAD tracks, or every path when git
+     * [origins] for the forcing paths that got one; a path HEAD or the base tracks, or every path when git
      * could not say which are tracked, gets none and is only counted in [unnamed].
      */
     class Classified(
@@ -76,6 +76,7 @@ internal object ForcingPaths {
 
     /**
      * [classify] against the tree at [rootDir] and the record beside [mapDir]'s current snapshot;
+     * a path the index or [base] (the commit the change set was diffed against) tracks is tracked.
      * [Classified.NONE] if anything fails, since a failing explanation must never fail the run.
      */
     fun classify(
@@ -83,19 +84,18 @@ internal object ForcingPaths {
         mapDir: File,
         forcing: Collection<String>,
         sourceDirs: Collection<String>,
-    ): Classified = runCatching { classifyTree(rootDir, mapDir, forcing, sourceDirs) }.getOrDefault(Classified.NONE)
+        base: String?,
+    ): Classified = runCatching { classifyTree(rootDir, mapDir, forcing, sourceDirs, base) }.getOrDefault(Classified.NONE)
 
     private fun classifyTree(
         rootDir: File,
         mapDir: File,
         forcing: Collection<String>,
         sourceDirs: Collection<String>,
+        base: String?,
     ): Classified = classify(
         forcing, sourceDirs,
-        tracked = { paths ->
-            ChangeDetection.rawGit(rootDir, listOf("--literal-pathspecs", "ls-files", "-z", "--") + paths)
-                ?.split('\u0000')?.filter(String::isNotEmpty)?.toSet()
-        },
+        tracked = { paths -> tracked(rootDir, base, paths) },
         captured = {
             val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE).takeIf(File::isFile)
                 ?.let { runCatching { it.readText() }.getOrNull() }
@@ -103,6 +103,20 @@ internal object ForcingPaths {
             WorkingTree.capturedMoves(mapDir, snapshot?.takenMillis)
         },
     )
+
+    // Each path is asked both under the build's prefix and from the repository's top: the change
+    // set keeps a path outside a build in a subdirectory repo-relative. A path deleted since [base]
+    // is only in its tree. Either match withholds an origin, which is the safe direction.
+    private fun tracked(rootDir: File, base: String?, paths: Collection<String>): Set<String>? {
+        val prefix = ChangeDetection.rawGit(rootDir, listOf("rev-parse", "--show-prefix"))
+            ?.trimEnd('\n') ?: return null
+        val listed = ChangeDetection.rawGit(
+            rootDir,
+            listOfNotNull("ls-files", "-z", "--full-name", base?.let { "--with-tree=$it" }, "--") +
+                paths.flatMap { listOf(":(top,literal)$prefix$it", ":(top,literal)$it") }.distinct(),
+        )?.split('\u0000')?.filter(String::isNotEmpty)?.toSet() ?: return null
+        return paths.filterTo(mutableSetOf()) { "$prefix$it" in listed || it in listed }
+    }
 
     /** Every source set's directories of the build, relative to [rootDir]; those outside it are left out. */
     fun sourceDirs(rootDir: File, dirs: Collection<File>): List<String> =

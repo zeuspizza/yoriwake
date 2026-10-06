@@ -247,7 +247,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 "from ${facts.testOutputs.files.count { it.isDirectory }} test output dirs)"
         )
         val forcing = ForcingPaths.classify(
-            rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs,
+            rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs, base,
         )
         // Written before anything is logged, through the same function the run uses, so
         // the file never disagrees with the log or the run.

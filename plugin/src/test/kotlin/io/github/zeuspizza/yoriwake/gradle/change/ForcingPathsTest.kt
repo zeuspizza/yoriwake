@@ -2,6 +2,8 @@ package io.github.zeuspizza.yoriwake.gradle.change
 
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths.Origin
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -125,5 +127,35 @@ class ForcingPathsTest {
         assertContains(lines[2], "app/data.json")
         assertTrue(lines.drop(1).none { "derby.stream.error.file" in it })
         assertContains(lines[3], "1 other")
+    }
+
+    @Test
+    fun `a build under a subdirectory of the repo names no tracked path, inside it or outside`(@TempDir repo: File) {
+        fun git(vararg args: String) {
+            val code = ProcessBuilder("git", *args).directory(repo).redirectErrorStream(true).start().waitFor()
+            check(code == 0) { "git ${args.joinToString(" ")} failed with $code" }
+        }
+        git("init")
+        val root = File(repo, "backend")
+        File(root, "src/main/resources").mkdirs()
+        File(root, "src/main/resources/a.txt").writeText("a")
+        File(repo, "gradle").mkdirs()
+        File(repo, "gradle/libs.versions.toml").writeText("[versions]\n")
+        git("add", ".")
+        git("-c", "user.email=t@e.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-m", "base")
+        File(repo, "gradle/libs.versions.toml").appendText("# touched\n")
+        File(root, "src/main/resources/a.txt").writeText("b")
+        File(root, "notes.txt").writeText("n")
+
+        // As the change set has them: rebased onto the build, and repo-relative outside it.
+        val classified = ForcingPaths.classify(
+            root, File(repo, "map"),
+            listOf("gradle/libs.versions.toml", "src/main/resources/a.txt", "notes.txt"),
+            listOf("src/main/resources"),
+            base = "HEAD",
+        )
+
+        assertEquals(mapOf("notes.txt" to Origin.UNTRACKED), classified.origins)
+        assertEquals(2, classified.unnamed)
     }
 }

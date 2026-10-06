@@ -261,7 +261,7 @@ internal fun TestTaskWiring.configureSelection(
         // From a copy, before the change set is written and printed after it: it only explains
         // the run, and never changes what the test JVM is handed.
         val forcing = ForcingPaths.classify(
-            rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs,
+            rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs, against,
         )
         writeChangeSet(
             test, changeSetFile,
@@ -451,7 +451,7 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
         // Never read under a refusal; deleted so a previous run's file is not mistaken for this one's.
         runCatching { changeSetFile.delete() }
         if (now != null) {
-            ForcingPaths.lines(test.path, ForcingPaths.classify(rootDir, mapDir, now - configured, sourceDirs))
+            ForcingPaths.lines(test.path, ForcingPaths.classify(rootDir, mapDir, now - configured, sourceDirs, against))
                 .forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
         }
         applyCaptureDecision(

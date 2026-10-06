@@ -312,6 +312,25 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a tracked resource deleted and committed since the base gets no origin`(@TempDir dir: File) {
+        fixture(dir, extra = arrayOf("src/main/resources/data.txt" to "data"))
+        capture(dir)
+        git(dir, "checkout", "-b", "feature")
+        git(dir, "rm", "-q", "app/src/main/resources/data.txt")
+        commit(dir, "drop data")
+        changeBeta(app(dir))
+
+        explain(dir)
+        val output = select(dir)
+
+        assertEquals(both, ranTests(app(dir)), output)
+        val explained = explainedOrigins(dir)
+        assertTrue("app/src/main/resources/data.txt" in explained, explained.toString())
+        assertNull(explained["app/src/main/resources/data.txt"])
+        assertEquals(emptyList(), linesNaming(output, "app/src/main/resources/data.txt"), output)
+    }
+
+    @Test
     fun `a test that writes its file under the build directory leaves the selecting run narrowed`(
         @TempDir dir: File,
     ) {
