@@ -1,10 +1,12 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 /**
@@ -272,6 +274,76 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.BetaTest"), ranTests(app(dir)), output)
         assertNull(decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
         assertNull(decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    // What a dating capture records of the files that moved while it ran.
+
+    private fun mapDir(dir: File) = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+
+    private fun movedFile(dir: File) = File(mapDir(dir), WorkingTree.MOVED_FILE)
+
+    /** The record as a selecting run would read it, beside the map's current snapshot. */
+    private fun capturedMoves(dir: File): Map<String, WorkingTree.Move>? {
+        val snapshot = assertNotNull(WorkingTree.parse(File(mapDir(dir), WorkingTree.SNAPSHOT_FILE).readText()))
+        return WorkingTree.capturedMoves(mapDir(dir), snapshot.takenMillis)
+    }
+
+    /** Creates `run.log`, rewrites `state.txt` and deletes `old.log`, all ignored. */
+    private val moverTest = "src/test/java/dev/sample/AaMovesFilesTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import java.nio.file.Files;
+        import java.nio.file.Path;
+        class AaMovesFilesTest {
+            @Test void moves() throws Exception {
+                Files.writeString(Path.of("run.log"), "ran");
+                Files.writeString(Path.of("state.txt"), "after");
+                Files.deleteIfExists(Path.of("old.log"));
+            }
+        }
+    """.trimIndent()
+
+    private fun moverFixture(dir: File) {
+        fixture(dir, extra = arrayOf(moverTest))
+        File(app(dir), "state.txt").writeText("before")
+        File(app(dir), "old.log").writeText("old")
+    }
+
+    @Test
+    fun `a capture records the files its tests created, rewrote and deleted`(@TempDir dir: File) {
+        moverFixture(dir)
+
+        capture(dir)
+
+        assertEquals(
+            mapOf(
+                "app/run.log" to WorkingTree.Move.CREATED,
+                "app/state.txt" to WorkingTree.Move.CHANGED,
+                "app/old.log" to WorkingTree.Move.DELETED,
+            ),
+            capturedMoves(dir),
+            movedFile(dir).readText(),
+        )
+    }
+
+    @Test
+    fun `a capture where nothing moved records no path`(@TempDir dir: File) {
+        fixture(dir)
+
+        capture(dir)
+
+        assertEquals(emptyMap(), capturedMoves(dir), movedFile(dir).readText())
+    }
+
+    @Test
+    fun `a filtered capture after a dating one leaves the record as it was`(@TempDir dir: File) {
+        moverFixture(dir)
+        capture(dir)
+        val dated = movedFile(dir).readBytes().toList()
+
+        capture(dir, "--tests", "dev.sample.AlphaTest")
+
+        assertEquals(dated, movedFile(dir).readBytes().toList())
     }
 
     private val both = setOf("dev.sample.AlphaTest", "dev.sample.BetaTest")

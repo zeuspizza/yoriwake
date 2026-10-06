@@ -254,7 +254,7 @@ internal abstract class DecodeTask : DefaultTask() {
                         rootDir,
                         WorkingTree.readStart(datedSnapshot, pending?.snapshotId),
                         WorkingTree.readStart(startStats, pending?.statsId),
-                    )?.undated
+                    )
                 },
                 isolated = isolated.getOrElse(false),
             )
