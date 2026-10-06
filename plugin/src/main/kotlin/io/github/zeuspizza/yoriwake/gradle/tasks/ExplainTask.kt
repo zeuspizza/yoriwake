@@ -11,6 +11,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
@@ -21,7 +22,9 @@ import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
 import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
+import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
+import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
@@ -81,6 +84,9 @@ internal abstract class ExplainTask : DefaultTask() {
 
     @get:Internal("read through the map's own reader, which knows which of its files matter")
     lateinit var mapDir: File
+
+    @get:Internal("only names where a forcing path lies; the task is untracked")
+    var sourceDirs: List<String> = emptyList()
 
     /** Absent for a declined task, which writes nothing. */
     @get:OutputFile
@@ -240,6 +246,11 @@ internal abstract class ExplainTask : DefaultTask() {
                 "(${established.testClasses.size} of them this task's own test classes, " +
                 "from ${facts.testOutputs.files.count { it.isDirectory }} test output dirs)"
         )
+        val forcing = runCatching {
+            ForcingPaths.classify(
+                rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs,
+            )
+        }.getOrDefault(ForcingPaths.Classified.NONE)
         // Written before anything is logged, through the same function the run uses, so
         // the file never disagrees with the log or the run.
         val capture = decideCapture(
@@ -249,8 +260,9 @@ internal abstract class ExplainTask : DefaultTask() {
             learnable = scoped.change.classPrefixes,
         )
         writeExplanation(
-            mapDir, taskPath, base, scoped, established, decision, widening, capture,
+            mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing,
         )
+        ForcingPaths.lines(taskPath, forcing).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (decision.isFullRun) {
             logger.lifecycle(
                 "[yoriwake] $taskPath would run everything: ${decision.fullRunReason()}"
@@ -311,6 +323,9 @@ internal abstract class ExplainTask : DefaultTask() {
                 // it: stale class files would hide a changed constant and predict a narrower run.
                 task.dependsOn(facts.classpath, facts.testOutputs)
                 task.excluded.set(WorkingTree.excluded(project.rootDir, facts.buildDirs.values))
+                task.sourceDirs = ForcingPaths.sourceDirs(
+                    project.rootDir, projectFacts(project, BuildMemo.of(project)).allSourceDirs,
+                )
             }
         }
     }

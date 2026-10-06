@@ -5,9 +5,11 @@ import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * A file in the source tree that the build or its own tests write keeps forcing every selecting
@@ -49,6 +51,35 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         return runner(dir, ":app:test", "-Pyoriwake.select", *args).build().output
     }
 
+    /** What `yoriwakeExplain` would say now, run before the selecting build so the tree is the same. */
+    private fun explain(dir: File, vararg args: String): String =
+        runner(dir, ":app:yoriwakeExplainTest", *args).build().output
+
+    /** explain.json's forcing paths, each with its origin token, or null for one listed without. */
+    private fun explainedOrigins(dir: File): Map<String, String?> {
+        val json = File(mapDir(dir), "explain.json").readText()
+        val list = assertNotNull(Regex(""""forcingPathOrigins": \[(.*?)]""", RegexOption.DOT_MATCHES_ALL).find(json), json)
+        return Regex("""\{ "path": "([^"]*)", "origin": (?:null|"([^"]*)") }""").findAll(list.groupValues[1])
+            .associate { it.groupValues[1] to it.groupValues[2].ifEmpty { null } }
+    }
+
+    /** The console lines of `:app:test` that name [path]. */
+    private fun linesNaming(output: String, path: String) =
+        output.lines().filter { it.startsWith("[yoriwake] :app:test: ") && path in it }
+
+    /** The one identifier the build-directory remedy names, whatever its sentence says. */
+    private val buildDirectoryRemedy = "derby.stream.error.file"
+
+    private fun assertNamedWithRemedy(output: String, path: String) {
+        val lines = linesNaming(output, path)
+        assertTrue(lines.isNotEmpty() && lines.all { buildDirectoryRemedy in it }, output)
+    }
+
+    private fun assertNamedWithoutRemedy(output: String, path: String) {
+        val lines = linesNaming(output, path)
+        assertTrue(lines.isNotEmpty() && lines.none { buildDirectoryRemedy in it }, output)
+    }
+
     private val logWriterTest = "src/test/java/dev/sample/AaWritesLogTest.java" to """
         package dev.sample;
         import org.junit.jupiter.api.Test;
@@ -69,10 +100,13 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         capture(dir)
         changeBeta(app(dir))
 
+        explain(dir)
         val output = select(dir)
 
         assertEquals(withLogWriter, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals("written-during-capture", explainedOrigins(dir)["app/run.log"])
+        assertNamedWithRemedy(output, "app/run.log")
     }
 
     @Test
@@ -116,6 +150,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
             """.trimIndent()
         )
 
+        explain(dir)
         val output = select(dir)
 
         assertEquals(
@@ -124,6 +159,8 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
             output,
         )
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals("written-during-capture", explainedOrigins(dir)["app/state.txt"])
+        assertNamedWithRemedy(output, "app/state.txt")
     }
 
     @Test
@@ -133,10 +170,13 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         File(app(dir), "run.log").delete()
         changeBeta(app(dir))
 
+        explain(dir)
         val output = select(dir)
 
         assertEquals(withLogWriter, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals("written-during-capture", explainedOrigins(dir)["app/run.log"])
+        assertNamedWithRemedy(output, "app/run.log")
     }
 
     /** Writes an ignored resource into a main resource directory from the `info` property. */
@@ -167,6 +207,8 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("change-set-stale", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        // Not explained: the explain build would regenerate the resource first.
+        assertNamedWithoutRemedy(output, "app/gen/main/resources/info.properties")
     }
 
     @Test
@@ -179,10 +221,13 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         runner(dir, ":app:processResources", "-Pinfo=b").build()
         changeBeta(app(dir))
 
+        explain(dir, "-Pinfo=b")
         val output = select(dir, "-Pinfo=b")
 
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals("generated-in-sources", explainedOrigins(dir)["app/gen/main/resources/info.properties"])
+        assertNamedWithoutRemedy(output, "app/gen/main/resources/info.properties")
     }
 
     @Test
@@ -202,10 +247,13 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         capture(dir)
         changeBeta(app(dir))
 
+        explain(dir)
         val output = select(dir)
 
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals("written-during-capture", explainedOrigins(dir)["app/generated.txt"])
+        assertNamedWithRemedy(output, "app/generated.txt")
     }
 
     @Test
@@ -215,10 +263,13 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         File(app(dir), "fixtures/data.json").apply { parentFile.mkdirs() }.writeText("{}")
         changeBeta(app(dir))
 
+        explain(dir)
         val output = select(dir)
 
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals("untracked", explainedOrigins(dir)["app/fixtures/data.json"])
+        assertNamedWithoutRemedy(output, "app/fixtures/data.json")
     }
 
     @Test
@@ -245,6 +296,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         commit(dir, "golden")
         changeBeta(app(dir))
 
+        explain(dir)
         val output = select(dir)
 
         assertEquals(
@@ -253,6 +305,10 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
             output,
         )
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        val explained = explainedOrigins(dir)
+        assertTrue("app/golden.txt" in explained, explained.toString())
+        assertNull(explained["app/golden.txt"])
+        assertEquals(emptyList(), linesNaming(output, "app/golden.txt"), output)
     }
 
     @Test
@@ -274,6 +330,163 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.BetaTest"), ranTests(app(dir)), output)
         assertNull(decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
         assertNull(decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertEquals(emptyList(), linesNaming(output, "run.log"), output)
+    }
+
+    @Test
+    fun `a file a test writes is named untracked when the map has no record of the capture`(@TempDir dir: File) {
+        fixture(dir, extra = arrayOf(logWriterTest))
+        capture(dir)
+        // As a map written before the record existed.
+        assertTrue(movedFile(dir).delete())
+        changeBeta(app(dir))
+
+        explain(dir)
+        val output = select(dir)
+
+        assertEquals(withLogWriter, ranTests(app(dir)), output)
+        assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals("untracked", explainedOrigins(dir)["app/run.log"])
+        assertNamedWithoutRemedy(output, "app/run.log")
+    }
+
+    @Test
+    fun `a file another module's task writes into its main resources is named as in the sources`(
+        @TempDir dir: File,
+    ) {
+        fixture(
+            dir,
+            """
+            dependencies { implementation(project(":lib")) }
+            tasks.test { dependsOn(":lib:writeStamp") }
+            """,
+        )
+        File(dir, "lib/build.gradle.kts").apply { parentFile.mkdirs() }.writeText(
+            """
+            plugins { java }
+            // Only in the capture build, so the selecting build leaves the file as the capture did.
+            val writeStamp by tasks.registering {
+                val on = providers.gradleProperty("stamp")
+                val out = layout.projectDirectory.file("src/main/resources/stamp.txt")
+                onlyIf { on.isPresent }
+                doLast { out.asFile.apply { parentFile.mkdirs() }.writeText("at " + System.nanoTime()) }
+            }
+            """.trimIndent()
+        )
+        File(dir, "settings.gradle.kts").appendText("include(\"lib\")\n")
+        File(dir, ".gitignore").appendText("stamp.txt\n")
+        commit(dir, "lib")
+        capture(dir, "-Pstamp")
+        changeBeta(app(dir))
+
+        explain(dir)
+        val output = select(dir)
+
+        assertEquals(both, ranTests(app(dir)), output)
+        assertEquals("generated-in-sources", explainedOrigins(dir)["lib/src/main/resources/stamp.txt"])
+        assertNamedWithoutRemedy(output, "lib/src/main/resources/stamp.txt")
+    }
+
+    @Test
+    fun `a file a task writes into the test resources during the capture is named as in the sources`(
+        @TempDir dir: File,
+    ) {
+        fixture(
+            dir,
+            """
+            val writeFixture by tasks.registering {
+                val on = providers.gradleProperty("fixture")
+                val out = layout.projectDirectory.file("src/test/resources/fixture.txt")
+                onlyIf { on.isPresent }
+                doLast { out.asFile.writeText("at " + System.nanoTime()) }
+            }
+            tasks.test { dependsOn(writeFixture) }
+            """,
+        )
+        File(dir, ".gitignore").appendText("fixture.txt\n")
+        commit(dir, "ignore")
+        capture(dir, "-Pfixture")
+        changeBeta(app(dir))
+
+        explain(dir)
+        val output = select(dir)
+
+        assertEquals(both, ranTests(app(dir)), output)
+        assertEquals("generated-in-sources", explainedOrigins(dir)["app/src/test/resources/fixture.txt"])
+        assertNamedWithoutRemedy(output, "app/src/test/resources/fixture.txt")
+    }
+
+    @Test
+    fun `an edited build script beside a test-written file gets no line of its own`(@TempDir dir: File) {
+        fixture(dir, extra = arrayOf(logWriterTest))
+        capture(dir)
+        File(app(dir), "build.gradle.kts").appendText("\n// touched\n")
+        changeBeta(app(dir))
+
+        explain(dir)
+        val output = select(dir)
+
+        assertEquals(withLogWriter, ranTests(app(dir)), output)
+        val explained = explainedOrigins(dir)
+        assertEquals("written-during-capture", explained["app/run.log"])
+        assertTrue("app/build.gradle.kts" in explained, explained.toString())
+        assertNull(explained["app/build.gradle.kts"])
+        assertNamedWithRemedy(output, "app/run.log")
+        assertEquals(emptyList(), linesNaming(output, "app/build.gradle.kts"), output)
+    }
+
+    @Test
+    fun `seven test-written files are named five at a time`(@TempDir dir: File) {
+        fixture(
+            dir,
+            extra = arrayOf(
+                "src/test/java/dev/sample/AaWritesSevenTest.java" to """
+                    package dev.sample;
+                    import org.junit.jupiter.api.Test;
+                    import java.nio.file.Files;
+                    import java.nio.file.Path;
+                    class AaWritesSevenTest {
+                        @Test void writes() throws Exception {
+                            for (int i = 1; i <= 7; i++) Files.writeString(Path.of("f" + i + ".log"), "" + System.nanoTime());
+                        }
+                    }
+                """.trimIndent(),
+            ),
+        )
+        capture(dir)
+        changeBeta(app(dir))
+
+        val output = select(dir)
+
+        val named = linesNaming(output, "app/f1.log")
+        assertEquals(1, named.size, output)
+        (2..5).forEach { assertContains(named.single(), "app/f$it.log") }
+        assertContains(named.single(), "and 2 more")
+        assertEquals(emptyList(), linesNaming(output, "app/f6.log"), output)
+        assertEquals(emptyList(), linesNaming(output, "app/f7.log"), output)
+    }
+
+    @Test
+    fun `explain gives each kind of forcing path its own token and counts the rest`(@TempDir dir: File) {
+        fixture(dir, infoGenerator, logWriterTest, "../gradle/libs.versions.toml" to "[versions]\n")
+        runner(dir, ":app:processResources", "-Pinfo=a").build()
+        capture(dir, "-Pinfo=a")
+        runner(dir, ":app:processResources", "-Pinfo=b").build()
+        File(app(dir), "fixtures/data.json").apply { parentFile.mkdirs() }.writeText("{}")
+        File(dir, "gradle/libs.versions.toml").appendText("# touched\n")
+
+        val output = explain(dir, "-Pinfo=b")
+
+        val explained = explainedOrigins(dir)
+        assertEquals("written-during-capture", explained["app/run.log"], explained.toString())
+        assertEquals("generated-in-sources", explained["app/gen/main/resources/info.properties"], explained.toString())
+        assertEquals("untracked", explained["app/fixtures/data.json"], explained.toString())
+        assertTrue("gradle/libs.versions.toml" in explained, explained.toString())
+        assertNull(explained["gradle/libs.versions.toml"])
+        assertNamedWithRemedy(output, "app/run.log")
+        assertNamedWithoutRemedy(output, "app/gen/main/resources/info.properties")
+        assertNamedWithoutRemedy(output, "app/fixtures/data.json")
+        assertTrue(output.lines().any { it.startsWith("[yoriwake] :app:test: 1 other") }, output)
     }
 
     // What a dating capture records of the files that moved while it ran.

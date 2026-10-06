@@ -47,6 +47,9 @@ digest-silence	digest-walk-unaccounted-output
 digest-silence	digest-walk-unreadable
 filter-verdict	no
 filter-verdict	yes
+forcing-path-origin	generated-in-sources
+forcing-path-origin	untracked
+forcing-path-origin	written-during-capture
 framework	junit-platform
 full-run-kind	daemon-refused
 full-run-kind	empty-change-set

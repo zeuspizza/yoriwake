@@ -24,6 +24,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.validCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.changeSet
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
@@ -192,6 +193,8 @@ internal fun TestTaskWiring.configureSelection(
     // Resolved to plain values and providers here: a task action may not touch Project under
     // the configuration cache.
     val classpathFacts = classpathFacts(project, test, paths)
+    val rootDir = project.rootDir
+    val sourceDirs = ForcingPaths.sourceDirs(rootDir, projectFacts(project, buildMemo).allSourceDirs)
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -255,6 +258,13 @@ internal fun TestTaskWiring.configureSelection(
             ACCOUNTED_PROPERTY,
             accountedFor(paths, scoped, established).toString(),
         )
+        // From a copy, before the change set is written and printed after it: it only explains
+        // the run, and never changes what the test JVM is handed.
+        val forcing = runCatching {
+            ForcingPaths.classify(
+                rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs,
+            )
+        }.getOrDefault(ForcingPaths.Classified.NONE)
         writeChangeSet(
             test, changeSetFile,
             mapOf(
@@ -285,6 +295,7 @@ internal fun TestTaskWiring.configureSelection(
                 if (scoped.dropped == 0) "" else
                     ", ${scoped.dropped} in modules that are not on this task's classpath"
         )
+        ForcingPaths.lines(test.path, forcing).forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
 
         val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map
@@ -394,7 +405,9 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
     // Plain values: a task action may not touch Project or its providers under the configuration
     // cache, so git is asked directly.
     val rootDir = project.rootDir
-    val excluded = WorkingTree.excluded(rootDir, projectFacts(project, buildMemo).buildDirs.values)
+    val facts = projectFacts(project, buildMemo)
+    val excluded = WorkingTree.excluded(rootDir, facts.buildDirs.values)
+    val sourceDirs = ForcingPaths.sourceDirs(rootDir, facts.allSourceDirs)
     // The same git call as the change set's own, answered from the build's memo.
     val configuredTracked = listOfNotNull(against, stamp)
         .map { ChangeDetection.trackedPaths(project.providers, rootDir, it, buildMemo) }
@@ -439,6 +452,12 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
         refuse(test, RefusalKind.CHANGE_SET_STALE, reason)
         // Never read under a refusal; deleted so a previous run's file is not mistaken for this one's.
         runCatching { changeSetFile.delete() }
+        if (now != null) {
+            runCatching { ForcingPaths.classify(rootDir, mapDir, now - configured, sourceDirs) }
+                .getOrNull()
+                ?.let { ForcingPaths.lines(test.path, it) }
+                ?.forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
+        }
         applyCaptureDecision(
             test, mapDir, jacoco,
             decideCapture(

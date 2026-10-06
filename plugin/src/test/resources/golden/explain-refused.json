@@ -10,6 +10,7 @@
   "changedClasses": 2,
   "unmappablePaths": 2,
   "unmappablePathsSample": ["build.gradle.kts", "docs/README.md"],
+  "forcingPathOrigins": [{ "path": "build.gradle.kts", "origin": null }, { "path": "docs/README.md", "origin": "untracked" }],
   "offClasspath": 2,
   "provablyUntested": 1,
   "ownTestClasses": 1,
