@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.capture
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
@@ -84,9 +85,20 @@ internal object MapProvenance {
         }
 
     sealed interface Verdict {
-        data class Trusted(val digest: String) : Verdict
-        data class Unverified(val reason: String) : Verdict
-        data class Untrusted(val reason: String) : Verdict
+        /** The refusal a run makes on this verdict, as its kind and reason; null when trusted. */
+        val refusal: Pair<RefusalKind, String>?
+
+        data class Trusted(val digest: String) : Verdict {
+            override val refusal: Pair<RefusalKind, String>? get() = null
+        }
+
+        data class Unverified(val reason: String) : Verdict {
+            override val refusal get() = RefusalKind.MAP_UNVERIFIED to reason
+        }
+
+        data class Untrusted(val reason: String) : Verdict {
+            override val refusal get() = RefusalKind.MAP_UNTRUSTED to reason
+        }
     }
 
     /** [listed] is the digest the trusted list names for this map directory, or null when it names none. */

@@ -98,6 +98,8 @@ internal fun TestTaskWiring.configureSelection(
     if (!settings.select) {
         return
     }
+    // Read before any refusal below, so a list that cannot be read fails every selecting run alike.
+    val trusted = trustedDigest(project, settings, mapDir)
 
     val explicit = settings.base
     val base = when {
@@ -297,7 +299,7 @@ internal fun TestTaskWiring.configureSelection(
     }
 
     refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo)
-    trustedDigest(project, settings, mapDir)?.let { listed ->
+    trusted?.let { listed ->
         refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile)
     }
 }
@@ -351,15 +353,11 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
     }
     test.inputs.property("yoriwake.mapProvenance", provenance)
     test.doFirst {
-        val (kind, reason) = when (val verdict = MapProvenance.verify(mapDir, listed)) {
-            is MapProvenance.Verdict.Trusted -> return@doFirst
-            is MapProvenance.Verdict.Unverified -> RefusalKind.MAP_UNVERIFIED to verdict.reason
-            is MapProvenance.Verdict.Untrusted -> RefusalKind.MAP_UNTRUSTED to verdict.reason
-        }
+        val (kind, reason) = MapProvenance.verify(mapDir, listed).refusal ?: return@doFirst
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: $reason, so the whole suite runs and records a new " +
-                "map. A map narrows here only when -P${Settings.TRUSTED_MAPS} names its digest, as " +
-                "the GitHub Action does from the default branch's recording."
+                "map. A map narrows here only when -P${Settings.TRUSTED_MAPS} names its digest, as a " +
+                "run on the default branch recorded it."
         )
         refuse(test, kind, reason)
         MapProvenance.clear(mapDir)
@@ -374,7 +372,8 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
 /**
  * Runs the whole suite when the tree the tests will see is not the one the change set was computed
  * from: a task earlier in this build, or a continuous build's later cycle, may have edited it after
- * configuration. Registered after the other selection actions, so it runs before them.
+ * configuration. Registered after the other selection actions, so it runs before them; only the
+ * provenance check, registered after it, runs earlier.
  */
 private fun TestTaskWiring.refuseAStaleChangeSet(
     project: Project,

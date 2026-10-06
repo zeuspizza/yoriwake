@@ -57,6 +57,7 @@ internal abstract class ExplainTask : DefaultTask() {
 
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
+    @get:Optional
     abstract val checksProvenance: Property<Boolean>
 
     /** The digest that list names for this map; unset when it names none. */
@@ -155,12 +156,7 @@ internal abstract class ExplainTask : DefaultTask() {
         }
         // Checked by the run before anything narrows, so it explains every line below it.
         if (checksProvenance.getOrElse(false)) {
-            val (kind, reason) = when (val verdict = MapProvenance.verify(mapDir, listedDigest.orNull)) {
-                is MapProvenance.Verdict.Trusted -> null to null
-                is MapProvenance.Verdict.Unverified -> RefusalKind.MAP_UNVERIFIED to verdict.reason
-                is MapProvenance.Verdict.Untrusted -> RefusalKind.MAP_UNTRUSTED to verdict.reason
-            }
-            if (kind != null && reason != null) {
+            MapProvenance.verify(mapDir, listedDigest.orNull).refusal?.let { (kind, reason) ->
                 logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
                 writeUnanswered(
                     mapDir, taskPath, base,

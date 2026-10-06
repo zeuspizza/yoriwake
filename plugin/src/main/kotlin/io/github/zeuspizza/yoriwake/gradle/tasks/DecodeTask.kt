@@ -253,7 +253,9 @@ internal abstract class DecodeTask : DefaultTask() {
             // Recorded for `yoriwakeAudit`, not only warned: the kept map looks healthy
             // while it ages.
             Audit.TaskFacts.recordDecodeRefusal(mapDir, it.toString())
-            logger.warn("[yoriwake] $taskPath could not update the map ($it); it is unchanged")
+            // It may have written part of the map, so its digest no longer describes it.
+            runCatching { File(mapDir, AgentContract.MAP_DIGEST_FILE).delete() }
+            logger.warn("[yoriwake] $taskPath could not update the map ($it)")
             return
         }
         when (val decoded = outcome.getOrNull()) {

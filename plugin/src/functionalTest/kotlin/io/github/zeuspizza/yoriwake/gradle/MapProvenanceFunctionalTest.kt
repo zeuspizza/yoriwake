@@ -248,4 +248,18 @@ class MapProvenanceFunctionalTest : FunctionalTestSupport() {
         assertContains(output, "would run everything: the trusted-map list does not name the map")
         assertContains(File(mapDir(dir), "explain.json").readText(), "\"refusalKind\": \"map-unverified\"")
     }
+
+    @Test
+    fun `explain on a declined task says so, with a trusted-map list too`(@TempDir dir: File) {
+        val disabled = minimalBuild + "\n" + """
+            tasks.test { extensions.getByType<JacocoTaskExtension>().isEnabled = false }
+        """.trimIndent()
+        build(dir, "build.gradle.kts" to disabled, oneClass, oneTest)
+        val list = File(dir, "build/trusted.tsv").also { it.parentFile.mkdirs(); it.writeText("") }
+
+        listOf(emptyList(), listOf("-Pyoriwake.trustedMaps=${list.absolutePath}")).forEach { extra ->
+            val output = runner(dir, "yoriwakeExplainTest", *extra.toTypedArray()).build().output
+            assertContains(output, "Nothing is captured or selected for this task")
+        }
+    }
 }
