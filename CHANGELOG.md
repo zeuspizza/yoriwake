@@ -17,6 +17,12 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A run forced by an untracked file in the source tree now names it, and says whether it changed
+  during the last capture build, lies untracked in a source directory, or is otherwise untracked,
+  on the console and in `explain.json` (`forcingPathOrigins`). A file only tests write and no test
+  reads gets the remedy: write it into the build directory. What runs is unchanged. **Your map:**
+  left alone; gains `capture-moved` on its next dating capture.
+
 - A JUnit 4 or TestNG task off the JUnit Platform now says on a selecting run that it runs every
   test. Before, it said selection was class-granular and that coverage was captured either way;
   neither was so. **Your map:** left alone.

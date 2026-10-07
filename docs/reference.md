@@ -54,6 +54,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
+| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from; see [Files written into the source tree](#files-written-into-the-source-tree) |
 
 Reasons, one per test:
 
@@ -74,7 +75,9 @@ Files in the map directory that are meant to be read:
   that would run each test, not only the one that decided it; see
   [the contract](contract.md#decision-rules).
 - `explain.json`: written by `yoriwakeExplain<Task>`. Carries `fullRunKind` and `refusalKind` as
-  tokens, so a script can branch on the cause without matching English.
+  tokens, so a script can branch on the cause without matching English. `forcingPathOrigins` lists
+  the paths that force the run, each with `written-during-capture`, `generated-in-sources`,
+  `untracked`, or no origin for a path HEAD tracks.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
 
 ## When it refuses to select
@@ -85,11 +88,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - the map's age cannot be established (no capture stamp, or one that cannot be related to the
   base);
 - a changed path coverage cannot see: a build script, a settings file, a version catalog, a
-  resource. That includes a file your tests write into the source tree outside `build/`, such as
-  a `derby.log`: untracked and ignored files count, so every later run forces on it. If no test
-  reads the file back, have the tests write it under `build/` (for Derby, set
-  `derby.stream.error.file`); if one does, leave it where it is, because a file under `build/` is
-  never seen as a change;
+  resource. That includes a file your tests or your build write into the source tree outside
+  `build/`, such as a `derby.log`: untracked and ignored files count. The run names each such file;
+  see [Files written into the source tree](#files-written-into-the-source-tree);
 - a changed class the map has never recorded, because uncovered and unrecordable look the same. A
   test class this task runs is the exception: discovery runs it whatever the map knows;
 - a changed class whose annotations, on the class or any member and with their values, differ from
@@ -130,6 +131,31 @@ them as not in it.
 
 Separately from those, a test the map does not record as passing always runs, and a test the map
 has never seen always runs.
+
+### Files written into the source tree
+
+A file the tests or the build write into the source tree outside the build directories counts as
+a change by its content, tracked or not, ignored or not. A run that sees it changed runs
+everything, and names it, one line per kind:
+
+- **Changed during the last capture build** (`written-during-capture`): created, rewritten or
+  deleted while the capture that dated the map ran, by its tests or its tasks. If a test writes it
+  and no test, the writer included, ever reads it back, have the test write it into the project's
+  build directory (`layout.buildDirectory`); for Derby's `derby.log`, set the
+  `derby.stream.error.file` system property. If a test reads it back (a database, a golden file
+  recorded when missing), or a build task writes it, leave it where it is: under the build
+  directory its changes are never seen, as for any build output, and tests that hand data to each
+  other through it are [order-dependent](#what-is-not-supported). Gitignoring it does not help,
+  since ignored files count; deleting it before each run does not either, since the capture marks
+  it again; nor does another directory such as `out/` or `tmp/`.
+- **In CI**, a file the capture's tests create is in the change set of every fresh checkout that
+  lacks it, so such a project runs everything on every pull request until the file moves.
+- **Untracked in a source directory** (`generated-in-sources`): a file a build task generates into
+  a source or resource directory, or one not yet added to git. It is on the classpath, tests can
+  read it, and its changes are changes; nothing is offered to make it stop counting.
+- **Untracked** (`untracked`): any other untracked or ignored file; it counts by content.
+
+A file HEAD tracks gets no line: the run cannot tell a test's write from your edit.
 
 ## What coverage does not record
 
@@ -353,7 +379,7 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   same content, stays in every selecting run's change set until the next capture, so a test that
   rewrites one on every run keeps it there. A file the tests create outside the build directory is
   in the change set of every fresh checkout that lacks it, such as a CI runner's, which then runs
-  everything. Have such tests write under the build directory.
+  everything. See [Files written into the source tree](#files-written-into-the-source-tree).
 - **Your own classes on the boot class path.** A native library load, a class definition or a
   foreign-function call is judged by the class that makes it, and a class the bootstrap or platform
   loader loaded counts as the JDK's own. Classes a build adds with `-Xbootclasspath/a` (or a

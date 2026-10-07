@@ -154,8 +154,8 @@ internal object CoverageDecoder {
         classDigests: Map<String, String>? = null,
         /** See [ANNOTATION_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
         annotationDigests: Map<String, String>? = null,
-        /** See [WorkingTree]. Asked once records merge; a null answer removes the snapshot. */
-        worktreeSnapshot: (() -> String?)? = null,
+        /** See [WorkingTree]. Asked once records merge; a null answer removes the snapshot and its record. */
+        worktreeSnapshot: (() -> WorkingTree.Reobserved?)? = null,
         /** Whether this capture forked a JVM per test class; see [JVM_MODE_FILE]. */
         isolated: Boolean = false,
     ): Outcome? {
@@ -220,7 +220,15 @@ internal object CoverageDecoder {
         // Asked only by a dating capture: no other merges records.
         worktreeSnapshot?.let { observe ->
             val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE)
-            observe()?.let { writeAtomically(snapshot, it) } ?: snapshot.delete()
+            val moved = File(mapDir, WorkingTree.MOVED_FILE)
+            val reobserved = observe()
+            if (reobserved != null) {
+                writeAtomically(moved, reobserved.moved)
+                writeAtomically(snapshot, reobserved.undated)
+            } else {
+                snapshot.delete()
+                moved.delete()
+            }
         }
         writeAtomically(File(mapDir, MAP_SCHEMA_VERSION_FILE), "$MAP_SCHEMA_VERSION\n")
         val unattributable = captured.count { line ->

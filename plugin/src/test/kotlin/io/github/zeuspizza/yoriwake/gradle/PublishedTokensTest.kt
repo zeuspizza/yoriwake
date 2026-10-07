@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.agent.select.Selector
 import io.github.zeuspizza.yoriwake.agent.select.Verdict
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.change.DigestSilence
+import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -15,7 +16,7 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 
 /**
- * Every refusal, reason, verdict and decline token that can reach `explain.json`, `audit.json`,
+ * Every refusal, reason, verdict, decline and origin token that can reach `explain.json`, `audit.json`,
  * `decisions.tsv`, `task-facts`, `jvm-mode.tsv` or the console, pinned byte for byte. Scripts and people match on
  * these spellings, so a rename is a breaking change even when every other test stays green.
  *
@@ -53,6 +54,7 @@ class PublishedTokensTest {
         add("audit-blocker", Audit.BlockerKind.entries.map { it.token })
         add("audit-state", Audit.State.entries.map { it.token })
         add("digest-silence", DigestSilence.entries.map { it.token })
+        add("forcing-path-origin", ForcingPaths.Origin.entries.map { it.token })
         add("filter-verdict", listOf(FilterVerdict.UNFILTERED, FilterVerdict.FILTERED))
         add("framework", listOf(Audit.TaskFacts.PLATFORM))
         add("refusals-key", listOf(INLINE_REFUSAL_KEY))

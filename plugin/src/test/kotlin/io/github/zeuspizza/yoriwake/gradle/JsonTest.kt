@@ -10,6 +10,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.DigestWidening
 import io.github.zeuspizza.yoriwake.gradle.change.Established
+import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.InlineWidening
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.ScopedChange
@@ -68,6 +69,7 @@ class JsonTest {
                 digest = digest(setOf("com.acme.Y", "com.acme.X"), "nothing was recorded"),
             ),
             CaptureDecision(capture = true, fullRun = true, mapCurrent = false, reason = "running everything"),
+            ForcingPaths.Classified(mapOf("docs/README.md" to ForcingPaths.Origin.UNTRACKED), emptyMap(), emptyMap(), 1),
         )
 
         assertEquals(golden("explain-refused.json"), File(dir, YoriwakePlugin.EXPLANATION_FILE).readText())
@@ -170,9 +172,9 @@ class JsonTest {
         )
 
         val values = strings(File(dir, YoriwakePlugin.EXPLANATION_FILE).readText())
-        // task, base, the path sample, captureReason, inliners, digestSilence, the digest sample,
-        // and the refusal's class and reason.
-        assertEquals(9, values.count { it == hostile }, values.toString())
+        // task, base, the path sample, the forcing path, captureReason, inliners, digestSilence,
+        // the digest sample, and the refusal's class and reason.
+        assertEquals(10, values.count { it == hostile }, values.toString())
     }
 
     @Test

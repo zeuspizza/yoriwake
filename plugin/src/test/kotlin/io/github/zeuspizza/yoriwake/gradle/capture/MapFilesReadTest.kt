@@ -22,6 +22,7 @@ class MapFilesReadTest {
         "STATS_PENDING_FILE" to "the start reading of the tree, the run's own",
         "\"loaded\"" to "the agent's per-worker raw lists, folded in by the decode",
         "MAP_DIGEST_FILE" to "the digest itself, never compared with the list",
+        "MOVED_FILE" to "explains a forced run, read by nothing that decides",
         "name" to "a name drawn from constants this scan sees elsewhere",
     )
 

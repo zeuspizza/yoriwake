@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.gradle.report
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.change.Established
+import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.InlineWidening
 import io.github.zeuspizza.yoriwake.gradle.change.ScopedChange
 import java.io.File
@@ -23,6 +24,7 @@ internal fun writeExplanation(
     /** The inline widening's decision states, as data rather than log prose. */
     widening: InlineWidening = InlineWidening.widened(emptyList(), emptySet()),
     capture: CaptureDecision? = null,
+    forcing: ForcingPaths.Classified = ForcingPaths.Classified.NONE,
 ) {
     val known = decision.knownTests()
     val selected = if (decision.isFullRun) known else decision.selectedCount()
@@ -47,6 +49,16 @@ internal fun writeExplanation(
         append("""  "unmappablePathsSample": """)
         append(Json.strings(scoped.change.unmappablePaths.sorted().take(UNMAPPABLE_SAMPLE)))
         append(",").append('\n')
+        // The paths that force, each with where it came from: null for one HEAD tracks, or when
+        // git could not say.
+        append("""  "forcingPathOrigins": [""")
+        append(
+            (scoped.change.unmappablePaths - established.unreadablePaths).sorted().take(UNMAPPABLE_SAMPLE)
+                .joinToString(", ") { path ->
+                    """{ "path": ${Json.string(path)}, "origin": ${Json.string(forcing.origins[path]?.token)} }"""
+                }
+        )
+        append("],").append('\n')
         append("""  "offClasspath": ${scoped.dropped},""").append('\n')
         append("""  "provablyUntested": ${established.provable.size},""").append('\n')
         append("""  "ownTestClasses": ${established.testClasses.size},""").append('\n')
@@ -118,6 +130,7 @@ internal fun writeUnanswered(
         append("""  "changedClasses": 0,""").append('\n')
         append("""  "unmappablePaths": 0,""").append('\n')
         append("""  "unmappablePathsSample": [],""").append('\n')
+        append("""  "forcingPathOrigins": [],""").append('\n')
         append("""  "offClasspath": 0,""").append('\n')
         append("""  "provablyUntested": 0,""").append('\n')
         append("""  "ownTestClasses": 0,""").append('\n')

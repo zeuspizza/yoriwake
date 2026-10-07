@@ -244,15 +244,19 @@ internal object WorkingTree {
             else -> stat.first
         }
 
-    /** The snapshot a dating capture writes once its tests have run; see [reobserve]. */
-    class Reobserved(val undated: String)
+    /**
+     * The snapshot a dating capture writes once its tests have run, and its [MOVED_FILE] record;
+     * see [reobserve].
+     */
+    class Reobserved(val undated: String, val moved: String)
 
     /**
      * The tree at the end of a capture, against [startText] and [statsText] read where it started:
      * every path whose stat token or content moved in between is written unknown, even when its
      * content returned, so later selecting runs keep it in their change set until the next capture.
-     * Null when either start file is missing or unreadable, or the tree cannot be listed: the
-     * snapshot is then removed, and the next run refuses and captures.
+     * The untracked and ignored ones among them are also recorded with how they moved; a path
+     * unreadable at both ends is not. Null when either start file is missing or unreadable, or the
+     * tree cannot be listed: the snapshot is then removed, and the next run refuses and captures.
      */
     fun reobserve(
         rootDir: File,
@@ -265,15 +269,79 @@ internal object WorkingTree {
         val listed = listing(rootDir, excluded, git) ?: return null
         val now = System.currentTimeMillis()
         val entries = HashMap<String, State>()
+        val moves = HashMap<String, Move>()
         (start.entries.keys + listed).forEach { path ->
             val recorded = start.entries[path]
             val current = observe(rootDir, path, start)
-            entries[path] = if (recorded != null && untouched(recorded, current)) current else Unknown
+            if (recorded != null && untouched(recorded, current)) {
+                entries[path] = current
+                return@forEach
+            }
+            entries[path] = Unknown
+            // HEAD pins a tracked path, whatever happened to it during the capture.
+            if (path in stats || (recorded === Unknown && current === Unknown)) return@forEach
+            val absentAtStart = recorded == null || recorded === Absent
+            moves[path] = when {
+                absentAtStart && current !== Absent -> Move.CREATED
+                !absentAtStart && current === Absent -> Move.DELETED
+                else -> Move.CHANGED
+            }
         }
         stats.forEach { (path, token) ->
             if (path !in entries && touched(token, tokenOf(rootDir, path))) entries[path] = Unknown
         }
-        return Reobserved(render(Snapshot(now, entries)))
+        return Reobserved(render(Snapshot(now, entries)), renderMoves(Moves(now, moves)))
+    }
+
+    /**
+     * The untracked and ignored paths that moved during the map's last dating capture, written
+     * beside [SNAPSHOT_FILE] and under the same gate. It only explains a forced run; selection
+     * never reads it.
+     */
+    const val MOVED_FILE = "capture-moved"
+
+    private const val MOVED_HEADER = "yoriwake-capture-moved 1"
+
+    enum class Move(val token: String) { CREATED("created"), CHANGED("changed"), DELETED("deleted") }
+
+    /** [paths] moved during the capture whose snapshot was taken at [takenMillis]. */
+    class Moves(val takenMillis: Long, val paths: Map<String, Move>)
+
+    /** One sorted line per path; the footer's count refuses a file cut short, as [render]'s does. */
+    internal fun renderMoves(moves: Moves): String = buildString {
+        append(MOVED_HEADER).append('\t').append(moves.takenMillis).append('\n')
+        moves.paths.toSortedMap().forEach { (path, move) ->
+            append(move.token).append('\t').append(escape(path)).append('\n')
+        }
+        append(FOOTER).append('\t').append(moves.paths.size).append('\n')
+    }
+
+    internal fun parseMoves(text: String): Moves? = runCatching {
+        val lines = text.split('\n').dropLastWhile(String::isEmpty)
+        val header = lines.first().split('\t')
+        require(header.size == 2 && header[0] == MOVED_HEADER)
+        val footer = lines.last().split('\t')
+        require(footer.size == 2 && footer[0] == FOOTER)
+        val body = lines.subList(1, lines.size - 1)
+        require(body.size == footer[1].toInt())
+        val paths = body.associate { line ->
+            val fields = line.split('\t')
+            require(fields.size == 2)
+            unescape(fields[1]) to Move.entries.single { it.token == fields[0] }
+        }
+        require(paths.size == body.size)
+        Moves(header[1].toLong(), paths)
+    }.getOrNull()
+
+    /**
+     * The paths in [mapDir]'s [MOVED_FILE], if it was written with the snapshot taken at
+     * [snapshotTakenMillis]; null when it is missing, unreadable or stale, or there is no snapshot.
+     */
+    fun capturedMoves(mapDir: File, snapshotTakenMillis: Long?): Map<String, Move>? {
+        snapshotTakenMillis ?: return null
+        val file = File(mapDir, MOVED_FILE)
+        val moves = file.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }?.let(::parseMoves)
+        return moves?.takeIf { it.takenMillis == snapshotTakenMillis }?.paths
     }
 
     /** As [same], and for a file present at both ends its stat token too: touched counts, not only changed. */

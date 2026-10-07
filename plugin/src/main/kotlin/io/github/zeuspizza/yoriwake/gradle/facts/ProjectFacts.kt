@@ -17,6 +17,11 @@ internal class ProjectFacts(
     val moduleDirs: Map<String, String>,
     val buildDirs: Map<String, String>,
     val sourceDirs: List<File>,
+    /**
+     * Every source set's directories, tests and resources included. Only names where a forcing
+     * path lies; [sourceDirs] stays main-only because the instrumentation scope is derived from it.
+     */
+    val allSourceDirs: List<File>,
 )
 
 /** [ProjectFacts] for this build, computed once and keyed by the root it was read from. */
@@ -25,12 +30,14 @@ internal fun projectFacts(project: Project, memo: BuildMemo?): ProjectFacts {
         val moduleDirs = mutableMapOf<String, String>()
         val buildDirs = mutableMapOf<String, String>()
         val sourceDirs = mutableListOf<File>()
+        val allSourceDirs = mutableListOf<File>()
         project.rootProject.allprojects.forEach { candidate ->
             moduleDirs[
                 candidate.projectDir.relativeTo(project.rootDir).invariantSeparatorsPath.trim('/')
             ] = candidate.path
             buildDirs[candidate.path] = candidate.layout.buildDirectory.get().asFile.absolutePath
-            val declared = candidate.extensions.findByType(SourceSetContainer::class.java)
+            val sourceSets = candidate.extensions.findByType(SourceSetContainer::class.java)
+            val declared = sourceSets
                 ?.findByName(SourceSet.MAIN_SOURCE_SET_NAME)
                 ?.allSource?.srcDirs
                 .orEmpty()
@@ -43,8 +50,12 @@ internal fun projectFacts(project: Project, memo: BuildMemo?): ProjectFacts {
                     .filter { it.isDirectory } +
                     YoriwakePlugin.multiplatformSourceDirs(candidate.projectDir)
             }
+            // Without a SourceSetContainer, every directory under `src` stands in.
+            allSourceDirs += sourceSets?.flatMap { it.allSource.srcDirs }.orEmpty().ifEmpty {
+                File(candidate.projectDir, "src").listFiles()?.filter(File::isDirectory).orEmpty()
+            }
         }
-        ProjectFacts(moduleDirs, buildDirs, sourceDirs)
+        ProjectFacts(moduleDirs, buildDirs, sourceDirs, allSourceDirs)
     }
     val compute = { memo?.time(YoriwakePlugin.WALK_COUNTER, walk) ?: walk() }
     return if (memo == null) compute() else memo.value(YoriwakePlugin.FACTS_KEY + project.rootDir.path, compute)

@@ -295,6 +295,93 @@ class WorkingTreeTest {
         assertNull(WorkingTree.reobserve(root, null, start.second))
     }
 
+    // What moved during a capture, recorded beside the snapshot it ends with.
+
+    private fun movedDuring(root: File, start: Pair<String, String>): Map<String, WorkingTree.Move> =
+        assertNotNull(WorkingTree.parseMoves(assertNotNull(WorkingTree.reobserve(root, start.first, start.second)).moved)).paths
+
+    @Test
+    fun `a capture records the untracked files it created, rewrote and deleted`(@TempDir dir: File) {
+        val root = repo(dir)
+        File(root, "rewritten.local").writeText("one")
+        File(root, "deleted.local").writeText("gone soon")
+        File(root, "untouched.local").writeText("same")
+        val start = started(root)
+
+        File(root, "created.local").writeText("new")
+        File(root, "rewritten.local").writeText("two")
+        File(root, "deleted.local").delete()
+
+        assertEquals(
+            mapOf(
+                "created.local" to WorkingTree.Move.CREATED,
+                "rewritten.local" to WorkingTree.Move.CHANGED,
+                "deleted.local" to WorkingTree.Move.DELETED,
+            ),
+            movedDuring(root, start),
+        )
+    }
+
+    @Test
+    fun `a capture where nothing moved records no path`(@TempDir dir: File) {
+        val root = repo(dir)
+        File(root, "fixture.local").writeText("one")
+        val start = started(root)
+
+        assertEquals(emptyMap(), movedDuring(root, start))
+    }
+
+    @Test
+    fun `a tracked file rewritten during a capture is not recorded as moved`(@TempDir dir: File) {
+        val root = repo(dir)
+        val start = started(root)
+
+        File(root, "src/main/java/A.java").writeText("class A { int edited; }")
+
+        assertEquals(emptyMap(), movedDuring(root, start))
+    }
+
+    @Test
+    fun `a file unreadable where a capture starts and ends is not recorded as moved`(@TempDir dir: File) {
+        val root = repo(dir)
+        val secret = File(root, "secret.local").also { it.writeText("hidden") }
+        secret.setReadable(false)
+        try {
+            val start = started(root)
+            assertEquals(WorkingTree.Unknown, assertNotNull(WorkingTree.parse(start.first)).entries["secret.local"])
+
+            assertEquals(emptyMap(), movedDuring(root, start))
+        } finally {
+            secret.setReadable(true)
+        }
+    }
+
+    @Test
+    fun `the moved paths survive the file, and a file cut short is refused`() {
+        val moves = WorkingTree.Moves(
+            7L,
+            mapOf("a\tb.local" to WorkingTree.Move.CREATED, "c%d.local" to WorkingTree.Move.CHANGED, "e\nf.local" to WorkingTree.Move.DELETED),
+        )
+        val text = WorkingTree.renderMoves(moves)
+        val parsed = assertNotNull(WorkingTree.parseMoves(text))
+
+        assertEquals(7L, parsed.takenMillis)
+        assertEquals(moves.paths, parsed.paths)
+        assertNull(WorkingTree.parseMoves(text.lines().dropLast(2).joinToString("\n")))
+        assertNull(WorkingTree.parseMoves(text.replaceFirst("created", "touched")))
+    }
+
+    @Test
+    fun `the moved paths are read only beside the snapshot they were written with`(@TempDir dir: File) {
+        val moves = WorkingTree.Moves(7L, mapOf("run.log" to WorkingTree.Move.CREATED))
+        File(dir, WorkingTree.MOVED_FILE).writeText(WorkingTree.renderMoves(moves))
+
+        assertEquals(moves.paths, WorkingTree.capturedMoves(dir, 7L))
+        assertNull(WorkingTree.capturedMoves(dir, 8L))
+        assertNull(WorkingTree.capturedMoves(dir, null))
+        assertNull(WorkingTree.capturedMoves(File(dir, "absent"), 7L))
+    }
+
     @Test
     fun `a path with a tab, a newline or a percent sign survives the file`(@TempDir dir: File) {
         val paths = listOf("a\tb.local", "c\nd.local", "e%09f.local", "g\rh.local")
