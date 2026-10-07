@@ -24,6 +24,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A generated file on the test classpath that changed since the capture runs everything, named.
+  Map: repaired on the next build.
 - A test task with Develocity Test Distribution or Predictive Test Selection enabled is declined,
   its map left as it was. Map: left alone.
 - With `-Pyoriwake.trustedMaps=<file>`, a map narrows only when the file lists its digest. Map:

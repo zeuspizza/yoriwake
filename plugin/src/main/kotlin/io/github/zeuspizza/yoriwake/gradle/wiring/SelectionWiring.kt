@@ -24,6 +24,9 @@ import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.validCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
+import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
+import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.changeSet
@@ -225,6 +228,9 @@ internal fun TestTaskWiring.configureSelection(
             mapDir, scoped.change, classpathFacts,
         )
 
+        // A file the build generated onto the classpath from something git does not track moves
+        // with no change behind it; read now, after the test task's inputs are built.
+        val classpathFiles = classpathFilesRule(mapDir, classpathFacts)
         // An inline function's body is compiled into its call sites, so coverage cannot link
         // them; Kotlin's SMAP records the edge, and the consumers count as changed.
         val widening = widenForInlining(
@@ -233,7 +239,10 @@ internal fun TestTaskWiring.configureSelection(
             digestRule(mapDir, bytesAreFresh = true),
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = established.testClasses,
-        )
+        ).withClasspathFiles(
+            classpathFiles,
+            forcedByPaths = (scoped.change.unmappablePaths - established.unreadablePaths).isNotEmpty(),
+        ) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
         reportDigest(widening) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
 
         val changed = if (widening.forces) {
@@ -305,6 +314,9 @@ internal fun TestTaskWiring.configureSelection(
                 mapUsable = outlook.mapUsable,
                 fullRun = outlook.fullRun,
                 learnable = scoped.change.classPrefixes,
+                // A map whose classpath files moved, or that records none, is not current: the run
+                // forces, and its capture records them as they are now.
+                ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
             ),
         )
     }

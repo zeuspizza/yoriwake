@@ -11,6 +11,9 @@ import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
+import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
+import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
@@ -212,6 +215,8 @@ internal abstract class ExplainTask : DefaultTask() {
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },
             mapDir, scoped.change, facts,
         )
+        // As the run compares it: this task depends on what builds the classpath.
+        val classpathFiles = classpathFilesRule(mapDir, facts)
         // Through the same helper as the run itself, or this would report a narrower
         // selection for any change to an inline function.
         val widening = widenForInlining(
@@ -221,7 +226,10 @@ internal abstract class ExplainTask : DefaultTask() {
             digestRule(mapDir, bytesAreFresh = true),
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = found.testClasses,
-        )
+        ).withClasspathFiles(
+            classpathFiles,
+            forcedByPaths = (scoped.change.unmappablePaths - found.unreadablePaths).isNotEmpty(),
+        ) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
         reportDigest(widening) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
         // Named in the refusals so it prints and serialises beside every other reason.
         val established = if (widening.forces) {
@@ -256,6 +264,7 @@ internal abstract class ExplainTask : DefaultTask() {
             mapUsable = map.isUsable,
             fullRun = decision.isFullRun,
             learnable = scoped.change.classPrefixes,
+            ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
         )
         writeExplanation(
             mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing,

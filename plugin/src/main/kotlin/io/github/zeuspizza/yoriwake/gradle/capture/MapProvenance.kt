@@ -34,6 +34,7 @@ internal object MapProvenance {
         CoverageDecoder.CONSTANTS_FILE,
         CoverageDecoder.CLASS_DIGESTS_FILE,
         CoverageDecoder.ANNOTATION_DIGESTS_FILE,
+        CoverageDecoder.RESOURCE_DIGESTS_FILE,
         CoverageDecoder.CAPTURE_COMMIT_FILE,
         WorkingTree.SNAPSHOT_FILE,
         AgentContract.MAP_SCHEMA_VERSION_FILE,

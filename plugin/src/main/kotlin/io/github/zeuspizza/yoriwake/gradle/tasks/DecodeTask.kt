@@ -16,6 +16,7 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.develocityRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
+import io.github.zeuspizza.yoriwake.gradle.wiring.pendingClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingStats
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingSnapshot
@@ -92,6 +93,10 @@ internal abstract class DecodeTask : DefaultTask() {
         val develocityDeclined = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         val datedSnapshot = pendingSnapshot(mapDir)
         val startStats = pendingStats(mapDir)
+        // Read once and removed, so a later run never mistakes this run's walk for its own.
+        val classpathFiles = pendingClasspathFiles(mapDir).let { file ->
+            CoverageDecoder.readClasspathFilesFrom(file).also { runCatching { file.delete() } }
+        }
         // First: Develocity ran or chose this run's tests, and nothing of ours acted on it.
         if (develocityDeclined.delete()) {
             marker.delete()
@@ -246,6 +251,9 @@ internal abstract class DecodeTask : DefaultTask() {
                         }
                     }
                 }.getOrNull(),
+                // What the test JVM saw on its classpath, walked before it started; null records none,
+                // and the next selecting run forces until a capture does.
+                classpathFiles = classpathFiles,
                 // Asked only once records were merged, which only a dating capture does. Every path
                 // touched since the start reading is unknown. A start file that is missing, or that
                 // another build has rewritten since, removes the snapshot, and the next run refuses.

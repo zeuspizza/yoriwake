@@ -787,6 +787,47 @@ class CoverageDecoderTest {
         )
     }
 
+    private fun captureClasspathFiles(dir: File, digests: Map<String, String>?, datesTheMap: Boolean) {
+        records(
+            dir, "1",
+            Triple("[class:A]/[method:a()]", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))),
+        )
+        CoverageDecoder.decode(dir, listOf("com.acme"), datesTheMap = datesTheMap, classpathFiles = digests)
+    }
+
+    @Test
+    fun `a full capture records the classpath files, a path with a tab included`(@TempDir dir: File) {
+        val digests = mapOf("app/build/resources/test/a\tb.txt" to "abc", "lib.jar!/META-INF/MANIFEST.MF" to "def")
+
+        captureClasspathFiles(dir, digests, datesTheMap = true)
+
+        assertEquals(digests, CoverageDecoder.readClasspathFiles(dir))
+    }
+
+    @Test
+    fun `a capture that does not date the map leaves the classpath files as the last dating one wrote them`(
+        @TempDir dir: File,
+    ) {
+        captureClasspathFiles(dir, mapOf("a.txt" to "from-the-full-capture"), datesTheMap = true)
+        val before = File(dir, CoverageDecoder.RESOURCE_DIGESTS_FILE).readBytes()
+
+        captureClasspathFiles(dir, mapOf("a.txt" to "from-a-filtered-run"), datesTheMap = false)
+        captureClasspathFiles(dir, null, datesTheMap = false)
+
+        assertTrue(before.contentEquals(File(dir, CoverageDecoder.RESOURCE_DIGESTS_FILE).readBytes()))
+    }
+
+    @Test
+    fun `a dating capture with no walk removes the classpath files, so the next selecting run forces`(
+        @TempDir dir: File,
+    ) {
+        captureClasspathFiles(dir, mapOf("a.txt" to "abc"), datesTheMap = true)
+
+        captureClasspathFiles(dir, null, datesTheMap = true)
+
+        assertNull(CoverageDecoder.readClasspathFiles(dir))
+    }
+
     @Test
     fun `a full capture records the class digests it walked`(@TempDir dir: File) {
         captureDigests(dir, mapOf("com.acme.A" to "abc123", "com.acme.B" to "def456"), datesTheMap = true)
