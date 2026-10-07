@@ -400,6 +400,9 @@ public final class AgentContract {
     /** The test's own coverage holds a changed class. */
     public static final String RULE_REACHES_CHANGE = "reaches-change";
 
+    /** Its own test class changed, and the map holds it as a test of that class. */
+    public static final String RULE_OWN_CLASS_CHANGED = "own-class-changed";
+
     /** The test's own coverage holds a class whose bytes changed with no changed source behind them. */
     public static final String RULE_CHANGED_BYTES = "changed-bytes";
 

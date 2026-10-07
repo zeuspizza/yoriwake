@@ -117,7 +117,7 @@ public final class Selector {
         public enum Reason {
             /** Nothing may be skipped; see {@link Decision#fullRunReason()}. */
             FULL_RUN("full-run"),
-            /** The test's recorded coverage intersects the change. */
+            /** The test's recorded coverage intersects the change, or its own test class changed. */
             REACHES_CHANGE("reaches-change"),
             /**
              * The test ran at or after its JVM first loaded a changed class or read its file, so it
@@ -433,6 +433,14 @@ public final class Selector {
             }
         }
 
+        // Not left to the class's coverage of itself, which JaCoCo records none of for a class it
+        // could not instrument.
+        for (MapReader.Entry test : tests) {
+            if (ofChangedOwnClass(test.testId(), ownTestClasses, changedClassPrefixes)) {
+                selected.add(test.testId());
+            }
+        }
+
         Set<String> sharedJvmOnly = new HashSet<>();
         if (!changedClassPrefixes.isEmpty() || !changedBytes.isEmpty()) {
             Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), changedClassPrefixes, knownTestIds);
@@ -526,6 +534,9 @@ public final class Selector {
             }
             if (intersects(test, changed)) {
                 add(byTest, test.testId(), Rule.REACHES_CHANGE);
+            }
+            if (ofChangedOwnClass(test.testId(), change.ownTestClasses(), changed)) {
+                add(byTest, test.testId(), Rule.OWN_CLASS_CHANGED);
             }
             if (recordsAny(test, bytes)) {
                 add(byTest, test.testId(), Rule.CHANGED_BYTES);
@@ -689,15 +700,40 @@ public final class Selector {
                 continue;
             }
             for (String id : knownTestIds) {
-                String container = classContainerOf(id);
-                String name = container == null ? null : classNameOf(container);
-                if (prefix.equals(name)) {
+                if (prefix.equals(testClassOf(id))) {
                     known.add(prefix);
                     break;
                 }
             }
         }
         return known;
+    }
+
+    /**
+     * Whether the test is one of a changed own test class's, as {@link #testClassOf} names it. A
+     * static nested class is discovered on its own, so its id names {@code Outer$Inner}.
+     */
+    private static boolean ofChangedOwnClass(
+            String testId, Collection<String> ownTestClasses, Collection<String> changedClassPrefixes) {
+        String name = testClassOf(testId);
+        if (name == null) {
+            return false;
+        }
+        for (String prefix : changedClassPrefixes) {
+            if (ownTestClasses.contains(prefix) && (name.equals(prefix) || name.startsWith(prefix + "$"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The class an id's first class segment names, which for a nested class's test is the outer
+     * class; null for an id with no class segment.
+     */
+    private static String testClassOf(String testId) {
+        String container = classContainerOf(testId);
+        return container == null ? null : classNameOf(container);
     }
 
     private static Set<String> notKnownToPass(List<MapReader.Entry> tests) {

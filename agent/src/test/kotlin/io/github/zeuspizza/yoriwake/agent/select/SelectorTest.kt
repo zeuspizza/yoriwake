@@ -61,6 +61,7 @@ class SelectorTest {
         map: MapReader.Result,
         changed: List<String> = emptyList(),
         exempt: List<String> = emptyList(),
+        own: List<String> = exempt,
         unmappable: List<String> = emptyList(),
         discovered: List<String> = emptyList(),
         provable: List<String> = emptyList(),
@@ -70,7 +71,8 @@ class SelectorTest {
     ) = Selector.decide(
         map,
         ChangeSet.of(changed, unmappable).withAbsenceProvable(provable).withUnreadablePaths(unreadable)
-            .withChangedBytes(bytes).withAccountedFor(accounted).withExemptTestClasses(exempt),
+            .withChangedBytes(bytes).withAccountedFor(accounted).withExemptTestClasses(exempt)
+            .withOwnTestClasses(own),
         discovered,
     )
 
@@ -1231,5 +1233,139 @@ class SelectorTest {
         )
 
         assertTrue(decision.includes(placed("com.acme.LaterTest")))
+    }
+
+    // An edited test class runs its known tests by a rule of its own: JaCoCo may have left the class
+    // uninstrumented, and then its tests' coverage holds nothing of it.
+
+    private fun edited(method: String) = "[engine:junit-jupiter]/[class:com.acme.EditedTest]/[method:$method()]"
+
+    /** EditedTest's two tests, LaterTest, then [extra], in one JVM that loaded EditedTest at discovery. */
+    private fun editedThenLater(dir: File, editedCovers: String, vararg extra: Triple<String, String, String>) = map(
+        dir,
+        Triple(edited("a"), "SUCCESSFUL", editedCovers),
+        Triple(edited("b"), "SUCCESSFUL", editedCovers),
+        test("com.acme.LaterTest", "com.acme.Other"),
+        *extra,
+        positions = listOf("j\t2\t${edited("a")}", "j\t3\t${edited("b")}", "j\t4\t${placed("com.acme.LaterTest")}") +
+            extra.mapIndexed { i, (id, _, _) -> "j\t${5 + i}\t$id" },
+        firstTouches = editedTestFirst,
+    )
+
+    @Test
+    fun `an edited test class with no coverage of itself runs its known tests`(@TempDir dir: File) {
+        val decision = decide(
+            editedThenLater(dir, "com.acme.Calc"),
+            changed = listOf("com.acme.EditedTest"),
+            exempt = listOf("com.acme.EditedTest"),
+        )
+
+        assertFalse(decision.isFullRun)
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("a")))
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("b")))
+        assertEquals(Selector.Decision.Reason.SKIPPED, decision.reasonFor(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `an edited test class whose tests recorded it selects as through its coverage alone`(@TempDir dir: File) {
+        val decision = decide(
+            editedThenLater(dir, "com.acme.Calc,com.acme.EditedTest"),
+            changed = listOf("com.acme.EditedTest"),
+            exempt = listOf("com.acme.EditedTest"),
+        )
+
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("a")))
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("b")))
+        assertEquals(Selector.Decision.Reason.SKIPPED, decision.reasonFor(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `an edited test class another class names runs its known tests whatever its JVM recorded`(
+        @TempDir dir: File,
+    ) {
+        // Not exempt, so dated like any class; here nothing recorded touching it at all.
+        val decision = decide(
+            map(
+                dir,
+                Triple(edited("a"), "SUCCESSFUL", "com.acme.Calc"),
+                test("com.acme.LaterTest", "com.acme.Other"),
+                positions = listOf("j\t2\t${edited("a")}", "j\t4\t${placed("com.acme.LaterTest")}"),
+            ),
+            changed = listOf("com.acme.EditedTest"),
+            own = listOf("com.acme.EditedTest"),
+        )
+
+        assertTrue(decision.includes(edited("a")))
+        assertFalse(decision.includes(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `a test added to an edited test class runs as new beside its known ones`(@TempDir dir: File) {
+        val decision = Selector.decide(
+            editedThenLater(dir, "com.acme.Calc"),
+            ChangeSet.of(listOf("com.acme.EditedTest"), emptyList())
+                .withOwnTestClasses(listOf("com.acme.EditedTest"))
+                .withExemptTestClasses(listOf("com.acme.EditedTest")),
+            listOf(edited("a"), edited("b"), edited("c"), placed("com.acme.LaterTest")),
+        )
+
+        assertEquals(Selector.Decision.Reason.NOT_IN_MAP, decision.reasonFor(edited("c")))
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("a")))
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("b")))
+    }
+
+    @Test
+    fun `a nested class's test is a test of the edited outer class`(@TempDir dir: File) {
+        val nested = "[engine:junit-jupiter]/[class:com.acme.EditedTest]/[nested-class:Inner]/[method:t()]"
+        val decision = decide(
+            editedThenLater(dir, "com.acme.Calc", Triple(nested, "SUCCESSFUL", "com.acme.Calc")),
+            changed = listOf("com.acme.EditedTest"),
+            exempt = listOf("com.acme.EditedTest"),
+        )
+
+        assertTrue(decision.includes(nested))
+    }
+
+    @Test
+    fun `a static nested class's test is a test of the edited outer class`(@TempDir dir: File) {
+        // Discovered as a class of its own, so its id names the binary name, not the outer class.
+        val inner = "[engine:junit-jupiter]/[class:com.acme.EditedTest\$Inner]/[method:t()]"
+        val decision = decide(
+            editedThenLater(dir, "com.acme.Calc", Triple(inner, "SUCCESSFUL", "com.acme.Calc")),
+            changed = listOf("com.acme.EditedTest"),
+            exempt = listOf("com.acme.EditedTest"),
+        )
+
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(inner))
+    }
+
+    @Test
+    fun `a test id with no class segment is dated by its class's discovery load as before`(@TempDir dir: File) {
+        val vintage = "[engine:junit-vintage]/[runner:com.acme.EditedTest]/[test:t(com.acme.EditedTest)]"
+        val decision = decide(
+            map(
+                dir,
+                Triple(vintage, "SUCCESSFUL", "com.acme.Calc"),
+                positions = listOf("j\t2\t$vintage"),
+                firstTouches = editedTestFirst,
+            ),
+            changed = listOf("com.acme.EditedTest"),
+            exempt = listOf("com.acme.EditedTest"),
+        )
+
+        assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(vintage))
+    }
+
+    @Test
+    fun `an edited test class beside a path the map cannot see still runs everything`(@TempDir dir: File) {
+        val decision = decide(
+            editedThenLater(dir, "com.acme.Calc"),
+            changed = listOf("com.acme.EditedTest"),
+            exempt = listOf("com.acme.EditedTest"),
+            unmappable = listOf("src/test/resources/fixture.json"),
+        )
+
+        assertTrue(decision.isFullRun)
+        assertEquals(Selector.Decision.FullRunKind.UNMAPPABLE_PATHS, decision.fullRunKind())
     }
 }

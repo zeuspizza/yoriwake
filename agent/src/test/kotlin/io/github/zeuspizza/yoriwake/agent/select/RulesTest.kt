@@ -273,4 +273,39 @@ class RulesTest {
 
         assertNull(decision.rules(), "a daemon-side decide pays for nothing it does not write")
     }
+
+    @Test
+    fun `an edited test class names own-class-changed on its tests`(@TempDir dir: File) {
+        fun editedTestRules(name: String, covered: String) = decide(
+            map(File(dir, name), listOf(id("dev.EditedTest") to covered, id("dev.OtherTest") to "dev.Other")),
+            AgentContract.CHANGED_CLASSES_PROPERTY to "dev.EditedTest",
+            AgentContract.OWN_TEST_CLASSES_PROPERTY to "dev.EditedTest",
+            AgentContract.EXEMPT_TEST_CLASSES_PROPERTY to "dev.EditedTest",
+        )
+
+        val instrumented = editedTestRules("instrumented", "dev.Calc,dev.EditedTest")
+        val uninstrumented = editedTestRules("uninstrumented", "dev.Calc")
+
+        assertEquals("reaches-change,own-class-changed", instrumented.tokens(id("dev.EditedTest")))
+        assertEquals("own-class-changed", uninstrumented.tokens(id("dev.EditedTest")))
+        assertEquals(AgentContract.RULE_NONE, uninstrumented.tokens(id("dev.OtherTest"), Verdict.SKIPPED))
+    }
+
+    @Test
+    fun `own-class-changed needs the class to be both an own test class and changed`(@TempDir dir: File) {
+        val tests = listOf(id("dev.EditedTest") to "dev.Calc,dev.EditedTest")
+
+        val changedNotOwn = decide(
+            map(File(dir, "changed"), tests),
+            AgentContract.CHANGED_CLASSES_PROPERTY to "dev.EditedTest",
+        )
+        val ownNotChanged = decide(
+            map(File(dir, "own"), tests),
+            AgentContract.CHANGED_CLASSES_PROPERTY to "dev.Calc",
+            AgentContract.OWN_TEST_CLASSES_PROPERTY to "dev.EditedTest",
+        )
+
+        assertEquals("reaches-change", changedNotOwn.tokens(id("dev.EditedTest")))
+        assertEquals("reaches-change", ownNotChanged.tokens(id("dev.EditedTest")))
+    }
 }

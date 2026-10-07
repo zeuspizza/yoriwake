@@ -90,6 +90,7 @@ row-rule	engine-runs-everything
 row-rule	none
 row-rule	not-in-map
 row-rule	not-known-to-pass
+row-rule	own-class-changed
 row-rule	reaches-change
 row-rule	shares-jvm-changed-bytes
 row-rule	shares-jvm-changed-class

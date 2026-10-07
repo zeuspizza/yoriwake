@@ -56,7 +56,7 @@ Reasons, one per test:
 
 | Reason | Meaning |
 |---|---|
-| `reaches-change` | its recorded coverage touches a changed class |
+| `reaches-change` | its recorded coverage touches a changed class, or its own test class changed |
 | `shares-jvm-with-change` | it ran at or after the point its test JVM first loaded or executed a changed class, or read its class or source file; see [what coverage does not record](#what-coverage-does-not-record) |
 | `not-known-to-pass` | the map does not record it as having passed, so it runs whatever changed |
 | `not-in-map` | the map has never seen it, so no change could be shown not to reach it |
@@ -153,7 +153,8 @@ these are the rules that keep them selected:
     or runs is out of the agent's sight, so every later test in that JVM runs after any change. So
     does native code loaded or reached from outside the JDK, unless it is a [reviewed native
     library](#native-libraries) loaded by its own class.
-- **An edit to a test class.** A test class is exempt from the rule above when it declares a test
+- **An edit to a test class.** Every test of an edited test class that the map knows runs, whatever
+  its recorded coverage. A test class is exempt from the rule above when it declares a test
   method (JUnit Jupiter's `@Test`, `@RepeatedTest`, `@TestFactory`, `@TestTemplate` or
   `@ParameterizedTest`, JUnit 4's `@Test` or TestNG's `@Test`), the map holds tests of it, and no
   other class or resource of this build names it. An edit to it then selects its own tests and what
@@ -293,15 +294,6 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   (a `git.properties`, a build date or revision stamped into a manifest) can change while every
   tracked source stays the same. A test that asserts on its content is skipped when nothing else
   selects it. Pin such tests.
-- **An edited test class JaCoCo could not instrument.** A test class has no coverage of its own
-  when JaCoCo leaves it uninstrumented: its class files are newer than the JaCoCo release supports
-  (Gradle 8.14 bundles JaCoCo 0.8.13, which cannot read classes compiled for JDK 26 or later), or
-  a method in it grows past the JVM's 64 KiB limit once instrumented ("Method too large"). Edit
-  such a test class and a test in it that the map knows passed can be skipped, even though it now
-  fails. Use a JaCoCo that supports your test JDK (the `jacoco` extension's `toolVersion`; Gradle
-  9.8 bundles 0.8.15, which reads JDK 26 and 27 classes), keep test methods within the limit, or
-  run with `-Pyoriwake.disabled=true` after editing such a class. JaCoCo names each class it could
-  not instrument in the build output.
 - **A nested JUnit launcher the agent cannot tell apart.** A launcher a test starts from the test
   class path itself, not from a class loader of its own, is recognised as nested because the outer
   test plan is still executing, which the agent learns through its JUnit Platform listener. With

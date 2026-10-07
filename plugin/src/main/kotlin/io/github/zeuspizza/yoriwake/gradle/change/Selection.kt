@@ -607,7 +607,7 @@ internal fun scopedChange(
  * that is gone forces too: removing a bean is an annotation change to whatever scanned it.
  *
  * A test class this task runs is exempt, because its own tests are selected anyway: the ones the
- * map holds through their coverage of it, new ones as tests the map has no record of. That is a
+ * map holds by the rule for an edited own test class, new ones as tests the map has no record of. That is a
  * class from [ownTestClasses] that itself declares a test method; a helper, a base class or a
  * nested configuration beside it still forces. Not covered: a test that reads another test
  * class's annotations.
