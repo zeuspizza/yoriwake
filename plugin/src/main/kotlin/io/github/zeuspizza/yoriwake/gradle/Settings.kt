@@ -27,7 +27,6 @@ internal class Settings(lookup: (String) -> String?) {
     val uninstrumentedSeconds: String? = lookup(UNINSTRUMENTED_SECONDS)
 
     val loaded: Boolean = parseFlag(LOADED, lookup(LOADED))
-    val classSelection: Boolean = parseFlag(CLASS_SELECTION, lookup(CLASS_SELECTION))
     val classGranularity: Boolean = parseFlag(CLASS_GRANULARITY, lookup(CLASS_GRANULARITY))
     val counters: String? = lookup(COUNTERS)
     /** Raw, because "present but unparseable" and "never supplied" get different answers. */
@@ -44,7 +43,6 @@ internal class Settings(lookup: (String) -> String?) {
         const val UNINSTRUMENTED_SECONDS = "yoriwake.audit.uninstrumentedSeconds"
 
         const val LOADED = "yoriwake.internal.loaded"
-        const val CLASS_SELECTION = "yoriwake.internal.classSelection"
         const val CLASS_GRANULARITY = "yoriwake.internal.select.classGranularity"
         const val COUNTERS = "yoriwake.internal.counters"
         const val FORCED_SHARE = "yoriwake.internal.payback.forcedShare"

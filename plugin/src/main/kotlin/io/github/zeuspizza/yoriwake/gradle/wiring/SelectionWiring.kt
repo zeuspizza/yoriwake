@@ -91,7 +91,6 @@ internal fun TestTaskWiring.configureSelection(
     project: Project,
     test: Test,
     mapDir: File,
-    effectiveScope: org.gradle.api.provider.Provider<String>,
     buildMemo: BuildMemo?,
 ) {
     if (!settings.select) {
@@ -296,7 +295,6 @@ internal fun TestTaskWiring.configureSelection(
         )
     }
 
-    excludeDeselectedClasses(project, test, mapDir, paths, classpathFacts, effectiveScope)
     refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo)
 }
 
@@ -401,115 +399,6 @@ private fun TestTaskWiring.writeChangeSet(test: Test, file: File, lists: Map<Str
         val reason = "the change set could not be written to $file ($failure)"
         test.logger.lifecycle("[yoriwake] ${test.path}: $reason, so the whole suite runs.")
         refuse(test, RefusalKind.CHANGE_SET_UNREADABLE, reason)
-    }
-}
-
-/**
- * Deselection for non-JUnit-Platform builds through Gradle's own test filter. Excludes, never
- * includes, so a test class the map has never seen still runs.
- */
-private fun TestTaskWiring.excludeDeselectedClasses(
-    project: Project,
-    test: Test,
-    mapDir: File,
-    paths: List<String>,
-    classpathFacts: ClasspathFacts,
-    effectiveScope: org.gradle.api.provider.Provider<String>,
-) {
-    // Off by default: JUnit 4 runner and rule tests run nested tests that take the coverage,
-    // so the outer test's record is incomplete and a failure could be deselected.
-    if (!settings.classSelection) {
-        return
-    }
-    test.doFirst { task ->
-        task as Test
-        // The Platform has the finer in-JVM filter; two selectors on one run would make a
-        // skipped test impossible to attribute.
-        if (task.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions) {
-            return@doFirst
-        }
-        // Switched off by an action that ran before this one: the wiring found the task broken.
-        if (task.systemProperties[SELECT_PROPERTY]?.toString() == "false") {
-            return@doFirst
-        }
-        // A filter the host set is the user's instruction. Gradle unions include patterns, so
-        // adding to them would widen the run, and narrowing an explicit `--tests` surprises.
-        if (task.filter.includePatterns.isNotEmpty() || task.filter.excludePatterns.isNotEmpty()) {
-            task.logger.lifecycle(
-                "[yoriwake] ${task.path} already has a test filter, so selection leaves it alone " +
-                    "and the whole filtered set runs."
-            )
-            return@doFirst
-        }
-
-        val deselected = runCatching {
-            // Recomputed rather than passed between task actions, which the configuration
-            // cache would have to round-trip; it is cheap.
-            val scoped = scopedChange(paths, classpathFacts)
-            val established = establish(
-                { message -> task.logger.lifecycle("[yoriwake] ${task.path}: $message") },
-                mapDir, scoped.change, classpathFacts,
-            )
-            // The same widening, through the same helper, as the property-setting doFirst:
-            // both execution-time sites or neither.
-            val widening = widenForInlining(
-            scoped.change.classPrefixes, classpathFacts, CoverageDecoder.readConstants(mapDir),
-            scoped.change.inlinableSourceChanged,
-            digestRule(mapDir, bytesAreFresh = true),
-            recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
-            ownTestClasses = established.testClasses,
-        )
-            reportDigest(widening) { message ->
-                task.logger.lifecycle("[yoriwake] ${task.path}: $message")
-            }
-            if (widening.forces) {
-                task.logger.lifecycle("[yoriwake] ${task.path}: ${widening.refusal}")
-                return@doFirst
-            }
-            val decision = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(
-                io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir),
-                changeSet(widening.prefixes, paths, scoped, established, widening.changedBytes),
-                emptyList(),
-            )
-            decision.classesWithNothingSelected() to decision.idShapesNotRecognised()
-        }.getOrElse { failure ->
-            // Reading the map is the plugin's problem, never the host build's: a full run
-            // answers every question this selector cannot.
-            task.logger.lifecycle(
-                "[yoriwake] ${task.path}: could not decide a selection (${failure.message}), " +
-                    "so the whole suite runs."
-            )
-            return@doFirst
-        }
-        val (deselectedClasses, unrecognisedIds) = deselected
-
-        if (deselectedClasses.isEmpty()) {
-            // "Nothing was safe to deselect" differs from "an id shape stopped us", which is a
-            // capture gap somebody can close.
-            if (unrecognisedIds.isNotEmpty()) {
-                task.logger.lifecycle(
-                    "[yoriwake] ${task.path}: ${unrecognisedIds.size} known test id(s) carry no " +
-                        "class segment, so class-granular selection cannot attribute them and " +
-                        "the whole suite runs. First: ${unrecognisedIds.first()}"
-                )
-            } else {
-                task.logger.lifecycle(
-                    "[yoriwake] ${task.path} does not run on the JUnit Platform; nothing could be " +
-                        "deselected at class granularity, so the whole suite runs."
-                )
-            }
-            return@doFirst
-        }
-
-        deselectedClasses.sorted().forEach { task.filter.excludeTestsMatching(it) }
-        task.logger.warn(
-            "[yoriwake] ${task.path}: class-granular selection is EXPERIMENTAL and known to skip " +
-                "failing tests on JUnit 4 suites whose tests run other tests. Do not rely on it."
-        )
-        task.logger.lifecycle(
-            "[yoriwake] ${task.path} does not run on the JUnit Platform, so selection is applied at " +
-                "class granularity through Gradle's filter: ${deselectedClasses.size} test classes excluded."
-        )
     }
 }
 

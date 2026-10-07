@@ -56,12 +56,6 @@ class SettingsTest {
     }
 
     @Test
-    fun `an internal flag is read under the internal namespace only`() {
-        assertFalse(settings("yoriwake.classSelection" to "").classSelection)
-        assertTrue(settings("yoriwake.internal.classSelection" to "").classSelection)
-    }
-
-    @Test
     fun `alwaysRun is split on commas and blanks are dropped`() {
         assertEquals(listOf("a.B", "c.*"), settings(Settings.ALWAYS_RUN to " a.B, ,c.* ").alwaysRun)
     }

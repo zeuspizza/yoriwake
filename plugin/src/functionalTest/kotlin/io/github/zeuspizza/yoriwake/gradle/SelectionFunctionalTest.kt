@@ -43,7 +43,7 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `class-granular selection is off unless explicitly asked for`(@TempDir dir: File) {
+    fun `a plain JUnit 4 build runs every test under selection`(@TempDir dir: File) {
         // The JUnit 4 capture path mis-attributes coverage for tests that run other tests, so the
         // safe default runs everything.
         build(dir, "build.gradle.kts" to junit4Build, oneClass, betaClass, *junit4Tests)
@@ -69,84 +69,7 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertEquals(
             setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"),
             ranTests(dir),
-            "without -Pyoriwake.internal.classSelection a non-Platform build must run everything",
-        )
-    }
-
-    @Test
-    fun `a plain JUnit 4 build deselects at class granularity`(@TempDir dir: File) {
-        // Deselection is a JUnit Platform PostDiscoveryFilter, which a JUnit 4 build never
-        // consults. Gradle's own filter works for every framework, so selection here is
-        // class-granular. One JVM per class, because JUnit 4's class order is the file system's,
-        // and in a shared JVM a change selects every class that ran after its class was loaded.
-        build(
-            dir,
-            "build.gradle.kts" to junit4Build.replace("tasks.test { useJUnit() }", "tasks.test { useJUnit(); forkEvery = 1 }"),
-            oneClass, betaClass, *junit4Tests,
-        )
-        ignoreBuildOutputs(dir)
-        git(dir, "init")
-        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit",
-            "--allow-empty", "-m", "base")
-        git(dir, "add", ".")
-        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
-
-        runner(dir, "test").build()
-        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
-
-        File(dir, "build/test-results").deleteRecursively()
-        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
-            """
-            package dev.sample;
-            public class Alpha { public int twice(int n) { return n + n; } }
-            """.trimIndent()
-        )
-
-        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.internal.classSelection")
-            .build().output
-
-        assertContains(output, "class granularity")
-        assertEquals(setOf("dev.sample.AlphaTest"), ranTests(dir))
-    }
-
-    @Test
-    fun `a JUnit 4 test class the map has never seen still runs`(@TempDir dir: File) {
-        // The safety case for class-granular selection: the filter excludes what the map says runs
-        // nothing and never includes the complement, so a test class added since capture survives.
-        build(dir, "build.gradle.kts" to junit4Build, oneClass, betaClass, *junit4Tests)
-        ignoreBuildOutputs(dir)
-        git(dir, "init")
-        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit",
-            "--allow-empty", "-m", "base")
-        git(dir, "add", ".")
-        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
-
-        runner(dir, "test").build()
-
-        File(dir, "build/test-results").deleteRecursively()
-        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
-            """
-            package dev.sample;
-            public class Alpha { public int twice(int n) { return n + n; } }
-            """.trimIndent()
-        )
-        // Added after the map was built, so nothing in it mentions this class.
-        File(dir, "src/test/java/dev/sample/GammaTest.java").writeText(
-            """
-            package dev.sample;
-            import org.junit.Test;
-            import static org.junit.Assert.assertEquals;
-            public class GammaTest {
-                @Test public void passes() { assertEquals(2, new Alpha().twice(1)); }
-            }
-            """.trimIndent()
-        )
-
-        runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.internal.classSelection").build()
-
-        assertTrue(
-            "dev.sample.GammaTest" in ranTests(dir),
-            "a test class absent from the map must never be excluded; ran ${ranTests(dir)}",
+            "a build off the JUnit Platform must run everything",
         )
     }
 
@@ -542,46 +465,6 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertContains(explained, ":test would run everything")
         val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
         assertContains(File(mapDir, "explain.json").readText(), """"refusalKind": "constant-changed"""")
-    }
-
-    /**
-     * Both execution-time call sites run the bytes comparison, or they drift apart.
-     *
-     * A rule that lives at one call site answers the narrower question at the other, and a class
-     * rewritten after compilation could then be deselected there.
-     *
-     * A JUnit 4 build reaches both -- the property-setting `doFirst` and the class-granular one --
-     * where a Platform build returns from the second before it starts. Each site reports its
-     * comparison, so a site that stopped running it prints one line instead of two.
-     */
-    @Test
-    fun `the digest rule runs at both execution-time call sites`(@TempDir dir: File) {
-        build(dir, "build.gradle.kts" to junit4Build, oneClass, betaClass, *junit4Tests)
-        ignoreBuildOutputs(dir)
-        git(dir, "init")
-        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit",
-            "--allow-empty", "-m", "base")
-        git(dir, "add", ".")
-        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
-
-        runner(dir, "test").build()
-        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
-            """
-            package dev.sample;
-            public class Alpha { public int twice(int n) { return n + n; } }
-            """.trimIndent()
-        )
-
-        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.internal.classSelection")
-            .build().output
-
-        assertEquals(
-            2,
-            output.lines().count {
-                it.contains("[yoriwake]") && it.contains(" compiled classes against ")
-            },
-            "the comparison ran at one execution-time site and not the other: $output",
-        )
     }
 
     /** BetaTest, pinned in its own source with a tag that needs nothing on the classpath. */
@@ -1256,5 +1139,170 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertFalse(before.contentEquals(callerClass.readBytes()), "Caller was not recompiled with the new body")
         assertContains(output, "inlined the changed sources")
         assertTrue("dev.demokt.CallerTest" in ranTests(dir), "CallerTest executes the inlined body; ran ${ranTests(dir)}")
+    }
+
+    // A capture under a method-level framework filter dates the map without the method it left out.
+    // The next unfiltered selection must still run that method, though the map holds every other
+    // test of its class. One JVM per class, so no shared-JVM rule selects BetaTest on its own.
+
+    private fun filteredBuild(dependencies: String, framework: String) = """
+        plugins {
+            java
+            jacoco
+            id("io.github.zeuspizza.yoriwake")
+        }
+        repositories { mavenCentral() }
+        dependencies {
+            $dependencies
+        }
+        tasks.test { $framework; forkEvery = 1 }
+    """.trimIndent()
+
+    /** `class#method` of every test the last build ran. */
+    private fun ranMethods(dir: File): Set<String> =
+        File(dir, "build/test-results/test").listFiles { f: File -> f.name.endsWith(".xml") }.orEmpty()
+            .flatMap { file ->
+                Regex("""<testcase name="([^"(]+)(?:\(\))?" classname="([^"]+)"""")
+                    .findAll(file.readText()).map { "${it.groupValues[2]}#${it.groupValues[1]}" }
+            }
+            .toSet()
+
+    private fun mapTestIds(dir: File): List<String> {
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        return File(mapDir, "coverage.tsv").readLines().map { it.split("\t").last() }
+    }
+
+    /**
+     * Captures whole, then under `-Pquick`, which leaves `BetaTest.slow` out; then changes Alpha
+     * and selects with [selectArgs]. Returns what the selection ran.
+     */
+    private fun methodLeftOutBySelection(
+        dir: File,
+        buildScript: String,
+        vararg sources: Pair<String, String>,
+        selectArgs: List<String>,
+    ): Set<String> {
+        build(dir, "build.gradle.kts" to buildScript, oneClass, betaClass, *sources)
+        committed(dir)
+        runner(dir, "test").build()
+        assertTrue("dev.sample.BetaTest#slow" in ranMethods(dir), "the whole capture ran ${ranMethods(dir)}")
+
+        changeBeta(dir)
+        commit(dir, "a change")
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pquick").build()
+        assertEquals(setOf("dev.sample.AlphaTest#passes", "dev.sample.BetaTest#fast"), ranMethods(dir))
+        assertTrue(mapTestIds(dir).none { "slow" in it }, "the filtered capture kept BetaTest.slow in the map")
+        assertTrue(mapTestIds(dir).any { "fast" in it }, "the filtered capture lost BetaTest.fast")
+
+        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
+            """
+            package dev.sample;
+            public class Alpha { public int twice(int n) { return n + n; } }
+            """.trimIndent()
+        )
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.select", *selectArgs.toTypedArray()).build()
+        return ranMethods(dir)
+    }
+
+    private val alphaJUnit4 = "src/test/java/dev/sample/AlphaTest.java" to """
+        package dev.sample;
+        import org.junit.Test;
+        import static org.junit.Assert.assertEquals;
+        public class AlphaTest {
+            @Test public void passes() { assertEquals(2, new Alpha().twice(1)); }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `a method a category filter left out of the capture runs on the next selection`(@TempDir dir: File) {
+        val ran = methodLeftOutBySelection(
+            dir,
+            filteredBuild(
+                """testImplementation("junit:junit:4.13.2")""",
+                "useJUnit { if (project.hasProperty(\"quick\")) excludeCategories(\"dev.sample.Slow\") }",
+            ),
+            alphaJUnit4,
+            "src/test/java/dev/sample/Slow.java" to "package dev.sample;\npublic interface Slow {}",
+            "src/test/java/dev/sample/BetaTest.java" to """
+                package dev.sample;
+                import org.junit.Test;
+                import org.junit.experimental.categories.Category;
+                import static org.junit.Assert.assertEquals;
+                public class BetaTest {
+                    @Test public void fast() { assertEquals(3, new Beta().thrice(1)); }
+                    @Category(Slow.class) @Test public void slow() { assertEquals(6, new Beta().thrice(2)); }
+                }
+            """.trimIndent(),
+            selectArgs = listOf("-Pyoriwake.internal.classSelection"),
+        )
+
+        assertTrue("dev.sample.BetaTest#slow" in ran, "ran $ran")
+    }
+
+    @Test
+    fun `a method a group filter left out of the capture runs on the next selection`(@TempDir dir: File) {
+        val ran = methodLeftOutBySelection(
+            dir,
+            filteredBuild(
+                """testImplementation("org.testng:testng:7.10.2")""",
+                "useTestNG { if (project.hasProperty(\"quick\")) excludeGroups(\"slow\") }",
+            ),
+            "src/test/java/dev/sample/AlphaTest.java" to """
+                package dev.sample;
+                import org.testng.annotations.Test;
+                import static org.testng.Assert.assertEquals;
+                public class AlphaTest {
+                    @Test public void passes() { assertEquals(new Alpha().twice(1), 2); }
+                }
+            """.trimIndent(),
+            "src/test/java/dev/sample/BetaTest.java" to """
+                package dev.sample;
+                import org.testng.annotations.Test;
+                import static org.testng.Assert.assertEquals;
+                public class BetaTest {
+                    @Test public void fast() { assertEquals(new Beta().thrice(1), 3); }
+                    @Test(groups = "slow") public void slow() { assertEquals(new Beta().thrice(2), 6); }
+                }
+            """.trimIndent(),
+            selectArgs = listOf("-Pyoriwake.internal.classSelection"),
+        )
+
+        assertTrue("dev.sample.BetaTest#slow" in ran, "ran $ran")
+    }
+
+    @Test
+    fun `a method a tag filter left out of the capture runs on the next selection`(@TempDir dir: File) {
+        val ran = methodLeftOutBySelection(
+            dir,
+            filteredBuild(
+                """testImplementation(platform("org.junit:junit-bom:5.11.4"))
+            testImplementation("org.junit.jupiter:junit-jupiter")
+            testRuntimeOnly("org.junit.platform:junit-platform-launcher")""",
+                "useJUnitPlatform { if (project.hasProperty(\"quick\")) excludeTags(\"slow\") }",
+            ),
+            "src/test/java/dev/sample/AlphaTest.java" to """
+                package dev.sample;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class AlphaTest {
+                    @Test void passes() { assertEquals(2, new Alpha().twice(1)); }
+                }
+            """.trimIndent(),
+            "src/test/java/dev/sample/BetaTest.java" to """
+                package dev.sample;
+                import org.junit.jupiter.api.*;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class BetaTest {
+                    @Test void fast() { assertEquals(3, new Beta().thrice(1)); }
+                    @Tag("slow") @Test void slow() { assertEquals(6, new Beta().thrice(2)); }
+                }
+            """.trimIndent(),
+            selectArgs = listOf("-Pyoriwake.internal.classSelection"),
+        )
+
+        assertTrue("dev.sample.BetaTest#slow" in ran, "ran $ran")
+        assertEquals("not-in-map", decisionReasons(dir).filterKeys { "slow" in it }.values.single().lowercase().replace('_', '-'))
     }
 }

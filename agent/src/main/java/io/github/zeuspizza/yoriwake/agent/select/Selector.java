@@ -184,14 +184,6 @@ public final class Selector {
             return subtreeReason(testId);
         }
 
-        /**
-         * The same decision for a leaf container (a test template or dynamic-test factory), judged
-         * on its whole subtree because capture records the invocations beneath it.
-         */
-        public boolean includesSubtree(String containerId) {
-            return subtreeReason(containerId) != Reason.SKIPPED;
-        }
-
         /** Which rule decided a leaf container. */
         public Reason subtreeReason(String containerId) {
             if (isFullRun()) {
@@ -221,53 +213,6 @@ public final class Selector {
                 }
             }
             return found;
-        }
-
-        /**
-         * Test classes the map knows and this decision runs nothing from.
-         *
-         * <p>For builds not on the JUnit Platform, reduced to class names for Gradle's test filter.
-         * Deselected classes, never selected ones: excluding these keeps a class the map has never
-         * seen running. Empty for a full run.
-         */
-        public Set<String> classesWithNothingSelected() {
-            if (isFullRun()) {
-                return Collections.emptySet();
-            }
-            Map<String, String> classNameByContainer = new HashMap<>();
-            for (String known : knownTestIds) {
-                String container = classContainerOf(known);
-                if (container == null) {
-                    // An id with no class segment refuses the whole selection, not just itself: its
-                    // coverage (e.g. a JUnit 4 runner's inner test) may belong to a parseable class.
-                    return Collections.emptySet();
-                }
-                classNameByContainer.put(container, classNameOf(container));
-            }
-            Set<String> deselected = new HashSet<>();
-            for (Map.Entry<String, String> entry : classNameByContainer.entrySet()) {
-                if (entry.getValue() != null && !includesSubtree(entry.getKey())) {
-                    deselected.add(entry.getValue());
-                }
-            }
-            return deselected;
-        }
-
-        /**
-         * Known test ids without a class segment, so the class-granularity refusal can be reported.
-         * Empty for a full run, so another cause is never blamed on these ids.
-         */
-        public List<String> idShapesNotRecognised() {
-            if (isFullRun()) {
-                return Collections.emptyList();
-            }
-            List<String> unrecognised = new ArrayList<>();
-            for (String known : knownTestIds) {
-                if (classContainerOf(known) == null) {
-                    unrecognised.add(known);
-                }
-            }
-            return unrecognised;
         }
 
         /** Whether this test runs; delegates so it cannot drift from the rule the filter applies. */
