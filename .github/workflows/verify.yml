@@ -2,20 +2,32 @@ name: verify
 
 # Builds and tests the plugin, then checks the thing a local run cannot: that a coverage map built
 # on one machine selects correctly on another, from a cold checkout.
+# A change only to Markdown or docs starts nothing, except docs/contract.md: the agent's tests
+# check its constants against that file.
 on:
   push:
     branches: [main]
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md']
   pull_request:
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md']
   workflow_dispatch:
+
+# A newer push to a pull request cancels its older run. Every push to main runs on its own, so no
+# merge goes unchecked.
+concurrency:
+  group: verify-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 # Read-only, no secrets, and triggered by pull_request rather than pull_request_target, so a
 # fork's code cannot reach anything.
 permissions:
   contents: read
 
+# The build in three parallel jobs, split by task: together they run everything `./gradlew build`
+# runs, and the slowest functional suite sets the time.
 jobs:
   build:
-    name: build and test on linux
+    name: unit and agent suites
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,8 +36,32 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew build --console=plain
+      - run: ./gradlew build -x functionalTest -x functionalTestGradle9 --console=plain
       - run: python3 .github/test_ci.py
+
+  functional:
+    name: functional on Gradle 8.14
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 --console=plain
+
+  functional-gradle9:
+    name: functional on Gradle 9
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :plugin:functionalTestGradle9 --console=plain
 
   capture:
     name: build a map
