@@ -58,11 +58,12 @@ public final class TouchRecorder implements CaptureSession.Touches {
             instrumentation.addTransformer(new LoadObserver(this));
             // Loads what the definition and native sinks need, without recording anything.
             calledFromJdk();
+            JdkCode.isJdk(java.util.function.Function.identity().getClass());
             nameIn(new byte[0]);
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
                     this::childProcess, this::nativeCode, this::library);
-            incomplete = hooks.reads;
+            incomplete = hooks.reads != null ? hooks.reads : JdkCode.imageAltered();
             lookupsIncomplete = hooks.lookups != null ? hooks.lookups : nativeAgent();
         } catch (Throwable t) {
             incomplete = "could not observe class loading: " + t;
@@ -163,6 +164,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             if (name == null) {
                 touch(AgentContract.TOUCH_ALL, UNNAMED);
             } else {
+                JdkCode.projectDefined(name.replace('/', '.'));
                 touchNamed(AgentContract.TOUCH_DEFINED, name.replace('/', '.'));
             }
         } catch (Throwable t) {
@@ -218,8 +220,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
         try {
             Object[] pair = (Object[]) loaded;
             Class<?> caller = (Class<?>) pair[0];
-            ClassLoader loader = caller == null ? null : caller.getClassLoader();
-            if (caller != null && (loader == null || loader == ClassLoader.getPlatformClassLoader())) {
+            if (caller != null && JdkCode.isJdk(caller)) {
                 // A library the JDK loads for itself.
                 return;
             }
@@ -260,7 +261,6 @@ public final class TouchRecorder implements CaptureSession.Touches {
      */
     static boolean calledFromJdk() {
         try {
-            ClassLoader platform = ClassLoader.getPlatformClassLoader();
             return StackWalker.getInstance(java.util.EnumSet.of(StackWalker.Option.RETAIN_CLASS_REFERENCE,
                     StackWalker.Option.SHOW_HIDDEN_FRAMES)).walk(frames -> {
                 Class<?> hooked = null;
@@ -270,9 +270,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
                         if (!frame.getName().startsWith(AGENT_PACKAGE)) {
                             hooked = frame;
                         }
-                    } else if (frame != hooked && !invokesForAnother(frame.getName())) {
-                        ClassLoader loader = frame.getClassLoader();
-                        return loader == null || loader == platform;
+                    } else if (frame != hooked && !passesOver(frame)) {
+                        return JdkCode.isJdk(frame);
                     }
                 }
                 return false;
@@ -280,6 +279,14 @@ public final class TouchRecorder implements CaptureSession.Touches {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /**
+     * A frame that calls on another's behalf, by its name and by being what its name says: a class
+     * that only carries such a name is a caller like any other.
+     */
+    static boolean passesOver(Class<?> frame) {
+        return invokesForAnother(frame.getName()) && JdkCode.callsForAnother(frame);
     }
 
     /**
