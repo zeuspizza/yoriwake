@@ -17,56 +17,23 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
-- A run forced by an untracked file in the source tree now names it, and says whether it changed
-  during the last capture build, lies untracked in a source directory, or is otherwise untracked,
-  on the console and in `explain.json` (`forcingPathOrigins`). A file only tests write and no test
-  reads gets the remedy: write it into the build directory. What runs is unchanged. **Your map:**
-  left alone; gains `capture-moved` on its next dating capture.
-
-- A JUnit 4 or TestNG task off the JUnit Platform now says on a selecting run that it runs every
-  test. Before, it said selection was class-granular and that coverage was captured either way;
-  neither was so. **Your map:** left alone.
+- A run forced by an untracked file in the source tree names the file and where it came from, on
+  the console and in `explain.json`. Map: left alone.
+- A JUnit 4 or TestNG task off the JUnit Platform says on a selecting run that it runs every test.
+  Map: left alone.
 
 ### Fixed
 
-- A test task on which Develocity Test Distribution or Predictive Test Selection is enabled is now
-  declined: yoriwake neither selects nor records there, attaches no agent, leaves the host's JaCoCo
-  switched on and the map exactly as it was, under `develocity-test-distribution`,
-  `develocity-test-selection` or `develocity-undetermined`. Before, Test Distribution recorded part
-  of the suite's coverage into the map, and Predictive Test Selection could leave out a test
-  yoriwake kept. **Your map:** left alone.
-
-- A pull request no longer narrows its checks from a map it could have written itself, on a run
-  given `-Pyoriwake.trustedMaps=<file>`: a map narrows there only when the file lists its exact
-  digest, as a run on the default branch recorded it. Otherwise the run executes every test as
-  `map-unverified` or `map-untrusted`, clears the map and records a new one. Every recording writes
-  the digest to `map-digest`. Without the flag nothing changes; the reference's "Who can write the
-  map you restore" says what the check covers and what it cannot. **Your map:** left alone; gains
-  `map-digest` on its next recording.
-
-- A filtered (`--tests`, IDE runs, a build-script filter), fail-fast or interrupted run no longer
-  updates the map. Before, it merged its records without moving the map's commit, so a later revert
-  of what it saw could skip a test. It keeps only the outcomes of the tests it saw fail or skip. A capture during
-  which HEAD or its reflog moves, or a tracked file is touched, is caught too: HEAD and the tree are
-  read before compilation, and a path touched during the capture stays in the change set until the
-  next one. A file the tests create outside the build directory now forces a full run on a fresh
-  checkout, such as a CI runner's. **Your map:** discarded. A map written by 0.1.0 is rebuilt by the
-  first full run of each task.
-- An edited test class that JaCoCo could not instrument (a method over the JVM's 64 KiB limit once
-  instrumented, or class files newer than the JaCoCo release reads) now runs every test of it the
-  map knows; before, a test the edit made fail could be skipped. Decision records name the rule
-  `own-class-changed`. **Your map:** left alone.
-
-- A native library load, a hidden-class definition or a foreign-function call made by your own
-  code on the test JVM's boot class path (`-Xbootclasspath/a`, a `Boot-Class-Path` agent jar, or
-  `appendToBootstrapClassLoaderSearch`, as Mockito's inline mock maker does) is now recorded.
-  Before, every class the bootstrap or platform loader defined counted as the JDK's own, so a test
-  that depended on what such a class did could be skipped. Now only a class the runtime image holds
-  in a `java.*` or `jdk.*` module does. A test JVM that patches a JDK module (`--patch-module`) or
-  upgrades one (`--upgrade-module-path`), or whose own arguments cannot be read, counts every class
-  touched and narrows nothing. **Your map:** discarded with the same rebuild as the map format
-  version 7 this release already carries: a map written by 0.1.0 is rebuilt by the first full run
-  of each task.
+- A test task with Develocity Test Distribution or Predictive Test Selection enabled is declined,
+  its map left as it was. Map: left alone.
+- With `-Pyoriwake.trustedMaps=<file>`, a map narrows only when the file lists its digest. Map:
+  left alone; gains `map-digest`.
+- A filtered, fail-fast or interrupted run no longer updates the map, so a later revert cannot skip
+  a test. Map: discarded; rebuilt by the first full run of each task.
+- An edited test class JaCoCo could not instrument runs every test of it the map knows. Map: left
+  alone.
+- Native loads, class definitions and foreign calls by your own code on the boot class path are
+  recorded. Map: discarded, with the same rebuild.
 
 ## [0.1.0] - 2026-10-04
 
