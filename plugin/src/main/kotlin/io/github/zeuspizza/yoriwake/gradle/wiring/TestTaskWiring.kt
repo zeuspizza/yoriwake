@@ -21,6 +21,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -195,6 +196,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val recording = settings.loaded
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         test.systemProperty(RECORDS_DIR_PROPERTY, recordsDir.absolutePath)
+        // First, so its action runs last: after the selecting action has decided whether this run
+        // captures, and with nothing between it and the test JVM.
+        recordClasspathFiles(project, test, mapDir, selecting, buildMemo)
         observeWorkingTree(project, test, mapDir, selecting, buildMemo, startReading(project, buildMemo))
         discardPreviousRecords(test, recordsDir)
 
@@ -345,6 +349,41 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
             marker.parentFile.mkdirs()
             marker.writeText("ran")
+        }
+    }
+
+    /**
+     * Digests the build-produced files on the test classpath as the test JVM is about to see them,
+     * for the decode to write beside the map; see [ClasspathFiles]. Before the JVM starts, so a file
+     * a test writes into a classpath directory is never recorded. A selecting run that narrows
+     * captures nothing, so it walks nothing.
+     */
+    private fun recordClasspathFiles(
+        project: Project,
+        test: Test,
+        mapDir: File,
+        selecting: Boolean,
+        buildMemo: BuildMemo?,
+    ) {
+        val pending = pendingClasspathFiles(mapDir)
+        val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
+        val classpath = test.classpath
+        val buildDirs = projectFacts(project, buildMemo).buildDirs.values.toList()
+        val rootDir = project.rootDir
+        test.doFirst {
+            pending.delete()
+            if (declinedUnderDevelocity(test)) return@doFirst
+            if (selecting && !fullRunMarker.isFile) return@doFirst
+            val walk = runCatching { ClasspathFiles.walk(classpath.files, buildDirs, rootDir) }
+                .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
+            when (walk) {
+                is ClasspathFiles.Walk.Found ->
+                    runCatching { CoverageDecoder.writeClasspathFilesTo(pending, walk.digests) }
+                // No table: the next selecting run forces as unrecorded and captures again.
+                is ClasspathFiles.Walk.Refused -> test.logger.info(
+                    "[yoriwake] ${test.path}: no classpath file digests recorded (${walk.reason})"
+                )
+            }
         }
     }
 
@@ -738,6 +777,9 @@ internal fun pendingHead(mapDir: File) = File(mapDir, CaptureStart.PENDING_FILE)
  * [WorkingTree.startStats].
  */
 internal fun pendingStats(mapDir: File) = File(mapDir.parentFile.parentFile, WorkingTree.STATS_PENDING_FILE)
+
+/** The classpath files where the capture started; see [ClasspathFiles]. */
+internal fun pendingClasspathFiles(mapDir: File) = File(mapDir, CoverageDecoder.RESOURCE_DIGESTS_FILE + ".pending")
 
 /** The tree where the capture started; see [WorkingTree.startSnapshot]. */
 internal fun pendingSnapshot(mapDir: File) = File(mapDir, WorkingTree.SNAPSHOT_FILE + ".dated")

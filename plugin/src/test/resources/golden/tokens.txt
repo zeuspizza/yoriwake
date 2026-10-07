@@ -63,6 +63,8 @@ refusal-kind	annotations-unrecorded
 refusal-kind	bytes-unrecorded
 refusal-kind	change-set-stale
 refusal-kind	change-set-unreadable
+refusal-kind	classpath-files-changed
+refusal-kind	classpath-files-unrecorded
 refusal-kind	constant-changed
 refusal-kind	constant-unrecorded
 refusal-kind	develocity-test-distribution

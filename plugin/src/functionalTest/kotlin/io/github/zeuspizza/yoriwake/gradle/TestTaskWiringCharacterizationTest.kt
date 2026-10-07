@@ -237,9 +237,11 @@ class TestTaskWiringCharacterizationTest {
             #7 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/capture-head.pending
             #8 Execute doFirst {} action
-              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+              +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
             #9 Execute doFirst {} action
-            #10 Execute executeTests
+              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+            #10 Execute doFirst {} action
+            #11 Execute executeTests
         """.trimIndent()
         assertEquals(expected, captureActions.trimEnd())
     }
@@ -288,8 +290,9 @@ class TestTaskWiringCharacterizationTest {
             #9 Execute doFirst {} action
             #10 Execute doFirst {} action
             #11 Execute doFirst {} action
+            #12 Execute doFirst {} action
               -file build/jacoco/test.exec
-            #12 Execute executeTests
+            #13 Execute executeTests
         """.trimIndent()
         assertEquals(expected, selectActions.trimEnd())
     }

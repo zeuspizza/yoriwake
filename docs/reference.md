@@ -20,10 +20,13 @@ guess.
   selects the tests that read it. Build state does not: `.gradle/`, `.kotlin/`, the build
   directories of this build's projects, and a `build/` directory beside any other Gradle build
   script (`buildSrc`, an included build, a project a TestKit test wrote). A change reaches a test
-  that reads such a file through the tracked sources that produce it. A file put there by hand,
-  which no tracked source produces, is never seen as a change, and neither is a change to a file a
-  build step generates there from git state, the clock or the environment (a `git.properties`, a
-  build date or revision in a manifest).
+  that reads such a file through the tracked sources that produce it. A non-class file the build
+  put on a test task's runtime classpath (a resource, an entry of one of your own jars) is the
+  exception: it counts by content, compared with the capture's just before the tests start, so one
+  generated from git state, the clock or the environment (a `git.properties`, a build date or
+  revision in a manifest) runs everything when it changed; see [Generated files on the test
+  classpath](#generated-files-on-the-test-classpath). A build-directory file off the classpath,
+  put there by hand or by a build step, is never seen as a change.
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
   now and always runs one the map has never seen.
@@ -100,6 +103,12 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - compiled bytes that changed with no source change, in a class no test executed
   (`no-coverage-for-changed-bytes`), or a map holding no digest of the compiled classes to compare
   against (`bytes-unrecorded`);
+- a non-class file the build produced on the test runtime classpath whose content differs from
+  the capture's, with no tracked change behind it (`classpath-files-changed`), or a map that
+  records no such digests (`classpath-files-unrecorded`, once: the forced run records them, unless
+  the classpath holds over 200,000 such files, which are then never recorded). The
+  run names up to five files; see [Generated files on the test
+  classpath](#generated-files-on-the-test-classpath);
 - a change touching startup coverage, which no single test owns;
 - an empty change set, which cannot be told apart from not having one;
 - git could not report a change set, or no base could be resolved;
@@ -156,6 +165,35 @@ everything, and names it, one line per kind:
 - **Untracked** (`untracked`): any other untracked or ignored file; it counts by content.
 
 A file HEAD tracks gets no line: the run cannot tell a test's write from your edit.
+
+### Generated files on the test classpath
+
+Every non-class file the build produced on a test task's runtime classpath counts by content: each
+file of a resource or output directory under the root or a build directory, and each entry of one
+of your own jars (never the jar whole, so a rebuild that only moves entry timestamps changes
+nothing). The capture records them just before its tests start, and a selecting run compares them
+at the same point and runs everything when one changed, appeared or is gone, naming it
+(`classpath-files-changed`). Dependency jars are the classpath rule's. A file a test writes into
+such a directory is not there when a fresh checkout's tests start; where the build directory
+survives between runs, one a test rewrites with new content each run forces every selecting run,
+so have the test write elsewhere in the build directory.
+
+A build that writes the commit, a tag or the time into such a file therefore runs everything on
+every selecting run where that value moved: a `git.properties` from `gradle-git-properties`, or a
+`Build-Date`, `Build-Revision` or `Implementation-Version` with a commit in your own jar's
+manifest that another module's tests load. That is the point of the rule: a test may read the
+value, and nothing records whether it does. To keep such builds narrowing, write those values only
+in release builds, for example behind a property:
+
+```kotlin
+val release = providers.gradleProperty("release").isPresent
+tasks.jar {
+    if (release) manifest { attributes("Build-Date" to java.time.Instant.now().toString()) }
+}
+```
+
+and apply `gradle-git-properties`, or its task, the same way. A test that asserts on such a value
+then needs the release build to see it.
 
 ## What coverage does not record
 
@@ -334,11 +372,12 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   - a class inside a dependency jar that names one of your test classes. The JVM resolves such a
     reference without a call the agent can see, and the check that nothing else names a test class
     searches this build's own classes and jars and every resource, not the classes of dependencies.
-- **Files a build step generates from outside the sources.** A file under a build directory is
-  build state and never a change, so one generated from git state, the clock or the environment
-  (a `git.properties`, a build date or revision stamped into a manifest) can change while every
-  tracked source stays the same. A test that asserts on its content is skipped when nothing else
-  selects it. Pin such tests.
+- **Build output a test reads by path.** A file under a build directory that is not on the test
+  runtime classpath, such as a fixture under `build/` a test opens with `File`, is build state and
+  never a change, so one generated from git state, the clock or the environment can change while
+  every tracked source stays the same. A test that asserts on its content is skipped when nothing
+  else selects it. Pin such tests, or put the file on the test classpath, where it [counts by
+  content](#generated-files-on-the-test-classpath).
 - **Build steps that write into the working tree.** A file outside the build directories that a
   build step writes during a capture, such as a generator writing into `src/`, was touched while the
   tests ran, so it counts as changed on every selecting run until a capture in which nothing writes

@@ -95,6 +95,13 @@ internal object CoverageDecoder {
      */
     const val ANNOTATION_DIGESTS_FILE = "annotation-digests"
 
+    /**
+     * `path<TAB>sha256` for every non-class file the build produced on the test runtime classpath,
+     * the path escaped as [Tsv] escapes a field; see `ClasspathFiles`. Absent or torn forces, so no
+     * MAP_SCHEMA_VERSION bump, as for the tables above.
+     */
+    const val RESOURCE_DIGESTS_FILE = "resource-digests"
+
     /** The commit the map was last captured at. Absent means "unknown", never "current". */
     const val CAPTURE_COMMIT_FILE = "capture-commit"
 
@@ -154,6 +161,8 @@ internal object CoverageDecoder {
         classDigests: Map<String, String>? = null,
         /** See [ANNOTATION_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
         annotationDigests: Map<String, String>? = null,
+        /** See [RESOURCE_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
+        classpathFiles: Map<String, String>? = null,
         /** See [WorkingTree]. Asked once records merge; a null answer removes the snapshot and its record. */
         worktreeSnapshot: (() -> WorkingTree.Reobserved?)? = null,
         /** Whether this capture forked a JVM per test class; see [JVM_MODE_FILE]. */
@@ -217,6 +226,7 @@ internal object CoverageDecoder {
         writeConstants(mapDir, constants, datesTheMap)
         writeDigestTable(File(mapDir, CLASS_DIGESTS_FILE), classDigests, datesTheMap)
         writeDigestTable(File(mapDir, ANNOTATION_DIGESTS_FILE), annotationDigests, datesTheMap)
+        writeDigestTable(File(mapDir, RESOURCE_DIGESTS_FILE), classpathFiles?.mapKeys { Tsv.escape(it.key) }, datesTheMap)
         // Asked only by a dating capture: no other merges records.
         worktreeSnapshot?.let { observe ->
             val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE)
@@ -334,6 +344,17 @@ internal object CoverageDecoder {
      */
     fun readClassDigests(mapDir: File): Map<String, String>? =
         readDigestTable(File(mapDir, CLASS_DIGESTS_FILE))
+
+    /** Reads [RESOURCE_DIGESTS_FILE] as strictly as [readClassDigests]; null forces. */
+    fun readClasspathFiles(mapDir: File): Map<String, String>? =
+        readClasspathFilesFrom(File(mapDir, RESOURCE_DIGESTS_FILE))
+
+    /** Writes [digests] as [RESOURCE_DIGESTS_FILE] is written, to a file of the caller's. */
+    fun writeClasspathFilesTo(file: File, digests: Map<String, String>) =
+        writeDigestTable(file, digests.mapKeys { Tsv.escape(it.key) }, fullCapture = true)
+
+    fun readClasspathFilesFrom(file: File): Map<String, String>? =
+        readDigestTable(file)?.mapKeys { Tsv.unescape(it.key) }
 
     /** Reads [ANNOTATION_DIGESTS_FILE] as strictly as [readClassDigests]; null forces. */
     fun readAnnotationDigests(mapDir: File): Map<String, String>? =

@@ -43,6 +43,18 @@ internal enum class RefusalKind(val token: String) {
      */
     BYTES_UNRECORDED("bytes-unrecorded"),
 
+    /**
+     * The map holds no digests of the build-produced files on this task's classpath, or they could
+     * not be taken now. A capture fixes the first.
+     */
+    CLASSPATH_FILES_UNRECORDED("classpath-files-unrecorded"),
+
+    /**
+     * A build-produced file on this task's classpath differs from the captured one, with no tracked
+     * change behind it. Recapturing will not change that.
+     */
+    CLASSPATH_FILES_CHANGED("classpath-files-changed"),
+
     /** The inline scan or the bytes walk ran out of budget, or could not read something it walked. */
     SCAN_EXHAUSTED("scan-exhausted"),
 

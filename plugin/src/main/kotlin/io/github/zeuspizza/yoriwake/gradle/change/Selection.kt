@@ -180,6 +180,69 @@ internal data class DigestWidening(
 internal fun digestRule(mapDir: File, bytesAreFresh: Boolean): DigestRule =
     DigestRule(CoverageDecoder.readClassDigests(mapDir), bytesAreFresh)
 
+/** What comparing the build-produced files on the classpath against the map found. */
+internal sealed interface ClasspathFilesVerdict {
+    data object Unchanged : ClasspathFilesVerdict
+    data class Moved(val moved: ClasspathFiles.Moved) : ClasspathFilesVerdict
+    /** No table to compare against, or no walk to compare with. */
+    data class Unrecorded(val why: String) : ClasspathFilesVerdict
+}
+
+/**
+ * The comparison every selecting call site runs after the test task's inputs are built, so it
+ * reads what the test JVM will read. Top-level: a task action may not reach Project.
+ */
+internal fun classpathFilesRule(mapDir: File, facts: ClasspathFacts): ClasspathFilesVerdict {
+    val recorded = CoverageDecoder.readClasspathFiles(mapDir)
+        ?: return ClasspathFilesVerdict.Unrecorded("the map records no digests of this task's classpath files")
+    val walk = runCatching { ClasspathFiles.walk(facts.classpath.files, facts.buildDirs.values, facts.rootDir) }
+        .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
+    return when (walk) {
+        is ClasspathFiles.Walk.Refused ->
+            ClasspathFilesVerdict.Unrecorded("this task's classpath files could not be digested (${walk.reason})")
+        is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests)
+            .let { if (it.isEmpty) ClasspathFilesVerdict.Unchanged else ClasspathFilesVerdict.Moved(it) }
+    }
+}
+
+/**
+ * [this] refused on what the classpath-files comparison found, unless it already refuses (its own
+ * token stays) or [forcedByPaths], the changed paths the map cannot see, already run everything:
+ * then the moved files are only logged, so the reason stays the source path's.
+ */
+internal fun InlineWidening.withClasspathFiles(
+    verdict: ClasspathFilesVerdict,
+    forcedByPaths: Boolean,
+    log: (String) -> Unit,
+): InlineWidening {
+    if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this
+    if (forcedByPaths) {
+        if (verdict is ClasspathFilesVerdict.Moved) {
+            log("build output on this task's classpath also changed since the map was captured: ${verdict.moved.named()}")
+        }
+        return this
+    }
+    val refusal = when (verdict) {
+        is ClasspathFilesVerdict.Moved -> InlineWidening.refuse(
+            "build output on this task's classpath changed since the map was captured: " +
+                "${verdict.moved.named()}. A file generated from the commit, a property or the clock " +
+                "reaches a test through no tracked path. The whole suite runs.",
+            scanExhausted = false,
+            kind = RefusalKind.CLASSPATH_FILES_CHANGED,
+            detail = verdict.moved.named(),
+        )
+        is ClasspathFilesVerdict.Unrecorded -> InlineWidening.refuse(
+            "${verdict.why}, so a generated file that changed since the capture cannot be ruled out. " +
+                "The whole suite runs.",
+            scanExhausted = false,
+            kind = RefusalKind.CLASSPATH_FILES_UNRECORDED,
+            detail = verdict.why,
+        )
+        ClasspathFilesVerdict.Unchanged -> return this
+    }
+    return refusal.withDigest(digest)
+}
+
 /** Says what the bytes comparison found; a comparison that could not run forces and says so. */
 internal fun reportDigest(widening: InlineWidening, log: (String) -> Unit) {
     val digest = widening.digest ?: return
