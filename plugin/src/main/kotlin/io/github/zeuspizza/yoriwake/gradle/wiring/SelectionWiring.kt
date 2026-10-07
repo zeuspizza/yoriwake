@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
+import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.validCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
@@ -37,6 +38,7 @@ import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
+import org.gradle.api.InvalidUserDataException
 import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
@@ -96,6 +98,8 @@ internal fun TestTaskWiring.configureSelection(
     if (!settings.select) {
         return
     }
+    // Read before any refusal below, so a list that cannot be read fails every selecting run alike.
+    val trusted = trustedDigest(project, settings, mapDir)
 
     val explicit = settings.base
     val base = when {
@@ -206,8 +210,8 @@ internal fun TestTaskWiring.configureSelection(
     // Re-derived at execution, when the classpath is resolvable. Every doFirst runs before the
     // test JVM launches, so these properties are ones the JVM starts with.
     test.doFirst {
-        // Decided by the freshness check below, which runs before this action and captures.
-        if (test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() == RefusalKind.CHANGE_SET_STALE.token) {
+        // Decided by a check below, which runs before this action and captures.
+        if (refusedAtExecution(test)) {
             return@doFirst
         }
         val scoped = scopedChange(paths, classpathFacts)
@@ -295,12 +299,81 @@ internal fun TestTaskWiring.configureSelection(
     }
 
     refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo)
+    trusted?.let { listed ->
+        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile)
+    }
+}
+
+/** The kinds an action of the run itself decides; a later action leaves the run as they set it. */
+private val EXECUTION_REFUSALS =
+    setOf(RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED).map { it.token }
+
+private fun refusedAtExecution(test: Test) =
+    test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in EXECUTION_REFUSALS
+
+/** What `-Pyoriwake.trustedMaps` says of one map: [digest] is null when the list does not name it. */
+internal class TrustedDigest(val digest: String?)
+
+/**
+ * The trusted-map list's entry for [mapDir], or null when no list was passed. Read through a
+ * provider, so a reused configuration-cache entry sees a changed list. An unreadable list or a
+ * malformed line fails the build: it is the caller's input.
+ */
+internal fun trustedDigest(project: Project, settings: Settings, mapDir: File): TrustedDigest? {
+    val path = settings.trustedMaps ?: return null
+    val flag = "-P${Settings.TRUSTED_MAPS}=$path"
+    val file = File(path).let { if (it.isAbsolute) it else File(project.rootDir, path) }
+    val text = project.providers.fileContents(project.objects.fileProperty().fileValue(file)).asText.orNull
+        ?: throw InvalidUserDataException("[yoriwake] $flag: $file cannot be read.")
+    val listed = try {
+        MapProvenance.parseTrustedList(text, flag)
+    } catch (malformed: IllegalArgumentException) {
+        throw InvalidUserDataException(malformed.message)
+    }
+    return TrustedDigest(listed[mapDir.name])
+}
+
+/**
+ * Runs the whole suite when the map is not one the trusted-map list vouches for: restored from a
+ * cache the pull request could have written, its content is unreviewed. Registered after every
+ * other selection action, so it runs first; registered only when a list was passed.
+ */
+private fun TestTaskWiring.refuseAnUnverifiedMap(
+    project: Project,
+    test: Test,
+    mapDir: File,
+    listed: String?,
+    jacoco: JacocoTaskExtension?,
+    changeSetFile: File,
+) {
+    // Fingerprinted at execution, so a result cached under another verdict is never reused.
+    val provenance = project.providers.of(MapProvenance.Source::class.java) {
+        it.parameters.mapDir.set(mapDir.absolutePath)
+        listed?.let { digest -> it.parameters.listed.set(digest) }
+    }
+    test.inputs.property("yoriwake.mapProvenance", provenance)
+    test.doFirst {
+        val (kind, reason) = MapProvenance.verify(mapDir, listed).refusal ?: return@doFirst
+        test.logger.lifecycle(
+            "[yoriwake] ${test.path}: $reason, so the whole suite runs and records a new " +
+                "map. A map narrows here only when -P${Settings.TRUSTED_MAPS} names its digest, as a " +
+                "run on the default branch recorded it."
+        )
+        refuse(test, kind, reason)
+        MapProvenance.clear(mapDir)
+        runCatching { changeSetFile.delete() }
+        applyCaptureDecision(
+            test, mapDir, jacoco,
+            decideCapture(mapDir, mapUsable = false, fullRun = true, learnable = emptySet()),
+        )
+    }
 }
 
 /**
  * Runs the whole suite when the tree the tests will see is not the one the change set was computed
  * from: a task earlier in this build, or a continuous build's later cycle, may have edited it after
- * configuration. Registered after the other selection actions, so it runs before them.
+ * configuration. Registered after the other selection actions, so it runs before them; only the
+ * provenance check, registered after it, runs earlier.
  */
 private fun TestTaskWiring.refuseAStaleChangeSet(
     project: Project,
@@ -322,6 +395,10 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
         .map { ChangeDetection.trackedPaths(project.providers, rootDir, it, buildMemo) }
         .takeUnless { null in it }?.flatMap { it.orEmpty() }
     test.doFirst {
+        // A provenance refusal already runs everything over a cleared map, which has no drift to compare.
+        if (refusedAtExecution(test)) {
+            return@doFirst
+        }
         val git = ChangeDetection.directRunner(rootDir)
         // The same union as at configuration: the diffs from the widened base and the capture
         // commit, and the drift.

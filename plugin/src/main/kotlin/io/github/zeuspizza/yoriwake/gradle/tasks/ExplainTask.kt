@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
+import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
@@ -25,6 +26,7 @@ import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
+import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
 import org.gradle.api.DefaultTask
 import org.gradle.api.Project
 import org.gradle.api.file.RegularFileProperty
@@ -52,6 +54,16 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val explicitBase: Property<String>
+
+    /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
+    @get:Input
+    @get:Optional
+    abstract val checksProvenance: Property<Boolean>
+
+    /** The digest that list names for this map; unset when it names none. */
+    @get:Input
+    @get:Optional
+    abstract val listedDigest: Property<String>
 
     /** The build's own output directories, which the working-tree drift leaves out. */
     @get:Input
@@ -141,6 +153,19 @@ internal abstract class ExplainTask : DefaultTask() {
                 refusalKind = RefusalKind.NO_CHANGE_SET.token,
             )
             return
+        }
+        // Checked by the run before anything narrows, so it explains every line below it.
+        if (checksProvenance.getOrElse(false)) {
+            MapProvenance.verify(mapDir, listedDigest.orNull).refusal?.let { (kind, reason) ->
+                logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
+                writeUnanswered(
+                    mapDir, taskPath, base,
+                    io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                    reason,
+                    refusalKind = kind.token,
+                )
+                return
+            }
         }
         val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
         if (!map.isUsable) {
@@ -255,6 +280,9 @@ internal abstract class ExplainTask : DefaultTask() {
                     return@register
                 }
                 task.explicitBase.set(settings.base)
+                val trusted = trustedDigest(project, settings, mapDir)
+                task.checksProvenance.set(trusted != null)
+                trusted?.digest?.let(task.listedDigest::set)
                 task.explanation.set(File(mapDir, YoriwakePlugin.EXPLANATION_FILE))
                 // Unknown, not empty: the change set is computed when this task runs, and an empty
                 // one could drop a changed sibling's sources. So this task always pays the full

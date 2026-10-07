@@ -60,6 +60,8 @@ refusal-kind	change-set-unreadable
 refusal-kind	constant-changed
 refusal-kind	constant-unrecorded
 refusal-kind	in-jvm-parallelism
+refusal-kind	map-untrusted
+refusal-kind	map-unverified
 refusal-kind	no-change-set
 refusal-kind	scan-exhausted
 refusal-kind	scan-refused

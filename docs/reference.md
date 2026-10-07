@@ -109,7 +109,10 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   under build output and Gradle's own state are never a change, by design;
 - a changed class declaring a compile-time constant another class could reference, when the value
   differs from the map's;
-- a changed Kotlin source in a build that emits no `SourceDebugExtension` (see [Kotlin](#kotlin)).
+- a changed Kotlin source in a build that emits no `SourceDebugExtension` (see [Kotlin](#kotlin));
+- on a run given `-Pyoriwake.trustedMaps`, a map the list does not name (`map-unverified`) or names
+  with another digest (`map-untrusted`). The map is cleared and the run records a new one; see
+  [Who can write the map you restore](#who-can-write-the-map-you-restore).
 
 It also leaves a task alone when a test filter (`--tests`, `include`, `exclude`) is already in
 place: a filtered run does not speak for the whole suite, and leaves the map as it was. That includes
@@ -516,6 +519,42 @@ not run, and that the result is not empty. Adapt its `RESULTS` path and its expe
 Other CI systems work the same way if they can restore the newest directory from an earlier build,
 fetch enough history to resolve the base, and continue when the restore misses.
 
+### Who can write the map you restore
+
+A restored map is input no reviewer sees, and a map decides which tests are skipped. A pull request
+can write a cache entry its own later runs restore: on GitHub, a run of the pull request saves into
+the pull request's own scope, which its later runs search before the default branch's. It gets a
+save by pushing a workflow or build edit that saves, then reverting it, or through a recipe that
+saves on every event. A crafted map can list every test as passing and executing nothing the change
+touches, so every test whose own class did not change is skipped.
+
+`-Pyoriwake.trustedMaps=<file>` closes that for the map. The file lists, one per line, a map
+directory's name (`.gradle/yoriwake/<name>`), a tab, and the SHA-256 digest a trusted run recorded
+for it: every recording writes its digest to `map-digest` in the map directory. On a run given the
+list, a selecting run recomputes the map's digest before its tests start and narrows only when the
+list names that digest. Otherwise it runs everything, as `map-untrusted` when the list names
+another digest or `map-unverified` when it names none (an empty list is valid), clears the map and
+records a new one. The verdict is part of the test task's inputs, so a result the build cache holds
+from a run under another verdict is not reused. An unreadable list or a malformed line fails the
+build.
+
+The list is only as good as where it comes from: write it from the digests a run on the default
+branch recorded, never from the restored directory. Where no list is passed, nothing is checked and
+selection trusts any restored map, as in 0.1.0.
+
+What the check cannot cover:
+
+- **Runs without a list.** A pull request that writes a cache scope its later runs restore can
+  narrow past a broken test.
+- **Code in a cache entry the pull request wrote.** An entry saved through the cache API can carry
+  files outside the cached paths, such as a Gradle init script or a dependency jar; they run in the
+  job, outside any diff, and can change the map after the check. Restore only the map directory,
+  from a cache entry nothing else shares.
+- **Persistent self-hosted runners.** Code an earlier pull request job left on the machine runs in
+  later jobs, the default branch's included. Run pull requests on ephemeral runners.
+- **Other build-cache entries.** The verdict keys only the selecting test task's result; compiled
+  classes restored from a cache a pull request wrote are outside it.
+
 ## Properties and tasks
 
 Every property is a Gradle project property: `-P<name>` on the command line or in
@@ -527,6 +566,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.select` | Select. Without it nothing is ever skipped; a run only captures. |
 | `yoriwake.base=<ref>` | What to diff against. Defaults to the merge base with the branch upstream, widened to the map's age. Must be a single commit, not a range. |
 | `yoriwake.alwaysRun=<glob>[,<glob>…]` | Tests that may never be skipped, for this run. |
+| `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |
 | `yoriwake.disabled` | Leave the build entirely alone: nothing scoped, injected, captured or selected. |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. |

@@ -56,6 +56,7 @@ One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usuall
 | `MAP_ROOT_DIR` | `yoriwake` | plugin | plugin | The directory under the project cache dir holding every task's map |
 | `COVERAGE_FILE` | `coverage.tsv` | plugin | agent | `outcome \t durationNanos \t class,class \t record-id` |
 | `MAP_SCHEMA_VERSION_FILE` | `schema-version` | plugin | agent, plugin | The map version, one integer. Written last |
+| `MAP_DIGEST_FILE` | `map-digest` | plugin | callers | `sha256 <hex>`: the SHA-256 of the map's files, rewritten after every decode that writes them. A content hash for a caller to list; the plugin compares the recomputed digest with `-Pyoriwake.trustedMaps`, never with this file |
 | `SCOPE_FILE` | `scope` | plugin | agent | One package prefix per line |
 | `EFFECTIVE_SCOPE_FILE` | `effective-scope` | plugin | agent | The scope JaCoCo instrumented under, compared as opaque text |
 | `LOADED_FILE` | `loaded.txt` | plugin | agent | One loaded class name per line |

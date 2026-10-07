@@ -120,6 +120,13 @@ public final class AgentContract {
     /** The map's format version. Written last, so records without it are a capture that died. */
     public static final String MAP_SCHEMA_VERSION_FILE = "schema-version";
 
+    /**
+     * The SHA-256 of the map's files, written after every decode that writes them. A content hash,
+     * not a credential: a run given a trusted-map list compares the map's recomputed digest with the
+     * list, never with this file. See {@code docs/contract.md}.
+     */
+    public static final String MAP_DIGEST_FILE = "map-digest";
+
     /** The instrumentation scope the map was captured under, one package prefix per line. */
     public static final String SCOPE_FILE = "scope";
 

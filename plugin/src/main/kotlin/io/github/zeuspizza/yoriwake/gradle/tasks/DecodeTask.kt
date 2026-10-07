@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.bytecode.DigestScan
 import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -159,6 +160,9 @@ internal abstract class DecodeTask : DefaultTask() {
                 logger.warn("[yoriwake] $taskPath could not mark this run's failures in the map ($problem)")
                 0
             }
+            if (failures > 0) {
+                writeDigest(taskPath)
+            }
             val kept = if (failures == 0) "" else ", except that the $failures test(s) it saw fail or skip keep that outcome"
             if (reason == null) {
                 logger.info("[yoriwake] $taskPath selected part of the suite, so its records were not kept$kept")
@@ -249,7 +253,9 @@ internal abstract class DecodeTask : DefaultTask() {
             // Recorded for `yoriwakeAudit`, not only warned: the kept map looks healthy
             // while it ages.
             Audit.TaskFacts.recordDecodeRefusal(mapDir, it.toString())
-            logger.warn("[yoriwake] $taskPath could not update the map ($it); it is unchanged")
+            // It may have written part of the map, so its digest no longer describes it.
+            runCatching { File(mapDir, AgentContract.MAP_DIGEST_FILE).delete() }
+            logger.warn("[yoriwake] $taskPath could not update the map ($it)")
             return
         }
         when (val decoded = outcome.getOrNull()) {
@@ -274,6 +280,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 )
             }
             else -> {
+                writeDigest(taskPath)
                 Audit.TaskFacts.recordCoverage(mapDir, true)
                 // A merge that worked is the only thing that clears the refusal.
                 Audit.TaskFacts.recordDecodeRefusal(mapDir, null)
@@ -317,6 +324,17 @@ internal abstract class DecodeTask : DefaultTask() {
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Last after any write to the map, so a caller can list exactly what this decode left. One that
+     * cannot be written is removed rather than left describing an older map.
+     */
+    private fun writeDigest(taskPath: String) {
+        runCatching { MapProvenance.writeDigest(mapDir) }.onFailure {
+            runCatching { File(mapDir, AgentContract.MAP_DIGEST_FILE).delete() }
+            logger.warn("[yoriwake] $taskPath could not write the map's digest ($it); a run given a trusted-map list will not narrow from it")
         }
     }
 

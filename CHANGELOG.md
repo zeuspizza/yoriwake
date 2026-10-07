@@ -23,6 +23,14 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A pull request no longer narrows its checks from a map it could have written itself, on a run
+  given `-Pyoriwake.trustedMaps=<file>`: a map narrows there only when the file lists its exact
+  digest, as a run on the default branch recorded it. Otherwise the run executes every test as
+  `map-unverified` or `map-untrusted`, clears the map and records a new one. Every recording writes
+  the digest to `map-digest`. Without the flag nothing changes; the reference's "Who can write the
+  map you restore" says what the check covers and what it cannot. **Your map:** left alone; gains
+  `map-digest` on its next recording.
+
 - A filtered (`--tests`, IDE runs, a build-script filter), fail-fast or interrupted run no longer
   updates the map. Before, it merged its records without moving the map's commit, so a later revert
   of what it saw could skip a test. It keeps only the outcomes of the tests it saw fail or skip. A capture during
