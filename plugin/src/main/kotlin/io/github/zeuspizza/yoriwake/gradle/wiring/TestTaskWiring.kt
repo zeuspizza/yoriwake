@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle.wiring
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ALWAYS_RUN_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.JUNIT4_HOOK_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LOADED_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY
@@ -248,6 +249,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         recordTaskFacts(test, mapDir)
         configureSelection(project, test, mapDir, buildMemo)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
+        // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
+        declineUnderDevelocity(project, test, mapDir, agent)
         // Decided at execution time, since Gradle applies --tests after afterEvaluate. `wholeTask`
         // also requires recording: only a recording run produces a loaded-class union.
         val wholeTask = project.provider { unfiltered.get() && recording }
@@ -370,6 +373,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // One left by an earlier build describes its tree; the undated one only 0.1 wrote.
             head.delete()
             File(mapDir, WorkingTree.SNAPSHOT_FILE + ".undated").delete()
+            if (declinedUnderDevelocity(test)) return@doFirst
             val reading = startReading?.let(CaptureStart::decode)
             if (reading == null) {
                 // No start reading this build: the decode removes the stamp and the snapshot, and the
@@ -450,6 +454,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val scopeDetail = scope.detail
 
         test.doFirst {
+            // A declined run took the map directory away on purpose, and runs nothing of ours.
+            if (declinedUnderDevelocity(test)) return@doFirst
             val liveMapDir = test.systemProperties[MAP_DIR_PROPERTY]
 
             val agentOnClasspath = test.classpath.files.any { it.name == AgentJar.RESOURCE }
@@ -532,6 +538,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     testngParallel = testng?.parallel,
                     testngThreadCount = testng?.threadCount,
                 ),
+                // Set by the decline, which runs before this action.
+                develocity = task.systemProperties[REFUSED_KIND_PROPERTY]?.toString()
+                    ?.takeIf { declinedUnderDevelocity(task) },
             )
         }
     }
@@ -545,6 +554,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // configuration cache.
         val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         test.doFirst {
+            // Already declined, with the host's JaCoCo left as the host set it.
+            if (declinedUnderDevelocity(test)) return@doFirst
             val testng = test.options as? org.gradle.api.tasks.testing.testng.TestNGOptions
             val source = ParallelismDetector.detect(
                 systemProperties = test.systemProperties.mapValues { it.value?.toString() },
@@ -594,6 +605,49 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
     }
 
+    /**
+     * Declines a task Develocity runs or chooses tests for: it may run them on other machines, or
+     * leave out tests yoriwake would keep, so yoriwake neither selects nor records there. The task
+     * then runs as without yoriwake, but for the agent jar on its classpath, inert with selection
+     * off. Registered last, so its action runs first.
+     */
+    private fun declineUnderDevelocity(project: Project, test: Test, mapDir: File, agent: File?) {
+        val develocity = DevelocityDetection.provider(project, test)
+        val agentArgument = agent?.let { "-javaagent:" + it.absolutePath }
+        val marker = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
+        test.doFirst {
+            val (kind, reason) = DevelocityDetection.decode(develocity.orNull) ?: run {
+                // One a declined run left when its decode never ran must not discard this capture.
+                marker.delete()
+                return@doFirst
+            }
+            // The decode returns on it, so a run that captured nothing on purpose is not reported
+            // as one whose listener never loaded.
+            runCatching {
+                marker.parentFile.mkdirs()
+                marker.writeText(kind.token + "\n")
+            }.onFailure {
+                test.logger.warn(
+                    "[yoriwake] ${test.path}: could not record the Develocity decline ($it). Nothing is " +
+                        "captured either way; its decode may report that nothing was recorded."
+                )
+            }
+            refuse(test, kind, reason)
+            test.systemProperty(RECORDS_DIR_PROPERTY, "")
+            test.systemProperty(LOADED_DIR_PROPERTY, "")
+            // Absolute local paths: under Test Distribution they would travel to another machine.
+            test.setSystemProperties(
+                test.systemProperties.filterKeys { it != MAP_DIR_PROPERTY && it != CHANGE_SET_FILE_PROPERTY }
+            )
+            // Added at configuration on a run that records loaded classes.
+            agentArgument?.let { argument -> test.setJvmArgs(test.jvmArgs.orEmpty().filterNot { it == argument }) }
+            test.logger.lifecycle(
+                "[yoriwake] ${test.path}: $reason. The map is left exactly as it was. " +
+                    "`yoriwakeAudit${test.name.replaceFirstChar(Char::uppercase)}` reports this as `${kind.token}`."
+            )
+        }
+    }
+
     /** Puts the agent on the test runtime classpath. */
     private fun injectAgent(project: Project, test: Test): File? {
         // Unpacked at execution time, named at configuration time: writing the jar during
@@ -625,6 +679,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
     ) {
         val path = agent?.absolutePath
         test.doFirst { task ->
+            if (declinedUnderDevelocity(task as Test)) return@doFirst
             // Every framework: only the attached agent sees what a test JVM loads and reads, which
             // is what dates the code a JVM runs once. Attached here rather than at configuration,
             // so the jar's absolute path stays out of the task's cache key.
@@ -699,6 +754,26 @@ internal fun ranMarker(recordsDir: File) = File(recordsDir.parentFile, "ran.mark
  * nothing on purpose" from "the listener never loaded".
  */
 internal fun parallelRefusalMarker(recordsDir: File) = File(recordsDir.parentFile, "parallel-refused.marker")
+
+/**
+ * Written by a run declined under Develocity, so the decode finalizer can tell "captured nothing on
+ * purpose" from "the listener never loaded".
+ */
+internal fun develocityRefusalMarker(recordsDir: File) = File(recordsDir.parentFile, "develocity-declined.marker")
+
+internal val DEVELOCITY_REFUSALS = setOf(
+    RefusalKind.DEVELOCITY_TEST_DISTRIBUTION,
+    RefusalKind.DEVELOCITY_TEST_SELECTION,
+    RefusalKind.DEVELOCITY_UNDETERMINED,
+).map { it.token }
+
+/**
+ * Whether this run declined under Develocity. Every yoriwake action of the task that would write a
+ * file, a marker, a JVM argument, a system property or the host's JaCoCo returns first on it: the
+ * decline runs before them, and nothing of ours may act on a run Develocity shapes.
+ */
+internal fun declinedUnderDevelocity(test: Test) =
+    test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in DEVELOCITY_REFUSALS
 
 /**
  * Honours `--project-cache-dir`. `rootDir`, not `rootProject.file(...)`, which is a

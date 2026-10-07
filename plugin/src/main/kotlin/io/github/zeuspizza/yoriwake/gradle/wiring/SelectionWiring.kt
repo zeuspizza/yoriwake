@@ -122,6 +122,7 @@ internal fun TestTaskWiring.configureSelection(
             "A rebase, a force-push, or a map cached from a different history all look like this"
         }
         test.doFirst { task ->
+            if (declinedUnderDevelocity(test)) return@doFirst
             // A map recorded in isolation is left as it is, as by every other fallback.
             val leftAlone = decideCapture(
                 mapDir,
@@ -165,6 +166,7 @@ internal fun TestTaskWiring.configureSelection(
                 "select from")
         val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         test.doFirst {
+            if (declinedUnderDevelocity(test)) return@doFirst
             test.logger.lifecycle(
                 "[yoriwake] ${test.path}: git could not report changes against $against, so the " +
                     "whole suite runs. Selection needs a change set it can trust."
@@ -306,7 +308,8 @@ internal fun TestTaskWiring.configureSelection(
 
 /** The kinds an action of the run itself decides; a later action leaves the run as they set it. */
 private val EXECUTION_REFUSALS =
-    setOf(RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED).map { it.token }
+    setOf(RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED)
+        .map { it.token } + DEVELOCITY_REFUSALS
 
 private fun refusedAtExecution(test: Test) =
     test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in EXECUTION_REFUSALS
@@ -353,6 +356,8 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
     }
     test.inputs.property("yoriwake.mapProvenance", provenance)
     test.doFirst {
+        // A declined run leaves the map exactly as it was: no check, no clear.
+        if (declinedUnderDevelocity(test)) return@doFirst
         val (kind, reason) = MapProvenance.verify(mapDir, listed).refusal ?: return@doFirst
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: $reason, so the whole suite runs and records a new " +

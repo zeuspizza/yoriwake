@@ -110,6 +110,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - a changed class declaring a compile-time constant another class could reference, when the value
   differs from the map's;
 - a changed Kotlin source in a build that emits no `SourceDebugExtension` (see [Kotlin](#kotlin));
+- Develocity Test Distribution or Predictive Test Selection is enabled on the task
+  (`develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`): a
+  decline, so nothing is recorded either; see [What is not supported](#what-is-not-supported);
 - on a run given `-Pyoriwake.trustedMaps`, a map the list does not name (`map-unverified`) or names
   with another digest (`map-untrusted`). The map is cleared and the run records a new one; see
   [Who can write the map you restore](#who-can-write-the-map-you-restore).
@@ -322,6 +325,22 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   Interleaved tests in one JVM share one coverage agent and cannot be told apart. The task runs in
   full, nothing is captured, the map is left as it was, and the audit reports `in-jvm-parallelism`.
   Parallel forks (`maxParallelForks`) are fine.
+- **Develocity Test Distribution and Predictive Test Selection.** A test task on which either is
+  enabled when it runs, through the `develocity` task extension (Develocity 3.17+), the
+  `distribution` or `predictiveSelection` extensions of the Gradle Enterprise plugin, or
+  `-Dpts.enabled=true`, is declined: yoriwake neither selects nor records there, its agent is not
+  attached, none of its paths reach the test JVM, the host's JaCoCo stays switched on, and the map is
+  left exactly as it was. The JaCoCo scope yoriwake sets at configuration (its includes when the
+  host sets none, classes with no code-source location, the excluded reflection class loaders)
+  still applies, as on a task it declines for any other reason. Test Distribution may run the tests on other machines, and
+  even run locally it records only part of the suite's coverage; Predictive Test Selection leaves
+  out tests yoriwake would keep. The console names the feature and the setting that turns it off
+  for the task, and the audit reports `develocity-test-distribution`, `develocity-test-selection`,
+  or `develocity-undetermined` when the extension is there but its switches cannot be read. Checked
+  against the Develocity plugin 4.6.0, 3.17 and Gradle Enterprise 3.19.2 and 3.16.2 on 2026-10-06,
+  with Test Distribution run locally; what a remote Test Distribution agent does with the agent jar
+  on the classpath is not yet investigated. To use yoriwake on such a task, turn the feature off
+  for it; how the two could compose is not yet investigated.
 - **Plain JUnit 4 and TestNG selection.** Captured, never narrowed; see the next section.
 - **Windows.** Never run there. Maps have been shown to move between Linux and macOS in both
   directions; Windows is unverified.

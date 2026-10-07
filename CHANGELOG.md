@@ -23,6 +23,13 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A test task on which Develocity Test Distribution or Predictive Test Selection is enabled is now
+  declined: yoriwake neither selects nor records there, attaches no agent, leaves the host's JaCoCo
+  switched on and the map exactly as it was, under `develocity-test-distribution`,
+  `develocity-test-selection` or `develocity-undetermined`. Before, Test Distribution recorded part
+  of the suite's coverage into the map, and Predictive Test Selection could leave out a test
+  yoriwake kept. **Your map:** left alone.
+
 - A pull request no longer narrows its checks from a map it could have written itself, on a run
   given `-Pyoriwake.trustedMaps=<file>`: a map narrows there only when the file lists its exact
   digest, as a run on the default branch recorded it. Otherwise the run executes every test as

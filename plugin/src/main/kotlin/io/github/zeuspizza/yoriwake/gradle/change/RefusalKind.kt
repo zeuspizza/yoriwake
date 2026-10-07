@@ -75,6 +75,18 @@ internal enum class RefusalKind(val token: String) {
      * run recorded. The next recording on the default branch replaces it.
      */
     MAP_UNTRUSTED("map-untrusted"),
+
+    /**
+     * Develocity Test Distribution runs this task's tests, possibly on other machines: yoriwake
+     * declines, so it neither selects nor records. Turning it off for the task lifts this.
+     */
+    DEVELOCITY_TEST_DISTRIBUTION("develocity-test-distribution"),
+
+    /** Develocity Predictive Test Selection chooses this task's tests: yoriwake declines as above. */
+    DEVELOCITY_TEST_SELECTION("develocity-test-selection"),
+
+    /** The task carries a Develocity test extension whose switches could not be read: declines. */
+    DEVELOCITY_UNDETERMINED("develocity-undetermined"),
     ;
 
     companion object {
