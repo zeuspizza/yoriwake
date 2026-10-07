@@ -276,7 +276,7 @@ public final class AgentContract {
      * being wrong, since a never-selected record is never re-observed; a bump discards every cached
      * map.
      */
-    public static final int MAP_SCHEMA_VERSION = 6;
+    public static final int MAP_SCHEMA_VERSION = 7;
 
     /**
      * The raw record format's version. Bump it whenever the index columns, the record-id shapes or

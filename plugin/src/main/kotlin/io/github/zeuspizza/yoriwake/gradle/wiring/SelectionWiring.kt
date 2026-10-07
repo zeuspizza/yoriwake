@@ -115,8 +115,7 @@ internal fun TestTaskWiring.configureSelection(
         val cause = if (age.kind == RefusalKind.SNAPSHOT_ABSENT) {
             "A map captured before snapshots were recorded looks like this"
         } else {
-            "A rebase, a force-push, a map cached from a different history, or one only " +
-                "runs filtered by test pattern (`--tests`) or `--fail-fast` ever wrote all look like this"
+            "A rebase, a force-push, or a map cached from a different history all look like this"
         }
         test.doFirst { task ->
             // A map recorded in isolation is left as it is, as by every other fallback.

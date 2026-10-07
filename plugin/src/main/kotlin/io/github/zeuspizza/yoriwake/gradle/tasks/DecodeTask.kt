@@ -1,17 +1,21 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.bytecode.DigestScan
 import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
-import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
+import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
+import io.github.zeuspizza.yoriwake.gradle.wiring.pendingStats
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingSnapshot
 import io.github.zeuspizza.yoriwake.gradle.wiring.ranMarker
 import org.gradle.api.DefaultTask
@@ -57,14 +61,15 @@ internal abstract class DecodeTask : DefaultTask() {
     abstract val datesTheMap: Property<Boolean>
 
     @get:Input
+    abstract val undatedReason: Property<String>
+
+    @get:Input
     @get:Optional
     abstract val effectiveScope: Property<String>
 
     @get:Input
     abstract val isolated: Property<Boolean>
 
-    // HEAD is read in the action: as a configuration-time value source it would be a build
-    // input and re-configure the build on every commit.
     @get:Internal("where git runs, not a set of files this task reads")
     lateinit var rootDir: File
 
@@ -82,8 +87,8 @@ internal abstract class DecodeTask : DefaultTask() {
         val marker = ranMarker(CoverageDecoder.recordsDir(mapDir))
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
         val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
-        val datedSnapshot = pendingSnapshot(CoverageDecoder.recordsDir(mapDir), dates = true)
-        val undatedSnapshot = pendingSnapshot(CoverageDecoder.recordsDir(mapDir), dates = false)
+        val datedSnapshot = pendingSnapshot(mapDir)
+        val startStats = pendingStats(mapDir)
         // Before the ran-marker check: this run did work but declined to capture, and a
         // decode would merge older records into a map it must not touch.
         if (parallelRefused.delete()) {
@@ -103,9 +108,24 @@ internal abstract class DecodeTask : DefaultTask() {
         // A run that executed the whole suite dates the map even under `-Pyoriwake.select`,
         // or the map's age would never reset.
         val executedEverything = fullRunMarker.delete()
-        // HEAD even on a dirty tree; the working-tree snapshot beside the stamp covers
-        // what HEAD does not pin.
-        val captureCommit = ChangeDetection.head(ChangeDetection.directRunner(rootDir))
+        // The HEAD the tests saw, read before the build compiled anything; null when it could not be
+        // read, which removes the stamp so the next run refuses. HEAD even on a dirty tree: the
+        // working-tree snapshot beside the stamp covers what HEAD does not pin.
+        val pending = CaptureStart.Pending.decode(
+            pendingHead(mapDir).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
+        )
+        val start = pending?.reading
+        val now = CaptureStart.read(rootDir)
+        val captureCommit = start?.head
+        // Records span two commits once either moved, and no single diff covers both. A HEAD that
+        // cannot be read now differs from the one read at the start. Without a start reading there
+        // is nothing to compare, and the missing stamp is what keeps the next run safe.
+        val startHead = if (start == null) now.head else start.head
+        val headNow = now.head
+        val headMoved = startHead != headNow
+        val startReflogs = start?.reflogs ?: now.reflogs
+        val reflogsNow = now.reflogs
+        val reflogMoved = startReflogs != reflogsNow
         // Dated only if every test JVM finished: one that died mid-plan leaves older
         // records for tests it never reached.
         val unfinished = CoverageDecoder.unfinishedWorkers(mapDir)
@@ -119,7 +139,37 @@ internal abstract class DecodeTask : DefaultTask() {
                     "complete one."
             )
         }
-        val datesMap = observedEverything && unfinished.isEmpty()
+        val datesMap = observedEverything && unfinished.isEmpty() && !headMoved && !reflogMoved
+        val hasWorkerRecords = CoverageDecoder.recordsDir(mapDir).listFiles().orEmpty()
+            .any { it.isDirectory && it.name.startsWith(AgentContract.WORKER_DIR_PREFIX) }
+        // Merged undated, these records would describe code the stamp's commit does not hold, and a
+        // later change that undoes it would be in no diff. Kept, the map stays at one commit.
+        if (!datesMap && hasWorkerRecords) {
+            val reason = when {
+                // A narrowed selecting run is not a capture; it never meant to write the map.
+                selecting && !executedEverything -> null
+                !datesTheMap.getOrElse(false) -> undatedReason.getOrElse("").ifEmpty { "the run was filtered" }
+                unfinished.isNotEmpty() -> "${unfinished.joinToString()} did not finish"
+                headMoved -> "HEAD moved from ${startHead ?: "nothing"} to ${headNow ?: "something unreadable"} during the run"
+                startReflogs.first != reflogsNow.first -> "HEAD's reflog changed during the run"
+                startReflogs.second != reflogsNow.second -> "the stash's reflog changed during the run"
+                else -> "the run could not be dated"
+            }
+            val failures = runCatching { CoverageDecoder.carryFailures(mapDir) }.getOrElse { problem ->
+                logger.warn("[yoriwake] $taskPath could not mark this run's failures in the map ($problem)")
+                0
+            }
+            val kept = if (failures == 0) "" else ", except that the $failures test(s) it saw fail or skip keep that outcome"
+            if (reason == null) {
+                logger.info("[yoriwake] $taskPath selected part of the suite, so its records were not kept$kept")
+            } else {
+                logger.lifecycle(
+                    "[yoriwake] $taskPath: $reason, so this run's coverage was not kept and the map is " +
+                        "as it was$kept."
+                )
+            }
+            return
+        }
         val artifacts = if (datesMap) {
             runCatching {
                 TaskArtifacts(
@@ -180,12 +230,15 @@ internal abstract class DecodeTask : DefaultTask() {
                         }
                     }
                 }.getOrNull(),
-                // Asked only once records were merged. A missing pending file removes the
-                // snapshot, and the next run refuses.
+                // Asked only once records were merged, which only a dating capture does. Every path
+                // touched since the start reading is unknown. A start file that is missing, or that
+                // another build has rewritten since, removes the snapshot, and the next run refuses.
                 worktreeSnapshot = {
-                    (if (datesMap) datedSnapshot else undatedSnapshot)
-                        .takeIf(File::isFile)
-                        ?.let { runCatching { it.readText() }.getOrNull() }
+                    WorkingTree.reobserve(
+                        rootDir,
+                        WorkingTree.readStart(datedSnapshot, pending?.snapshotId),
+                        WorkingTree.readStart(startStats, pending?.statsId),
+                    )?.undated
                 },
                 isolated = isolated.getOrElse(false),
             )
@@ -275,6 +328,8 @@ internal abstract class DecodeTask : DefaultTask() {
         val wholeTask: Provider<Boolean>,
         val loadedScope: Provider<List<String>>,
         val datesTheMap: Provider<Boolean>,
+        /** Why a run that cannot date the map does not; empty when it can. */
+        val undatedReason: Provider<String>,
         val effectiveScope: Provider<String>,
         /** Whether this run forked a JVM per test class while it captured. */
         val isolated: Boolean,
@@ -309,6 +364,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.wholeTask.set(wired.wholeTask)
                 task.loadedScope.set(wired.loadedScope)
                 task.datesTheMap.set(wired.datesTheMap)
+                task.undatedReason.set(wired.undatedReason)
                 task.effectiveScope.set(wired.effectiveScope)
                 task.isolated.set(wired.isolated)
                 task.rootDir = project.rootDir

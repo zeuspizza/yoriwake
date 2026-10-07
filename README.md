@@ -188,8 +188,6 @@ details of each.
 - **Changes coverage cannot see.** Resources, build scripts and version catalogs run everything by
   design, and so does a Kotlin change in a build that emits no `SourceDebugExtension`. A file your
   tests write into the source tree outside `build/` counts as a change and forces every run.
-- **After a revert following a `--tests` run** (IntelliJ's delegated runs), run once without
-  `-Pyoriwake.select` to re-record.
 
 Requirements: the Gradle daemon on JDK 21+, test JVMs on JDK 11+, Gradle 8.14+ (9.x included),
 `git` on `PATH`, and a project applying `java`, an Android plugin, or Kotlin Multiplatform with a

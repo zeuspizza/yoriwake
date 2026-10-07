@@ -168,8 +168,12 @@ class IsolatedCaptureFunctionalTest : FunctionalTestSupport() {
     fun `a selecting run that falls back leaves a map that is partly isolated alone`(@TempDir dir: File) {
         sample(dir)
         runner(dir, "test").build()
-        // One class recorded in isolation, merged into the shared map.
-        runner(dir, "test", "--tests", "dev.sample.AlphaTest", "-Pyoriwake.isolatedCapture").build()
+        // A map that is partly isolated, written directly: a filtered isolated run no longer merges
+        // into the map, and no other run leaves both modes in one map.
+        // The mode is read per JVM that holds a position, so the isolated JVM holds one.
+        val alpha = File(mapDir(dir), AgentContract.POSITIONS_FILE).readLines().first { "AlphaTest" in it }
+        File(mapDir(dir), AgentContract.POSITIONS_FILE).appendText("earlier/worker-1\t1\t${alpha.substringAfterLast('\t')}\n")
+        File(mapDir(dir), AgentContract.JVM_MODE_FILE).appendText("earlier/worker-1\tisolated\n")
         assertEquals(setOf("isolated", "shared"), modes(dir))
         val recorded = mapFiles(dir)
         forceAFallback(dir)

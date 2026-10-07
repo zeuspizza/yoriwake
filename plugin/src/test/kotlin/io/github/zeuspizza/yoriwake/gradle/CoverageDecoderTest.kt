@@ -440,7 +440,8 @@ class CoverageDecoderTest {
         // Mixing two record formats in one file produces a map that parses and means something else.
         records(dir, "1", Triple("alpha", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
         CoverageDecoder.decode(dir, listOf("com.acme"))
-        File(dir, AgentContract.MAP_SCHEMA_VERSION_FILE).writeText("999\n")
+        // The previous version, literally: a 0.1.0 map may hold records merged without being dated.
+        File(dir, AgentContract.MAP_SCHEMA_VERSION_FILE).writeText("6\n")
         CoverageDecoder.recordsDir(dir).deleteRecursively()
 
         records(dir, "1", Triple("beta", "SUCCESSFUL", execData("com.acme.B" to booleanArrayOf(true))))
@@ -1344,5 +1345,83 @@ class CoverageDecoderTest {
 
         modes.delete()
         assertEquals(AgentContract.MODE_SHARED, CoverageDecoder.captureMode(dir))
+    }
+
+    // What a capture that does not date the map keeps: the outcome of each test it saw not succeed.
+
+    private fun mapRows(dir: File): Map<String, List<String>> =
+        File(dir, AgentContract.COVERAGE_FILE).readLines().filter(String::isNotBlank)
+            .map { Tsv.split(it).toList() }.associateBy { it[3] }
+
+    /** A dated map holding A and B, both passing, with the records it was built from gone. */
+    private fun mapOfTwo(dir: File, idA: String = "[class:A]/[method:a()]") {
+        records(
+            dir, "1",
+            Triple(Tsv.escape(idA), "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))),
+            Triple("[class:B]/[method:b()]", "SUCCESSFUL", execData("com.acme.B" to booleanArrayOf(true))),
+        )
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+        CoverageDecoder.recordsDir(dir).deleteRecursively()
+    }
+
+    @Test
+    fun `a discarded capture marks the tests it saw not succeed and keeps their coverage`(@TempDir dir: File) {
+        mapOfTwo(dir)
+        records(
+            dir, "1",
+            Triple("[class:A]/[method:a()]", "FAILED", execData("com.acme.Other" to booleanArrayOf(true))),
+            Triple("[class:B]/[method:b()]", "SUCCESSFUL", execData()),
+            Triple("[class:C]/[method:c()]", "SKIPPED", execData()),
+            Triple("[yoriwake:class][class:A]|[class:B]", "FAILED", execData()),
+            Triple("[yoriwake:unattributed]", "FAILED", execData()),
+        )
+
+        assertEquals(2, CoverageDecoder.carryFailures(dir))
+
+        val rows = mapRows(dir)
+        assertEquals(listOf("FAILED", "1000000", "com.acme.A"), rows.getValue("[class:A]/[method:a()]").take(3))
+        assertEquals(listOf("SUCCESSFUL", "1000000", "com.acme.B"), rows.getValue("[class:B]/[method:b()]").take(3))
+        // Not in the map: added with no coverage, which runs it until a capture records it.
+        assertEquals(listOf("SKIPPED", "0", ""), rows.getValue("[class:C]/[method:c()]").take(3))
+        assertEquals(3, rows.size)
+    }
+
+    @Test
+    fun `a carried failure finds its test by the id the map escaped`(@TempDir dir: File) {
+        val id = "[class:A]/[method:a(\t)]"
+        mapOfTwo(dir, idA = id)
+        records(dir, "1", Triple(Tsv.escape(id), "FAILED", execData()))
+
+        assertEquals(1, CoverageDecoder.carryFailures(dir))
+
+        assertEquals("FAILED", mapRows(dir).getValue(id)[0])
+        val lines = File(dir, AgentContract.COVERAGE_FILE).readLines().filter(String::isNotBlank)
+        assertEquals(2, lines.size, "the failure was added beside its own record: $lines")
+    }
+
+    @Test
+    fun `nothing is carried into a map of another version or none`(@TempDir dir: File) {
+        records(dir, "1", Triple("[class:A]/[method:a()]", "FAILED", execData()))
+
+        assertEquals(0, CoverageDecoder.carryFailures(dir))
+        assertFalse(File(dir, AgentContract.COVERAGE_FILE).exists())
+
+        mapOfTwo(dir)
+        val before = File(dir, AgentContract.COVERAGE_FILE).readText()
+        File(dir, AgentContract.MAP_SCHEMA_VERSION_FILE).writeText("6\n")
+        records(dir, "1", Triple("[class:A]/[method:a()]", "FAILED", execData()))
+
+        assertEquals(0, CoverageDecoder.carryFailures(dir))
+        assertEquals(before, File(dir, AgentContract.COVERAGE_FILE).readText())
+    }
+
+    @Test
+    fun `a capture that saw every test pass carries nothing`(@TempDir dir: File) {
+        mapOfTwo(dir)
+        val before = File(dir, AgentContract.COVERAGE_FILE).readText()
+        records(dir, "1", Triple("[class:A]/[method:a()]", "SUCCESSFUL", execData()))
+
+        assertEquals(0, CoverageDecoder.carryFailures(dir))
+        assertEquals(before, File(dir, AgentContract.COVERAGE_FILE).readText())
     }
 }

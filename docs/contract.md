@@ -240,7 +240,7 @@ whole-run forcing rules are `forcing-kinds`, and the daemon's own refusal is `re
 
 | Constant | Version | Of | Bumped when |
 |---|---|---|---|
-| `MAP_SCHEMA_VERSION` | `6` | the map | A record written before could still look like a passing one while being wrong |
+| `MAP_SCHEMA_VERSION` | `7` | the map | A record written before could still look like a passing one while being wrong |
 | `RAW_SCHEMA_VERSION` | `3` | a worker's raw records | The index columns, the record-id shapes or the outcome values change |
 | `DECISIONS_VERSION` | `2` | `decisions.tsv` | The meaning of a field changes. Adding a field is not a bump |
 

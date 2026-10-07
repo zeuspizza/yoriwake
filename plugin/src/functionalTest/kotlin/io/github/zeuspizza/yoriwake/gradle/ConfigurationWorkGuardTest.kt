@@ -132,19 +132,26 @@ class ConfigurationWorkGuardTest {
     }
 
     @Test
-    fun `a build that never selects asks git nothing at configuration time`(@TempDir tmp: File) {
+    fun `a build that never selects asks git only where a capture starts, once`(@TempDir tmp: File) {
+        // A capture that can date the map reads HEAD and its reflogs before anything compiles, so
+        // that a commit during compilation cannot stamp older classes with a newer commit. One build
+        // asks once, however many `Test` tasks it has; a filtered run cannot date the map and asks
+        // nothing at all.
         val dir = fixture(File(tmp, "never-selects"), subprojects = 3)
-        // A selecting build first: its non-zero count proves the shim is counting, so the zero
-        // below means the plugin asked nothing.
         val selecting = observe(dir, GRADLE_VERSIONS.first(), SELECTING)
         assertTrue(selecting.gitCalls > 0, "the selecting build asked git nothing; the shim is not counting")
 
-        val ordinary = observe(dir, GRADLE_VERSIONS.first(), CONFIGURE_ONLY, expectGit = false)
+        val ordinary = observe(dir, GRADLE_VERSIONS.first(), CONFIGURE_ONLY)
+        val larger = observe(fixture(File(tmp, "never-selects-larger"), subprojects = 6), GRADLE_VERSIONS.first(), CONFIGURE_ONLY)
+        val filtered = observe(dir, GRADLE_VERSIONS.first(), CONFIGURE_ONLY + listOf("--tests", "dev.Nothing"), expectGit = false)
 
         assertEquals(
-            emptySet(), ordinary.gitCommands,
-            "a build with no -Pyoriwake.select and no yoriwakeExplain still ran git at configuration time",
+            // HEAD and its reflogs, and the tree's listing: tracked changes, untracked files, tracked paths.
+            setOf("rev-parse HEAD", "rev-parse --git-path", "diff --name-only", "ls-files -z"), ordinary.gitCommands,
+            "a build with no -Pyoriwake.select asked git more than where its capture starts",
         )
+        assertEquals(ordinary.gitCalls, larger.gitCalls, "the capture's start was read once per Test task")
+        assertEquals(emptySet(), filtered.gitCommands, "a filtered run, which cannot date the map, asked git")
         assertTrue(
             ordinary.count(YoriwakePlugin.CLASSPATH_FACTS_COUNTER) > 0,
             "the build did not configure at all, so its zero says nothing about git",
@@ -382,10 +389,11 @@ class ConfigurationWorkGuardTest {
          *
          * Named rather than counted because commands differ in cost by an order of magnitude.
          * `merge-base HEAD` may run up to three times while looking for a base. `merge-base
-         * --end-of-options` only appears once a map is captured, and `rev-parse HEAD` only at
-         * execution time.
+         * --end-of-options` only appears once a map is captured.
          */
         val EXPECTED_COMMANDS = setOf(
+            "rev-parse HEAD",            // the commit a capture's tests will see, before compilation
+            "rev-parse --git-path",      // where HEAD's and the stash's reflogs are, to see them move
             "merge-base HEAD",           // where this branch left the one it will merge into
             "symbolic-ref --short",      // which branch that is
             "diff --name-only",          // what changed since

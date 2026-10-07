@@ -31,8 +31,10 @@ guess.
   builds from the test classpath (as spring-core-test's `@CompileWithForkedClassLoader` does), is
   never filtered: it runs every test it discovers, and its coverage belongs to the test that
   started it. Only the outer launcher's decisions are written to `decisions.tsv`.
-- **Refresh.** A narrowed run does not update the map; only a run of the whole suite can write a
-  complete one. A change large enough to force a full run refreshes the map as a side effect,
+- **Refresh.** A narrowed run does not update the map; only a capture that ran the whole suite,
+  finished, and kept HEAD and its reflog where they were from before compilation to the end writes
+  it. A filtered, fail-fast or interrupted run leaves the map as it was, except that a test it saw
+  fail or skip keeps that outcome. A change large enough to force a full run refreshes the map as a side effect,
   except a map [recorded in isolation](#recording-each-test-class-in-its-own-jvm). A run of the
   whole suite drops the record of any test it did not report, such as a deleted test or one under a
   class whose setup failed, so that test runs until a capture sees it again.
@@ -49,6 +51,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test selecting against <sha> (<origin>): N changed classes, M paths coverage cannot see` | selection is active, and against which base |
 | `of N tests discovered: reaches-change=… skipped=…` | how many tests each rule decided |
 | `:test map updated: N records captured, M known` | a capture completed |
+| `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
 
@@ -109,7 +112,7 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - a changed Kotlin source in a build that emits no `SourceDebugExtension` (see [Kotlin](#kotlin)).
 
 It also leaves a task alone when a test filter (`--tests`, `include`, `exclude`) is already in
-place: a filtered run does not speak for the whole suite, and does not date the map. That includes
+place: a filtered run does not speak for the whole suite, and leaves the map as it was. That includes
 a filter the build script sets on the task (`filter.includeTestsMatching`,
 `filter.excludeTestsMatching`): every run of that task is filtered, so its map is never dated and
 every selecting run refuses with `stamp-absent` and runs the whole suite, while still recording
@@ -294,6 +297,10 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   (a `git.properties`, a build date or revision stamped into a manifest) can change while every
   tracked source stays the same. A test that asserts on its content is skipped when nothing else
   selects it. Pin such tests.
+- **Build steps that write into the working tree.** A file outside the build directories that a
+  build step writes during a capture, such as a generator writing into `src/`, was touched while the
+  tests ran, so it counts as changed on every selecting run until a capture in which nothing writes
+  it, and the tests that reach it always run.
 - **A nested JUnit launcher the agent cannot tell apart.** A launcher a test starts from the test
   class path itself, not from a class loader of its own, is recognised as nested because the outer
   test plan is still executing, which the agent learns through its JUnit Platform listener. With
@@ -317,11 +324,14 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   directions; Windows is unverified.
 - **Changes coverage cannot see.** Resources, build scripts and version catalogs force a full run by
   design.
-- **A revert after a filtered run.** A run filtered by `--tests` (which is what IntelliJ's
-  delegated test runs use) records its tests' coverage without re-dating the map. If a later revert
-  brings back a path such a run no longer took, the recorded coverage no longer shows it, and a
-  change reached only through that path can skip the test. After reverting a commit, run the tests
-  once without `-Pyoriwake.select`: that run records everything and dates the map again.
+- **Tests that commit, check out or stash.** A capture during which HEAD or its reflog moves is not
+  kept, so a suite whose tests do that in the project's own repository never updates its map.
+  Selection still widens from the map's commit; it never skips a test for it.
+- **Files the tests write into the source tree.** A tracked file a test rewrites, even back to the
+  same content, stays in every selecting run's change set until the next capture, so a test that
+  rewrites one on every run keeps it there. A file the tests create outside the build directory is
+  in the change set of every fresh checkout that lacks it, such as a CI runner's, which then runs
+  everything. Have such tests write under the build directory.
 - **Your own classes on the boot class path.** A native library load, a class definition or a
   foreign-function call is judged by the class that makes it, and a class the bootstrap or platform
   loader loaded counts as the JDK's own. Classes a build adds with `-Xbootclasspath/a` (or a
@@ -473,7 +483,7 @@ selecting builds run your tests exactly as they did.
   above. Neither protects [order-dependent tests](#what-is-not-supported).
 
 `yoriwakeExplain<Task>` says how the map was recorded: `isolated`, `shared`, or `mixed` for a map
-that merged both.
+that merged both, which only a map from an earlier release can be.
 
 ### An old map costs speed, not safety
 
