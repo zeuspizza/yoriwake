@@ -47,7 +47,7 @@ class TestLauncherFunctionalTest : FunctionalTestSupport() {
     )
 
     /** A committed sample with a map captured by an ordinary build of `test`. */
-    private fun captured(dir: File) {
+    private fun captured(dir: File, vararg args: String) {
         build(dir, "build.gradle.kts" to publishedBuild, oneClass, alphaTests, secondClass, secondTest, classOrderByName)
         File(dir, "settings.gradle.kts").writeText(
             """
@@ -67,7 +67,7 @@ class TestLauncherFunctionalTest : FunctionalTestSupport() {
             """.trimIndent(),
         )
         committed(dir)
-        connected(dir) { it.newBuild().forTasks("test") }
+        connected(dir, *args) { it.newBuild().forTasks("test") }
         File(dir, "build/test-results").deleteRecursively()
     }
 
@@ -130,6 +130,8 @@ class TestLauncherFunctionalTest : FunctionalTestSupport() {
 
     private fun recordedTests(dir: File) = File(mapDir(dir), AgentContract.COVERAGE_FILE).readText()
 
+    private fun loadedUnion(dir: File) = File(mapDir(dir), AgentContract.LOADED_FILE).readText()
+
     @Test
     fun `a test class an IDE asks for runs every method under selection`(@TempDir dir: File) {
         captured(dir)
@@ -184,5 +186,19 @@ class TestLauncherFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.AlphaTest"), ranMethods(dir).keys, output)
         assertEquals(capturedAt, captureCommit(dir), output)
         assertContains(recordedTests(dir), "dev.sample.BetaTest", message = output)
+    }
+
+    @Test
+    fun `a recording request for one class leaves the loaded-class union as the capture wrote it`(@TempDir dir: File) {
+        captured(dir, "-Pyoriwake.internal.loaded")
+        val union = loadedUnion(dir)
+        assertContains(union, "dev.sample.Beta", message = "the whole capture's union does not hold Beta")
+
+        val output = launchAlphaTest(dir, "-Pyoriwake.internal.loaded")
+
+        // The configuration took the task as unfiltered before the launcher added its class, so a
+        // union this run wrote would speak for the whole suite while holding only AlphaTest's classes.
+        assertEquals(setOf("dev.sample.AlphaTest"), ranMethods(dir).keys, output)
+        assertEquals(union, loadedUnion(dir), output)
     }
 }
