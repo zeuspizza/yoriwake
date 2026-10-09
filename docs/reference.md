@@ -518,11 +518,25 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
 A CI job starts with no map, so every run captures and none selects unless one is restored.
 Cache `.gradle/yoriwake`, restore the newest one available, and let a miss run everything.
 
-Declare the default branch once in the build, so the same test command can select on every event
-and still run everything, and refresh the map, on that branch:
+List the repository's default branch, so the same test command can select on every event and
+still run everything, and refresh the map, on that branch:
 
 ```kotlin
 yoriwake { fullRunBranches.add("main") }
+```
+
+The list is per project: a project that applies the plugin without it selects on the default
+branch, and its map is never refreshed. In a multi-project build, set it in the convention plugin
+that applies yoriwake, or for every project from the root build script:
+
+```kotlin
+allprojects {
+    plugins.withId("io.github.zeuspizza.yoriwake") {
+        configure<io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension> {
+            fullRunBranches.add("main")
+        }
+    }
+}
 ```
 
 ```yaml
