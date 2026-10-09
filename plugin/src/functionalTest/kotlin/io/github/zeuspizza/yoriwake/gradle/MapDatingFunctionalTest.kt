@@ -827,7 +827,7 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         // Dated, because it drops the records of what it left out, which then run as not in the
         // map; never the whole task, because a union of part of the suite would skip more.
         assertContains(output, "unfiltered=no")
-        assertEquals(head(dir), captureStamp(dir), "a run filtered by the framework did not date the map")
+        assertEquals(head(dir), captureStamp(dir), "a run under this filter did not date the map")
         assertEquals(emptyList(), mapIds(dir).filter { "AlphaTest" in it }, "what it left out kept its records")
         assertFalse(unionWritten(dir), "a filtered run wrote a loaded-class union")
         return output
@@ -884,6 +884,101 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
             *FilterFixtures.support,
         )
         assertContains(output, "$filter=[")
+    }
+
+    /** [minimalBuild] with [filter] set on the task's test filter. */
+    private fun scriptFiltered(filter: String) = minimalBuild.replace(
+        "tasks.test { useJUnitPlatform() }",
+        "tasks.test { useJUnitPlatform(); filter { $filter } }",
+    )
+
+    private val alphaLeftOut = scriptFiltered("excludeTestsMatching(\"*AlphaTest\")")
+
+    /**
+     * Captures Alpha and Beta with their tests under [buildScript], whose filter leaves AlphaTest
+     * out: the map is dated and holds BetaTest alone.
+     */
+    private fun capturedUnderScriptFilter(dir: File, buildScript: String = alphaLeftOut) {
+        build(dir, "build.gradle.kts" to buildScript, oneClass, oneTest, secondClass, secondTest, classOrderByName)
+        committed(dir)
+
+        val output = runner(dir, "test").build().output
+
+        assertContains(output, "unfiltered=no")
+        assertEquals(head(dir), captureStamp(dir), "a capture under a build-script filter did not date the map")
+        assertTrue(mapIds(dir).any { "BetaTest" in it }, "the capture did not record BetaTest")
+        assertEquals(emptyList(), mapIds(dir).filter { "AlphaTest" in it }, "what the filter left out is in the map")
+    }
+
+    @Test
+    fun `a capture under a build-script filter dates the map without what it left out`(@TempDir dir: File) {
+        capturedUnderScriptFilter(dir)
+        changeBeta(dir)
+        commit(dir, "a change only BetaTest reaches")
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+    }
+
+    @Test
+    fun `a test a build-script filter left out runs once the filter is off`(@TempDir dir: File) {
+        capturedThenFiltered(
+            dir,
+            minimalBuild.replace(
+                "tasks.test { useJUnitPlatform() }",
+                "tasks.test { useJUnitPlatform(); if (project.hasProperty(\"quick\")) filter { excludeTestsMatching(\"*AlphaTest\") } }",
+            ),
+            oneTest, secondTest,
+        )
+
+        File(dir, "src/main/java/dev/sample/Beta.java").writeText(
+            """
+            package dev.sample;
+            public class Beta { public int thrice(int n) { return 3 * n; } }
+            """.trimIndent()
+        )
+        commit(dir, "a change AlphaTest does not reach")
+        File(dir, "build/test-results").deleteRecursively()
+        val selected = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertContains(ranTests(dir), "dev.sample.AlphaTest", "a test the filtered run left out was skipped")
+        assertContains(selected, "not-in-map=1")
+    }
+
+    @Test
+    fun `a build-script filter removed after a filtered capture runs everything and dates the map whole`(
+        @TempDir dir: File,
+    ) {
+        capturedUnderScriptFilter(dir)
+        File(dir, "build.gradle.kts").writeText(minimalBuild)
+        commit(dir, "the filter is gone")
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
+        assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertEquals(head(dir), captureStamp(dir), output)
+        assertTrue(mapIds(dir).any { "AlphaTest" in it }, "the run without the filter did not record AlphaTest")
+    }
+
+    @Test
+    fun `a build-script filter widened after a filtered capture runs the test it now admits`(@TempDir dir: File) {
+        capturedUnderScriptFilter(dir, scriptFiltered("includeTestsMatching(\"*BetaTest\")"))
+        File(dir, "build.gradle.kts").writeText(
+            scriptFiltered("includeTestsMatching(\"*BetaTest\"); includeTestsMatching(\"*AlphaTest\")"),
+        )
+        commit(dir, "the filter admits AlphaTest")
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertContains(ranTests(dir), "dev.sample.AlphaTest", output)
+        assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
     }
 
     companion object {
