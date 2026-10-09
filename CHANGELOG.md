@@ -21,6 +21,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   the console and in `explain.json`. Map: left alone.
 - A JUnit 4 or TestNG task off the JUnit Platform says on a selecting run that it runs every test.
   Map: left alone.
+- A test that passed and failed in one capture, as a retried test can, is recorded `FLAKY` and keeps
+  running. Map: left alone; a 0.1.0 audit counts `FLAKY` lines as malformed.
 
 ### Fixed
 
