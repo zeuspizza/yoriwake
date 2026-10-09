@@ -176,9 +176,6 @@ details of each.
 - **Without the JUnit Platform.** Plain JUnit 4 and TestNG are recorded but always run in full;
   JUnit 4 narrows only through the vintage engine. Kotest specs always run.
 - **Windows.** It has never run there. Maps move between Linux and macOS.
-- **A test filter in the build script.** A test filter set in the build script
-  (`filter.include/excludeTestsMatching`) switches selection off for that task: every run is a full
-  run, and the recording cost is still paid.
 - **Builds it declines.** Gradle below 8.14 on a JDK 21 daemon, Isolated Projects, and JUnit
   in-JVM parallelism: every run is a full run, nothing is recorded, and the plugin says so. Below
   8.14 on an older daemon JDK the build fails to resolve the plugin instead.

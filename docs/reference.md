@@ -134,15 +134,20 @@ decline, which also runs every test the filter matches, and `explain.json` repor
 `yoriwakeExplain<Task>` runs in the same build. A task whose `--tests` patterns
 cannot be read declines too (`decline-undetermined`) and runs everything.
 
-A filter set in the build script narrows differently. A filtered run does not speak for the whole
-suite, and leaves the map as it was. That includes a filter the build script sets on the task (`filter.includeTestsMatching`,
-`filter.excludeTestsMatching`): every run of that task is filtered, so its map is never dated and
-every selecting run refuses with `stamp-absent` and runs the whole suite, while still recording
-coverage. Selection is off for such a task until the filter moves out of the build script. A run that
-leaves tests out by tag or engine (`includeTags`, `excludeTags`, `includeEngines`,
-`excludeEngines`), JUnit 4 category or TestNG group does not speak for the whole suite either, but
-it does date the map: the tests it left out drop out of the map, so the next selecting run runs
-them as not in it.
+A filter given for one run, with `--tests` or as patterns an IDE's test launcher adds, does not
+speak for the whole suite: the run leaves the map as it was. On the JUnit Platform, a filter the
+build script sets on the task (`filter.includeTestsMatching`, `excludeTestsMatching`,
+`includeTest`, `excludeTest`) dates the map instead, as a tag or engine filter does: the tests it
+left out drop out of the map, so a run without it runs them as not in it. That includes a filter
+the build script sets only under a property (`if (hasProperty("quick")) ...`), which Gradle cannot
+tell from a permanent one: a run with the property drops the other tests from the map, as a tag
+filter under a property does. A pattern is the build script's when it is set by the time every
+build script and `afterEvaluate` has run; one added later, by an IDE's test launcher or a
+`gradle.taskGraph.whenReady` hook, counts as given for the run. On JUnit 4 or TestNG off the
+Platform, a filter in the build script leaves the map undated. A run that leaves tests out by tag
+or engine (`includeTags`, `excludeTags`, `includeEngines`, `excludeEngines`), JUnit 4 category or
+TestNG group does not speak for the whole suite either, but it does date the map: the tests it
+left out drop out of the map, so the next selecting run runs them as not in it.
 
 Separately from those, a test the map does not record as passing always runs, and a test the map
 has never seen always runs.

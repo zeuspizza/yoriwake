@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -95,6 +96,46 @@ class RefusalFunctionalTest : FunctionalTestSupport() {
         assertEquals("stamp-absent", decisionNotes(dir)["refusal-kind"], output)
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
         assertTrue(stamp.isFile, "the refused run executed everything and did not date the map")
+    }
+
+    /** A captured map under [buildScript] whose stamp is then deleted; returns the stamp file. */
+    private fun capturedThenUnstamped(dir: File, buildScript: String): File {
+        build(dir, "build.gradle.kts" to buildScript, oneClass, oneTest, secondClass, secondTest)
+        committed(dir)
+        runner(dir, "test").build()
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val stamp = File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE)
+        assertTrue(stamp.delete(), "the capture wrote no stamp to delete")
+        return stamp
+    }
+
+    private fun refusalLine(output: String) = output.lines().single { "carries no capture stamp" in it }
+
+    @Test
+    fun `a refusal on a fail-fast run names it and promises no fix`(@TempDir dir: File) {
+        val stamp = capturedThenUnstamped(dir, minimalBuild)
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "--fail-fast").build().output
+
+        assertContains(refusalLine(output), "--fail-fast")
+        assertFalse("this run's capture clears it" in refusalLine(output), output)
+        assertFalse(stamp.isFile, "a fail-fast run dated the map")
+    }
+
+    @Test
+    fun `a refusal under a build-script filter is cleared by its own capture`(@TempDir dir: File) {
+        val stamp = capturedThenUnstamped(
+            dir,
+            minimalBuild.replace(
+                "tasks.test { useJUnitPlatform() }",
+                "tasks.test { useJUnitPlatform(); filter { excludeTestsMatching(\"*AlphaTest\") } }",
+            ),
+        )
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+
+        assertContains(refusalLine(output), "this run's capture clears it")
+        assertTrue(stamp.isFile, "the refused run under a build-script filter did not date the map")
     }
 
     @Test
