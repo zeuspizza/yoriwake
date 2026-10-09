@@ -233,6 +233,18 @@ class FullRunRequestFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `explain reports a full run asked for on the command line`(@TempDir dir: File) {
+        captured(dir)
+        changeBeta(dir)
+        commit(dir, "change beta")
+
+        val output = runner(dir, "yoriwakeExplainTest", "-Pyoriwake.base=HEAD", "-Pyoriwake.fullRun").build().output
+
+        assertContains(output, "-Pyoriwake.fullRun")
+        assertContains(File(mapDir(dir), YoriwakePlugin.EXPLANATION_FILE).readText(), "\"full-run-requested\"")
+    }
+
+    @Test
     fun `a commit made after a cached configuration is still read`(@TempDir dir: File) {
         captured(dir)
         changeBeta(dir)
