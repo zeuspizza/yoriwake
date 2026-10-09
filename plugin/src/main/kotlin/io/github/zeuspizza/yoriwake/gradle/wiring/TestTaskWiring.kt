@@ -259,6 +259,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
         refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind)
         recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
+            // One a declined run left when its decode never ran must not discard this capture.
+            val leftAlone = declinedLeftAloneMarker(recordsDir)
+            test.doFirst { leftAlone.delete() }
             configureSelection(project, test, mapDir, buildMemo, runPlan)
         } else {
             declineSelection(test, mapDir, runPlan)

@@ -166,6 +166,20 @@ class FullRunRequestFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a left-alone marker no decode consumed does not discard a later run's capture`(@TempDir dir: File) {
+        captured(dir)
+        // As a declined run leaves it when its decode never runs: cancelled, or excluded with -x.
+        File(mapDir(dir), "declined-left-alone.marker").writeText("left alone by an earlier run\n")
+        changeBeta(dir)
+        commit(dir, "change beta")
+
+        val output = runner(dir, "test").build().output
+
+        assertEquals(head(dir), stamp(dir), output)
+        assertFalse("left alone by an earlier run" in output, output)
+    }
+
+    @Test
     fun `the flag and a marked commit are both listed, the flag first`(@TempDir dir: File) {
         captured(dir)
         changeBeta(dir)
