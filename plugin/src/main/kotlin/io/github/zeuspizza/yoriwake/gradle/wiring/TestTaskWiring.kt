@@ -248,8 +248,11 @@ internal class TestTaskWiring(internal val settings: Settings) {
 
         // Why it refused, not just that it did. A build's own `test.includes`/`excludes` define
         // which classes are tests and do not refuse; `--tests` and per-run filters narrow the run
-        // and do.
-        val filterVerdict = project.provider { readFilterVerdict(test) }
+        // and do. The patterns set by now are the build script's: this runs once every build script
+        // and `afterEvaluate` has, and before an IDE's test launcher adds its own. Copied as plain
+        // sets, so the provider keeps no task reference beyond the one it already reads.
+        val fromBuildScript = TestPatterns.of(test.filter)
+        val filterVerdict = project.provider { readFilterVerdict(test, fromBuildScript) }
         val unfiltered = project.provider { filterVerdict.get().unfiltered }
 
         // Registered in this order because `doFirst` prepends: the recorder must run before the
@@ -281,20 +284,11 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val wholeTask = project.provider { unfiltered.get() && recording }
         // Only a run that executed the whole suite may date the map, since unobserved records keep
         // their age; a fail-fast run may not. For selecting runs that is known only at execution
-        // time and carried in a marker file. A framework filter still dates it: the dating capture
-        // drops the records of the tests it left out, and a test not in the map runs.
-        val datesTheMap = project.provider {
-            (unfiltered.get() || filterVerdict.get().byFramework) && !test.failFast
-        }
+        // time and carried in a marker file. See FilterVerdict.datesTheMap for the filters that
+        // still date it.
+        val datesTheMap = project.provider { filterVerdict.get().datesTheMap(test.failFast) }
         // Why a run that cannot date the map left it as it was; empty when it can.
-        val undatedReason = project.provider {
-            val verdict = filterVerdict.get()
-            when {
-                test.failFast -> "--fail-fast"
-                !verdict.unfiltered && !verdict.byFramework -> "filtered by ${verdict.detail}"
-                else -> ""
-            }
-        }
+        val undatedReason = project.provider { filterVerdict.get().undatedBy(test.failFast).orEmpty() }
 
         // The packages the union may speak for, resolved lazily once every project is evaluated.
         val loadedScope = project.provider { allProjectPackages(project) }
@@ -772,31 +766,79 @@ internal class TestTaskWiring(internal val settings: Settings) {
     }
 }
 
-/** What [test]'s own filter leaves to run; see [FilterVerdict]. Read once Gradle has applied `--tests`. */
+/**
+ * What [test]'s own filter leaves to run; see [FilterVerdict]. Read once Gradle has applied
+ * `--tests`. [fromBuildScript] is the filter's patterns as they stood when yoriwake configured the
+ * task.
+ */
 // Top level, so the providers reading it capture no wiring instance.
-internal fun readFilterVerdict(test: Test): FilterVerdict {
+internal fun readFilterVerdict(test: Test, fromBuildScript: TestPatterns): FilterVerdict {
     val filter = test.filter
     val internal = filter as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter
-    // Read on its own, whatever else is set: named tests decline selection.
-    val named = internal?.commandLineIncludePatterns.orEmpty()
+    return decideFilterVerdict(
+        unreadable = if (internal == null) filter.javaClass.name else null,
+        commandLine = internal?.commandLineIncludePatterns.orEmpty().toSet(),
+        fromBuildScript = fromBuildScript,
+        live = TestPatterns.of(filter),
+        framework = frameworkFilter(test),
+        onPlatform = test.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions,
+        unfilteredDetail = "(task includes=${test.includes} excludes=${test.excludes})",
+    )
+}
+
+/** A test filter's name patterns: `filter.includePatterns` and `filter.excludePatterns`. */
+internal data class TestPatterns(val includes: Set<String>, val excludes: Set<String>) {
+    fun isEmpty() = includes.isEmpty() && excludes.isEmpty()
+
+    /** As `filter.<set>=[...]`, each set that is not empty. */
+    fun describe(): String = listOf("includePatterns" to includes, "excludePatterns" to excludes)
+        .filter { it.second.isNotEmpty() }
+        .joinToString(" ") { (name, patterns) -> "filter.$name=$patterns" }
+
+    companion object {
+        fun of(filter: org.gradle.api.tasks.testing.TestFilter) =
+            TestPatterns(filter.includePatterns.toSet(), filter.excludePatterns.toSet())
+    }
+}
+
+/**
+ * The verdict for a filter, first match wins: one that cannot be read; `--tests`; patterns added
+ * after the build script ran; the build script's own patterns; the framework's filter; none.
+ *
+ * Only the build script's patterns, on the JUnit Platform, join the framework filters in dating
+ * the map. Off the Platform a dated map feeds class-granular selection, which would exclude a class
+ * whose left-out method is not in the map. Taking a pattern's source wrongly costs speed, not
+ * safety: a dating capture keeps no record it did not re-observe, and a test not in the map runs.
+ */
+internal fun decideFilterVerdict(
+    unreadable: String?,
+    commandLine: Set<String>,
+    fromBuildScript: TestPatterns,
+    live: TestPatterns,
+    framework: String?,
+    onPlatform: Boolean,
+    unfilteredDetail: String,
+): FilterVerdict {
+    val added = TestPatterns(live.includes - fromBuildScript.includes, live.excludes - fromBuildScript.excludes)
     return when {
         // Fail closed: a gate that depends on a Gradle internal refuses when it cannot see.
-        internal == null -> FilterVerdict(
+        unreadable != null -> FilterVerdict(
             false,
-            "the test filter is a ${filter.javaClass.name}, not a DefaultTestFilter, " +
+            "the test filter is a $unreadable, not a DefaultTestFilter, " +
                 "so this build's filtering cannot be read",
             filterReadable = false,
         )
-        filter.includePatterns.isNotEmpty() ->
-            FilterVerdict(false, "filter.includePatterns=${filter.includePatterns}")
-        filter.excludePatterns.isNotEmpty() ->
-            FilterVerdict(false, "filter.excludePatterns=${filter.excludePatterns}")
-        internal.commandLineIncludePatterns.isNotEmpty() ->
-            FilterVerdict(false, "--tests ${internal.commandLineIncludePatterns}")
+        commandLine.isNotEmpty() -> FilterVerdict(false, "--tests $commandLine")
+        !added.isEmpty() -> FilterVerdict(false, "${added.describe()} added after the build script ran")
+        !live.isEmpty() -> FilterVerdict(
+            false,
+            listOfNotNull("${live.describe()} from the build script", framework).joinToString(" "),
+            byBuildScript = onPlatform,
+        )
         // Tags, engines, categories and groups leave tests out as surely as a pattern does.
-        else -> frameworkFilter(test)?.let { FilterVerdict(false, it, byFramework = true) }
-            ?: FilterVerdict(true, "(task includes=${test.includes} excludes=${test.excludes})")
-    }.copy(commandLinePatterns = named.toSet())
+        framework != null -> FilterVerdict(false, framework, byFramework = true)
+        else -> FilterVerdict(true, unfilteredDetail)
+    }.copy(commandLinePatterns = commandLine)
 }
 
 /** The test framework's own filters that are set, as `name=[values]`, or null when none is. */
@@ -889,7 +931,8 @@ internal fun fullRunMarker(recordsDir: File) = File(recordsDir.parentFile, "full
 /**
  * Whether the run's own test filter leaves the whole task to run, and what was read to decide. Its
  * text is what the resolved-configuration line prints after `unfiltered=`. [byFramework] when only
- * the test framework's own filter (tags, engines, categories, groups) leaves tests out.
+ * the test framework's own filter (tags, engines, categories, groups) leaves tests out;
+ * [byBuildScript] when the build script's own patterns do, on a JUnit Platform task.
  * [commandLinePatterns] are the `--tests` patterns, whatever else is set; [filterReadable] is false
  * when the filter is not one whose `--tests` patterns can be read.
  */
@@ -899,8 +942,22 @@ internal data class FilterVerdict(
     val byFramework: Boolean = false,
     val commandLinePatterns: Set<String> = emptySet(),
     val filterReadable: Boolean = true,
+    val byBuildScript: Boolean = false,
 ) {
     override fun toString(): String = if (unfiltered) "$UNFILTERED $detail" else "$FILTERED: $detail"
+
+    /**
+     * Why a run under this filter cannot date the map, or null when it can. A framework or
+     * build-script filter still dates it: the dating capture drops the records of the tests it left
+     * out, and a test not in the map runs.
+     */
+    fun undatedBy(failFast: Boolean): String? = when {
+        failFast -> "--fail-fast"
+        !(unfiltered || byFramework || byBuildScript) -> "filtered by $detail"
+        else -> null
+    }
+
+    fun datesTheMap(failFast: Boolean): Boolean = undatedBy(failFast) == null
 
     /**
      * The decline a selecting run takes for this filter, as its kind and reason: tests named with

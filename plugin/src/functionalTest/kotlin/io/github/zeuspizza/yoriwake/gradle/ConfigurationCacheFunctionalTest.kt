@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -100,5 +101,62 @@ class ConfigurationCacheFunctionalTest : FunctionalTestSupport() {
         val second = runner(dir, "help", *flags).build().output
 
         assertContains(second, "Configuration cache entry reused")
+    }
+
+    private val alphaLeftOut = minimalBuild.replace(
+        "tasks.test { useJUnitPlatform() }",
+        "tasks.test { useJUnitPlatform(); filter { excludeTestsMatching(\"*AlphaTest\") } }",
+    )
+
+    private fun head(dir: File): String =
+        ProcessBuilder("git", "rev-parse", "HEAD").directory(dir).start()
+            .inputStream.bufferedReader().readText().trim()
+
+    private fun stampFile(dir: File): File = File(
+        File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory),
+        io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder.CAPTURE_COMMIT_FILE,
+    )
+
+    @Test
+    fun `a build-script filter dates the map on a build that stores its entry and on one that reuses it`(
+        @TempDir dir: File,
+    ) {
+        build(dir, "build.gradle.kts" to alphaLeftOut, oneClass, oneTest, secondClass, secondTest)
+        committed(dir)
+
+        val first = runner(dir, "test").build().output
+        assertContains(first, "Configuration cache entry stored")
+        assertEquals(head(dir), stampFile(dir).readText().trim(), first)
+        assertTrue(stampFile(dir).delete())
+
+        val second = runner(dir, "test", "--rerun-tasks").build().output
+        assertContains(second, "Configuration cache entry reused")
+        assertEquals(head(dir), stampFile(dir).takeIf(File::isFile)?.readText()?.trim(), second)
+    }
+
+    @Test
+    fun `a pattern added after the build script ran leaves the stamp alone on a stored and a reused entry`(
+        @TempDir dir: File,
+    ) {
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest)
+        committed(dir)
+        runner(dir, "test").build()
+        val captured = head(dir)
+        changeBeta(dir)
+        commit(dir, "an unrelated change")
+        val launcher = File(dir, "build/launcher.init.gradle").apply {
+            writeText(
+                "gradle.taskGraph.whenReady { graph -> graph.allTasks.findAll { it instanceof Test }" +
+                    ".each { it.filter.includeTest('dev.sample.BetaTest', null) } }\n",
+            )
+        }
+
+        val first = runner(dir, "test", "--init-script", launcher.absolutePath).build().output
+        assertContains(first, "Configuration cache entry stored")
+        assertEquals(captured, stampFile(dir).readText().trim(), first)
+
+        val second = runner(dir, "test", "--init-script", launcher.absolutePath, "--rerun-tasks").build().output
+        assertContains(second, "Configuration cache entry reused")
+        assertEquals(captured, stampFile(dir).readText().trim(), second)
     }
 }
