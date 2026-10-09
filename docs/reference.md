@@ -559,6 +559,7 @@ jobs:
           path: |
             .gradle/yoriwake
             !.gradle/yoriwake/*/raw
+            !.gradle/yoriwake/*/selection.tsv
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
           restore-keys: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-
 
@@ -573,6 +574,7 @@ jobs:
           path: |
             .gradle/yoriwake
             !.gradle/yoriwake/*/raw
+            !.gradle/yoriwake/*/selection.tsv
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
 ```
 
@@ -588,6 +590,8 @@ jobs:
 - **Commit, with a prefix fallback.** An exact hit almost never happens. A map from an older commit
   is still useful and still safe.
 - **Not `raw/`.** The undecoded records are cleared by the next capture before it writes anything.
+- **Not `selection.tsv`.** A complement run leaves out the tests it lists, and no map digest covers
+  it, so it comes only from the selecting job of the same workflow run, never from a cache.
 
 ### When to refresh
 
@@ -829,6 +833,10 @@ The flag takes two forms:
   `.gradle/yoriwake`, by task, for a complement run in another job. A relative path is resolved
   against the root project. Keep the directory outside the checkout: a file in it makes the tree
   not clean.
+
+With `-Pyoriwake.trustedMaps`, only the second form is used: the map directory may come from a
+cache a pull request wrote, and the record is outside the map's digest, so a bare
+`-Pyoriwake.complement` runs every test as `complement-record-mismatch`.
 
 A run that cannot use a record runs every test and records the map, as a run without the flag
 does, and names why: `complement-no-record` when the task has none, `complement-record-mismatch`

@@ -170,6 +170,25 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `with a trusted-map list, this build's own record runs every test and only a saved copy is read`(@TempDir dir: File) {
+        selected(dir)
+        val saved = File(dir.parentFile, "${dir.name}-saved").apply { deleteRecursively() }
+        File(dir, ".gradle/yoriwake").copyRecursively(saved)
+        // Outside the checkout, so the tree stays clean; an empty list is valid.
+        val list = File(dir.parentFile, "${dir.name}-trusted.tsv").apply { writeText("") }
+        val trusted = "-Pyoriwake.trustedMaps=${list.absolutePath}"
+
+        val own = runner(dir, "test", COMPLEMENT, trusted).build().output
+
+        assertRecordedInFull(dir, own, "complement-record-mismatch")
+        assertContains(own, "is not one the trusted-map list vouches for")
+
+        val copied = runner(dir, "test", "-Pyoriwake.complement=${saved.absolutePath}", trusted).build().output
+
+        assertEquals(early, ranTests(dir), copied)
+    }
+
+    @Test
     fun `a saved directory holding no record for this task runs every test`(@TempDir dir: File) {
         selected(dir)
         val saved = File(dir.parentFile, "${dir.name}-empty").apply { deleteRecursively(); mkdirs() }

@@ -437,7 +437,7 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
  * stamp equals this run's: the commit, a clean tree, the task, the build, the classpath and the task's
  * configuration. The test JVM checks its own identity. A record that is missing or does not match
  * makes the run a recording full run, named; one that matches captures nothing and leaves the map,
- * and the record, as they are.
+ * and the record, as they are. With a trusted-map list, only a record from `<dir>` is used.
  *
  * The record is read at configuration, so its digest is a task input and a new record is never
  * `UP-TO-DATE`; its stamp is compared where the task starts, when the classpath and the task's
@@ -461,6 +461,12 @@ internal fun TestTaskWiring.configureComplement(
     val text = project.providers.fileContents(project.objects.fileProperty().fileValue(record)).asText.orNull
     val read = SelectionRecord.read(text)
     val unusable = when {
+        // A trusted-map list makes a restored map directory unreviewed input, and the record in it is
+        // outside the map's digest: only a record handed over by the run that wrote it is used.
+        from.isEmpty() && settings.trustedMaps != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to
+            "the ${AgentContract.SELECTION_FILE} for ${test.path} in $where is not one the trusted-map list " +
+            "vouches for, since a restored cache could have written it; with -P${Settings.TRUSTED_MAPS}, pass " +
+            "the selecting run's own record as -P${Settings.COMPLEMENT}=<dir>"
         text == null -> RefusalKind.COMPLEMENT_NO_RECORD to
             "no ${AgentContract.SELECTION_FILE} for ${test.path} in $where: no selecting run that narrowed at a clean tree left one"
         read.failure() != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to
