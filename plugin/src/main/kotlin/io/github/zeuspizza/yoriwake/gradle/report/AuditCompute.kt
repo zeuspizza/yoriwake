@@ -28,9 +28,10 @@ private val NON_TEST_OUTCOMES = setOf("NONE")
 
 /**
  * Test outcomes as an allowlist, so a truncated or unknown outcome field counts as malformed.
- * `UNKNOWN` is what the decoder writes when it could not attribute a window.
+ * `UNKNOWN` is what the decoder writes when it could not attribute a window, `FLAKY` what it writes
+ * for a test that both passed and failed in one capture.
  */
-private val TEST_OUTCOMES = setOf("SUCCESSFUL", "FAILED", "ABORTED", "UNKNOWN")
+private val TEST_OUTCOMES = setOf("SUCCESSFUL", "FAILED", "ABORTED", "UNKNOWN", "FLAKY")
 
 /** outcome, durationNanos, comma-separated classes, testId. */
 private const val OUTCOME = 0

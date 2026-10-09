@@ -319,6 +319,13 @@ public final class AgentContract {
     /** A test the platform skipped. Recorded, so a re-enabled test is still selectable. */
     public static final String OUTCOME_SKIPPED = "SKIPPED";
 
+    /**
+     * A test that both passed and failed in one capture, as a retried test does when its retry
+     * round's result differs from its first. Written by the decoder only, never by the agent; like
+     * any outcome but {@link #OUTCOME_SUCCESSFUL}, it runs the test whatever changed.
+     */
+    public static final String OUTCOME_FLAKY = "FLAKY";
+
 
     /**
      * Marks a note about the run as a whole: {@code #!key \t value}. A plain {@code #} would be

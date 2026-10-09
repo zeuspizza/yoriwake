@@ -301,6 +301,19 @@ class AuditTest {
     }
 
     @Test
+    fun `a flaky record is a test like any other`(@TempDir dir: File) {
+        map(
+            dir, record("t1", "com.acme.A"),
+            record("t2", "com.acme.B", outcome = "FLAKY"), record("t2", "com.acme.C", outcome = "FLAKY"),
+        )
+
+        val result = audit(dir)
+
+        assertEquals(0, result.counts.malformed)
+        assertEquals(2, result.counts.testRecords)
+    }
+
+    @Test
     fun `the wall-clock check says what its own slack cannot catch`(@TempDir dir: File) {
         // The comparison is against a whole build, so recorded time below it proves nothing on a
         // compile-heavy one; the refusal states that gap rather than implying a bound.

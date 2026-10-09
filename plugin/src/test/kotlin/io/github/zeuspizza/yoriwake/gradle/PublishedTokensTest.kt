@@ -17,7 +17,7 @@ import kotlin.test.assertEquals
 
 /**
  * Every refusal, reason, verdict, decline and origin token that can reach `explain.json`, `audit.json`,
- * `decisions.tsv`, `task-facts`, `jvm-mode.tsv` or the console, pinned byte for byte. Scripts and people match on
+ * `decisions.tsv`, `coverage.tsv`, `task-facts`, `jvm-mode.tsv` or the console, pinned byte for byte. Scripts and people match on
  * these spellings, so a rename is a breaking change even when every other test stays green.
  *
  * One `category<TAB>token` per line: the same spelling can mean different things in two outputs.
@@ -58,6 +58,13 @@ class PublishedTokensTest {
         add("filter-verdict", listOf(FilterVerdict.UNFILTERED, FilterVerdict.FILTERED))
         add("framework", listOf(Audit.TaskFacts.PLATFORM))
         add("refusals-key", listOf(INLINE_REFUSAL_KEY))
+        add(
+            "map-outcome",
+            listOf(
+                AgentContract.OUTCOME_SUCCESSFUL, AgentContract.OUTCOME_NOT_A_TEST, AgentContract.OUTCOME_UNKNOWN,
+                AgentContract.OUTCOME_SKIPPED, AgentContract.OUTCOME_FLAKY,
+            ),
+        )
         add(
             "capture-mode",
             listOf(AgentContract.MODE_ISOLATED, AgentContract.MODE_SHARED, CoverageDecoder.MIXED_MODES),
