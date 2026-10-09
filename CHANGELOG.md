@@ -19,6 +19,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - `-Pyoriwake.fullRun`, or a `yoriwake: full` line in a commit message, makes a selecting run run
   everything and record. Map: left alone.
+- `yoriwake { fullRunBranches.add("main") }`: a selecting run on a listed branch runs everything and
+  records, so CI can pass `-Pyoriwake.select` on every branch. Map: left alone.
 
 ### Changed
 

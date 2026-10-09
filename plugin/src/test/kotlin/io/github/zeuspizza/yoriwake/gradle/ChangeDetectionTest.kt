@@ -680,4 +680,93 @@ class RawStringDeclarationsTest {
         assertFalse("dev.sample.Bar" in types, "got $types")
     }
 
+    @Test
+    fun `an attached HEAD names its branch`(@TempDir dir: File) {
+        branchRepo(dir)
+        repoGit(dir, "checkout", "-q", "-b", "feature/x")
+
+        assertEquals(ChangeDetection.CheckedOut.Branch("feature/x"), ChangeDetection.checkedOut(raw(dir)))
+    }
+
+    @Test
+    fun `a detached HEAD lists the local and remote-tracking branches that contain it`(@TempDir dir: File) {
+        branchRepo(dir)
+        repoGit(dir, "remote", "add", "origin", "../nowhere")
+        repoGit(dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+        commitIn(dir, "ahead")
+        repoGit(dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+        repoGit(dir, "checkout", "-q", "--detach", "HEAD~1")
+
+        val head = ChangeDetection.checkedOut(raw(dir))
+
+        assertEquals(
+            ChangeDetection.CheckedOut.Detached(
+                listOf(ChangeDetection.BranchRef("main", "main"), ChangeDetection.BranchRef("origin/main", "main")),
+            ),
+            head,
+        )
+    }
+
+    @Test
+    fun `a pull request's merge ref is not a branch, and a tag is never read`(@TempDir dir: File) {
+        branchRepo(dir)
+        repoGit(dir, "remote", "add", "origin", "../nowhere")
+        repoGit(dir, "checkout", "-q", "--detach")
+        commitIn(dir, "merge commit")
+        repoGit(dir, "update-ref", "refs/remotes/pull/1/merge", "HEAD")
+        repoGit(dir, "tag", "v1")
+
+        assertEquals(ChangeDetection.CheckedOut.Detached(emptyList()), ChangeDetection.checkedOut(raw(dir)))
+    }
+
+    @Test
+    fun `git that cannot answer is a failure, never a detached HEAD`() {
+        val head = ChangeDetection.checkedOut { null }
+
+        val failed = head as ChangeDetection.CheckedOut.Failed
+        assertContains(failed.reason, "git")
+    }
+
+    @Test
+    fun `a detached HEAD whose later git calls cannot answer is a failure naming the command`() {
+        fun detachedThen(failing: String): (List<String>) -> String? = { args ->
+            when {
+                args.first() == failing -> null
+                args.first() == "rev-parse" -> "HEAD"
+                args.first() == "for-each-ref" -> "refs/heads/main"
+                else -> "origin"
+            }
+        }
+
+        for ((failing, command) in listOf("for-each-ref" to "git for-each-ref", "remote" to "git remote")) {
+            val head = ChangeDetection.checkedOut(detachedThen(failing))
+
+            val failed = head as ChangeDetection.CheckedOut.Failed
+            assertContains(failed.reason, command)
+        }
+    }
+
+    @Test
+    fun `an unexpected answer for the symbolic name is a failure, never a detached HEAD`() {
+        val head = ChangeDetection.checkedOut { args -> if (args.first() == "rev-parse") "refs/tags/v1" else "" }
+
+        val failed = head as ChangeDetection.CheckedOut.Failed
+        assertContains(failed.reason, "git rev-parse --symbolic-full-name HEAD")
+        assertContains(failed.reason, "refs/tags/v1")
+    }
+
+    private fun raw(dir: File): (List<String>) -> String? = { ChangeDetection.rawGit(dir, it) }
+
+    private fun branchRepo(dir: File) {
+        repoGit(dir, "init", "-q", "-b", "main")
+        commitIn(dir, "base")
+    }
+
+    private fun commitIn(dir: File, message: String) =
+        repoGit(dir, "-c", "user.email=t@e.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message)
+
+    private fun repoGit(dir: File, vararg args: String) {
+        val exit = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true).start().waitFor()
+        assertEquals(0, exit, "git ${args.joinToString(" ")}")
+    }
 }

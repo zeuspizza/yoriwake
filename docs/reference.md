@@ -518,6 +518,27 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
 A CI job starts with no map, so every run captures and none selects unless one is restored.
 Cache `.gradle/yoriwake`, restore the newest one available, and let a miss run everything.
 
+List the repository's default branch, so the same test command can select on every event and
+still run everything, and refresh the map, on that branch:
+
+```kotlin
+yoriwake { fullRunBranches.add("main") }
+```
+
+The list is per project: a project that applies the plugin without it selects on the default
+branch, and its map is never refreshed. In a multi-project build, set it in the convention plugin
+that applies yoriwake, or for every project from the root build script:
+
+```kotlin
+allprojects {
+    plugins.withId("io.github.zeuspizza.yoriwake") {
+        configure<io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension> {
+            fullRunBranches.add("main")
+        }
+    }
+}
+```
+
 ```yaml
 env:
   YORIWAKE_VERSION: 0.1.0       # the version your build applies
@@ -541,10 +562,10 @@ jobs:
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
           restore-keys: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-
 
-      - if: github.event_name == 'pull_request'
-        run: ./gradlew test -Pyoriwake.select -Pyoriwake.base=origin/${{ github.base_ref }}
-      - if: github.event_name != 'pull_request'
-        run: ./gradlew test      # the default branch runs everything, so it captures a full map
+      # On the default branch fullRunBranches makes this run everything, so it captures a full map.
+      - run: >-
+          ./gradlew test -Pyoriwake.select
+          -Pyoriwake.base=origin/${{ github.base_ref || github.event.repository.default_branch }}
 
       - if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: actions/cache/save@v4
@@ -572,6 +593,28 @@ jobs:
 
 You do not schedule it. Save only from the default branch, whose run executes the whole suite and
 so captures a complete map. Pull request builds narrow and refresh nothing, and need not.
+
+`fullRunBranches` is what makes the default branch's run a full one while CI passes
+`-Pyoriwake.select` everywhere. Such a run declines selection as `full-run-branch`, names the
+branch, and records like a run without the flag; `-Pyoriwake.isolatedCapture` applies to it. Entries
+are branch names matched whole, in which `*` matches any characters: `main` does not match
+`main.old`, and `release/*` matches `release/1.2`. An entry that is empty or only `*` fails the
+build. The branch is read from git:
+
+- **Attached**, as on a push build, the checked-out branch's name is matched.
+- **Detached**, as some CI systems check out the pipeline commit, HEAD counts as a listed branch when
+  that branch, local or remote-tracking under a configured remote, contains it: its tip is HEAD or
+  a descendant. So a build of the default branch still matches after the branch moved on. A pull
+  request's merge commit is in no listed branch and selects. A detached checkout must therefore
+  fetch the listed branch's ref (`origin/main`); a shallow or single-ref clone that lacks it selects.
+- A local detached checkout that a listed branch contains, a bisect step or an old commit, also
+  runs in full and dates the map at that commit.
+
+While `fullRunBranches` is set, a run that still selects says what it detected, "on branch
+feature/x" or "detached; no listed branch contains HEAD", in the console and as `branch` in
+`explain.json`. If git cannot read the branch, the run runs everything as `decline-undetermined`,
+naming the git command. The list only switches selection off: without `-Pyoriwake.select` a run
+records as always.
 
 To bound how old a restored map may be, put a period in the key rather than pruning entries, for
 example the ISO week: one full run at each rollover.
@@ -635,12 +678,14 @@ A selecting run can be asked to run every test instead, without changing the CI 
 
 - **`-Pyoriwake.fullRun`** for one run, for example when a pull request carries a label your
   workflow maps to it. The decision record says `full-run-requested`.
+- **A branch `fullRunBranches` lists**, checked out: see [When to refresh](#when-to-refresh). The
+  record says `full-run-branch`.
 - **A `yoriwake: full` line in a commit message**, alone on its line, in any case, with any spacing
   around the colon. Every commit the run selects over is read: those since the base, widened to the
   map's age, and HEAD itself. The console names the commit; the record says `full-run-commit`. A
   line that starts with `yoriwake:` and is anything else asks for nothing, and the run says so.
 
-Either way the run is a recording run: it captures and dates the map, and
+Any of these makes the run a recording run: it captures and dates the map, and
 `-Pyoriwake.isolatedCapture` applies to it. A map recorded with a fresh test JVM per test class is
 left as it is unless that flag is passed. With a pull request base, the marker stays in the range
 until the pull request merges, so it makes every push of it run in full; the flag is the one-run
@@ -741,6 +786,7 @@ The extension:
 yoriwake {
     enabled = false                        // same as -Pyoriwake.disabled
     alwaysRun.add("com.acme.FlakyTest")    // a class, a method (Class.method), or a glob
+    fullRunBranches.add("main")            // a selecting run here runs everything; see CI
 }
 ```
 

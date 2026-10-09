@@ -85,6 +85,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val fullRunRequested: Property<Boolean>
 
+    /** The build's `fullRunBranches`; a listed branch checked out declines selection. */
+    @get:Input
+    @get:Optional
+    abstract val fullRunBranches: ListProperty<String>
+
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
     @get:Optional
@@ -178,9 +183,14 @@ internal abstract class ExplainTask : DefaultTask() {
         val drift = if (age is MapAge.Known) WorkingTree.drift(rootDir, mapDir, excluded) else null
         val unknown = (drift as? WorkingTree.Drift.Unknown)?.let { MapAge.Unknown(it.kind, it.reason) }
             ?: age as? MapAge.Unknown
-        // As the run checks them, before the map's age refuses: a full run asked for, then a
-        // commit asking for one, read over the range the run would select over.
-        val (declines, notes) = RunPlan.declines(fullRunRequested.getOrElse(false), unknown ?: age) { since ->
+        // As the run checks them, before the map's age refuses: a full run asked for, a listed
+        // branch, then a commit asking for one, read over the range the run would select over.
+        val (declines, notes, branch) = RunPlan.declines(
+            fullRunRequested.getOrElse(false),
+            fullRunBranches.getOrElse(emptyList()),
+            { ChangeDetection.checkedOut { ChangeDetection.rawGit(rootDir, it) } },
+            unknown ?: age,
+        ) { since ->
             ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(rootDir, it) }, since)
         }
         notes.forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
@@ -191,6 +201,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
                 decline.reason,
                 refusalKind = decline.kind.token,
+                branch = branch,
             )
             return
         }
@@ -201,6 +212,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
                 unknown.reason,
                 refusalKind = unknown.kind.token,
+                branch = branch,
             )
             return
         }
@@ -223,6 +235,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
                 "git could not report changes against $base, so there is no change set",
                 refusalKind = RefusalKind.NO_CHANGE_SET.token,
+                branch = branch,
             )
             return
         }
@@ -235,6 +248,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
                     reason,
                     refusalKind = kind.token,
+                    branch = branch,
                 )
                 return
             }
@@ -246,6 +260,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 mapDir, taskPath, base,
                 io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.MAP_UNUSABLE,
                 map.unusableReason(),
+                branch = branch,
             )
             return
         }
@@ -313,7 +328,7 @@ internal abstract class ExplainTask : DefaultTask() {
             ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
         )
         writeExplanation(
-            mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing,
+            mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing, branch,
         )
         ForcingPaths.lines(taskPath, forcing).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (decision.isFullRun) {
@@ -347,6 +362,7 @@ internal abstract class ExplainTask : DefaultTask() {
             project: Project,
             testName: String,
             settings: Settings,
+            fullRunBranches: List<String>,
             outcome: (Test) -> Pair<File, ScopeOutcome>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -363,6 +379,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 }
                 task.explicitBase.set(settings.base)
                 task.fullRunRequested.set(settings.fullRun)
+                task.fullRunBranches.set(fullRunBranches)
                 task.develocity.set(DevelocityDetection.provider(project, test))
                 // Through a provider: Gradle applies `--tests` after this runs. Only the decline is
                 // read, and where a pattern came from does not change it.

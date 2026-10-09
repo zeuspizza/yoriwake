@@ -372,6 +372,14 @@ public abstract class YoriwakeExtension {
      */
     public abstract val alwaysRun: org.gradle.api.provider.ListProperty<String>
 
+    /**
+     * Branches on which a run asked to select runs every test and records the map instead:
+     * `fullRunBranches.add("main")`. Names match whole, and `*` matches any characters, so one
+     * entry can list every release branch. A detached HEAD counts as a listed branch when that
+     * branch, local or remote-tracking, contains it. It can only cause more tests to run.
+     */
+    public abstract val fullRunBranches: org.gradle.api.provider.ListProperty<String>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)

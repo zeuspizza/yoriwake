@@ -83,6 +83,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         // Read with `enabled`, for the same reason.
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
+        val fullRunBranches = RunPlan.fullRunBranches(extension.fullRunBranches.getOrElse(emptyList()), project.path)
 
         // One instance for the whole build, so git questions are asked once rather than per `Test`
         // task. Null when the plugin loads through more than one classloader: slow, not wrong.
@@ -105,7 +106,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, buildMemo) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, buildMemo) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -122,7 +123,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches) { t ->
                     configured.getValue(t.name).let { it.mapDir to it.outcome }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -156,6 +157,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         test: Test,
         scope: List<String>?,
         alwaysRunDeclared: List<String>,
+        fullRunBranches: List<String>,
         buildMemo: BuildMemo?,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
@@ -207,6 +209,13 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     { ChangeDetection.cachedRawGit(project.providers, project.rootDir, buildMemo, it, recordFailures = false) },
                     since,
                 )
+            },
+            fullRunBranches,
+            {
+                // Not a build-wide git failure either: a branch git cannot read declines this run alone.
+                ChangeDetection.checkedOut {
+                    ChangeDetection.cachedRawGit(project.providers, project.rootDir, buildMemo, it, recordFailures = false)
+                }
             },
         )
         val selecting = runPlan.selecting

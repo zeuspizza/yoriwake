@@ -109,13 +109,16 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     TESTS_NAMED("tests-named", requested = true),
 
     /**
-     * Whether a decline holds could not be read: tests named with `--tests`, or a commit asking for
-     * a full run. Everything runs.
+     * Whether a decline holds could not be read: tests named with `--tests`, the checked-out branch
+     * while `fullRunBranches` is set, or a commit asking for a full run. Everything runs.
      */
     DECLINE_UNDETERMINED("decline-undetermined"),
 
     /** `-Pyoriwake.fullRun` asked a selecting run to run everything; it records the map instead. */
     FULL_RUN_REQUESTED("full-run-requested", requested = true),
+
+    /** The checked-out branch is one `fullRunBranches` lists; as above. */
+    FULL_RUN_BRANCH("full-run-branch", requested = true),
 
     /** A commit since the base asks for a full run with a `yoriwake: full` line; as above. */
     FULL_RUN_COMMIT("full-run-commit", requested = true),
