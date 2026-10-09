@@ -30,12 +30,12 @@ jobs:
     name: unit and agent suites
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew build -x functionalTest -x functionalTestGradle9 --console=plain
       - run: python3 .github/test_ci.py
 
@@ -43,36 +43,36 @@ jobs:
     name: functional on Gradle 8.14
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 --console=plain
 
   functional-gradle9:
     name: functional on Gradle 9
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew :plugin:functionalTestGradle9 --console=plain
 
   capture:
     name: build a map
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: publish the plugin locally
         run: ./gradlew :plugin:publishToMavenLocal --console=plain
@@ -93,7 +93,7 @@ jobs:
           map=$(python3 .github/ci.py find-map samples/demo)
           grep -q "dev.demo.Alpha" "$map"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-map
           path: samples/demo/.gradle/yoriwake
@@ -107,14 +107,14 @@ jobs:
     steps:
       # A fresh checkout on a different runner, with no build outputs and no map of its own. This is
       # the CI shape: restore the map, change something, run only what the change can reach.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-map
           path: samples/demo/.gradle/yoriwake
@@ -152,14 +152,14 @@ jobs:
       - name: allow long paths
         run: git config --global core.longpaths true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-map
           path: samples/demo/.gradle/yoriwake
