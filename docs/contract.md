@@ -169,6 +169,7 @@ construction. Several class-scoped records can share an id, and each one counts.
 | `OUTCOME_NOT_A_TEST` | `NONE` | An unattributed or class-scoped record |
 | `OUTCOME_UNKNOWN` | `UNKNOWN` | No result was reported, or no in-scope class was covered |
 | `OUTCOME_SKIPPED` | `SKIPPED` | The platform skipped the test |
+| `OUTCOME_FLAKY` | `FLAKY` | The test both passed and failed in one capture, as a retried test can. Written on each of its passing and failing lines, whatever the order; a round that covered no in-scope class stays `UNKNOWN` |
 
 A test can also carry `FAILED` or `ABORTED`, the JUnit Platform's own names.
 

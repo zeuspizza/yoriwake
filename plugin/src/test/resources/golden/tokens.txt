@@ -58,6 +58,11 @@ full-run-kind	no-coverage-for-changed
 full-run-kind	no-coverage-for-changed-bytes
 full-run-kind	startup-coverage
 full-run-kind	unmappable-paths
+map-outcome	FLAKY
+map-outcome	NONE
+map-outcome	SKIPPED
+map-outcome	SUCCESSFUL
+map-outcome	UNKNOWN
 refusal-kind	annotations-changed
 refusal-kind	annotations-unrecorded
 refusal-kind	bytes-unrecorded

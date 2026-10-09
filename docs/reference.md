@@ -65,7 +65,7 @@ Reasons, one per test:
 |---|---|
 | `reaches-change` | its recorded coverage touches a changed class, or its own test class changed |
 | `shares-jvm-with-change` | it ran at or after the point its test JVM first loaded or executed a changed class, or read its class or source file; see [what coverage does not record](#what-coverage-does-not-record) |
-| `not-known-to-pass` | the map does not record it as having passed, so it runs whatever changed |
+| `not-known-to-pass` | the map does not record it as having passed, so it runs whatever changed; this includes a test recorded `FLAKY`, see [retrying failed tests](#retrying-failed-tests) |
 | `not-in-map` | the map has never seen it, so no change could be shown not to reach it |
 | `engine-runs-everything` | its engine runs every test it discovered or none, so it is never left out; see [Kotlin](#kotlin) |
 | `full-run` | nothing may be skipped this run |
@@ -608,6 +608,21 @@ that merged both, which only a map from an earlier release can be.
 Selection reads the commit the map was captured at and widens the diff base back to it, so every
 change since the capture is in the change set. The older the map, the more tests run, until a run
 goes full, captures, and resets the map's age.
+
+### Retrying failed tests
+
+`org.gradle.test-retry` (checked with 1.6.6) and Develocity's own test retry (checked with the
+Develocity plugin 4.6.0) run a failed test again inside the same test task, in a new test JVM.
+Every round is recorded:
+
+- A capture in which a test both passed and failed, in either order, records it `FLAKY`. Each of
+  its lines keeps the classes its round executed. `FLAKY` is not a pass, so the test runs on every
+  selecting run whatever changed, until a capture sees it pass every time. A test that failed every
+  round stays `FAILED`.
+- A retry round does not stop a capture of the whole suite dating the map.
+- On a selecting run, a retry round decides as the first round did, so every test that round ran
+  and saw fail runs again, one its class alone selected included. `decisions.tsv` lists each test
+  once. A test that flipped there is kept as failed, as any failure on a selecting run is.
 
 ### Giving selection a base
 

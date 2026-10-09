@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_SCHEMA_VERS
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MODE_ISOLATED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MODE_SHARED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NAMED_TOUCH_FILE
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_FLAKY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_NOT_A_TEST
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_SUCCESSFUL
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_UNKNOWN
@@ -179,7 +180,7 @@ internal object CoverageDecoder {
         // One id per worker of this capture, so positions from two captures never mix in a merge.
         val run = UUID.randomUUID().toString().substring(0, 8)
         val decoded = workers.map { worker -> decodeWorker(worker, includePackages, "$run/${worker.name}", isolated) }
-        val captured = decoded.flatMap(WorkerRecords::lines)
+        val captured = markFlaky(decoded.flatMap(WorkerRecords::lines))
         if (captured.isEmpty()) return null
 
         // Keyed by id but not deduplicated by it: a class-scoped id appears once per coverage
@@ -530,6 +531,37 @@ internal object CoverageDecoder {
 
     /** A record is keyed by its test id, the last tab-separated field. */
     private fun testIdOf(line: String): String = line.substringAfterLast('\t')
+
+    /** The JUnit Platform's own name for a failed test, as the agent records it. */
+    private const val OUTCOME_FAILED = "FAILED"
+
+    /**
+     * Rewrites [OUTCOME_FLAKY] every passing and failing line of a test whose records in this
+     * capture hold both, as a test retried in a later round does. Each line keeps its own coverage,
+     * and the rule reads no order between the lines: a test that passed and then failed is no more
+     * known to pass than one that failed and then passed. Class-scoped and unattributed ids are left
+     * alone, since several windows legitimately share one.
+     */
+    private fun markFlaky(lines: List<String>): List<String> {
+        val outcome = { line: String -> line.substringBefore('\t') }
+        val flaky = lines
+            .filter { line ->
+                val id = testIdOf(line)
+                !id.startsWith(CLASS_SCOPED_RECORD_PREFIX) && id != UNATTRIBUTED_RECORD_ID
+            }
+            .groupBy(::testIdOf, outcome)
+            .filterValues { OUTCOME_SUCCESSFUL in it && OUTCOME_FAILED in it }
+            .keys
+        if (flaky.isEmpty()) return lines
+        return lines.map { line ->
+            val was = outcome(line)
+            if (testIdOf(line) in flaky && (was == OUTCOME_SUCCESSFUL || was == OUTCOME_FAILED)) {
+                OUTCOME_FLAKY + line.substring(was.length)
+            } else {
+                line
+            }
+        }
+    }
 
     /** One worker's decoded records, where each test ran, and when each class first arrived. */
     private class WorkerRecords(

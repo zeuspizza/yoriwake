@@ -160,6 +160,77 @@ class CoverageDecoderTest {
         assertEquals(2, CoverageDecoder.decode(dir, listOf("com.acme"))?.captured)
     }
 
+    /** Each line of the map as `outcome` and its classes, keyed by test id. */
+    private fun outcomesById(dir: File): Map<String, List<Pair<String, String>>> =
+        File(dir, AgentContract.COVERAGE_FILE).readLines().filter(String::isNotBlank)
+            .map { it.split('\t') }
+            .groupBy({ it[3] }, { it[0] to it[2] })
+
+    @Test
+    fun `a test that failed and then passed in another JVM is flaky on every line, its coverage kept`(@TempDir dir: File) {
+        // A retry round runs in a JVM of its own, and the test's coverage differs between rounds.
+        records(dir, "1", Triple("flip", "FAILED", execData("com.acme.A" to booleanArrayOf(true), "com.acme.B" to booleanArrayOf(true))))
+        records(dir, "2", Triple("flip", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+
+        CoverageDecoder.decode(dir, listOf("com.acme"), datesTheMap = true)
+
+        assertEquals(
+            listOf("FLAKY" to "com.acme.A,com.acme.B", "FLAKY" to "com.acme.A"),
+            outcomesById(dir).getValue("flip"),
+        )
+    }
+
+    @Test
+    fun `a test that passed and then failed is flaky too, whichever JVM ran first`(@TempDir dir: File) {
+        records(dir, "1", Triple("flip", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        records(dir, "2", Triple("flip", "FAILED", execData("com.acme.B" to booleanArrayOf(true))))
+
+        CoverageDecoder.decode(dir, listOf("com.acme"), datesTheMap = true)
+
+        assertEquals(listOf("FLAKY", "FLAKY"), outcomesById(dir).getValue("flip").map { it.first })
+    }
+
+    @Test
+    fun `a test that passed twice stays successful, and one that failed twice stays failed`(@TempDir dir: File) {
+        records(
+            dir, "1",
+            Triple("passes", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))),
+            Triple("fails", "FAILED", execData("com.acme.A" to booleanArrayOf(true))),
+        )
+        records(
+            dir, "2",
+            Triple("passes", "SUCCESSFUL", execData("com.acme.B" to booleanArrayOf(true))),
+            Triple("fails", "FAILED", execData("com.acme.B" to booleanArrayOf(true))),
+        )
+
+        CoverageDecoder.decode(dir, listOf("com.acme"), datesTheMap = true)
+
+        val outcomes = outcomesById(dir)
+        assertEquals(listOf("SUCCESSFUL", "SUCCESSFUL"), outcomes.getValue("passes").map { it.first })
+        assertEquals(listOf("FAILED", "FAILED"), outcomes.getValue("fails").map { it.first })
+    }
+
+    @Test
+    fun `windows sharing a class-scoped id are never rewritten as one test`(@TempDir dir: File) {
+        val window = "[yoriwake:class][engine:junit-jupiter]/[class:com.acme.ATest]"
+        records(
+            dir, "1",
+            Triple(window, "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))),
+            Triple(AgentContract.UNATTRIBUTED_RECORD_ID, "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))),
+        )
+        records(
+            dir, "2",
+            Triple(window, "FAILED", execData("com.acme.B" to booleanArrayOf(true))),
+            Triple(AgentContract.UNATTRIBUTED_RECORD_ID, "FAILED", execData("com.acme.B" to booleanArrayOf(true))),
+        )
+
+        CoverageDecoder.decode(dir, listOf("com.acme"), datesTheMap = true)
+
+        val outcomes = outcomesById(dir)
+        assertEquals(listOf("SUCCESSFUL", "FAILED"), outcomes.getValue(window).map { it.first })
+        assertEquals(listOf("SUCCESSFUL", "FAILED"), outcomes.getValue(AgentContract.UNATTRIBUTED_RECORD_ID).map { it.first })
+    }
+
     @Test
     fun `a worker that wrote no completion marker is named as unfinished`(@TempDir dir: File) {
         // A test JVM that died mid-run still leaves records that decode cleanly; only the marker it
