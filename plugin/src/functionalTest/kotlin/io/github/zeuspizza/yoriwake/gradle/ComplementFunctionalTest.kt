@@ -296,13 +296,23 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a complement run after a new selecting run is not up to date and leaves out what that one ran`(@TempDir dir: File) {
+    fun `a complement run whose record was replaced since the last one is not up to date`(@TempDir dir: File) {
         selected(dir)
-        complement(dir)
+        val first = File(mapDir(dir), AgentContract.SELECTION_FILE).readText()
         runner(dir, "test", SELECT, BASE, "-Pyoriwake.alwaysRun=dev.sample.CharlieTest").build()
         assertEquals(late + "dev.sample.CharlieTest", ranTests(dir))
+        val second = File(mapDir(dir), AgentContract.SELECTION_FILE).readText()
+        // A saved record at a fixed path, as a later selecting run hands over a new one: between the
+        // two complement runs only the record changes, not the commit, the classpath or the options.
+        val saved = File(dir.parentFile, "${dir.name}-saved").apply { deleteRecursively() }
+        File(dir, ".gradle/yoriwake").copyRecursively(saved)
+        val savedRecord = File(saved, "${mapDir(dir).name}/${AgentContract.SELECTION_FILE}")
+        savedRecord.writeText(first)
+        runner(dir, "test", "-Pyoriwake.complement=${saved.absolutePath}").build()
+        assertEquals(early, ranTests(dir))
+        savedRecord.writeText(second)
 
-        val result = complement(dir)
+        val result = runner(dir, "test", "-Pyoriwake.complement=${saved.absolutePath}").build()
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":test")?.outcome, result.output)
         assertEquals(early - "dev.sample.CharlieTest", ranTests(dir), result.output)
