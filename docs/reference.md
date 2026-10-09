@@ -127,9 +127,15 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   with another digest (`map-untrusted`). The map is cleared and the run records a new one; see
   [Who can write the map you restore](#who-can-write-the-map-you-restore).
 
-It also leaves a task alone when a test filter (`--tests`, `include`, `exclude`) is already in
-place: a filtered run does not speak for the whole suite, and leaves the map as it was. That includes
-a filter the build script sets on the task (`filter.includeTestsMatching`,
+Tests named on the command line with `--tests` all run: a selecting run declines selection for
+that task (`tests-named`), runs every test the filter matches whatever the map says, and leaves the
+map as it was. The decline takes the place of any other refusal on the task except a Develocity
+decline, which also runs every test the filter matches, and `explain.json` reports it when
+`yoriwakeExplain<Task>` runs in the same build. A task whose `--tests` patterns
+cannot be read declines too (`decline-undetermined`) and runs everything.
+
+A filter set in the build script narrows differently. A filtered run does not speak for the whole
+suite, and leaves the map as it was. That includes a filter the build script sets on the task (`filter.includeTestsMatching`,
 `filter.excludeTestsMatching`): every run of that task is filtered, so its map is never dated and
 every selecting run refuses with `stamp-absent` and runs the whole suite, while still recording
 coverage. Selection is off for such a task until the filter moves out of the build script. A run that

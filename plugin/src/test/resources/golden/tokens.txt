@@ -67,6 +67,7 @@ refusal-kind	classpath-files-changed
 refusal-kind	classpath-files-unrecorded
 refusal-kind	constant-changed
 refusal-kind	constant-unrecorded
+refusal-kind	decline-undetermined
 refusal-kind	develocity-test-distribution
 refusal-kind	develocity-test-selection
 refusal-kind	develocity-undetermined
@@ -81,6 +82,7 @@ refusal-kind	smap-absent
 refusal-kind	snapshot-absent
 refusal-kind	stamp-absent
 refusal-kind	stamp-unrelatable
+refusal-kind	tests-named
 refusal-kind	unnamed
 refusals-key	(inline widening)
 row-reason	ALWAYS_RUN

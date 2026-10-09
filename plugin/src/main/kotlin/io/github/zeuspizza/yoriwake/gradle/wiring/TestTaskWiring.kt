@@ -222,27 +222,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // Why it refused, not just that it did. A build's own `test.includes`/`excludes` define
         // which classes are tests and do not refuse; `--tests` and per-run filters narrow the run
         // and do.
-        val filterVerdict = project.provider {
-            val filter = test.filter
-            val internal = filter as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter
-            when {
-                // Fail closed: a gate that depends on a Gradle internal refuses when it cannot see.
-                internal == null -> FilterVerdict(
-                    false,
-                    "the test filter is a ${filter.javaClass.name}, not a DefaultTestFilter, " +
-                        "so this build's filtering cannot be read",
-                )
-                filter.includePatterns.isNotEmpty() ->
-                    FilterVerdict(false, "filter.includePatterns=${filter.includePatterns}")
-                filter.excludePatterns.isNotEmpty() ->
-                    FilterVerdict(false, "filter.excludePatterns=${filter.excludePatterns}")
-                internal.commandLineIncludePatterns.isNotEmpty() ->
-                    FilterVerdict(false, "--tests ${internal.commandLineIncludePatterns}")
-                // Tags, engines, categories and groups leave tests out as surely as a pattern does.
-                else -> frameworkFilter(test)?.let { FilterVerdict(false, it, byFramework = true) }
-                    ?: FilterVerdict(true, "(task includes=${test.includes} excludes=${test.excludes})")
-            }
-        }
+        val filterVerdict = project.provider { readFilterVerdict(test) }
         val unfiltered = project.provider { filterVerdict.get().unfiltered }
 
         // Registered in this order because `doFirst` prepends: the recorder must run before the
@@ -252,6 +232,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         refuseInJvmParallelism(test, mapDir)
         recordTaskFacts(test, mapDir)
         configureSelection(project, test, mapDir, buildMemo)
+        // After every selection action, so it runs before them; each returns on it.
+        if (selecting) declineNamedTests(test, mapDir, filterVerdict)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir, agent)
@@ -593,8 +575,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // configuration cache.
         val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         test.doFirst {
-            // Already declined, with the host's JaCoCo left as the host set it.
-            if (declinedUnderDevelocity(test)) return@doFirst
+            // Already declined, with the host's JaCoCo left as the host set it, or with tests named,
+            // which select nothing and capture nothing.
+            if (declinedUnderDevelocity(test) || declinedForNamedTests(test)) return@doFirst
             val testng = test.options as? org.gradle.api.tasks.testing.testng.TestNGOptions
             val source = ParallelismDetector.detect(
                 systemProperties = test.systemProperties.mapValues { it.value?.toString() },
@@ -749,6 +732,33 @@ internal class TestTaskWiring(internal val settings: Settings) {
     }
 }
 
+/** What [test]'s own filter leaves to run; see [FilterVerdict]. Read once Gradle has applied `--tests`. */
+// Top level, so the providers reading it capture no wiring instance.
+internal fun readFilterVerdict(test: Test): FilterVerdict {
+    val filter = test.filter
+    val internal = filter as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter
+    // Read on its own, whatever else is set: named tests decline selection.
+    val named = internal?.commandLineIncludePatterns.orEmpty()
+    return when {
+        // Fail closed: a gate that depends on a Gradle internal refuses when it cannot see.
+        internal == null -> FilterVerdict(
+            false,
+            "the test filter is a ${filter.javaClass.name}, not a DefaultTestFilter, " +
+                "so this build's filtering cannot be read",
+            filterReadable = false,
+        )
+        filter.includePatterns.isNotEmpty() ->
+            FilterVerdict(false, "filter.includePatterns=${filter.includePatterns}")
+        filter.excludePatterns.isNotEmpty() ->
+            FilterVerdict(false, "filter.excludePatterns=${filter.excludePatterns}")
+        internal.commandLineIncludePatterns.isNotEmpty() ->
+            FilterVerdict(false, "--tests ${internal.commandLineIncludePatterns}")
+        // Tags, engines, categories and groups leave tests out as surely as a pattern does.
+        else -> frameworkFilter(test)?.let { FilterVerdict(false, it, byFramework = true) }
+            ?: FilterVerdict(true, "(task includes=${test.includes} excludes=${test.excludes})")
+    }.copy(commandLinePatterns = named.toSet())
+}
+
 /** The test framework's own filters that are set, as `name=[values]`, or null when none is. */
 // Top level, so the provider reading it captures no wiring instance.
 private fun frameworkFilter(test: Test): String? {
@@ -834,9 +844,28 @@ internal fun fullRunMarker(recordsDir: File) = File(recordsDir.parentFile, "full
  * Whether the run's own test filter leaves the whole task to run, and what was read to decide. Its
  * text is what the resolved-configuration line prints after `unfiltered=`. [byFramework] when only
  * the test framework's own filter (tags, engines, categories, groups) leaves tests out.
+ * [commandLinePatterns] are the `--tests` patterns, whatever else is set; [filterReadable] is false
+ * when the filter is not one whose `--tests` patterns can be read.
  */
-internal data class FilterVerdict(val unfiltered: Boolean, val detail: String, val byFramework: Boolean = false) {
+internal data class FilterVerdict(
+    val unfiltered: Boolean,
+    val detail: String,
+    val byFramework: Boolean = false,
+    val commandLinePatterns: Set<String> = emptySet(),
+    val filterReadable: Boolean = true,
+) {
     override fun toString(): String = if (unfiltered) "$UNFILTERED $detail" else "$FILTERED: $detail"
+
+    /**
+     * The decline a selecting run takes for this filter, as its kind and reason: tests named with
+     * `--tests`, or a filter whose `--tests` patterns cannot be read. Null when neither holds.
+     */
+    fun namedTestsDecline(): Pair<RefusalKind, String>? = when {
+        !filterReadable -> RefusalKind.DECLINE_UNDETERMINED to "$detail, so whether tests were named with --tests is unknown"
+        commandLinePatterns.isNotEmpty() -> RefusalKind.TESTS_NAMED to
+            "tests were named with --tests ${commandLinePatterns.sorted().joinToString(" ")}"
+        else -> null
+    }
 
     companion object {
         const val UNFILTERED = "yes"

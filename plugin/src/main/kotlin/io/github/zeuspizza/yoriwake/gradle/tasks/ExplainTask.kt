@@ -33,6 +33,7 @@ import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
 import io.github.zeuspizza.yoriwake.gradle.wiring.DevelocityDetection
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
+import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
 import org.gradle.api.DefaultTask
 import org.gradle.api.Project
@@ -66,6 +67,16 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val develocity: Property<String>
+
+    /** The token of the decline the run takes over `--tests`; unset when it takes none. */
+    @get:Input
+    @get:Optional
+    abstract val namedTestsKind: Property<String>
+
+    /** That decline's reason, as the run prints it. */
+    @get:Input
+    @get:Optional
+    abstract val namedTestsReason: Property<String>
 
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
@@ -123,6 +134,18 @@ internal abstract class ExplainTask : DefaultTask() {
                 io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
                 reason,
                 refusalKind = kind.token,
+            )
+            return
+        }
+        // Declined next, as the run declines before any selection action.
+        namedTestsKind.orNull?.let { kind ->
+            val reason = namedTestsReason.get()
+            logger.lifecycle("[yoriwake] $taskPath would run every test the filter matches: $reason")
+            writeUnanswered(
+                mapDir, taskPath, explicitBase.orNull ?: "",
+                io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                reason,
+                refusalKind = kind,
             )
             return
         }
@@ -317,6 +340,10 @@ internal abstract class ExplainTask : DefaultTask() {
                 }
                 task.explicitBase.set(settings.base)
                 task.develocity.set(DevelocityDetection.provider(project, test))
+                // Through a provider: Gradle applies `--tests` after this runs.
+                val namedTestsDecline = project.provider<Pair<RefusalKind, String>> { readFilterVerdict(test).namedTestsDecline() }
+                task.namedTestsKind.set(namedTestsDecline.map { it.first.token })
+                task.namedTestsReason.set(namedTestsDecline.map { it.second })
                 val trusted = trustedDigest(project, settings, mapDir)
                 task.checksProvenance.set(trusted != null)
                 trusted?.digest?.let(task.listedDigest::set)
