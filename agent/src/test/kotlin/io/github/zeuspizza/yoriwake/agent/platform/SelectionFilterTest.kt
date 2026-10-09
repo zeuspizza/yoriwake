@@ -454,6 +454,18 @@ class SelectionFilterTest {
     }
 
     @Test
+    fun `a complement run runs a leaf that is both container and test whatever the record lists`(@TempDir dir: File) {
+        val feature = "[engine:spock]/[spec:com.acme.AlphaSpec]/[feature:\$spock_feature_0_0]"
+        complementing(dir, feature)
+        val descriptor = object : AbstractTestDescriptor(UniqueId.parse(feature), feature) {
+            override fun getType() = TestDescriptor.Type.CONTAINER_AND_TEST
+            override fun getSource(): Optional<TestSource> = Optional.empty()
+        }
+
+        assertTrue(SelectionFilter(false).apply(descriptor).included())
+    }
+
+    @Test
     fun `a complement run runs every test of an engine that runs everything`(@TempDir dir: File) {
         val spec = "[engine:kotest]/[spec:com.acme.AlphaSpec]/[test:doubles]"
         complementing(dir, spec)

@@ -384,7 +384,8 @@ public class SelectionFilter implements PostDiscoveryFilter {
      * What a complement run includes: everything when the record was written on another test JVM or
      * cannot be read; else every test but those it lists as ran, matched by exact id. A container with
      * children is judged through them; a leaf container and a test of an engine that runs everything
-     * always run, whatever the record lists.
+     * always run, whatever the record lists. So does a leaf that is both container and test, such as a
+     * Spock data-driven feature: a dry run reports it finished without running it.
      */
     private FilterResult complement(TestDescriptor descriptor) {
         Complement read = complementRecord();
@@ -402,7 +403,7 @@ public class SelectionFilter implements PostDiscoveryFilter {
             record(descriptor, Verdict.ENGINE_RUNS_EVERYTHING);
             return FilterResult.included("its engine runs nothing once one of its tests is left out");
         }
-        if (descriptor.isTest() && read.ran.containsKey(id)) {
+        if (descriptor.getType() == TestDescriptor.Type.TEST && read.ran.containsKey(id)) {
             leftOut.incrementAndGet();
             record(descriptor, Verdict.ALREADY_RAN);
             return FilterResult.excluded("the selecting run ran it");
