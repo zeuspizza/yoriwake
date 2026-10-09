@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "task": ":test",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "mapCaptureCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "note": null,
+  "outcomesRecorded": true,
+  "observedOutcome": "narrowed",
+  "fullRunKind": null,
+  "refusalKind": null,
+  "complete": true,
+  "testsWithoutVerdict": 0,
+  "failures": 1,
+  "failuresKept": 1,
+  "wouldBeMisses": [],
+  "wouldBeSkipped": 1,
+  "recordedInstrumentedTestNanos": 1000000,
+  "caveats": [
+    "A would-be miss is a test that failed in this run and that selection would have left out. A test that fails only when the whole suite runs in this order, or that is flaky, is listed as one too.",
+    "Selection can make a test fail by changing what runs before it. A run that does not select cannot observe that.",
+    "This run refreshes the map, so the selection it observes was computed against a fresher map than a run that only selects would read. The skipped time is an upper bound for such a run.",
+    "No would-be miss on a run where no test failed, or where selection would have run everything, says nothing about how often selection misses a failure.",
+    "recordedInstrumentedTestNanos is the skipped tests' recorded durations under instrumentation, summed over forks: not the wall-clock time a selecting run would save."
+  ]
+}

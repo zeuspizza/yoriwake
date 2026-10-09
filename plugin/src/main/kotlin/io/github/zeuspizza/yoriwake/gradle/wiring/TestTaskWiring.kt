@@ -310,7 +310,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         configured[test.name] = Configured(
             mapDir, scope, scopeOutcome,
             DecodeTask.Inputs(
-                mapDir, scopeOutcome, selecting, wholeTask, loadedScope, datesTheMap, undatedReason,
+                mapDir, scopeOutcome, selecting, runPlan.observing, wholeTask, loadedScope, datesTheMap, undatedReason,
                 // What JaCoCo actually instruments, read back off the task so the host's excludes
                 // are in it. See EffectiveScope.
                 effectiveScope,
@@ -350,7 +350,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // The decisions file beside the map goes too: the agent writes it at JVM exit, so a run
         // whose agent never loaded would leave the previous run's decisions next to a fresh map.
         val decisions = File(recordsDir.parentFile, AgentContract.DECISIONS_FILE)
+        // As does an observation, which describes the run that wrote it.
+        val observation = File(recordsDir.parentFile, AgentContract.OBSERVATION_FILE)
         test.doFirst { task ->
+            observation.delete()
             if (decisions.isFile && !decisions.delete()) {
                 task.logger.warn(
                     "[yoriwake] ${task.path}: could not delete $decisions; if it survives this run it " +

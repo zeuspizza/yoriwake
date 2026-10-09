@@ -70,6 +70,7 @@ One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usuall
 | `JVM_MODE_FILE` | `jvm-mode.tsv` | plugin | plugin, people, tools | `jvm \t mode`: how that JVM was recorded, `isolated` or `shared` (see [Recording modes](#recording-modes)) |
 | `DECISIONS_FILE` | `decisions.tsv` | agent | people, tools | `test \t verdict \t reason` rows after `#!key \t value` notes, then `#+` rule lines (see [Decision rules](#decision-rules)). Last writer wins |
 | `DECISIONS_PART_SUFFIX` | `.part` | agent | people, tools | Ends `decisions.tsv.<pid>-<writer>.part`, one per writer, same format |
+| `OBSERVATION_FILE` | `observation.json` | plugin | people, tools | After an observing run: the failing tests selection would have left out, and the recorded time of the tests it would have skipped. See [Observing before you select](reference.md#observing-before-you-select) |
 | `CHANGE_SET_FILE` | `change-set` | plugin | agent | The list-valued change-set properties of the last selecting run, in `java.util.Properties` format, ending with `CHANGE_SET_END` |
 | `CHANGE_SET_END` | `#end` | plugin | agent | The last line of a whole `change-set`. Without it the file is refused |
 | `RAW_DIR` | `raw` | agent | plugin, agent | Raw records, one directory per worker. Cleared before every run |

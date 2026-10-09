@@ -171,12 +171,163 @@ class ObservationFunctionalTest : FunctionalTestSupport() {
         assertContains(output, "-Pyoriwake.observe")
     }
 
+    @Test
+    fun `a failure selection would have kept fails the build as usual and is no would-be miss`(@TempDir dir: File) {
+        captured(dir)
+        breakBeta(dir)
+        commit(dir, "break beta")
+        val before = stamp(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.observe", "-Pyoriwake.base=HEAD").buildAndFail().output
+
+        assertEquals(bothTests, ranTests(dir), output)
+        val report = report(dir)
+        assertContains(report, "\"observedOutcome\": \"narrowed\"")
+        assertContains(report, "\"failures\": 1,")
+        assertContains(report, "\"failuresKept\": 1,")
+        assertContains(report, "\"wouldBeMisses\": [],")
+        assertContains(report, "\"wouldBeSkipped\": 1,")
+        assertContains(report, "\"commit\": \"${head(dir)}\"")
+        assertContains(report, "\"mapCaptureCommit\": \"$before\"")
+        assertContains(output, "recorded test time")
+        assertEquals(head(dir), stamp(dir), "the observing run did not date the map")
+    }
+
+    @Test
+    fun `a failing test selection would have left out is a would-be miss`(@TempDir dir: File) {
+        capturedWithEarlyTests(dir)
+        breakBeta(dir)
+        commit(dir, "break beta")
+
+        val output = runner(dir, "test", "-Pyoriwake.observe", "-Pyoriwake.base=HEAD", "-PquxFail=true")
+            .buildAndFail().output
+
+        assertEquals(listOf("FAILED"), misses(dir).filterKeys { "QuxTest" in it }.values.toList(), output)
+        assertTrue(misses(dir).keys.none { "BetaTest" in it }, output)
+    }
+
+    @Test
+    fun `failures in a class's setup, its teardown and one invocation are would-be misses`(@TempDir dir: File) {
+        capturedWithEarlyTests(dir)
+        changeBeta(dir)
+        commit(dir, "change beta")
+
+        val output = runner(dir, "test", "-Pyoriwake.observe", "-Pyoriwake.base=HEAD", "-PquxFail=true")
+            .buildAndFail().output
+
+        val misses = misses(dir).keys
+        assertTrue(misses.any { "SetupTest" in it && "[method:first()]" in it }, "$misses\n$output")
+        assertTrue(misses.any { "SetupTest" in it && "[method:second()]" in it }, "$misses\n$output")
+        assertTrue(misses.any { "TeardownTest" in it && "[method:passes()]" in it }, "$misses\n$output")
+        assertEquals(
+            listOf("[test-template-invocation:#2]"),
+            misses.filter { "ParamTest" in it }.map { it.substringAfterLast('/') },
+            "$misses\n$output",
+        )
+        assertContains(report(dir), "\"complete\": true")
+    }
+
+    @Test
+    fun `a green observing run reports no failure`(@TempDir dir: File) {
+        captured(dir)
+        changeBeta(dir)
+        commit(dir, "change beta")
+
+        val output = observe(dir).output
+
+        assertContains(report(dir), "\"failures\": 0,")
+        assertContains(output, "no test failed")
+    }
+
+    @Test
+    fun `an observing run declined for in-JVM parallelism reports this run, never the previous one`(@TempDir dir: File) {
+        captured(dir)
+        changeBeta(dir)
+        commit(dir, "change beta")
+        observe(dir)
+        assertContains(report(dir), "\"outcomesRecorded\": true")
+        File(dir, "build.gradle.kts").appendText(
+            "\ntasks.test { systemProperty(\"junit.jupiter.execution.parallel.enabled\", \"true\") }\n"
+        )
+        commit(dir, "parallel")
+
+        val output = observe(dir).output
+
+        assertContains(report(dir), "\"outcomesRecorded\": false")
+        assertContains(report(dir), "in-JVM parallel")
+        assertContains(output, "observed nothing")
+    }
+
+    @Test
+    fun `every fork's record is read`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to minimalBuild + "\ntasks.test { forkEvery = 1 }\n",
+            oneClass, oneTest, secondClass, secondTest, classOrderByName,
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        changeBeta(dir)
+        commit(dir, "change beta")
+
+        val output = observe(dir).output
+
+        val parts = mapDir(dir).listFiles().orEmpty().count { it.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX) }
+        assertTrue(parts >= 2, "$parts parts\n$output")
+        assertContains(report(dir), "\"complete\": true")
+        assertContains(report(dir), "\"wouldBeSkipped\": 1,")
+    }
+
     /** A committed two-class sample whose map was captured at HEAD. */
     private fun captured(dir: File, vararg flags: String) {
         build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest, classOrderByName)
         committed(dir)
         runner(dir, "test", *flags).build()
     }
+
+    /**
+     * The two-class sample with classes that run before them by name: `QuxTest`, and a class whose
+     * setup, one whose teardown and one parameterised invocation fail when the test JVM sees
+     * `qux.fail`, which `-PquxFail` sets for one run, out of sight of any change set. Each reaches
+     * Alpha, so the map knows it passed, and none reaches Beta.
+     */
+    private fun capturedWithEarlyTests(dir: File) {
+        val early = "src/test/java/dev/early"
+        val imports = "package dev.early;\nimport org.junit.jupiter.api.*;\n"
+        val fails = "System.getProperty(\"qux.fail\") != null"
+        val reach = "new dev.sample.Alpha().twice(1);"
+        build(
+            dir,
+            "build.gradle.kts" to minimalBuild +
+                "\ntasks.test { providers.gradleProperty(\"quxFail\").orNull?.let { systemProperty(\"qux.fail\", it) } }\n",
+            oneClass, oneTest, secondClass, secondTest, classOrderByName,
+            "$early/QuxTest.java" to "${imports}class QuxTest { @Test void passes() { $reach Assertions.assertFalse($fails); } }",
+            "$early/SetupTest.java" to "${imports}class SetupTest {\n" +
+                "  @BeforeAll static void setUp() { Assertions.assertFalse($fails); }\n" +
+                "  @Test void first() { $reach }\n  @Test void second() { $reach }\n}",
+            "$early/TeardownTest.java" to "${imports}class TeardownTest {\n" +
+                "  @AfterAll static void tearDown() { Assertions.assertFalse($fails); }\n" +
+                "  @Test void passes() { $reach }\n}",
+            "$early/ParamTest.java" to "${imports}import org.junit.jupiter.params.ParameterizedTest;\n" +
+                "import org.junit.jupiter.params.provider.ValueSource;\nclass ParamTest {\n" +
+                "  @ParameterizedTest @ValueSource(ints = {1, 2}) void each(int n) { $reach Assertions.assertFalse(n == 2 && $fails); }\n}",
+        )
+        committed(dir)
+        runner(dir, "test").build()
+    }
+
+    /** A Beta whose test fails: only BetaTest reaches it. */
+    private fun breakBeta(dir: File) {
+        File(dir, "src/main/java/dev/sample/Beta.java").writeText(
+            "package dev.sample;\npublic class Beta { public int thrice(int n) { return n * 4; } }\n"
+        )
+    }
+
+    private fun report(dir: File) = File(mapDir(dir), AgentContract.OBSERVATION_FILE).readText()
+
+    /** Each would-be miss's outcome, keyed by test id, as the report lists them. */
+    private fun misses(dir: File): Map<String, String> =
+        Regex("""\{ "test": "((?:[^"\\]|\\.)*)", "outcome": "([A-Z]+)" \}""").findAll(report(dir))
+            .associate { it.groupValues[1].replace("\\\"", "\"") to it.groupValues[2] }
 
     private fun observe(dir: File, vararg flags: String) =
         runner(dir, "test", "-Pyoriwake.observe", "-Pyoriwake.base=HEAD", *flags).build()

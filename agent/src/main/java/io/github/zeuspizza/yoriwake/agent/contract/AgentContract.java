@@ -162,6 +162,12 @@ public final class AgentContract {
     public static final String DECISIONS_FILE = "decisions.tsv";
 
     /**
+     * What an observing run's verdicts and outcomes say together, written by the decode after every
+     * observing run and deleted before every run, so it never describes an earlier one.
+     */
+    public static final String OBSERVATION_FILE = "observation.json";
+
+    /**
      * Ends each writer's own copy of its decisions, {@code decisions.tsv.<pid>-<writer>.part}.
      * {@link #DECISIONS_FILE} is last-writer-wins across test JVMs; the parts hold the whole task.
      */
