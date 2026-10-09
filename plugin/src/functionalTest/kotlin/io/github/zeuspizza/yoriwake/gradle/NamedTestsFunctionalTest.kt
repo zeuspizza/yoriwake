@@ -37,8 +37,8 @@ class NamedTestsFunctionalTest : FunctionalTestSupport() {
         "\ntasks.test { if (providers.gradleProperty(\"narrow\").isPresent) filter.includeTestsMatching(\"*Test\") }"
 
     /** A committed sample with a captured map and an uncommitted change to Beta. */
-    private fun capturedWithBetaChanged(dir: File, buildScript: String = minimalBuild) {
-        build(dir, "build.gradle.kts" to buildScript, oneClass, alphaTests, secondClass, secondTest, classOrderByName)
+    private fun capturedWithBetaChanged(dir: File, buildScript: String = minimalBuild, vararg extra: Pair<String, String>) {
+        build(dir, "build.gradle.kts" to buildScript, oneClass, alphaTests, secondClass, secondTest, classOrderByName, *extra)
         committed(dir)
         runner(dir, "test").build()
         File(dir, "build/test-results").deleteRecursively()
@@ -116,6 +116,69 @@ class NamedTestsFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(mapOf("dev.sample.AlphaTest" to allAlpha), ranMethods(dir), output)
         assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    /** Every AlphaTest method ran, and the run declined for named tests rather than for [other]. */
+    private fun assertDeclinedForNamedTests(dir: File, output: String, other: String) {
+        assertEquals(mapOf("dev.sample.AlphaTest" to allAlpha), ranMethods(dir), output)
+        assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
+        assertFalse(other in decisionNotes(dir).values, output)
+    }
+
+    private val alphaNamed = arrayOf("test", "--tests", "dev.sample.AlphaTest", "-Pyoriwake.select")
+
+    @Test
+    fun `named tests decline on a map whose age is unknown`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir)
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        File(mapDir, io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder.CAPTURE_COMMIT_FILE)
+            .writeText("f".repeat(40))
+
+        val output = runner(dir, *alphaNamed).build().output
+
+        assertDeclinedForNamedTests(dir, output, "stamp-unrelatable")
+    }
+
+    @Test
+    fun `named tests decline when the tree changes after configuration`(@TempDir dir: File) {
+        val editsLater = minimalBuild + """
+
+            val editFixture by tasks.registering {
+                val root = layout.projectDirectory.asFile
+                doLast { File(root, "src/test/resources/fixture.txt").writeText("two") }
+            }
+            tasks.processTestResources { mustRunAfter(editFixture) }
+            tasks.test { mustRunAfter(editFixture) }
+        """.trimIndent()
+        capturedWithBetaChanged(dir, editsLater, "src/test/resources/fixture.txt" to "one")
+
+        val output = runner(dir, "editFixture", *alphaNamed).build().output
+
+        assertDeclinedForNamedTests(dir, output, "change-set-stale")
+    }
+
+    @Test
+    fun `named tests decline under in-JVM parallelism`(@TempDir dir: File) {
+        val parallelOnRequest = minimalBuild + "\ntasks.test { if (providers.gradleProperty(\"parallel\").isPresent) " +
+            "systemProperty(\"junit.jupiter.execution.parallel.enabled\", \"true\") }"
+        capturedWithBetaChanged(dir, parallelOnRequest)
+
+        val output = runner(dir, *alphaNamed, "-Pparallel").build().output
+
+        assertDeclinedForNamedTests(dir, output, "in-jvm-parallelism")
+    }
+
+    @Test
+    fun `named tests decline on a map the trusted list does not name, and leave it in place`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir)
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val digest = File(mapDir, io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIGEST_FILE).readText()
+        val list = File(dir, "build/trusted.tsv").also { it.parentFile.mkdirs(); it.writeText("") }
+
+        val output = runner(dir, *alphaNamed, "-Pyoriwake.trustedMaps=${list.absolutePath}").build().output
+
+        assertDeclinedForNamedTests(dir, output, "map-unverified")
+        assertEquals(digest, File(mapDir, io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIGEST_FILE).readText())
     }
 
     @Test

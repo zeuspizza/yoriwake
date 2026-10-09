@@ -129,8 +129,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 
 Tests named on the command line with `--tests` all run: a selecting run declines selection for
 that task (`tests-named`), runs every test the filter matches whatever the map says, and leaves the
-map as it was. The decline takes the place of any other refusal on the task, and `explain.json`
-reports it when `yoriwakeExplain<Task>` runs in the same build. A task whose `--tests` patterns
+map as it was. The decline takes the place of any other refusal on the task except a Develocity
+decline, which also runs every test the filter matches, and `explain.json` reports it when
+`yoriwakeExplain<Task>` runs in the same build. A task whose `--tests` patterns
 cannot be read declines too (`decline-undetermined`) and runs everything.
 
 A filter set in the build script narrows differently. A filtered run does not speak for the whole
