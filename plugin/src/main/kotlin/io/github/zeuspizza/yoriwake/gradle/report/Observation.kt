@@ -104,8 +104,9 @@ internal object Observation {
                             AgentContract.ROWS_NOTE -> declared = fields.getOrNull(1)?.toIntOrNull()
                             AgentContract.OBSERVED_OUTCOME_NOTE -> {
                                 val value = fields.drop(1)
-                                // A writer that narrowed is the one a miss could come from.
-                                if (observed.isEmpty() || value.firstOrNull() == AgentContract.RUN_NARROWED) observed = value
+                                // A writer that narrowed is the one a miss could come from, and one
+                                // that discovered no test decided nothing, so it never speaks for the run.
+                                if (observed.isEmpty() || rank(value) > rank(observed)) observed = value
                             }
                         }
                     }
@@ -116,6 +117,12 @@ internal object Observation {
         }
         return Verdicts(excluded, observed, whole)
     }
+
+    private val OUTCOME_RANK = listOf(
+        AgentContract.RUN_NOT_DECIDED, AgentContract.RUN_NOT_REQUESTED, AgentContract.RUN_FULL, AgentContract.RUN_NARROWED,
+    )
+
+    private fun rank(observed: List<String>) = OUTCOME_RANK.indexOf(observed.firstOrNull())
 
     private class Outcome(var failing: String?, var nanos: Long)
 

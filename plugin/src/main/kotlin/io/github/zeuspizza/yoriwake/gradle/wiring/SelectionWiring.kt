@@ -377,7 +377,10 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
     test.systemProperty(DECLINES_PROPERTY, runPlan.declines.joinToString(",") { it.kind.token })
     if (runPlan.observing) {
         val reasons = runPlan.declines.joinToString("; ") { it.reason }
+        val leftAlone = declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir))
         test.doFirst {
+            // One a declined run left when its decode never ran must not discard this capture.
+            leftAlone.delete()
             if (declinedUnderDevelocity(test) || declinedForNamedTests(test, first.kind)) return@doFirst
             test.logger.lifecycle(
                 "[yoriwake] ${test.path}: $reasons, so a selecting run would run every test, and that is " +

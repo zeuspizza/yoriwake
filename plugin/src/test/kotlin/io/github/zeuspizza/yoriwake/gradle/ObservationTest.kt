@@ -202,6 +202,47 @@ class ObservationTest {
     }
 
     @Test
+    fun `a fork that discovered no test does not hide the full run the deciding fork would have run`(
+        @TempDir mapDir: File,
+    ) {
+        part(mapDir, "11-1", listOf("not-decided"))
+        part(mapDir, "12-1", listOf("full-run", "unmappable-paths"), alpha to "UNMAPPABLE_PATHS")
+        worker(mapDir, "2", Triple("SUCCESSFUL", 1L, alpha))
+
+        val report = Observation.write(mapDir, run)
+
+        assertEquals("full-run", report.observedOutcome)
+        assertEquals("unmappable-paths", report.fullRunKind)
+        assertTrue(report.complete)
+    }
+
+    @Test
+    fun `a narrowing fork speaks for the run whichever fork sorts first`(@TempDir mapDir: File) {
+        part(mapDir, "11-1", listOf("full-run", "unmappable-paths"), bar to "UNMAPPABLE_PATHS")
+        part(mapDir, "12-1", listOf("narrowed"), alpha to "SKIPPED")
+        part(mapDir, "13-1", listOf("not-decided"))
+        worker(mapDir, "1", Triple("SUCCESSFUL", 1L, alpha), Triple("SUCCESSFUL", 2L, bar))
+
+        assertEquals("narrowed", Observation.write(mapDir, run).observedOutcome)
+    }
+
+    @Test
+    fun `a run with no decision record decided nothing, and none of its tests counts as skipped`(
+        @TempDir mapDir: File,
+    ) {
+        worker(mapDir, "1", Triple("SUCCESSFUL", 1L, alpha), Triple("FAILED", 2L, bar))
+
+        val report = Observation.write(mapDir, run)
+
+        assertEquals(AgentContract.RUN_NOT_DECIDED, report.observedOutcome)
+        assertFalse(report.complete)
+        assertEquals(2, report.testsWithoutVerdict)
+        assertEquals(0, report.wouldBeSkipped)
+        assertEquals(emptyList(), report.misses)
+        assertContains(Observation.line(report), "selection decided nothing (not-decided)")
+    }
+
+    @Test
     fun `a run that recorded no outcome says why, and counts nothing`(@TempDir mapDir: File) {
         part(mapDir, "1-1", listOf("narrowed"), alpha to "SKIPPED")
         worker(mapDir, "1", Triple("FAILED", 1L, alpha))

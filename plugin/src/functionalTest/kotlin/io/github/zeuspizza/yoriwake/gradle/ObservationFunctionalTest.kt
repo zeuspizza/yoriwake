@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -129,6 +130,37 @@ class ObservationFunctionalTest : FunctionalTestSupport() {
         )
         assertEquals(setOf("included"), observations(dir).values.map { it[0] }.toSet(), output)
         assertEquals(head(dir), stamp(dir), "the observing run did not date the map")
+    }
+
+    @Test
+    fun `a left-alone marker no decode consumed does not discard a declined observing run's capture`(@TempDir dir: File) {
+        captured(dir)
+        // As a declined run leaves it when its decode never runs: cancelled, or excluded with -x.
+        File(mapDir(dir), "declined-left-alone.marker").writeText("left alone by an earlier run\n")
+        changeBeta(dir)
+        commit(dir, "change beta")
+
+        val output = observe(dir, "-Pyoriwake.fullRun").output
+
+        assertEquals(head(dir), stamp(dir), output)
+        assertFalse("left alone by an earlier run" in output, output)
+    }
+
+    @Test
+    fun `an observing run whose test task did no work reports that, never the previous run`(@TempDir dir: File) {
+        captured(dir)
+        changeBeta(dir)
+        commit(dir, "change beta")
+        observe(dir)
+        // The first dates the map, which changes the test task's inputs; the second leaves them as they are.
+        observe(dir)
+        assertContains(report(dir), "\"outcomesRecorded\": true")
+
+        val result = observe(dir)
+
+        assertEquals(TaskOutcome.UP_TO_DATE, result.task(":test")?.outcome, result.output)
+        assertContains(report(dir), "\"outcomesRecorded\": false")
+        assertContains(report(dir), "the test task did no work")
     }
 
     @Test
