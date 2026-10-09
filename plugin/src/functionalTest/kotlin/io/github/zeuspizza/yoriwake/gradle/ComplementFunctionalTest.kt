@@ -227,6 +227,23 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a JVM argument an argument provider sets differently runs every test, naming the configuration`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\ntasks.test {\n    val mode = providers.gradleProperty(\"mode\").getOrElse(\"a\")\n" +
+                "    jvmArgumentProviders.add(CommandLineArgumentProvider { listOf(\"-Dsample.mode=\$mode\") })\n}\n",
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pmode=b").build().output
+
+        assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
+        assertContains(output, "configuration")
+    }
+
+    @Test
     fun `a record from another Java runtime runs every test uncaptured, noting the mismatch`(@TempDir dir: File) {
         selected(dir)
         val record = File(mapDir(dir), AgentContract.SELECTION_FILE)

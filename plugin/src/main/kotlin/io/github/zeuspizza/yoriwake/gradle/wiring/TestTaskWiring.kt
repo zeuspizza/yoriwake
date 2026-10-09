@@ -916,7 +916,12 @@ internal class StampIdentity(
             classpath = SelectionRecord.classpathDigest(test.classpath.files, rootDir, gradleUserHome),
             configuration = SelectionRecord.configurationDigest(
                 test.systemProperties,
-                test.jvmArgs.orEmpty().filter { it != agentArgument },
+                // Every argument the test JVM starts with, those of argument providers included, but
+                // the agents and properties the plugin and JaCoCo set by run kind.
+                test.allJvmArgs.filter { argument ->
+                    argument != agentArgument && !argument.startsWith("-Dyoriwake.") &&
+                        !(argument.startsWith("-javaagent:") && argument.substringBefore('=').endsWith("jacocoagent.jar"))
+                },
                 test.includes.sorted().map { "include $it" } + test.excludes.sorted().map { "exclude $it" } +
                     test.filter.includePatterns.sorted().map { "filter.include $it" } +
                     test.filter.excludePatterns.sorted().map { "filter.exclude $it" },
