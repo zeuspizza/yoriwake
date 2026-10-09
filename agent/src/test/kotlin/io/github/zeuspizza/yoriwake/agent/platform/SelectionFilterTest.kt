@@ -28,6 +28,8 @@ class SelectionFilterTest {
         AgentContract.SELECT_PROPERTY,
         AgentContract.CLASS_GRANULARITY_PROPERTY,
         AgentContract.OBSERVE_PROPERTY,
+        AgentContract.COMPLEMENT_RECORD_PROPERTY,
+        AgentContract.REFUSED_PROPERTY,
     )
 
     @AfterEach
@@ -415,5 +417,70 @@ class SelectionFilterTest {
         File(dir, "coverage.tsv").delete()
 
         assertTrue(filter.apply(Descriptor(testId("Beta"), test = true)).excluded())
+    }
+    /** A selection record listing [ran], written on this JVM unless [identity] says otherwise. */
+    private fun complementing(dir: File, vararg ran: String, identity: Map<String, String> = emptyMap()) {
+        val notes = AgentContract.JVM_IDENTITY_PROPERTIES.split(",")
+            .map { it to (identity[it] ?: System.getProperty(it)) }
+        val record = File(dir, "complement.record")
+        record.writeText(
+            (listOf("#!${AgentContract.VERSION_NOTE}\t${AgentContract.SELECTION_VERSION}") +
+                notes.map { (key, value) -> "#!${AgentContract.JVM_NOTE_PREFIX}$key\t$value" } +
+                "#!${AgentContract.ROWS_NOTE}\t${ran.size}" +
+                ran.map { "$it\tSUCCESSFUL" }).joinToString("\n", postfix = "\n")
+        )
+        System.setProperty(AgentContract.COMPLEMENT_RECORD_PROPERTY, record.absolutePath)
+    }
+
+    @Test
+    fun `a complement run leaves out exactly the tests the record lists as ran`(@TempDir dir: File) {
+        complementing(dir, testId("Alpha"))
+        val filter = SelectionFilter(false)
+
+        assertTrue(filter.apply(Descriptor(testId("Alpha"), test = true)).excluded())
+        assertTrue(filter.apply(Descriptor(testId("Beta"), test = true)).included())
+        assertTrue(
+            filter.apply(Descriptor("[engine:junit-jupiter]/[class:Alpha]/[method:other()]", test = true)).included(),
+            "a test of a class the record names was left out without its own entry",
+        )
+    }
+
+    @Test
+    fun `a complement run runs a leaf container whatever the record lists`(@TempDir dir: File) {
+        val template = "[engine:junit-jupiter]/[class:Alpha]/[test-template:each(int)]"
+        complementing(dir, template)
+
+        assertTrue(SelectionFilter(false).apply(Descriptor(template, test = false)).included())
+    }
+
+    @Test
+    fun `a complement run runs every test of an engine that runs everything`(@TempDir dir: File) {
+        val spec = "[engine:kotest]/[spec:com.acme.AlphaSpec]/[test:doubles]"
+        complementing(dir, spec)
+
+        assertTrue(SelectionFilter(false).apply(Descriptor(spec, test = true)).included())
+    }
+
+    @Test
+    fun `a complement run on another Java runtime than the record's runs everything`(@TempDir dir: File) {
+        complementing(dir, testId("Alpha"), identity = mapOf("java.vendor" to "Another Vendor"))
+
+        assertTrue(SelectionFilter(false).apply(Descriptor(testId("Alpha"), test = true)).included())
+    }
+
+    @Test
+    fun `a complement record that cannot be read runs everything`(@TempDir dir: File) {
+        complementing(dir, testId("Alpha"))
+        File(dir, "complement.record").appendText("${testId("Beta")}\tSUCCESSFUL\n")
+
+        assertTrue(SelectionFilter(false).apply(Descriptor(testId("Alpha"), test = true)).included())
+    }
+
+    @Test
+    fun `a refusal beside a complement record runs everything`(@TempDir dir: File) {
+        complementing(dir, testId("Alpha"))
+        System.setProperty(AgentContract.REFUSED_PROPERTY, "tests were named")
+
+        assertTrue(SelectionFilter(false).apply(Descriptor(testId("Alpha"), test = true)).included())
     }
 }

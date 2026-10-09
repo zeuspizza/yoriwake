@@ -137,10 +137,53 @@ class RunPlanTest {
     }
 
     @Test
+    fun `-Pyoriwake_complement makes a complement run, reading this build's own record or a saved one`() {
+        val own = resolve(settings(Settings.COMPLEMENT))
+        val saved = resolve(Settings { if (it == Settings.COMPLEMENT) "saved/yoriwake" else null })
+
+        assertEquals(RunPlan.Kind.COMPLEMENT, own.kind)
+        assertTrue(own.complementing)
+        assertFalse(own.selecting)
+        assertEquals("", own.complementFrom)
+        assertEquals("saved/yoriwake", saved.complementFrom)
+        assertEquals(null, resolve(settings(Settings.SELECT)).complementFrom)
+    }
+
+    @Test
+    fun `-Pyoriwake_complement=false is a recording run`() {
+        val plan = RunPlan.resolve(
+            Settings { if (it == Settings.COMPLEMENT) "false" else null }, { error("asked for the base") }, { error("scanned") },
+        )
+
+        assertEquals(RunPlan.Kind.RECORD, plan.kind)
+    }
+
+    @Test
+    fun `a full run asked for turns a complement run into a recording one`() {
+        val plan = resolve(settings(Settings.COMPLEMENT, Settings.FULL_RUN))
+
+        assertEquals(RunPlan.Kind.RECORD, plan.kind)
+        assertEquals(RunPlan.Kind.COMPLEMENT, plan.asked)
+        assertEquals(listOf(RefusalKind.FULL_RUN_REQUESTED), plan.declines.map { it.kind })
+    }
+
+    @Test
+    fun `a complement run beside a selecting or an observing one fails, naming both flags`() {
+        listOf(Settings.SELECT, Settings.OBSERVE).forEach { other ->
+            val failure = assertThrows<InvalidUserDataException> {
+                RunPlan.resolve(settings(other, Settings.COMPLEMENT), { error("asked for the base") }, { error("scanned") })
+            }
+
+            assertTrue(other in failure.message.orEmpty(), failure.message)
+            assertTrue(Settings.COMPLEMENT in failure.message.orEmpty(), failure.message)
+        }
+    }
+
+    @Test
     fun `nothing but the run plan reads the selection and observation flags`() {
         val readers = File("src/main/kotlin").walkTopDown()
             .filter { it.extension == "kt" && it.name != "RunPlan.kt" && it.name != "Settings.kt" }
-            .filter { Regex("""\bsettings\.(select|observe)\b""").containsMatchIn(it.readText()) }
+            .filter { Regex("""\bsettings\.(select|observe|complement)\b""").containsMatchIn(it.readText()) }
             .map { it.name }
             .toList()
 

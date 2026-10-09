@@ -7,6 +7,7 @@ import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -157,15 +158,24 @@ class SelectionRecordTest {
     }
 
     @Test
-    fun `a tree that is not clean at either end removes the record`(@TempDir root: File) {
+    fun `a tree not clean where the run started removes the record`(@TempDir root: File) {
         val (repo, map) = repository(root)
+        record(map).writeText("an earlier run's record\n")
         start(map, repo, stamp = stamp(repo).copy(clean = false))
         part(map, "1-1", "token-1", listOf("a"))
-        assertIs<SelectionRecord.Outcome.Removed>(SelectionRecord.afterSelectingRun(map, repo, false))
 
+        assertIs<SelectionRecord.Outcome.Removed>(SelectionRecord.afterSelectingRun(map, repo, false))
+        assertFalse(record(map).exists())
+    }
+
+    @Test
+    fun `a tree not clean where the run ended removes the record`(@TempDir root: File) {
+        val (repo, map) = repository(root)
+        record(map).writeText("an earlier run's record\n")
         start(map, repo)
         part(map, "1-1", "token-1", listOf("a"))
         File(repo, "untracked.txt").writeText("appeared during the run")
+
         assertIs<SelectionRecord.Outcome.Removed>(SelectionRecord.afterSelectingRun(map, repo, false))
         assertFalse(record(map).exists())
     }
@@ -222,5 +232,50 @@ class SelectionRecordTest {
         listOf(null, "", "token", start.encode() + "\nextra").forEach {
             assertNull(SelectionRecord.Start.decode(it), "decoded ${it?.replace("\n", "|")}")
         }
+    }
+    @Test
+    fun `the classpath digest follows each file, and names files under the build or the Gradle home portably`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val there = File(root, "there")
+        val jar = { base: File, version: String -> File(base, "caches/modules-2/files-2.1/org.slf4j/slf4j-api/$version/x/slf4j-api-$version.jar") }
+        val digest = { base: File, home: File, version: String ->
+            SelectionRecord.classpathDigest(listOf(File(base, "build/classes/java/test"), jar(home, version)), base, home)
+        }
+
+        assertEquals(digest(here, home, "2.0.13"), digest(there, File(root, "elsewhere/.gradle"), "2.0.13"))
+        assertNotEquals(digest(here, home, "2.0.13"), digest(here, home, "2.0.12"))
+    }
+
+    @Test
+    fun `the configuration digest follows the task's own settings and not the plugin's`() {
+        val base = SelectionRecord.configurationDigest(mapOf("mode" to "a", "yoriwake.select" to "true"), listOf("-Xmx1g"), listOf("include **/*Test*"), "includeTags=[fast]")
+
+        assertEquals(base, SelectionRecord.configurationDigest(mapOf("mode" to "a"), listOf("-Xmx1g"), listOf("include **/*Test*"), "includeTags=[fast]"))
+        assertNotEquals(base, SelectionRecord.configurationDigest(mapOf("mode" to "b"), listOf("-Xmx1g"), listOf("include **/*Test*"), "includeTags=[fast]"))
+        assertNotEquals(base, SelectionRecord.configurationDigest(mapOf("mode" to "a"), listOf("-Xmx2g"), listOf("include **/*Test*"), "includeTags=[fast]"))
+        assertNotEquals(base, SelectionRecord.configurationDigest(mapOf("mode" to "a"), listOf("-Xmx1g"), listOf("exclude **/*Test*"), "includeTags=[fast]"))
+        assertNotEquals(base, SelectionRecord.configurationDigest(mapOf("mode" to "a"), listOf("-Xmx1g"), listOf("include **/*Test*"), null))
+    }
+
+    @Test
+    fun `a record of another task never matches`() {
+        val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", "c", "d")
+
+        assertTrue("task" in SelectionRecord.mismatch(recorded, recorded.copy(task = ":other:test")).orEmpty())
+    }
+
+    @Test
+    fun `a stamp names the first field it differs in, and a tree that is not clean never matches`() {
+        val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", "c", "d")
+
+        assertNull(SelectionRecord.mismatch(recorded, recorded))
+        assertTrue("commit" in SelectionRecord.mismatch(recorded, recorded.copy(commit = "b".repeat(40))).orEmpty())
+        assertTrue("working tree" in SelectionRecord.mismatch(recorded, recorded.copy(clean = false)).orEmpty())
+        assertTrue("build" in SelectionRecord.mismatch(recorded, recorded.copy(buildRoot = "other")).orEmpty())
+        assertTrue("build" in SelectionRecord.mismatch(recorded, recorded.copy(buildPath = ":included")).orEmpty())
+        assertTrue("classpath" in SelectionRecord.mismatch(recorded, recorded.copy(classpath = "e")).orEmpty())
+        assertTrue("configuration" in SelectionRecord.mismatch(recorded, recorded.copy(configuration = "e")).orEmpty())
+        assertTrue("commit" in SelectionRecord.mismatch(recorded, recorded.copy(commit = null)).orEmpty())
     }
 }

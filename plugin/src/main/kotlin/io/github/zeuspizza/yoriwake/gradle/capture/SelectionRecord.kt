@@ -34,19 +34,26 @@ internal object SelectionRecord {
         val buildPath: String,
         val classpath: String,
         val configuration: String,
-    ) {
-        /** The first field that differs from [other], as a reader names it, or null when none does. */
-        fun differenceFrom(other: Stamp): String? = when {
-            commit != other.commit -> "the commit (${other.commit ?: "unknown"}, not ${commit ?: "unknown"})"
-            !clean -> "the working tree, which is not clean"
-            task != other.task -> "the task (${other.task}, not $task)"
-            buildRoot != other.buildRoot || buildPath != other.buildPath ->
-                "the build (${other.buildRoot.ifEmpty { "." }} ${other.buildPath}, not ${buildRoot.ifEmpty { "." }} $buildPath)"
-            classpath != other.classpath -> "the test runtime classpath"
-            configuration != other.configuration -> "the task's configuration (system properties, JVM arguments, filters)"
-            else -> null
-        }
+    )
+
+    /**
+     * The first field in which a run whose stamp is [now] differs from a [recorded] one, as a reader
+     * names it, or null when it differs in none. A tree that is not clean now never matches.
+     */
+    fun mismatch(recorded: Stamp, now: Stamp): String? = when {
+        now.commit == null || now.commit != recorded.commit ->
+            "the commit: the record is at ${recorded.commit ?: "an unknown commit"}, this run at ${now.commit ?: "an unknown commit"}"
+        !now.clean -> "the working tree, which is not clean"
+        now.task != recorded.task -> "the task: ${recorded.task} in the record, ${now.task} here"
+        now.buildRoot != recorded.buildRoot || now.buildPath != recorded.buildPath ->
+            "the build: ${describe(recorded)} in the record, ${describe(now)} here"
+        now.classpath != recorded.classpath -> "the test runtime classpath"
+        now.configuration != recorded.configuration ->
+            "the task's configuration (its system properties, JVM arguments or test filters)"
+        else -> null
     }
+
+    private fun describe(stamp: Stamp) = "${stamp.buildRoot.ifEmpty { "the repository's top level" }} (${stamp.buildPath})"
 
     /** What a selecting run's first action leaves its decode. */
     class Start(val token: String, val stamp: Stamp) {
@@ -114,6 +121,44 @@ internal object SelectionRecord {
     fun afterDeclinedRun(mapDir: File): Outcome = remove(mapDir, "the run declined to select")
 
     fun read(text: String?): SelectionRecordFile.Result = SelectionRecordFile.read(text)
+
+    /** What a complement run's test JVMs noted: the tests they left out and ran, or why one ran all. */
+    class Complemented(val leftOut: Int, val ran: Int, val mismatch: String?) {
+        /** The decode's one line about the run. */
+        fun line(taskPath: String, commit: String?): String {
+            val untouched = "nothing was captured, and the map and ${AgentContract.SELECTION_FILE} are as they were"
+            return if (mismatch != null) {
+                "[yoriwake] $taskPath: every test ran, because $mismatch; $untouched."
+            } else {
+                "[yoriwake] $taskPath complemented the selecting run at ${commit?.take(12) ?: "its commit"}: " +
+                    "$leftOut tests left out as already run, $ran run; $untouched."
+            }
+        }
+    }
+
+    fun complemented(mapDir: File): Complemented {
+        var leftOut = 0
+        var ran = 0
+        var mismatch: String? = null
+        decisionParts(mapDir).forEach { part ->
+            val notes = runCatching { part.readLines() }.getOrDefault(emptyList())
+                .filter { it.startsWith(AgentContract.NOTE_PREFIX) }
+                .map { Tsv.split(it.removePrefix(AgentContract.NOTE_PREFIX)) }
+                .associate { it[0] to it.drop(1) }
+            notes[AgentContract.COMPLEMENT_NOTE]?.let { counts ->
+                leftOut += counts.getOrNull(0)?.toIntOrNull() ?: 0
+                ran += counts.getOrNull(1)?.toIntOrNull() ?: 0
+            }
+            if (notes[AgentContract.REFUSAL_KIND_NOTE]?.firstOrNull() == AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND) {
+                mismatch = notes[AgentContract.FULL_RUN_REASON_NOTE]?.firstOrNull() ?: "the selection record did not match"
+            }
+        }
+        return Complemented(leftOut, ran, mismatch)
+    }
+
+    private fun decisionParts(mapDir: File): List<File> = mapDir.listFiles { file ->
+        file.name.startsWith("${AgentContract.DECISIONS_FILE}.") && file.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX)
+    }.orEmpty().sortedBy(File::getName)
 
     /** The daemon's stamp of a usable record. */
     fun stampOf(record: SelectionRecordFile.Result): Stamp {
@@ -183,9 +228,7 @@ internal object SelectionRecord {
      * record only leaves its tests out.
      */
     private fun merge(mapDir: File, token: String): Merge {
-        val parts = mapDir.listFiles { file ->
-            file.name.startsWith("${AgentContract.DECISIONS_FILE}.") && file.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX)
-        }.orEmpty().sortedBy(File::getName)
+        val parts = decisionParts(mapDir)
         if (parts.isEmpty()) return Merge.Refused("no test JVM wrote a decision record")
         val ran = sortedMapOf<String, String>()
         var identity: Map<String, String>? = null

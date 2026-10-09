@@ -44,6 +44,8 @@ the run as `change-set-unreadable`.
 | `RUN_TOKEN_PROPERTY` | `yoriwake.run.token` | plugin → agent | A fresh value per selecting run of the task. Each decision record notes it, so the plugin merges only this run's |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |
 | `CHANGE_SET_UNREADABLE_KIND` | `change-set-unreadable` | plugin, agent | The refusal token of a run whose change-set file could not be written or read |
+| `COMPLEMENT_RECORD_PROPERTY` | `yoriwake.complement.record` | plugin → agent | On a complement run whose selection record's stamp matched: the path of its copy, `complement.record`. The agent leaves out each test it lists as ran, unless the record's `jvm.` notes differ from this JVM |
+| `COMPLEMENT_RECORD_MISMATCH_KIND` | `complement-record-mismatch` | plugin, agent | The refusal token of a complement run whose selection record does not match it. The agent writes it as `refusal-kind` when the record's test JVM is not this one |
 
 The agent also reads Gradle's `org.gradle.test.worker` to name its worker directory, and uses a few
 `yoriwake.internal.capture.*` and `yoriwake.junit4.*` properties inside one JVM. Those are not part
@@ -73,6 +75,7 @@ One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usuall
 | `DECISIONS_PART_SUFFIX` | `.part` | agent | people, tools | Ends `decisions.tsv.<pid>-<writer>.part`, one per writer, same format |
 | `OBSERVATION_FILE` | `observation.json` | plugin | people, tools | After an observing run: the failing tests selection would have left out, and the recorded time of the tests it would have skipped. See [Observing before you select](reference.md#observing-before-you-select) |
 | `SELECTION_FILE` | `selection.tsv` | plugin | plugin, agent | After a selecting run that narrowed, at a clean tree: the tests that ran to an outcome, stamped. Removed after any other selecting run. See [The selection record](#the-selection-record) |
+| `COMPLEMENT_RECORD_FILE` | `complement.record` | plugin | agent | A complement run's copy of the selection record it validated. Removed by its decode |
 | `CHANGE_SET_FILE` | `change-set` | plugin | agent | The list-valued change-set properties of the last selecting run, in `java.util.Properties` format, ending with `CHANGE_SET_END` |
 | `CHANGE_SET_END` | `#end` | plugin | agent | The last line of a whole `change-set`. Without it the file is refused |
 | `RAW_DIR` | `raw` | agent | plugin, agent | Raw records, one directory per worker. Cleared before every run |
@@ -188,7 +191,7 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `VERSION_NOTE` | `record-version` | The decision record version |
 | `ROWS_NOTE` | `rows` | Rows the writer meant to write. Fewer rows means the tail was lost |
 | `WRITER_NOTE` | `writer` | Which writer survived, `<n> of <m>` |
-| `OUTCOME_NOTE` | `outcome` | One of the four values below |
+| `OUTCOME_NOTE` | `outcome` | One of the five values below |
 | `FULL_RUN_KIND_NOTE` | `full-run-kind` | Which side forced, as a token |
 | `FULL_RUN_REASON_NOTE` | `full-run-reason` | Why, as prose |
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
@@ -202,6 +205,8 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `RUN_FULL` | `full-run` | Outcome: everything ran |
 | `RUN_NOT_REQUESTED` | `selection-not-requested` | Outcome: the run did not ask to select |
 | `RUN_NOT_DECIDED` | `not-decided` | Outcome: discovery never asked |
+| `RUN_COMPLEMENTED` | `complemented` | Outcome: a complement run left out the tests the selection record lists as ran. Its rows read `ALREADY_RAN` (excluded) or `NOT_ALREADY_RAN` (included) |
+| `COMPLEMENT_NOTE` | `complement` | On a complement run, `leftOut \t ran`: how many tests this writer left out as already run, and how many it ran |
 | `RULES_NOTE` | `rules` | What the rule lines were computed from, one of the five values below. Absent when the run decided nothing |
 | `FORCING_KINDS_NOTE` | `forcing-kinds` | Every full-run kind whose condition held, comma-separated in the order the selector checks them, or `none`. `full-run-kind` names only the first |
 | `RULES_COMPLETE` | `complete` | Rules: from every input the selector reads |

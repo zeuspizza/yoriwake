@@ -65,6 +65,10 @@ internal abstract class DecodeTask : DefaultTask() {
     @get:Input
     abstract val asksSelection: Property<Boolean>
 
+    /** Whether the run leaves out what a selecting run's record lists as ran. */
+    @get:Input
+    abstract val complementing: Property<Boolean>
+
     @get:Input
     abstract val wholeTask: Property<Boolean>
 
@@ -148,6 +152,18 @@ internal abstract class DecodeTask : DefaultTask() {
                     "exactly as it was."
             )
             return
+        }
+        // A complement run that left out what its record lists captured nothing on purpose, and the map
+        // and the record stay as they are.
+        val complemented = File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE)
+        if (complementing.getOrElse(false) && complemented.isFile) {
+            val commit = runCatching { SelectionRecord.stampOf(SelectionRecord.read(complemented.readText())).commit }.getOrNull()
+            complemented.delete()
+            if (marker.delete()) {
+                fullRunMarker.delete()
+                logger.lifecycle(SelectionRecord.complemented(mapDir).line(taskPath, commit))
+                return
+            }
         }
         // The marker exists only when the test task actually executed; see ranMarker.
         if (!marker.delete()) {
@@ -455,6 +471,8 @@ internal abstract class DecodeTask : DefaultTask() {
         val observing: Boolean,
         /** Whether this run was asked to select, declined or not. */
         val asksSelection: Boolean,
+        /** Whether this run complements a selecting run. */
+        val complementing: Boolean,
         val wholeTask: Provider<Boolean>,
         val loadedScope: Provider<List<String>>,
         val datesTheMap: Provider<Boolean>,
@@ -494,6 +512,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.selecting.set(wired.selecting)
                 task.observing.set(wired.observing)
                 task.asksSelection.set(wired.asksSelection)
+                task.complementing.set(wired.complementing)
                 task.wholeTask.set(wired.wholeTask)
                 task.loadedScope.set(wired.loadedScope)
                 task.datesTheMap.set(wired.datesTheMap)

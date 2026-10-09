@@ -278,6 +278,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing)
         recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
+            // Registered before the marker's deletion, so it runs after it and may write one.
+            if (runPlan.complementing) configureComplement(project, test, mapDir, runPlan, agent)
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
@@ -313,7 +315,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         configured[test.name] = Configured(
             mapDir, scope, scopeOutcome,
             DecodeTask.Inputs(
-                mapDir, scopeOutcome, selecting, runPlan.observing, runPlan.asked == RunPlan.Kind.SELECT,
+                mapDir, scopeOutcome, selecting, runPlan.observing, runPlan.asked == RunPlan.Kind.SELECT, runPlan.complementing,
                 wholeTask, loadedScope, datesTheMap, undatedReason,
                 // What JaCoCo actually instruments, read back off the task so the host's excludes
                 // are in it. See EffectiveScope.
@@ -736,6 +738,12 @@ internal class TestTaskWiring(internal val settings: Settings) {
         test.doFirst {
             File(mapDir, SelectionRecord.START_FILE).delete()
             if (declinedUnderDevelocity(test)) return@doFirst
+            // A test JVM keeps running after the first failure, and Gradle drops what it reports then:
+            // a test could be listed as ran whose outcome no run showed.
+            if (test.failFast) {
+                test.logger.info("[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record")
+                return@doFirst
+            }
             val token = java.util.UUID.randomUUID().toString()
             test.systemProperty(RUN_TOKEN_PROPERTY, token)
             runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, identity.observe(test))) }

@@ -1,6 +1,9 @@
 package io.github.zeuspizza.yoriwake.agent.platform;
 
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_RECORD_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FULL_RUN_KIND_NOTE;
@@ -11,6 +14,7 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSAL_KIND_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_COMPLEMENTED;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_FULL;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_NARROWED;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_NOT_DECIDED;
@@ -22,9 +26,12 @@ import io.github.zeuspizza.yoriwake.agent.engines.PlatformEvents;
 import io.github.zeuspizza.yoriwake.agent.host.AttachedLoader;
 import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun;
 import io.github.zeuspizza.yoriwake.agent.select.FilterRule;
+import io.github.zeuspizza.yoriwake.agent.select.SelectionRecordFile;
 import io.github.zeuspizza.yoriwake.agent.select.Selector;
 import io.github.zeuspizza.yoriwake.agent.select.Verdict;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -45,7 +52,8 @@ import org.junit.platform.launcher.PostDiscoveryFilter;
  *
  * <p>Opt-in per run: with no selection requested, everything is included and the run only builds
  * or refreshes the map. An observing run decides as a selecting one does, includes everything, and
- * records each verdict beside the row of what ran.
+ * records each verdict beside the row of what ran. A complement run leaves out only the tests a
+ * selecting run's record lists as ran.
  */
 public class SelectionFilter implements PostDiscoveryFilter {
 
@@ -83,6 +91,23 @@ public class SelectionFilter implements PostDiscoveryFilter {
     // Apart from the tally, which counts the selector's reasons: the selector never judged these.
     private final java.util.concurrent.atomic.AtomicInteger engineRunsEverything =
             new java.util.concurrent.atomic.AtomicInteger();
+
+    // A complement run's record, read once; and what it left out and ran, for its note.
+    private volatile Complement complement;
+    private final java.util.concurrent.atomic.AtomicInteger leftOut = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger complementRan =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** The tests a complement run may leave out, or why it leaves out none. */
+    private static final class Complement {
+        final java.util.Map<String, String> ran;
+        final String mismatch;
+
+        Complement(java.util.Map<String, String> ran, String mismatch) {
+            this.ran = ran;
+            this.mismatch = mismatch;
+        }
+    }
 
     /** Required by {@link java.util.ServiceLoader}: JUnit instantiates filters with no arguments. */
     public SelectionFilter() {
@@ -163,6 +188,20 @@ public class SelectionFilter implements PostDiscoveryFilter {
                     decisions.note(DECLINES_NOTE, declines);
                 }
                 decisions.note(FULL_RUN_REASON_NOTE, refusal);
+                return;
+            }
+            if (complementing()) {
+                Complement read = complement;
+                if (read != null && read.mismatch != null) {
+                    // The daemon's refusal channel was set before this JVM started, so the agent's
+                    // own refusal is a note.
+                    decisions.note(OUTCOME_NOTE, RUN_FULL);
+                    decisions.note(REFUSAL_KIND_NOTE, COMPLEMENT_RECORD_MISMATCH_KIND);
+                    decisions.note(FULL_RUN_REASON_NOTE, read.mismatch);
+                    return;
+                }
+                decisions.note(OUTCOME_NOTE, RUN_COMPLEMENTED);
+                decisions.noteFields(COMPLEMENT_NOTE, String.valueOf(leftOut.get()), String.valueOf(complementRan.get()));
                 return;
             }
             if (observing()) {
@@ -290,6 +329,9 @@ public class SelectionFilter implements PostDiscoveryFilter {
             record(descriptor, Verdict.DAEMON_REFUSED);
             return FilterResult.included("the daemon refused this run");
         }
+        if (complementing()) {
+            return complement(descriptor);
+        }
         if (!selectionRequested()) {
             record(descriptor, Verdict.SELECTION_NOT_REQUESTED);
             return FilterResult.included("selection not requested");
@@ -337,6 +379,69 @@ public class SelectionFilter implements PostDiscoveryFilter {
         return FilterResult.included(verdict.reasonToken());
     }
 
+
+    /**
+     * What a complement run includes: everything when the record was written on another test JVM or
+     * cannot be read; else every test but those it lists as ran, matched by exact id. A container with
+     * children is judged through them; a leaf container and a test of an engine that runs everything
+     * always run, whatever the record lists.
+     */
+    private FilterResult complement(TestDescriptor descriptor) {
+        Complement read = complementRecord();
+        if (read.mismatch != null) {
+            reportOnce("running everything: " + read.mismatch);
+            record(descriptor, Verdict.FULL_RUN);
+            return FilterResult.included(read.mismatch);
+        }
+        if (!descriptor.getChildren().isEmpty()) {
+            return FilterResult.included("a container whose children are judged individually");
+        }
+        String id = descriptor.getUniqueId().toString();
+        if (FilterRule.engineRunsEverything(id)) {
+            complementRan.incrementAndGet();
+            record(descriptor, Verdict.ENGINE_RUNS_EVERYTHING);
+            return FilterResult.included("its engine runs nothing once one of its tests is left out");
+        }
+        if (descriptor.isTest() && read.ran.containsKey(id)) {
+            leftOut.incrementAndGet();
+            record(descriptor, Verdict.ALREADY_RAN);
+            return FilterResult.excluded("the selecting run ran it");
+        }
+        complementRan.incrementAndGet();
+        record(descriptor, Verdict.NOT_ALREADY_RAN);
+        return FilterResult.included("the selecting run did not run it");
+    }
+
+    /** The complement record, read once; any doubt about it leaves out nothing. */
+    private synchronized Complement complementRecord() {
+        if (complement == null) {
+            complement = readComplement(System.getProperty(COMPLEMENT_RECORD_PROPERTY));
+        }
+        return complement;
+    }
+
+    private static Complement readComplement(String path) {
+        String text;
+        try {
+            text = new String(Files.readAllBytes(new File(path).toPath()), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return new Complement(Collections.<String, String>emptyMap(), "the selection record could not be read (" + e + ")");
+        }
+        SelectionRecordFile.Result record = SelectionRecordFile.read(text);
+        if (record.failure() != null) {
+            return new Complement(Collections.<String, String>emptyMap(), "the selection record is unusable: " + record.failure());
+        }
+        for (String property : AgentContract.JVM_IDENTITY_PROPERTIES.split(",")) {
+            String recorded = record.notes().get(AgentContract.JVM_NOTE_PREFIX + property);
+            String here = System.getProperty(property, "");
+            if (!here.equals(recorded)) {
+                return new Complement(Collections.<String, String>emptyMap(),
+                        "the selection record was written on another test JVM: " + property + " was " + recorded
+                                + " there and is " + here + " here");
+            }
+        }
+        return new Complement(record.ran(), null);
+    }
 
     // At JVM exit because there is no end-of-discovery callback and the count is only complete then.
     private void reportTallyOnExit() {
@@ -402,6 +507,12 @@ public class SelectionFilter implements PostDiscoveryFilter {
     // A capture-only run must not deselect, or the map would only describe tests it already knew.
     private boolean selectionRequested() {
         return Boolean.parseBoolean(System.getProperty(SELECT_PROPERTY, "false"));
+    }
+
+    /** Whether this run leaves out what a selecting run's record lists as ran. */
+    private boolean complementing() {
+        String path = System.getProperty(COMPLEMENT_RECORD_PROPERTY);
+        return path != null && !path.isEmpty();
     }
 
     /** Whether this run includes everything and records what selection would have done. */

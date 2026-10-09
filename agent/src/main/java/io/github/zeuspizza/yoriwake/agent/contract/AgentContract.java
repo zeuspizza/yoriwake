@@ -107,6 +107,13 @@ public final class AgentContract {
      */
     public static final String RUN_TOKEN_PROPERTY = "yoriwake.run.token";
 
+    /**
+     * The selection record a complement run reads, {@link #COMPLEMENT_RECORD_FILE} beside the map. Set
+     * only once the plugin found the record's stamp equal to this run's; the test JVM then leaves out
+     * each test it lists as ran, unless its own identity differs from the record's.
+     */
+    public static final String COMPLEMENT_RECORD_PROPERTY = "yoriwake.complement.record";
+
     /** Test-id globs selection may never skip, comma-separated. */
     public static final String ALWAYS_RUN_PROPERTY = "yoriwake.alwaysRun";
 
@@ -115,6 +122,12 @@ public final class AgentContract {
      * because the agent raises it too.
      */
     public static final String CHANGE_SET_UNREADABLE_KIND = "change-set-unreadable";
+
+    /**
+     * The refusal kind of a complement run whose selection record does not match it. Defined here
+     * because the agent raises it too, when the record's test JVM is not this one.
+     */
+    public static final String COMPLEMENT_RECORD_MISMATCH_KIND = "complement-record-mismatch";
 
 
     /** The directory under the project cache dir ({@code .gradle/}) that holds one map per task. */
@@ -179,6 +192,12 @@ public final class AgentContract {
      * the decode after such a run, removed after any other selecting run; a complement run reads it.
      */
     public static final String SELECTION_FILE = "selection.tsv";
+
+    /**
+     * A complement run's copy of the selection record it validated, beside the map and outside
+     * {@link #RAW_DIR}, which {@link #COMPLEMENT_RECORD_PROPERTY} names. Removed by its decode.
+     */
+    public static final String COMPLEMENT_RECORD_FILE = "complement.record";
 
     /** The selection record's version, its {@link #VERSION_NOTE}. */
     public static final String SELECTION_VERSION = "1";
@@ -426,6 +445,12 @@ public final class AgentContract {
     public static final String RUN_FULL = "full-run";
 
     public static final String RUN_NOT_REQUESTED = "selection-not-requested";
+
+    /** Outcome: a complement run left out the tests a selecting run's record lists as ran. */
+    public static final String RUN_COMPLEMENTED = "complemented";
+
+    /** On a complement run: {@code leftOut \t ran}, the tests this writer left out and included. */
+    public static final String COMPLEMENT_NOTE = "complement";
 
     /** Discovery never asked, so there is no decision to describe. */
     public static final String RUN_NOT_DECIDED = "not-decided";
