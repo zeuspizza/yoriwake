@@ -354,14 +354,7 @@ internal fun TestTaskWiring.declineNamedTests(
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
     test.doFirst {
         if (declinedUnderDevelocity(test)) return@doFirst
-        val verdict = filterVerdict.get()
-        val (kind, reason) = when {
-            !verdict.filterReadable -> RefusalKind.DECLINE_UNDETERMINED to
-                "${verdict.detail}, so whether tests were named with --tests is unknown"
-            verdict.commandLinePatterns.isNotEmpty() -> RefusalKind.TESTS_NAMED to
-                "tests were named with --tests ${verdict.commandLinePatterns.sorted().joinToString(" ")}"
-            else -> return@doFirst
-        }
+        val (kind, reason) = filterVerdict.get().namedTestsDecline() ?: return@doFirst
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: $reason, so selection is declined and every test the filter " +
                 "matches runs."
