@@ -15,6 +15,11 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- `-Pyoriwake.fullRun`, or a `yoriwake: full` line in a commit message, makes a selecting run run
+  everything and record. Map: left alone.
+
 ### Changed
 
 - A run forced by an untracked file in the source tree names the file and where it came from, on
