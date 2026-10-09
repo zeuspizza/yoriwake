@@ -175,8 +175,6 @@ details of each.
   recording cost.
 - **Without the JUnit Platform.** Plain JUnit 4 and TestNG are recorded but always run in full;
   JUnit 4 narrows only through the vintage engine. Kotest specs always run.
-- **Coverage reports.** While yoriwake records, the test task's own JaCoCo `.exec` holds almost
-  nothing, full runs included. Run coverage jobs with `-Pyoriwake.disabled=true`.
 - **Windows.** It has never run there. Maps move between Linux and macOS.
 - **A test filter in the build script.** A test filter set in the build script
   (`filter.include/excludeTestsMatching`) switches selection off for that task: every run is a full

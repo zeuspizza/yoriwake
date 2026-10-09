@@ -12,6 +12,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
+import io.github.zeuspizza.yoriwake.gradle.wiring.AfterTest
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.develocityRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
@@ -82,9 +83,14 @@ internal abstract class DecodeTask : DefaultTask() {
     @get:Internal("the classpath the digests read without depending on the tasks that build it")
     lateinit var facts: ClasspathFacts
 
+    @get:Internal("work its test task's own doLast did not reach when a test failed")
+    lateinit var afterTest: AfterTest
+
     @TaskAction
     fun decode() {
         val taskPath = taskPath.get()
+        // First, so a report that runs after this task reads the restored file.
+        afterTest.runIfPending(taskPath, logger)
         val patterns = patterns.get()
         val selecting = selecting.get()
         val marker = ranMarker(CoverageDecoder.recordsDir(mapDir))
@@ -371,6 +377,7 @@ internal abstract class DecodeTask : DefaultTask() {
         val effectiveScope: Provider<String>,
         /** Whether this run forked a JVM per test class while it captured. */
         val isolated: Boolean,
+        val afterTest: AfterTest,
     )
 
     internal companion object {
@@ -405,6 +412,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.undatedReason.set(wired.undatedReason)
                 task.effectiveScope.set(wired.effectiveScope)
                 task.isolated.set(wired.isolated)
+                task.afterTest = wired.afterTest
                 task.rootDir = project.rootDir
                 // Empty, stated rather than defaulted: these facts never reach
                 // `modulesOnClasspath`, so resolving `declared` would buy nothing.

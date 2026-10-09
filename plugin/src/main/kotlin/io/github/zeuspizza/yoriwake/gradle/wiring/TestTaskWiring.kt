@@ -36,6 +36,7 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.JacocoScoping.deriveScope
 import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+import org.gradle.testing.jacoco.tasks.JacocoReportBase
 import java.io.File
 
 /**
@@ -124,6 +125,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     configured.getValue(t.name).let { it.mapDir to it.outcome }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
+                // A failed run restores the host's JaCoCo file in the decode; a report reads it after.
+                project.tasks.withType(JacocoReportBase::class.java).configureEach {
+                    it.mustRunAfter(DecodeTask.nameFor(name))
+                }
             }
         }
     }
@@ -201,6 +206,16 @@ internal class TestTaskWiring(internal val settings: Settings) {
         recordClasspathFiles(project, test, mapDir, selecting, buildMemo)
         observeWorkingTree(project, test, mapDir, selecting, buildMemo, startReading(project, buildMemo))
         discardPreviousRecords(test, recordsDir)
+        val afterTest = AfterTest(
+            afterTestPending(recordsDir),
+            listOf(
+                RestoreHostCoverage(
+                    recordsDir,
+                    project.provider { (test.extensions.findByName("jacoco") as? JacocoTaskExtension)?.destinationFile },
+                ),
+            ),
+        )
+        afterTest.attachTo(test)
 
         // Opt-in (-Pyoriwake.internal.loaded): a second -javaagent learns which classes the test
         // JVM loaded. Cleared every run, so old files never pass for this run's output.
@@ -269,6 +284,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 effectiveScope,
                 // What this run asked for; the decoder still checks that each JVM ran one class.
                 isolated = settings.isolatedCapture && !selecting,
+                afterTest = afterTest,
             ),
         )
         test.finalizedBy(DecodeTask.nameFor(test.name))

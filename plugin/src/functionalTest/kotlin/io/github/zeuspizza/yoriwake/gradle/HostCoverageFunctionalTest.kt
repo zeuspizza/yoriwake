@@ -33,22 +33,36 @@ class HostCoverageFunctionalTest : FunctionalTestSupport() {
     private val mainClasses = setOf("dev/sample/Alpha", "dev/sample/Beta", "dev/sample/Gamma")
 
     @Test
-    fun `a capture run leaves the host file without the classes its tests ran`(@TempDir dir: File) {
+    fun `a capture run leaves the host file holding what its tests ran`(@TempDir dir: File) {
         build(dir, "build.gradle.kts" to build, *sources)
 
         runner(dir, "test").build()
 
         assertEquals(mainClasses, mainClassesIn(*rawRecords(dir)))
-        assertEquals(emptySet(), mainClassesIn(hostFile(dir)))
+        assertEquals(mainClasses, mainClassesIn(hostFile(dir)))
     }
 
     @Test
-    fun `two forks leave one session each in the host file`(@TempDir dir: File) {
+    fun `the report of a capture run equals the report of a run without the plugin`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to build, *sources)
+        runner(dir, "test", "jacocoTestReport").build()
+        val captured = report(dir)
+        File(dir, "build").deleteRecursively()
+
+        runner(dir, "test", "jacocoTestReport", "-Pyoriwake.disabled").build()
+
+        assertTrue("<class name=\"dev/sample/Gamma\"" in captured, captured)
+        assertEquals(report(dir), captured)
+    }
+
+    @Test
+    fun `two forks leave a complete host file`(@TempDir dir: File) {
         build(dir, "build.gradle.kts" to build + "\ntasks.test { maxParallelForks = 2 }", *sources)
 
         runner(dir, "test").build()
 
-        assertEquals(2, sessionsIn(hostFile(dir)))
+        assertTrue(sessionsIn(hostFile(dir)) >= 2)
+        assertEquals(mainClasses, mainClassesIn(hostFile(dir)))
     }
 
     @Test
@@ -109,7 +123,7 @@ class HostCoverageFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a failing test runs the decode before the host's report`(@TempDir dir: File) {
+    fun `a failing test restores the host file before the host's report reads it`(@TempDir dir: File) {
         build(
             dir,
             "build.gradle.kts" to build + "\ntasks.test { finalizedBy(tasks.jacocoTestReport) }",
@@ -122,6 +136,8 @@ class HostCoverageFunctionalTest : FunctionalTestSupport() {
         val order = result.tasks.map { it.path }
         assertTrue(order.indexOf(":yoriwakeDecodeTest") < order.indexOf(":jacocoTestReport"), "$order")
         assertEquals(TaskOutcome.SUCCESS, result.task(":jacocoTestReport")?.outcome)
+        assertEquals(mainClasses, mainClassesIn(hostFile(dir)))
+        assertEquals(mainClasses.map { it.substringAfterLast('/') }.toSet(), coveredInReport(dir))
     }
 
     @Test
@@ -138,7 +154,7 @@ class HostCoverageFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(TaskOutcome.FROM_CACHE, cached.task(":test")?.outcome)
         assertTrue(stored.contentEquals(hostFile(dir).readBytes()))
-        assertEquals(emptySet(), mainClassesIn(hostFile(dir)))
+        assertEquals(mainClasses, mainClassesIn(hostFile(dir)))
     }
 
     private fun testClass(name: String, vararg bodies: String) = "src/test/java/dev/sample/$name.java" to """
@@ -161,6 +177,16 @@ class HostCoverageFunctionalTest : FunctionalTestSupport() {
     }
 
     private fun hostFile(dir: File) = File(dir, "build/jacoco/test.exec")
+
+    /** The XML report without its session list, which names each JVM and when it ran. */
+    private fun report(dir: File) =
+        File(dir, "build/reports/jacoco/test/jacocoTestReport.xml").readText().replace(Regex("<sessioninfo[^>]*/>"), "")
+
+    /** The simple names of the classes the XML report counts any covered line for. */
+    private fun coveredInReport(dir: File): Set<String> =
+        Regex("<class name=\"dev/sample/(\\w+)\"[^>]*>.*?</class>").findAll(report(dir))
+            .filter { Regex("<counter type=\"LINE\" missed=\"\\d+\" covered=\"[1-9]").containsMatchIn(it.value) }
+            .map { it.groupValues[1] }.toSet()
 
     /** Every per-test record the run wrote. */
     private fun rawRecords(dir: File): Array<File> {
