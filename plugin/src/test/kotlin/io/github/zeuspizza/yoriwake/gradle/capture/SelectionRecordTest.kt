@@ -248,6 +248,26 @@ class SelectionRecordTest {
     }
 
     @Test
+    fun `the classpath digest follows the content of a jar or directory outside the build, at the same path`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val snapshot = File(root, "m2/com/acme/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOT.jar").apply { parentFile.mkdirs(); writeText("a") }
+        val included = File(root, "lib/build/classes/java/main").apply { mkdirs() }
+        File(included, "com/acme/Lib.class").apply { parentFile.mkdirs(); writeText("a") }
+        val built = File(here, "build/libs/here.jar").apply { parentFile.mkdirs(); writeText("a") }
+        val digest = { SelectionRecord.classpathDigest(listOf(built, snapshot, included), here, home) }
+        val before = digest()
+
+        built.writeText("b")
+        assertEquals(before, digest(), "a jar this build makes is fixed by the commit, so it is named only")
+        snapshot.writeText("b")
+        val afterSnapshot = digest()
+        assertNotEquals(before, afterSnapshot)
+        File(included, "com/acme/Lib.class").writeText("b")
+        assertNotEquals(afterSnapshot, digest())
+    }
+
+    @Test
     fun `the configuration digest follows the task's own settings and not the plugin's`() {
         val base = SelectionRecord.configurationDigest(mapOf("mode" to "a", "yoriwake.select" to "true"), listOf("-Xmx1g"), listOf("include **/*Test*"), "includeTags=[fast]")
 

@@ -181,13 +181,41 @@ internal object SelectionRecord {
     /**
      * A digest of [files] in order, each named relative to [rootDir] or [gradleUserHome] when under
      * one, so the same resolution on another machine digests alike.
+     *
+     * A file or directory outside [rootDir] is digested by its content too, unless it is in Gradle's
+     * module cache, whose paths name their content: a snapshot in a local repository or an included
+     * build elsewhere can change at the same path between two runs at one commit. What is under
+     * [rootDir] is named only, since the commit and a clean tree fix what git tracks there and the
+     * build outputs made from it, and a jar the build rebuilds need not come out byte for byte alike.
      */
     fun classpathDigest(files: Iterable<File>, rootDir: File, gradleUserHome: File): String =
         sha256(files.map { file ->
-            file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let { "root:$it" }
-                ?: file.relativeToOrNull(gradleUserHome)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let { "gradle:$it" }
-                ?: file.invariantSeparatorsPath
+            file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let { return@map "root:$it" }
+            val inHome = file.relativeToOrNull(gradleUserHome)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath
+            if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
+            (inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath) + " " + contentDigest(file)
         })
+
+    /** A file's bytes, or a directory's files by relative path and bytes; `absent` when neither. */
+    private fun contentDigest(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        fun add(each: File) = each.inputStream().use { input ->
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        when {
+            file.isFile -> add(file)
+            file.isDirectory -> file.walkTopDown().filter(File::isFile)
+                .map { it.relativeTo(file).invariantSeparatorsPath to it }.sortedBy { it.first }
+                .forEach { (path, each) -> digest.update(path.toByteArray(Charsets.UTF_8)); digest.update(0); add(each) }
+            else -> return "absent"
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 
     /**
      * A digest of what a task's configuration decides about its tests: its system properties and JVM
