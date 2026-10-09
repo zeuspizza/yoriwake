@@ -17,6 +17,8 @@ import org.gradle.api.Project
 internal class Settings(lookup: (String) -> String?) {
 
     val select: Boolean = parseFlag(SELECT, lookup(SELECT))
+    /** Asks a selecting run to run every test instead, as a recording run. */
+    val fullRun: Boolean = parseFlag(FULL_RUN, lookup(FULL_RUN))
     val base: String? = lookup(BASE)
     val disabled: Boolean = parseFlag(DISABLED, lookup(DISABLED))
     val isolatedCapture: Boolean = parseFlag(ISOLATED_CAPTURE, lookup(ISOLATED_CAPTURE))
@@ -36,6 +38,7 @@ internal class Settings(lookup: (String) -> String?) {
 
     companion object {
         const val SELECT = "yoriwake.select"
+        const val FULL_RUN = "yoriwake.fullRun"
         const val BASE = "yoriwake.base"
         const val DISABLED = "yoriwake.disabled"
         const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"

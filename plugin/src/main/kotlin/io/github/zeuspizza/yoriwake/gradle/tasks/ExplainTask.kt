@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
@@ -77,6 +78,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val namedTestsReason: Property<String>
+
+    /** Whether `-Pyoriwake.fullRun` was passed, which declines selection. */
+    @get:Input
+    @get:Optional
+    abstract val fullRunRequested: Property<Boolean>
 
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
@@ -171,6 +177,22 @@ internal abstract class ExplainTask : DefaultTask() {
         val drift = if (age is MapAge.Known) WorkingTree.drift(rootDir, mapDir, excluded) else null
         val unknown = (drift as? WorkingTree.Drift.Unknown)?.let { MapAge.Unknown(it.kind, it.reason) }
             ?: age as? MapAge.Unknown
+        // As the run checks them, before the map's age refuses: a full run asked for, then a
+        // commit asking for one, read over the range the run would select over.
+        val (declines, notes) = RunPlan.declines(fullRunRequested.getOrElse(false), unknown ?: age) { since ->
+            ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(rootDir, it) }, since)
+        }
+        notes.forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
+        declines.firstOrNull()?.let { decline ->
+            logger.lifecycle("[yoriwake] $taskPath would run everything: ${decline.reason}")
+            writeUnanswered(
+                mapDir, taskPath, resolvedBase.ref,
+                io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                decline.reason,
+                refusalKind = decline.kind.token,
+            )
+            return
+        }
         if (unknown != null) {
             logger.lifecycle("[yoriwake] $taskPath would run everything: ${unknown.reason}")
             writeUnanswered(
@@ -339,6 +361,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     return@register
                 }
                 task.explicitBase.set(settings.base)
+                task.fullRunRequested.set(settings.fullRun)
                 task.develocity.set(DevelocityDetection.provider(project, test))
                 // Through a provider: Gradle applies `--tests` after this runs.
                 val namedTestsDecline = project.provider<Pair<RefusalKind, String>> { readFilterVerdict(test).namedTestsDecline() }

@@ -7,6 +7,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_BYTES_P
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEMPT_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
@@ -107,18 +108,8 @@ internal fun TestTaskWiring.configureSelection(
     // Read before any refusal below, so a list that cannot be read fails every selecting run alike.
     val trusted = trustedDigest(project, settings, mapDir)
 
-    val explicit = settings.base
-    val base = when {
-        explicit != null -> ChangeDetection.Base(explicit, Settings.BASE)
-        else -> ChangeDetection.defaultBase(project.providers, project.rootDir, buildMemo)
-            ?: noBaseFound()
-    }
-    val stampAge = widenBaseToMapAge(project, mapDir, base, buildMemo)
-    // Only for a map whose stamp stands; the drift is the part of the map's age a commit
-    // cannot state.
-    val drift = if (stampAge is MapAge.Known) worktreeDrift(project, mapDir, buildMemo) else null
-    val age = (drift as? WorkingTree.Drift.Unknown)?.let { MapAge.Unknown(it.kind, it.reason) }
-        ?: stampAge
+    val age = runPlan.widening!!.age
+    val drift = runPlan.widening.drift
     if (age is MapAge.Unknown) {
         refuse(test, age.kind, age.reason)
         val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -329,6 +320,73 @@ internal fun TestTaskWiring.configureSelection(
     }
 }
 
+/**
+ * The base a selecting run compares from, widened to the map's age, and the working tree's drift
+ * since the capture. The run plan asks it once, before any decline is checked.
+ */
+internal fun selectionWidening(
+    project: Project,
+    settings: Settings,
+    mapDir: File,
+    buildMemo: BuildMemo?,
+): RunPlan.Widening {
+    val explicit = settings.base
+    val base = when {
+        explicit != null -> ChangeDetection.Base(explicit, Settings.BASE)
+        else -> ChangeDetection.defaultBase(project.providers, project.rootDir, buildMemo)
+            ?: noBaseFound()
+    }
+    val stampAge = widenBaseToMapAge(project, mapDir, base, buildMemo)
+    // Only for a map whose stamp stands; the drift is the part of the map's age a commit
+    // cannot state.
+    val drift = if (stampAge is MapAge.Known) worktreeDrift(project, mapDir, buildMemo) else null
+    val age = (drift as? WorkingTree.Drift.Unknown)?.let { MapAge.Unknown(it.kind, it.reason) }
+        ?: stampAge
+    return RunPlan.Widening(age, drift)
+}
+
+/**
+ * Turns a run asked to select into a recording run, for each decline that held: it runs every
+ * test, captures and dates the map. A map recorded with a JVM per test class is left as it is
+ * unless this invocation passes `-Pyoriwake.isolatedCapture`, as on every other fallback. Registered
+ * where the selection actions would be, so the named-tests and Develocity declines still run first.
+ */
+internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: RunPlan) {
+    val first = runPlan.declines.first()
+    refuse(test, first.kind, first.reason)
+    test.systemProperty(DECLINES_PROPERTY, runPlan.declines.joinToString(",") { it.kind.token })
+    // Held from configuration time: a task action may not reach Task.extensions under the
+    // configuration cache.
+    val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+    val reasons = runPlan.declines.map { it.reason }
+    val isolatedCapture = settings.isolatedCapture
+    val leftAlone = declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir))
+    test.doFirst {
+        leftAlone.delete()
+        if (declinedUnderDevelocity(test) || declinedForNamedTests(test, first.kind)) return@doFirst
+        test.logger.lifecycle(
+            "[yoriwake] ${test.path}: ${reasons.joinToString("; ")}, so selection is declined and every " +
+                "test runs as on a run without -P${Settings.SELECT}."
+        )
+        val decision = decideCapture(
+            mapDir,
+            mapUsable = runCatching {
+                io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
+            }.getOrDefault(false),
+            fullRun = true,
+            learnable = emptySet(),
+            ageKnown = false,
+        )
+        if (isolatedCapture || decision.capture) return@doFirst
+        applyCaptureDecision(test, mapDir, jacoco, decision)
+        // The decode reads it: this run captured nothing on purpose.
+        runCatching {
+            leftAlone.parentFile.mkdirs()
+            leftAlone.writeText(decision.reason + "\n")
+        }
+    }
+}
+
 private val NAMED_TESTS_REFUSALS = setOf(RefusalKind.TESTS_NAMED, RefusalKind.DECLINE_UNDETERMINED).map { it.token }
 
 /** The kinds an action of the run itself decides; a later action leaves the run as they set it. */
@@ -336,9 +394,15 @@ private val EXECUTION_REFUSALS =
     setOf(RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED)
         .map { it.token } + DEVELOCITY_REFUSALS + NAMED_TESTS_REFUSALS
 
-/** Whether this run declined selection because tests were named, or could not tell. */
-internal fun declinedForNamedTests(test: Test) =
-    test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in NAMED_TESTS_REFUSALS
+/**
+ * Whether this run declined selection because tests were named, or could not tell. [planned] is
+ * the decline the run plan made at configuration: an undetermined one of its own is not about the
+ * test filter.
+ */
+internal fun declinedForNamedTests(test: Test, planned: RefusalKind? = null): Boolean {
+    val kind = test.systemProperties[REFUSED_KIND_PROPERTY]?.toString()
+    return kind in NAMED_TESTS_REFUSALS && kind != planned?.token
+}
 
 /**
  * Declines selection on a task run with `--tests`: a developer who names tests expects every one of
@@ -362,6 +426,9 @@ internal fun TestTaskWiring.declineNamedTests(
                 "matches runs."
         )
         refuse(test, kind, reason)
+        // Listed beside any decline the run plan already made.
+        val declined = test.systemProperties[DECLINES_PROPERTY]?.toString().orEmpty()
+        test.systemProperty(DECLINES_PROPERTY, listOf(declined, kind.token).filter(String::isNotEmpty).joinToString(","))
         // Only part of the suite runs, so there is nothing to capture.
         applyCaptureDecision(
             test, mapDir, jacoco,

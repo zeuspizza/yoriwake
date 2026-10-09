@@ -5,8 +5,10 @@ package io.github.zeuspizza.yoriwake.gradle.change
  * in `yoriwake.refused.kind`, `decisions.tsv` records as `refusal-kind` and `explain.json` reports
  * as `refusalKind`. Each value has a different remedy, so a reader can tell whether recapturing
  * would help.
+ *
+ * [requested] marks the kinds a user asked for, so a reader never counts them as the tool refusing.
  */
-internal enum class RefusalKind(val token: String) {
+internal enum class RefusalKind(val token: String, val requested: Boolean = false) {
     /** The map's capture stamp cannot be related to the base, so its age is unknown. */
     STAMP_UNRELATABLE("stamp-unrelatable"),
 
@@ -104,10 +106,19 @@ internal enum class RefusalKind(val token: String) {
      * Tests were named with `--tests`: every test that filter matches runs, as asked. Dropping
      * `--tests` lifts this.
      */
-    TESTS_NAMED("tests-named"),
+    TESTS_NAMED("tests-named", requested = true),
 
-    /** Whether tests were named with `--tests` could not be read off the task, so everything runs. */
+    /**
+     * Whether a decline holds could not be read: tests named with `--tests`, or a commit asking for
+     * a full run. Everything runs.
+     */
     DECLINE_UNDETERMINED("decline-undetermined"),
+
+    /** `-Pyoriwake.fullRun` asked a selecting run to run everything; it records the map instead. */
+    FULL_RUN_REQUESTED("full-run-requested", requested = true),
+
+    /** A commit since the base asks for a full run with a `yoriwake: full` line; as above. */
+    FULL_RUN_COMMIT("full-run-commit", requested = true),
     ;
 
     companion object {

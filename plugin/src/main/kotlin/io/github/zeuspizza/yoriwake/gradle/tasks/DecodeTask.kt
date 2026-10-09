@@ -14,6 +14,7 @@ import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.AfterTest
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
+import io.github.zeuspizza.yoriwake.gradle.wiring.declinedLeftAloneMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.develocityRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
@@ -126,6 +127,15 @@ internal abstract class DecodeTask : DefaultTask() {
         // The marker exists only when the test task actually executed; see ranMarker.
         if (!marker.delete()) {
             logger.info("[yoriwake] $taskPath did no work; the map is left as it is")
+            return
+        }
+        // A declined run that left a map recorded in isolation alone captured nothing on purpose.
+        val leftAlone = declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir))
+        if (leftAlone.isFile) {
+            val reason = runCatching { leftAlone.readText().trim() }.getOrDefault("")
+            leftAlone.delete()
+            fullRunMarker.delete()
+            logger.lifecycle("[yoriwake] $taskPath: $reason")
             return
         }
         // Read here, not through a provider, which resolves before any task action runs.

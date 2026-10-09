@@ -91,6 +91,9 @@ public final class AgentContract {
     /** Which refusal it was, as a machine-readable token. */
     public static final String REFUSED_KIND_PROPERTY = "yoriwake.refused.kind";
 
+    /** Every decline that held on this run, as refusal tokens, comma-separated, first one first. */
+    public static final String DECLINES_PROPERTY = "yoriwake.declines";
+
     /** Test-id globs selection may never skip, comma-separated. */
     public static final String ALWAYS_RUN_PROPERTY = "yoriwake.alwaysRun";
 
@@ -355,6 +358,9 @@ public final class AgentContract {
 
     /** The daemon's own refusal token, copied from {@link #REFUSED_KIND_PROPERTY}. */
     public static final String REFUSAL_KIND_NOTE = "refusal-kind";
+
+    /** Every decline that held, copied from {@link #DECLINES_PROPERTY}. */
+    public static final String DECLINES_NOTE = "declines";
 
     /** Prefixes each recorded input property, {@code input.<property>}, to re-decide offline. */
     public static final String INPUT_NOTE_PREFIX = "input.";

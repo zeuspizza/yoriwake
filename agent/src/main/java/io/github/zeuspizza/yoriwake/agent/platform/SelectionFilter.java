@@ -1,6 +1,8 @@
 package io.github.zeuspizza.yoriwake.agent.platform;
 
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FULL_RUN_KIND_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FULL_RUN_REASON_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY;
@@ -147,6 +149,11 @@ public class SelectionFilter implements PostDiscoveryFilter {
                 if (!kind.isEmpty()) {
                     // DAEMON_REFUSED says which side refused; this says which refusal it was.
                     decisions.note(REFUSAL_KIND_NOTE, kind);
+                }
+                String declines = orEmpty(inputs().apply(DECLINES_PROPERTY));
+                if (!declines.isEmpty()) {
+                    // The refusal names one; this names every decline that held.
+                    decisions.note(DECLINES_NOTE, declines);
                 }
                 decisions.note(FULL_RUN_REASON_NOTE, refusal);
                 return;

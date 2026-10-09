@@ -47,6 +47,14 @@ class SettingsTest {
     }
 
     @Test
+    fun `fullRun is a switch, and a value that is not a boolean names it`() {
+        assertFalse(settings().fullRun)
+        assertTrue(settings(Settings.FULL_RUN to "").fullRun)
+        val failure = assertFailsWith<InvalidUserDataException> { settings(Settings.FULL_RUN to "yes") }
+        assertContains(failure.message.orEmpty(), "yoriwake.fullRun=yes")
+    }
+
+    @Test
     fun `isolatedCapture is a switch like the others`() {
         assertFalse(settings().isolatedCapture)
         assertTrue(settings(Settings.ISOLATED_CAPTURE to "").isolatedCapture)
