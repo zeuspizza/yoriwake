@@ -94,6 +94,9 @@ private fun allowAnEmptyRun(test: Test) {
 /**
  * Hands the change set to the in-JVM filter, then turns selection on: last, and only when git
  * answered, so any failure degrades to a full run. Opt-in per invocation (`-Pyoriwake.select`).
+ *
+ * An observing run (`-Pyoriwake.observe`) computes the same change set and hands it over the same
+ * way, so the test JVM decides exactly as a selecting run would; it captures as a recording run does.
  */
 internal fun TestTaskWiring.configureSelection(
     project: Project,
@@ -103,9 +106,10 @@ internal fun TestTaskWiring.configureSelection(
     runPlan: RunPlan,
     filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
 ) {
-    if (!runPlan.selecting) {
+    if (!runPlan.selecting && !runPlan.observing) {
         return
     }
+    val observing = runPlan.observing
     // Read before any refusal below, so a list that cannot be read fails every selecting run alike.
     val trusted = trustedDigest(project, settings, mapDir)
 
@@ -146,7 +150,7 @@ internal fun TestTaskWiring.configureSelection(
             // Running everything, so it captures and dates the map; otherwise a build that
             // always selects would refuse forever. An isolated map waits for its recording run.
             applyCaptureDecision(
-                test, mapDir, refusalJacoco,
+                test, mapDir, refusalJacoco, observing,
                 leftAlone ?: CaptureDecision(
                     capture = true, fullRun = true, mapCurrent = false,
                     reason = if (undated == null) {
@@ -184,7 +188,7 @@ internal fun TestTaskWiring.configureSelection(
             // Captures and dates a shared map like any full run; a map recorded in isolation is
             // left as it is, as by every other fallback.
             applyCaptureDecision(
-                test, mapDir, refusalJacoco,
+                test, mapDir, refusalJacoco, observing,
                 decideCapture(
                     mapDir,
                     mapUsable = runCatching {
@@ -219,7 +223,8 @@ internal fun TestTaskWiring.configureSelection(
     // Forwarded only when asked for; the agent defaults it to false.
     test.systemProperty(
         CLASS_GRANULARITY_PROPERTY, settings.classGranularity.toString())
-    allowAnEmptyRun(test)
+    // An observing run leaves out nothing, so an empty task fails as it would without yoriwake.
+    if (!observing) allowAnEmptyRun(test)
 
     // Re-derived at execution, when the classpath is resolvable. Every doFirst runs before the
     // test JVM launches, so these properties are ones the JVM starts with.
@@ -314,7 +319,7 @@ internal fun TestTaskWiring.configureSelection(
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map
         // nothing, and widening would re-capture the suite on every inline change.
         applyCaptureDecision(
-            test, mapDir, jacoco,
+            test, mapDir, jacoco, observing,
             decideCapture(
                 mapDir,
                 mapUsable = outlook.mapUsable,
@@ -327,9 +332,9 @@ internal fun TestTaskWiring.configureSelection(
         )
     }
 
-    refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo)
+    refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo, observing)
     trusted?.let { listed ->
-        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile)
+        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)
     }
 }
 
@@ -363,11 +368,24 @@ internal fun selectionWidening(
  * test, captures and dates the map. A map recorded with a JVM per test class is left as it is
  * unless this invocation passes `-Pyoriwake.isolatedCapture`, as on every other fallback. Registered
  * where the selection actions would be, so the named-tests and Develocity declines still run first.
+ *
+ * An observing run already records; only the selection it observes is declined.
  */
 internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: RunPlan) {
     val first = runPlan.declines.first()
     refuse(test, first.kind, first.reason)
     test.systemProperty(DECLINES_PROPERTY, runPlan.declines.joinToString(",") { it.kind.token })
+    if (runPlan.observing) {
+        val reasons = runPlan.declines.joinToString("; ") { it.reason }
+        test.doFirst {
+            if (declinedUnderDevelocity(test) || declinedForNamedTests(test, first.kind)) return@doFirst
+            test.logger.lifecycle(
+                "[yoriwake] ${test.path}: $reasons, so a selecting run would run every test, and that is " +
+                    "what this run observes."
+            )
+        }
+        return
+    }
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -399,7 +417,7 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
             ageKnown = false,
         )
         if (isolatedCapture || decision.capture) return@doFirst
-        applyCaptureDecision(test, mapDir, jacoco, decision)
+        applyCaptureDecision(test, mapDir, jacoco, observing = false, decision)
         // The decode reads it: this run captured nothing on purpose.
         runCatching {
             leftAlone.parentFile.mkdirs()
@@ -407,6 +425,11 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
         }
     }
 }
+
+private val OBSERVING_CAPTURE = CaptureDecision(
+    capture = true, fullRun = true, mapCurrent = false,
+    reason = "observing selection, so this run captures the map as a recording run does.",
+)
 
 private const val NAMED_TESTS_LEFT_ALONE =
     "only the named tests run, so nothing is instrumented and the map is left alone."
@@ -438,6 +461,7 @@ internal fun TestTaskWiring.declineNamedTests(
     test: Test,
     mapDir: File,
     filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
+    observing: Boolean,
 ) {
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
@@ -455,7 +479,7 @@ internal fun TestTaskWiring.declineNamedTests(
         test.systemProperty(DECLINES_PROPERTY, listOf(declined, kind.token).filter(String::isNotEmpty).joinToString(","))
         // Only part of the suite runs, so there is nothing to capture.
         applyCaptureDecision(
-            test, mapDir, jacoco,
+            test, mapDir, jacoco, observing,
             CaptureDecision(
                 capture = false, fullRun = false, mapCurrent = false,
                 reason = NAMED_TESTS_LEFT_ALONE,
@@ -501,6 +525,7 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
     listed: String?,
     jacoco: JacocoTaskExtension?,
     changeSetFile: File,
+    observing: Boolean,
 ) {
     // Fingerprinted at execution, so a result cached under another verdict is never reused.
     val provenance = project.providers.of(MapProvenance.Source::class.java) {
@@ -521,7 +546,7 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
         MapProvenance.clear(mapDir)
         runCatching { changeSetFile.delete() }
         applyCaptureDecision(
-            test, mapDir, jacoco,
+            test, mapDir, jacoco, observing,
             decideCapture(mapDir, mapUsable = false, fullRun = true, learnable = emptySet()),
         )
     }
@@ -543,6 +568,7 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
     jacoco: JacocoTaskExtension?,
     changeSetFile: File,
     buildMemo: BuildMemo?,
+    observing: Boolean,
 ) {
     // Plain values: a task action may not touch Project or its providers under the configuration
     // cache, so git is asked directly.
@@ -599,7 +625,7 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
                 .forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
         }
         applyCaptureDecision(
-            test, mapDir, jacoco,
+            test, mapDir, jacoco, observing,
             decideCapture(
                 mapDir,
                 mapUsable = runCatching {
@@ -646,13 +672,18 @@ private fun TestTaskWiring.writeChangeSet(test: Test, file: File, lists: Map<Str
  * Applies [decideCapture] to this run: instrument, or make instrumenting impossible by clearing
  * the records directory. Turning JaCoCo off with the listener on would record every test as
  * covering nothing.
+ *
+ * An [observing] run runs every test and captures as a recording run does, whatever the decision
+ * says a selecting run would do.
  */
 private fun applyCaptureDecision(
     test: Test,
     mapDir: File,
     jacoco: JacocoTaskExtension?,
-    decision: CaptureDecision,
+    observing: Boolean,
+    decided: CaptureDecision,
 ) {
+    val decision = if (observing) OBSERVING_CAPTURE else decided
     // Written only when this run executes everything and captures, deleted otherwise, so a
     // stale marker never dates a map.
     val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))

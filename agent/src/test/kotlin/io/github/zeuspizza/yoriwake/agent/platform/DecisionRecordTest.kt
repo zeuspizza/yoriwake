@@ -434,4 +434,39 @@ class DecisionRecordTest {
         val ruleLines = read(dir).lines().filter { it.startsWith(AgentContract.RULES_LINE_PREFIX) }
         assertEquals(listOf("#+odd\\tid\\nwith breaks\tnot-in-map"), ruleLines)
     }
+
+    @Test
+    fun `an observed verdict is a row of what ran, and a line of what selection would have done`(@TempDir dir: File) {
+        DecisionRecord().apply {
+            observe("a:test", Verdict.SKIPPED)
+            observe("b:test", Verdict.REACHES_CHANGE)
+        }.writeTo(dir)
+
+        assertEquals(listOf("a:test\tincluded\tOBSERVING", "b:test\tincluded\tOBSERVING"), rows(dir))
+        assertEquals(
+            listOf("#?a:test\texcluded\tSKIPPED", "#?b:test\tincluded\tREACHES_CHANGE"),
+            read(dir).lines().filter { it.startsWith(AgentContract.OBSERVATION_LINE_PREFIX) },
+        )
+    }
+
+    @Test
+    fun `an observed run's rule lines follow the verdict selection would have given`(@TempDir dir: File) {
+        DecisionRecord().apply { observe("[engine:junit-jupiter]/[class:Pinned]/[method:t()]", Verdict.ALWAYS_RUN) }
+            .writeTo(dir, rules(dir))
+
+        val line = read(dir).lines().single { it.startsWith(AgentContract.RULES_LINE_PREFIX) }
+        assertTrue(AgentContract.RULE_ALWAYS_RUN in line, line)
+    }
+
+    @Test
+    fun `the observed outcome is one note of tab-separated fields, trailing blanks dropped`(@TempDir dir: File) {
+        DecisionRecord().apply {
+            noteFields(AgentContract.OBSERVED_OUTCOME_NOTE, AgentContract.RUN_FULL, "daemon-refused", "full-run-requested")
+        }.writeTo(dir)
+        DecisionRecord().apply { noteFields(AgentContract.OBSERVED_OUTCOME_NOTE, AgentContract.RUN_NARROWED, null, "") }
+            .writeTo(File(dir, "narrowed"))
+
+        assertTrue("#!observed-outcome\tfull-run\tdaemon-refused\tfull-run-requested" in read(dir).lines())
+        assertTrue("#!observed-outcome\tnarrowed" in read(File(dir, "narrowed")).lines())
+    }
 }

@@ -27,6 +27,7 @@ the run as `change-set-unreadable`.
 | `LOADED_DIR_PROPERTY` | `yoriwake.loaded.out` | plugin → agent | Where to write loaded-class lists. Set only with `-Pyoriwake.internal.loaded` |
 | `JUNIT4_HOOK_PROPERTY` | `yoriwake.junit4.hook` | plugin → agent | `true` on a task not on the JUnit Platform: capture through JUnit 4's `RunNotifier` |
 | `SELECT_PROPERTY` | `yoriwake.select` | plugin → agent | `true` to narrow; anything else runs everything |
+| `OBSERVE_PROPERTY` | `yoriwake.observe` | plugin → agent | `true` on an observing run: every test runs, and each row's selecting verdict is recorded as an observation line. Set beside `yoriwake.select`, which still decides that verdict |
 | `CLASS_GRANULARITY_PROPERTY` | `yoriwake.select.classGranularity` | plugin → agent | `true` rounds a selection up to whole classes |
 | `CHANGED_CLASSES_PROPERTY` | `yoriwake.change.classes` | plugin → agent | Changed classes |
 | `UNMAPPABLE_PATHS_PROPERTY` | `yoriwake.change.unmappable` | plugin → agent | Changed paths no class was derived from; any one forces |
@@ -189,6 +190,7 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `FULL_RUN_REASON_NOTE` | `full-run-reason` | Why, as prose |
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
 | `DECLINES_NOTE` | `declines` | Every decline that held, as `yoriwake.declines` carried it. Absent when none did |
+| `OBSERVED_OUTCOME_NOTE` | `observed-outcome` | On an observing run, the outcome a selecting run of the same inputs would have noted: `outcome`, then its `full-run-kind` and `refusal-kind` when it has them, tab-separated. `outcome` says what ran, `full-run` |
 | `INPUT_NOTE_PREFIX` | `input.` | Starts `input.<property>`: each property the decision read, for replay |
 | `RUN_NARROWED` | `narrowed` | Outcome: some tests were skipped |
 | `RUN_FULL` | `full-run` | Outcome: everything ran |
@@ -239,6 +241,22 @@ row whose line names a rule outside the `shares-jvm-*` family and `class-granula
 
 A parameterised test or container carries the rules of the invocations recorded beneath it. The
 whole-run forcing rules are `forcing-kinds`, and the daemon's own refusal is `refusal-kind`.
+
+## Observation lines
+
+On an observing run (`-Pyoriwake.observe`) every test runs, so every row's verdict is `included` and
+its reason `OBSERVING`. What a selecting run of the same build, flags and map would have written for
+that row follows the rows and the rule lines, one line per row:
+
+```
+#?test \t verdict \t reason
+```
+
+The rule lines then follow the verdict the observation line holds, as they would on a selecting run.
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `OBSERVATION_LINE_PREFIX` | `#?` | Starts every observation line |
 
 ## Versions
 

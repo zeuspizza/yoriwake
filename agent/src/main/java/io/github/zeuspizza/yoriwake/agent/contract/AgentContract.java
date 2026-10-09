@@ -32,6 +32,13 @@ public final class AgentContract {
     public static final String SELECT_PROPERTY = "yoriwake.select";
 
     /**
+     * {@code true} when this run executes every test and records, beside each row, the verdict a
+     * selecting run of the same inputs would have given. Set beside {@link #SELECT_PROPERTY}, which
+     * still decides what that verdict is.
+     */
+    public static final String OBSERVE_PROPERTY = "yoriwake.observe";
+
+    /**
      * Rounds a selection up to whole classes, for order-dependent tests sharing static state. Off by
      * default. It only ever includes more.
      */
@@ -362,6 +369,12 @@ public final class AgentContract {
     /** Every decline that held, copied from {@link #DECLINES_PROPERTY}. */
     public static final String DECLINES_NOTE = "declines";
 
+    /**
+     * What a selecting run of the same inputs would have noted as its outcome, on an observing run:
+     * {@code outcome [\t full-run-kind [\t refusal-kind]]}. The {@link #OUTCOME_NOTE} says what ran.
+     */
+    public static final String OBSERVED_OUTCOME_NOTE = "observed-outcome";
+
     /** Prefixes each recorded input property, {@code input.<property>}, to re-decide offline. */
     public static final String INPUT_NOTE_PREFIX = "input.";
 
@@ -382,6 +395,13 @@ public final class AgentContract {
      * of the rows alone never sees one.
      */
     public static final String RULES_LINE_PREFIX = "#+";
+
+    /**
+     * Starts an observation line, {@code #?test \t verdict \t reason}: the row a selecting run would
+     * have written for that test, on an observing run, whose own row says it ran. One per row, after
+     * the rows and the rule lines.
+     */
+    public static final String OBSERVATION_LINE_PREFIX = "#?";
 
     /** What the rule lines were computed from: one of the {@code RULES_*} values. */
     public static final String RULES_NOTE = "rules";

@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.JUNIT4_HOOK_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LOADED_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
@@ -219,6 +220,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
             },
         )
         val selecting = runPlan.selecting
+        if (runPlan.observing) {
+            // Beside the selecting properties configureSelection sets, or a decline's refusal.
+            test.systemProperty(OBSERVE_PROPERTY, "true")
+        }
         val recording = settings.loaded
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         test.systemProperty(RECORDS_DIR_PROPERTY, recordsDir.absolutePath)
@@ -268,7 +273,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
         // that check, which may switch capture off.
         isolateWhileCapturing(test, runPlan)
-        refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind)
+        refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing)
         recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
             // One a declined run left when its decode never ran must not discard this capture.
@@ -284,7 +289,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         // After every selection action, so it runs before them; each returns on it. A declined run
         // was asked to select, so tests named on it still run as named.
-        if (runPlan.asked == RunPlan.Kind.SELECT) declineNamedTests(test, mapDir, filterVerdict)
+        if (runPlan.asked != RunPlan.Kind.RECORD) declineNamedTests(test, mapDir, filterVerdict, runPlan.observing)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir, agent)
@@ -611,16 +616,17 @@ internal class TestTaskWiring(internal val settings: Settings) {
 
     /**
      * Refuses in-JVM parallel test execution while capturing: it interleaves tests under one agent
-     * and blends their attributions. Parallel forks are fine.
+     * and blends their attributions. Parallel forks are fine. An [observing] run captures with tests
+     * named too, so it is refused then as well.
      */
-    private fun refuseInJvmParallelism(test: Test, mapDir: File, planned: RefusalKind?) {
+    private fun refuseInJvmParallelism(test: Test, mapDir: File, planned: RefusalKind?, observing: Boolean) {
         // Resolved here, not in the action: `Task.extensions` at execution time violates the
         // configuration cache.
         val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         test.doFirst {
             // Already declined, with the host's JaCoCo left as the host set it, or with tests named,
-            // which select nothing and capture nothing.
-            if (declinedUnderDevelocity(test) || declinedForNamedTests(test, planned)) return@doFirst
+            // which select nothing and, unless the run observes, capture nothing.
+            if (declinedUnderDevelocity(test) || (!observing && declinedForNamedTests(test, planned))) return@doFirst
             val testng = test.options as? org.gradle.api.tasks.testing.testng.TestNGOptions
             val source = ParallelismDetector.detect(
                 systemProperties = test.systemProperties.mapValues { it.value?.toString() },

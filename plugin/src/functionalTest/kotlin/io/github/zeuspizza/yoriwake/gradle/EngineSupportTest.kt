@@ -289,6 +289,13 @@ class EngineSupportTest {
         assertContains(decisions, "[engine:kotest]/[spec:dev.engine.AlphaSpec]\tincluded\tENGINE_RUNS_EVERYTHING")
         assertContains(selected, "engine-runs-everything=2")
 
+        // An observing run records the same verdict a selecting run gave each spec.
+        runner(dir, "test", "-Pyoriwake.observe").build()
+        assertContains(
+            File(map, AgentContract.DECISIONS_FILE).readText(),
+            "${AgentContract.OBSERVATION_LINE_PREFIX}[engine:kotest]/[spec:dev.engine.AlphaSpec]\tincluded\tENGINE_RUNS_EVERYTHING",
+        )
+
         val (_, broken) = subject("Beta", "n * 3")
         File(dir, path).writeText(broken)
         val failing = runner(dir, "test", "-Pyoriwake.select").buildAndFail().output
