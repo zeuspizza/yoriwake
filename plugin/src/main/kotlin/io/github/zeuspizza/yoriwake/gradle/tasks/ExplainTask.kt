@@ -363,13 +363,13 @@ internal abstract class ExplainTask : DefaultTask() {
             testName: String,
             settings: Settings,
             fullRunBranches: List<String>,
-            outcome: (Test) -> Pair<File, ScopeOutcome>,
+            outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
                 task.group = "verification"
                 task.description = "Reports what predictive test selection would do, without running tests"
                 val test = project.tasks.named(testName, Test::class.java).get()
-                val (mapDir, scope) = outcome(test)
+                val (mapDir, scope, fromBuildScript) = outcome(test)
                 task.taskPath.set(test.path)
                 task.rootDir = project.rootDir
                 task.mapDir = mapDir
@@ -381,10 +381,12 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.develocity.set(DevelocityDetection.provider(project, test))
-                // Through a provider: Gradle applies `--tests` after this runs. Only the decline is
-                // read, and where a pattern came from does not change it.
+                // Through a provider: Gradle applies `--tests`, and an init script's `whenReady` adds
+                // patterns, after this runs. Both are seen when the configuration cache stores its
+                // entry; a test launcher's patterns arrive later, but it never asks for this task.
+                val buildScriptPatterns = fromBuildScript ?: TestPatterns.of(test.filter)
                 val namedTestsDecline = project.provider<Pair<RefusalKind, String>> {
-                    readFilterVerdict(test, TestPatterns.of(test.filter)).namedTestsDecline()
+                    readFilterVerdict(test, buildScriptPatterns).namedTestsDecline()
                 }
                 task.namedTestsKind.set(namedTestsDecline.map { it.first.token })
                 task.namedTestsReason.set(namedTestsDecline.map { it.second })

@@ -61,6 +61,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val outcome: ScopeOutcome,
         /** Null for a declined task: nothing is captured, so there is nothing to decode. */
         val decode: DecodeTask.Inputs?,
+        /** The filter's patterns as the build script left them; null for a declined task. */
+        val fromBuildScript: TestPatterns? = null,
     )
 
     /**
@@ -127,7 +129,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             )
             if (wired) {
                 ExplainTask.register(project, name, settings, fullRunBranches) { t ->
-                    configured.getValue(t.name).let { it.mapDir to it.outcome }
+                    configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
                 // A failed run restores the host's JaCoCo file in the decode; a report reads it after.
@@ -266,7 +268,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // which classes are tests and do not refuse; `--tests` and per-run filters narrow the run
         // and do. The patterns set by now are the build script's: this runs once every build script
         // and `afterEvaluate` has, and before an IDE's test launcher adds its own. Copied as plain
-        // sets, so the provider keeps no task reference beyond the one it already reads.
+        // sets, so the provider keeps no task reference beyond the one it already reads. A provider
+        // resolves when the configuration cache stores its entry, before a test launcher's patterns
+        // arrive, so the actions that must see them read the filter themselves.
         val fromBuildScript = TestPatterns.of(test.filter)
         val filterVerdict = project.provider { readFilterVerdict(test, fromBuildScript) }
         val unfiltered = project.provider { filterVerdict.get().unfiltered }
@@ -293,8 +297,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         // After every selection action, so it runs before them; each returns on it. A declined run
         // was asked to select, so tests named on it still run as named.
-        if (runPlan.asked != RunPlan.Kind.RECORD) declineNamedTests(test, mapDir, filterVerdict, runPlan.observing)
-        reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
+        if (runPlan.asked != RunPlan.Kind.RECORD) declineNamedTests(test, mapDir, fromBuildScript, runPlan.observing)
+        reportResolvedConfiguration(project, test, mapDir, scopeOutcome, fromBuildScript)
         if (selecting) startSelectionRecord(project, test, mapDir, agent)
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir, agent)
@@ -324,6 +328,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 isolated = settings.isolatedCapture && !selecting,
                 afterTest = afterTest,
             ),
+            fromBuildScript,
         )
         test.finalizedBy(DecodeTask.nameFor(test.name))
 
@@ -516,7 +521,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         test: Test,
         mapDir: File,
         scope: ScopeOutcome,
-        filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
+        fromBuildScript: TestPatterns,
     ) {
         // Through a provider: Task.extensions may not be touched at execution time under the
         // configuration cache.
@@ -544,7 +549,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     "nolocation=${liveNoLocation.orNull ?: "unknown"} " +
                     "exclloaders=${liveExcludedLoaders.orNull ?: "unknown"} " +
                     "agent=$agentOnClasspath forks=${test.maxParallelForks} " +
-                    "unfiltered=${filterVerdict.orNull ?: "unknown"}"
+                    "unfiltered=${readFilterVerdict(test, fromBuildScript)}"
             )
 
             // No agent means no records, no map, and every later run silently forcing. A task whose
@@ -885,7 +890,7 @@ internal fun decideFilterVerdict(
         // Tags, engines, categories and groups leave tests out as surely as a pattern does.
         framework != null -> FilterVerdict(false, framework, byFramework = true)
         else -> FilterVerdict(true, unfilteredDetail)
-    }.copy(commandLinePatterns = commandLine)
+    }.copy(commandLinePatterns = commandLine, addedIncludePatterns = added.includes)
 }
 
 /**
@@ -1030,14 +1035,17 @@ internal fun fullRunMarker(recordsDir: File) = File(recordsDir.parentFile, "full
  * text is what the resolved-configuration line prints after `unfiltered=`. [byFramework] when only
  * the test framework's own filter (tags, engines, categories, groups) leaves tests out;
  * [byBuildScript] when the build script's own patterns do, on a JUnit Platform task.
- * [commandLinePatterns] are the `--tests` patterns, whatever else is set; [filterReadable] is false
- * when the filter is not one whose `--tests` patterns can be read.
+ * [commandLinePatterns] are the `--tests` patterns, whatever else is set; [addedIncludePatterns] the
+ * include patterns added after the build script ran, as an IDE's test launcher adds the tests it was
+ * asked to run; [filterReadable] is false when the filter is not one whose `--tests` patterns can be
+ * read.
  */
 internal data class FilterVerdict(
     val unfiltered: Boolean,
     val detail: String,
     val byFramework: Boolean = false,
     val commandLinePatterns: Set<String> = emptySet(),
+    val addedIncludePatterns: Set<String> = emptySet(),
     val filterReadable: Boolean = true,
     val byBuildScript: Boolean = false,
 ) {
@@ -1058,12 +1066,15 @@ internal data class FilterVerdict(
 
     /**
      * The decline a selecting run takes for this filter, as its kind and reason: tests named with
-     * `--tests`, or a filter whose `--tests` patterns cannot be read. Null when neither holds.
+     * `--tests` or added to the filter for this run, or a filter whose `--tests` patterns cannot be
+     * read. Null when none holds.
      */
     fun namedTestsDecline(): Pair<RefusalKind, String>? = when {
         !filterReadable -> RefusalKind.DECLINE_UNDETERMINED to "$detail, so whether tests were named with --tests is unknown"
         commandLinePatterns.isNotEmpty() -> RefusalKind.TESTS_NAMED to
             "tests were named with --tests ${commandLinePatterns.sorted().joinToString(" ")}"
+        addedIncludePatterns.isNotEmpty() -> RefusalKind.TESTS_NAMED to
+            "tests were named for this run (filter.includePatterns=${addedIncludePatterns.sorted()})"
         else -> null
     }
 

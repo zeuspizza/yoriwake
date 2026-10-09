@@ -8,8 +8,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 /**
- * Tests named on the command line with `--tests` run, whatever the map says: a developer who names
- * a test expects exactly that test to execute.
+ * Tests named on the command line with `--tests`, or added to the filter after the build script ran
+ * as an IDE's test launcher does, run whatever the map says: a developer who names a test expects
+ * exactly that test to execute.
  *
  * Every case captures a map, then changes Beta, which AlphaTest never reaches: on its own the
  * change selects BetaTest alone, so a named AlphaTest that runs was not left to selection.
@@ -208,6 +209,109 @@ class NamedTestsFunctionalTest : FunctionalTestSupport() {
             .build().output
 
         assertEquals(mapOf("dev.sample.AlphaTest" to allAlpha), ranMethods(dir), output)
+    }
+
+    /**
+     * An init script that adds [call] to every test task's filter as the graph is ready: after every
+     * build script, where an IDE's test launcher adds the tests it was asked to run.
+     */
+    private fun launcher(dir: File, call: String): String {
+        val script = File(dir, "build/launcher.init.gradle")
+        script.parentFile.mkdirs()
+        script.writeText(
+            "gradle.taskGraph.whenReady { graph -> graph.allTasks.findAll { it instanceof Test }.each { it.filter.$call } }\n",
+        )
+        return script.absolutePath
+    }
+
+    @Test
+    fun `a test named for this run after the build script ran runs every method under selection`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "--init-script", launcher(dir, "includeTest('dev.sample.AlphaTest', null)"))
+            .build().output
+
+        assertEquals(mapOf("dev.sample.AlphaTest" to allAlpha), ranMethods(dir), output)
+        // Gradle 8 adds the class as `dev.sample.AlphaTest.*`, Gradle 9 as `dev.sample.AlphaTest`.
+        assertContains(output, "tests were named for this run (filter.includePatterns=[dev.sample.AlphaTest")
+        assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `a test named for this run beside a build-script filter runs every method`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir, narrowedBuild)
+
+        val output = runner(
+            dir, "test", "-Pnarrow", "-Pyoriwake.select",
+            "--init-script", launcher(dir, "includeTest('dev.sample.AlphaTest', null)"),
+        ).build().output
+
+        // The build script's `*Test` still admits BetaTest: Gradle runs what either pattern matches.
+        assertEquals(
+            mapOf("dev.sample.AlphaTest" to allAlpha, "dev.sample.BetaTest" to setOf("passes")),
+            ranMethods(dir),
+            output,
+        )
+        assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `a method named for this run runs under selection`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "--init-script", launcher(dir, "includeTest('dev.sample.AlphaTest', 'adds')"))
+            .build().output
+
+        assertEquals(mapOf("dev.sample.AlphaTest" to setOf("adds")), ranMethods(dir), output)
+        assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `a test excluded for this run still leaves the rest to selection`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "--init-script", launcher(dir, "excludeTest('dev.sample.AlphaTest', null)"))
+            .build().output
+
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+        assertFalse("tests-named" in decisionNotes(dir).values, output)
+    }
+
+    @Test
+    fun `a reused configuration still declines for a test named for this run`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir)
+        val named = launcher(dir, "includeTest('dev.sample.AlphaTest', null)")
+        runner(dir, "test", "-Pyoriwake.select", "--init-script", named).build()
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "--init-script", named, "--rerun-tasks").build().output
+
+        assertContains(output, "Reusing configuration cache")
+        assertEquals(mapOf("dev.sample.AlphaTest" to allAlpha), ranMethods(dir), output)
+        assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `the explanation names the decline for a test named for this run`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir)
+
+        val output = runner(
+            dir, "test", "yoriwakeExplainTest", "-Pyoriwake.select",
+            "--init-script", launcher(dir, "includeTest('dev.sample.AlphaTest', null)"),
+        ).build().output
+
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertContains(File(mapDir, "explain.json").readText(), "\"refusalKind\": \"tests-named\"", message = output)
+    }
+
+    @Test
+    fun `the explanation names no decline for a build-script filter`(@TempDir dir: File) {
+        capturedWithBetaChanged(dir, narrowedBuild)
+
+        val output = runner(dir, "test", "yoriwakeExplainTest", "-Pnarrow", "-Pyoriwake.select").build().output
+
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertFalse("tests-named" in File(mapDir, "explain.json").readText(), output)
     }
 
     @Test
