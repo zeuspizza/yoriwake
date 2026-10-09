@@ -106,7 +106,7 @@ internal fun TestTaskWiring.configureSelection(
     mapDir: File,
     buildMemo: BuildMemo?,
     runPlan: RunPlan,
-    filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
+    fromBuildScript: TestPatterns,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -140,7 +140,7 @@ internal fun TestTaskWiring.configureSelection(
             ).takeUnless { it.capture }
             // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
             // map must not promise that its capture clears the refusal.
-            val undated = filterVerdict.get().undatedBy(test.failFast)
+            val undated = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast)
             task.logger.lifecycle(
                 "[yoriwake] ${task.path}: ${age.reason}, and the whole suite runs. $cause; " +
                     when {

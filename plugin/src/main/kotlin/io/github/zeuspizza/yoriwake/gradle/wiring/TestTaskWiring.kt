@@ -229,6 +229,14 @@ internal class TestTaskWiring(internal val settings: Settings) {
             test.systemProperty(OBSERVE_PROPERTY, "true")
         }
         val recording = settings.loaded
+        // Why it refused, not just that it did. A build's own `test.includes`/`excludes` define
+        // which classes are tests and do not refuse; `--tests` and per-run filters narrow the run
+        // and do. The patterns set by now are the build script's: this runs once every build script
+        // and `afterEvaluate` has, and before an IDE's test launcher adds its own. Copied as plain
+        // sets, so the provider keeps no task reference beyond the one it already reads. A provider
+        // resolves when the configuration cache stores its entry, before a test launcher's patterns
+        // arrive, so the actions that must see them read the filter themselves.
+        val fromBuildScript = TestPatterns.of(test.filter)
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         test.systemProperty(RECORDS_DIR_PROPERTY, recordsDir.absolutePath)
         // First, so its action runs last: after the selecting action has decided whether this run
@@ -236,6 +244,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         recordClasspathFiles(project, test, mapDir, selecting, buildMemo)
         observeWorkingTree(project, test, mapDir, selecting, buildMemo, startReading(project, buildMemo))
         discardPreviousRecords(test, recordsDir)
+        recordWhetherTheRunDates(test, recordsDir, fromBuildScript)
         val afterTest = AfterTest(
             afterTestPending(recordsDir),
             listOf(
@@ -264,14 +273,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
             EffectiveScope.readFrom(test.extensions.findByName("jacoco"))?.serialize()
         }
 
-        // Why it refused, not just that it did. A build's own `test.includes`/`excludes` define
-        // which classes are tests and do not refuse; `--tests` and per-run filters narrow the run
-        // and do. The patterns set by now are the build script's: this runs once every build script
-        // and `afterEvaluate` has, and before an IDE's test launcher adds its own. Copied as plain
-        // sets, so the provider keeps no task reference beyond the one it already reads. A provider
-        // resolves when the configuration cache stores its entry, before a test launcher's patterns
-        // arrive, so the actions that must see them read the filter themselves.
-        val fromBuildScript = TestPatterns.of(test.filter)
         val filterVerdict = project.provider { readFilterVerdict(test, fromBuildScript) }
         val unfiltered = project.provider { filterVerdict.get().unfiltered }
 
@@ -287,7 +288,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
-            configureSelection(project, test, mapDir, buildMemo, runPlan, filterVerdict)
+            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript)
         } else {
             declineSelection(test, mapDir, runPlan)
         }
@@ -308,7 +309,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // Only a run that executed the whole suite may date the map, since unobserved records keep
         // their age; a fail-fast run may not. For selecting runs that is known only at execution
         // time and carried in a marker file. See FilterVerdict.datesTheMap for the filters that
-        // still date it.
+        // still date it. These resolve when the configuration cache stores its entry; a filter
+        // that gained patterns later overrides them through recordWhetherTheRunDates's marker.
         val datesTheMap = project.provider { filterVerdict.get().datesTheMap(test.failFast) }
         // Why a run that cannot date the map left it as it was; empty when it can.
         val undatedReason = project.provider { filterVerdict.get().undatedBy(test.failFast).orEmpty() }
@@ -393,6 +395,25 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
             marker.parentFile.mkdirs()
             marker.writeText("ran")
+        }
+    }
+
+    /**
+     * Records, as the task executes, why this run cannot date the map, for the decode to read:
+     * the decode's own inputs were fixed when the configuration cache stored its entry, before an
+     * IDE's test launcher added the tests it was asked to run. Deleted first, so an earlier run's
+     * reason never outlives it; when it cannot be written, those inputs decide.
+     */
+    private fun recordWhetherTheRunDates(test: Test, recordsDir: File, fromBuildScript: TestPatterns) {
+        val marker = undatedRunMarker(recordsDir)
+        test.doFirst {
+            marker.delete()
+            if (declinedUnderDevelocity(test)) return@doFirst
+            val reason = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast) ?: return@doFirst
+            runCatching {
+                marker.parentFile.mkdirs()
+                marker.writeText(reason)
+            }
         }
     }
 
@@ -1029,6 +1050,12 @@ internal fun Project.cacheDir(): File =
  * the map's age may only advance when its records describe every test.
  */
 internal fun fullRunMarker(recordsDir: File) = File(recordsDir.parentFile, "full-run.marker")
+
+/**
+ * Written by a run whose filter, read as the task executed, keeps it from dating the map; holds the
+ * reason. Read by the decode finalizer over its own inputs, which may predate the filter.
+ */
+internal fun undatedRunMarker(recordsDir: File) = File(recordsDir.parentFile, "undated-run.marker")
 
 /**
  * Whether the run's own test filter leaves the whole task to run, and what was read to decide. Its

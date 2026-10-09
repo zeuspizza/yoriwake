@@ -1,5 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import org.gradle.tooling.GradleConnector
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -12,7 +14,7 @@ import kotlin.test.assertEquals
  * An IDE that delegates a test run to Gradle asks through the Tooling API's test launcher, which
  * adds the class it names to the task's filter when it schedules the task: after the configuration
  * cache stored its entry, so only what runs at execution sees it. The tests the IDE asked for run
- * whatever the map says.
+ * whatever the map says, and a run that names them leaves the map's other records alone.
  *
  * Driven through a real Tooling API connection, with the plugin resolved from the repository this
  * build publishes to, since TestKit's plugin classpath does not reach a Tooling API build.
@@ -122,6 +124,12 @@ class TestLauncherFunctionalTest : FunctionalTestSupport() {
             }
             .filterValues { it.isNotEmpty() }
 
+    private fun mapDir(dir: File) = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+
+    private fun captureCommit(dir: File) = File(mapDir(dir), CoverageDecoder.CAPTURE_COMMIT_FILE).readText().trim()
+
+    private fun recordedTests(dir: File) = File(mapDir(dir), AgentContract.COVERAGE_FILE).readText()
+
     @Test
     fun `a test class an IDE asks for runs every method under selection`(@TempDir dir: File) {
         captured(dir)
@@ -146,5 +154,35 @@ class TestLauncherFunctionalTest : FunctionalTestSupport() {
         assertContains(output, "Reusing configuration cache")
         assertEquals(mapOf("dev.sample.AlphaTest" to setOf("adds", "doubles")), ranMethods(dir), output)
         assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `a recording request for one class leaves the map's age and other records alone`(@TempDir dir: File) {
+        captured(dir)
+        val capturedAt = captureCommit(dir)
+        assertContains(recordedTests(dir), "dev.sample.BetaTest")
+        // A new HEAD, so a run that dated the map would move its stamp.
+        File(dir, "README.txt").writeText("moved on")
+        commit(dir, "moved on")
+
+        val output = launchAlphaTest(dir)
+
+        assertEquals(setOf("dev.sample.AlphaTest"), ranMethods(dir).keys, output)
+        assertEquals(capturedAt, captureCommit(dir), output)
+        assertContains(recordedTests(dir), "dev.sample.BetaTest", message = output)
+    }
+
+    @Test
+    fun `an observing request for one class leaves the map's age and other records alone`(@TempDir dir: File) {
+        captured(dir)
+        val capturedAt = captureCommit(dir)
+        File(dir, "README.txt").writeText("moved on")
+        commit(dir, "moved on")
+
+        val output = launchAlphaTest(dir, "-Pyoriwake.observe")
+
+        assertEquals(setOf("dev.sample.AlphaTest"), ranMethods(dir).keys, output)
+        assertEquals(capturedAt, captureCommit(dir), output)
+        assertContains(recordedTests(dir), "dev.sample.BetaTest", message = output)
     }
 }

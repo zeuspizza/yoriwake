@@ -237,16 +237,17 @@ class TestTaskWiringCharacterizationTest {
             #7 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #8 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/ran.marker
             #9 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
+              +file .gradle/yoriwake/test-7f007aca/ran.marker
             #10 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
+              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
             #11 Execute doFirst {} action
-              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+              +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
             #12 Execute doFirst {} action
-            #13 Execute executeTests
-            #14 Execute doLast {} action
+              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+            #13 Execute doFirst {} action
+            #14 Execute executeTests
+            #15 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, captureActions.trimEnd())
