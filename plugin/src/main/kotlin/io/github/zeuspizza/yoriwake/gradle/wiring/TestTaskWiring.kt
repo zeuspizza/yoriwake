@@ -265,7 +265,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
-            configureSelection(project, test, mapDir, buildMemo, runPlan)
+            configureSelection(project, test, mapDir, buildMemo, runPlan, filterVerdict)
         } else {
             declineSelection(test, mapDir, runPlan)
         }

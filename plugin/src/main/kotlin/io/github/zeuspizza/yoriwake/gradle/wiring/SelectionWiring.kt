@@ -101,6 +101,7 @@ internal fun TestTaskWiring.configureSelection(
     mapDir: File,
     buildMemo: BuildMemo?,
     runPlan: RunPlan,
+    filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
 ) {
     if (!runPlan.selecting) {
         return
@@ -116,7 +117,8 @@ internal fun TestTaskWiring.configureSelection(
         val cause = if (age.kind == RefusalKind.SNAPSHOT_ABSENT) {
             "A map captured before snapshots were recorded looks like this"
         } else {
-            "A rebase, a force-push, or a map cached from a different history all look like this"
+            "A rebase, a force-push, a map cached from a different history, or one 0.1.0 captured " +
+                "under a test filter in its build script all look like this"
         }
         test.doFirst { task ->
             if (refusedAtExecution(test)) return@doFirst
@@ -130,9 +132,16 @@ internal fun TestTaskWiring.configureSelection(
                 learnable = emptySet(),
                 ageKnown = false,
             ).takeUnless { it.capture }
+            // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
+            // map must not promise that its capture clears the refusal.
+            val undated = filterVerdict.get().undatedBy(test.failFast)
             task.logger.lifecycle(
                 "[yoriwake] ${task.path}: ${age.reason}, and the whole suite runs. $cause; " +
-                    if (leftAlone == null) "this run's capture clears it." else "the next recording run clears it."
+                    when {
+                        leftAlone != null -> "the next recording run clears it."
+                        undated != null -> "this run's capture cannot clear it ($undated); a run without that does."
+                        else -> "this run's capture clears it."
+                    }
             )
             // Running everything, so it captures and dates the map; otherwise a build that
             // always selects would refuse forever. An isolated map waits for its recording run.
@@ -140,7 +149,11 @@ internal fun TestTaskWiring.configureSelection(
                 test, mapDir, refusalJacoco,
                 leftAlone ?: CaptureDecision(
                     capture = true, fullRun = true, mapCurrent = false,
-                    reason = "running everything, so this run also captures and dates the map.",
+                    reason = if (undated == null) {
+                        "running everything, so this run also captures and dates the map."
+                    } else {
+                        "running everything."
+                    },
                 ),
             )
         }
