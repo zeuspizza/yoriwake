@@ -31,6 +31,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A JUnit Platform task whose build script sets a test filter selects; its left-out tests leave the
+  map. Map: such a task's is dated by its next full run; others left alone.
 - Tests named with `--tests` all run on a selecting run, declined as `tests-named`. Map: left alone.
 - The test task's JaCoCo file holds what an instrumented run executed, so its report no longer reads
   near zero. Map: left alone.
