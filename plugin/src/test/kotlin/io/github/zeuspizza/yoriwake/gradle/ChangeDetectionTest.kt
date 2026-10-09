@@ -727,6 +727,34 @@ class RawStringDeclarationsTest {
         assertContains(failed.reason, "git")
     }
 
+    @Test
+    fun `a detached HEAD whose later git calls cannot answer is a failure naming the command`() {
+        fun detachedThen(failing: String): (List<String>) -> String? = { args ->
+            when {
+                args.first() == failing -> null
+                args.first() == "rev-parse" -> "HEAD"
+                args.first() == "for-each-ref" -> "refs/heads/main"
+                else -> "origin"
+            }
+        }
+
+        for ((failing, command) in listOf("for-each-ref" to "git for-each-ref", "remote" to "git remote")) {
+            val head = ChangeDetection.checkedOut(detachedThen(failing))
+
+            val failed = head as ChangeDetection.CheckedOut.Failed
+            assertContains(failed.reason, command)
+        }
+    }
+
+    @Test
+    fun `an unexpected answer for the symbolic name is a failure, never a detached HEAD`() {
+        val head = ChangeDetection.checkedOut { args -> if (args.first() == "rev-parse") "refs/tags/v1" else "" }
+
+        val failed = head as ChangeDetection.CheckedOut.Failed
+        assertContains(failed.reason, "git rev-parse --symbolic-full-name HEAD")
+        assertContains(failed.reason, "refs/tags/v1")
+    }
+
     private fun raw(dir: File): (List<String>) -> String? = { ChangeDetection.rawGit(dir, it) }
 
     private fun branchRepo(dir: File) {

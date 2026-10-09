@@ -175,8 +175,11 @@ class BranchPolicyFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir.also { select(it) }))
 
         git(dir, "checkout", "-q", "main")
+        // The same sources as the cached run, so only what git answers can invalidate its entry.
+        changeBeta(dir)
         val output = select(dir).output
 
+        assertContains(output, "configuration cache cannot be reused because a build logic input of type 'GitOutput'")
         assertEquals("full-run-branch", decisionNotes(dir)["refusal-kind"], output)
     }
 
