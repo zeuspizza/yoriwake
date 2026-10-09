@@ -4,12 +4,17 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISION
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISIONS_PART_SUFFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISIONS_VERSION;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FORCING_KINDS_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.JVM_IDENTITY_PROPERTIES;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.JVM_NOTE_PREFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NOTE_PREFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVATION_LINE_PREFIX;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RAN_LINE_PREFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ROWS_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RULES_LINE_PREFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RULES_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RULE_UNKNOWN;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.VERSION_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WRITER_NOTE;
 
@@ -152,6 +157,16 @@ public final class DecisionRecord {
         // The file is one discovery request's answer, which may cover fewer tests than the task.
         out.append(NOTE_PREFIX).append(WRITER_NOTE).append('\t')
                 .append(writerId).append(" of ").append(WRITERS.get()).append('\n');
+        // Which run wrote this, and on which runtime: a record of what ran is used only by a later run
+        // that matches both.
+        String token = System.getProperty(RUN_TOKEN_PROPERTY);
+        if (token != null && !token.isEmpty()) {
+            out.append(NOTE_PREFIX).append(Tsv.join(RUN_TOKEN_NOTE, token)).append('\n');
+            for (String property : JVM_IDENTITY_PROPERTIES.split(",")) {
+                out.append(NOTE_PREFIX).append(Tsv.join(JVM_NOTE_PREFIX + property, System.getProperty(property, "")))
+                        .append('\n');
+            }
+        }
         synchronized (notes) {
             for (String note : notes) {
                 out.append(note).append('\n');
@@ -174,6 +189,12 @@ public final class DecisionRecord {
                 out.append(OBSERVATION_LINE_PREFIX)
                         .append(Tsv.join(row.testId, row.observed.inclusionToken(), row.observed.reasonToken()))
                         .append('\n');
+            }
+        }
+        for (Row row : snapshot) {
+            String ran = row.verdict.included() ? RanTests.outcome(row.testId) : null;
+            if (ran != null) {
+                out.append(RAN_LINE_PREFIX).append(Tsv.join(row.testId, ran)).append('\n');
             }
         }
         long pid = ProcessHandle.current().pid();

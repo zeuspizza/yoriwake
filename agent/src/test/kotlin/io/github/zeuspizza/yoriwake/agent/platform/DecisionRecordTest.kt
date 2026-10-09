@@ -469,4 +469,41 @@ class DecisionRecordTest {
         assertTrue("#!observed-outcome\tfull-run\tdaemon-refused\tfull-run-requested" in read(dir).lines())
         assertTrue("#!observed-outcome\tnarrowed" in read(File(dir, "narrowed")).lines())
     }
+    @Test
+    fun `each included row whose test passed or failed carries a ran line with its outcome`(@TempDir dir: File) {
+        val id = { name: String -> "ran-lines:$name" }
+        RanTests.record(id("passed"), "SUCCESSFUL")
+        RanTests.record(id("failed"), "FAILED")
+        RanTests.record(id("aborted"), "ABORTED")
+        RanTests.record(id("left-out"), "SUCCESSFUL")
+        DecisionRecord().apply {
+            add(id("passed"), Verdict.REACHES_CHANGE)
+            add(id("failed"), Verdict.NOT_IN_MAP)
+            add(id("aborted"), Verdict.REACHES_CHANGE)
+            add(id("left-out"), Verdict.SKIPPED)
+            add(id("never-finished"), Verdict.REACHES_CHANGE)
+        }.writeTo(dir)
+
+        assertEquals(
+            listOf("#=ran-lines:passed\tSUCCESSFUL", "#=ran-lines:failed\tFAILED"),
+            read(dir).lines().filter { it.startsWith(AgentContract.RAN_LINE_PREFIX) },
+        )
+        assertEquals(5, rows(dir).size, "a ran line must not reach a reader of the rows")
+    }
+
+    @Test
+    fun `each record carries the run token and the test JVM's identity`(@TempDir dir: File) {
+        System.setProperty(AgentContract.RUN_TOKEN_PROPERTY, "token-1")
+        try {
+            DecisionRecord().writeTo(dir)
+        } finally {
+            System.clearProperty(AgentContract.RUN_TOKEN_PROPERTY)
+        }
+
+        val notes = notes(dir)
+        assertEquals("token-1", notes[AgentContract.RUN_TOKEN_NOTE])
+        AgentContract.JVM_IDENTITY_PROPERTIES.split(",").forEach { property ->
+            assertEquals(System.getProperty(property), notes[AgentContract.JVM_NOTE_PREFIX + property], property)
+        }
+    }
 }

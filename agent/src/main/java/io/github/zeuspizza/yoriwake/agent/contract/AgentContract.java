@@ -101,6 +101,12 @@ public final class AgentContract {
     /** Every decline that held on this run, as refusal tokens, comma-separated, first one first. */
     public static final String DECLINES_PROPERTY = "yoriwake.declines";
 
+    /**
+     * A fresh value per run of a selecting test task. Each decision record carries it, so the decode
+     * merges only the records this run wrote.
+     */
+    public static final String RUN_TOKEN_PROPERTY = "yoriwake.run.token";
+
     /** Test-id globs selection may never skip, comma-separated. */
     public static final String ALWAYS_RUN_PROPERTY = "yoriwake.alwaysRun";
 
@@ -408,6 +414,25 @@ public final class AgentContract {
      * the rows and the rule lines.
      */
     public static final String OBSERVATION_LINE_PREFIX = "#?";
+
+    /**
+     * Starts a ran line, {@code #=test \t outcome}: an included row whose test finished
+     * {@code SUCCESSFUL} or {@code FAILED} in the outermost test plan of this JVM. One per such row,
+     * after the observation lines.
+     */
+    public static final String RAN_LINE_PREFIX = "#=";
+
+    /** The run's {@link #RUN_TOKEN_PROPERTY}, noted only when the run was given one. */
+    public static final String RUN_TOKEN_NOTE = "run-token";
+
+    /**
+     * Prefixes each of the test JVM's {@link #JVM_IDENTITY_PROPERTIES}, {@code jvm.<property>}, noted
+     * beside {@link #RUN_TOKEN_NOTE}.
+     */
+    public static final String JVM_NOTE_PREFIX = "jvm.";
+
+    /** The test JVM's system properties that say which runtime and platform it is, comma-separated. */
+    public static final String JVM_IDENTITY_PROPERTIES = "java.version,java.vendor,java.vm.name,os.name,os.arch";
 
     /** What the rule lines were computed from: one of the {@code RULES_*} values. */
     public static final String RULES_NOTE = "rules";

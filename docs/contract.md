@@ -41,6 +41,7 @@ the run as `change-set-unreadable`.
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
 | `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `tests-named`, `decline-undetermined` |
+| `RUN_TOKEN_PROPERTY` | `yoriwake.run.token` | plugin → agent | A fresh value per selecting run of the task. Each decision record notes it, so the plugin merges only this run's |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |
 | `CHANGE_SET_UNREADABLE_KIND` | `change-set-unreadable` | plugin, agent | The refusal token of a run whose change-set file could not be written or read |
 
@@ -192,6 +193,9 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
 | `DECLINES_NOTE` | `declines` | Every decline that held, as `yoriwake.declines` carried it. Absent when none did |
 | `OBSERVED_OUTCOME_NOTE` | `observed-outcome` | On an observing run, the outcome a selecting run of the same inputs would have noted: `outcome`, then its `full-run-kind` and `refusal-kind` when it has them, tab-separated. `outcome` says what ran, `full-run` |
+| `RUN_TOKEN_NOTE` | `run-token` | The run's `yoriwake.run.token`. Noted only when the run was given one |
+| `JVM_NOTE_PREFIX` | `jvm.` | Starts `jvm.<property>`, beside `run-token`: each of the test JVM's identity properties below, with its value |
+| `JVM_IDENTITY_PROPERTIES` | `java.version,java.vendor,java.vm.name,os.name,os.arch` | The system properties the `jvm.` notes carry |
 | `INPUT_NOTE_PREFIX` | `input.` | Starts `input.<property>`: each property the decision read, for replay |
 | `RUN_NARROWED` | `narrowed` | Outcome: some tests were skipped |
 | `RUN_FULL` | `full-run` | Outcome: everything ran |
@@ -258,6 +262,22 @@ The rule lines then follow the verdict the observation line holds, as they would
 | Constant | Value | Meaning |
 |---|---|---|
 | `OBSERVATION_LINE_PREFIX` | `#?` | Starts every observation line |
+
+## Ran lines
+
+Each included row whose test finished `SUCCESSFUL` or `FAILED` in the test JVM's outermost test plan
+follows the observation lines, one line per such row, whether or not the run captured:
+
+```
+#=test \t outcome
+```
+
+A test that aborted, was skipped, or never finished (a fork killed, `--fail-fast`) has none, and
+neither has a test a launcher started inside another test ran.
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `RAN_LINE_PREFIX` | `#=` | Starts every ran line |
 
 ## Versions
 
