@@ -21,6 +21,8 @@ class MapFilesReadTest {
         "TASK_FILE" to "the payback report",
         "PENDING_FILE" to "the start reading of HEAD, the run's own",
         "STATS_PENDING_FILE" to "the start reading of the tree, the run's own",
+        "START_FILE" to "a selecting run's start reading, the run's own",
+        "SELECTION_FILE" to "what a selecting run ran, stamped with its own commit and task; never part of a map",
         "\"loaded\"" to "the agent's per-worker raw lists, folded in by the decode",
         "MAP_DIGEST_FILE" to "the digest itself, never compared with the list",
         "MOVED_FILE" to "explains a forced run, read by nothing that decides",

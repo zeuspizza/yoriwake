@@ -174,6 +174,37 @@ public final class AgentContract {
     public static final String OBSERVATION_FILE = "observation.json";
 
     /**
+     * What a selecting run that narrowed left of the tests that ran to an outcome, stamped with what
+     * decided what they exercised: {@code test \t outcome} per row, after {@code #!} notes. Written by
+     * the decode after such a run, removed after any other selecting run; a complement run reads it.
+     */
+    public static final String SELECTION_FILE = "selection.tsv";
+
+    /** The selection record's version, its {@link #VERSION_NOTE}. */
+    public static final String SELECTION_VERSION = "1";
+
+    /** A selection record note: the commit the tests ran at, with a clean tree at both ends. */
+    public static final String STAMP_COMMIT_NOTE = "commit";
+
+    /** A selection record note: the test task's path. */
+    public static final String STAMP_TASK_NOTE = "task";
+
+    /** A selection record note: the build's root directory, relative to the repository's top level. */
+    public static final String STAMP_BUILD_ROOT_NOTE = "build-root";
+
+    /** A selection record note: the project's path in the build tree, which names an included build. */
+    public static final String STAMP_BUILD_PATH_NOTE = "build-path";
+
+    /** A selection record note: a digest of the test runtime classpath, file by file. */
+    public static final String STAMP_CLASSPATH_NOTE = "classpath";
+
+    /**
+     * A selection record note: a digest of the task's system properties, JVM arguments, include and
+     * exclude patterns and framework filters.
+     */
+    public static final String STAMP_CONFIGURATION_NOTE = "configuration";
+
+    /**
      * Ends each writer's own copy of its decisions, {@code decisions.tsv.<pid>-<writer>.part}.
      * {@link #DECISIONS_FILE} is last-writer-wins across test JVMs; the parts hold the whole task.
      */

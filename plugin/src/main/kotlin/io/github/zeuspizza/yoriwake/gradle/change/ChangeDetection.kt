@@ -374,6 +374,13 @@ internal object ChangeDetection {
         }
     }
 
+    /**
+     * Every path `git status` reports, untracked files included and ignored ones not: empty for a
+     * clean tree, null when git could not answer.
+     */
+    fun status(git: Runner): List<String>? =
+        git.run(listOf("status", "--porcelain", "--untracked-files=all"))
+
     fun head(providers: ProviderFactory, projectDir: File, memo: BuildMemo? = null): String? =
         head(cachedRunner(providers, projectDir, memo))
 
