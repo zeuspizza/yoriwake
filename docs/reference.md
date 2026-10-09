@@ -294,6 +294,25 @@ issue with its version, a link to its native sources at that tag, every file ope
 directory scan and `dlopen` in them with where each path comes from, the file names its loader
 gives the library, and the class that calls `System.load` or `System.loadLibrary`.
 
+## Your JaCoCo report
+
+- **A run yoriwake instruments** leaves the test task's JaCoCo destination file holding what the
+  run executed, as it would without yoriwake. The agent takes JaCoCo's data and resets it around
+  every test, so after the tests yoriwake appends each test's record to what JaCoCo wrote. A run
+  whose tests failed has its file completed before the project's JaCoCo report and verification
+  tasks run. JaCoCo's Sessions page then lists one session per test, and the file is about as
+  large as the run's own records under `.gradle/yoriwake`: it grows with tests times instrumented
+  classes, and it is part of the test task's build cache entry.
+- **A run yoriwake does not instrument** leaves no execution file: Gradle removes the previous
+  run's, so `jacocoTestReport` and `jacocoTestCoverageVerification` are skipped for want of data.
+  A skipped verification has checked nothing. These runs are:
+  - selecting runs that narrow;
+  - selecting runs that run everything while the map already covers the commit;
+  - selecting runs that run everything over a map recorded with a test JVM per class;
+  - runs declined over in-JVM parallelism.
+- **A job whose coverage report matters** runs without `-Pyoriwake.select`. It records, so it
+  reports everything it ran.
+
 ## Requirements
 
 - **Gradle daemon JDK: 21 or newer.** The plugin's classes are compiled for Java 21.
@@ -444,12 +463,6 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   a native library it loads makes every later test in that JVM run after any change. An exploded
   JDK build's classes are not in an image, so all of them count as yours. Both select wider, never
   narrower.
-- **Your own JaCoCo coverage report.** To record each test's coverage, the agent takes JaCoCo's
-  execution data and resets it around every test. The test task's JaCoCo destination file then
-  holds only what ran after the last test, so `jacocoTestReport`, `jacocoTestCoverageVerification`
-  and uploads to coverage services read close to zero on every run yoriwake instruments, full runs
-  included. Selection is unaffected. Until the fix, run a job whose coverage report matters with
-  `-Pyoriwake.disabled=true`.
 - **Edits that do not change bytecode.** A comment or formatting change is already served by
   Gradle's build cache, which is better than this tool for anything it covers.
 

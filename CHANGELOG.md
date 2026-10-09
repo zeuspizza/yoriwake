@@ -25,6 +25,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Fixed
 
 - Tests named with `--tests` all run on a selecting run, declined as `tests-named`. Map: left alone.
+- The test task's JaCoCo file holds what an instrumented run executed, so its report no longer reads
+  near zero. Map: left alone.
 - A generated file on the test classpath that changed since the capture runs everything, named.
   Map: repaired on the next build.
 - A test task with Develocity Test Distribution or Predictive Test Selection enabled is declined,
