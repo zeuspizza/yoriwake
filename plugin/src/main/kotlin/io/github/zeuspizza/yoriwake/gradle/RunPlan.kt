@@ -31,6 +31,11 @@ internal class RunPlan(
     val notes: List<String> = emptyList(),
     /** What was checked out, when a branch list is set and git could say; null otherwise. */
     val branch: String? = null,
+    /**
+     * Where a complement run reads its selection record: empty for this build's own map directories,
+     * else a directory holding a saved copy of a build's `.gradle/yoriwake`. Null on any other run.
+     */
+    val complementFrom: String? = null,
 ) {
 
     enum class Kind {
@@ -45,6 +50,12 @@ internal class RunPlan(
          * would have left out.
          */
         OBSERVE,
+
+        /**
+         * Runs every test but those a selecting run's record shows ran at this commit and
+         * configuration, and captures nothing. A record it cannot use makes it [RECORD], named.
+         */
+        COMPLEMENT,
     }
 
     /** A reason a run asked to select runs everything instead. */
@@ -63,6 +74,8 @@ internal class RunPlan(
 
     val observing: Boolean get() = kind == Kind.OBSERVE
 
+    val complementing: Boolean get() = kind == Kind.COMPLEMENT
+
     companion object {
         /**
          * [widening], [scan] and [checkedOut] are asked only for a run asked to select or observe, and
@@ -76,22 +89,31 @@ internal class RunPlan(
             fullRunBranches: List<String> = emptyList(),
             checkedOut: () -> CheckedOut = { error("the branch was asked for with no branch listed") },
         ): RunPlan {
-            if (settings.select && settings.observe) {
+            val set = listOfNotNull(
+                Settings.SELECT.takeIf { settings.select },
+                Settings.OBSERVE.takeIf { settings.observe },
+                Settings.COMPLEMENT.takeIf { settings.complement != null },
+            )
+            if (set.size > 1) {
                 throw InvalidUserDataException(
-                    "[yoriwake] -P${Settings.SELECT} and -P${Settings.OBSERVE} were both set. A run either " +
-                        "selects or observes what selection would do; pass one of them."
+                    "[yoriwake] ${set.joinToString(" and ") { "-P$it" }} were set together. A run selects, " +
+                        "observes what selection would do, or runs what a selecting run left out; pass one of them."
                 )
             }
             val asked = when {
                 settings.select -> Kind.SELECT
                 settings.observe -> Kind.OBSERVE
+                settings.complement != null -> Kind.COMPLEMENT
                 else -> return RunPlan(Kind.RECORD, Kind.RECORD, widening = null)
             }
             val widened = widening()
             val (declines, notes, branch) = declines(settings.fullRun, fullRunBranches, checkedOut, widened.age, scan)
             // An observing run already records; a decline applies only to the selection it observes.
             val kind = if (declines.isEmpty() || asked == Kind.OBSERVE) asked else Kind.RECORD
-            return RunPlan(kind, asked, widened, declines, notes, branch)
+            return RunPlan(
+                kind, asked, widened, declines, notes, branch,
+                complementFrom = settings.complement.takeIf { kind == Kind.COMPLEMENT },
+            )
         }
 
         /**

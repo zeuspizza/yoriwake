@@ -23,6 +23,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   records, so CI can pass `-Pyoriwake.select` on every branch. Map: left alone.
 - `-Pyoriwake.observe` runs every test and reports in `observation.json` what selection would have
   left out. Map: left alone.
+- `-Pyoriwake.complement` runs only the tests a selecting run at the same commit left out, from the
+  `selection.tsv` such a run now leaves. Map: left alone; a new file beside it.
 
 ### Changed
 

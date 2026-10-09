@@ -171,6 +171,7 @@ class TestTaskWiringCharacterizationTest {
         // Commit ids, process ids, identity hashes and worker numbers differ per run; a TestKit
         // daemon numbers its workers across every build it has run.
         result = result.replace(Regex("[0-9a-f]{40}"), "<sha>")
+        result = result.replace(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), "<token>")
         result = result.replace(Regex("""worker-\d+"""), "worker-<n>")
         result = result.replace(Regex("zip_[0-9a-f]+"), "zip_<hash>")
         result = result.replace(Regex("""\.\d+-\d+\.part"""), ".<pid>-<n>.part")
@@ -263,25 +264,28 @@ class TestTaskWiringCharacterizationTest {
               jvmArgs []
             #0 Execute doFirst {} action
             #1 Execute doFirst {} action
-              log [yoriwake] :test map=<project>/.gradle/yoriwake/test-7f007aca scope=derived(dev.sample.*) includes=[dev.sample.*] nolocation=true exclloaders=[sun.reflect.DelegatingClassLoader, jdk.internal.reflect.DelegatingClassLoader] agent=true forks=1 unfiltered=yes (task includes=[] excludes=[])
+              prop yoriwake.run.token=<token>
+              +file .gradle/yoriwake/test-7f007aca/selection-start.pending
             #2 Execute doFirst {} action
+              log [yoriwake] :test map=<project>/.gradle/yoriwake/test-7f007aca scope=derived(dev.sample.*) includes=[dev.sample.*] nolocation=true exclloaders=[sun.reflect.DelegatingClassLoader, jdk.internal.reflect.DelegatingClassLoader] agent=true forks=1 unfiltered=yes (task includes=[] excludes=[])
             #3 Execute doFirst {} action
             #4 Execute doFirst {} action
+            #5 Execute doFirst {} action
               prop yoriwake.change.accountedFor=false
               prop yoriwake.internal.capture.outputDir=
               +file .gradle/yoriwake/test-7f007aca/change-set
               log [yoriwake] :test: compared 4 compiled classes against 4 the map recorded: 0 changed with no source change behind them
               log [yoriwake] :test selecting against <sha> (merge base with main): 1 changed classes, 0 paths coverage cannot see
               log [yoriwake] :test: narrowing, so nothing is instrumented and the map is left alone. A partial run cannot produce a map worth keeping.
-            #5 Execute doFirst {} action
             #6 Execute doFirst {} action
             #7 Execute doFirst {} action
             #8 Execute doFirst {} action
-              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #9 Execute doFirst {} action
+              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #10 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #11 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/after-test.pending
+            #12 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/ran.marker
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv.<pid>-<n>.part
@@ -296,13 +300,13 @@ class TestTaskWiringCharacterizationTest {
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/plan-complete
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/raw-schema-version
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/touches.tsv
-            #12 Execute doFirst {} action
             #13 Execute doFirst {} action
             #14 Execute doFirst {} action
             #15 Execute doFirst {} action
+            #16 Execute doFirst {} action
               -file build/jacoco/test.exec
-            #16 Execute executeTests
-            #17 Execute doLast {} action
+            #17 Execute executeTests
+            #18 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, selectActions.trimEnd())
@@ -330,12 +334,14 @@ class TestTaskWiringCharacterizationTest {
             prop yoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
             prop yoriwake.internal.capture.outputDir=
             prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
+            prop yoriwake.run.token=<token>
             prop yoriwake.select=true
             prop yoriwake.select.classGranularity=false
             arg -Dyoriwake.change.accountedFor=false
             arg -Dyoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
             arg -Dyoriwake.internal.capture.outputDir
             arg -Dyoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
+            arg -Dyoriwake.run.token=<token>
             arg -Dyoriwake.select=true
             arg -Dyoriwake.select.classGranularity=false
             arg -javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar

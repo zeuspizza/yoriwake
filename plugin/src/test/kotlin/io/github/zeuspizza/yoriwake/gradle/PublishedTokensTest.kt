@@ -46,7 +46,7 @@ class PublishedTokensTest {
             "run-outcome",
             listOf(
                 AgentContract.RUN_NARROWED, AgentContract.RUN_FULL, AgentContract.RUN_NOT_REQUESTED,
-                AgentContract.RUN_NOT_DECIDED,
+                AgentContract.RUN_NOT_DECIDED, AgentContract.RUN_COMPLEMENTED,
             ),
         )
         add("refusal-kind", RefusalKind.entries.map { it.token })

@@ -122,6 +122,18 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
 
     /** A commit since the base asks for a full run with a `yoriwake: full` line; as above. */
     FULL_RUN_COMMIT("full-run-commit", requested = true),
+
+    /**
+     * A complement run found no selection record for its task: no selecting run that narrowed at a
+     * clean tree left one there. Everything runs and the map is recorded.
+     */
+    COMPLEMENT_NO_RECORD("complement-no-record"),
+
+    /**
+     * A complement run's selection record was stamped with another commit, tree, task, build,
+     * classpath, configuration or test JVM, or could not be read. Everything runs.
+     */
+    COMPLEMENT_RECORD_MISMATCH(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND),
     ;
 
     companion object {

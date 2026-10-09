@@ -101,6 +101,19 @@ public final class AgentContract {
     /** Every decline that held on this run, as refusal tokens, comma-separated, first one first. */
     public static final String DECLINES_PROPERTY = "yoriwake.declines";
 
+    /**
+     * A fresh value per run of a selecting test task. Each decision record carries it, so the decode
+     * merges only the records this run wrote.
+     */
+    public static final String RUN_TOKEN_PROPERTY = "yoriwake.run.token";
+
+    /**
+     * The selection record a complement run reads, {@link #COMPLEMENT_RECORD_FILE} beside the map. Set
+     * only once the plugin found the record's stamp equal to this run's; the test JVM then leaves out
+     * each test it lists as ran, unless its own identity differs from the record's.
+     */
+    public static final String COMPLEMENT_RECORD_PROPERTY = "yoriwake.complement.record";
+
     /** Test-id globs selection may never skip, comma-separated. */
     public static final String ALWAYS_RUN_PROPERTY = "yoriwake.alwaysRun";
 
@@ -109,6 +122,12 @@ public final class AgentContract {
      * because the agent raises it too.
      */
     public static final String CHANGE_SET_UNREADABLE_KIND = "change-set-unreadable";
+
+    /**
+     * The refusal kind of a complement run whose selection record does not match it. Defined here
+     * because the agent raises it too, when the record's test JVM is not this one.
+     */
+    public static final String COMPLEMENT_RECORD_MISMATCH_KIND = "complement-record-mismatch";
 
 
     /** The directory under the project cache dir ({@code .gradle/}) that holds one map per task. */
@@ -166,6 +185,43 @@ public final class AgentContract {
      * observing run and deleted before every run, so it never describes an earlier one.
      */
     public static final String OBSERVATION_FILE = "observation.json";
+
+    /**
+     * What a selecting run that narrowed left of the tests that ran to an outcome, stamped with what
+     * decided what they exercised: {@code test \t outcome} per row, after {@code #!} notes. Written by
+     * the decode after such a run, removed after any other selecting run; a complement run reads it.
+     */
+    public static final String SELECTION_FILE = "selection.tsv";
+
+    /**
+     * A complement run's copy of the selection record it validated, beside the map and outside
+     * {@link #RAW_DIR}, which {@link #COMPLEMENT_RECORD_PROPERTY} names. Removed by its decode.
+     */
+    public static final String COMPLEMENT_RECORD_FILE = "complement.record";
+
+    /** The selection record's version, its {@link #VERSION_NOTE}. */
+    public static final String SELECTION_VERSION = "1";
+
+    /** A selection record note: the commit the tests ran at, with a clean tree at both ends. */
+    public static final String STAMP_COMMIT_NOTE = "commit";
+
+    /** A selection record note: the test task's path. */
+    public static final String STAMP_TASK_NOTE = "task";
+
+    /** A selection record note: the build's root directory, relative to the repository's top level. */
+    public static final String STAMP_BUILD_ROOT_NOTE = "build-root";
+
+    /** A selection record note: the project's path in the build tree, which names an included build. */
+    public static final String STAMP_BUILD_PATH_NOTE = "build-path";
+
+    /** A selection record note: a digest of the test runtime classpath, file by file. */
+    public static final String STAMP_CLASSPATH_NOTE = "classpath";
+
+    /**
+     * A selection record note: a digest of the task's system properties, JVM arguments, include and
+     * exclude patterns and framework filters.
+     */
+    public static final String STAMP_CONFIGURATION_NOTE = "configuration";
 
     /**
      * Ends each writer's own copy of its decisions, {@code decisions.tsv.<pid>-<writer>.part}.
@@ -390,6 +446,12 @@ public final class AgentContract {
 
     public static final String RUN_NOT_REQUESTED = "selection-not-requested";
 
+    /** Outcome: a complement run left out the tests a selecting run's record lists as ran. */
+    public static final String RUN_COMPLEMENTED = "complemented";
+
+    /** On a complement run: {@code leftOut \t ran}, the tests this writer left out and included. */
+    public static final String COMPLEMENT_NOTE = "complement";
+
     /** Discovery never asked, so there is no decision to describe. */
     public static final String RUN_NOT_DECIDED = "not-decided";
 
@@ -408,6 +470,25 @@ public final class AgentContract {
      * the rows and the rule lines.
      */
     public static final String OBSERVATION_LINE_PREFIX = "#?";
+
+    /**
+     * Starts a ran line, {@code #=test \t outcome}: an included row whose test finished
+     * {@code SUCCESSFUL} or {@code FAILED} in the outermost test plan of this JVM. One per such row,
+     * after the observation lines.
+     */
+    public static final String RAN_LINE_PREFIX = "#=";
+
+    /** The run's {@link #RUN_TOKEN_PROPERTY}, noted only when the run was given one. */
+    public static final String RUN_TOKEN_NOTE = "run-token";
+
+    /**
+     * Prefixes each of the test JVM's {@link #JVM_IDENTITY_PROPERTIES}, {@code jvm.<property>}, noted
+     * beside {@link #RUN_TOKEN_NOTE}.
+     */
+    public static final String JVM_NOTE_PREFIX = "jvm.";
+
+    /** The test JVM's system properties that say which runtime and platform it is, comma-separated. */
+    public static final String JVM_IDENTITY_PROPERTIES = "java.version,java.vendor,java.vm.name,os.name,os.arch";
 
     /** What the rule lines were computed from: one of the {@code RULES_*} values. */
     public static final String RULES_NOTE = "rules";

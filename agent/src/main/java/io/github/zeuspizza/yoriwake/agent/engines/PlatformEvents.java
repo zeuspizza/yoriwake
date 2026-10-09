@@ -11,6 +11,7 @@ import io.github.zeuspizza.yoriwake.agent.capture.ProbeReporter;
 import io.github.zeuspizza.yoriwake.agent.capture.ProbeResult;
 import io.github.zeuspizza.yoriwake.agent.host.AttachedLoader;
 import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
+import io.github.zeuspizza.yoriwake.agent.platform.RanTests;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -51,6 +52,9 @@ public class PlatformEvents implements TestExecutionListener {
 
     private JacocoAgent agent;
     private CaptureClaim claim;
+    // Whether this instance serves the outermost plan, whose tests are the task's. A plan a running
+    // test started (a nested launcher) runs inside that test, so its tests are never the task's.
+    private volatile boolean outermost;
     private volatile CaptureSession session;
     // The plan being captured, for the tests beneath a container that fails.
     private volatile TestPlan plan;
@@ -80,7 +84,7 @@ public class PlatformEvents implements TestExecutionListener {
         if (!ATTACHED) {
             return;
         }
-        EXECUTING.incrementAndGet();
+        outermost = EXECUTING.incrementAndGet() == 1;
         // A nested in-process Launcher gets its own instance, which loses the claim and does
         // nothing, so the nested run's coverage lands on the outer test.
         if (outputDir != null) {
@@ -122,6 +126,10 @@ public class PlatformEvents implements TestExecutionListener {
 
     @Override
     public void executionFinished(TestIdentifier identifier, TestExecutionResult result) {
+        // Before the capture check: a run that narrowed captures nothing and still ran these.
+        if (outermost && identifier.isTest() && result != null) {
+            RanTests.record(identifier.getUniqueId(), result.getStatus().name());
+        }
         CaptureSession capture = session;
         if (capture == null) {
             return;
@@ -179,6 +187,7 @@ public class PlatformEvents implements TestExecutionListener {
             return;
         }
         EXECUTING.decrementAndGet();
+        outermost = false;
         CaptureSession capture = session;
         if (capture == null) {
             return;

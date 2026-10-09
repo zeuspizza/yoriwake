@@ -19,6 +19,18 @@ internal class Settings(lookup: (String) -> String?) {
     val select: Boolean = parseFlag(SELECT, lookup(SELECT))
     /** Runs every test and records what a selecting run would have left out. */
     val observe: Boolean = parseFlag(OBSERVE, lookup(OBSERVE))
+    /**
+     * Runs every test but those a selecting run's record lists as ran: null when off, empty for the
+     * record in this build's own map directories, else a directory holding a saved copy of a build's
+     * `.gradle/yoriwake`. Bare or `true` is the build's own, `false` is off.
+     */
+    val complement: String? = lookup(COMPLEMENT)?.let {
+        when {
+            it.isEmpty() || it.equals("true", ignoreCase = true) -> ""
+            it.equals("false", ignoreCase = true) -> null
+            else -> it
+        }
+    }
     /** Asks a selecting run to run every test instead, as a recording run. */
     val fullRun: Boolean = parseFlag(FULL_RUN, lookup(FULL_RUN))
     val base: String? = lookup(BASE)
@@ -41,6 +53,7 @@ internal class Settings(lookup: (String) -> String?) {
     companion object {
         const val SELECT = "yoriwake.select"
         const val OBSERVE = "yoriwake.observe"
+        const val COMPLEMENT = "yoriwake.complement"
         const val FULL_RUN = "yoriwake.fullRun"
         const val BASE = "yoriwake.base"
         const val DISABLED = "yoriwake.disabled"

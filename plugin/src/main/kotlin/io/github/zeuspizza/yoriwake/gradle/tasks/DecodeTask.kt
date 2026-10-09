@@ -7,6 +7,7 @@ import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
+import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -59,6 +60,14 @@ internal abstract class DecodeTask : DefaultTask() {
 
     @get:Input
     abstract val observing: Property<Boolean>
+
+    /** Whether the run was asked to select, and so leaves or removes a selection record. */
+    @get:Input
+    abstract val asksSelection: Property<Boolean>
+
+    /** Whether the run leaves out what a selecting run's record lists as ran. */
+    @get:Input
+    abstract val complementing: Property<Boolean>
 
     @get:Input
     abstract val wholeTask: Property<Boolean>
@@ -120,6 +129,10 @@ internal abstract class DecodeTask : DefaultTask() {
                 else -> null
             })
         }
+        // Before every return below. A run that did no work leaves the record of the run that did.
+        if (asksSelection.getOrElse(false) && marker.isFile) {
+            recordSelection(taskPath, selecting, fullRunMarker.isFile)
+        }
         // First: Develocity ran or chose this run's tests, and nothing of ours acted on it.
         if (develocityDeclined.delete()) {
             marker.delete()
@@ -139,6 +152,18 @@ internal abstract class DecodeTask : DefaultTask() {
                     "exactly as it was."
             )
             return
+        }
+        // A complement run that left out what its record lists captured nothing on purpose, and the map
+        // and the record stay as they are.
+        val complemented = File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE)
+        if (complementing.getOrElse(false) && complemented.isFile) {
+            val commit = runCatching { SelectionRecord.stampOf(SelectionRecord.read(complemented.readText())).commit }.getOrNull()
+            complemented.delete()
+            if (marker.delete()) {
+                fullRunMarker.delete()
+                logger.lifecycle(SelectionRecord.complemented(mapDir).line(taskPath, commit))
+                return
+            }
         }
         // The marker exists only when the test task actually executed; see ranMarker.
         if (!marker.delete()) {
@@ -401,6 +426,32 @@ internal abstract class DecodeTask : DefaultTask() {
     }
 
     /**
+     * Writes what a complement run may leave out of this selecting run, or removes any record when
+     * this run cannot vouch for one. A record that cannot be written costs the complement a full run.
+     */
+    private fun recordSelection(taskPath: String, selecting: Boolean, ranEverything: Boolean) {
+        val outcome = runCatching {
+            if (selecting) {
+                SelectionRecord.afterSelectingRun(mapDir, rootDir, ranEverything)
+            } else {
+                SelectionRecord.afterDeclinedRun(mapDir)
+            }
+        }.getOrElse {
+            runCatching { File(mapDir, AgentContract.SELECTION_FILE).delete() }
+            SelectionRecord.Outcome.Removed(it.toString())
+        }
+        when (outcome) {
+            is SelectionRecord.Outcome.Written -> logger.lifecycle(
+                "[yoriwake] $taskPath: ${AgentContract.SELECTION_FILE} lists the ${outcome.tests} tests this run " +
+                    "ran, for a complement run at the same commit to leave out."
+            )
+            is SelectionRecord.Outcome.Removed -> logger.info(
+                "[yoriwake] $taskPath: no ${AgentContract.SELECTION_FILE} for this run: ${outcome.reason}"
+            )
+        }
+    }
+
+    /**
      * Last after any write to the map, so a caller can list exactly what this decode left. One that
      * cannot be written is removed rather than left describing an older map.
      */
@@ -418,6 +469,10 @@ internal abstract class DecodeTask : DefaultTask() {
         val selecting: Boolean,
         /** Whether this run observes selection, and so writes `observation.json`. */
         val observing: Boolean,
+        /** Whether this run was asked to select, declined or not. */
+        val asksSelection: Boolean,
+        /** Whether this run complements a selecting run. */
+        val complementing: Boolean,
         val wholeTask: Provider<Boolean>,
         val loadedScope: Provider<List<String>>,
         val datesTheMap: Provider<Boolean>,
@@ -456,6 +511,8 @@ internal abstract class DecodeTask : DefaultTask() {
                 )
                 task.selecting.set(wired.selecting)
                 task.observing.set(wired.observing)
+                task.asksSelection.set(wired.asksSelection)
+                task.complementing.set(wired.complementing)
                 task.wholeTask.set(wired.wholeTask)
                 task.loadedScope.set(wired.loadedScope)
                 task.datesTheMap.set(wired.datesTheMap)

@@ -10,6 +10,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERT
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
@@ -20,6 +21,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.TEST_TASKS_C
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
+import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
@@ -276,6 +278,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing)
         recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
+            // Registered before the marker's deletion, so it runs after it and may write one.
+            if (runPlan.complementing) configureComplement(project, test, mapDir, runPlan, agent)
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
@@ -291,6 +295,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // was asked to select, so tests named on it still run as named.
         if (runPlan.asked != RunPlan.Kind.RECORD) declineNamedTests(test, mapDir, filterVerdict, runPlan.observing)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
+        if (selecting) startSelectionRecord(project, test, mapDir, agent)
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir, agent)
         // Decided at execution time, since Gradle applies --tests after afterEvaluate. `wholeTask`
@@ -310,7 +315,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         configured[test.name] = Configured(
             mapDir, scope, scopeOutcome,
             DecodeTask.Inputs(
-                mapDir, scopeOutcome, selecting, runPlan.observing, wholeTask, loadedScope, datesTheMap, undatedReason,
+                mapDir, scopeOutcome, selecting, runPlan.observing, runPlan.asked == RunPlan.Kind.SELECT, runPlan.complementing,
+                wholeTask, loadedScope, datesTheMap, undatedReason,
                 // What JaCoCo actually instruments, read back off the task so the host's excludes
                 // are in it. See EffectiveScope.
                 effectiveScope,
@@ -722,6 +728,29 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
     }
 
+    /**
+     * Gives a selecting run its token and reads the stamp its selection record will carry, before
+     * any other action of ours but the Develocity decline: the commit, whether the tree is clean,
+     * the task, the build, the classpath and the task's configuration. See [SelectionRecord].
+     */
+    private fun startSelectionRecord(project: Project, test: Test, mapDir: File, agent: File?) {
+        val identity = StampIdentity.of(project, test, agent)
+        test.doFirst {
+            File(mapDir, SelectionRecord.START_FILE).delete()
+            if (declinedUnderDevelocity(test)) return@doFirst
+            // A test JVM keeps running after the first failure, and Gradle drops what it reports then:
+            // a test could be listed as ran whose outcome no run showed.
+            if (test.failFast) {
+                test.logger.info("[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record")
+                return@doFirst
+            }
+            val token = java.util.UUID.randomUUID().toString()
+            test.systemProperty(RUN_TOKEN_PROPERTY, token)
+            runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, identity.observe(test))) }
+                .onFailure { test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be written ($it)") }
+        }
+    }
+
     /** Puts the agent on the test runtime classpath. */
     private fun injectAgent(project: Project, test: Test): File? {
         // Unpacked at execution time, named at configuration time: writing the jar during
@@ -857,6 +886,56 @@ internal fun decideFilterVerdict(
         framework != null -> FilterVerdict(false, framework, byFramework = true)
         else -> FilterVerdict(true, unfilteredDetail)
     }.copy(commandLinePatterns = commandLine)
+}
+
+/**
+ * What a selection record's stamp needs from configuration, as plain values, and how it reads the
+ * rest when the task runs: a selecting run reads it where it starts, a complement run before it
+ * leaves anything out, so both read the same fields at the same point of the task.
+ */
+internal class StampIdentity(
+    private val rootDir: File,
+    private val task: String,
+    private val buildPath: String,
+    private val gradleUserHome: File,
+    /** The plugin's own `-javaagent` argument, left out of the configuration digest. */
+    private val agentArgument: String?,
+) : java.io.Serializable {
+
+    fun observe(test: Test): SelectionRecord.Stamp {
+        val git = ChangeDetection.directRunner(rootDir)
+        val top = git.run(listOf("rev-parse", "--show-toplevel"))?.firstOrNull()
+        val buildRoot = top?.let { runCatching { rootDir.canonicalFile.relativeTo(File(it).canonicalFile).invariantSeparatorsPath }.getOrNull() }
+        return SelectionRecord.Stamp(
+            commit = ChangeDetection.head(git),
+            clean = ChangeDetection.status(git)?.isEmpty() == true,
+            task = task,
+            // Unknown reads as a root no build has, so it never matches.
+            buildRoot = buildRoot ?: "?${rootDir.absolutePath}",
+            buildPath = buildPath,
+            classpath = SelectionRecord.classpathDigest(test.classpath.files, rootDir, gradleUserHome),
+            configuration = SelectionRecord.configurationDigest(
+                test.systemProperties,
+                // Every argument the test JVM starts with, those of argument providers included, but
+                // the agents and properties the plugin and JaCoCo set by run kind.
+                test.allJvmArgs.filter { argument ->
+                    argument != agentArgument && !argument.startsWith("-Dyoriwake.") &&
+                        !(argument.startsWith("-javaagent:") && argument.substringBefore('=').endsWith("jacocoagent.jar"))
+                },
+                test.includes.sorted().map { "include $it" } + test.excludes.sorted().map { "exclude $it" } +
+                    test.filter.includePatterns.sorted().map { "filter.include $it" } +
+                    test.filter.excludePatterns.sorted().map { "filter.exclude $it" },
+                frameworkFilter(test),
+            ),
+        )
+    }
+
+    companion object {
+        fun of(project: Project, test: Test, agent: File?) = StampIdentity(
+            project.rootDir, test.path, project.buildTreePath, project.gradle.gradleUserHomeDir,
+            agent?.let { "-javaagent:" + it.absolutePath },
+        )
+    }
 }
 
 /** The test framework's own filters that are set, as `name=[values]`, or null when none is. */

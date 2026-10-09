@@ -22,9 +22,11 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
+import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.validCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
+import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
 import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
@@ -406,9 +408,10 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
             }
             return@doFirst
         }
+        val flag = if (runPlan.asked == RunPlan.Kind.COMPLEMENT) Settings.COMPLEMENT else Settings.SELECT
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: ${reasons.joinToString("; ")}, so selection is declined and every " +
-                "test runs as on a run without -P${Settings.SELECT}."
+                "test runs as on a run without -P$flag."
         )
         val decision = decideCapture(
             mapDir,
@@ -428,6 +431,111 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
         }
     }
 }
+
+/**
+ * Leaves out of a complement run the tests the selecting run's record lists as ran, once the record's
+ * stamp equals this run's: the commit, a clean tree, the task, the build, the classpath and the task's
+ * configuration. The test JVM checks its own identity. A record that is missing or does not match
+ * makes the run a recording full run, named; one that matches captures nothing and leaves the map,
+ * and the record, as they are. With a trusted-map list, only a record from `<dir>` is used.
+ *
+ * The record is read at configuration, so its digest is a task input and a new record is never
+ * `UP-TO-DATE`; its stamp is compared where the task starts, when the classpath and the task's
+ * options are settled, as the selecting run read its own.
+ */
+internal fun TestTaskWiring.configureComplement(
+    project: Project,
+    test: Test,
+    mapDir: File,
+    runPlan: RunPlan,
+    agent: File?,
+) {
+    val from = runPlan.complementFrom ?: return
+    val record = if (from.isEmpty()) {
+        File(mapDir, AgentContract.SELECTION_FILE)
+    } else {
+        File(File(from).let { if (it.isAbsolute) it else File(project.rootDir, from) }, "${mapDir.name}/${AgentContract.SELECTION_FILE}")
+    }
+    val where = if (from.isEmpty()) "this build's map directory" else from
+    val copy = File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE)
+    val text = project.providers.fileContents(project.objects.fileProperty().fileValue(record)).asText.orNull
+    val read = SelectionRecord.read(text)
+    val unusable = when {
+        // A trusted-map list makes a restored map directory unreviewed input, and the record in it is
+        // outside the map's digest: only a record handed over by the run that wrote it is used.
+        from.isEmpty() && settings.trustedMaps != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to
+            "the ${AgentContract.SELECTION_FILE} for ${test.path} in $where is not one the trusted-map list " +
+            "vouches for, since a restored cache could have written it; with -P${Settings.TRUSTED_MAPS}, pass " +
+            "the selecting run's own record as -P${Settings.COMPLEMENT}=<dir>"
+        text == null -> RefusalKind.COMPLEMENT_NO_RECORD to
+            "no ${AgentContract.SELECTION_FILE} for ${test.path} in $where: no selecting run that narrowed at a clean tree left one"
+        read.failure() != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to
+            "the ${AgentContract.SELECTION_FILE} for ${test.path} in $where is unusable: ${read.failure()}"
+        else -> null
+    }
+    // The record as an input: a new one must run the task again, and never find it up to date.
+    test.inputs.property("yoriwake.complement", text?.let(::complementDigest) ?: "none")
+    val leftAlone = declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir))
+    if (unusable != null) {
+        val (kind, reason) = unusable
+        refuse(test, kind, reason)
+        test.doFirst {
+            copy.delete()
+            if (declinedUnderDevelocity(test) || namedTestsLeftAlone(test, leftAlone)) return@doFirst
+            test.logger.lifecycle("[yoriwake] ${test.path}: $reason, so every test runs and the map is recorded.")
+        }
+        return
+    }
+    // Everything the selecting run ran may be left out.
+    allowAnEmptyRun(test)
+    val recorded = SelectionRecord.stampOf(read)
+    val identity = StampIdentity.of(project, test, agent)
+    val listed = read.ran().size
+    // Held from configuration time: a task action may not reach Task.extensions under the
+    // configuration cache.
+    val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+    val validated: String = text!!
+    test.doFirst {
+        copy.delete()
+        if (declinedUnderDevelocity(test) || namedTestsLeftAlone(test, leftAlone) || refusedAtExecution(test)) return@doFirst
+        val mismatch = SelectionRecord.mismatch(recorded, identity.observe(test))
+            ?: runCatching { copy.parentFile.mkdirs(); writeAtomically(copy, validated) }
+                .exceptionOrNull()?.let { "its copy could not be written ($it)" }
+        if (mismatch != null) {
+            val reason = "the ${AgentContract.SELECTION_FILE} for ${test.path} in $where differs from this run in $mismatch"
+            refuse(test, RefusalKind.COMPLEMENT_RECORD_MISMATCH, reason)
+            test.logger.lifecycle("[yoriwake] ${test.path}: $reason, so every test runs and the map is recorded.")
+            return@doFirst
+        }
+        test.systemProperty(AgentContract.COMPLEMENT_RECORD_PROPERTY, copy.absolutePath)
+        applyCaptureDecision(
+            test, mapDir, jacoco, observing = false,
+            CaptureDecision(
+                capture = false, fullRun = false, mapCurrent = false,
+                reason = "leaving out the $listed tests the selecting run at ${recorded.commit?.take(12)} ran; nothing " +
+                    "is instrumented, and the map and ${AgentContract.SELECTION_FILE} are left as they are.",
+            ),
+        )
+    }
+}
+
+/**
+ * Whether tests were named on this run, which then run whole and are captured by nothing; the decode
+ * reads [leftAlone] and leaves the map as it is.
+ */
+private fun namedTestsLeftAlone(test: Test, leftAlone: File): Boolean {
+    if (!declinedForNamedTests(test)) return false
+    runCatching {
+        leftAlone.parentFile.mkdirs()
+        leftAlone.writeText(NAMED_TESTS_LEFT_ALONE + "\n")
+    }
+    return true
+}
+
+/** The selection record as one short value, standing in for it as a task input. */
+private fun complementDigest(text: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
 
 private val OBSERVING_CAPTURE = CaptureDecision(
     capture = true, fullRun = true, mapCurrent = false,

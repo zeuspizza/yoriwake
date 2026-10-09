@@ -2,7 +2,8 @@ package io.github.zeuspizza.yoriwake.agent.select;
 
 /**
  * What the test-JVM filter did with one test, and which rule decided it: one row of
- * {@code decisions.tsv}. Only {@link #SKIPPED} excludes; every other verdict runs the test.
+ * {@code decisions.tsv}. Only {@link #SKIPPED} and {@link #ALREADY_RAN} exclude; every other verdict
+ * runs the test.
  */
 public enum Verdict {
     /** The daemon refused this run, so nothing is deselected. */
@@ -11,6 +12,10 @@ public enum Verdict {
     SELECTION_NOT_REQUESTED,
     /** The run observes selection, so the test runs; the verdict selection gave it is recorded apart. */
     OBSERVING,
+    /** A complement run: the selecting run's record shows the test ran at this commit, so it is left out. */
+    ALREADY_RAN,
+    /** A complement run: the record does not show the test ran, or it is a leaf container, so it runs. */
+    NOT_ALREADY_RAN,
     /** Selection threw, so the test runs. */
     SELECTION_FAILED,
     /** Pinned by pattern or tag. */
@@ -46,7 +51,7 @@ public enum Verdict {
     }
 
     public boolean included() {
-        return this != SKIPPED;
+        return this != SKIPPED && this != ALREADY_RAN;
     }
 
     /** The row's verdict column. */

@@ -41,8 +41,11 @@ the run as `change-set-unreadable`.
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
 | `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `tests-named`, `decline-undetermined` |
+| `RUN_TOKEN_PROPERTY` | `yoriwake.run.token` | plugin → agent | A fresh value per selecting run of the task. Each decision record notes it, so the plugin merges only this run's |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |
 | `CHANGE_SET_UNREADABLE_KIND` | `change-set-unreadable` | plugin, agent | The refusal token of a run whose change-set file could not be written or read |
+| `COMPLEMENT_RECORD_PROPERTY` | `yoriwake.complement.record` | plugin → agent | On a complement run whose selection record's stamp matched: the path of its copy, `complement.record`. The agent leaves out each test it lists as ran, unless the record's `jvm.` notes differ from this JVM |
+| `COMPLEMENT_RECORD_MISMATCH_KIND` | `complement-record-mismatch` | plugin, agent | The refusal token of a complement run whose selection record does not match it. The agent writes it as `refusal-kind` when the record's test JVM is not this one |
 
 The agent also reads Gradle's `org.gradle.test.worker` to name its worker directory, and uses a few
 `yoriwake.internal.capture.*` and `yoriwake.junit4.*` properties inside one JVM. Those are not part
@@ -71,6 +74,8 @@ One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usuall
 | `DECISIONS_FILE` | `decisions.tsv` | agent | people, tools | `test \t verdict \t reason` rows after `#!key \t value` notes, then `#+` rule lines (see [Decision rules](#decision-rules)). Last writer wins |
 | `DECISIONS_PART_SUFFIX` | `.part` | agent | people, tools | Ends `decisions.tsv.<pid>-<writer>.part`, one per writer, same format |
 | `OBSERVATION_FILE` | `observation.json` | plugin | people, tools | After an observing run: the failing tests selection would have left out, and the recorded time of the tests it would have skipped. See [Observing before you select](reference.md#observing-before-you-select) |
+| `SELECTION_FILE` | `selection.tsv` | plugin | plugin, agent | After a selecting run that narrowed, at a clean tree: the tests that ran to an outcome, stamped. Removed after any other selecting run. See [The selection record](#the-selection-record) |
+| `COMPLEMENT_RECORD_FILE` | `complement.record` | plugin | agent | A complement run's copy of the selection record it validated. Removed by its decode |
 | `CHANGE_SET_FILE` | `change-set` | plugin | agent | The list-valued change-set properties of the last selecting run, in `java.util.Properties` format, ending with `CHANGE_SET_END` |
 | `CHANGE_SET_END` | `#end` | plugin | agent | The last line of a whole `change-set`. Without it the file is refused |
 | `RAW_DIR` | `raw` | agent | plugin, agent | Raw records, one directory per worker. Cleared before every run |
@@ -186,17 +191,22 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `VERSION_NOTE` | `record-version` | The decision record version |
 | `ROWS_NOTE` | `rows` | Rows the writer meant to write. Fewer rows means the tail was lost |
 | `WRITER_NOTE` | `writer` | Which writer survived, `<n> of <m>` |
-| `OUTCOME_NOTE` | `outcome` | One of the four values below |
+| `OUTCOME_NOTE` | `outcome` | One of the five values below |
 | `FULL_RUN_KIND_NOTE` | `full-run-kind` | Which side forced, as a token |
 | `FULL_RUN_REASON_NOTE` | `full-run-reason` | Why, as prose |
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
 | `DECLINES_NOTE` | `declines` | Every decline that held, as `yoriwake.declines` carried it. Absent when none did |
 | `OBSERVED_OUTCOME_NOTE` | `observed-outcome` | On an observing run, the outcome a selecting run of the same inputs would have noted: `outcome`, then its `full-run-kind` and `refusal-kind` when it has them, tab-separated. `outcome` says what ran, `full-run` |
+| `RUN_TOKEN_NOTE` | `run-token` | The run's `yoriwake.run.token`. Noted only when the run was given one |
+| `JVM_NOTE_PREFIX` | `jvm.` | Starts `jvm.<property>`, beside `run-token`: each of the test JVM's identity properties below, with its value |
+| `JVM_IDENTITY_PROPERTIES` | `java.version,java.vendor,java.vm.name,os.name,os.arch` | The system properties the `jvm.` notes carry |
 | `INPUT_NOTE_PREFIX` | `input.` | Starts `input.<property>`: each property the decision read, for replay |
 | `RUN_NARROWED` | `narrowed` | Outcome: some tests were skipped |
 | `RUN_FULL` | `full-run` | Outcome: everything ran |
 | `RUN_NOT_REQUESTED` | `selection-not-requested` | Outcome: the run did not ask to select |
 | `RUN_NOT_DECIDED` | `not-decided` | Outcome: discovery never asked |
+| `RUN_COMPLEMENTED` | `complemented` | Outcome: a complement run left out the tests the selection record lists as ran. Its rows read `ALREADY_RAN` (excluded) or `NOT_ALREADY_RAN` (included) |
+| `COMPLEMENT_NOTE` | `complement` | On a complement run, `leftOut \t ran`: how many tests this writer left out as already run, and how many it ran |
 | `RULES_NOTE` | `rules` | What the rule lines were computed from, one of the five values below. Absent when the run decided nothing |
 | `FORCING_KINDS_NOTE` | `forcing-kinds` | Every full-run kind whose condition held, comma-separated in the order the selector checks them, or `none`. `full-run-kind` names only the first |
 | `RULES_COMPLETE` | `complete` | Rules: from every input the selector reads |
@@ -259,12 +269,54 @@ The rule lines then follow the verdict the observation line holds, as they would
 |---|---|---|
 | `OBSERVATION_LINE_PREFIX` | `#?` | Starts every observation line |
 
+## Ran lines
+
+Each included row whose test finished `SUCCESSFUL` or `FAILED` in the test JVM's outermost test plan
+follows the observation lines, one line per such row, whether or not the run captured:
+
+```
+#=test \t outcome
+```
+
+A test that aborted, was skipped, or never finished (a fork killed, `--fail-fast`) has none, and
+neither has a test a launcher started inside another test ran.
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `RAN_LINE_PREFIX` | `#=` | Starts every ran line |
+
+## The selection record
+
+`selection.tsv` holds `#!key \t value` notes, then one row per test that ran:
+
+```
+test \t outcome
+```
+
+`outcome` is `SUCCESSFUL` or `FAILED`. The plugin writes it only when every decision record the run
+left carries its `run-token`, none was cut short, they agree on the test JVM, at least one narrowed
+and none ran everything, and HEAD was the same, with a clean tree, where the run started and where
+it ended. A test JVM that wrote no record (killed, halted) leaves its tests out of it. The notes are
+`record-version`, the stamp below, each `jvm.<property>` the decision records carried, and `rows`.
+
+| Constant | Note | Meaning |
+|---|---|---|
+| `STAMP_COMMIT_NOTE` | `commit` | HEAD where the run started and ended |
+| `STAMP_TASK_NOTE` | `task` | The test task's path |
+| `STAMP_BUILD_ROOT_NOTE` | `build-root` | The build's root directory relative to the repository's top level, empty at the top |
+| `STAMP_BUILD_PATH_NOTE` | `build-path` | The project's path in the build tree, which names an included build |
+| `STAMP_CLASSPATH_NOTE` | `classpath` | A SHA-256 of the test runtime classpath's files, in order, each relative to the build root or the Gradle user home when under one |
+| `STAMP_CONFIGURATION_NOTE` | `configuration` | A SHA-256 of the task's system properties and JVM arguments other than yoriwake's, its include and exclude patterns and its framework's filters |
+
+A record of another version, or whose rows do not match `rows`, is unusable whole.
+
 ## Versions
 
 | Constant | Version | Of | Bumped when |
 |---|---|---|---|
 | `MAP_SCHEMA_VERSION` | `7` | the map | A record written before could still look like a passing one while being wrong |
 | `RAW_SCHEMA_VERSION` | `3` | a worker's raw records | The index columns, the record-id shapes or the outcome values change |
+| `SELECTION_VERSION` | `1` | `selection.tsv` | The meaning of a field or the stamp changes |
 | `DECISIONS_VERSION` | `2` | `decisions.tsv` | The meaning of a field changes. Adding a field is not a bump |
 
 The plugin and the agent ship in one jar, so they always agree with each other. Versions exist for

@@ -559,6 +559,7 @@ jobs:
           path: |
             .gradle/yoriwake
             !.gradle/yoriwake/*/raw
+            !.gradle/yoriwake/*/selection.tsv
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
           restore-keys: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-
 
@@ -573,6 +574,7 @@ jobs:
           path: |
             .gradle/yoriwake
             !.gradle/yoriwake/*/raw
+            !.gradle/yoriwake/*/selection.tsv
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
 ```
 
@@ -588,6 +590,8 @@ jobs:
 - **Commit, with a prefix fallback.** An exact hit almost never happens. A map from an older commit
   is still useful and still safe.
 - **Not `raw/`.** The undecoded records are cleared by the next capture before it writes anything.
+- **Not `selection.tsv`.** A complement run leaves out the tests it lists, and no map digest covers
+  it, so it comes only from the selecting job of the same workflow run, never from a cache.
 
 ### When to refresh
 
@@ -795,6 +799,108 @@ What it does not show:
 - A task off the JUnit Platform never asks the filter: its outcome is `not-decided`, and its tests
   are counted in `testsWithoutVerdict`.
 
+## Running what a selection skipped
+
+A selecting run on a pull request leaves out the tests the change cannot reach. Later in the same
+pipeline, `-Pyoriwake.complement` runs exactly those: every test but the ones the selecting run
+shows it ran. The two runs together run every test once, for less time than running everything a
+second time.
+
+```
+./gradlew test -Pyoriwake.select       # first: what the change reaches
+./gradlew test -Pyoriwake.complement   # later, at the same commit: everything else
+```
+
+**Both runs must test the same code.** After a selecting run that narrowed, the task's map
+directory holds `selection.tsv`: every test whose execution finished `SUCCESSFUL` or `FAILED`,
+stamped with the commit, the task, the build, a digest of the test runtime classpath and one of the
+task's configuration (its system properties, JVM arguments and test filters), and the test JVM's
+Java version, vendor and VM, OS and architecture. A complement run uses the record only when every
+field equals its own and its working tree is clean, so a test is left out only when it already ran
+on this code, this way. A test that ran on other code says nothing about this code.
+
+A selecting run leaves no record, and removes an older one, when it ran everything, declined, ran
+with `--fail-fast` (Gradle drops the results of tests that finish after the first failure), or
+started or ended on a tree `git status` does not report clean, untracked files included. A test JVM
+that died, a test an assumption aborted and a test its engine skipped are never listed, so they run
+in the complement.
+
+The flag takes two forms:
+
+- **`-Pyoriwake.complement`** reads the record from this build's own map directories, for a
+  complement run in the same checkout as the selecting run.
+- **`-Pyoriwake.complement=<dir>`** reads it from a directory holding a copy of a build's
+  `.gradle/yoriwake`, by task, for a complement run in another job. A relative path is resolved
+  against the root project. Keep the directory outside the checkout: a file in it makes the tree
+  not clean.
+
+With `-Pyoriwake.trustedMaps`, only the second form is used: the map directory may come from a
+cache a pull request wrote, and the record is outside the map's digest, so a bare
+`-Pyoriwake.complement` runs every test as `complement-record-mismatch`.
+
+A run that cannot use a record runs every test and records the map, as a run without the flag
+does, and names why: `complement-no-record` when the task has none, `complement-record-mismatch`
+when its stamp differs, naming the first field that does (the commit, the working tree, the task,
+the build, the classpath, the configuration). A record from another test JVM is found in that JVM:
+it runs every test without recording, and `decisions.tsv` notes `refusal-kind`
+`complement-record-mismatch` with the property that differs. One that matches captures nothing, and
+leaves the map and `selection.tsv` as they are:
+
+```
+[yoriwake] :test complemented the selecting run at 1a2b3c4d5e6f: 41 tests left out as already run, 1158 run; nothing was captured, and the map and selection.tsv are as they were.
+```
+
+`decisions.tsv` gives each test `ALREADY_RAN` (left out) or `NOT_ALREADY_RAN`. A parameterised
+test, a test factory and a Kotest spec always run again, whatever the record lists, and so does a
+test whose id the record does not hold exactly. Tests named with `--tests` run as named
+(`tests-named`), and a [requested full run](#forcing-a-full-run) records as it does on a selecting
+run. Passing the flag beside `-Pyoriwake.select` or `-Pyoriwake.observe` fails the build.
+
+In CI, the complement is a later job of the same workflow run: it checks out the same commit (each
+job of one run checks out `github.sha`, for a pull request its merge commit), on the same runner
+image and JDK, and restores the selecting job's record outside the checkout:
+
+```yaml
+jobs:
+  select:
+    # ... the job from the CI section, which runs ./gradlew test -Pyoriwake.select ...
+    steps:
+      # ...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yoriwake-selection
+          path: .gradle/yoriwake/*/selection.tsv
+          include-hidden-files: true    # .gradle is a hidden directory
+          if-no-files-found: ignore      # a run that ran everything leaves none
+
+  complement:
+    needs: select
+    runs-on: ubuntu-latest              # the selecting job's runner image and JDK
+    steps:
+      - uses: actions/checkout@v4       # the same commit as the selecting job
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        continue-on-error: true         # no record: the complement runs everything
+        with:
+          name: yoriwake-selection
+          path: ${{ runner.temp }}/yoriwake
+      - run: ./gradlew test -Pyoriwake.complement=${{ runner.temp }}/yoriwake
+```
+
+A matrix leg the stamp cannot tell apart from another, such as one set only by an environment
+variable, needs a record per leg: name the artifact after the leg, and restore that leg's.
+
+What it cannot see:
+
+- a file in the repository that git ignores and the build does not make, such as an ignored
+  fixture or a jar put on the classpath by hand, and a file outside the repository the classpath
+  does not hold. Changed between the two runs, it is in neither stamp: the classpath digest reads
+  the content only of what the classpath holds outside the repository;
+- environment variables, which are in no stamp: a test that reads one runs with whatever the
+  complement run has.
+
 ## Properties and tasks
 
 Every property is a Gradle project property: `-P<name>` on the command line or in
@@ -806,6 +912,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.select` | Select. Without it nothing is ever skipped; a run only captures. |
 | `yoriwake.fullRun` | On a selecting run, run every test and record the map instead. See [Forcing a full run](#forcing-a-full-run). |
 | `yoriwake.observe` | Run every test, record the map, and report what selection would have left out. Not with `yoriwake.select`. See [Observing before you select](#observing-before-you-select). |
+| `yoriwake.complement[=<dir>]` | Run every test but those the selecting run at this commit ran, from this build's record or from a saved `.gradle/yoriwake` in `<dir>`. Not a switch: bare or `true` reads this build's own record, `false` is off, any other value is a directory. Not with `yoriwake.select` or `yoriwake.observe`. See [Running what a selection skipped](#running-what-a-selection-skipped). |
 | `yoriwake.base=<ref>` | What to diff against. Defaults to the merge base with the branch upstream, widened to the map's age. Must be a single commit, not a range. |
 | `yoriwake.alwaysRun=<glob>[,<glob>…]` | Tests that may never be skipped, for this run. |
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |

@@ -7,7 +7,7 @@ import java.io.File
 import kotlin.test.assertEquals
 
 /**
- * Pins what a recording, a selecting and an observing run hand the test JVM, and what they capture, as seen just
+ * Pins what a recording, a selecting, an observing and a complement run hand the test JVM, and what they capture, as seen just
  * before the tests start: the selection and refusal properties, whether records are written,
  * `forkEvery`, whether JaCoCo is on, and whether the run is marked as one that executes everything.
  * Every site that reads whether a run selects is behind one of these observations.
@@ -59,6 +59,7 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
                 listOf(SELECT, ISOLATED) to "select=false refused=bytes-unrecorded records=on forkEvery=0 jacoco=true fullRunMarker=true",
                 listOf(OBSERVE) to "select=false refused=bytes-unrecorded records=on forkEvery=0 jacoco=true fullRunMarker=true",
                 listOf(OBSERVE, ISOLATED) to "select=false refused=bytes-unrecorded records=on forkEvery=1 jacoco=true fullRunMarker=true",
+                listOf(COMPLEMENT) to "select=false refused=complement-no-record records=on forkEvery=0 jacoco=true fullRunMarker=false",
             ),
             observed,
         )
@@ -80,8 +81,22 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
                 listOf(SELECT, ISOLATED) to "select=true refused=null records=off forkEvery=0 jacoco=false fullRunMarker=false",
                 listOf(OBSERVE) to "select=true refused=null records=on forkEvery=0 jacoco=true fullRunMarker=true",
                 listOf(OBSERVE, ISOLATED) to "select=true refused=null records=on forkEvery=1 jacoco=true fullRunMarker=true",
+                listOf(COMPLEMENT) to "select=false refused=complement-no-record records=on forkEvery=0 jacoco=true fullRunMarker=false",
             ),
             observed,
+        )
+    }
+
+    @Test
+    fun `a complement run whose selection record matches`(@TempDir dir: File) {
+        capturedSample(dir)
+        changeBeta(dir)
+        commit(dir, "change beta")
+        observe(dir, SELECT)
+
+        assertEquals(
+            "select=null refused=null records=off forkEvery=0 jacoco=false fullRunMarker=false",
+            observe(dir, COMPLEMENT),
         )
     }
 
@@ -167,8 +182,10 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
         const val SELECT = "-Pyoriwake.select"
         const val ISOLATED = "-Pyoriwake.isolatedCapture"
         const val OBSERVE = "-Pyoriwake.observe"
+        const val COMPLEMENT = "-Pyoriwake.complement"
         val COMBINATIONS = listOf(
             emptyList(), listOf(ISOLATED), listOf(SELECT), listOf(SELECT, ISOLATED), listOf(OBSERVE), listOf(OBSERVE, ISOLATED),
+            listOf(COMPLEMENT),
         )
     }
 }

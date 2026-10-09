@@ -64,6 +64,15 @@ class SettingsTest {
     }
 
     @Test
+    fun `complement is off unless set, bare or true for this build's record, any other value a directory`() {
+        assertEquals(null, settings().complement)
+        assertEquals("", settings(Settings.COMPLEMENT to "").complement)
+        assertEquals("", settings(Settings.COMPLEMENT to "true").complement)
+        assertEquals(null, settings(Settings.COMPLEMENT to "false").complement)
+        assertEquals("ci/yoriwake", settings(Settings.COMPLEMENT to "ci/yoriwake").complement)
+    }
+
+    @Test
     fun `isolatedCapture is a switch like the others`() {
         assertFalse(settings().isolatedCapture)
         assertTrue(settings(Settings.ISOLATED_CAPTURE to "").isolatedCapture)
