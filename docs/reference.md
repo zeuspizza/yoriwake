@@ -300,7 +300,9 @@ gives the library, and the class that calls `System.load` or `System.loadLibrary
   run executed, as it would without yoriwake. The agent takes JaCoCo's data and resets it around
   every test, so after the tests yoriwake appends each test's record to what JaCoCo wrote. A run
   whose tests failed has its file completed before the project's JaCoCo report and verification
-  tasks run. JaCoCo's Sessions page then lists one session per test.
+  tasks run. JaCoCo's Sessions page then lists one session per test, and the file is about as
+  large as the run's own records under `.gradle/yoriwake`: it grows with tests times instrumented
+  classes, and it is part of the test task's build cache entry.
 - **A run yoriwake does not instrument** leaves no execution file: Gradle removes the previous
   run's, so `jacocoTestReport` and `jacocoTestCoverageVerification` are skipped for want of data.
   A skipped verification has checked nothing. These runs are:
