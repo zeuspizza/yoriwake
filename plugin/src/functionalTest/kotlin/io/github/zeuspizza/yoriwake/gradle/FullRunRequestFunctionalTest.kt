@@ -202,6 +202,7 @@ class FullRunRequestFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.AlphaTest"), ranTests(dir), output)
         assertEquals("tests-named", decisionNotes(dir)["refusal-kind"], output)
         assertEquals("full-run-requested,tests-named", decisionNotes(dir)["declines"], output)
+        assertFalse("recorded no coverage" in output, output)
     }
 
     @Test

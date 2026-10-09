@@ -363,7 +363,15 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
     val leftAlone = declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir))
     test.doFirst {
         leftAlone.delete()
-        if (declinedUnderDevelocity(test) || declinedForNamedTests(test, first.kind)) return@doFirst
+        if (declinedUnderDevelocity(test)) return@doFirst
+        if (declinedForNamedTests(test, first.kind)) {
+            // The decode reads it: this run is not selecting, yet captured nothing on purpose.
+            runCatching {
+                leftAlone.parentFile.mkdirs()
+                leftAlone.writeText(NAMED_TESTS_LEFT_ALONE + "\n")
+            }
+            return@doFirst
+        }
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: ${reasons.joinToString("; ")}, so selection is declined and every " +
                 "test runs as on a run without -P${Settings.SELECT}."
@@ -386,6 +394,9 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
         }
     }
 }
+
+private const val NAMED_TESTS_LEFT_ALONE =
+    "only the named tests run, so nothing is instrumented and the map is left alone."
 
 private val NAMED_TESTS_REFUSALS = setOf(RefusalKind.TESTS_NAMED, RefusalKind.DECLINE_UNDETERMINED).map { it.token }
 
@@ -434,7 +445,7 @@ internal fun TestTaskWiring.declineNamedTests(
             test, mapDir, jacoco,
             CaptureDecision(
                 capture = false, fullRun = false, mapCurrent = false,
-                reason = "only the named tests run, so nothing is instrumented and the map is left alone.",
+                reason = NAMED_TESTS_LEFT_ALONE,
             ),
         )
     }
