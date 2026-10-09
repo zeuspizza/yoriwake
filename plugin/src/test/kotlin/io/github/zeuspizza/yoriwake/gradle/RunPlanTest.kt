@@ -2,9 +2,12 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection.CheckedOut
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection.CommitScan
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
+import org.gradle.api.InvalidUserDataException
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -104,5 +107,115 @@ class RunPlanTest {
             .toList()
 
         assertEquals(emptyList(), readers)
+    }
+
+    private fun onBranch(
+        head: CheckedOut,
+        vararg listed: String,
+        flags: Array<String> = arrayOf(Settings.SELECT),
+        scan: CommitScan = clean,
+    ) = RunPlan.resolve(settings(*flags), { known }, { scan }, listed.toList(), { head })
+
+    @Test
+    fun `on a listed branch a selecting run declines, naming the branch, and records`() {
+        val plan = onBranch(CheckedOut.Branch("main"), "main")
+
+        assertEquals(RunPlan.Kind.RECORD, plan.kind)
+        val decline = plan.declines.single()
+        assertEquals(RefusalKind.FULL_RUN_BRANCH, decline.kind)
+        assertTrue(decline.kind.requested)
+        assertTrue("main" in decline.reason, decline.reason)
+    }
+
+    @Test
+    fun `on a branch not listed the run selects and says what it detected`() {
+        val plan = onBranch(CheckedOut.Branch("feature/x"), "main")
+
+        assertEquals(RunPlan.Kind.SELECT, plan.kind)
+        assertTrue(plan.notes.single().contains("on branch feature/x"), plan.notes.toString())
+        assertEquals("on branch feature/x", plan.branch)
+    }
+
+    @Test
+    fun `a branch name matches whole, with a star matching any characters`() {
+        assertEquals(emptyList(), onBranch(CheckedOut.Branch("main.old"), "main").declines)
+        assertEquals(emptyList(), onBranch(CheckedOut.Branch("old-main"), "main").declines)
+        assertEquals(
+            listOf(RefusalKind.FULL_RUN_BRANCH),
+            onBranch(CheckedOut.Branch("release/1.2"), "release/*").declines.map { it.kind },
+        )
+    }
+
+    @Test
+    fun `a detached HEAD a listed branch contains declines, naming the ref`() {
+        val head = CheckedOut.Detached(listOf(ChangeDetection.BranchRef("origin/main", "main")))
+        val plan = onBranch(head, "main")
+
+        assertEquals(RefusalKind.FULL_RUN_BRANCH, plan.declines.single().kind)
+        assertTrue("origin/main" in plan.declines.single().reason, plan.declines.single().reason)
+    }
+
+    @Test
+    fun `a detached HEAD no listed branch contains selects and says so`() {
+        val head = CheckedOut.Detached(listOf(ChangeDetection.BranchRef("origin/feature", "feature")))
+        val plan = onBranch(head, "main")
+
+        assertEquals(RunPlan.Kind.SELECT, plan.kind)
+        assertTrue(plan.notes.single().contains("detached; no listed branch contains HEAD"), plan.notes.toString())
+    }
+
+    @Test
+    fun `a branch git cannot read declines as undetermined, which is forced, naming git`() {
+        val plan = onBranch(CheckedOut.Failed("git rev-parse --symbolic-full-name HEAD could not answer"), "main")
+
+        assertEquals(RunPlan.Kind.RECORD, plan.kind)
+        val decline = plan.declines.single()
+        assertEquals(RefusalKind.DECLINE_UNDETERMINED, decline.kind)
+        assertFalse(decline.kind.requested)
+        assertTrue("git" in decline.reason, decline.reason)
+    }
+
+    @Test
+    fun `with no listed branch the branch is never asked for`() {
+        var asked = 0
+        val plan = RunPlan.resolve(settings(Settings.SELECT), { known }, { clean }, emptyList(), {
+            asked++
+            CheckedOut.Branch("main")
+        })
+
+        assertEquals(0, asked)
+        assertEquals(RunPlan.Kind.SELECT, plan.kind)
+        assertEquals(emptyList(), plan.notes)
+    }
+
+    @Test
+    fun `a recording run never asks for the branch`() {
+        val plan = RunPlan.resolve(settings(), { error("asked for the base") }, { error("scanned") }, listOf("main"), {
+            error("asked for the branch")
+        })
+
+        assertEquals(emptyList(), plan.declines)
+    }
+
+    @Test
+    fun `the flag, then the branch, then a marked commit, each listed in that order`() {
+        val plan = onBranch(
+            CheckedOut.Branch("main"), "main",
+            flags = arrayOf(Settings.SELECT, Settings.FULL_RUN), scan = marked,
+        )
+
+        assertEquals(
+            listOf(RefusalKind.FULL_RUN_REQUESTED, RefusalKind.FULL_RUN_BRANCH, RefusalKind.FULL_RUN_COMMIT),
+            plan.declines.map { it.kind },
+        )
+    }
+
+    @Test
+    fun `an empty entry, or a star alone, fails naming the property`() {
+        listOf("  ", "*", "**").forEach { entry ->
+            val refused = assertThrows<InvalidUserDataException> { RunPlan.fullRunBranches(listOf("main", entry), ":") }
+            assertTrue("fullRunBranches" in refused.message.orEmpty(), refused.message)
+        }
+        assertEquals(listOf("main", "release/*"), RunPlan.fullRunBranches(listOf(" main ", "release/*"), ":"))
     }
 }

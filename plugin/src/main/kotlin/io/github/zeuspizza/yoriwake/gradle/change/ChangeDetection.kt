@@ -282,6 +282,53 @@ internal object ChangeDetection {
 
     private val HINT = Regex("""^\s*yoriwake\s*:""", RegexOption.IGNORE_CASE)
 
+    /** A local or remote-tracking branch: [shown] as a person writes it, [name] without its remote. */
+    data class BranchRef(val shown: String, val name: String)
+
+    /** What is checked out, as far as a branch policy needs to know. */
+    sealed interface CheckedOut {
+        data class Branch(val name: String) : CheckedOut
+
+        /** [containing] lists every branch whose tip is HEAD or a descendant of it. */
+        data class Detached(val containing: List<BranchRef>) : CheckedOut
+
+        /** git could not say, so whether a listed branch is checked out is unknown. */
+        data class Failed(val reason: String) : CheckedOut
+    }
+
+    /**
+     * The checked-out branch or, on a detached HEAD, the branches that contain it. Every command
+     * here exits 0 for every ordinary answer, so only git failing reads as [CheckedOut.Failed]. A
+     * remote-tracking ref counts only under a remote `git remote` lists, so a pull request's
+     * `refs/remotes/pull/<n>/merge` is not a branch. Tags are never read.
+     */
+    fun checkedOut(git: (List<String>) -> String?): CheckedOut {
+        val symbolic = git(listOf("rev-parse", "--symbolic-full-name", "HEAD"))?.trim()
+            ?: return CheckedOut.Failed("git rev-parse --symbolic-full-name HEAD could not answer")
+        if (symbolic.startsWith(LOCAL)) return CheckedOut.Branch(symbolic.removePrefix(LOCAL))
+        if (symbolic != "HEAD") {
+            return CheckedOut.Failed("git rev-parse --symbolic-full-name HEAD answered '$symbolic'")
+        }
+        val refs = git(listOf("for-each-ref", "--contains", "HEAD", "--format=%(refname)", "refs/heads", "refs/remotes"))
+            ?: return CheckedOut.Failed("git for-each-ref --contains HEAD could not answer")
+        val remotes = git(listOf("remote"))?.lines()?.map(String::trim)?.filter(String::isNotEmpty)
+            ?: return CheckedOut.Failed("git remote could not answer")
+        val containing = refs.lines().map(String::trim).filter(String::isNotEmpty).flatMap { ref ->
+            if (ref.startsWith(LOCAL)) {
+                listOf(ref.removePrefix(LOCAL).let { BranchRef(it, it) })
+            } else {
+                remotes.filter { ref.startsWith("$REMOTE$it/") }.map { remote ->
+                    BranchRef(ref.removePrefix(REMOTE), ref.removePrefix("$REMOTE$remote/"))
+                }
+            }
+        }
+        return CheckedOut.Detached(containing)
+    }
+
+    private const val LOCAL = "refs/heads/"
+
+    private const val REMOTE = "refs/remotes/"
+
     /** The tracked side of [changedPaths]: what `git diff` from [against] reports. */
     fun trackedPaths(
         providers: ProviderFactory,

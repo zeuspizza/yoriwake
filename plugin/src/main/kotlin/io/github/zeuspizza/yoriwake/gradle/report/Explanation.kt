@@ -25,6 +25,8 @@ internal fun writeExplanation(
     widening: InlineWidening = InlineWidening.widened(emptyList(), emptySet()),
     capture: CaptureDecision? = null,
     forcing: ForcingPaths.Classified = ForcingPaths.Classified.NONE,
+    /** What was checked out, written only when `fullRunBranches` is set. */
+    branch: String? = null,
 ) {
     val known = decision.knownTests()
     val selected = if (decision.isFullRun) known else decision.selectedCount()
@@ -70,6 +72,7 @@ internal fun writeExplanation(
         append("""  "refusalDetail": """)
             .append(Json.string(widening.refusalDetail))
             .append(',').append('\n')
+        branch?.let { append("""  "branch": ${Json.string(it)},""").append('\n') }
         append("""  "capture": ${capture?.capture ?: false},""").append('\n')
         append("""  "mapCurrent": ${capture?.mapCurrent ?: false},""").append('\n')
         append("""  "captureReason": ${Json.string(capture?.reason)},""")
@@ -116,6 +119,8 @@ internal fun writeUnanswered(
     reason: String,
     /** The daemon's own finer token, in the same vocabulary the run channel carries. */
     refusalKind: String? = null,
+    /** What was checked out, written only when `fullRunBranches` is set. */
+    branch: String? = null,
 ) {
     val json = buildString {
         append("{\n")
@@ -140,6 +145,7 @@ internal fun writeUnanswered(
             .append(Json.string(refusalKind))
             .append(',').append('\n')
         append("""  "refusalDetail": null,""").append('\n')
+        branch?.let { append("""  "branch": ${Json.string(it)},""").append('\n') }
         append("""  "capture": false,""").append('\n')
         append("""  "mapCurrent": false,""").append('\n')
         append("""  "captureReason": null,""").append('\n')

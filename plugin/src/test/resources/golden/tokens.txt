@@ -76,6 +76,7 @@ refusal-kind	decline-undetermined
 refusal-kind	develocity-test-distribution
 refusal-kind	develocity-test-selection
 refusal-kind	develocity-undetermined
+refusal-kind	full-run-branch
 refusal-kind	full-run-commit
 refusal-kind	full-run-requested
 refusal-kind	in-jvm-parallelism

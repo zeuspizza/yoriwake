@@ -116,13 +116,6 @@ public final class AlwaysRun {
      * a method still pins only that method.
      */
     private static Pattern compile(String glob) {
-        StringBuilder regex = new StringBuilder();
-        for (String literal : glob.split("\\*", -1)) {
-            if (regex.length() > 0) {
-                regex.append(".*");
-            }
-            regex.append(Pattern.quote(literal));
-        }
-        return Pattern.compile(regex.append("(?:\\..*)?").toString());
+        return Pattern.compile(Glob.regex(glob) + "(?:\\..*)?");
     }
 }

@@ -59,5 +59,15 @@ class PublicApiTest {
         assertEquals(emptyList(), topLevel, "top-level declarations that are public")
     }
 
+    @Test
+    fun `the extension exposes exactly the properties a build script configures`() {
+        val properties = YoriwakeExtension::class.java.methods
+            .filter { it.declaringClass == YoriwakeExtension::class.java && it.name.startsWith("get") }
+            .map { it.name.removePrefix("get").replaceFirstChar(Char::lowercase) }
+            .toSet()
+
+        assertEquals(setOf("enabled", "alwaysRun", "fullRunBranches"), properties)
+    }
+
     private fun Visibility.exposed() = this == Visibility.PUBLIC || this == Visibility.PROTECTED
 }
