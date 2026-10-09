@@ -99,6 +99,15 @@ internal enum class RefusalKind(val token: String) {
 
     /** The task carries a Develocity test extension whose switches could not be read: declines. */
     DEVELOCITY_UNDETERMINED("develocity-undetermined"),
+
+    /**
+     * Tests were named with `--tests`: every test that filter matches runs, as asked. Dropping
+     * `--tests` lifts this.
+     */
+    TESTS_NAMED("tests-named"),
+
+    /** Whether tests were named with `--tests` could not be read off the task, so everything runs. */
+    DECLINE_UNDETERMINED("decline-undetermined"),
     ;
 
     companion object {

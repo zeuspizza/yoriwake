@@ -67,6 +67,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val develocity: Property<String>
 
+    /** The `--tests` patterns given to the test task in this build, space-separated; empty when none. */
+    @get:Input
+    @get:Optional
+    abstract val namedTests: Property<String>
+
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
     @get:Optional
@@ -123,6 +128,18 @@ internal abstract class ExplainTask : DefaultTask() {
                 io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
                 reason,
                 refusalKind = kind.token,
+            )
+            return
+        }
+        // Declined next, as the run declines before any selection action.
+        namedTests.orNull?.takeIf(String::isNotEmpty)?.let { patterns ->
+            val reason = "tests were named with --tests $patterns"
+            logger.lifecycle("[yoriwake] $taskPath would run every test the filter matches: $reason")
+            writeUnanswered(
+                mapDir, taskPath, explicitBase.orNull ?: "",
+                io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                reason,
+                refusalKind = RefusalKind.TESTS_NAMED.token,
             )
             return
         }
@@ -317,6 +334,11 @@ internal abstract class ExplainTask : DefaultTask() {
                 }
                 task.explicitBase.set(settings.base)
                 task.develocity.set(DevelocityDetection.provider(project, test))
+                // Through a provider: Gradle applies `--tests` after this runs.
+                task.namedTests.set(project.provider {
+                    (test.filter as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter)
+                        ?.commandLineIncludePatterns.orEmpty().sorted().joinToString(" ")
+                })
                 val trusted = trustedDigest(project, settings, mapDir)
                 task.checksProvenance.set(trusted != null)
                 trusted?.digest?.let(task.listedDigest::set)

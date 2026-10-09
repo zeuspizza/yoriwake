@@ -126,7 +126,7 @@ internal fun TestTaskWiring.configureSelection(
             "A rebase, a force-push, or a map cached from a different history all look like this"
         }
         test.doFirst { task ->
-            if (declinedUnderDevelocity(test)) return@doFirst
+            if (refusedAtExecution(test)) return@doFirst
             // A map recorded in isolation is left as it is, as by every other fallback.
             val leftAlone = decideCapture(
                 mapDir,
@@ -170,7 +170,7 @@ internal fun TestTaskWiring.configureSelection(
                 "select from")
         val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         test.doFirst {
-            if (declinedUnderDevelocity(test)) return@doFirst
+            if (refusedAtExecution(test)) return@doFirst
             test.logger.lifecycle(
                 "[yoriwake] ${test.path}: git could not report changes against $against, so the " +
                     "whole suite runs. Selection needs a change set it can trust."
@@ -327,10 +327,56 @@ internal fun TestTaskWiring.configureSelection(
     }
 }
 
+private val NAMED_TESTS_REFUSALS = setOf(RefusalKind.TESTS_NAMED, RefusalKind.DECLINE_UNDETERMINED).map { it.token }
+
 /** The kinds an action of the run itself decides; a later action leaves the run as they set it. */
 private val EXECUTION_REFUSALS =
     setOf(RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED)
-        .map { it.token } + DEVELOCITY_REFUSALS
+        .map { it.token } + DEVELOCITY_REFUSALS + NAMED_TESTS_REFUSALS
+
+/** Whether this run declined selection because tests were named, or could not tell. */
+internal fun declinedForNamedTests(test: Test) =
+    test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in NAMED_TESTS_REFUSALS
+
+/**
+ * Declines selection on a task run with `--tests`: a developer who names tests expects every one of
+ * them to run, so the filter Gradle applies decides alone. Decided at execution, after Gradle has
+ * applied `--tests`; registered after every other selection action, so it runs before them, and
+ * each of them returns on it. A filter whose patterns cannot be read declines too.
+ */
+internal fun TestTaskWiring.declineNamedTests(
+    test: Test,
+    mapDir: File,
+    filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
+) {
+    // Held from configuration time: a task action may not reach Task.extensions under the
+    // configuration cache.
+    val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+    test.doFirst {
+        if (declinedUnderDevelocity(test)) return@doFirst
+        val verdict = filterVerdict.get()
+        val (kind, reason) = when {
+            !verdict.filterReadable -> RefusalKind.DECLINE_UNDETERMINED to
+                "${verdict.detail}, so whether tests were named with --tests is unknown"
+            verdict.commandLinePatterns.isNotEmpty() -> RefusalKind.TESTS_NAMED to
+                "tests were named with --tests ${verdict.commandLinePatterns.sorted().joinToString(" ")}"
+            else -> return@doFirst
+        }
+        test.logger.lifecycle(
+            "[yoriwake] ${test.path}: $reason, so selection is declined and every test the filter " +
+                "matches runs."
+        )
+        refuse(test, kind, reason)
+        // Only part of the suite runs, so there is nothing to capture.
+        applyCaptureDecision(
+            test, mapDir, jacoco,
+            CaptureDecision(
+                capture = false, fullRun = false, mapCurrent = false,
+                reason = "only the named tests run, so nothing is instrumented and the map is left alone.",
+            ),
+        )
+    }
+}
 
 private fun refusedAtExecution(test: Test) =
     test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in EXECUTION_REFUSALS
@@ -378,7 +424,7 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
     test.inputs.property("yoriwake.mapProvenance", provenance)
     test.doFirst {
         // A declined run leaves the map exactly as it was: no check, no clear.
-        if (declinedUnderDevelocity(test)) return@doFirst
+        if (refusedAtExecution(test)) return@doFirst
         val (kind, reason) = MapProvenance.verify(mapDir, listed).refusal ?: return@doFirst
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: $reason, so the whole suite runs and records a new " +
