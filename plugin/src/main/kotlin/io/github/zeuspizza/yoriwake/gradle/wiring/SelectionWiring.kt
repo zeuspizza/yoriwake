@@ -14,6 +14,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNMAPPABLE_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNREADABLE_PATHS_PROPERTY
+import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
@@ -98,8 +99,9 @@ internal fun TestTaskWiring.configureSelection(
     test: Test,
     mapDir: File,
     buildMemo: BuildMemo?,
+    runPlan: RunPlan,
 ) {
-    if (!settings.select) {
+    if (!runPlan.selecting) {
         return
     }
     // Read before any refusal below, so a list that cannot be read fails every selecting run alike.

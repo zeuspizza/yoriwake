@@ -10,6 +10,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PRO
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
+import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
@@ -197,7 +198,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
 
         test.systemProperty(MAP_DIR_PROPERTY, mapDir.absolutePath)
         // Raw records stay beneath the map, inspectable after a run; the decoder writes the map.
-        val selecting = settings.select
+        val runPlan = RunPlan.resolve(settings)
+        val selecting = runPlan.selecting
         val recording = settings.loaded
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         test.systemProperty(RECORDS_DIR_PROPERTY, recordsDir.absolutePath)
@@ -243,10 +245,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // Registered in this order because `doFirst` prepends: the recorder must run before the
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
         // that check, which may switch capture off.
-        isolateWhileCapturing(test)
+        isolateWhileCapturing(test, runPlan)
         refuseInJvmParallelism(test, mapDir)
         recordTaskFacts(test, mapDir)
-        configureSelection(project, test, mapDir, buildMemo)
+        configureSelection(project, test, mapDir, buildMemo, runPlan)
         // After every selection action, so it runs before them; each returns on it.
         if (selecting) declineNamedTests(test, mapDir, filterVerdict)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
@@ -533,8 +535,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
      * At execution time because the in-JVM parallelism refusal, which switches capture off, is only
      * decided then; registered before [refuseInJvmParallelism] so it runs after it.
      */
-    private fun isolateWhileCapturing(test: Test) {
-        if (!settings.isolatedCapture || settings.select) {
+    private fun isolateWhileCapturing(test: Test, runPlan: RunPlan) {
+        if (!settings.isolatedCapture || runPlan.selecting) {
             return
         }
         test.doFirst {
