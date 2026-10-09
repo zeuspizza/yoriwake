@@ -39,6 +39,7 @@ the run as `change-set-unreadable`.
 | `CHANGE_SET_FILE_PROPERTY` | `yoriwake.change.file` | plugin → agent | The file holding the list-valued change-set properties. Set means that file alone answers for them |
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
+| `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-commit`, `tests-named`, `decline-undetermined` |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |
 | `CHANGE_SET_UNREADABLE_KIND` | `change-set-unreadable` | plugin, agent | The refusal token of a run whose change-set file could not be written or read |
 
@@ -187,6 +188,7 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `FULL_RUN_KIND_NOTE` | `full-run-kind` | Which side forced, as a token |
 | `FULL_RUN_REASON_NOTE` | `full-run-reason` | Why, as prose |
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
+| `DECLINES_NOTE` | `declines` | Every decline that held, as `yoriwake.declines` carried it. Absent when none did |
 | `INPUT_NOTE_PREFIX` | `input.` | Starts `input.<property>`: each property the decision read, for replay |
 | `RUN_NARROWED` | `narrowed` | Outcome: some tests were skipped |
 | `RUN_FULL` | `full-run` | Outcome: everything ran |

@@ -624,6 +624,26 @@ Every round is recorded:
   and saw fail runs again, one its class alone selected included. `decisions.tsv` lists each test
   once. A test that flipped there is kept as failed, as any failure on a selecting run is.
 
+### Forcing a full run
+
+A selecting run can be asked to run every test instead, without changing the CI command:
+
+- **`-Pyoriwake.fullRun`** for one run, for example when a pull request carries a label your
+  workflow maps to it. The decision record says `full-run-requested`.
+- **A `yoriwake: full` line in a commit message**, alone on its line, in any case, with any spacing
+  around the colon. Every commit the run selects over is read: those since the base, widened to the
+  map's age, and HEAD itself. The console names the commit; the record says `full-run-commit`. A
+  line that starts with `yoriwake:` and is anything else asks for nothing, and the run says so.
+
+Either way the run is a recording run: it captures and dates the map, and
+`-Pyoriwake.isolatedCapture` applies to it. A map recorded with a fresh test JVM per test class is
+left as it is unless that flag is passed. With a pull request base, the marker stays in the range
+until the pull request merges, so it makes every push of it run in full; the flag is the one-run
+alternative. If git cannot list the commit messages, the run runs everything as
+`decline-undetermined`. `yoriwakeExplain<Task>` reports both, with or without `-Pyoriwake.select`,
+so a commit can be checked before it is pushed. Tests named with `--tests` still run as named, and
+the record's `declines` note lists every decline that held.
+
 ### Giving selection a base
 
 When no base resolves, the plugin says so and every run is a full run. Two common causes:
@@ -694,6 +714,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | Property | Meaning |
 |---|---|
 | `yoriwake.select` | Select. Without it nothing is ever skipped; a run only captures. |
+| `yoriwake.fullRun` | On a selecting run, run every test and record the map instead. See [Forcing a full run](#forcing-a-full-run). |
 | `yoriwake.base=<ref>` | What to diff against. Defaults to the merge base with the branch upstream, widened to the map's age. Must be a single commit, not a range. |
 | `yoriwake.alwaysRun=<glob>[,<glob>…]` | Tests that may never be skipped, for this run. |
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |

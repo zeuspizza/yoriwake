@@ -10,6 +10,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PRO
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
+import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
@@ -197,7 +198,18 @@ internal class TestTaskWiring(internal val settings: Settings) {
 
         test.systemProperty(MAP_DIR_PROPERTY, mapDir.absolutePath)
         // Raw records stay beneath the map, inspectable after a run; the decoder writes the map.
-        val selecting = settings.select
+        val runPlan = RunPlan.resolve(
+            settings,
+            { selectionWidening(project, settings, mapDir, buildMemo) },
+            { since ->
+                // Not a build-wide git failure: a scan git cannot answer declines this task alone.
+                ChangeDetection.scanCommitMessages(
+                    { ChangeDetection.cachedRawGit(project.providers, project.rootDir, buildMemo, it, recordFailures = false) },
+                    since,
+                )
+            },
+        )
+        val selecting = runPlan.selecting
         val recording = settings.loaded
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         test.systemProperty(RECORDS_DIR_PROPERTY, recordsDir.absolutePath)
@@ -243,12 +255,24 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // Registered in this order because `doFirst` prepends: the recorder must run before the
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
         // that check, which may switch capture off.
-        isolateWhileCapturing(test)
-        refuseInJvmParallelism(test, mapDir)
+        isolateWhileCapturing(test, runPlan)
+        refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind)
         recordTaskFacts(test, mapDir)
-        configureSelection(project, test, mapDir, buildMemo)
-        // After every selection action, so it runs before them; each returns on it.
-        if (selecting) declineNamedTests(test, mapDir, filterVerdict)
+        if (runPlan.declines.isEmpty()) {
+            // One a declined run left when its decode never ran must not discard this capture.
+            val leftAlone = declinedLeftAloneMarker(recordsDir)
+            test.doFirst { leftAlone.delete() }
+            configureSelection(project, test, mapDir, buildMemo, runPlan)
+        } else {
+            declineSelection(test, mapDir, runPlan)
+        }
+        if (runPlan.notes.isNotEmpty()) {
+            val notes = runPlan.notes
+            test.doFirst { notes.forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") } }
+        }
+        // After every selection action, so it runs before them; each returns on it. A declined run
+        // was asked to select, so tests named on it still run as named.
+        if (runPlan.asked == RunPlan.Kind.SELECT) declineNamedTests(test, mapDir, filterVerdict)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, filterVerdict)
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir, agent)
@@ -533,8 +557,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
      * At execution time because the in-JVM parallelism refusal, which switches capture off, is only
      * decided then; registered before [refuseInJvmParallelism] so it runs after it.
      */
-    private fun isolateWhileCapturing(test: Test) {
-        if (!settings.isolatedCapture || settings.select) {
+    private fun isolateWhileCapturing(test: Test, runPlan: RunPlan) {
+        if (!settings.isolatedCapture || runPlan.selecting) {
             return
         }
         test.doFirst {
@@ -586,14 +610,14 @@ internal class TestTaskWiring(internal val settings: Settings) {
      * Refuses in-JVM parallel test execution while capturing: it interleaves tests under one agent
      * and blends their attributions. Parallel forks are fine.
      */
-    private fun refuseInJvmParallelism(test: Test, mapDir: File) {
+    private fun refuseInJvmParallelism(test: Test, mapDir: File, planned: RefusalKind?) {
         // Resolved here, not in the action: `Task.extensions` at execution time violates the
         // configuration cache.
         val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         test.doFirst {
             // Already declined, with the host's JaCoCo left as the host set it, or with tests named,
             // which select nothing and capture nothing.
-            if (declinedUnderDevelocity(test) || declinedForNamedTests(test)) return@doFirst
+            if (declinedUnderDevelocity(test) || declinedForNamedTests(test, planned)) return@doFirst
             val testng = test.options as? org.gradle.api.tasks.testing.testng.TestNGOptions
             val source = ParallelismDetector.detect(
                 systemProperties = test.systemProperties.mapValues { it.value?.toString() },
@@ -828,6 +852,12 @@ internal fun parallelRefusalMarker(recordsDir: File) = File(recordsDir.parentFil
  * purpose" from "the listener never loaded".
  */
 internal fun develocityRefusalMarker(recordsDir: File) = File(recordsDir.parentFile, "develocity-declined.marker")
+
+/**
+ * Written by a declined run that left a map recorded in isolation alone, so the decode finalizer can
+ * tell "captured nothing on purpose" from "the listener never loaded". Holds the reason.
+ */
+internal fun declinedLeftAloneMarker(recordsDir: File) = File(recordsDir.parentFile, "declined-left-alone.marker")
 
 internal val DEVELOCITY_REFUSALS = setOf(
     RefusalKind.DEVELOCITY_TEST_DISTRIBUTION,

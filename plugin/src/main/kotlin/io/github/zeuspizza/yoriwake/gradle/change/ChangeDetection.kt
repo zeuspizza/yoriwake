@@ -211,6 +211,13 @@ internal object ChangeDetection {
     ): List<String>? = changedPaths(cachedRunner(providers, projectDir, memo), projectDir, against)
 
     fun changedPaths(git: Runner, projectDir: File, against: String): List<String>? {
+        requireSingleCommit(against)
+        val tracked = trackedPaths(git, projectDir, against) ?: return null
+        val untracked = untrackedPaths(git) ?: return null
+        return (tracked + untracked).distinct()
+    }
+
+    private fun requireSingleCommit(against: String) {
         // A leading dash would be read as a git option (`--output=<path>` writes files). Refused
         // rather than ignored, so a rejected base never silently becomes HEAD.
         if (against.startsWith("-")) {
@@ -226,10 +233,54 @@ internal object ChangeDetection {
                     "changes in the working tree would not be selected on."
             )
         }
-        val tracked = trackedPaths(git, projectDir, against) ?: return null
-        val untracked = untrackedPaths(git) ?: return null
-        return (tracked + untracked).distinct()
     }
+
+    /** A commit, by its full sha and its message's first line. */
+    data class Commit(val sha: String, val subject: String)
+
+    /** What the commit messages a run selects over say about running everything. */
+    sealed interface CommitScan {
+        /**
+         * [marked] is the newest commit with a `yoriwake: full` line, or null; [hints] are the
+         * commits with a `yoriwake:` line that is not one.
+         */
+        data class Read(val marked: Commit?, val hints: List<Commit>) : CommitScan
+
+        /** git could not list the messages, so whether one asks for a full run is unknown. */
+        data class Failed(val reason: String) : CommitScan
+    }
+
+    /**
+     * Reads the message of every commit in `[since]..HEAD`, and HEAD's own when that range is
+     * empty, for a line asking for a full run. One `git log`, parsed here: `--grep`'s regex dialect
+     * depends on how git was built.
+     */
+    fun scanCommitMessages(git: (List<String>) -> String?, since: String): CommitScan {
+        requireSingleCommit(since)
+        val format = "--format=%H%x00%B%x1e"
+        val ranged = git(listOf("log", format, "--end-of-options", "$since..HEAD"))
+            ?: return CommitScan.Failed("git log $since..HEAD could not answer")
+        val raw = ranged.ifBlank {
+            git(listOf("log", "-1", format, "--end-of-options", "HEAD"))
+                ?: return CommitScan.Failed("git log HEAD could not answer")
+        }
+        val commits = raw.split('\u001e').mapNotNull { record ->
+            val sha = record.substringBefore('\u0000', "").trim().takeIf(String::isNotEmpty) ?: return@mapNotNull null
+            val lines = record.substringAfter('\u0000').lines()
+            Commit(sha, lines.firstOrNull { it.isNotBlank() }.orEmpty().trim()) to lines
+        }
+        val marked = commits.firstOrNull { (_, lines) -> lines.any(::isFullRunMarker) }?.first
+        val hints = commits.filter { (_, lines) -> lines.any { HINT.containsMatchIn(it) && !isFullRunMarker(it) } }
+            .map { it.first }
+        return CommitScan.Read(marked, hints)
+    }
+
+    /** A whole line of `yoriwake: full`, in any case, with any spacing around the colon and the line. */
+    fun isFullRunMarker(line: String): Boolean = MARKER.matches(line.trim())
+
+    private val MARKER = Regex("""yoriwake\s*:\s*full""", RegexOption.IGNORE_CASE)
+
+    private val HINT = Regex("""^\s*yoriwake\s*:""", RegexOption.IGNORE_CASE)
 
     /** The tracked side of [changedPaths]: what `git diff` from [against] reports. */
     fun trackedPaths(
