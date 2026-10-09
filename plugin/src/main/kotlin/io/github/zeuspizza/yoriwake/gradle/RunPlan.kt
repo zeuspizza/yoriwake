@@ -13,13 +13,14 @@ import org.gradle.api.InvalidUserDataException
  * them can disagree about whether a run selects.
  *
  * A run asked to select can be declined: asked on the command line, by a branch the build lists, or
- * in a commit message to run everything, it records instead, and says why.
+ * in a commit message to run everything, it records instead, and says why. A run asked to observe
+ * stays observing, and the selection it observes is the declined one.
  */
 internal class RunPlan(
     val kind: Kind,
     /** What the invocation asked for, before any decline. */
     val asked: Kind,
-    /** Where a run asked to select compares from; null on a run asked to record. */
+    /** Where a run asked to select or observe compares from; null on a run asked to record. */
     val widening: Widening?,
     /** Every decline that held, in the order they are checked; the first is the run's refusal. */
     val declines: List<Decline> = emptyList(),
@@ -38,6 +39,12 @@ internal class RunPlan(
 
         /** Runs what selection keeps; captures only when it falls back to running everything. */
         SELECT,
+
+        /**
+         * Runs every test and captures as [RECORD] does, while the test JVM records what [SELECT]
+         * would have left out.
+         */
+        OBSERVE,
     }
 
     /** A reason a run asked to select runs everything instead. */
@@ -54,9 +61,11 @@ internal class RunPlan(
 
     val selecting: Boolean get() = kind == Kind.SELECT
 
+    val observing: Boolean get() = kind == Kind.OBSERVE
+
     companion object {
         /**
-         * [widening], [scan] and [checkedOut] are asked only for a run asked to select, and
+         * [widening], [scan] and [checkedOut] are asked only for a run asked to select or observe, and
          * [checkedOut] only when [fullRunBranches] lists a branch, so a recording run asks git
          * nothing more than it did.
          */
@@ -67,14 +76,22 @@ internal class RunPlan(
             fullRunBranches: List<String> = emptyList(),
             checkedOut: () -> CheckedOut = { error("the branch was asked for with no branch listed") },
         ): RunPlan {
-            if (!settings.select) {
-                return RunPlan(Kind.RECORD, Kind.RECORD, widening = null)
+            if (settings.select && settings.observe) {
+                throw InvalidUserDataException(
+                    "[yoriwake] -P${Settings.SELECT} and -P${Settings.OBSERVE} were both set. A run either " +
+                        "selects or observes what selection would do; pass one of them."
+                )
+            }
+            val asked = when {
+                settings.select -> Kind.SELECT
+                settings.observe -> Kind.OBSERVE
+                else -> return RunPlan(Kind.RECORD, Kind.RECORD, widening = null)
             }
             val widened = widening()
             val (declines, notes, branch) = declines(settings.fullRun, fullRunBranches, checkedOut, widened.age, scan)
-            return RunPlan(
-                if (declines.isEmpty()) Kind.SELECT else Kind.RECORD, Kind.SELECT, widened, declines, notes, branch,
-            )
+            // An observing run already records; a decline applies only to the selection it observes.
+            val kind = if (declines.isEmpty() || asked == Kind.OBSERVE) asked else Kind.RECORD
+            return RunPlan(kind, asked, widened, declines, notes, branch)
         }
 
         /**

@@ -99,10 +99,48 @@ class RunPlanTest {
     }
 
     @Test
-    fun `nothing but the run plan reads the selection flag`() {
+    fun `-Pyoriwake_observe makes an observing run, which neither selects nor records`() {
+        val plan = resolve(settings(Settings.OBSERVE))
+
+        assertEquals(RunPlan.Kind.OBSERVE, plan.kind)
+        assertEquals(RunPlan.Kind.OBSERVE, plan.asked)
+        assertFalse(plan.selecting)
+        assertTrue(plan.observing)
+        assertTrue(plan.widening != null)
+    }
+
+    @Test
+    fun `-Pyoriwake_observe=false is a recording run`() {
+        val plan = RunPlan.resolve(
+            Settings { if (it == Settings.OBSERVE) "false" else null }, { error("asked for the base") }, { error("scanned") },
+        )
+
+        assertEquals(RunPlan.Kind.RECORD, plan.kind)
+    }
+
+    @Test
+    fun `a decline leaves an observing run observing, and names why`() {
+        val plan = resolve(settings(Settings.OBSERVE, Settings.FULL_RUN), scan = marked)
+
+        assertEquals(RunPlan.Kind.OBSERVE, plan.kind)
+        assertEquals(listOf(RefusalKind.FULL_RUN_REQUESTED, RefusalKind.FULL_RUN_COMMIT), plan.declines.map { it.kind })
+    }
+
+    @Test
+    fun `observing and selecting together fail, naming both flags`() {
+        val failure = assertThrows<InvalidUserDataException> {
+            RunPlan.resolve(settings(Settings.SELECT, Settings.OBSERVE), { error("asked for the base") }, { error("scanned") })
+        }
+
+        assertTrue(Settings.SELECT in failure.message.orEmpty(), failure.message)
+        assertTrue(Settings.OBSERVE in failure.message.orEmpty(), failure.message)
+    }
+
+    @Test
+    fun `nothing but the run plan reads the selection and observation flags`() {
         val readers = File("src/main/kotlin").walkTopDown()
             .filter { it.extension == "kt" && it.name != "RunPlan.kt" && it.name != "Settings.kt" }
-            .filter { Regex("""\bsettings\.select\b""").containsMatchIn(it.readText()) }
+            .filter { Regex("""\bsettings\.(select|observe)\b""").containsMatchIn(it.readText()) }
             .map { it.name }
             .toList()
 

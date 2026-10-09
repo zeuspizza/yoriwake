@@ -12,6 +12,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
+import io.github.zeuspizza.yoriwake.gradle.report.Observation
 import io.github.zeuspizza.yoriwake.gradle.wiring.AfterTest
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.declinedLeftAloneMarker
@@ -55,6 +56,9 @@ internal abstract class DecodeTask : DefaultTask() {
 
     @get:Input
     abstract val selecting: Property<Boolean>
+
+    @get:Input
+    abstract val observing: Property<Boolean>
 
     @get:Input
     abstract val wholeTask: Property<Boolean>
@@ -104,6 +108,18 @@ internal abstract class DecodeTask : DefaultTask() {
         val classpathFiles = pendingClasspathFiles(mapDir).let { file ->
             CoverageDecoder.readClasspathFilesFrom(file).also { runCatching { file.delete() } }
         }
+        val pending = CaptureStart.Pending.decode(
+            pendingHead(mapDir).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
+        )
+        // Before every return below, so each of them leaves a report of this run.
+        if (observing.getOrElse(false)) {
+            observe(taskPath, pending, when {
+                develocityDeclined.isFile -> "Develocity declined this run"
+                parallelRefused.isFile -> "in-JVM parallel execution is enabled, so nothing was captured"
+                !marker.isFile -> "the test task did no work"
+                else -> null
+            })
+        }
         // First: Develocity ran or chose this run's tests, and nothing of ours acted on it.
         if (develocityDeclined.delete()) {
             marker.delete()
@@ -145,9 +161,6 @@ internal abstract class DecodeTask : DefaultTask() {
         // The HEAD the tests saw, read before the build compiled anything; null when it could not be
         // read, which removes the stamp so the next run refuses. HEAD even on a dirty tree: the
         // working-tree snapshot beside the stamp covers what HEAD does not pin.
-        val pending = CaptureStart.Pending.decode(
-            pendingHead(mapDir).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
-        )
         val start = pending?.reading
         val now = CaptureStart.read(rootDir)
         val captureCommit = start?.head
@@ -364,6 +377,30 @@ internal abstract class DecodeTask : DefaultTask() {
     }
 
     /**
+     * Writes and prints what this observing run shows, against the map the test JVM read: the decode
+     * below rewrites it. [note] says why no outcome of this run is read. A report that cannot be
+     * written costs the report, never the map.
+     */
+    private fun observe(taskPath: String, pending: CaptureStart.Pending?, note: String?) {
+        runCatching {
+            val report = Observation.write(
+                mapDir,
+                Observation.Run(
+                    taskPath,
+                    commit = pending?.reading?.head ?: CaptureStart.read(rootDir).head,
+                    mapCaptureCommit = File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE).takeIf(File::isFile)
+                        ?.let { runCatching { it.readText().trim() }.getOrNull() },
+                    note = note,
+                ),
+            )
+            logger.lifecycle(Observation.line(report))
+        }.onFailure {
+            runCatching { File(mapDir, AgentContract.OBSERVATION_FILE).delete() }
+            logger.warn("[yoriwake] $taskPath could not write ${AgentContract.OBSERVATION_FILE} ($it)")
+        }
+    }
+
+    /**
      * Last after any write to the map, so a caller can list exactly what this decode left. One that
      * cannot be written is removed rather than left describing an older map.
      */
@@ -379,6 +416,8 @@ internal abstract class DecodeTask : DefaultTask() {
         val mapDir: File,
         val scope: ScopeOutcome,
         val selecting: Boolean,
+        /** Whether this run observes selection, and so writes `observation.json`. */
+        val observing: Boolean,
         val wholeTask: Provider<Boolean>,
         val loadedScope: Provider<List<String>>,
         val datesTheMap: Provider<Boolean>,
@@ -416,6 +455,7 @@ internal abstract class DecodeTask : DefaultTask() {
                     }.map { it.removeSuffix("*").removeSuffix(".") }.filter(String::isNotEmpty)
                 )
                 task.selecting.set(wired.selecting)
+                task.observing.set(wired.observing)
                 task.wholeTask.set(wired.wholeTask)
                 task.loadedScope.set(wired.loadedScope)
                 task.datesTheMap.set(wired.datesTheMap)

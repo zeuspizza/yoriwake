@@ -7,7 +7,7 @@ import java.io.File
 import kotlin.test.assertEquals
 
 /**
- * Pins what a recording and a selecting run hand the test JVM, and what they capture, as seen just
+ * Pins what a recording, a selecting and an observing run hand the test JVM, and what they capture, as seen just
  * before the tests start: the selection and refusal properties, whether records are written,
  * `forkEvery`, whether JaCoCo is on, and whether the run is marked as one that executes everything.
  * Every site that reads whether a run selects is behind one of these observations.
@@ -57,6 +57,8 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
                 listOf(ISOLATED) to "select=null refused=null records=on forkEvery=1 jacoco=true fullRunMarker=false",
                 listOf(SELECT) to "select=false refused=bytes-unrecorded records=on forkEvery=0 jacoco=true fullRunMarker=true",
                 listOf(SELECT, ISOLATED) to "select=false refused=bytes-unrecorded records=on forkEvery=0 jacoco=true fullRunMarker=true",
+                listOf(OBSERVE) to "select=false refused=bytes-unrecorded records=on forkEvery=0 jacoco=true fullRunMarker=true",
+                listOf(OBSERVE, ISOLATED) to "select=false refused=bytes-unrecorded records=on forkEvery=1 jacoco=true fullRunMarker=true",
             ),
             observed,
         )
@@ -76,6 +78,8 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
                 listOf(ISOLATED) to "select=null refused=null records=on forkEvery=1 jacoco=true fullRunMarker=false",
                 listOf(SELECT) to "select=true refused=null records=off forkEvery=0 jacoco=false fullRunMarker=false",
                 listOf(SELECT, ISOLATED) to "select=true refused=null records=off forkEvery=0 jacoco=false fullRunMarker=false",
+                listOf(OBSERVE) to "select=true refused=null records=on forkEvery=0 jacoco=true fullRunMarker=true",
+                listOf(OBSERVE, ISOLATED) to "select=true refused=null records=on forkEvery=1 jacoco=true fullRunMarker=true",
             ),
             observed,
         )
@@ -162,6 +166,9 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
     private companion object {
         const val SELECT = "-Pyoriwake.select"
         const val ISOLATED = "-Pyoriwake.isolatedCapture"
-        val COMBINATIONS = listOf(emptyList(), listOf(ISOLATED), listOf(SELECT), listOf(SELECT, ISOLATED))
+        const val OBSERVE = "-Pyoriwake.observe"
+        val COMBINATIONS = listOf(
+            emptyList(), listOf(ISOLATED), listOf(SELECT), listOf(SELECT, ISOLATED), listOf(OBSERVE), listOf(OBSERVE, ISOLATED),
+        )
     }
 }

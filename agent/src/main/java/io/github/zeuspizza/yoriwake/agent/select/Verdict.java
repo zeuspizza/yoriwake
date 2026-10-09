@@ -9,6 +9,8 @@ public enum Verdict {
     DAEMON_REFUSED,
     /** The run did not ask to select. */
     SELECTION_NOT_REQUESTED,
+    /** The run observes selection, so the test runs; the verdict selection gave it is recorded apart. */
+    OBSERVING,
     /** Selection threw, so the test runs. */
     SELECTION_FAILED,
     /** Pinned by pattern or tag. */

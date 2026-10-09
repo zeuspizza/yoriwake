@@ -6,6 +6,8 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FULL_RUN_KIND_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FULL_RUN_REASON_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVED_OUTCOME_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSAL_KIND_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY;
@@ -42,7 +44,8 @@ import org.junit.platform.launcher.PostDiscoveryFilter;
  * run a test the map has never seen" requires. Registered by {@code ServiceLoader}.
  *
  * <p>Opt-in per run: with no selection requested, everything is included and the run only builds
- * or refreshes the map.
+ * or refreshes the map. An observing run decides as a selecting one does, includes everything, and
+ * records each verdict beside the row of what ran.
  */
 public class SelectionFilter implements PostDiscoveryFilter {
 
@@ -146,6 +149,10 @@ public class SelectionFilter implements PostDiscoveryFilter {
                 decisions.note(OUTCOME_NOTE, RUN_FULL);
                 decisions.note(FULL_RUN_KIND_NOTE, Selector.Decision.FullRunKind.DAEMON_REFUSED.token());
                 String kind = orEmpty(inputs().apply(REFUSED_KIND_PROPERTY));
+                if (observing()) {
+                    decisions.noteFields(OBSERVED_OUTCOME_NOTE,
+                            RUN_FULL, Selector.Decision.FullRunKind.DAEMON_REFUSED.token(), kind);
+                }
                 if (!kind.isEmpty()) {
                     // DAEMON_REFUSED says which side refused; this says which refusal it was.
                     decisions.note(REFUSAL_KIND_NOTE, kind);
@@ -156,6 +163,12 @@ public class SelectionFilter implements PostDiscoveryFilter {
                     decisions.note(DECLINES_NOTE, declines);
                 }
                 decisions.note(FULL_RUN_REASON_NOTE, refusal);
+                return;
+            }
+            if (observing()) {
+                decisions.note(OUTCOME_NOTE, RUN_FULL);
+                decisions.note(FULL_RUN_REASON_NOTE, "the run observes selection, so every test runs");
+                decisions.noteFields(OBSERVED_OUTCOME_NOTE, selectedOutcome());
                 return;
             }
             if (!selectionRequested()) {
@@ -181,6 +194,25 @@ public class SelectionFilter implements PostDiscoveryFilter {
         } catch (Throwable ignored) {
             // A diagnostic that cannot be written must cost information, never the host's build.
         }
+    }
+
+    /**
+     * The outcome a selecting run of these inputs notes, as an observation records it: the outcome,
+     * then the full-run kind when it ran everything. The daemon's refusal is noted before this.
+     */
+    private String[] selectedOutcome() {
+        if (!selectionRequested()) {
+            return new String[] {RUN_NOT_REQUESTED};
+        }
+        Selector.Decision current = decision;
+        if (current == null) {
+            return new String[] {RUN_NOT_DECIDED};
+        }
+        if (!current.isFullRun()) {
+            return new String[] {RUN_NARROWED};
+        }
+        Selector.Decision.FullRunKind kind = current.fullRunKind();
+        return new String[] {RUN_FULL, kind == null ? "" : kind.token()};
     }
 
     // By @Tag or by pattern, so pinning needs nothing on the host's compile classpath.
@@ -222,9 +254,16 @@ public class SelectionFilter implements PostDiscoveryFilter {
         return method == null ? type : type + "." + method;
     }
 
-    /** Never throws: a row that cannot be recorded must not change what runs. */
+    /**
+     * Never throws: a row that cannot be recorded must not change what runs. On an observing run the
+     * verdict is what a selecting run would have done, recorded beside the row of what ran.
+     */
     private void record(TestDescriptor descriptor, Verdict verdict) {
         try {
+            if (observing()) {
+                decisions.observe(descriptor.getUniqueId().toString(), verdict);
+                return;
+            }
             decisions.add(descriptor.getUniqueId().toString(), verdict);
         } catch (Throwable ignored) {
             // An id that cannot even be turned into a string is not worth failing a build over.
@@ -232,6 +271,17 @@ public class SelectionFilter implements PostDiscoveryFilter {
     }
 
     private FilterResult decideFor(TestDescriptor descriptor) {
+        FilterResult selected = select(descriptor);
+        // Decided and recorded as a selecting run would, then everything runs: what it would have left
+        // out is the observation, and a test it left out must still run to show its outcome.
+        if (observing()) {
+            return FilterResult.included("the run observes selection");
+        }
+        return selected;
+    }
+
+    /** What a selecting run includes, each verdict recorded. */
+    private FilterResult select(TestDescriptor descriptor) {
         // Before the select flag: a refusal alongside a selection request is a contradiction, and
         // the safe reading runs everything. Deliberately redundant with the refusal the decision
         // itself forces; this one also gives every row its own verdict in the record.
@@ -299,6 +349,11 @@ public class SelectionFilter implements PostDiscoveryFilter {
             if (total == 0) {
                 return;
             }
+            // An observing run's own line comes from the decode, which joins verdicts with outcomes.
+            if (observing()) {
+                reportPins();
+                return;
+            }
             StringBuilder line = new StringBuilder("[yoriwake] of " + total + " tests discovered:");
             for (Selector.Decision.Reason reason : Selector.Decision.Reason.values()) {
                 Integer count = tally.get(reason);
@@ -347,6 +402,11 @@ public class SelectionFilter implements PostDiscoveryFilter {
     // A capture-only run must not deselect, or the map would only describe tests it already knew.
     private boolean selectionRequested() {
         return Boolean.parseBoolean(System.getProperty(SELECT_PROPERTY, "false"));
+    }
+
+    /** Whether this run includes everything and records what selection would have done. */
+    private boolean observing() {
+        return Boolean.parseBoolean(System.getProperty(OBSERVE_PROPERTY, "false"));
     }
 
     /** Whether a selection is rounded up to whole classes. See {@link AgentContract#CLASS_GRANULARITY_PROPERTY}. */

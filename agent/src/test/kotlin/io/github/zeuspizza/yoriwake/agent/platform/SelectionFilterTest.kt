@@ -27,6 +27,7 @@ class SelectionFilterTest {
         AgentContract.UNMAPPABLE_PATHS_PROPERTY,
         AgentContract.SELECT_PROPERTY,
         AgentContract.CLASS_GRANULARITY_PROPERTY,
+        AgentContract.OBSERVE_PROPERTY,
     )
 
     @AfterEach
@@ -129,6 +130,16 @@ class SelectionFilterTest {
 
         assertTrue(SelectionFilter(false).apply(Descriptor(testId("Beta"), test = true)).excluded())
         assertTrue(nested.apply(Descriptor(testId("Beta"), test = true)).included(), "a nested launcher's test was deselected")
+    }
+
+    @Test
+    fun `an observing run includes a test the change cannot reach`(@TempDir dir: File) {
+        writeMap(dir, record("Alpha", "com.acme.A"), record("Beta", "com.acme.B"))
+        selectingAgainst(dir, "com.acme.A")
+        System.setProperty(AgentContract.OBSERVE_PROPERTY, "true")
+
+        assertTrue(SelectionFilter(false).apply(Descriptor(testId("Beta"), test = true)).included())
+        assertTrue(SelectionFilter(false).apply(Descriptor(testId("Alpha"), test = true)).included())
     }
 
     @Test

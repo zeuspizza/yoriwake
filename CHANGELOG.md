@@ -21,6 +21,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   everything and record. Map: left alone.
 - `yoriwake { fullRunBranches.add("main") }`: a selecting run on a listed branch runs everything and
   records, so CI can pass `-Pyoriwake.select` on every branch. Map: left alone.
+- `-Pyoriwake.observe` runs every test and reports in `observation.json` what selection would have
+  left out. Map: left alone.
 
 ### Changed
 

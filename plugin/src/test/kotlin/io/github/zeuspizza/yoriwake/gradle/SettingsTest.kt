@@ -55,6 +55,15 @@ class SettingsTest {
     }
 
     @Test
+    fun `observe is a switch, and a value that is not a boolean names it`() {
+        assertFalse(settings().observe)
+        assertTrue(settings(Settings.OBSERVE to "").observe)
+        assertFalse(settings(Settings.OBSERVE to "false").observe)
+        val failure = assertFailsWith<InvalidUserDataException> { settings(Settings.OBSERVE to "maybe") }
+        assertContains(failure.message.orEmpty(), "yoriwake.observe=maybe")
+    }
+
+    @Test
     fun `isolatedCapture is a switch like the others`() {
         assertFalse(settings().isolatedCapture)
         assertTrue(settings(Settings.ISOLATED_CAPTURE to "").isolatedCapture)

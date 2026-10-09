@@ -755,6 +755,46 @@ What the check cannot cover:
 - **Other build-cache entries.** The verdict keys only the selecting test task's result; compiled
   classes restored from a cache a pull request wrote are outside it.
 
+## Observing before you select
+
+`-Pyoriwake.observe` runs every test and records what `-Pyoriwake.select` would have left out, so a
+team can see on its own builds what selection would do before it lets selection skip anything. The
+run decides exactly as a selecting run of the same build, flags and map would, then runs everything
+and captures the map as a run without either flag does. Passing both flags fails the build.
+
+After each such run the map directory holds `observation.json` for that run, and one console line
+summarises it:
+
+```
+[yoriwake] :test observed: selection would have narrowed; 2 tests failed, 1 of them kept; 1 would-be miss; 41 tests would have been skipped, 12.3 s of recorded test time (instrumented, summed over forks; not a wall-clock saving). observation.json lists them.
+```
+
+| Field | Meaning |
+|---|---|
+| `commit` | The commit the tests ran at |
+| `mapCaptureCommit` | The capture commit of the map the selection was computed against |
+| `note` | Why no outcome of this run was read (the task did no work, or captured nothing), or null |
+| `observedOutcome` | `narrowed`, or `full-run` when selection would have run everything, with its `fullRunKind` and `refusalKind`. A [requested full run](#forcing-a-full-run) shows here: `-Pyoriwake.fullRun` reads `daemon-refused` and `full-run-requested` |
+| `failures`, `failuresKept` | How many tests failed in this run, and how many of them selection would have run |
+| `wouldBeMisses` | Each failing test selection would have left out, with its outcome (`FAILED` or `ABORTED`). A failing invocation of a parameterised test counts under its template, and a failing `@BeforeAll` or `@AfterAll` fails every test of its class |
+| `wouldBeSkipped`, `recordedInstrumentedTestNanos` | How many tests selection would have left out, and their recorded durations, measured under instrumentation and summed over forks |
+| `complete`, `testsWithoutVerdict` | `false` when a test JVM's decision record is missing or cut short. Its tests ran with no verdict and are not counted as skipped |
+
+What it does not show:
+
+- A would-be miss is a test that failed and that selection would have left out. A test that fails
+  only when the whole suite runs in this order, or that is flaky, is listed too.
+- Selection can make a test fail by changing what runs before it. A run that does not select cannot
+  observe that.
+- Each observing run refreshes the map, so the selection it observes was computed against a fresher
+  map than a regime that only selects, and refreshes on its default branch, would read. The skipped
+  time is an upper bound for that regime.
+- No would-be miss on a run where no test failed, or where the outcome was `full-run`, says nothing
+  about how often selection misses a failure. The report counts; it never gives a rate.
+- The skipped time is not a wall-clock saving: instrumented durations, summed over forks.
+- A task off the JUnit Platform never asks the filter: its outcome is `not-decided`, and its tests
+  are counted in `testsWithoutVerdict`.
+
 ## Properties and tasks
 
 Every property is a Gradle project property: `-P<name>` on the command line or in
@@ -765,6 +805,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 |---|---|
 | `yoriwake.select` | Select. Without it nothing is ever skipped; a run only captures. |
 | `yoriwake.fullRun` | On a selecting run, run every test and record the map instead. See [Forcing a full run](#forcing-a-full-run). |
+| `yoriwake.observe` | Run every test, record the map, and report what selection would have left out. Not with `yoriwake.select`. See [Observing before you select](#observing-before-you-select). |
 | `yoriwake.base=<ref>` | What to diff against. Defaults to the merge base with the branch upstream, widened to the map's age. Must be a single commit, not a range. |
 | `yoriwake.alwaysRun=<glob>[,<glob>…]` | Tests that may never be skipped, for this run. |
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |

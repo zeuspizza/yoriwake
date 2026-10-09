@@ -16,6 +16,7 @@ class MapFilesReadTest {
         "DECISIONS_FILE" to "written by the run, read by nothing that decides",
         "EXPLANATION_FILE" to "a report",
         "AUDIT_FILE" to "a report",
+        "OBSERVATION_FILE" to "an observing run's report, read by nothing that decides",
         "FILE" to "the audit's task facts, a report",
         "TASK_FILE" to "the payback report",
         "PENDING_FILE" to "the start reading of HEAD, the run's own",

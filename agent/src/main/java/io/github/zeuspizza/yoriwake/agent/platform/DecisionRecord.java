@@ -5,6 +5,7 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISION
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISIONS_VERSION;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FORCING_KINDS_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NOTE_PREFIX;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVATION_LINE_PREFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ROWS_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RULES_LINE_PREFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RULES_NOTE;
@@ -58,10 +59,18 @@ public final class DecisionRecord {
     private static final class Row {
         final String testId;
         final Verdict verdict;
+        /** What a selecting run would have given the test, on an observing run; null otherwise. */
+        final Verdict observed;
 
-        Row(String testId, Verdict verdict) {
+        Row(String testId, Verdict verdict, Verdict observed) {
             this.testId = testId;
             this.verdict = verdict;
+            this.observed = observed;
+        }
+
+        /** The verdict the rules are computed for: a selecting run's, observed or not. */
+        Verdict selecting() {
+            return observed == null ? verdict : observed;
         }
     }
 
@@ -69,7 +78,32 @@ public final class DecisionRecord {
     private final List<String> notes = Collections.synchronizedList(new ArrayList<String>());
 
     void add(String testId, Verdict verdict) {
-        rows.add(new Row(testId, verdict));
+        rows.add(new Row(testId, verdict, null));
+    }
+
+    /**
+     * Records a test an observing run includes whatever selection decided: its row says it ran, and
+     * an observation line holds {@code wouldBe}, the verdict a selecting run would have given.
+     */
+    void observe(String testId, Verdict wouldBe) {
+        rows.add(new Row(testId, Verdict.OBSERVING, wouldBe));
+    }
+
+    /** As {@link #note}, with several tab-separated fields; trailing null or empty ones are dropped. */
+    void noteFields(String key, String... fields) {
+        int kept = fields.length;
+        while (kept > 0 && (fields[kept - 1] == null || fields[kept - 1].isEmpty())) {
+            kept--;
+        }
+        if (key == null || key.isEmpty() || kept == 0) {
+            return;
+        }
+        String[] row = new String[kept + 1];
+        row[0] = key;
+        for (int index = 0; index < kept; index++) {
+            row[index + 1] = fields[index] == null ? "" : fields[index];
+        }
+        notes.add(NOTE_PREFIX + Tsv.join(row));
     }
 
     /**
@@ -135,6 +169,13 @@ public final class DecisionRecord {
                 out.append(RULES_LINE_PREFIX).append(Tsv.join(row.testId, tokensFor(rules, row))).append('\n');
             }
         }
+        for (Row row : snapshot) {
+            if (row.observed != null) {
+                out.append(OBSERVATION_LINE_PREFIX)
+                        .append(Tsv.join(row.testId, row.observed.inclusionToken(), row.observed.reasonToken()))
+                        .append('\n');
+            }
+        }
         long pid = ProcessHandle.current().pid();
         long write = writes.incrementAndGet();
         publish(dir, DECISIONS_FILE, out.toString(), pid, write);
@@ -145,7 +186,7 @@ public final class DecisionRecord {
     /** Never throws: a rule that cannot be computed for one row costs that row's rules, not the record. */
     private static String tokensFor(Rules rules, Row row) {
         try {
-            return rules.tokensFor(row.testId, row.verdict);
+            return rules.tokensFor(row.testId, row.selecting());
         } catch (Throwable failed) {
             return RULE_UNKNOWN;
         }
