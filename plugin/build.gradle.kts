@@ -219,7 +219,14 @@ tasks.test {
 val functionalGradleVersions = mapOf(
     "functionalTest" to "8.14",
     "functionalTestGradle9" to "9.8.0",
+    "breakAttempts" to "8.14",
+    "breakAttemptsGradle9" to "9.8.0",
 )
+
+// Attempts to make selection skip a test that should run, each kept once it fails to, live in one
+// package of the functional sources and run as their own task on both versions: the functional
+// suite does not grow with every attempt, and the attempts run where a release or a fix asks.
+val breakAttemptsPackage = "io.github.zeuspizza.yoriwake.gradle.breaking"
 
 testing {
     suites {
@@ -232,6 +239,8 @@ testing {
             }
             targets {
                 register("functionalTestGradle9")
+                register("breakAttempts")
+                register("breakAttemptsGradle9")
                 all {
                     testTask.configure {
                         // TestKit builds are slow; give them room rather than letting them fail as flakes.
@@ -241,6 +250,11 @@ testing {
                         systemProperty("yoriwake.localRepository", localRepository.get().asFile.absolutePath)
                         // The version this build publishes, release or snapshot, for the published-plugin test.
                         systemProperty("yoriwake.pluginVersion", project.version.toString())
+                        if (name.startsWith("breakAttempts")) {
+                            filter.includeTestsMatching("$breakAttemptsPackage.*")
+                        } else {
+                            filter.excludeTestsMatching("$breakAttemptsPackage.*")
+                        }
                     }
                 }
             }
@@ -251,6 +265,7 @@ testing {
 // `functionalTest` alone runs both versions. A `--tests` filter reaches only the task it follows,
 // so a filtered run names one version's task and excludes the other.
 tasks.named("functionalTest") { finalizedBy("functionalTestGradle9") }
+tasks.named("breakAttempts") { finalizedBy("breakAttemptsGradle9") }
 tasks.check { dependsOn("functionalTest", "functionalTestGradle9") }
 
 // The suite reads the plugin's internals, as `test` does.
