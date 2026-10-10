@@ -259,8 +259,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
      * on someone else's behalf. The JDK's own lambda bootstraps then count as the JDK's: past the
      * metafactory's frames stands the JDK class whose lambda it is.
      *
-     * A call made through a proxy is never the JDK's: a proxy dispatches to a handle or handler its
-     * maker chose, so whoever called the proxy, JDK code included, did not ask for the hooked call.
+     * A call that passes over a proxy is never the JDK's: a proxy dispatches to a handle or handler
+     * its maker chose, so whoever called the proxy, JDK code included, did not ask for the hooked call.
      */
     static boolean calledFromJdk() {
         try {
