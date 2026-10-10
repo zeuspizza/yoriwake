@@ -455,6 +455,112 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a hidden copy of a class defined through Method invoke dates that class`(@TempDir dir: File) {
+        val ran = hiddenCopy(
+            dir, "W",
+            """
+            Method define = MethodHandles.Lookup.class.getMethod(
+                    "defineHiddenClass", byte[].class, boolean.class, MethodHandles.Lookup.ClassOption[].class);
+            MethodHandles.Lookup hidden = (MethodHandles.Lookup) define.invoke(
+                    MethodHandles.lookup(), bytes, true, new MethodHandles.Lookup.ClassOption[0]);
+            """.trimIndent(),
+        )
+
+        assertEquals(names("W1HiddenCopyTest", "W2CodecTest"), ran)
+    }
+
+    @Test
+    fun `a hidden copy of a class defined through a method handle dates that class`(@TempDir dir: File) {
+        val ran = hiddenCopy(
+            dir, "X",
+            """
+            MethodHandle define = MethodHandles.lookup().findVirtual(MethodHandles.Lookup.class, "defineHiddenClass",
+                    MethodType.methodType(MethodHandles.Lookup.class, byte[].class, boolean.class,
+                            MethodHandles.Lookup.ClassOption[].class));
+            MethodHandles.Lookup hidden = (MethodHandles.Lookup) define.invoke(
+                    MethodHandles.lookup(), bytes, true, new MethodHandles.Lookup.ClassOption[0]);
+            """.trimIndent(),
+        )
+
+        assertEquals(names("X1HiddenCopyTest", "X2CodecTest"), ran)
+    }
+
+    @Test
+    fun `the foreign-function API reached through a method reference JDK code calls selects every later test in its JVM`(
+        @TempDir dir: File,
+    ) {
+        // The test JVM is Java 21, where the foreign-function API is a preview. The method
+        // reference's own class is hidden, so the class that wrote it, not the stream, is the caller.
+        val previewBuild = orderedBuild.replace("useJUnitPlatform()", "useJUnitPlatform()\n    jvmArgs(\"--enable-preview\")") +
+            "\ntasks.withType<JavaCompile>().configureEach { options.compilerArgs.add(\"--enable-preview\"); options.release = 21 }\n"
+        val ran = selectedAfter(
+            dir, "src/main/java/dev/sample/Tool.java", { it.replace("\"tool\"", "\"tool!\"") },
+            main("Tool", "public class Tool { public static String name() { return \"tool\"; } }"),
+            first("Y"),
+            test(
+                "Y1NativeTest",
+                """
+                @Test void links() {
+                    Supplier<Linker> linker = Linker::nativeLinker;
+                    assertNotNull(Stream.generate(linker).limit(1).findFirst().get());
+                }
+                """.trimIndent(),
+                imports = "import java.lang.foreign.Linker;\nimport java.util.function.Supplier;\nimport java.util.stream.Stream;",
+            ),
+            test("Y2ToolTest", "@Test void runs() { assertTrue(Tool.name().startsWith(\"tool\")); }"),
+            test("Y3LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            buildScript = previewBuild,
+        )
+
+        assertEquals(names("Y1NativeTest", "Y2ToolTest", "Y3LaterTest"), ran)
+    }
+
+    /**
+     * A test that defines a hidden copy of Codec with [define], which leaves the copy's lookup in
+     * `hidden`, then runs it; then a test that runs Codec itself. The build copies Codec's class
+     * file to a name that is not a class file, so reading the bytes dates nothing and only the
+     * definition can: a copy runs Codec's code, and coverage records none of it.
+     */
+    private fun hiddenCopy(dir: File, prefix: String, define: String) = selectedAfter(
+        dir, "src/main/java/dev/sample/Codec.java", { it.replace("reverse()", "reverse().append(\"\")") },
+        main(
+            "Codec",
+            "public class Codec { public String encode(String s) { return new StringBuilder(s).reverse().toString(); } }",
+        ),
+        first(prefix),
+        test(
+            "${prefix}1HiddenCopyTest",
+            """
+            @Test void copiesCodec() throws Throwable {
+                byte[] bytes = Files.readAllBytes(Paths.get(System.getProperty("codec.copy")));
+            """.trimIndent() + "\n" + define.prependIndent("    ") + "\n" + """
+                Class<?> copy = hidden.lookupClass();
+                assertEquals("cba", copy.getMethod("encode", String.class).invoke(copy.getConstructor().newInstance(), "abc"));
+            }
+            """.trimIndent(),
+            imports = listOf(
+                "java.lang.invoke.MethodHandle", "java.lang.invoke.MethodHandles", "java.lang.invoke.MethodType",
+                "java.lang.reflect.Method", "java.nio.file.Files", "java.nio.file.Paths",
+            ).joinToString("\n") { "import $it;" },
+        ),
+        test("${prefix}2CodecTest", "@Test void reverses() { assertEquals(\"cba\", new Codec().encode(\"abc\")); }"),
+        buildScript = copiedCodecBuild,
+    )
+
+    private val copiedCodecBuild = orderedBuild + "\n" + """
+        val copyCodec = tasks.register<Copy>("copyCodec") {
+            dependsOn(tasks.compileJava)
+            from(layout.buildDirectory.file("classes/java/main/dev/sample/Codec.class"))
+            rename { "Codec.bytes" }
+            into(layout.buildDirectory.dir("copies"))
+        }
+        tasks.test {
+            dependsOn(copyCodec)
+            systemProperty("codec.copy", layout.buildDirectory.file("copies/Codec.bytes").get().asFile.absolutePath)
+        }
+    """.trimIndent()
+
+    @Test
     fun `a test that reads a class file through the file-system provider is selected when it changes`(
         @TempDir dir: File,
     ) {

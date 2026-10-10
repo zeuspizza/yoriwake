@@ -59,13 +59,16 @@ no minutes against a budget.
 | 1 | `./gradlew build` and `./gradlew build -PreleaseVersion=<version>` pass. The build runs the functional suite on Gradle 8.14 and 9. | maintainer | none, run locally |
 | 2 | The private mutation checks (see [CONTRIBUTING.md](CONTRIBUTING.md)) run at the candidate, and every guard, broken in turn, is caught by a test. | maintainer | none, run locally; under an hour |
 | 3 | One code review of the whole release diff, `v<previous>..<candidate>`, so interactions between changes are seen. It also asks whether upgrading needs anything beyond the CHANGELOG's map lines (a map format change, a renamed or removed property or flag, a changed CI recipe or cache path); if so, the release notes and the reference's "Upgrading and your map" get a short "what you do" paragraph. Each confirmed finding is fixed in its own pull request, which repeats steps 1 and 2 for what it touches. | maintainer | none |
+| 3b | An adversarial campaign at the candidate, following the private campaign playbook: agents try to make a selecting run skip a test that should run, in every area of the code the release changed and one other in rotation, reading each rule's code for its boundary as well as writing attempts from known shapes. Its record passes the campaign check. Each attempt that held stays in the break suite (`./gradlew :plugin:breakAttempts`, which then passes on Gradle 8.14 and 9); each skipped test it finds is fixed in its own pull request, test first, with a fix that forces or widens and a mutation check that removes the fix, which repeats steps 1 to 3 for what it touches; or the maintainer accepts it as a limit documented in [docs/reference.md](docs/reference.md). | maintainer; agents run the attempts | none, run locally; one Gradle build at a time |
 | 4 | A reduced benchmark on real projects at the candidate: whether each test that should have run did run is the same as at the previous release, or each difference is explained by a merged change. | maintainer | none, run locally; about 20 minutes |
 | 5 | Every new flag, DSL property, token and file is documented in [docs/reference.md](docs/reference.md) or [docs/contract.md](docs/contract.md). | maintainer | none |
 | 6 | Each native library in [the reviewed list](docs/reference.md#native-libraries) is compared with its latest major release; a re-review issue is opened for each that moved. | maintainer | none |
 | 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so steps 1-6 stand; if anything else differs, the gates it touches run again on the final candidate. | maintainer | none |
 | 8 | If the Portal description or tags changed: `./gradlew :plugin:publishPlugins --validate-only -PreleaseVersion=<version>` with the Portal keys. | maintainer | none |
 
-A gate that fails, or a confirmed finding left unfixed, stops the release.
+A gate that fails, or a confirmed finding left unfixed, stops the release. A campaign finding is open
+until it is fixed with a mutation check or accepted by the maintainer as a documented limit; the
+release waits for every one.
 
 ## Tagging and publishing
 
