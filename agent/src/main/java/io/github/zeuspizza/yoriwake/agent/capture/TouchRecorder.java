@@ -258,12 +258,16 @@ public final class TouchRecorder implements CaptureSession.Touches {
      * that wrote it; reflection and method-handle frames are passed over, because they make a call
      * on someone else's behalf. The JDK's own lambda bootstraps then count as the JDK's: past the
      * metafactory's frames stands the JDK class whose lambda it is.
+     *
+     * A call made through a proxy is never the JDK's: a proxy dispatches to a handle or handler its
+     * maker chose, so whoever called the proxy, JDK code included, did not ask for the hooked call.
      */
     static boolean calledFromJdk() {
         try {
             return StackWalker.getInstance(java.util.EnumSet.of(StackWalker.Option.RETAIN_CLASS_REFERENCE,
                     StackWalker.Option.SHOW_HIDDEN_FRAMES)).walk(frames -> {
                 Class<?> hooked = null;
+                boolean throughAProxy = false;
                 for (java.util.Iterator<StackWalker.StackFrame> it = frames.iterator(); it.hasNext(); ) {
                     Class<?> frame = it.next().getDeclaringClass();
                     if (hooked == null) {
@@ -271,7 +275,12 @@ public final class TouchRecorder implements CaptureSession.Touches {
                             hooked = frame;
                         }
                     } else if (frame != hooked && !passesOver(frame)) {
+                        if (throughAProxy) {
+                            return false;
+                        }
                         return JdkCode.isJdk(frame);
+                    } else if (JdkCode.isProxy(frame)) {
+                        throughAProxy = true;
                     }
                 }
                 return false;

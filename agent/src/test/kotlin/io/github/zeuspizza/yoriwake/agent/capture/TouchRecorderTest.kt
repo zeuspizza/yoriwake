@@ -352,6 +352,32 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `a hooked method reached through an interface proxy that JDK code calls is judged as the project's`() {
+        val native = TouchRecorder()
+        standin.Hooked.Caller.throughAnInterfaceProxyTheJdkCalls { native.nativeCode(null) }
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
+            drained(native),
+            "JDK code that calls a proxy did not choose what the proxy calls",
+        )
+
+        val defined = TouchRecorder()
+        standin.Hooked.Caller.throughAnInterfaceProxyTheJdkCalls { defined.defined(classBytes("com/acme/Generated")) }
+        assertEquals(listOf(AgentContract.TOUCH_DEFINED to "com.acme.Generated"), drained(defined))
+
+        // Reflection frames with no proxy among them still leave the JDK code beyond them the caller.
+        val constructed = TouchRecorder()
+        var ran = false
+        standin.Hooked.Caller.constructedByTheJdk {
+            constructed.nativeCode(null)
+            constructed.defined(classBytes("com/acme/Generated"))
+            ran = true
+        }
+        assertTrue(ran, "the service loader constructed the provider")
+        assertEquals(emptyList(), drained(constructed), "the JDK's service loader constructed it")
+    }
+
+    @Test
     fun `native code and hidden classes a class on the boot class path reaches are recorded`() {
         val native = TouchRecorder()
         standin.boot.BootCaller.call(Consumer { native.nativeCode(null) }, "value")
