@@ -5,6 +5,9 @@ carried on; `sed` exited 0 when its pattern matched nothing, so a mutation step 
 left the assertion reporting "ran but did not fail" -- a message about the tests rather than about
 the step that broke.
 
+It also checks that every workflow pins its actions by commit SHA, so a moved tag cannot change
+what CI runs.
+
 The style is this repository's: cases return a count of failed checks rather than asserting, because
 a function that asserted would be collected by pytest and pass however many checks failed. One
 `test_*` entry point asserts, so a pytest run sees exactly one test.
@@ -13,6 +16,7 @@ a function that asserted would be collected by pytest and pass however many chec
 """
 
 import os
+import re
 import sys
 import tempfile
 
@@ -180,6 +184,55 @@ def case_discard_on_a_clean_tree_is_not_an_error():
     return problems
 
 
+WORKFLOWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflows")
+USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(\S+)(.*)$")
+PINNED = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
+VERSION_COMMENT = re.compile(r"^\s+#\s*v\d+\.\d+\.\d+\s*$")
+
+
+def unpinned_uses(text):
+    """Each `uses:` line not pinned to a full commit SHA with a `# vX.Y.Z` comment.
+
+    A tag can be moved to other code without a commit here, so a tag pin changes what CI runs
+    without anyone reviewing it; the comment is what tells a reader which release the SHA is.
+    """
+    found = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        match = USES.match(line)
+        if match and not (PINNED.match(match.group(1)) and VERSION_COMMENT.match(match.group(2))):
+            found.append(f"line {number}: {line.strip()}")
+    return found
+
+
+def case_a_tag_pin_is_reported():
+    problems = 0
+    if not unpinned_uses("    steps:\n      - uses: actions/checkout@v7\n"):
+        problems += fail("`actions/checkout@v7` passed the pin check")
+    return problems
+
+
+def case_a_sha_without_its_version_comment_is_reported():
+    problems = 0
+    line = "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
+    if not unpinned_uses(line):
+        problems += fail("a SHA pin without a `# vX.Y.Z` comment passed the pin check")
+    if unpinned_uses(line.rstrip("\n") + " # v7.0.1\n"):
+        problems += fail("a SHA pin with its version comment was reported")
+    return problems
+
+
+def case_every_workflow_pins_its_actions_by_sha():
+    problems = 0
+    names = sorted(name for name in os.listdir(WORKFLOWS) if name.endswith((".yml", ".yaml")))
+    if not names:
+        problems += fail(f"no workflows found under {WORKFLOWS}")
+    for name in names:
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in unpinned_uses(handle.read()):
+                problems += fail(f"{name} {problem}")
+    return problems
+
+
 CASES = (
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
@@ -190,6 +243,9 @@ CASES = (
     case_restore_is_the_mutation_backwards,
     case_discard_removes_results_and_leaves_the_map_alone_by_default,
     case_discard_on_a_clean_tree_is_not_an_error,
+    case_a_tag_pin_is_reported,
+    case_a_sha_without_its_version_comment_is_reported,
+    case_every_workflow_pins_its_actions_by_sha,
 )
 
 
