@@ -49,6 +49,20 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `a class file read by project code running inside a class definition is a read`(@TempDir dir: File) {
+        File(dir, "com/acme/Other.class").apply { parentFile.mkdirs() }.writeBytes(classBytes("com/acme/Other"))
+        val recorder = TouchRecorder()
+        var ran = false
+        standin.PermissionsReader(dir) {
+            recorder.read(File("build/classes/java/main/com/acme/Codec.class"))
+            ran = true
+        }.use { it.loadClass("com.acme.Other") }
+
+        assertTrue(ran, "the loader's getPermissions ran while it defined the class")
+        assertEquals(listOf(AgentContract.TOUCH_READ to "build/classes/java/main/com/acme/Codec.class"), drained(recorder))
+    }
+
+    @Test
     fun `a jar opened by something other than the JDK's zip code counts as every class in it`(@TempDir dir: File) {
         val recorder = TouchRecorder()
         recorder.read(File(dir, "scanned.jar"))

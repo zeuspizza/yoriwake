@@ -60,6 +60,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   recorded. Map: discarded, with the same rebuild.
 - A class definition or foreign call made through an interface proxy that JDK code calls is
   recorded. Map: discarded, with the same rebuild.
+- A class file your code reads while a class loader defines a class (a `getPermissions` override,
+  say) dates the test by that class. Map: discarded, with the same rebuild.
 
 ## [0.1.0] - 2026-10-04
 
