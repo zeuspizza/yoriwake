@@ -769,7 +769,8 @@ selection trusts any restored map, as in 0.1.0.
 On GitHub, [yoriwake-action](https://github.com/zeuspizza/yoriwake-action#which-maps-a-pull-request-trusts)
 writes the list: a push to the default branch or a schedule that saves the map uploads its digests
 as an artifact, and a pull request lists the digests of the artifact whose run GitHub records as
-such a run of this repository, at a commit the default branch contains, or passes an empty list.
+such a run of this repository, at a commit the default branch contains. When none qualifies, the
+pull request passes no selection flag and records every test.
 Nothing supplies a list yet on GitLab, CircleCI, Jenkins or Azure Pipelines, or in a hand-written
 GitHub workflow: selection there runs without one.
 
