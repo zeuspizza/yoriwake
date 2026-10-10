@@ -369,14 +369,41 @@ public final class TouchRecorder implements CaptureSession.Touches {
      * Whether this read is the JDK defining a class from its file, which the load observer already
      * records as a load. Only the JDK's own loaders count: anything else reading a class file is a
      * reader, and misreading a load as a read only opens a window earlier.
+     *
+     * Only the JDK's own frames may stand between the read and the definition: a definition calls
+     * code it does not own (a loader's {@code getPermissions}, a transformer, a URL handler), and a
+     * class file that code reads is its read. Hidden frames are shown, so a hidden class of the
+     * project's cannot leave only the JDK's frames in view. Anything that cannot tell says no, the
+     * side that records.
      */
     private static boolean definingAClass() {
-        return StackWalker.getInstance().walk(frames -> frames.limit(24).anyMatch(frame ->
-                "defineClass".equals(frame.getMethodName())
-                        && (frame.getClassName().startsWith("jdk.internal.loader.")
-                                || frame.getClassName().equals("java.net.URLClassLoader")
-                                || frame.getClassName().equals("java.security.SecureClassLoader")
-                                || frame.getClassName().equals("java.lang.ClassLoader"))));
+        try {
+            StackWalker walker = StackWalker.getInstance(java.util.EnumSet.of(
+                    StackWalker.Option.RETAIN_CLASS_REFERENCE, StackWalker.Option.SHOW_HIDDEN_FRAMES));
+            return walker.walk(frames -> {
+                boolean pastAgent = false;
+                for (java.util.Iterator<StackWalker.StackFrame> it = frames.limit(24).iterator(); it.hasNext(); ) {
+                    StackWalker.StackFrame frame = it.next();
+                    if (!pastAgent && frame.getClassName().startsWith(AGENT_PACKAGE)) {
+                        continue;
+                    }
+                    pastAgent = true;
+                    if (!JdkCode.isJdk(frame.getDeclaringClass())) {
+                        return false;
+                    }
+                    if ("defineClass".equals(frame.getMethodName())
+                            && (frame.getClassName().startsWith("jdk.internal.loader.")
+                                    || frame.getClassName().equals("java.net.URLClassLoader")
+                                    || frame.getClassName().equals("java.security.SecureClassLoader")
+                                    || frame.getClassName().equals("java.lang.ClassLoader"))) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private static boolean isClassOrSource(String path) {
