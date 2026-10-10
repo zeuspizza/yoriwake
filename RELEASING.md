@@ -36,10 +36,14 @@ publishes: `release.yml` publishes to the Gradle Plugin Portal on any `v*` tag, 
 version cannot be taken back, so no `v*` tag exists until every gate below has passed.
 
 - **Minor.** A commit of `main` with every change for the release merged.
-- **Patch.** A commit on `release/<major>.<minor>`. Create the branch from the minor's tag if it
-  does not exist (`git branch release/0.2 v0.2.0`), cherry-pick each fix from `main`
-  (`git cherry-pick -x <sha>`), and take the resulting commit. A patch carries only cherry-picked
-  fixes: `git log v<previous>..<candidate>` lists nothing else.
+- **Patch.** A commit on `release/<major>.<minor>`, which is pushed with each patch's tag. If the
+  branch exists neither locally nor on `origin`, create it from the line's latest tag
+  (`git tag -l 'v0.2.*' --sort=-v:refname | head -1`, then `git branch release/0.2 <that tag>`).
+  Cherry-pick each fix from `main` (`git cherry-pick -x <sha>`); a conflict in `CHANGELOG.md` is
+  resolved by putting the fix's line under a `## [Unreleased]` heading. The candidate contains the
+  previous release (`git merge-base --is-ancestor v<previous> <candidate>` succeeds), and a patch
+  carries only cherry-picked fixes and the changelog commit of step 7:
+  `git log v<previous>..<candidate>` lists nothing else.
 
 Write the candidate's full SHA down before the first gate. Every gate runs on that SHA; a fix found
 by a gate makes a new candidate, and the gates it touches run again on it.
@@ -58,15 +62,16 @@ no minutes against a budget.
 | 4 | A reduced benchmark on real projects at the candidate: whether each test that should have run did run is the same as at the previous release, or each difference is explained by a merged change. | maintainer | none, run locally; about 20 minutes |
 | 5 | Every new flag, DSL property, token and file is documented in [docs/reference.md](docs/reference.md) or [docs/contract.md](docs/contract.md). | maintainer | none |
 | 6 | Each native library in [the reviewed list](docs/reference.md#native-libraries) is compared with its latest major release; a re-review issue is opened for each that moved. | maintainer | none |
-| 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate; it touches no code, so steps 1-6 stand. | maintainer | none |
+| 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so steps 1-6 stand; if anything else differs, the gates it touches run again on the final candidate. | maintainer | none |
 | 8 | If the Portal description or tags changed: `./gradlew :plugin:publishPlugins --validate-only -PreleaseVersion=<version>` with the Portal keys. | maintainer | none |
 
 A gate that fails, or a confirmed finding left unfixed, stops the release.
 
 ## Tagging and publishing
 
-1. Tag the candidate and push the tag:
-   `git tag -a v<version> <candidate> -m v<version> && git push origin v<version>`.
+1. Tag the final candidate and push the tag:
+   `git tag -a v<version> <final candidate> -m v<version> && git push origin v<version>`. For a
+   patch, also push the release branch: `git push origin release/<major>.<minor>`.
 2. `release.yml` builds and tests the tag, then waits for a maintainer to approve the `release`
    environment, which holds the Portal key and accepts only `v*` tags. Approve it.
 3. While the Portal reviews the new version, merge only documentation changes.
@@ -77,7 +82,9 @@ A gate that fails, or a confirmed finding left unfixed, stops the release.
   `-Pyoriwake.observe` and once with `-Pyoriwake.select`.
 - The GitHub Action ([zeuspizza/yoriwake-action](https://github.com/zeuspizza/yoriwake-action)) is
   tagged at the matching version.
-- The release is recorded with its candidate SHA and each gate's result.
+- The release is recorded with its final candidate SHA and each gate's result.
+- For a patch, a pull request on `main` adds its `## [<version>]` section to `CHANGELOG.md` and
+  removes its fixes' lines from `## [Unreleased]`.
 - If the release fixes a silent skip, the advisory is updated with the fixed version, and adopters
   who reported it are told.
 
