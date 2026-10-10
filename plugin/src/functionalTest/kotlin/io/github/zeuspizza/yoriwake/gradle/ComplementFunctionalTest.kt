@@ -233,6 +233,29 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a file the build generates from a property differently runs every test, naming the classpath`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\nval buildInfo = tasks.register(\"buildInfo\") {\n" +
+                "    val flavor = providers.gradleProperty(\"flavor\").getOrElse(\"a\")\n" +
+                "    val out = layout.buildDirectory.dir(\"generated/res\")\n" +
+                "    inputs.property(\"flavor\", flavor)\n    outputs.dir(out)\n" +
+                "    doLast { out.get().file(\"build-info.properties\").asFile.writeText(\"flavor=\$flavor\\n\") }\n}\n" +
+                "dependencies { testRuntimeOnly(files(buildInfo)) }\n",
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE, "-Pflavor=a").build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertEquals("flavor=b\n", File(dir, "build/generated/res/build-info.properties").readText())
+        assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
+        assertContains(output, "classpath")
+    }
+
+    @Test
     fun `a task configured differently runs every test, naming its configuration`(@TempDir dir: File) {
         captured(dir, extraBuild = "\ntasks.test { systemProperty(\"sample.mode\", providers.gradleProperty(\"mode\").getOrElse(\"a\")) }\n")
         changeAlpha(dir)

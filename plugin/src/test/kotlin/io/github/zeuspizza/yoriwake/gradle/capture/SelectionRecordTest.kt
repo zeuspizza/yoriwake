@@ -254,17 +254,63 @@ class SelectionRecordTest {
         val snapshot = File(root, "m2/com/acme/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOT.jar").apply { parentFile.mkdirs(); writeText("a") }
         val included = File(root, "lib/build/classes/java/main").apply { mkdirs() }
         File(included, "com/acme/Lib.class").apply { parentFile.mkdirs(); writeText("a") }
-        val built = File(here, "build/libs/here.jar").apply { parentFile.mkdirs(); writeText("a") }
-        val digest = { SelectionRecord.classpathDigest(listOf(built, snapshot, included), here, home) }
+        val digest = { SelectionRecord.classpathDigest(listOf(snapshot, included), here, home) }
         val before = digest()
 
-        built.writeText("b")
-        assertEquals(before, digest(), "a jar this build makes is fixed by the commit, so it is named only")
         snapshot.writeText("b")
         val afterSnapshot = digest()
         assertNotEquals(before, afterSnapshot)
         File(included, "com/acme/Lib.class").writeText("b")
         assertNotEquals(afterSnapshot, digest())
+    }
+
+    @Test
+    fun `the classpath digest follows what the build generated into a directory under it`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val generated = File(here, "build/generated/res/build-info.properties").apply { parentFile.mkdirs(); writeText("flavor=a") }
+        val config = File(here, "build/classes/java/main/dev/BuildConfig.class").apply { parentFile.mkdirs(); writeText("a") }
+        val digest = { SelectionRecord.classpathDigest(listOf(generated.parentFile, File(here, "build/classes/java/main")), here, home) }
+        val before = digest()
+
+        assertEquals(before, digest())
+        generated.writeText("flavor=b")
+        val afterResource = digest()
+        assertNotEquals(before, afterResource, "a file generated from a property is not fixed by the commit")
+        config.writeText("b")
+        assertNotEquals(afterResource, digest(), "nor is a class compiled from a generated source")
+    }
+
+    @Test
+    fun `the classpath digest follows the entries of a jar this build makes, not its timestamps`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val built = File(here, "lib/build/libs/lib.jar").apply { parentFile.mkdirs() }
+        val write = { time: Long, flavor: String ->
+            java.util.zip.ZipOutputStream(built.outputStream()).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("build-info.properties").apply { this.time = time })
+                zip.write("flavor=$flavor".toByteArray())
+                zip.closeEntry()
+            }
+        }
+        val digest = { SelectionRecord.classpathDigest(listOf(built), here, home) }
+        write(1_000_000_000_000L, "a")
+        val before = digest()
+
+        write(1_700_000_000_000L, "a")
+        assertEquals(before, digest(), "a rebuilt jar keeps the digest of its entries")
+        write(1_700_000_000_000L, "b")
+        assertNotEquals(before, digest())
+    }
+
+    @Test
+    fun `a classpath entry under the build that cannot be read digests to a value no run matches`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val broken = File(here, "build/libs/here.jar").apply { parentFile.mkdirs(); writeText("not a jar") }
+        val digest = { SelectionRecord.classpathDigest(listOf(broken), here, home) }
+
+        assertNotEquals(digest(), digest())
     }
 
     @Test

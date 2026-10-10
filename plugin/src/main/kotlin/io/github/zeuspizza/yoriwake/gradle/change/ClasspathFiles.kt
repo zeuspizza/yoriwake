@@ -31,13 +31,14 @@ internal object ClasspathFiles {
      * each file of a directory, each entry of a jar, never a jar whole (an own jar keeps entry
      * timestamps, so its whole-file digest moves on every clean rebuild). Dependency jars from
      * elsewhere are not the build's output. Paths are relative to [rootDir]; a jar entry is
-     * `<jar>!/<entry>`.
+     * `<jar>!/<entry>`. With [classes], class files are walked too.
      */
     fun walk(
         classpath: Collection<File>,
         buildDirs: Collection<String>,
         rootDir: File,
         maxFiles: Int = MAX_FILES,
+        classes: Boolean = false,
     ): Walk {
         val roots = buildDirs.map { File(it).absoluteFile } + rootDir.absoluteFile
         // Gradle's and the plugin's own state, such as the agent jar, is not the build's output.
@@ -63,7 +64,7 @@ internal object ClasspathFiles {
                                 stack.addLast(file)
                                 continue
                             }
-                            if (file.name.endsWith(".class")) continue
+                            if (!classes && file.name.endsWith(".class")) continue
                             if (++files > maxFiles) return budgetSpent(maxFiles)
                             digests[pathOf(rootDir, file)] =
                                 runCatching { file.inputStream().use(::sha256) }.getOrDefault(UNREADABLE)
@@ -75,7 +76,7 @@ internal object ClasspathFiles {
                     val read = runCatching {
                         ZipFile(entry).use { zip ->
                             for (zipped in zip.entries()) {
-                                if (zipped.isDirectory || zipped.name.endsWith(".class")) continue
+                                if (zipped.isDirectory || (!classes && zipped.name.endsWith(".class"))) continue
                                 if (++files > maxFiles) return budgetSpent(maxFiles)
                                 digests["$jar!/${zipped.name}"] =
                                     runCatching { zip.getInputStream(zipped).use(::sha256) }.getOrDefault(UNREADABLE)

@@ -922,10 +922,9 @@ variable, needs a record per leg: name the artifact after the leg, and restore t
 
 What it cannot see:
 
-- a file in the repository that git ignores and the build does not make, such as an ignored
-  fixture or a jar put on the classpath by hand, and a file outside the repository the classpath
-  does not hold. Changed between the two runs, it is in neither stamp: the classpath digest reads
-  the content only of what the classpath holds outside the repository;
+- a file the test runtime classpath does not hold, such as a fixture git ignores that a test reads
+  by its path. Changed between the two runs, it is in neither stamp: the classpath digest reads the
+  content only of what the classpath holds;
 - environment variables, which are in no stamp: a test that reads one runs with whatever the
   complement run has.
 

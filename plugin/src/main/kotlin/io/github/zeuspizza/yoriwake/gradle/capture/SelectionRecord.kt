@@ -4,8 +4,10 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.SelectionRecordFile
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
 
 /**
  * `selection.tsv`: the tests a selecting run that narrowed ran to an outcome, stamped with what
@@ -185,16 +187,27 @@ internal object SelectionRecord {
      * A file or directory outside [rootDir] is digested by its content too, unless it is in Gradle's
      * module cache, whose paths name their content: a snapshot in a local repository or an included
      * build elsewhere can change at the same path between two runs at one commit. What is under
-     * [rootDir] is named only, since the commit and a clean tree fix what git tracks there and the
-     * build outputs made from it, and a jar the build rebuilds need not come out byte for byte alike.
+     * [rootDir] is digested by the content of each file of a directory and each entry of a jar,
+     * never a jar whole: the commit and a clean tree do not fix a file generated from git state, a
+     * property or the clock, and a jar the build rebuilds need not come out byte for byte alike.
+     * When that walk cannot vouch for every file, the digest is one no other run produces.
      */
-    fun classpathDigest(files: Iterable<File>, rootDir: File, gradleUserHome: File): String =
-        sha256(files.map { file ->
-            file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let { return@map "root:$it" }
+    fun classpathDigest(files: Iterable<File>, rootDir: File, gradleUserHome: File): String {
+        val built = mutableListOf<File>()
+        val named = files.map { file ->
+            file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let {
+                built += file
+                return@map "root:$it"
+            }
             val inHome = file.relativeToOrNull(gradleUserHome)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath
             if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
             (inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath) + " " + contentDigest(file)
-        })
+        }
+        val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true) }.getOrNull()
+        val content = (walk as? ClasspathFiles.Walk.Found)?.digests?.takeUnless { ClasspathFiles.UNREADABLE in it.values }
+            ?: return "unmatched ${UUID.randomUUID()}"
+        return sha256(named + content.map { (path, digest) -> "built $path $digest" })
+    }
 
     /** A file's bytes, or a directory's files by relative path and bytes; `absent` when neither. */
     private fun contentDigest(file: File): String {
