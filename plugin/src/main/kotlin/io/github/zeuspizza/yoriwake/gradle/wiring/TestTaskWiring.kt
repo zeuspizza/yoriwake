@@ -847,10 +847,14 @@ internal class TestTaskWiring(internal val settings: Settings) {
 // Top level, so the providers reading it capture no wiring instance.
 internal fun readFilterVerdict(test: Test, fromBuildScript: TestPatterns): FilterVerdict {
     val filter = test.filter
-    val internal = filter as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter
+    // A Gradle without this internal type or its method links to nothing here, which must refuse
+    // as an unreadable filter does rather than fail the task.
+    val commandLine = runCatching {
+        (filter as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter)?.commandLineIncludePatterns?.toSet()
+    }.getOrNull()
     return decideFilterVerdict(
-        unreadable = if (internal == null) filter.javaClass.name else null,
-        commandLine = internal?.commandLineIncludePatterns.orEmpty().toSet(),
+        unreadable = if (commandLine == null) filter.javaClass.name else null,
+        commandLine = commandLine.orEmpty(),
         fromBuildScript = fromBuildScript,
         live = TestPatterns.of(filter),
         framework = frameworkFilter(test),

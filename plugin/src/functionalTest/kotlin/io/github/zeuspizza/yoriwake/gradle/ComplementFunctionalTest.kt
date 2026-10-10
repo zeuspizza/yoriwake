@@ -4,6 +4,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -40,6 +41,21 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
         assertEquals(AgentContract.RUN_COMPLEMENTED, decisionNotes(dir)[AgentContract.OUTCOME_NOTE], result.output)
         assertFalse("recorded no coverage" in result.output, result.output)
         assertEquals(before, mapFiles(dir), "the complement run changed the map or the selection record")
+    }
+
+    @Test
+    fun `a complement in a fresh clone of the same commit leaves out what the selecting run ran`(@TempDir root: File) {
+        // Another CI job: its own checkout, compiled from nothing, with the selecting run's record.
+        val dir = File(root, "select")
+        val other = File(root, "complement")
+        selected(dir)
+        git(root, "clone", "-q", dir.absolutePath, other.absolutePath)
+        val saved = File(root, "saved").apply { File(dir, ".gradle/yoriwake").copyRecursively(this) }
+
+        val output = runner(other, "test", "-Pyoriwake.complement=${saved.absolutePath}").build().output
+
+        assertEquals(early, ranTests(other), output)
+        assertContains(output, "2 tests left out as already run, 4 run")
     }
 
     @Test
@@ -199,6 +215,41 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a record path that is a directory runs every test, as having no record`(@TempDir dir: File) {
+        captured(dir)
+        File(dir, "saved/${mapDir(dir).name}/${AgentContract.SELECTION_FILE}").mkdirs()
+
+        val output = runner(dir, "test", "-Pyoriwake.complement=saved").build().output
+
+        assertRecordedInFull(dir, output, "complement-no-record")
+        assertContains(output, "cannot be read as a file")
+    }
+
+    @Test
+    fun `a record that cannot be read runs every test, as having no record`(@TempDir dir: File) {
+        captured(dir)
+        val record = File(dir, "saved/${mapDir(dir).name}/${AgentContract.SELECTION_FILE}").apply { parentFile.mkdirs(); writeText("x") }
+        assumeTrue(record.setReadable(false) && !record.canRead(), "this platform cannot make a file unreadable to its owner")
+        try {
+            val output = runner(dir, "test", "-Pyoriwake.complement=saved").build().output
+
+            assertRecordedInFull(dir, output, "complement-no-record")
+            assertContains(output, "cannot be read as a file")
+        } finally {
+            record.setReadable(true)
+        }
+    }
+
+    @Test
+    fun `a disabled plugin leaves no test out of a complement run`(@TempDir dir: File) {
+        selected(dir)
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pyoriwake.disabled").build().output
+
+        assertEquals(everyTest, ranTests(dir), output)
+    }
+
+    @Test
     fun `a record another build of the same repository wrote runs every test, naming the build`(@TempDir root: File) {
         // The same sample twice: the repository's top level and a separate build beneath it.
         val other = File(root, "other")
@@ -228,6 +279,29 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
 
         val output = runner(dir, "test", COMPLEMENT, "-Pslf4j=2.0.12").build().output
 
+        assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
+        assertContains(output, "classpath")
+    }
+
+    @Test
+    fun `a file the build generates from a property differently runs every test, naming the classpath`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\nval buildInfo = tasks.register(\"buildInfo\") {\n" +
+                "    val flavor = providers.gradleProperty(\"flavor\").getOrElse(\"a\")\n" +
+                "    val out = layout.buildDirectory.dir(\"generated/res\")\n" +
+                "    inputs.property(\"flavor\", flavor)\n    outputs.dir(out)\n" +
+                "    doLast { out.get().file(\"build-info.properties\").asFile.writeText(\"flavor=\$flavor\\n\") }\n}\n" +
+                "dependencies { testRuntimeOnly(files(buildInfo)) }\n",
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE, "-Pflavor=a").build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertEquals("flavor=b\n", File(dir, "build/generated/res/build-info.properties").readText())
         assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
         assertContains(output, "classpath")
     }
