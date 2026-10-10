@@ -458,7 +458,14 @@ internal fun TestTaskWiring.configureComplement(
     }
     val where = if (from.isEmpty()) "this build's map directory" else from
     val copy = File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE)
-    val text = project.providers.fileContents(project.objects.fileProperty().fileValue(record)).asText.orNull
+    // A record that cannot be read is no record: it costs a full run, never the build. Asked before
+    // Gradle reads it, since a read that fails is a configuration cache problem however it is caught;
+    // a missing record is still Gradle's to read, so a record written later is not missed.
+    val text = if (!record.isFile || java.nio.file.Files.isReadable(record.toPath())) {
+        project.providers.fileContents(project.objects.fileProperty().fileValue(record)).asText.orNull
+    } else {
+        null
+    }
     val read = SelectionRecord.read(text)
     val unusable = when {
         // A trusted-map list makes a restored map directory unreviewed input, and the record in it is

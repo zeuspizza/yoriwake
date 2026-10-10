@@ -4,6 +4,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -196,6 +197,39 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
         val output = runner(dir, "test", "-Pyoriwake.complement=${saved.absolutePath}").build().output
 
         assertRecordedInFull(dir, output, "complement-no-record")
+    }
+
+    @Test
+    fun `a record path that is a directory runs every test, as having no record`(@TempDir dir: File) {
+        captured(dir)
+        File(dir, "saved/${mapDir(dir).name}/${AgentContract.SELECTION_FILE}").mkdirs()
+
+        val output = runner(dir, "test", "-Pyoriwake.complement=saved").build().output
+
+        assertRecordedInFull(dir, output, "complement-no-record")
+    }
+
+    @Test
+    fun `a record that cannot be read runs every test, as having no record`(@TempDir dir: File) {
+        captured(dir)
+        val record = File(dir, "saved/${mapDir(dir).name}/${AgentContract.SELECTION_FILE}").apply { parentFile.mkdirs(); writeText("x") }
+        assumeTrue(record.setReadable(false) && !record.canRead(), "this platform cannot make a file unreadable to its owner")
+        try {
+            val output = runner(dir, "test", "-Pyoriwake.complement=saved").build().output
+
+            assertRecordedInFull(dir, output, "complement-no-record")
+        } finally {
+            record.setReadable(true)
+        }
+    }
+
+    @Test
+    fun `a disabled plugin leaves no test out of a complement run`(@TempDir dir: File) {
+        selected(dir)
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pyoriwake.disabled").build().output
+
+        assertEquals(everyTest, ranTests(dir), output)
     }
 
     @Test
