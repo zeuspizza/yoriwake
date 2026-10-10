@@ -60,9 +60,9 @@ abstract class BreakAttempt : FunctionalTestSupport() {
 
     /**
      * Builds [sources] with [buildScript], commits them, records the map and checks that [target]
-     * (a test class) passes; applies [change] to the working tree, runs a selecting build, then a
-     * build with yoriwake disabled to learn whether the change fails the target at all, and
-     * classifies what the selecting build did.
+     * (a test class holding one test method) passes; applies [change] to the working tree, runs a
+     * selecting build, then a build with yoriwake disabled to learn whether the change fails the
+     * target at all, and classifies what the selecting build did.
      */
     protected fun attempt(
         dir: File,
@@ -77,6 +77,13 @@ abstract class BreakAttempt : FunctionalTestSupport() {
         runner(dir, "test").build()
         val captured = ranTests(dir)
         check(passed(dir, target) == true) { "$target did not pass when the map was recorded; ran $captured" }
+        // Selection keeps or skips each method, but a result file speaks for the whole class: a
+        // skipped method would hide behind a sibling that ran and passed.
+        val targetCases = Regex("<testcase ").findAll(File(dir, "build/test-results/test/TEST-$target.xml").readText())
+            .count()
+        check(targetCases == 1) {
+            "$target ran $targetCases test cases; a target holds one test method, so a skipped one cannot hide behind a sibling that ran"
+        }
 
         File(dir, "build/test-results").deleteRecursively()
         change(dir)
@@ -91,9 +98,10 @@ abstract class BreakAttempt : FunctionalTestSupport() {
         runner(dir, "test", "--rerun", "-Pyoriwake.disabled").run()
         val failsUnderFullRun = passed(dir, target) == false
 
-        val forced = (listOfNotNull(notes[AgentContract.REFUSAL_KIND_NOTE], notes[AgentContract.FULL_RUN_KIND_NOTE]) +
-            notes[AgentContract.FORCING_KINDS_NOTE].orEmpty().split(','))
-            .filter { it.isNotBlank() && it != AgentContract.RULE_NONE }.distinct()
+        val forced = notes.flatMap { note ->
+            listOfNotNull(note[AgentContract.REFUSAL_KIND_NOTE], note[AgentContract.FULL_RUN_KIND_NOTE]) +
+                note[AgentContract.FORCING_KINDS_NOTE].orEmpty().split(',')
+        }.filter { it.isNotBlank() && it != AgentContract.RULE_NONE }.distinct()
         return classify(
             Observed(
                 targetFailsUnderFullRun = failsUnderFullRun,
@@ -166,24 +174,37 @@ abstract class BreakAttempt : FunctionalTestSupport() {
         return count("failures") + count("errors") == 0
     }
 
-    /** The selecting run's notes, and each of [target]'s method rows as its reason and its rules. */
-    private fun decisions(dir: File, target: String): Pair<Map<String, String>, List<Pair<String, Set<String>>>> {
-        val file = File(dir, ".gradle/yoriwake").listFiles().orEmpty().filter(File::isDirectory)
-            .map { File(it, AgentContract.DECISIONS_FILE) }.singleOrNull(File::isFile)
-            ?: return emptyMap<String, String>() to emptyList()
-        val lines = file.readLines()
-        val notes = lines.filter { it.startsWith(AgentContract.NOTE_PREFIX) }.associate { line ->
-            val (key, value) = (line.removePrefix(AgentContract.NOTE_PREFIX) + "\t").split("\t", limit = 3)
-            key to value
+    /**
+     * The selecting run's notes, one map per test JVM that wrote decisions, and each of [target]'s
+     * method rows as its reason and its rules. Every JVM's part is read: the decisions file alone is
+     * whichever JVM wrote last, and may not hold the target.
+     */
+    private fun decisions(dir: File, target: String): Pair<List<Map<String, String>>, List<Pair<String, Set<String>>>> {
+        fun isPart(file: File) =
+            file.name.startsWith("${AgentContract.DECISIONS_FILE}.") && file.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX)
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles().orEmpty().filter(File::isDirectory)
+            .singleOrNull { d -> d.listFiles().orEmpty().any { it.name == AgentContract.DECISIONS_FILE || isPart(it) } }
+            ?: return emptyList<Map<String, String>>() to emptyList()
+        val files = mapDir.listFiles().orEmpty().filter(::isPart).sortedBy(File::getName)
+            .ifEmpty { listOf(File(mapDir, AgentContract.DECISIONS_FILE)).filter(File::isFile) }
+        val notes = mutableListOf<Map<String, String>>()
+        val rows = mutableListOf<Pair<String, Set<String>>>()
+        for (file in files) {
+            val lines = file.readLines()
+            notes += lines.filter { it.startsWith(AgentContract.NOTE_PREFIX) }.associate { line ->
+                val (key, value) = (line.removePrefix(AgentContract.NOTE_PREFIX) + "\t").split("\t", limit = 3)
+                key to value
+            }
+            val rules = lines.filter { it.startsWith(AgentContract.RULES_LINE_PREFIX) }.associate { line ->
+                val (id, named) = (line.removePrefix(AgentContract.RULES_LINE_PREFIX) + "\t").split("\t", limit = 3)
+                id to named.split(',').filter(String::isNotBlank).toSet()
+            }
+            rows += lines.filter { it.isNotBlank() && !it.startsWith("#") }
+                .map { it.split("\t") }
+                .filter { it.size >= 3 && it[0].contains("[class:$target]") && it[0].contains("[method:") }
+                .map { it[2] to rules[it[0]].orEmpty() }
         }
-        val rules = lines.filter { it.startsWith(AgentContract.RULES_LINE_PREFIX) }.associate { line ->
-            val (id, named) = (line.removePrefix(AgentContract.RULES_LINE_PREFIX) + "\t").split("\t", limit = 3)
-            id to named.split(',').filter(String::isNotBlank).toSet()
-        }
-        val ofTarget = lines.filter { it.isNotBlank() && !it.startsWith("#") }
-            .map { it.split("\t") }
-            .filter { it.size >= 3 && it[0].contains("[class:$target]") && it[0].contains("[method:") }
-        return notes to ofTarget.map { it[2] to rules[it[0]].orEmpty() }
+        return notes to rows.distinct()
     }
 
     private fun gitStatus(dir: File): String =
