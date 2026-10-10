@@ -14,6 +14,9 @@ response time and no support window are promised. If a report shows a test being
 should have run, the advisory names the safe step (run without `-Pyoriwake.select`) as soon as it
 is confirmed. How fixes are released is in [RELEASING.md](RELEASING.md).
 
+For now reports are answered by the maintainer alone, with no backup. A second person with access
+to private advisories is named before 1.0.
+
 ## Supported versions
 
 The latest release. Fixes ship as a patch on the latest minor version; upgrade to get them.
