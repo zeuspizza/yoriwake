@@ -34,6 +34,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   Map: left alone.
 - A test that passed and failed in one capture, as a retried test can, is recorded `FLAKY` and keeps
   running. Map: left alone; a 0.1.0 audit counts `FLAKY` lines as malformed.
+- The reference's GitHub workflow only records; pull requests select through yoriwake-action, which
+  passes a trusted-map list. Map: left alone.
 
 ### Fixed
 
