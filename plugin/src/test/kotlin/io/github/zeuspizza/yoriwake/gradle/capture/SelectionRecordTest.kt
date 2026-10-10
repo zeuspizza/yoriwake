@@ -4,6 +4,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -309,8 +310,21 @@ class SelectionRecordTest {
         val here = File(root, "here")
         val broken = File(here, "build/libs/here.jar").apply { parentFile.mkdirs(); writeText("not a jar") }
         val digest = { SelectionRecord.classpathDigest(listOf(broken), here, home) }
+        val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", digest(), "d")
 
         assertNotEquals(digest(), digest())
+        assertContains(SelectionRecord.mismatch(recorded, recorded.copy(classpath = "c")).orEmpty(), "build/libs/here.jar could not be read")
+    }
+
+    @Test
+    fun `the build's root directory on the classpath digests to a value no run matches, saying so`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here").apply { mkdirs() }
+        val digest = { SelectionRecord.classpathDigest(listOf(here), here, home) }
+        val now = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", digest(), "d")
+
+        assertNotEquals(digest(), digest())
+        assertContains(SelectionRecord.mismatch(now.copy(classpath = "c"), now).orEmpty(), "root directory")
     }
 
     @Test

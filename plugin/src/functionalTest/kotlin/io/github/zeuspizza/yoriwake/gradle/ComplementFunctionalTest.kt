@@ -44,6 +44,21 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a complement in a fresh clone of the same commit leaves out what the selecting run ran`(@TempDir root: File) {
+        // Another CI job: its own checkout, compiled from nothing, with the selecting run's record.
+        val dir = File(root, "select")
+        val other = File(root, "complement")
+        selected(dir)
+        git(root, "clone", "-q", dir.absolutePath, other.absolutePath)
+        val saved = File(root, "saved").apply { File(dir, ".gradle/yoriwake").copyRecursively(this) }
+
+        val output = runner(other, "test", "-Pyoriwake.complement=${saved.absolutePath}").build().output
+
+        assertEquals(early, ranTests(other), output)
+        assertContains(output, "2 tests left out as already run, 4 run")
+    }
+
+    @Test
     fun `a fail-fast selecting run leaves no record, so a test whose result it dropped runs in the complement`(@TempDir dir: File) {
         captured(dir)
         File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
@@ -207,6 +222,7 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
         val output = runner(dir, "test", "-Pyoriwake.complement=saved").build().output
 
         assertRecordedInFull(dir, output, "complement-no-record")
+        assertContains(output, "cannot be read as a file")
     }
 
     @Test
@@ -218,6 +234,7 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
             val output = runner(dir, "test", "-Pyoriwake.complement=saved").build().output
 
             assertRecordedInFull(dir, output, "complement-no-record")
+            assertContains(output, "cannot be read as a file")
         } finally {
             record.setReadable(true)
         }

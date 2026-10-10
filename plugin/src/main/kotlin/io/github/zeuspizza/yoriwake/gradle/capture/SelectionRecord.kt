@@ -49,7 +49,11 @@ internal object SelectionRecord {
         now.task != recorded.task -> "the task: ${recorded.task} in the record, ${now.task} here"
         now.buildRoot != recorded.buildRoot || now.buildPath != recorded.buildPath ->
             "the build: ${describe(recorded)} in the record, ${describe(now)} here"
-        now.classpath != recorded.classpath -> "the test runtime classpath"
+        now.classpath != recorded.classpath -> "the test runtime classpath" + (
+            unmatchedReason(now.classpath)?.let { ", whose build output this run could not digest: $it" }
+                ?: unmatchedReason(recorded.classpath)?.let { ", whose build output the selecting run could not digest: $it" }
+                ?: ""
+            )
         now.configuration != recorded.configuration ->
             "the task's configuration (its system properties, JVM arguments or test filters)"
         else -> null
@@ -190,11 +194,14 @@ internal object SelectionRecord {
      * [rootDir] is digested by the content of each file of a directory and each entry of a jar,
      * never a jar whole: the commit and a clean tree do not fix a file generated from git state, a
      * property or the clock, and a jar the build rebuilds need not come out byte for byte alike.
-     * When that walk cannot vouch for every file, the digest is one no other run produces.
+     * When that walk cannot vouch for every file, or the root itself is on the classpath, the digest
+     * is one no other run produces, carrying why.
      */
     fun classpathDigest(files: Iterable<File>, rootDir: File, gradleUserHome: File): String {
         val built = mutableListOf<File>()
         val named = files.map { file ->
+            // The walk reads only what is beneath the root, so the root itself would be named only.
+            if (file.absoluteFile == rootDir.absoluteFile) return unmatched("the build's root directory is on it")
             file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let {
                 built += file
                 return@map "root:$it"
@@ -203,11 +210,22 @@ internal object SelectionRecord {
             if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
             (inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath) + " " + contentDigest(file)
         }
-        val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true) }.getOrNull()
-        val content = (walk as? ClasspathFiles.Walk.Found)?.digests?.takeUnless { ClasspathFiles.UNREADABLE in it.values }
-            ?: return "unmatched ${UUID.randomUUID()}"
+        val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true) }
+            .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
+            is ClasspathFiles.Walk.Refused -> return unmatched(walk.reason)
+            is ClasspathFiles.Walk.Found -> walk.digests
+        }
+        content.entries.firstOrNull { it.value == ClasspathFiles.UNREADABLE }?.let { return unmatched("${it.key} could not be read") }
         return sha256(named + content.map { (path, digest) -> "built $path $digest" })
     }
+
+    // The reason rides in the digest so that a complement refusing over it can say why.
+    private fun unmatched(reason: String) = "$UNMATCHED${UUID.randomUUID()} $reason"
+
+    /** Why [digest] is one no run matches, or null when it is a digest of content. */
+    private fun unmatchedReason(digest: String) = digest.takeIf { it.startsWith(UNMATCHED) }?.substringAfter(' ', "")
+
+    private const val UNMATCHED = "unmatched:"
 
     /** A file's bytes, or a directory's files by relative path and bytes; `absent` when neither. */
     private fun contentDigest(file: File): String {

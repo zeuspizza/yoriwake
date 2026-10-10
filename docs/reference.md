@@ -920,11 +920,19 @@ jobs:
 A matrix leg the stamp cannot tell apart from another, such as one set only by an environment
 variable, needs a record per leg: name the artifact after the leg, and restore that leg's.
 
+Each job compiles on its own, so the stamp matches only when the build's output on the classpath
+comes out the same in both: compiled classes, processed resources and the entries of your own jars
+do, but a file the build writes the time or the host into does not (a Spring Boot
+`build-info.properties`, a `git.properties` with `git.build.time`), and every complement then runs
+everything, naming the classpath. Write such values only in release builds, as for a
+[selecting run](#generated-files-on-the-test-classpath).
+
 What it cannot see:
 
 - a file the test runtime classpath does not hold, such as a fixture git ignores that a test reads
   by its path. Changed between the two runs, it is in neither stamp: the classpath digest reads the
-  content only of what the classpath holds;
+  content only of what the classpath holds, and only the name of what it holds under the root's
+  `.gradle`, Gradle's and the plugin's own state;
 - environment variables, which are in no stamp: a test that reads one runs with whatever the
   complement run has.
 

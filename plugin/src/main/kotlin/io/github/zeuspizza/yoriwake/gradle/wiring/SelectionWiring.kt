@@ -474,6 +474,8 @@ internal fun TestTaskWiring.configureComplement(
             "the ${AgentContract.SELECTION_FILE} for ${test.path} in $where is not one the trusted-map list " +
             "vouches for, since a restored cache could have written it; with -P${Settings.TRUSTED_MAPS}, pass " +
             "the selecting run's own record as -P${Settings.COMPLEMENT}=<dir>"
+        text == null && record.exists() -> RefusalKind.COMPLEMENT_NO_RECORD to
+            "the ${AgentContract.SELECTION_FILE} for ${test.path} in $where cannot be read as a file"
         text == null -> RefusalKind.COMPLEMENT_NO_RECORD to
             "no ${AgentContract.SELECTION_FILE} for ${test.path} in $where: no selecting run that narrowed at a clean tree left one"
         read.failure() != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to
