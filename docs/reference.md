@@ -82,6 +82,12 @@ Files in the map directory that are meant to be read:
   the paths that force the run, each with `written-during-capture`, `generated-in-sources`,
   `untracked`, or no origin for a path HEAD tracks.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
+- `observation.json`: written by an [observing run](#observing-before-you-select): what selection
+  would have left out, and which of those failed.
+- `selection.tsv`: written by a selecting run that narrowed at a clean tree: the tests that ran, for
+  a [complement run](#running-what-a-selection-skipped).
+- `map-digest`: the map's digest, which [`-Pyoriwake.trustedMaps`](#who-can-write-the-map-you-restore)
+  lists.
 
 ## When it refuses to select
 
@@ -559,7 +565,7 @@ allprojects {
 
 ```yaml
 env:
-  YORIWAKE_VERSION: 0.1.0       # the version your build applies
+  YORIWAKE_VERSION: 0.2.0       # the version your build applies
 
 jobs:
   test:
@@ -803,14 +809,18 @@ summarises it:
 
 | Field | Meaning |
 |---|---|
+| `version` | The format of this file, `1`; it changes when a field's meaning changes |
+| `task` | The test task's path |
 | `commit` | The commit the tests ran at |
 | `mapCaptureCommit` | The capture commit of the map the selection was computed against |
 | `note` | Why no outcome of this run was read (the task did no work, or captured nothing), or null |
+| `outcomesRecorded` | Whether this run's test outcomes were read; `false` with a `note` |
 | `observedOutcome` | `narrowed`, or `full-run` when selection would have run everything, with its `fullRunKind` and `refusalKind`. A [requested full run](#forcing-a-full-run) shows here: `-Pyoriwake.fullRun` reads `daemon-refused` and `full-run-requested` |
 | `failures`, `failuresKept` | How many tests failed in this run, and how many of them selection would have run |
 | `wouldBeMisses` | Each failing test selection would have left out, with its outcome (`FAILED` or `ABORTED`). A failing invocation of a parameterised test counts under its template, and a failing `@BeforeAll` or `@AfterAll` fails every test of its class |
 | `wouldBeSkipped`, `recordedInstrumentedTestNanos` | How many tests selection would have left out, and their recorded durations, measured under instrumentation and summed over forks |
 | `complete`, `testsWithoutVerdict` | `false` when a test JVM's decision record is missing or cut short. Its tests ran with no verdict and are not counted as skipped |
+| `caveats` | Fixed sentences on what an observation cannot show, the ones listed below |
 
 What it does not show:
 
@@ -891,7 +901,7 @@ image and JDK, and restores the selecting job's record outside the checkout:
 ```yaml
 jobs:
   select:
-    # ... the job from the CI section, which runs ./gradlew test -Pyoriwake.select ...
+    # ... a selecting job: yoriwake-action on a pull request, or ./gradlew test -Pyoriwake.select ...
     steps:
       # ...
       - uses: actions/upload-artifact@v4
@@ -1003,6 +1013,22 @@ have:
 Two other messages are not upgrades: a map holding records but no `schema-version` is a capture
 that died partway (delete the directory and capture again), and a directory with neither predates
 format versioning.
+
+### From 0.1.0 to 0.2.0
+
+- **Your map is discarded.** The format moves from 6 to 7, so the first 0.2.0 build refuses the
+  0.1.0 map, runs everything and records; selection resumes on the next build. Do not purge
+  caches. The entries marked "Map: left alone" describe each change on its own, not a 0.1.0 map.
+- **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.2.0`; it keys the cache, so the
+  upgrade is one ordinary cache miss. The recipe above now only records: pull requests select
+  through [yoriwake-action](https://github.com/zeuspizza/yoriwake-action), which passes the
+  trusted-map list. A 0.1.0 pull-request step that still passes `-Pyoriwake.select` keeps working,
+  but narrows from whatever entry it restores, a pull request's own included. Before using
+  `-Pyoriwake.complement`, add `!.gradle/yoriwake/*/selection.tsv` to a cache path that stores the
+  whole map directory.
+- **What runs changes without a new flag:** a Develocity Test Distribution or Predictive Test
+  Selection task is declined; a JUnit Platform test filter set in the build script selects and
+  dates the map; tests named with `--tests` or by an IDE run as named.
 
 ## Prior art
 
