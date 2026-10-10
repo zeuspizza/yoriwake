@@ -529,8 +529,15 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
 A CI job starts with no map, so every run captures and none selects unless one is restored.
 Cache `.gradle/yoriwake`, restore the newest one available, and let a miss run everything.
 
-List the repository's default branch, so the same test command can select on every event and
-still run everything, and refresh the map, on that branch:
+On GitHub Actions, use [yoriwake-action](https://github.com/zeuspizza/yoriwake-action). In one
+step it caches the map, fetches the history selection needs, records on the default branch, and
+on pull requests selects only from a map a run of the default branch vouched for (see [Who can
+write the map you restore](#who-can-write-the-map-you-restore)). Its README lists [when it runs
+everything](https://github.com/zeuspizza/yoriwake-action#when-it-runs-everything) and the warning
+each case prints.
+
+Where one test command runs on every event, list the repository's default branch, so the command
+can select elsewhere and still run everything, and refresh the map, on that branch:
 
 ```kotlin
 yoriwake { fullRunBranches.add("main") }
@@ -574,10 +581,8 @@ jobs:
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
           restore-keys: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-
 
-      # On the default branch fullRunBranches makes this run everything, so it captures a full map.
-      - run: >-
-          ./gradlew test -Pyoriwake.select
-          -Pyoriwake.base=origin/${{ github.base_ref || github.event.repository.default_branch }}
+      # Records: this workflow passes no trusted-map list, so it does not select.
+      - run: ./gradlew test
 
       - if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: actions/cache/save@v4
@@ -588,6 +593,10 @@ jobs:
             !.gradle/yoriwake/*/selection.tsv
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
 ```
+
+This hand-written workflow only records and saves. A selecting step in it would narrow from
+whatever its restore found, a cache entry a pull request saved included; leave selection on pull
+requests to the action, which passes the trusted-map list.
 
 ### What the key is for
 
@@ -756,6 +765,14 @@ build.
 The list is only as good as where it comes from: write it from the digests a run on the default
 branch recorded, never from the restored directory. Where no list is passed, nothing is checked and
 selection trusts any restored map, as in 0.1.0.
+
+On GitHub, [yoriwake-action](https://github.com/zeuspizza/yoriwake-action#which-maps-a-pull-request-trusts)
+writes the list: a push to the default branch or a schedule that saves the map uploads its digests
+as an artifact, and a pull request lists the digests of the artifact whose run GitHub records as
+such a run of this repository, at a commit the default branch contains. When none qualifies, the
+pull request passes no selection flag and records every test.
+Nothing supplies a list yet on GitLab, CircleCI, Jenkins or Azure Pipelines, or in a hand-written
+GitHub workflow: selection there runs without one.
 
 What the check cannot cover:
 
