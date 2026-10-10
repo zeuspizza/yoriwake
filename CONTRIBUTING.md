@@ -76,6 +76,10 @@ most useful thing it asks is whether a test that should have run did not.
 
 Security issues go through [SECURITY.md](SECURITY.md), not the issue tracker.
 
+## Releases
+
+How a version is cut, and how a fix reaches you: [RELEASING.md](RELEASING.md).
+
 ## Licence
 
 Contributions are accepted under the [Apache License 2.0](LICENSE), the project's licence.
