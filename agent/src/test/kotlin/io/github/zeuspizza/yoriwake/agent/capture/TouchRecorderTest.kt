@@ -62,6 +62,33 @@ class TouchRecorderTest {
         assertEquals(listOf(AgentContract.TOUCH_READ to "build/classes/java/main/com/acme/Codec.class"), drained(recorder))
     }
 
+    /**
+     * A loader that reads the class file it is defining from its `getPermissions`. Declared in the
+     * agent's own package, so its frame is passed over with the agent's and only the JDK's frames
+     * stand between the read and the definition, as when the JDK reads a class file to define it.
+     */
+    private class JdkOnlyReader(private val dir: File, private val recorder: TouchRecorder) :
+        java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), null) {
+        var ran = false
+
+        override fun getPermissions(codesource: java.security.CodeSource?): java.security.PermissionCollection {
+            recorder.read(File(dir, "com/acme/Other.class"))
+            ran = true
+            return super.getPermissions(codesource)
+        }
+    }
+
+    @Test
+    fun `a class file read with only the JDK's frames between it and the definition is not a read`(@TempDir dir: File) {
+        File(dir, "com/acme/Other.class").apply { parentFile.mkdirs() }.writeBytes(classBytes("com/acme/Other"))
+        val recorder = TouchRecorder()
+        val loader = JdkOnlyReader(dir, recorder)
+        loader.use { it.loadClass("com.acme.Other") }
+
+        assertTrue(loader.ran, "the loader's getPermissions ran while it defined the class")
+        assertEquals(emptyList(), drained(recorder))
+    }
+
     @Test
     fun `a jar opened by something other than the JDK's zip code counts as every class in it`(@TempDir dir: File) {
         val recorder = TouchRecorder()
