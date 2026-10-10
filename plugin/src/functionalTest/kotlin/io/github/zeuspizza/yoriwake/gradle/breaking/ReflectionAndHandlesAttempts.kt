@@ -118,6 +118,24 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
         assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
     }
 
+    // Track: code reading. Boundary: past a proxy, the first judged frame is whoever called the
+    // proxy, here the JDK's stream code. A proxy dispatches to a handle someone else chose, so JDK
+    // code beyond it did not ask for the definition and must not make it the JDK's own.
+    @Test
+    fun `a hidden copy defined through an interface proxy that JDK code calls is held by its definition`(
+        @TempDir dir: File,
+    ) {
+        val result = attempt(
+            dir, "dev.sample.A1HiddenCopyTest", Aim.Row("shares-jvm-changed-class"),
+            listOf(codec, other, first,
+                hiddenCopyTest("(MethodHandles.Lookup) java.util.stream.Stream.of((Object) bytes).map(definer).findFirst().get()"),
+                codecTest, classOrderByName),
+            buildScript = copiedCodecBuild,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
+
     // Track: code reading. Boundary: the frame above a hooked call is its caller, and a method
     // reference's own class is hidden, so without hidden frames the stream that calls it would be
     // taken for the caller. The test JVM is Java 21, where the foreign-function API is a preview.

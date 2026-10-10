@@ -126,6 +126,11 @@ final class JdkCode {
         return isJdk(frame) || java.lang.reflect.Proxy.isProxyClass(frame) || methodHandleProxy(frame);
     }
 
+    /** Whether a class is a {@code java.lang.reflect.Proxy} class or a method-handle proxy. */
+    static boolean isProxy(Class<?> frame) {
+        return java.lang.reflect.Proxy.isProxyClass(frame) || methodHandleProxy(frame);
+    }
+
     private static boolean methodHandleProxy(Class<?> frame) {
         Module module = frame.getModule();
         return frame.getName().startsWith("jdk.MHProxy") && module.isNamed() && module.getLayer() == null;

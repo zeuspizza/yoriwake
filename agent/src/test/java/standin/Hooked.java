@@ -5,6 +5,7 @@ import java.lang.invoke.MethodHandleProxies;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.Optional;
+import java.util.ServiceLoader;
 import java.util.function.Consumer;
 
 /**
@@ -53,6 +54,37 @@ public final class Hooked {
                     MethodType.methodType(void.class, Runnable.class))
                     .asType(MethodType.methodType(void.class, Object.class));
             MethodHandleProxies.asInterfaceInstance(Consumer.class, call).accept(sink);
+        }
+
+        /** The same proxy, called by JDK code rather than by this class. */
+        @SuppressWarnings("unchecked")
+        public static void throughAnInterfaceProxyTheJdkCalls(Runnable sink) throws Throwable {
+            MethodHandle call = MethodHandles.lookup().findStatic(Hooked.class, "call",
+                    MethodType.methodType(void.class, Runnable.class))
+                    .asType(MethodType.methodType(void.class, Object.class));
+            Optional.of(sink).ifPresent(MethodHandleProxies.asInterfaceInstance(Consumer.class, call));
+        }
+
+        /** JDK code constructs a provider through reflection, with no proxy, and its constructor runs the sink. */
+        public static void constructedByTheJdk(Runnable sink) {
+            Provider.sink = sink;
+            try {
+                ServiceLoader.load(Service.class, Hooked.class.getClassLoader()).findFirst();
+            } finally {
+                Provider.sink = null;
+            }
+        }
+    }
+
+    /** The service {@link Provider} is registered for. */
+    public interface Service {}
+
+    /** Stands where the hooked method stands: its constructor runs the sink. */
+    public static final class Provider implements Service {
+        static Runnable sink;
+
+        public Provider() {
+            sink.run();
         }
     }
 }

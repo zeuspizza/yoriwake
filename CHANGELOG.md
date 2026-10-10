@@ -58,6 +58,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   alone.
 - Native loads, class definitions and foreign calls by your own code on the boot class path are
   recorded. Map: discarded, with the same rebuild.
+- A class definition or foreign call made through an interface proxy that JDK code calls is
+  recorded. Map: discarded, with the same rebuild.
 
 ## [0.1.0] - 2026-10-04
 
