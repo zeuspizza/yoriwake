@@ -237,16 +237,17 @@ class TestTaskWiringCharacterizationTest {
             #7 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #8 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/ran.marker
             #9 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
+              +file .gradle/yoriwake/test-7f007aca/ran.marker
             #10 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
+              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
             #11 Execute doFirst {} action
-              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+              +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
             #12 Execute doFirst {} action
-            #13 Execute executeTests
-            #14 Execute doLast {} action
+              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+            #13 Execute doFirst {} action
+            #14 Execute executeTests
+            #15 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, captureActions.trimEnd())
@@ -286,6 +287,7 @@ class TestTaskWiringCharacterizationTest {
             #11 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #12 Execute doFirst {} action
+            #13 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/ran.marker
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv.<pid>-<n>.part
@@ -300,13 +302,13 @@ class TestTaskWiringCharacterizationTest {
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/plan-complete
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/raw-schema-version
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/touches.tsv
-            #13 Execute doFirst {} action
             #14 Execute doFirst {} action
             #15 Execute doFirst {} action
             #16 Execute doFirst {} action
+            #17 Execute doFirst {} action
               -file build/jacoco/test.exec
-            #17 Execute executeTests
-            #18 Execute doLast {} action
+            #18 Execute executeTests
+            #19 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, selectActions.trimEnd())

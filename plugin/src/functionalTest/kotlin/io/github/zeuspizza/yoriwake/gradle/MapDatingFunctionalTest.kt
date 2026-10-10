@@ -1019,6 +1019,22 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `an unfiltered capture dates the map over a reason an earlier filtered run left behind`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest, classOrderByName)
+        committed(dir)
+        runner(dir, "test").build()
+        changeBeta(dir)
+        commit(dir, "an unrelated change")
+        // As a filtered run leaves it when its decode never runs.
+        io.github.zeuspizza.yoriwake.gradle.wiring.undatedRunMarker(CoverageDecoder.recordsDir(mapDirOf(dir)))
+            .writeText("filtered by an earlier run")
+
+        val output = runner(dir, "test").build().output
+
+        assertEquals(head(dir), captureStamp(dir), output)
+    }
+
+    @Test
     fun `a build-script filter naming one test dates the map with that test alone`(@TempDir dir: File) {
         capturedUnderScriptFilter(dir, scriptFiltered("includeTestsMatching(\"*BetaTest\")"))
         changeBeta(dir)

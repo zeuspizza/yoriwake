@@ -127,12 +127,22 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   with another digest (`map-untrusted`). The map is cleared and the run records a new one; see
   [Who can write the map you restore](#who-can-write-the-map-you-restore).
 
-Tests named on the command line with `--tests` all run: a selecting run declines selection for
-that task (`tests-named`), runs every test the filter matches whatever the map says, and leaves the
-map as it was. The decline takes the place of any other refusal on the task except a Develocity
-decline, which also runs every test the filter matches, and `explain.json` reports it when
-`yoriwakeExplain<Task>` runs in the same build. A task whose `--tests` patterns
-cannot be read declines too (`decline-undetermined`) and runs everything.
+Tests named on the command line with `--tests`, or added to the task's filter after the build
+script ran, all run: a selecting run declines selection for that task (`tests-named`), runs every
+test the filter matches whatever the map says, and leaves the map as it was. The decline takes the
+place of any other refusal on the task except a Develocity decline, which also runs every test the
+filter matches, and `explain.json` reports it when `yoriwakeExplain<Task>` runs in the same build. A
+task whose `--tests` patterns cannot be read declines too (`decline-undetermined`) and runs
+everything.
+
+That covers an IDE that runs a test through Gradle: its test launcher adds the class or method it
+was asked for to the task's filter, and the run declines as it would for `--tests`, with the
+configuration cache on or off, storing or reusing its entry. The filter is read as the task
+executes. `explain.json` sees a pattern a `gradle.taskGraph.whenReady` hook adds, but never a test
+launcher's, which asks for the test task alone. A pattern counts as added only when the build
+script did not set the same one: on Gradle 9, a test launcher asking for exactly the class an
+`includeTestsMatching` in the build script already names adds nothing new, and that run narrows
+within the build script's filter.
 
 A filter given for one run, with `--tests` or as patterns an IDE's test launcher adds, does not
 speak for the whole suite: the run leaves the map as it was. On the JUnit Platform, a filter the
@@ -143,7 +153,8 @@ the build script sets only under a property (`if (hasProperty("quick")) ...`), w
 tell from a permanent one: a run with the property drops the other tests from the map, as a tag
 filter under a property does. A pattern is the build script's when it is set by the time every
 build script and `afterEvaluate` has run; one added later, by an IDE's test launcher or a
-`gradle.taskGraph.whenReady` hook, counts as given for the run. On JUnit 4 or TestNG off the
+`gradle.taskGraph.whenReady` hook, counts as given for the run, and a recording or observing run
+under it keeps the records of every test it did not run. On JUnit 4 or TestNG off the
 Platform, a filter in the build script leaves the map undated. A run that leaves tests out by tag
 or engine (`includeTags`, `excludeTags`, `includeEngines`, `excludeEngines`), JUnit 4 category or
 TestNG group does not speak for the whole suite either, but it does date the map: the tests it

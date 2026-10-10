@@ -106,7 +106,7 @@ internal fun TestTaskWiring.configureSelection(
     mapDir: File,
     buildMemo: BuildMemo?,
     runPlan: RunPlan,
-    filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
+    fromBuildScript: TestPatterns,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -140,7 +140,7 @@ internal fun TestTaskWiring.configureSelection(
             ).takeUnless { it.capture }
             // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
             // map must not promise that its capture clears the refusal.
-            val undated = filterVerdict.get().undatedBy(test.failFast)
+            val undated = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast)
             task.logger.lifecycle(
                 "[yoriwake] ${task.path}: ${age.reason}, and the whole suite runs. $cause; " +
                     when {
@@ -564,14 +564,17 @@ internal fun declinedForNamedTests(test: Test, planned: RefusalKind? = null): Bo
 
 /**
  * Declines selection on a task run with `--tests`: a developer who names tests expects every one of
- * them to run, so the filter Gradle applies decides alone. Decided at execution, after Gradle has
- * applied `--tests`; registered after every other selection action, so it runs before them, and
- * each of them returns on it. A filter whose patterns cannot be read declines too.
+ * them to run, so the filter Gradle applies decides alone. So does a run whose filter gained include
+ * patterns after the build script ran, as an IDE's test launcher adds the tests it was asked for.
+ * Decided at execution, from the filter itself: Gradle applies `--tests` after configuration, and a
+ * test launcher's patterns after the configuration cache stored its entry. Registered after every
+ * other selection action, so it runs before them, and each of them returns on it. A filter whose
+ * patterns cannot be read declines too. [fromBuildScript] is the filter as the build script left it.
  */
 internal fun TestTaskWiring.declineNamedTests(
     test: Test,
     mapDir: File,
-    filterVerdict: org.gradle.api.provider.Provider<FilterVerdict>,
+    fromBuildScript: TestPatterns,
     observing: Boolean,
 ) {
     // Held from configuration time: a task action may not reach Task.extensions under the
@@ -579,7 +582,7 @@ internal fun TestTaskWiring.declineNamedTests(
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
     test.doFirst {
         if (declinedUnderDevelocity(test)) return@doFirst
-        val (kind, reason) = filterVerdict.get().namedTestsDecline() ?: return@doFirst
+        val (kind, reason) = readFilterVerdict(test, fromBuildScript).namedTestsDecline() ?: return@doFirst
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: $reason, so selection is declined and every test the filter " +
                 "matches runs."

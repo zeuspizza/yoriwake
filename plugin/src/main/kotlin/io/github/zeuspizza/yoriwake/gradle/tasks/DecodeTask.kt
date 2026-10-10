@@ -25,6 +25,7 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingStats
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingSnapshot
 import io.github.zeuspizza.yoriwake.gradle.wiring.ranMarker
+import io.github.zeuspizza.yoriwake.gradle.wiring.undatedRunMarker
 import org.gradle.api.DefaultTask
 import org.gradle.api.Project
 import org.gradle.api.provider.ListProperty
@@ -120,6 +121,16 @@ internal abstract class DecodeTask : DefaultTask() {
         val pending = CaptureStart.Pending.decode(
             pendingHead(mapDir).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
         )
+        // Why the run cannot date the map, as its test task read its filter while executing. Over
+        // the inputs below, which a reused configuration fixed before an IDE's test launcher added
+        // its patterns. Read once and removed, as the walk above.
+        val undatedAtExecution = undatedRunMarker(CoverageDecoder.recordsDir(mapDir)).let { file ->
+            file.takeIf(File::isFile)?.let { runCatching { it.readText().trim() }.getOrDefault("") }
+                .also { runCatching { file.delete() } }
+        }
+        val datesTheMap = undatedAtExecution == null && datesTheMap.getOrElse(false)
+        val wholeTask = undatedAtExecution == null && wholeTask.getOrElse(false)
+        val undatedReason = undatedAtExecution ?: undatedReason.getOrElse("")
         // Before every return below, so each of them leaves a report of this run.
         if (observing.getOrElse(false)) {
             observe(taskPath, pending, when {
@@ -201,7 +212,7 @@ internal abstract class DecodeTask : DefaultTask() {
         // Dated only if every test JVM finished: one that died mid-plan leaves older
         // records for tests it never reached.
         val unfinished = CoverageDecoder.unfinishedWorkers(mapDir)
-        val observedEverything = datesTheMap.getOrElse(false) && (!selecting || executedEverything)
+        val observedEverything = datesTheMap && (!selecting || executedEverything)
         if (observedEverything && unfinished.isNotEmpty()) {
             logger.warn(
                 "[yoriwake] $taskPath: ${unfinished.joinToString()} did not finish its run (a test " +
@@ -220,7 +231,7 @@ internal abstract class DecodeTask : DefaultTask() {
             val reason = when {
                 // A narrowed selecting run is not a capture; it never meant to write the map.
                 selecting && !executedEverything -> null
-                !datesTheMap.getOrElse(false) -> undatedReason.getOrElse("").ifEmpty { "the run was filtered" }
+                !datesTheMap -> undatedReason.ifEmpty { "the run was filtered" }
                 unfinished.isNotEmpty() -> "${unfinished.joinToString()} did not finish"
                 headMoved -> "HEAD moved from ${startHead ?: "nothing"} to ${headNow ?: "something unreadable"} during the run"
                 startReflogs.first != reflogsNow.first -> "HEAD's reflog changed during the run"
@@ -259,7 +270,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 mapDir,
                 patterns,
                 selecting,
-                wholeTask.getOrElse(false),
+                wholeTask,
                 loadedScope.getOrElse(emptyList()),
                 captureCommit,
                 datesMap,
