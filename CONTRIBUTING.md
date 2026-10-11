@@ -1,8 +1,7 @@
 # Contributing
 
-yoriwake is maintained by the zeuspizza organisation and developed with AI assistance. Contributions
-are welcome; reviews happen when the maintainers have time, and no review or response time is
-promised.
+Contributions are welcome; reviews happen when the maintainers have time, and no review or response
+time is promised.
 
 What the tool does, what it prints and what it refuses is in [docs/reference.md](docs/reference.md)
 and is not repeated here.
