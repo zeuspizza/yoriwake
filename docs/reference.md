@@ -264,12 +264,17 @@ these are the rules that keep them selected:
   method (JUnit Jupiter's `@Test`, `@RepeatedTest`, `@TestFactory`, `@TestTemplate` or
   `@ParameterizedTest`, JUnit 4's `@Test` or TestNG's `@Test`), the map holds tests of it, and no
   other class or resource of this build names it. An edit to it then selects its own tests and what
-  coverage selects, plus every test at or after the first time, after discovery, that something
-  looked it up by name, defined a copy of it in another class loader, read its class or source
-  file, or executed it from another test class. It
-  falls back to the wider rule, so that every test in its JVM runs on an edit to it, when:
+  coverage selects, plus every test at or after the first of its own tests in that JVM, since its
+  code can hand its class to whatever runs later, and every test at or after the first time, after
+  discovery, that something looked it up by name, defined a copy of it in another class loader, read
+  its class or source file, or executed it from another test class. The tests before those points
+  stay skipped. It falls back to the wider rule, so that every test in its JVM runs on an edit to
+  it, when:
   - a test in that JVM ran on an engine other than JUnit Jupiter, JUnit Vintage, the JUnit Platform
     Suite, JUnit 4, TestNG, Spock, Kotest, ArchUnit or jqwik;
+  - your own code ran in that JVM during discovery: a class or method orderer, a display-name
+    generator, a post-discovery filter, a discovery or launcher session listener, a runner or engine
+    that runs test code while it builds the tests. Discovery hands such code every test class;
   - a lookup hook could not be installed, or a native agent (`-agentlib`, `-agentpath`) is attached.
 
   From the point where a [reviewed native library](#native-libraries) is loaded, or something asks
@@ -423,7 +428,11 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
     widen ordinary suites;
   - a class inside a dependency jar that names one of your test classes. The JVM resolves such a
     reference without a call the agent can see, and the check that nothing else names a test class
-    searches this build's own classes and jars and every resource, not the classes of dependencies.
+    searches this build's own classes and jars and every resource, not the classes of dependencies;
+  - an edited test class nothing else names, through code that is handed the class without a lookup
+    before the class's first test, but is not your build's own code run during discovery: a class
+    orderer or listener from a dependency jar, or a test execution listener whose plan-start
+    callback runs after yoriwake's own.
 - **Build output a test reads by path.** A file under a build directory that is not on the test
   runtime classpath, such as a fixture under `build/` a test opens with `File`, is build state and
   never a change, so one generated from git state, the clock or the environment can change while

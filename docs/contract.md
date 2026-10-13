@@ -111,9 +111,12 @@ changed class's first touch in its JVM.
 
 A test class that declares a test, and that nothing else names, is the exception. Its engine
 instantiates it, so its loading and inspection at discovery open no window. It is dated by
-`named-touch.tsv` instead. That holds only in a JVM whose every test ran on an engine known to
-build tests from its own classes: Jupiter, Vintage, the suite engine, JUnit 4, TestNG, Spock,
-Kotest, ArchUnit or jqwik. In any other JVM its named touches start at `*`.
+`named-touch.tsv` instead, which also holds its own first test in each JVM: from there its code may
+have handed its `Class` to anything after it. That holds only in a JVM whose every test ran on an engine
+known to build tests from its own classes: Jupiter, Vintage, the suite engine, JUnit 4, TestNG,
+Spock, Kotest, ArchUnit or jqwik. In any other JVM its named touches start at `*`. In a JVM where
+project code ran during discovery (a class orderer, a filter, a listener), every class discovery
+touched has a named touch at `0`: that code was handed every test class.
 
 `jvm` is an opaque id the plugin gives one worker of one capture. `sequence` is the record's
 number in `index.tsv`. A touch between two records counts toward the later one.

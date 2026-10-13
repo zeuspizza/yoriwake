@@ -615,6 +615,8 @@ internal object CoverageDecoder {
         // The outermost class of each test this JVM ran; null for a test id that names none.
         val testClasses = HashSet<String?>()
         val unreadUnowned = HashSet<String>()
+        // The first window that ran project code, or whose coverage could not be read.
+        var firstRanProjectCode = Int.MAX_VALUE
 
         val lines = index.readLines().filter(String::isNotBlank).mapNotNull { line ->
             // sequence, durationNanos, byteCount, outcome, testId
@@ -631,9 +633,11 @@ internal object CoverageDecoder {
             // no record and the older ones survive; see decode.
             val classes = coveredClasses(exec) ?: if (attributable) emptySet() else {
                 unreadUnowned += testId
+                firstRanProjectCode = minOf(firstRanProjectCode, sequence)
                 return@mapNotNull null
             }
             val inScopeClasses = classes.filter(inScope)
+            if (inScopeClasses.isNotEmpty()) firstRanProjectCode = minOf(firstRanProjectCode, sequence)
             inScopeClasses.forEach { touch(it, sequence) }
             // A class executed in some other class's window was reached from outside its own tests.
             val owners = ownersOf(testId)
@@ -643,12 +647,20 @@ internal object CoverageDecoder {
             if (attributable) {
                 positions += Tsv.join(jvm, sequence.toString(), testId)
                 testClasses += owners.firstOrNull()
+                // From its first test on, a test class's own code may have handed its Class to any
+                // later test. A named touch, unlike a position, outlives a recapture of its tests.
+                owners.firstOrNull()?.let { if (inScope(it)) touchNamed(it, sequence) }
                 if (engineOf(testId) !in ENGINES_THAT_OWN_THEIR_CLASSES) unknownEngine = true
             }
             val outcome = if (inScopeClasses.isEmpty() && attributable) OUTCOME_UNKNOWN else parts[3]
             Tsv.join(outcome, parts[1], inScopeClasses.sorted().joinToString(","), testId)
         }
-        readTouches(worker, inScope, touch, touchNamed)
+        val discovery = readTouches(worker, inScope, touch, touchNamed)
+        // Project code that ran during discovery (a class orderer, a filter, a listener) was handed
+        // every test class without a lookup by name, and may have kept what it read for later tests.
+        if (discovery != null && firstRanProjectCode < discovery.planStartedAt) {
+            discovery.touched.forEach { touchNamed(it, 0) }
+        }
         if (unknownEngine) touchNamed(FIRST_TOUCH_ANY, 0)
         val rows = { touches: Map<String, Int> ->
             touches.entries.sortedBy { it.key }.map { (name, sequence) -> Tsv.join(jvm, sequence.toString(), name) }
@@ -658,38 +670,48 @@ internal object CoverageDecoder {
         return WorkerRecords(lines, positions, rows(first), rows(named), Tsv.join(jvm, mode), unreadUnowned)
     }
 
+    /** Where discovery ended, as the sequence of the first record after it, and what it touched. */
+    private class Discovery(val planStartedAt: Int, val touched: Set<String>)
+
     /**
-     * Feeds [touch] what the worker's JVM loaded or read, by the record it preceded, and
+     * Feeds [firstTouch] what the worker's JVM loaded or read, by the record it preceded, and
      * [touchNamed] the lookups and reads after discovery. Anything this cannot vouch for (no file,
      * no end marker, no plan start, a jar it cannot list, an observation the agent said was
-     * incomplete) touches every class from that point, never none.
+     * incomplete) touches every class from that point, never none; it then returns null, and
+     * otherwise what discovery touched.
      */
     private fun readTouches(
         worker: File,
         inScope: (String) -> Boolean,
-        touch: (String, Int) -> Unit,
+        firstTouch: (String, Int) -> Unit,
         touchNamed: (String, Int) -> Unit,
-    ) {
+    ): Discovery? {
+        // Discovery loads and inspects every test class; what it did stays out of the named touches.
+        var planStarted = false
+        var planStartedAt = 0
+        val discovered = HashSet<String>()
+        val touch = { name: String, sequence: Int ->
+            firstTouch(name, sequence)
+            if (!planStarted) discovered += name
+        }
         val both = { name: String, sequence: Int -> touch(name, sequence); touchNamed(name, sequence) }
         val file = File(worker, TOUCHES_FILE)
         val lines = runCatching { if (file.isFile) file.readLines() else null }.getOrNull()
         if (lines == null || lines.lastOrNull { it.isNotBlank() } != TOUCHES_COMPLETE) {
             both(FIRST_TOUCH_ANY, 0)
-            return
+            return null
         }
-        // Discovery loads and inspects every test class; what it did stays out of the named touches.
-        var planStarted = false
         for (line in lines) {
             if (line.isBlank() || line == TOUCHES_COMPLETE) continue
             val parts = Tsv.split(line)
             val sequence = parts.getOrNull(0)?.toIntOrNull()
             if (parts.size != 3 || sequence == null) {
                 both(FIRST_TOUCH_ANY, 0)
-                return
+                return null
             }
             val named = { name: String -> if (inScope(name)) { touch(name, sequence); if (planStarted) touchNamed(name, sequence) } }
             when (parts[1]) {
-                TOUCH_PLAN_STARTED -> planStarted = true
+                TOUCH_PLAN_STARTED -> if (!planStarted) { planStarted = true; planStartedAt = sequence }
                 TOUCH_LOADED -> if (inScope(parts[2])) touch(parts[2], sequence)
                 TOUCH_DEFINED -> named(parts[2])
                 TOUCH_LOOKUP -> if (parts[2] == FIRST_TOUCH_ANY) touchNamed(FIRST_TOUCH_ANY, if (planStarted) sequence else 0)
@@ -708,6 +730,7 @@ internal object CoverageDecoder {
             }
         }
         if (!planStarted) touchNamed(FIRST_TOUCH_ANY, 0)
+        return if (planStarted) Discovery(planStartedAt, discovered) else null
     }
 
     private const val MAX_ARCHIVE_DEPTH = 8

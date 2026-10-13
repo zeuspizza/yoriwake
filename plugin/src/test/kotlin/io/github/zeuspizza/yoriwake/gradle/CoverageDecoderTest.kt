@@ -1302,7 +1302,8 @@ class CoverageDecoderTest {
             .associate { line -> Tsv.split(line).let { it[2] to it[1].toInt() } }
 
     private val jupiterA = Triple("[engine:junit-jupiter]/[class:com.acme.ATest]/[method:a()]", "SUCCESSFUL",
-        execData("com.acme.ATest" to booleanArrayOf(true), "com.acme.BTest" to booleanArrayOf(true)))
+        execData("com.acme.ATest" to booleanArrayOf(true), "com.acme.BTest" to booleanArrayOf(true),
+            "com.acme.Helper" to booleanArrayOf(true)))
     private val jupiterB = Triple("[engine:junit-jupiter]/[class:com.acme.BTest]/[method:b()]", "SUCCESSFUL",
         execData("com.acme.BTest" to booleanArrayOf(true)))
 
@@ -1321,11 +1322,93 @@ class CoverageDecoderTest {
         CoverageDecoder.decode(dir, listOf("com.acme"))
 
         val named = namedTouches(dir)
-        assertNull(named["com.acme.ATest"], "discovery looked ATest up")
+        assertEquals(2, named["com.acme.ATest"], "its own first test, not discovery's lookup at 1")
         assertEquals(2, named["com.acme.CTest"])
         assertEquals(2, named["com.acme.DTest"])
-        // ATest's own record executed BTest: BTest was reached from outside its own tests.
-        assertEquals(2, named["com.acme.BTest"])
+        // ATest's own record executed Helper: Helper was reached from outside its own tests.
+        assertEquals(2, named["com.acme.Helper"])
+        assertEquals(1, named["com.acme.BTest"], "its own first test")
+    }
+
+    @Test
+    fun `project code that ran during discovery dates every class discovery touched from the start`(
+        @TempDir dir: File,
+    ) {
+        val startup = Triple("[yoriwake:unattributed]", "NONE", execData("com.acme.Orderer" to booleanArrayOf(true)))
+        records(dir, "1", startup, jupiterB, jupiterA)
+        touches(
+            dir, "1",
+            "1\t${AgentContract.TOUCH_LOADED}\tcom.acme.ATest",
+            "1\t${AgentContract.TOUCH_LOADED}\tcom.acme.Orderer",
+            "2\t${AgentContract.TOUCH_PLAN_STARTED}\t",
+            "3\t${AgentContract.TOUCH_LOADED}\tcom.acme.Late",
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        val named = namedTouches(dir)
+        assertEquals(0, named["com.acme.ATest"], "named $named")
+        assertNull(named["com.acme.Late"], "loaded after discovery, by the engine running its tests")
+    }
+
+    @Test
+    fun `discovery that ran no project code dates no class it loaded`(@TempDir dir: File) {
+        val startup = Triple("[yoriwake:unattributed]", "NONE", execData("org.other.Engine" to booleanArrayOf(true)))
+        records(dir, "1", startup, jupiterB, jupiterA)
+        touches(
+            dir, "1",
+            "1\t${AgentContract.TOUCH_LOADED}\tcom.acme.ATest",
+            "2\t${AgentContract.TOUCH_PLAN_STARTED}\t",
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        assertEquals(3, namedTouches(dir)["com.acme.ATest"], "its own first test, not discovery")
+    }
+
+    @Test
+    fun `a startup record that cannot be read counts as project code run during discovery`(@TempDir dir: File) {
+        records(dir, "1", Triple("[yoriwake:unattributed]", "NONE", "not jacoco data".toByteArray()), jupiterB, jupiterA)
+        touches(
+            dir, "1",
+            "1\t${AgentContract.TOUCH_LOADED}\tcom.acme.ATest",
+            "2\t${AgentContract.TOUCH_PLAN_STARTED}\t",
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        assertEquals(0, namedTouches(dir)["com.acme.ATest"])
+    }
+
+    @Test
+    fun `a test class's own first test dates it, and a later capture of its tests elsewhere keeps that`(
+        @TempDir dir: File,
+    ) {
+        val edited = Triple("[engine:junit-jupiter]/[class:com.acme.ETest]/[method:e()]", "SUCCESSFUL",
+            execData("com.acme.ETest" to booleanArrayOf(true)))
+        val later = Triple("[engine:junit-jupiter]/[class:com.acme.LTest]/[method:l()]", "SUCCESSFUL",
+            execData("com.acme.LTest" to booleanArrayOf(true)))
+        records(dir, "1", edited, later)
+        touches(dir, "1", "1\t${AgentContract.TOUCH_PLAN_STARTED}\t", AgentContract.TOUCHES_COMPLETE)
+        CoverageDecoder.decode(dir, listOf("com.acme"), datesTheMap = true)
+        CoverageDecoder.recordsDir(dir).deleteRecursively()
+
+        // A selecting run reruns only ETest, in a JVM of its own; the first JVM keeps LTest.
+        records(dir, "1", edited)
+        touches(dir, "1", "1\t${AgentContract.TOUCH_PLAN_STARTED}\t", AgentContract.TOUCHES_COMPLETE)
+        CoverageDecoder.decode(dir, listOf("com.acme"), selecting = true, datesTheMap = false)
+
+        val rows = File(dir, AgentContract.NAMED_TOUCH_FILE).readLines().filter(String::isNotBlank).map(Tsv::split)
+        val jvmsWithLater = File(dir, AgentContract.POSITIONS_FILE).readLines()
+            .filter { it.endsWith("[class:com.acme.LTest]/[method:l()]") }.map { Tsv.split(it)[0] }
+        assertEquals(1, jvmsWithLater.size, "positions ${File(dir, AgentContract.POSITIONS_FILE).readText()}")
+        assertTrue(
+            rows.any { it[0] == jvmsWithLater.single() && it[2] == "com.acme.ETest" && it[1] == "1" },
+            "named touches $rows",
+        )
     }
 
     @Test
@@ -1345,7 +1428,7 @@ class CoverageDecoderTest {
         CoverageDecoder.decode(dir, listOf("com.acme"))
 
         val named = namedTouches(dir)
-        assertNull(named["com.acme.ATest"], "discovery defined ATest")
+        assertEquals(2, named["com.acme.ATest"], "its own first test, not discovery's definition at 1")
         assertEquals(2, named["com.acme.CTest"])
         assertEquals(2, firstTouches(dir)["com.acme.CTest"])
         assertEquals(2, firstTouches(dir)[AgentContract.FIRST_TOUCH_ANY])
