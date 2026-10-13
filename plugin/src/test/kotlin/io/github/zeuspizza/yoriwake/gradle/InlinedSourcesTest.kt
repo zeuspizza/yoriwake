@@ -104,7 +104,7 @@ class InlinedSourcesTest {
 
     @Test
     fun `absence of an SMAP is a property of the whole output, not of one class`() {
-        // A class that inlines nothing and a build compiled with -Xno-source-debug-extension look
+        // A class that inlines nothing and a build whose SMAPs were stripped look
         // alike one class at a time; TaskArtifacts.SmapEvidence decides over the whole output.
         assertTrue(
             InlinedSources.scan(bytesOf("io.github.zeuspizza.yoriwake.gradle.fixtures.InlinesSomethingElse")).carriesSmap,

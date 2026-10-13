@@ -12,8 +12,8 @@ import org.objectweb.asm.Opcodes
  * the declaring source. Kotlin's `SourceDebugExtension` (SMAP) names every source inlined into the
  * class.
  *
- * A missing SMAP is not proof: a class that inlines nothing and every class compiled with
- * `-Xno-source-debug-extension` look the same. So [scan] answers "nothing named here", and callers
+ * A missing SMAP is not proof: a class that inlines nothing and every class whose SMAP a
+ * tool stripped look the same. So [scan] answers "nothing named here", and callers
  * decide project-wide whether the signal exists (see [Scan.carriesSmap]).
  */
 internal object InlinedSources {

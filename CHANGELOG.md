@@ -42,6 +42,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Fixed
 
 - A changed git submodule is in the change set even when its `ignore` setting hides it. Map: left alone.
+- The audit's remedy for Kotlin classes with no SMAP no longer suggests dropping
+  `-Xno-source-debug-extension`, which does not remove it. Map: left alone.
 - A JUnit Platform task whose build script sets a test filter selects; its left-out tests leave the
   map. Map: such a task's is dated by its next full run; others left alone.
 - Tests named with `--tests` all run on a selecting run, declined as `tests-named`. Map: left alone.

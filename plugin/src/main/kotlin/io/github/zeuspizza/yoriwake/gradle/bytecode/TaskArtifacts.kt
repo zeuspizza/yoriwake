@@ -516,8 +516,8 @@ internal class TaskArtifacts(
      * coverage cannot see. Read from the SMAP Kotlin emits for debuggers; see [InlinedSources].
      *
      * Refuses rather than answering "nothing inlines this" when nothing can be scanned, a class or
-     * jar cannot be read, the budget runs out, or a Kotlin output carries no SMAP at all (e.g.
-     * `-Xno-source-debug-extension`). A pure Java output does not refuse: Java has no inline bodies.
+     * jar cannot be read, the budget runs out, or a Kotlin output carries no SMAP at all (e.g. a
+     * tool stripped the attribute). A pure Java output does not refuse: Java has no inline bodies.
      */
     internal fun classesInlining(
         prefixes: Collection<String>,

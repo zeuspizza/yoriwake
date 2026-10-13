@@ -440,8 +440,9 @@ internal fun Audit.blockers(
                             "source: ${refused.reason}. A change set of Java sources alone is " +
                             "unaffected and still narrows."
                     ),
-                    "if your build passes -Xno-source-debug-extension, removing it restores " +
-                        "the signal. If it does not, the build's Kotlin classes call no " +
+                    "if a tool in your build strips class-file attributes before the tests run, " +
+                        "keeping SourceDebugExtension restores the signal. If none does, the " +
+                        "build's Kotlin classes call no " +
                         "`inline` function, so the compiler wrote a SourceDebugExtension " +
                         "into none of them -- typically a mostly-Java build with a few " +
                         "Kotlin classes -- and there is nothing to fix in your build: a " +

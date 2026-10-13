@@ -305,7 +305,7 @@ class TaskArtifactsTest {
 
     @Test
     fun `refuses when a Kotlin output carries no SMAP anywhere`(@TempDir dir: File) {
-        // What `-Xno-source-debug-extension` produces. Per class it looks like inlining nothing,
+        // What a tool stripping the attribute produces. Per class it looks like inlining nothing,
         // so the whole output is asked, and the answer is "unknown".
         classFile(dir, "io.github.zeuspizza.yoriwake.gradle.fixtures.InlinesNothing",
             fixtureBytes("io.github.zeuspizza.yoriwake.gradle.fixtures.InlinesNothing"))
@@ -325,7 +325,7 @@ class TaskArtifactsTest {
         @TempDir dir: File,
     ) {
         // The counts tell a mostly-Java build with a Kotlin extension from a Kotlin build compiled
-        // with -Xno-source-debug-extension; the two want opposite remedies.
+        // with the attribute stripped; the two want opposite remedies.
         classFile(dir, "io.github.zeuspizza.yoriwake.gradle.fixtures.InlinesNothing",
             fixtureBytes("io.github.zeuspizza.yoriwake.gradle.fixtures.InlinesNothing"))
         classFile(dir, "com.acme.One", plainClass("com.acme.One"))
