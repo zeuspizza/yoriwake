@@ -69,6 +69,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   alone.
 - A class a test reads out of a zip, war, aar or nested jar with its own zip code selects it. Map:
   left alone; recorded from its next capture.
+- An edited test class nothing names also runs every test after its own first one, and every test
+  in its JVM when your code ran during discovery. Map: discarded, with the same rebuild.
 
 ## [0.1.0] - 2026-10-04
 

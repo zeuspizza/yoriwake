@@ -251,14 +251,16 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
     )
 
     // A test class nothing else names is instantiated by its engine alone, so loading it at
-    // discovery opens no window; only a lookup by name, a read or another class's execution does.
+    // discovery opens no window. Its own first test does, since its code can hand its class to
+    // anything after it, and so does a lookup by name, a read or another class's execution. Project
+    // code that ran during discovery was handed every test class, so then discovery does.
 
     private fun unrelated(name: String) = test(name, "@Test void runs() { assertEquals(1, new Other().one()); }")
 
     private val editTest = { text: String -> text.replace("1, new", "1, 0 + new") }
 
     @Test
-    fun `an edit to a test class nothing else names selects its own tests, not every test in its JVM`(
+    fun `an edit to a test class nothing else names selects its own tests and the tests after them`(
         @TempDir dir: File,
     ) {
         val ran = selectedAfter(
@@ -267,7 +269,90 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         )
 
         // F1MiddleTest through the window it shares with F2EditedTest, which constructs F2 there.
-        assertEquals(names("F1MiddleTest", "F2EditedTest"), ran)
+        assertEquals(names("F1MiddleTest", "F2EditedTest", "F3LaterTest"), ran)
+    }
+
+    @Test
+    fun `a test that reads an edited test class's annotation from shared state runs`(@TempDir dir: File) {
+        val level = "src/test/java/dev/sample/Level.java" to """
+            package dev.sample;
+            import java.lang.annotation.*;
+            @Retention(RetentionPolicy.RUNTIME) @Target(ElementType.TYPE)
+            public @interface Level { int value(); }
+        """.trimIndent()
+        // Holds classes without naming one, so the edited class stays one nothing else names.
+        val seen = "src/test/java/dev/sample/Seen.java" to """
+            package dev.sample;
+            import java.util.ArrayList;
+            import java.util.List;
+            public class Seen { public static final List<Class<?>> CLASSES = new ArrayList<>(); }
+        """.trimIndent()
+        val edited = "src/test/java/dev/sample/Q2EditedTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            @Level(3)
+            class Q2EditedTest { @Test void registers() { Seen.CLASSES.add(getClass()); } }
+        """.trimIndent()
+        val ran = selectedAfter(
+            dir, edited.first, { it.replace("@Level(3)", "@Level(4)") },
+            level, seen, first("Q"), unrelated("Q1MiddleTest"), edited,
+            // Reads the level without asserting its value, so the selecting build passes either way.
+            test(
+                "Q3AuditTest",
+                """@Test void levels() {
+                    assertFalse(Seen.CLASSES.isEmpty());
+                    for (Class<?> c : Seen.CLASSES) assertTrue(c.getAnnotation(Level.class).value() > 0);
+                }""",
+            ),
+            testCount = 4,
+        )
+
+        // Q1MiddleTest through the window it shares with Q2EditedTest, as F1MiddleTest above.
+        assertEquals(names("Q1MiddleTest", "Q2EditedTest", "Q3AuditTest"), ran)
+    }
+
+    @Test
+    fun `a test that depends on what a class orderer read from an edited test class at discovery runs`(
+        @TempDir dir: File,
+    ) {
+        // Project code the engine hands every test class during discovery, with no lookup by name.
+        val orderer = "src/test/java/dev/sample/CountingOrderer.java" to """
+            package dev.sample;
+            import java.lang.reflect.Method;
+            import java.util.Comparator;
+            import org.junit.jupiter.api.ClassDescriptor;
+            import org.junit.jupiter.api.ClassOrderer;
+            import org.junit.jupiter.api.ClassOrdererContext;
+            public class CountingOrderer implements ClassOrderer {
+                public static int declared;
+                @Override public void orderClasses(ClassOrdererContext context) {
+                    context.getClassDescriptors().sort(Comparator.comparing(d -> d.getTestClass().getName()));
+                    int count = 0;
+                    for (ClassDescriptor descriptor : context.getClassDescriptors()) {
+                        for (Method method : descriptor.getTestClass().getDeclaredMethods()) {
+                            if (!method.isSynthetic()) count++;
+                        }
+                    }
+                    declared = count;
+                }
+            }
+        """.trimIndent()
+        val ran = selectedAfter(
+            dir, "src/test/java/dev/sample/R2EditedTest.java",
+            { it.replace("@Test void runs()", "int unused() { return 0; }\n    @Test void runs()") },
+            orderer,
+            // Runs before the edited class and the window beside it, so only what discovery did can
+            // date it. Reads the count without asserting it, so the selecting build passes either way.
+            test("R0TargetTest", "@Test void counts() { assertTrue(CountingOrderer.declared > 0); }"),
+            unrelated("R1MiddleTest"), unrelated("R2EditedTest"), unrelated("R3LaterTest"),
+            buildScript = orderedBuild.replace(
+                Regex("\"org\\.junit\\.jupiter\\.api\\.ClassOrderer[^\"]*\""),
+                "\"dev.sample.CountingOrderer\"",
+            ),
+            testCount = 4,
+        )
+
+        assertEquals(names("R0TargetTest", "R1MiddleTest", "R2EditedTest", "R3LaterTest"), ran)
     }
 
     @Test

@@ -127,7 +127,7 @@ class UninstrumentedTestClassFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(mapOf("dev.sample.ZTest#testA" to true, "dev.sample.ZTest#testB" to false), ran)
 
-        val byRule = "included REACHES_CHANGE" to "own-class-changed"
+        val byRule = "included REACHES_CHANGE" to "own-class-changed,shares-jvm-changed-class"
         assertEquals(mapOf("testA" to byRule, "testB" to byRule), zTestDecisions(dir))
     }
 
@@ -142,8 +142,8 @@ class UninstrumentedTestClassFunctionalTest : FunctionalTestSupport() {
             mapOf("dev.sample.ATest#doubles" to false, "dev.sample.ZTest#testA" to true, "dev.sample.ZTest#testB" to false),
             ran,
         )
-        // Their own class's setup record holds ZTest too, so it is a third rule here.
-        val byCoverage = "included REACHES_CHANGE" to "reaches-change,own-class-changed,class-setup"
+        // Their own class's setup record holds ZTest too, and their own first test opens their JVM.
+        val byCoverage = "included REACHES_CHANGE" to "reaches-change,own-class-changed,class-setup,shares-jvm-changed-class"
         assertEquals(mapOf("testA" to byCoverage, "testB" to byCoverage), zTestDecisions(dir))
     }
 }

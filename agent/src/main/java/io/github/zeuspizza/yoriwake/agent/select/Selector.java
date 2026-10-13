@@ -539,6 +539,10 @@ public final class Selector {
                     open(opened, Rule.SHARES_JVM_CHANGED_CLASS, named);
                 }
             }
+            for (Map.Entry<String, Integer> first : ownFirstTests(map, tests, exempt).entrySet()) {
+                opened.computeIfAbsent(Rule.SHARES_JVM_CHANGED_CLASS, key -> new HashMap<>())
+                        .merge(first.getKey(), first.getValue(), Math::min);
+            }
         }
         for (MapReader.Entry test : tests) {
             List<MapReader.Position> positions = map.positionsOf(test.testId());
@@ -590,12 +594,16 @@ public final class Selector {
                 firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
             }
         }
-        // An exempt test class is dated only by what can reach it from outside its own tests.
+        // An exempt test class is dated by what can reach it from outside its own tests, and by
+        // its own first test.
         if (!exempt.isEmpty()) {
             for (MapReader.FirstTouch touch : map.namedTouches()) {
                 if (touchesChange(touch.className(), exempt, Collections.<String>emptySet(), changedClassPrefixes)) {
                     firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
                 }
+            }
+            for (Map.Entry<String, Integer> first : ownFirstTests(map, tests, exempt).entrySet()) {
+                firstTouchByJvm.merge(first.getKey(), first.getValue(), Math::min);
             }
         }
         Set<String> after = new HashSet<>();
@@ -614,6 +622,26 @@ public final class Selector {
             }
         }
         return after;
+    }
+
+    /**
+     * Where each JVM first ran a test of an exempt class. From there the class's own code may have
+     * handed its {@code Class} to anything that runs later (a static list, an extension), and
+     * reflection on it is not observed, so a later test may depend on it with no touch recorded.
+     * A capture also records this as a named touch, which outlives a recapture of the class's tests
+     * in another JVM; the positions answer for what the map holds now.
+     */
+    private static Map<String, Integer> ownFirstTests(MapReader.Result map, List<MapReader.Entry> tests,
+            Set<String> exempt) {
+        Map<String, Integer> firstByJvm = new HashMap<>();
+        for (MapReader.Entry test : tests) {
+            if (ofChangedOwnClass(test.testId(), exempt, exempt)) {
+                for (MapReader.Position position : map.positionsOf(test.testId())) {
+                    firstByJvm.merge(position.jvm(), position.sequence(), Math::min);
+                }
+            }
+        }
+        return firstByJvm;
     }
 
     /**

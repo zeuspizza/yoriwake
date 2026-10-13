@@ -1062,27 +1062,37 @@ class SelectorTest {
         assertEquals(Selector.Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED, decision.fullRunKind())
     }
 
-    // A test class nothing else names is dated by named touches alone: its discovery-time load,
-    // which every test class has, opens no window.
+    // A test class nothing else names is dated by its own first test and by named touches: its
+    // discovery-time load, which every test class has, opens no window.
 
     private val editedTestFirst = listOf("j\t1\tcom.acme.EditedTest")
 
     @Test
-    fun `an exempt test class loaded at discovery opens no window`(@TempDir dir: File) {
+    fun `an exempt test class opens its window at its own first test, not at its discovery load`(@TempDir dir: File) {
         val decision = decide(
             map(
                 dir,
+                test("com.acme.EarlierTest", "com.acme.EarlierTest"),
                 test("com.acme.EditedTest", "com.acme.EditedTest"),
                 test("com.acme.LaterTest", "com.acme.LaterTest"),
-                positions = listOf("j\t2\t${placed("com.acme.EditedTest")}", "j\t4\t${placed("com.acme.LaterTest")}"),
-                firstTouches = editedTestFirst,
+                test("com.acme.ElsewhereTest", "com.acme.ElsewhereTest"),
+                positions = listOf(
+                    "j\t2\t${placed("com.acme.EarlierTest")}",
+                    "j\t3\t${placed("com.acme.EditedTest")}",
+                    "j\t4\t${placed("com.acme.LaterTest")}",
+                    // Another JVM, which never ran the edited class's tests.
+                    "k\t5\t${placed("com.acme.ElsewhereTest")}",
+                ),
+                firstTouches = editedTestFirst + "k\t1\tcom.acme.EditedTest",
             ),
             changed = listOf("com.acme.EditedTest"),
             exempt = listOf("com.acme.EditedTest"),
         )
 
         assertTrue(decision.includes(placed("com.acme.EditedTest")))
-        assertFalse(decision.includes(placed("com.acme.LaterTest")))
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertFalse(decision.includes(placed("com.acme.ElsewhereTest")))
+        assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.LaterTest")))
     }
 
     @Test
@@ -1126,14 +1136,14 @@ class SelectorTest {
 
     private fun edited(method: String) = "[engine:junit-jupiter]/[class:com.acme.EditedTest]/[method:$method()]"
 
-    /** EditedTest's two tests, LaterTest, then [extra], in one JVM that loaded EditedTest at discovery. */
-    private fun editedThenLater(dir: File, editedCovers: String, vararg extra: Triple<String, String, String>) = map(
+    /** EarlierTest, EditedTest's two tests, then [extra], in one JVM that loaded EditedTest at discovery. */
+    private fun earlierThenEdited(dir: File, editedCovers: String, vararg extra: Triple<String, String, String>) = map(
         dir,
         Triple(edited("a"), "SUCCESSFUL", editedCovers),
         Triple(edited("b"), "SUCCESSFUL", editedCovers),
-        test("com.acme.LaterTest", "com.acme.Other"),
+        test("com.acme.EarlierTest", "com.acme.Other"),
         *extra,
-        positions = listOf("j\t2\t${edited("a")}", "j\t3\t${edited("b")}", "j\t4\t${placed("com.acme.LaterTest")}") +
+        positions = listOf("j\t2\t${placed("com.acme.EarlierTest")}", "j\t3\t${edited("a")}", "j\t4\t${edited("b")}") +
             extra.mapIndexed { i, (id, _, _) -> "j\t${5 + i}\t$id" },
         firstTouches = editedTestFirst,
     )
@@ -1141,7 +1151,7 @@ class SelectorTest {
     @Test
     fun `an edited test class with no coverage of itself runs its known tests`(@TempDir dir: File) {
         val decision = decide(
-            editedThenLater(dir, "com.acme.Calc"),
+            earlierThenEdited(dir, "com.acme.Calc"),
             changed = listOf("com.acme.EditedTest"),
             exempt = listOf("com.acme.EditedTest"),
         )
@@ -1149,20 +1159,20 @@ class SelectorTest {
         assertFalse(decision.isFullRun)
         assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("a")))
         assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("b")))
-        assertEquals(Selector.Decision.Reason.SKIPPED, decision.reasonFor(placed("com.acme.LaterTest")))
+        assertEquals(Selector.Decision.Reason.SKIPPED, decision.reasonFor(placed("com.acme.EarlierTest")))
     }
 
     @Test
     fun `an edited test class whose tests recorded it selects as through its coverage alone`(@TempDir dir: File) {
         val decision = decide(
-            editedThenLater(dir, "com.acme.Calc,com.acme.EditedTest"),
+            earlierThenEdited(dir, "com.acme.Calc,com.acme.EditedTest"),
             changed = listOf("com.acme.EditedTest"),
             exempt = listOf("com.acme.EditedTest"),
         )
 
         assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("a")))
         assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("b")))
-        assertEquals(Selector.Decision.Reason.SKIPPED, decision.reasonFor(placed("com.acme.LaterTest")))
+        assertEquals(Selector.Decision.Reason.SKIPPED, decision.reasonFor(placed("com.acme.EarlierTest")))
     }
 
     @Test
@@ -1188,11 +1198,11 @@ class SelectorTest {
     @Test
     fun `a test added to an edited test class runs as new beside its known ones`(@TempDir dir: File) {
         val decision = Selector.decide(
-            editedThenLater(dir, "com.acme.Calc"),
+            earlierThenEdited(dir, "com.acme.Calc"),
             ChangeSet.of(listOf("com.acme.EditedTest"), emptyList())
                 .withOwnTestClasses(listOf("com.acme.EditedTest"))
                 .withExemptTestClasses(listOf("com.acme.EditedTest")),
-            listOf(edited("a"), edited("b"), edited("c"), placed("com.acme.LaterTest")),
+            listOf(placed("com.acme.EarlierTest"), edited("a"), edited("b"), edited("c")),
         )
 
         assertEquals(Selector.Decision.Reason.NOT_IN_MAP, decision.reasonFor(edited("c")))
@@ -1204,7 +1214,7 @@ class SelectorTest {
     fun `a nested class's test is a test of the edited outer class`(@TempDir dir: File) {
         val nested = "[engine:junit-jupiter]/[class:com.acme.EditedTest]/[nested-class:Inner]/[method:t()]"
         val decision = decide(
-            editedThenLater(dir, "com.acme.Calc", Triple(nested, "SUCCESSFUL", "com.acme.Calc")),
+            earlierThenEdited(dir, "com.acme.Calc", Triple(nested, "SUCCESSFUL", "com.acme.Calc")),
             changed = listOf("com.acme.EditedTest"),
             exempt = listOf("com.acme.EditedTest"),
         )
@@ -1217,7 +1227,7 @@ class SelectorTest {
         // Discovered as a class of its own, so its id names the binary name, not the outer class.
         val inner = "[engine:junit-jupiter]/[class:com.acme.EditedTest\$Inner]/[method:t()]"
         val decision = decide(
-            editedThenLater(dir, "com.acme.Calc", Triple(inner, "SUCCESSFUL", "com.acme.Calc")),
+            earlierThenEdited(dir, "com.acme.Calc", Triple(inner, "SUCCESSFUL", "com.acme.Calc")),
             changed = listOf("com.acme.EditedTest"),
             exempt = listOf("com.acme.EditedTest"),
         )
@@ -1245,7 +1255,7 @@ class SelectorTest {
     @Test
     fun `an edited test class beside a path the map cannot see still runs everything`(@TempDir dir: File) {
         val decision = decide(
-            editedThenLater(dir, "com.acme.Calc"),
+            earlierThenEdited(dir, "com.acme.Calc"),
             changed = listOf("com.acme.EditedTest"),
             exempt = listOf("com.acme.EditedTest"),
             unmappable = listOf("src/test/resources/fixture.json"),

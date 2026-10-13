@@ -277,7 +277,10 @@ class RulesTest {
     @Test
     fun `an edited test class names own-class-changed on its tests`(@TempDir dir: File) {
         fun editedTestRules(name: String, covered: String) = decide(
-            map(File(dir, name), listOf(id("dev.EditedTest") to covered, id("dev.OtherTest") to "dev.Other")),
+            map(
+                File(dir, name),
+                listOf(id("dev.OtherTest") to "dev.Other", id("dev.EditedTest") to covered, id("dev.LaterTest") to "dev.Other"),
+            ),
             AgentContract.CHANGED_CLASSES_PROPERTY to "dev.EditedTest",
             AgentContract.OWN_TEST_CLASSES_PROPERTY to "dev.EditedTest",
             AgentContract.EXEMPT_TEST_CLASSES_PROPERTY to "dev.EditedTest",
@@ -286,9 +289,18 @@ class RulesTest {
         val instrumented = editedTestRules("instrumented", "dev.Calc,dev.EditedTest")
         val uninstrumented = editedTestRules("uninstrumented", "dev.Calc")
 
-        assertEquals("reaches-change,own-class-changed", instrumented.tokens(id("dev.EditedTest")))
-        assertEquals("own-class-changed", uninstrumented.tokens(id("dev.EditedTest")))
+        // Its own first test opens the window, so it runs inside it as well.
+        assertEquals(
+            "reaches-change,own-class-changed,shares-jvm-changed-class",
+            instrumented.tokens(id("dev.EditedTest")),
+        )
+        assertEquals("own-class-changed,shares-jvm-changed-class", uninstrumented.tokens(id("dev.EditedTest")))
         assertEquals(AgentContract.RULE_NONE, uninstrumented.tokens(id("dev.OtherTest"), Verdict.SKIPPED))
+        // Ran after the edited class's own first test, which may have handed its class to it.
+        assertEquals(
+            AgentContract.RULE_SHARES_JVM_CHANGED_CLASS,
+            uninstrumented.tokens(id("dev.LaterTest"), Verdict.SHARES_JVM_WITH_CHANGE),
+        )
     }
 
     @Test
