@@ -257,16 +257,18 @@ internal object ChangeDetection {
      */
     fun scanCommitMessages(git: (List<String>) -> String?, since: String): CommitScan {
         requireSingleCommit(since)
-        val format = "--format=%H%x00%B%x1e"
-        val ranged = git(listOf("log", format, "--end-of-options", "$since..HEAD"))
+        // NUL-terminated records: git refuses a NUL in a commit message, while any other byte, a
+        // separator a format could pick included, may be in one and would cut the message short.
+        val format = "--format=%H%n%B"
+        val ranged = git(listOf("log", "-z", format, "--end-of-options", "$since..HEAD"))
             ?: return CommitScan.Failed("git log $since..HEAD could not answer")
         val raw = ranged.ifBlank {
-            git(listOf("log", "-1", format, "--end-of-options", "HEAD"))
+            git(listOf("log", "-1", "-z", format, "--end-of-options", "HEAD"))
                 ?: return CommitScan.Failed("git log HEAD could not answer")
         }
-        val commits = raw.split('\u001e').mapNotNull { record ->
-            val sha = record.substringBefore('\u0000', "").trim().takeIf(String::isNotEmpty) ?: return@mapNotNull null
-            val lines = record.substringAfter('\u0000').lines()
+        val commits = raw.split('\u0000').mapNotNull { record ->
+            val sha = record.substringBefore('\n').trim().takeIf(String::isNotEmpty) ?: return@mapNotNull null
+            val lines = record.substringAfter('\n', "").lines()
             Commit(sha, lines.firstOrNull { it.isNotBlank() }.orEmpty().trim()) to lines
         }
         val marked = commits.firstOrNull { (_, lines) -> lines.any(::isFullRunMarker) }?.first
