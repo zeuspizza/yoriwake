@@ -157,8 +157,10 @@ internal object WorkingTree {
     private class GitListing(val tracked: String, val untracked: String)
 
     private fun askGit(excluded: Collection<String>, git: (List<String>) -> String?): GitListing? {
-        val tracked = git(listOf("diff", "--name-only", "--no-renames", "--relative", "-z", "HEAD"))
-            ?: return null
+        // As in ChangeDetection.trackedPaths: a submodule's `ignore` setting must not hide it.
+        val tracked = git(
+            listOf("diff", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", "-z", "HEAD")
+        ) ?: return null
         // The pathspecs only spare git the walk; the filter below is what decides.
         val untracked = git(
             listOf("ls-files", "-z", "--others", "--", ".", ":(exclude,glob)**/.gradle/**") +
