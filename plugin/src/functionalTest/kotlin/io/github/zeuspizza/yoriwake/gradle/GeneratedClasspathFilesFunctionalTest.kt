@@ -98,16 +98,16 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
     private val staticResource = "src/test/resources/static.txt" to "one\n"
 
     /** `lib` builds a jar `app`'s tests use at runtime; `app` generates a test resource. Committed. */
-    private fun fixture(dir: File) {
+    private fun fixture(dir: File, appExtra: String = "", vararg appSources: Pair<String, String>, rootBuild: String = "") {
         build(
             dir,
-            "build.gradle.kts" to "",
+            "build.gradle.kts" to rootBuild,
             "lib/build.gradle.kts" to libBuild,
             "lib/src/main/java/dev/lib/Lib.java" to "package dev.lib;\npublic class Lib {}\n",
-            "app/build.gradle.kts" to minimalBuild + "\n" + appBuild,
+            "app/build.gradle.kts" to minimalBuild + "\n" + appBuild + "\n" + appExtra,
             *arrayOf(
                 oneClass, oneTest, secondClass, secondTest, classOrderByName,
-                legacy, legacyTest, infoTest, revisionTest, staticResource,
+                legacy, legacyTest, infoTest, revisionTest, staticResource, *appSources,
             ).map { (path, content) -> "app/$path" to content }.toTypedArray(),
         )
         File(dir, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\ninclude(\"app\", \"lib\")\n")
@@ -146,6 +146,109 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
             output.lines().any { it.startsWith("[yoriwake] :app:test: ") && "app/build/resources/test/info.properties" in it },
             output,
         )
+    }
+
+    @Test
+    fun `a resource the test task's own doFirst writes runs the test that reads it`(@TempDir dir: File) {
+        fixture(
+            dir,
+            """
+            tasks.test {
+                val stamp = providers.gradleProperty("stamp").orElse("a")
+                val info = layout.buildDirectory.file("resources/test/info.properties")
+                doFirst { info.get().asFile.writeText("info=" + stamp.get() + "\n") }
+            }
+            """.trimIndent(),
+        )
+        capture(dir, "-Pstamp=a")
+        editLegacy(dir)
+
+        val output = select(dir, "-Pstamp=x")
+
+        assertTrue("dev.sample.AaInfoTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(
+            output.lines().any {
+                it.startsWith("[yoriwake] :app:test: ") && "app/build/resources/test/info.properties" in it &&
+                    "doFirst" in it
+            },
+            output,
+        )
+    }
+
+    @Test
+    fun `a resource a doFirst from the root project's subprojects block writes runs the test that reads it`(@TempDir dir: File) {
+        fixture(
+            dir,
+            rootBuild = """
+                subprojects {
+                    tasks.withType<Test>().configureEach {
+                        val stamp = providers.gradleProperty("stamp").orElse("a")
+                        val info = layout.buildDirectory.file("resources/test/info.properties")
+                        doFirst { info.get().asFile.writeText("info=" + stamp.get() + "\n") }
+                    }
+                }
+            """.trimIndent(),
+        )
+        capture(dir, "-Pstamp=a")
+        editLegacy(dir)
+
+        val output = select(dir, "-Pstamp=x")
+
+        assertTrue("dev.sample.AaInfoTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    /** `path.jar` carries no files; its manifest puts `flavor.jar`, built from `flavor`, on the class path. */
+    private val flavorJars = """
+        val generateFlavor by tasks.registering {
+            val flavor = providers.gradleProperty("flavor").orElse("a")
+            val out = layout.buildDirectory.dir("generated/flavor")
+            inputs.property("flavor", flavor)
+            outputs.dir(out)
+            doLast { out.get().file("flavor.properties").asFile.writeText("flavor=" + flavor.get() + "\n") }
+        }
+        val flavorJar by tasks.registering(Jar::class) {
+            archiveFileName.set("flavor.jar")
+            destinationDirectory.set(layout.buildDirectory.dir("extra"))
+            from(generateFlavor)
+        }
+        val pathJar by tasks.registering(Jar::class) {
+            dependsOn(flavorJar)
+            archiveFileName.set("path.jar")
+            destinationDirectory.set(layout.buildDirectory.dir("extra"))
+            manifest { attributes("Class-Path" to "flavor.jar") }
+        }
+        dependencies { testRuntimeOnly(files(pathJar)) }
+    """.trimIndent()
+
+    /** Before Legacy by name, so Legacy is not loaded yet when it runs under `flavor=a`. */
+    private val flavorTest = "src/test/java/dev/sample/AcFlavorTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import java.io.InputStream;
+        import java.util.Properties;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class AcFlavorTest {
+            @Test void reads() throws Exception {
+                Properties flavor = new Properties();
+                try (InputStream in = getClass().getResourceAsStream("/flavor.properties")) { flavor.load(in); }
+                if ("x".equals(flavor.getProperty("flavor"))) assertEquals(1, new Legacy().value());
+            }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `a jar only another jar's manifest names runs the test that reads it when it changed`(@TempDir dir: File) {
+        fixture(dir, flavorJars, flavorTest)
+        capture(dir, "-Pflavor=a")
+        editLegacy(dir)
+
+        val output = select(dir, "-Pflavor=x")
+
+        assertTrue("dev.sample.AcFlavorTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.contains("app/build/extra/flavor.jar!/flavor.properties"), output)
     }
 
     @Test

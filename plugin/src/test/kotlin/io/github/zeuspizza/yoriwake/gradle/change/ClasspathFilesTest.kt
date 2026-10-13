@@ -109,6 +109,75 @@ class ClasspathFilesTest {
     }
 
     @Test
+    fun `what a walked jar's manifest Class-Path names gives rows too, class files included`(@TempDir root: File) {
+        val extra = File(root, "app/build/extra")
+        val path = jar(File(extra, "path.jar"), 0L, "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: flavor.jar lib/\n")
+        jar(File(extra, "flavor.jar"), 0L, "flavor.properties" to "flavor=a\n", "dev/F.class" to "bytes")
+        file(extra, "lib/x.txt", "x")
+        file(extra, "lib/dev/Y.class", "bytes")
+
+        val digests = found(ClasspathFiles.walk(listOf(path), listOf(), root))
+
+        assertEquals(
+            setOf(
+                "app/build/extra/path.jar!/META-INF/MANIFEST.MF",
+                "app/build/extra/flavor.jar!/flavor.properties",
+                "app/build/extra/flavor.jar!/dev/F.class",
+                "app/build/extra/lib/x.txt",
+                "app/build/extra/lib/dev/Y.class",
+            ),
+            digests.keys,
+        )
+    }
+
+    @Test
+    fun `jars whose manifests name each other are walked once each`(@TempDir root: File) {
+        val libs = File(root, "build/libs")
+        val a = jar(File(libs, "a.jar"), 0L, "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: b.jar\n")
+        jar(File(libs, "b.jar"), 0L, "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: a.jar\n")
+
+        assertEquals(
+            setOf("build/libs/a.jar!/META-INF/MANIFEST.MF", "build/libs/b.jar!/META-INF/MANIFEST.MF"),
+            found(ClasspathFiles.walk(listOf(a), listOf(), root)).keys,
+        )
+    }
+
+    @Test
+    fun `a Class-Path entry the walk cannot resolve moves`(@TempDir root: File) {
+        val path = jar(File(root, "build/libs/path.jar"), 0L, "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: %zz\n")
+
+        assertTrue(ClasspathFiles.UNREADABLE in found(ClasspathFiles.walk(listOf(path), listOf(), root)).values)
+    }
+
+    @Test
+    fun `a Class-Path entry that is not a file URL, or names nothing, gives no rows`(@TempDir root: File) {
+        val path = jar(
+            File(root, "build/libs/path.jar"), 0L,
+            "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: https://example.com/x.jar missing.jar\n",
+        )
+
+        val digests = found(ClasspathFiles.walk(listOf(path), listOf(), root))
+
+        assertEquals(setOf("build/libs/path.jar!/META-INF/MANIFEST.MF"), digests.keys)
+        assertTrue(ClasspathFiles.UNREADABLE !in digests.values)
+    }
+
+    @Test
+    fun `a jar in Gradle's module cache a manifest names gives no rows`(@TempDir dir: File) {
+        val root = File(dir, "project").apply { mkdirs() }
+        val cached = jar(File(dir, "home/caches/modules-2/files-2.1/g/a/1/0a/a.jar"), 0L, "a.txt" to "a")
+        val path = jar(
+            File(root, "build/libs/path.jar"), 0L,
+            "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: ${cached.toURI()}\n",
+        )
+
+        assertEquals(
+            setOf("build/libs/path.jar!/META-INF/MANIFEST.MF"),
+            found(ClasspathFiles.walk(listOf(path), listOf(), root)).keys,
+        )
+    }
+
+    @Test
     fun `a changed, an appeared and a gone file all count as moved`() {
         val moved = ClasspathFiles.compare(
             recorded = mapOf("a" to "1", "b" to "2", "c" to "3"),

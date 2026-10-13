@@ -307,6 +307,70 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a jar only another jar's manifest names, built from a property differently, runs every test`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                val buildInfo = tasks.register("buildInfo") {
+                    val flavor = providers.gradleProperty("flavor").getOrElse("a")
+                    val out = layout.buildDirectory.dir("generated/res")
+                    inputs.property("flavor", flavor)
+                    outputs.dir(out)
+                    doLast { out.get().file("build-info.properties").asFile.writeText("flavor=" + flavor + "\n") }
+                }
+                val flavorJar = tasks.register<Jar>("flavorJar") {
+                    archiveFileName.set("flavor.jar")
+                    destinationDirectory.set(layout.buildDirectory.dir("extra"))
+                    from(buildInfo)
+                }
+                val pathJar = tasks.register<Jar>("pathJar") {
+                    dependsOn(flavorJar)
+                    archiveFileName.set("path.jar")
+                    destinationDirectory.set(layout.buildDirectory.dir("extra"))
+                    manifest { attributes("Class-Path" to "flavor.jar") }
+                }
+                dependencies { testRuntimeOnly(files(pathJar)) }
+            """.trimIndent(),
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE, "-Pflavor=a").build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
+        assertContains(output, "classpath")
+    }
+
+    @Test
+    fun `a classpath file the test task's doFirst writes from a property differently runs every test`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    val flavor = providers.gradleProperty("flavor").orElse("a")
+                    val info = layout.buildDirectory.file("resources/test/build-info.properties")
+                    doFirst { info.get().asFile.apply { parentFile.mkdirs() }.writeText("flavor=" + flavor.get() + "\n") }
+                }
+            """.trimIndent(),
+        )
+        // The capture digested the classpath before the doFirst first wrote the file: this run sees
+        // it appear, runs everything and records it.
+        runner(dir, "test", SELECT, BASE).build()
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertEquals(everyTest, ranTests(dir), output)
+        assertEquals(AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, "build/resources/test/build-info.properties")
+    }
+
+    @Test
     fun `a task configured differently runs every test, naming its configuration`(@TempDir dir: File) {
         captured(dir, extraBuild = "\ntasks.test { systemProperty(\"sample.mode\", providers.gradleProperty(\"mode\").getOrElse(\"a\")) }\n")
         changeAlpha(dir)

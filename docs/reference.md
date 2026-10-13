@@ -202,10 +202,19 @@ file of a resource or output directory under the root or a build directory, and 
 of your own jars (never the jar whole, so a rebuild that only moves entry timestamps changes
 nothing). The capture records them just before its tests start, and a selecting run compares them
 at the same point and runs everything when one changed, appeared or is gone, naming it
-(`classpath-files-changed`). Dependency jars are the classpath rule's. A file a test writes into
-such a directory is not there when a fresh checkout's tests start; where the build directory
+(`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path` names is on
+the test JVM's class path too, so it counts the same way, its class files included, wherever it
+lies but in Gradle's module cache. Dependency jars are the classpath rule's. A file a test writes
+into such a directory is not there when a fresh checkout's tests start; where the build directory
 survives between runs, one a test rewrites with new content each run forces every selecting run,
 so have the test write elsewhere in the build directory.
+
+The test task's own `doFirst` actions run after that comparison: the plugin wires the task once
+every build script has run, and `doFirst` prepends. So it looks again right before the test JVM
+starts, from an action that runs after every other `doFirst`, and a file one of those actions wrote
+onto the classpath runs everything, named, as `classpath-files-changed`. The map records the files
+as they were before those actions, so a build whose action changes a file runs everything on every
+selecting run; write the file in a task the test task depends on instead.
 
 A build that writes the commit, a tag or the time into such a file therefore runs everything on
 every selecting run where that value moved: a `git.properties` from `gradle-git-properties`, or a
@@ -865,11 +874,13 @@ second time.
 
 **Both runs must test the same code.** After a selecting run that narrowed, the task's map
 directory holds `selection.tsv`: every test whose execution finished `SUCCESSFUL` or `FAILED`,
-stamped with the commit, the task, the build, a digest of the test runtime classpath and one of the
+stamped with the commit, the task, the build, a digest of the test runtime classpath (what a
+manifest `Class-Path` of a jar the build produced names included) and one of the
 task's configuration (its system properties, JVM arguments and test filters), and the test JVM's
 Java version, vendor and VM, OS and architecture. A complement run uses the record only when every
-field equals its own and its working tree is clean, so a test is left out only when it already ran
-on this code, this way. A test that ran on other code says nothing about this code.
+field equals its own (its classpath looked at again after the task's own `doFirst` actions; see
+[Generated files on the test classpath](#generated-files-on-the-test-classpath)) and its working
+tree is clean, so a test is left out only when it already ran on this code, this way. A test that ran on other code says nothing about this code.
 
 A selecting run leaves no record, and removes an older one, when it ran everything, declined, ran
 with `--fail-fast` (Gradle drops the results of tests that finish after the first failure), or
