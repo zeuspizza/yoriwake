@@ -727,7 +727,7 @@ class AuditTest {
 
         val blocker = blockers.single { it.token == "smap-absent" }
         assertContains(blocker.detail, "13 of them Kotlin")
-        assertContains(assertNotNull(blocker.remedy), "-Xno-source-debug-extension")
+        assertContains(assertNotNull(blocker.remedy), "keeping SourceDebugExtension")
         // The other cause: Kotlin that calls no inline function.
         assertContains(blocker.remedy!!, "Kotlin classes call no `inline` function")
     }

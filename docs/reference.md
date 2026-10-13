@@ -476,7 +476,16 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
 - **In-JVM parallelism** (JUnit Jupiter's parallel mode, TestNG `parallel` / `threadCount`).
   Interleaved tests in one JVM share one coverage agent and cannot be told apart. The task runs in
   full, nothing is captured, the map is left as it was, and the audit reports `in-jvm-parallelism`.
-  Parallel forks (`maxParallelForks`) are fine.
+  Parallel forks (`maxParallelForks`) are fine. It is detected from the test task's system
+  properties and JVM arguments, `junit-platform.properties` on the test runtime classpath, and the
+  TestNG options. Parallelism switched on any other way, such as a JUnit `@Suite`'s configuration
+  parameters or `JAVA_TOOL_OPTIONS`, is not detected: the task is not declined, and tests that
+  overlap in one JVM are recorded as unknown and always run.
+- **Two builds at once in one project.** Two builds running the same test task at the same time
+  share one change-set file, so one build's test JVM can read the change set the other wrote.
+- **A working directory the complement stamp does not see.** The record's stamp does not include
+  the test task's `workingDir`, so a [complement run](#running-what-a-selection-skipped) whose task
+  differs from the selecting run's only there uses its record.
 - **Develocity Test Distribution and Predictive Test Selection.** A test task on which either is
   enabled when it runs, through the `develocity` task extension (Develocity 3.17+), the
   `distribution` or `predictiveSelection` extensions of the Gradle Enterprise plugin, or
@@ -556,9 +565,9 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   executing the declaring class and coverage records no edge. The plugin reads the
   `SourceDebugExtension` Kotlin emits for debuggers to find who inlined a changed file, and adds
   those callers to the change.
-- A build that emits no `SourceDebugExtension` at all (for example one passing
-  `-Xno-source-debug-extension`) cannot answer that question, so any changed Kotlin source forces a
-  full run. A change set of Java sources alone still narrows. The audit reports `smap-absent`.
+- A build whose Kotlin classes carry no `SourceDebugExtension` at all cannot answer that question,
+  so any changed Kotlin source forces a full run. A change set of Java sources alone still narrows.
+  The audit reports `smap-absent`.
 
 ## CI
 
