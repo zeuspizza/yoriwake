@@ -33,7 +33,6 @@ the run as `change-set-unreadable`.
 | `UNMAPPABLE_PATHS_PROPERTY` | `yoriwake.change.unmappable` | plugin → agent | Changed paths no class was derived from; any one forces |
 | `ACCOUNTED_PROPERTY` | `yoriwake.change.accountedFor` | plugin → agent | `true` when every changed path was accounted for, so an empty change set means "nothing changed" |
 | `ABSENCE_PROVABLE_PROPERTY` | `yoriwake.change.absenceProvable` | plugin → agent | Changed classes whose absence from the map proves them untested |
-| `UNREADABLE_PATHS_PROPERTY` | `yoriwake.change.unreadable` | plugin → agent | Changed paths the build never reads |
 | `OWN_TEST_CLASSES_PROPERTY` | `yoriwake.change.ownTestClasses` | plugin → agent | Changed classes that are this task's own tests |
 | `EXEMPT_TEST_CLASSES_PROPERTY` | `yoriwake.change.exemptTestClasses` | plugin → agent | Of those, the ones that declare a test and that no other compiled class or resource names. Their loading at discovery opens no window; see [First touches](#first-touches) |
 | `CHANGED_BYTES_PROPERTY` | `yoriwake.change.bytes` | plugin → agent | Classes whose compiled bytes changed with no changed source behind them. Tests that recorded one run; one no test recorded forces |

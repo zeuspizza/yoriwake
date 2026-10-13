@@ -89,6 +89,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // Read with `enabled`, for the same reason.
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
         val fullRunBranches = RunPlan.fullRunBranches(extension.fullRunBranches.getOrElse(emptyList()), project.path)
+        val notReadByTests = extension.notReadByTests.getOrElse(emptyList())
 
         // One instance for the whole build, so git questions are asked once rather than per `Test`
         // task. Null when the plugin loads through more than one classloader: slow, not wrong.
@@ -111,7 +112,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, buildMemo) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, notReadByTests, buildMemo) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -128,7 +129,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, notReadByTests) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -163,6 +164,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         scope: List<String>?,
         alwaysRunDeclared: List<String>,
         fullRunBranches: List<String>,
+        notReadByTests: List<String>,
         buildMemo: BuildMemo?,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
@@ -290,7 +292,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
-            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript)
+            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests)
         } else {
             declineSelection(test, mapDir, runPlan)
         }

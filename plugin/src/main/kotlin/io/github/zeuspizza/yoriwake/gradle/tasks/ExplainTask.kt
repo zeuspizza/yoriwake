@@ -90,6 +90,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val fullRunBranches: ListProperty<String>
 
+    /** The build's `notReadByTests`: changed files that match one are no change. */
+    @get:Input
+    @get:Optional
+    abstract val notReadByTests: ListProperty<String>
+
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
     @get:Optional
@@ -271,7 +276,7 @@ internal abstract class ExplainTask : DefaultTask() {
             else -> "partly with a fresh test JVM per test class and partly in shared test JVMs"
         }
         logger.lifecycle("[yoriwake] $taskPath: the map was recorded $recorded ($mode)")
-        val scoped = scopedChange(paths, facts)
+        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()))
         val found = establish(
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },
             mapDir, scoped.change, facts,
@@ -289,7 +294,7 @@ internal abstract class ExplainTask : DefaultTask() {
             ownTestClasses = found.testClasses,
         ).withClasspathFiles(
             classpathFiles,
-            forcedByPaths = (scoped.change.unmappablePaths - found.unreadablePaths).isNotEmpty(),
+            forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
         ) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
         reportDigest(widening) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
         // Named in the refusals so it prints and serialises beside every other reason.
@@ -311,12 +316,13 @@ internal abstract class ExplainTask : DefaultTask() {
             "[yoriwake] $taskPath vs $base: ${scoped.change.classPrefixes.size} changed classes, " +
                 "${scoped.change.unmappablePaths.size} paths coverage cannot see, " +
                 "${scoped.dropped} off this task's classpath, " +
+                "${scoped.ideState} an IDE's state, ${scoped.notReadByTests} notReadByTests lists, " +
                 "${provable.size} the daemon could vouch for as untested " +
                 "(${established.testClasses.size} of them this task's own test classes, " +
                 "from ${facts.testOutputs.files.count { it.isDirectory }} test output dirs)"
         )
         val forcing = ForcingPaths.classify(
-            rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs, base,
+            rootDir, mapDir, scoped.change.unmappablePaths, sourceDirs, base,
         )
         // Written before anything is logged, through the same function the run uses, so
         // the file never disagrees with the log or the run.
@@ -363,6 +369,7 @@ internal abstract class ExplainTask : DefaultTask() {
             testName: String,
             settings: Settings,
             fullRunBranches: List<String>,
+            notReadByTests: List<String>,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -380,6 +387,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.explicitBase.set(settings.base)
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
+                task.notReadByTests.set(notReadByTests)
                 task.develocity.set(DevelocityDetection.provider(project, test))
                 // Through a provider: Gradle applies `--tests`, and an init script's `whenReady` adds
                 // patterns, after this runs. Both are seen when the configuration cache stores its

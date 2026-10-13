@@ -23,8 +23,6 @@ internal data class Established(
     val provable: Set<String>,
     /** Changed classes that are this task's own test classes, which discovery already runs. */
     val testClasses: Set<String>,
-    /** Changed paths the build never reads and no compiled class can name. */
-    val unreadablePaths: Set<String>,
     /** Why each class the daemon could not vouch for was refused, for `yoriwakeExplain` to report. */
     val refusals: Map<String, String> = emptyMap(),
     /**
@@ -42,15 +40,8 @@ internal fun establish(
 ): Established {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpath.files, facts.buildDirs.values, facts.testOutputs.files)
-    }.getOrNull() ?: return Established(emptySet(), emptySet(), emptySet())
+    }.getOrNull() ?: return Established(emptySet(), emptySet())
 
-    // Independent of the map: a path nothing can name is unreadable whatever the map knows, and a
-    // changed test class is one discovery already covers.
-    val unreadable = ClasspathScope.unreadable(
-        change.unmappablePaths,
-        artifacts.pathsNamedInClasses(change.unmappablePaths),
-        namedInBuildScripts(facts.rootDir, change.unmappablePaths),
-    )
     // A task that runs builds in child JVMs is one the union cannot speak for; the reason belongs
     // to the task, not to any one class.
     val verdicts = if (artifacts.runsCodeInUnobservedJvms()) {
@@ -85,7 +76,6 @@ internal fun establish(
     return Established(
         provable = verdicts.filterValues { it.provable }.keys,
         testClasses = testClasses,
-        unreadablePaths = unreadable,
         exemptTestClasses = exemptTestClasses,
         refusals = verdicts
             .filterValues { !it.provable }
@@ -571,16 +561,16 @@ internal fun absenceVerdicts(
 }
 
 /**
- * Whether the change set emptied because every changed path was accounted for (off this task's
- * classpath, or unreadable), rather than git reporting nothing, which forces.
+ * Whether the change set emptied because every changed path was accounted for (a class source off
+ * this task's classpath, an IDE's state, or a path notReadByTests lists), rather than git reporting
+ * nothing, which forces.
  */
 internal fun accountedFor(
     paths: List<String>,
     scoped: ScopedChange,
-    established: Established,
 ): Boolean = paths.isNotEmpty() &&
     scoped.change.classPrefixes.isEmpty() &&
-    (scoped.change.unmappablePaths - established.unreadablePaths).isEmpty()
+    scoped.change.unmappablePaths.isEmpty()
 
 /**
  * The change set the three daemon-side `Selector.decide` sites hand it, built one way so they cannot
@@ -595,9 +585,8 @@ internal fun changeSet(
     changedBytes: Collection<String>,
 ): io.github.zeuspizza.yoriwake.agent.select.ChangeSet =
     io.github.zeuspizza.yoriwake.agent.select.ChangeSet.of(changed, scoped.change.unmappablePaths.sorted())
-        .withAccountedFor(accountedFor(paths, scoped, established))
+        .withAccountedFor(accountedFor(paths, scoped))
         .withAbsenceProvable(established.provable)
-        .withUnreadablePaths(established.unreadablePaths)
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
         .withChangedBytes(changedBytes.sorted())
@@ -636,7 +625,14 @@ internal fun wouldRunEverything(
 }.getOrDefault(FullRunOutlook(fullRun = true, mapUsable = false))
 
 /** A change set narrowed to this task's classpath, and how much was dropped. */
-internal data class ScopedChange(val change: ChangeDetection.Change, val dropped: Int) {
+internal data class ScopedChange(
+    val change: ChangeDetection.Change,
+    val dropped: Int,
+    /** Changed paths that are an IDE's state, no change. */
+    val ideState: Int = 0,
+    /** Changed paths `notReadByTests` declares unread, no change. */
+    val notReadByTests: Int = 0,
+) {
     /** Whether every path was dropped as off-classpath, as opposed to an empty change set. */
     val everythingWasOffClasspath: Boolean
         get() = dropped > 0 &&
@@ -645,23 +641,30 @@ internal data class ScopedChange(val change: ChangeDetection.Change, val dropped
 }
 
 /**
- * The change set with other modules' sources removed, computed at execution time. Falls back to
- * the whole change set whenever the classpath or its classes cannot be established.
+ * The change set with an IDE's state, what [notReadByTests] declares, and other modules' sources
+ * removed, computed at execution time. The classpath part keeps every path whenever the classpath
+ * or its classes cannot be established.
  */
 internal fun scopedChange(
     paths: List<String>,
     facts: ClasspathFacts,
+    notReadByTests: List<String> = emptyList(),
 ): ScopedChange {
+    val declared = NotRead.declared(notReadByTests)
+    val ideState = paths.count(NotRead::isIdeState)
+    val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }
     // The same artifacts `establish` builds, so a sibling path this task's classes name is kept.
     // Lazy: most change sets have no off-classpath path to ask about.
     val present = modulesOnClasspath(facts)
-    val restriction = ClasspathScope.restrict(paths, facts.moduleDirs, present) { candidates ->
+    val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present) { candidates ->
         TaskArtifacts(facts.classpath.files, facts.buildDirs.values, facts.testOutputs.files)
             .pathsNamedInClasses(candidates)
     }
     return ScopedChange(
         ChangeDetection.split(restriction.kept, facts.rootDir),
         restriction.dropped.size,
+        ideState = ideState,
+        notReadByTests = paths.size - read.size - ideState,
     )
 }
 

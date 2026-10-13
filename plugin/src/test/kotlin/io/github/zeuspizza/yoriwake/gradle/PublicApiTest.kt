@@ -66,7 +66,7 @@ class PublicApiTest {
             .map { it.name.removePrefix("get").replaceFirstChar(Char::lowercase) }
             .toSet()
 
-        assertEquals(setOf("enabled", "alwaysRun", "fullRunBranches"), properties)
+        assertEquals(setOf("enabled", "alwaysRun", "fullRunBranches", "notReadByTests"), properties)
     }
 
     private fun Visibility.exposed() = this == Visibility.PUBLIC || this == Visibility.PROTECTED

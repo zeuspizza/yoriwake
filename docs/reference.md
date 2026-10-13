@@ -98,9 +98,16 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - the map's age cannot be established (no capture stamp, or one that cannot be related to the
   base);
 - a changed path coverage cannot see: a build script, a settings file, a version catalog, a
-  resource. That includes a file your tests or your build write into the source tree outside
-  `build/`, such as a `derby.log`: untracked and ignored files count. The run names each such file;
-  see [Files written into the source tree](#files-written-into-the-source-tree);
+  resource, or any other file, a README or a CI workflow included. Nothing named in the code is
+  needed: a test or the build can find a file by a pattern, by walking a directory, or through
+  another file that lists it. That includes a file your tests or your build write into the source
+  tree outside `build/`, such as a `derby.log`: untracked and ignored files count. The run names
+  each such file; see [Files written into the source tree](#files-written-into-the-source-tree).
+  Three kinds of file are no change: an IDE's state (anything under an `.idea`, `.vscode` or
+  `.fleet` directory at any depth, and `*.iml` files); a file the build's `notReadByTests` lists
+  (see [Properties and tasks](#properties-and-tasks)); and a Java or Kotlin source of a module that
+  is not on the task's runtime classpath, which no compiled class of the task names. The console
+  counts the first two;
 - a changed class the map has never recorded, because uncovered and unrecordable look the same. A
   test class this task runs is the exception: discovery runs it whatever the map knows;
 - a changed class whose annotations, on the class or any member and with their values, differ from
@@ -1005,6 +1012,7 @@ yoriwake {
     enabled = false                        // same as -Pyoriwake.disabled
     alwaysRun.add("com.acme.FlakyTest")    // a class, a method (Class.method), or a glob
     fullRunBranches.add("main")            // a selecting run here runs everything; see CI
+    notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
 }
 ```
 
@@ -1013,6 +1021,12 @@ A pattern naming a class pins every test in it, its nested classes' included (`O
 parameterised test and every dynamic test of a test factory. Vintage tests are named by their JUnit 4
 class and method, and Spock features by their specification and feature name
 (`com.acme.HandlerSpec.handles a request`).
+
+`notReadByTests` takes globs over paths relative to the root project, each matched whole, with `*`
+matching any characters, slashes included: `docs/*` is everything under `docs/`, `*.md` every
+Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
+a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
+nothing reads: a test that reads a listed file is skipped when only that file changed.
 
 A test's own source can pin it with `@Tag("yoriwake-always-run")`, with nothing on the compile
 classpath.

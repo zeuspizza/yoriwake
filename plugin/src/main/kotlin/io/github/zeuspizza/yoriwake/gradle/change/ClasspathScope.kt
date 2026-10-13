@@ -1,14 +1,14 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
-import java.io.File
-
 /**
- * Drops changed files belonging to modules that are not in this task's JVM, unless a test can name
- * them.
+ * Drops changed class sources belonging to modules that are not in this task's JVM, unless a test
+ * can name them.
  *
- * A module not on the classpath is not in the JVM, but a test can still read its files by path, so
- * a path drops only when no compiled class of this task names it. Only files under an absent
- * module's `src` may drop; build scripts and everything else keep forcing.
+ * A module not on the classpath puts no class in the JVM, but a test can still read its files by
+ * path, so a source drops only when no compiled class of this task names it. Only a Java or Kotlin
+ * source under an absent module's `src` may drop. Its other files keep forcing, like build scripts
+ * and everything else: a test or the build can read a resource without naming it, found by a
+ * pattern, by walking a directory, or handed over by path.
  */
 internal object ClasspathScope {
 
@@ -16,7 +16,7 @@ internal object ClasspathScope {
     data class Restriction(val kept: List<String>, val dropped: List<String>)
 
     /**
-     * Keeps every path except source files of modules absent from the classpath that no class names.
+     * Keeps every path except class sources of modules absent from the classpath that no class names.
      *
      * @param paths repository-relative, forward-slashed
      * @param moduleDirs repository-relative directory of each module, mapped to its Gradle path.
@@ -37,7 +37,7 @@ internal object ClasspathScope {
         }
         val candidates = paths.filterTo(mutableSetOf()) { path ->
             val owner = ownerOf(path, moduleDirs)
-            owner != null && owner.second !in present && isUnderSourceRoot(path, owner.first)
+            owner != null && owner.second !in present && isClassSource(path, owner.first)
         }
         if (candidates.isEmpty()) {
             return Restriction(paths.toList(), emptyList())
@@ -46,34 +46,6 @@ internal object ClasspathScope {
             ?: return Restriction(paths.toList(), emptyList())
         val (dropped, kept) = paths.partition { it in candidates && it !in named }
         return Restriction(kept, dropped)
-    }
-
-    /**
-     * Paths that no part of the build reads, and no compiled class can name (e.g. CI workflow files).
-     * A test can only read a file it can name.
-     *
-     * @param namedInClasses paths some class file mentions
-     * @param namedInBuildScripts paths a build script mentions; these may be code-generation inputs
-     *   (an `openapi.yaml`, a `.proto`) that no class names, so they keep forcing.
-     */
-    fun unreadable(
-        paths: Collection<String>,
-        namedInClasses: Set<String>,
-        namedInBuildScripts: Set<String> = emptySet(),
-    ): Set<String> =
-        paths.filterTo(mutableSetOf()) { path ->
-            path !in namedInClasses && path !in namedInBuildScripts && !isBuildInput(path)
-        }
-
-    /** Whether the build itself reads this path. Deliberately broad. */
-    private fun isBuildInput(path: String): Boolean {
-        val name = path.substringAfterLast('/')
-        return path.contains("/src/") || path.startsWith("src/") ||
-            name.endsWith(".gradle") || name.endsWith(".gradle.kts") ||
-            name == "gradle.properties" || name == "settings.gradle" || name == "settings.gradle.kts" ||
-            name.endsWith(".versions.toml") ||
-            path.startsWith("gradle/") || path.contains("/gradle/") ||
-            name == "gradlew" || name == "gradlew.bat"
     }
 
     /**
@@ -87,9 +59,11 @@ internal object ClasspathScope {
             ?.let { (dir, gradlePath) -> dir to gradlePath }
 
     /**
-     * Whether the path is a source or resource file of that module. A module with another layout
-     * has its files kept, which is the safe direction.
+     * Whether the path is a Java or Kotlin source of that module, which compiles to classes. A
+     * module with another layout has its files kept, which is the safe direction.
      */
-    private fun isUnderSourceRoot(path: String, moduleDir: String): Boolean =
-        path.startsWith("$moduleDir/src/")
+    private fun isClassSource(path: String, moduleDir: String): Boolean =
+        CLASS_SOURCE.matches(path.removePrefix("$moduleDir/"))
+
+    private val CLASS_SOURCE = Regex("""^src/[^/]+/(?:java|kotlin)/.+\.(?:java|kt)$""")
 }

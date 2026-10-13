@@ -163,14 +163,14 @@ class RefusalFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), refused)
         assertTrue(snapshot.isFile, "the refused run executed everything and wrote no snapshot")
 
-        // And an ignored file nothing builds from or names -- an IDE's state -- enters the change
-        // set and is discharged there, rather than forcing: the snapshot adds paths, it does not
-        // decide what they mean.
+        // An IDE's state, ignored or not, is no change: an IDE rewrites it as you work, and it
+        // would otherwise force every selecting run.
         File(dir, ".idea/workspace.xml").also { it.parentFile.mkdirs() }.writeText("<project/>")
+        File(dir, "sample.iml").writeText("<module/>")
         File(dir, "build/test-results").deleteRecursively()
         val narrowed = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
         assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), narrowed)
-        assertContains(narrowed, "1 changed paths the build never reads")
+        assertContains(narrowed, "1 an IDE's state")
     }
 
     /**

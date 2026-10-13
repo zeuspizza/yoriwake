@@ -59,9 +59,6 @@ public final class AgentContract {
     /** Changed classes whose absence from the map the daemon could prove means untested. */
     public static final String ABSENCE_PROVABLE_PROPERTY = "yoriwake.change.absenceProvable";
 
-    /** Changed paths the build never reads and no compiled class can name. */
-    public static final String UNREADABLE_PATHS_PROPERTY = "yoriwake.change.unreadable";
-
     /** Changed classes that are this task's own test classes, which discovery already runs. */
     public static final String OWN_TEST_CLASSES_PROPERTY = "yoriwake.change.ownTestClasses";
 

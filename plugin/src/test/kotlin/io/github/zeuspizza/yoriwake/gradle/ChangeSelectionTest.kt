@@ -24,7 +24,6 @@ import io.github.zeuspizza.yoriwake.gradle.change.annotationRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.compareDigests
 import io.github.zeuspizza.yoriwake.gradle.change.constantHolderRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
-import io.github.zeuspizza.yoriwake.gradle.change.namedInBuildScripts
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -61,8 +60,7 @@ class ChangeSelectionTest {
         dropped: Int = 0,
     ) = ScopedChange(change(prefixes, unmappable), dropped)
 
-    private fun established(unreadable: Set<String> = emptySet()) =
-        Established(emptySet(), emptySet(), unreadable)
+    private fun established() = Established(emptySet(), emptySet())
 
     private fun declaring(file: File, packageName: String) {
         file.parentFile.mkdirs()
@@ -159,13 +157,12 @@ class ChangeSelectionTest {
     }
 
     @Test
-    fun `a change set that emptied because everything was explained is accounted for`() {
+    fun `a change set that emptied because everything was off the classpath is accounted for`() {
         // The exception to "empty forces". The files really did change and every one of them was
-        // explained -- off this task's classpath, or unreadable by anything in it.
+        // a class source of a module this task's JVM cannot load.
         val accounted = accountedFor(
-            paths = listOf(".github/workflows/ci.yml"),
-            scoped = scoped(unmappable = listOf(".github/workflows/ci.yml")),
-            established = established(unreadable = setOf(".github/workflows/ci.yml")),
+            paths = listOf("lib/src/main/java/com/acme/Lib.java"),
+            scoped = scoped(dropped = 1),
         )
 
         assertTrue(accounted)
@@ -175,15 +172,16 @@ class ChangeSelectionTest {
     fun `git having nothing to say is not the same as everything being explained`() {
         // The default base is HEAD, so committing and then testing yields an empty diff, which
         // must not read as "nothing needs to run".
-        assertFalse(accountedFor(paths = emptyList(), scoped = scoped(), established = established()))
+        assertFalse(accountedFor(paths = emptyList(), scoped = scoped()))
     }
 
     @Test
-    fun `one unexplained path is enough to keep the change set unaccounted for`() {
+    fun `a changed path nothing names keeps the change set unaccounted for`() {
+        // A CI workflow no class or build script names may still be read: found by a pattern,
+        // walked to, or listed in another file.
         val accounted = accountedFor(
-            paths = listOf(".github/workflows/ci.yml", "build.gradle.kts"),
-            scoped = scoped(unmappable = listOf(".github/workflows/ci.yml", "build.gradle.kts")),
-            established = established(unreadable = setOf(".github/workflows/ci.yml")),
+            paths = listOf("lib/src/main/java/com/acme/Lib.java", ".github/workflows/ci.yml"),
+            scoped = scoped(unmappable = listOf(".github/workflows/ci.yml"), dropped = 1),
         )
 
         assertFalse(accounted)
@@ -194,83 +192,9 @@ class ChangeSelectionTest {
         val accounted = accountedFor(
             paths = listOf("core/src/main/java/com/acme/Thing.java"),
             scoped = scoped(prefixes = setOf("com.acme.Thing")),
-            established = established(),
         )
 
         assertFalse(accounted)
-    }
-
-    @Test
-    fun `a path a build script names is reported, and one it does not is not`(@TempDir dir: File) {
-        // An openapi.yaml or a .proto changes what compiles while no compiled class ever names it,
-        // so the build scripts are the only place that dependency is visible.
-        File(dir, "build.gradle.kts").writeText(
-            """
-            tasks.register("generate") {
-                inputs.file("api/openapi.yaml")
-            }
-            """.trimIndent()
-        )
-
-        val named = namedInBuildScripts(dir, listOf("api/openapi.yaml", "docs/unrelated.md"))
-
-        assertEquals(setOf("api/openapi.yaml"), named)
-    }
-
-    @Test
-    fun `a script in a subdirectory is read too`(@TempDir dir: File) {
-        File(dir, "service").mkdirs()
-        File(dir, "service/build.gradle").writeText("// reads schema/events.proto")
-
-        assertEquals(setOf("schema/events.proto"), namedInBuildScripts(dir, listOf("schema/events.proto")))
-    }
-
-    @Test
-    fun `asking about no paths reads no scripts`(@TempDir dir: File) {
-        File(dir, "build.gradle.kts").writeText("// anything")
-
-        assertTrue(namedInBuildScripts(dir, emptyList()).isEmpty())
-    }
-
-    @Test
-    fun `a version catalog counts as a build script`(@TempDir dir: File) {
-        File(dir, "gradle").mkdirs()
-        File(dir, "gradle/libs.versions.toml").writeText("""schema = { file = "schema/events.proto" }""")
-
-        assertEquals(setOf("schema/events.proto"), namedInBuildScripts(dir, listOf("schema/events.proto")))
-    }
-
-    @Test
-    fun `a build script naming only a directory protects the files inside it`(@TempDir dir: File) {
-        // `inputs.dir("testdata")` or a system property names the directory, never the changed
-        // file, and no class names it either; unnamed, golden-file tests would be skipped.
-        File(dir, "build.gradle.kts").writeText("""tasks.test { inputs.dir("testdata") }""")
-
-        assertEquals(setOf("testdata/case1.json"), namedInBuildScripts(dir, listOf("testdata/case1.json")))
-    }
-
-    @Test
-    fun `deep module scripts and convention plugins are read`(@TempDir dir: File) {
-        File(dir, "a/b/c").mkdirs()
-        File(dir, "a/b/c/build.gradle.kts").writeText("// reads schema/deep.proto")
-        File(dir, "build-logic/src/main/kotlin").mkdirs()
-        File(dir, "build-logic/settings.gradle.kts").writeText("")
-        File(dir, "build-logic/src/main/kotlin/Codegen.kt").writeText("""val spec = "api/openapi.yaml"""")
-        File(dir, "buildSrc/src/main/kotlin").mkdirs()
-        File(dir, "buildSrc/src/main/kotlin/conventions.gradle.kts").writeText("// reads fixtures/golden.txt")
-
-        assertEquals(
-            setOf("schema/deep.proto", "api/openapi.yaml", "fixtures/golden.txt"),
-            namedInBuildScripts(dir, listOf("schema/deep.proto", "api/openapi.yaml", "fixtures/golden.txt")),
-        )
-    }
-
-    @Test
-    fun `an ordinary module's sources are not read as build logic`(@TempDir dir: File) {
-        File(dir, "app/src/main/kotlin").mkdirs()
-        File(dir, "app/src/main/kotlin/App.kt").writeText("""val doc = "docs/unrelated.md"""")
-
-        assertTrue(namedInBuildScripts(dir, listOf("docs/unrelated.md")).isEmpty())
     }
 
     private val base = ChangeDetection.Base("base0000", "an explicit base")

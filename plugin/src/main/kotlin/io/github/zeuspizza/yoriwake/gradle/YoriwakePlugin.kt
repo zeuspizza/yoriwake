@@ -390,6 +390,15 @@ public abstract class YoriwakeExtension {
      */
     public abstract val fullRunBranches: org.gradle.api.provider.ListProperty<String>
 
+    /**
+     * Files neither the tests nor the build ever read, as globs over paths relative to the root
+     * project: `notReadByTests.addAll("*.md", "LICENSE")`. Paths match whole, and `*` matches any
+     * characters, slashes included, so `docs` followed by a slash and a star is every file under
+     * `docs`. A changed file one matches is no change, where it would otherwise force a full run.
+     * Empty by default; an entry that names a file a test does read skips that test.
+     */
+    public abstract val notReadByTests: org.gradle.api.provider.ListProperty<String>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)

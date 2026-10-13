@@ -55,7 +55,7 @@ internal fun writeExplanation(
         // git could not say.
         append("""  "forcingPathOrigins": [""")
         append(
-            (scoped.change.unmappablePaths - established.unreadablePaths).sorted().take(UNMAPPABLE_SAMPLE)
+            scoped.change.unmappablePaths.sorted().take(UNMAPPABLE_SAMPLE)
                 .joinToString(", ") { path ->
                     """{ "path": ${Json.string(path)}, "origin": ${Json.string(forcing.origins[path]?.token)} }"""
                 }
@@ -64,7 +64,6 @@ internal fun writeExplanation(
         append("""  "offClasspath": ${scoped.dropped},""").append('\n')
         append("""  "provablyUntested": ${established.provable.size},""").append('\n')
         append("""  "ownTestClasses": ${established.testClasses.size},""").append('\n')
-        append("""  "unreadablePaths": ${established.unreadablePaths.size},""").append('\n')
         append("""  "inlineScanExhausted": ${widening.scanExhausted},""").append('\n')
         append("""  "refusalKind": """)
             .append(Json.string(widening.refusalKind?.token))
@@ -139,7 +138,6 @@ internal fun writeUnanswered(
         append("""  "offClasspath": 0,""").append('\n')
         append("""  "provablyUntested": 0,""").append('\n')
         append("""  "ownTestClasses": 0,""").append('\n')
-        append("""  "unreadablePaths": 0,""").append('\n')
         append("""  "inlineScanExhausted": false,""").append('\n')
         append("""  "refusalKind": """)
             .append(Json.string(refusalKind))

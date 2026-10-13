@@ -16,7 +16,6 @@ public final class ChangeSet {
     private final Collection<String> unmappablePaths;
     private final boolean accountedFor;
     private final Collection<String> absenceProvable;
-    private final Collection<String> unreadablePaths;
     private final Collection<String> ownTestClasses;
     private final Collection<String> exemptTestClasses;
     private final Collection<String> changedBytes;
@@ -27,7 +26,6 @@ public final class ChangeSet {
             Collection<String> unmappablePaths,
             boolean accountedFor,
             Collection<String> absenceProvable,
-            Collection<String> unreadablePaths,
             Collection<String> ownTestClasses,
             Collection<String> exemptTestClasses,
             Collection<String> changedBytes,
@@ -36,7 +34,6 @@ public final class ChangeSet {
         this.unmappablePaths = unmappablePaths;
         this.accountedFor = accountedFor;
         this.absenceProvable = absenceProvable;
-        this.unreadablePaths = unreadablePaths;
         this.ownTestClasses = ownTestClasses;
         this.exemptTestClasses = exemptTestClasses;
         this.changedBytes = changedBytes;
@@ -50,29 +47,23 @@ public final class ChangeSet {
     public static ChangeSet of(Collection<String> changedClasses, Collection<String> unmappablePaths) {
         return new ChangeSet(changedClasses, unmappablePaths, false, Collections.<String>emptySet(),
                 Collections.<String>emptySet(), Collections.<String>emptySet(), Collections.<String>emptySet(),
-                Collections.<String>emptySet(), null);
+                null);
     }
 
     /**
-     * The change set was not empty, and every path in it was shown unable to reach this JVM: its
-     * module is absent from this task's classpath, or nothing in the build reads it and no compiled
-     * class names it.
+     * The change set was not empty, and every path in it was accounted for: a class source whose
+     * module is absent from this task's classpath and that no compiled class names, an IDE's state,
+     * or a path the build declares no test reads.
      */
     public ChangeSet withAccountedFor(boolean accountedFor) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                unreadablePaths, ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
+                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
     }
 
     /** Prefixes for which the daemon's AbsenceEvidence holds; see {@code Selector.untested}. */
     public ChangeSet withAbsenceProvable(Collection<String> absenceProvable) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                unreadablePaths, ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
-    }
-
-    /** Changed paths that are not build inputs and no compiled class names. */
-    public ChangeSet withUnreadablePaths(Collection<String> unreadablePaths) {
-        return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                unreadablePaths, ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
+                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
     }
 
     /**
@@ -82,7 +73,7 @@ public final class ChangeSet {
      */
     public ChangeSet withOwnTestClasses(Collection<String> ownTestClasses) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                unreadablePaths, ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
+                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
     }
 
     /**
@@ -92,7 +83,7 @@ public final class ChangeSet {
      */
     public ChangeSet withExemptTestClasses(Collection<String> exemptTestClasses) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                unreadablePaths, ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
+                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
     }
 
     /**
@@ -103,7 +94,7 @@ public final class ChangeSet {
      */
     public ChangeSet withChangedBytes(Collection<String> changedBytes) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                unreadablePaths, ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
+                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
     }
 
     /**
@@ -112,7 +103,7 @@ public final class ChangeSet {
      */
     public ChangeSet withDaemonRefusal(String daemonRefusal) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                unreadablePaths, ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
+                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal);
     }
 
     public Collection<String> changedClasses() {
@@ -129,10 +120,6 @@ public final class ChangeSet {
 
     public Collection<String> absenceProvable() {
         return absenceProvable;
-    }
-
-    public Collection<String> unreadablePaths() {
-        return unreadablePaths;
     }
 
     public Collection<String> ownTestClasses() {
