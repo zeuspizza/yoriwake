@@ -30,9 +30,9 @@ class ClasspathScopeTest {
     private val nothingNamed: (Collection<String>) -> Set<String>? = { emptySet() }
 
     @Test
-    fun `drops another module's sources`() {
+    fun `drops another module's class sources`() {
         val result = ClasspathScope.restrict(
-            listOf("ui/src/components/Flow.vue", "webserver/src/main/java/io/kestra/webserver/Api.java"),
+            listOf("webserver/src/main/java/io/kestra/webserver/Api.java", "ui/src/main/kotlin/io/kestra/ui/Page.kt"),
             modules,
             onlyCore,
             nothingNamed,
@@ -40,6 +40,22 @@ class ClasspathScopeTest {
 
         assertTrue(result.kept.isEmpty())
         assertEquals(2, result.dropped.size)
+    }
+
+    @Test
+    fun `keeps another module's files that compile to no class`() {
+        // A resource, a front-end component, a golden file: none reaches the JVM as a class, and a
+        // test or the build can read any of them by a path no compiled class holds.
+        val paths = listOf(
+            "ui/src/components/Flow.vue",
+            "webserver/src/main/resources/application.yml",
+            "webserver/src/test/resources/golden/flow.json",
+        )
+
+        val result = ClasspathScope.restrict(paths, modules, onlyCore, nothingNamed)
+
+        assertEquals(paths, result.kept)
+        assertTrue(result.dropped.isEmpty())
     }
 
     @Test
@@ -125,15 +141,15 @@ class ClasspathScopeTest {
 
     @Test
     fun `a sibling's file a compiled class names is kept`() {
-        // A golden file in a module the JVM never loads is still a file a test can open by path.
+        // A source in a module the JVM never loads is still a file a test can open by path.
         // Dropping it on the strength of the classpath would skip the test that reads it.
-        val golden = "ui/src/main/resources/golden/flow.json"
-        val vue = "ui/src/components/Flow.vue"
+        val fixture = "ui/src/test/java/io/kestra/ui/Fixture.java"
+        val page = "ui/src/main/kotlin/io/kestra/ui/Page.kt"
 
-        val result = ClasspathScope.restrict(listOf(golden, vue), modules, onlyCore) { setOf(golden) }
+        val result = ClasspathScope.restrict(listOf(fixture, page), modules, onlyCore) { setOf(fixture) }
 
-        assertEquals(listOf(golden), result.kept)
-        assertEquals(listOf(vue), result.dropped)
+        assertEquals(listOf(fixture), result.kept)
+        assertEquals(listOf(page), result.dropped)
     }
 
     @Test
@@ -142,12 +158,12 @@ class ClasspathScopeTest {
     ) {
         // The rule the lambda stands in for, end to end: a test class holding the relative path it
         // reads, as `Path.of("../ui/src/main/resources/golden/flow.json")` compiles to. It names
-        // `src` too, so another module's Vue component is kept with it -- the price of matching a
+        // `src` too, so another module's Kotlin source is kept with it -- the price of matching a
         // path assembled from parts, paid on purpose.
         File(dir, "pkg").mkdirs()
         File(dir, "pkg/GoldenTest.class")
             .writeBytes("..../ui/src/main/resources/golden/flow.json..".toByteArray())
-        val paths = listOf("ui/src/main/resources/golden/flow.json", "webserver/src/components/Flow.vue")
+        val paths = listOf("ui/src/main/resources/golden/flow.json", "webserver/src/main/kotlin/Flow.kt")
 
         val result = ClasspathScope.restrict(
             paths, modules, onlyCore, TaskArtifacts(listOf(dir), emptyList())::pathsNamedInClasses,
@@ -164,12 +180,12 @@ class ClasspathScopeTest {
             .writeBytes("..dev/core/ThingTest..java/lang/Object..org/junit/jupiter/api/Test..".toByteArray())
 
         val result = ClasspathScope.restrict(
-            listOf("webserver/src/components/Flow.vue"), modules, onlyCore,
+            listOf("webserver/src/main/kotlin/kestra/Api.kt"), modules, onlyCore,
             TaskArtifacts(listOf(dir), emptyList())::pathsNamedInClasses,
         )
 
         assertTrue(result.kept.isEmpty())
-        assertEquals(listOf("webserver/src/components/Flow.vue"), result.dropped)
+        assertEquals(listOf("webserver/src/main/kotlin/kestra/Api.kt"), result.dropped)
     }
 
     @Test

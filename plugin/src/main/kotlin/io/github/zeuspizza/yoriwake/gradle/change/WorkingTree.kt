@@ -94,6 +94,7 @@ internal object WorkingTree {
         // `.kotlin` is the Kotlin Gradle plugin's state beside `.gradle`: a marker per live
         // compiler session, so every run that starts a new daemon would otherwise force.
         return ".gradle" in directories || ".kotlin" in directories || ".git" in directories ||
+            NotRead.isIdeState(path) ||
             isUnderExcluded(path, excluded) ||
             directories.indices.any { i ->
                 directories[i] == "build" && isGradleBuild(directories.subList(0, i).joinToString("/"))

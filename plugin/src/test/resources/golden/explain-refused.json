@@ -14,7 +14,6 @@
   "offClasspath": 2,
   "provablyUntested": 1,
   "ownTestClasses": 1,
-  "unreadablePaths": 1,
   "inlineScanExhausted": true,
   "refusalKind": "constant-changed",
   "refusalDetail": "com.acme.Thing.LIMIT",

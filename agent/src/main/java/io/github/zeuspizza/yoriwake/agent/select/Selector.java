@@ -247,7 +247,6 @@ public final class Selector {
             MapReader.Result map, ChangeSet change, Collection<String> discoveredTestIds) {
         Collection<String> changedClassPrefixes = change.changedClasses();
         Collection<String> unmappablePaths = change.unmappablePaths();
-        Collection<String> unreadablePaths = change.unreadablePaths();
         Collection<String> absenceProvable = change.absenceProvable();
         Collection<String> ownTestClasses = change.ownTestClasses();
         boolean changeWasFullyAccountedFor = change.accountedFor();
@@ -280,14 +279,6 @@ public final class Selector {
         if (daemonRefusal != null) {
             return Decision.fullRun(daemonRefusal, Decision.FullRunKind.DAEMON_REFUSED, knownTestIds);
         }
-
-        List<String> unreadable = new ArrayList<>();
-        for (String path : unmappablePaths) {
-            if (!unreadablePaths.contains(path)) {
-                unreadable.add(path);
-            }
-        }
-        unmappablePaths = unreadable;
 
         if (!unmappablePaths.isEmpty()) {
             // Coverage says nothing about build scripts, resources or generated sources, so
@@ -441,11 +432,8 @@ public final class Selector {
             knownTestIds.add(test.testId());
         }
 
-        for (String path : change.unmappablePaths()) {
-            if (!change.unreadablePaths().contains(path)) {
-                forcing.add(Decision.FullRunKind.UNMAPPABLE_PATHS);
-                break;
-            }
+        if (!change.unmappablePaths().isEmpty()) {
+            forcing.add(Decision.FullRunKind.UNMAPPABLE_PATHS);
         }
         if (changed.isEmpty() && !change.accountedFor()) {
             forcing.add(Decision.FullRunKind.EMPTY_CHANGE_SET);

@@ -121,8 +121,9 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
 
         runner(dir, "test").build()
 
-        File(dir, "beta/src/components/Flow.vue").apply { parentFile.mkdirs() }
-            .writeText("<template><div/></template>")
+        // A class source whose directories no alpha class names, so nothing alpha runs can name it.
+        File(dir, "beta/src/main/kotlin/zq/Flow.kt").apply { parentFile.mkdirs() }
+            .writeText("package zq\nclass Flow")
         File(dir, "alpha/build/test-results").deleteRecursively()
 
         val output = runner(dir, ":alpha:test", "-Pyoriwake.select").build().output

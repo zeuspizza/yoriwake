@@ -28,6 +28,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A changed file nothing names (a README, a CI workflow, another module's resource) forces a full
+  run unless `notReadByTests` lists it; IDE state is no change. Map: left alone.
 - A run forced by an untracked file in the source tree names the file and where it came from, on
   the console and in `explain.json`. Map: left alone.
 - A JUnit 4 or TestNG task off the JUnit Platform says on a selecting run that it runs every test.

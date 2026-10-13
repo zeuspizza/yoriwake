@@ -14,7 +14,6 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PRO
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNMAPPABLE_PATHS_PROPERTY
-import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNREADABLE_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
@@ -41,6 +40,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.digestRule
 import io.github.zeuspizza.yoriwake.gradle.change.establish
 import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
 import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
+import io.github.zeuspizza.yoriwake.gradle.change.NotRead
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.change.wouldRunEverything
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -108,6 +108,7 @@ internal fun TestTaskWiring.configureSelection(
     buildMemo: BuildMemo?,
     runPlan: RunPlan,
     fromBuildScript: TestPatterns,
+    notReadByTests: List<String>,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -236,7 +237,7 @@ internal fun TestTaskWiring.configureSelection(
         if (refusedAtExecution(test)) {
             return@doFirst
         }
-        val scoped = scopedChange(paths, classpathFacts)
+        val scoped = scopedChange(paths, classpathFacts, notReadByTests)
         val established = establish(
             { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") },
             mapDir, scoped.change, classpathFacts,
@@ -268,7 +269,7 @@ internal fun TestTaskWiring.configureSelection(
             ownTestClasses = established.testClasses,
         ).withClasspathFiles(
             classpathFiles,
-            forcedByPaths = (scoped.change.unmappablePaths - established.unreadablePaths).isNotEmpty(),
+            forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
         ) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
         reportDigest(widening) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
 
@@ -288,16 +289,17 @@ internal fun TestTaskWiring.configureSelection(
             widening.prefixes
         }
 
-        // Says the empty change set was arrived at (every path off-classpath or unreadable)
-        // rather than reported by git, which would force a full run.
+        // Says the empty change set was arrived at (every path a class source off the classpath,
+        // an IDE's state, or one notReadByTests lists) rather than reported by git, which would
+        // force a full run.
         test.systemProperty(
             ACCOUNTED_PROPERTY,
-            accountedFor(paths, scoped, established).toString(),
+            accountedFor(paths, scoped).toString(),
         )
         // From a copy, before the change set is written and printed after it: it only explains
         // the run, and never changes what the test JVM is handed.
         val forcing = ForcingPaths.classify(
-            rootDir, mapDir, scoped.change.unmappablePaths - established.unreadablePaths, sourceDirs, against,
+            rootDir, mapDir, scoped.change.unmappablePaths, sourceDirs, against,
         )
         writeChangeSet(
             test, changeSetFile,
@@ -312,22 +314,22 @@ internal fun TestTaskWiring.configureSelection(
                 // definition, so the absence rule would never fire for it.
                 OWN_TEST_CLASSES_PROPERTY to established.testClasses,
                 EXEMPT_TEST_CLASSES_PROPERTY to established.exemptTestClasses,
-                UNREADABLE_PATHS_PROPERTY to established.unreadablePaths,
             ),
         )
-        if (established.unreadablePaths.isNotEmpty() || established.testClasses.isNotEmpty()) {
+        if (established.testClasses.isNotEmpty()) {
             test.logger.lifecycle(
-                "[yoriwake] ${test.path}: ${established.unreadablePaths.size} changed paths the build " +
-                    "never reads, ${established.testClasses.size} changed test classes discovery " +
-                    "already runs"
+                "[yoriwake] ${test.path}: ${established.testClasses.size} changed test classes " +
+                    "discovery already runs"
             )
         }
         test.logger.lifecycle(
             "[yoriwake] ${test.path} selecting against ${widened.ref} (${widened.origin}): " +
                 "${scoped.change.classPrefixes.size} changed classes, " +
                 "${scoped.change.unmappablePaths.size} paths coverage cannot see" +
-                if (scoped.dropped == 0) "" else
-                    ", ${scoped.dropped} in modules that are not on this task's classpath"
+                (if (scoped.dropped == 0) "" else
+                    ", ${scoped.dropped} in modules that are not on this task's classpath") +
+                (if (scoped.ideState == 0) "" else ", ${scoped.ideState} an IDE's state") +
+                (if (scoped.notReadByTests == 0) "" else ", ${scoped.notReadByTests} notReadByTests lists")
         )
         ForcingPaths.lines(test.path, forcing).forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
 
@@ -348,7 +350,7 @@ internal fun TestTaskWiring.configureSelection(
         )
     }
 
-    refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo, observing)
+    refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo, observing, notReadByTests)
     trusted?.let { listed ->
         refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)
     }
@@ -722,6 +724,7 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
     changeSetFile: File,
     buildMemo: BuildMemo?,
     observing: Boolean,
+    notReadByTests: List<String>,
 ) {
     // Plain values: a task action may not touch Project or its providers under the configuration
     // cache, so git is asked directly.
@@ -757,7 +760,11 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
         // A tracked path is never such noise, whatever directory it sits in.
         val buildState = WorkingTree.buildState(rootDir, excluded)
         val tracked = listed?.first.orEmpty().toSet()
-        val isNoise = { path: String -> path !in tracked && buildState(path) }
+        // What is no change to selection is no change here either, tracked or not.
+        val declared = NotRead.declared(notReadByTests)
+        val isNoise = { path: String ->
+            (path !in tracked && buildState(path)) || NotRead.isIdeState(path) || declared(path)
+        }
         val configured = paths.filterNot(isNoise).toSet()
         val now = listed?.second?.filterNot(isNoise)?.toSet()
         if (now == configured) {

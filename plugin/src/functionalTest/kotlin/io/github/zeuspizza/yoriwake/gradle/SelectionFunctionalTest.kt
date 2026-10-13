@@ -142,6 +142,162 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertContains(ranTests(backend), "dev.sample.FixtureTest", output)
     }
 
+    /**
+     * Captures [sources] with the two-class sample, applies [edit], and selects. A changed file
+     * that no source root maps must force: a test or the build can read a file without naming it.
+     * Each [edit] keeps the reading test passing, so the forced run succeeds.
+     */
+    private fun selectsAfterAnUnnamedFileChanged(
+        dir: File,
+        buildScript: String,
+        vararg sources: Pair<String, String>,
+        edit: () -> Unit,
+    ): String {
+        build(dir, "build.gradle.kts" to buildScript, oneClass, oneTest, secondClass, secondTest, *sources)
+        committed(dir)
+        runner(dir, "test").build()
+        edit()
+        File(dir, "build/test-results").deleteRecursively()
+        return runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+    }
+
+    @Test
+    fun `a file the build script finds by its extension and hands to the tests forces the run`(@TempDir dir: File) {
+        val output = selectsAfterAnUnnamedFileChanged(
+            dir,
+            minimalBuild.replace(
+                "tasks.test { useJUnitPlatform() }",
+                """
+                val knob = rootDir.listFiles { f -> f.name.endsWith(".knob") }!!.single().readText().trim()
+                tasks.test { useJUnitPlatform(); systemProperty("factor", knob) }
+                """.trimIndent(),
+            ),
+            "level.knob" to "2\n",
+            "src/test/java/dev/sample/FactorTest.java" to """
+                package dev.sample;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class FactorTest { @Test void factor() { assertEquals(Integer.getInteger("factor").intValue(), new Alpha().twice(1)); } }
+            """.trimIndent(),
+        ) { File(dir, "level.knob").writeText("2\n\n") }
+
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
+        assertContains(ranTests(dir), "dev.sample.FactorTest", output)
+    }
+
+    @Test
+    fun `a file only a list file names forces the run`(@TempDir dir: File) {
+        val output = selectsAfterAnUnnamedFileChanged(
+            dir,
+            minimalBuild,
+            "cases.txt" to "expected/one.out\n",
+            "expected/one.out" to "2\n",
+            "src/test/java/dev/sample/CasesTest.java" to """
+                package dev.sample;
+                import java.nio.file.Files;
+                import java.nio.file.Paths;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class CasesTest {
+                    @Test void cases() throws Exception {
+                        for (String listed : Files.readAllLines(Paths.get("cases.txt"))) {
+                            assertEquals(new Alpha().twice(1), Integer.parseInt(Files.readString(Paths.get(listed)).trim()));
+                        }
+                    }
+                }
+            """.trimIndent(),
+        ) { File(dir, "expected/one.out").writeText("2\n\n") }
+
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
+        assertContains(ranTests(dir), "dev.sample.CasesTest", output)
+    }
+
+    @Test
+    fun `a Markdown file a test finds by walking the project forces the run`(@TempDir dir: File) {
+        val output = selectsAfterAnUnnamedFileChanged(
+            dir,
+            minimalBuild,
+            "notes.md" to "# Notes\n\nAll done.\n",
+            "src/test/java/dev/sample/DocsTest.java" to """
+                package dev.sample;
+                import java.nio.file.Files;
+                import java.nio.file.Path;
+                import java.nio.file.Paths;
+                import java.util.List;
+                import java.util.stream.Collectors;
+                import java.util.stream.Stream;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertFalse;
+                class DocsTest {
+                    @Test void noOpenItems() throws Exception {
+                        List<Path> docs;
+                        try (Stream<Path> all = Files.walk(Paths.get(""))) {
+                            docs = all.filter(p -> p.toString().endsWith(".md")).collect(Collectors.toList());
+                        }
+                        for (Path doc : docs) assertFalse(Files.readString(doc).contains("TODO"), doc.toString());
+                    }
+                }
+            """.trimIndent(),
+        ) { File(dir, "notes.md").writeText("# Notes\n\nAll done, again.\n") }
+
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
+        assertContains(ranTests(dir), "dev.sample.DocsTest", output)
+    }
+
+    @Test
+    fun `a changed file notReadByTests lists is no change`(@TempDir dir: File) {
+        val output = selectsAfterAnUnnamedFileChanged(
+            dir,
+            minimalBuild + "\nyoriwake { notReadByTests.addAll(\"docs/*\", \"*.md\") }\n",
+            "notes.md" to "# Notes\n",
+            "docs/guide.txt" to "Guide\n",
+            classOrderByName,
+        ) {
+            File(dir, "notes.md").writeText("# Notes, again\n")
+            File(dir, "docs/guide.txt").writeText("Guide, again\n")
+            changeBeta(dir)
+        }
+
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+        assertContains(output, "2 notReadByTests lists")
+    }
+
+    @Test
+    fun `a resource of a module off the classpath the build script hands a test by path forces the run`(
+        @TempDir dir: File,
+    ) {
+        val output = selectsAfterAnUnnamedFileChanged(
+            dir,
+            minimalBuild.replace(
+                "tasks.test { useJUnitPlatform() }",
+                """
+                tasks.test {
+                    useJUnitPlatform()
+                    systemProperty("sibling.path", file("golden/src/main/resources/answer.txt").absolutePath)
+                }
+                """.trimIndent(),
+            ),
+            "settings.gradle.kts" to "include(\"golden\")",
+            "golden/build.gradle.kts" to "",
+            "golden/src/main/resources/answer.txt" to "2",
+            "src/test/java/dev/sample/SiblingTest.java" to """
+                package dev.sample;
+                import java.nio.file.Files;
+                import java.nio.file.Paths;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class SiblingTest {
+                    @Test void answer() throws Exception {
+                        assertEquals(new Alpha().twice(1), Integer.parseInt(Files.readString(Paths.get(System.getProperty("sibling.path"))).trim()));
+                    }
+                }
+            """.trimIndent(),
+        ) { File(dir, "golden/src/main/resources/answer.txt").writeText("2\n") }
+
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
+        assertContains(ranTests(dir), "dev.sample.SiblingTest", output)
+    }
+
     @Test
     fun `build output of another Gradle build below the root is not a change`(@TempDir dir: File) {
         // buildSrc, an included build, a TestKit project a test wrote: this build knows none of

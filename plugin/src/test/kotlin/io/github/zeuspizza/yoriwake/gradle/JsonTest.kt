@@ -59,7 +59,7 @@ class JsonTest {
                 2,
             ),
             Established(
-                setOf("com.acme.Untested"), setOf("com.acme.ThingTest"), setOf("src/main/resources/x.txt"),
+                setOf("com.acme.Untested"), setOf("com.acme.ThingTest"),
                 mapOf("com.acme.Thing" to "a constant changed", "com.acme.Other" to "no bytes"),
             ),
             fullRun(),
@@ -80,7 +80,7 @@ class JsonTest {
         writeExplanation(
             dir, ":app:test", "origin/main",
             ScopedChange(ChangeDetection.Change(setOf("com.acme.Thing"), emptyList()), 0),
-            Established(emptySet(), emptySet(), emptySet()),
+            Established(emptySet(), emptySet()),
             fullRun(),
             InlineWidening.widened(
                 listOf("com.acme.Thing"), setOf("com.acme.InlineB", "com.acme.InlineA"),
@@ -165,7 +165,7 @@ class JsonTest {
         writeExplanation(
             dir, hostile, hostile,
             ScopedChange(ChangeDetection.Change(setOf(hostile), listOf(hostile)), 0),
-            Established(emptySet(), emptySet(), emptySet(), mapOf(hostile to hostile)),
+            Established(emptySet(), emptySet(), mapOf(hostile to hostile)),
             fullRun(),
             InlineWidening.widened(emptyList(), setOf(hostile), digest(setOf(hostile), hostile)),
             CaptureDecision(capture = false, fullRun = true, mapCurrent = false, reason = hostile),

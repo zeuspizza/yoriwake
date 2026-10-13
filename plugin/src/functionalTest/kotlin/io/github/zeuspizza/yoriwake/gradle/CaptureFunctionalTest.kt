@@ -471,8 +471,7 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
         runner(dir, "test").build()
         File(dir, "build/test-results").deleteRecursively()
 
-        // A path no source root claims and one the build reads, so it forces. A README would not:
-        // the build never reads it, so that change is proven irrelevant and nothing runs.
+        // A path no source root claims, so it forces.
         File(dir, "build.gradle.kts").appendText("\n// coverage cannot see a build script\n")
         git(dir, "add", ".")
         git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "build tweak")

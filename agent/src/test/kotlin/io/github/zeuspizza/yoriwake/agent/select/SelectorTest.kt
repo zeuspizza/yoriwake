@@ -65,12 +65,11 @@ class SelectorTest {
         unmappable: List<String> = emptyList(),
         discovered: List<String> = emptyList(),
         provable: List<String> = emptyList(),
-        unreadable: List<String> = emptyList(),
         bytes: List<String> = emptyList(),
         accounted: Boolean = false,
     ) = Selector.decide(
         map,
-        ChangeSet.of(changed, unmappable).withAbsenceProvable(provable).withUnreadablePaths(unreadable)
+        ChangeSet.of(changed, unmappable).withAbsenceProvable(provable)
             .withChangedBytes(bytes).withAccountedFor(accounted).withExemptTestClasses(exempt)
             .withOwnTestClasses(own),
         discovered,
@@ -388,40 +387,6 @@ class SelectorTest {
 
         assertTrue(decision.isFullRun)
         assertContains(decision.fullRunReason(), "empty")
-    }
-
-    @Test
-    fun `a changed path the build never reads does not force`(@TempDir dir: File) {
-        // Gradle never reads a CI workflow file and no compiled class names it, so nothing in this
-        // JVM can open it.
-        val m = map(dir, test("A", "com.acme.A"))
-
-        val decision = decide(
-            m,
-            changed = listOf("com.acme.A"),
-            unmappable = listOf(".github/workflows/ci.yml"),
-            unreadable = listOf(".github/workflows/ci.yml"),
-        )
-
-        assertFalse(decision.isFullRun)
-    }
-
-    @Test
-    fun `an unreadable path among readable ones still leaves the readable ones forcing`(
-        @TempDir dir: File,
-    ) {
-        val m = map(dir, test("A", "com.acme.A"))
-
-        val decision = decide(
-            m,
-            changed = listOf("com.acme.A"),
-            unmappable = listOf(".github/workflows/ci.yml", "build.gradle.kts"),
-            unreadable = listOf(".github/workflows/ci.yml"),
-        )
-
-        assertTrue(decision.isFullRun)
-        assertContains(decision.fullRunReason(), "build.gradle.kts")
-        assertFalse(decision.fullRunReason().contains("ci.yml"))
     }
 
     @Test

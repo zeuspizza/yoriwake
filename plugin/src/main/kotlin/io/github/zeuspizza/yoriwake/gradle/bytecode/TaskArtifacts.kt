@@ -192,7 +192,6 @@ internal class TaskArtifacts(
             return paths.toSet()
         }
         // A non-ASCII path counts as named: class files hold modified UTF-8, so its bytes vary.
-        // `namedInBuildScripts` builds the same ancestor forms: change both or neither.
         val unsearchable = paths.filterTo(mutableSetOf()) { path -> path.any { it.code > 127 } }
         val needlesByPath = (paths - unsearchable).associateWith { path ->
             val forms = mutableSetOf(path, path.substringAfterLast('/'))

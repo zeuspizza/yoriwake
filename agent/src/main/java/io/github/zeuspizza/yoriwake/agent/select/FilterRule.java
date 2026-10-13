@@ -37,7 +37,6 @@ public final class FilterRule {
             AgentContract.UNMAPPABLE_PATHS_PROPERTY,
             AgentContract.ACCOUNTED_PROPERTY,
             AgentContract.ABSENCE_PROVABLE_PROPERTY,
-            AgentContract.UNREADABLE_PATHS_PROPERTY,
             AgentContract.OWN_TEST_CLASSES_PROPERTY,
             AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
             AgentContract.CHANGED_BYTES_PROPERTY,
@@ -56,7 +55,6 @@ public final class FilterRule {
                     AgentContract.CHANGED_CLASSES_PROPERTY,
                     AgentContract.UNMAPPABLE_PATHS_PROPERTY,
                     AgentContract.ABSENCE_PROVABLE_PROPERTY,
-                    AgentContract.UNREADABLE_PATHS_PROPERTY,
                     AgentContract.OWN_TEST_CLASSES_PROPERTY,
                     AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
                     AgentContract.CHANGED_BYTES_PROPERTY)));
@@ -135,7 +133,6 @@ public final class FilterRule {
                         splitProperty(property, AgentContract.UNMAPPABLE_PATHS_PROPERTY))
                 .withAccountedFor(Boolean.parseBoolean(orEmpty(property, AgentContract.ACCOUNTED_PROPERTY)))
                 .withAbsenceProvable(splitProperty(property, AgentContract.ABSENCE_PROVABLE_PROPERTY))
-                .withUnreadablePaths(splitProperty(property, AgentContract.UNREADABLE_PATHS_PROPERTY))
                 .withOwnTestClasses(splitProperty(property, AgentContract.OWN_TEST_CLASSES_PROPERTY))
                 .withExemptTestClasses(splitProperty(property, AgentContract.EXEMPT_TEST_CLASSES_PROPERTY))
                 .withChangedBytes(splitProperty(property, AgentContract.CHANGED_BYTES_PROPERTY))

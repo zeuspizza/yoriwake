@@ -363,7 +363,6 @@ class TestTaskWiringCharacterizationTest {
             yoriwake.change.exemptTestClasses=
             yoriwake.change.ownTestClasses=
             yoriwake.change.unmappable=
-            yoriwake.change.unreadable=
             """.trimIndent(),
             selectChangeSet,
         )
