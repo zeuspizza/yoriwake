@@ -1137,6 +1137,39 @@ class CoverageDecoderTest {
         assertEquals(2, firstTouches(dir)[AgentContract.FIRST_TOUCH_ANY])
     }
 
+    private fun zip(entries: List<Pair<String, ByteArray>>): ByteArray =
+        java.io.ByteArrayOutputStream().also { out ->
+            java.util.zip.ZipOutputStream(out).use { z ->
+                entries.forEach { (name, bytes) -> z.putNextEntry(java.util.zip.ZipEntry(name)); z.write(bytes); z.closeEntry() }
+            }
+        }.toByteArray()
+
+    @Test
+    fun `an archive a scanner opened itself touches the classes of every archive nested in it`(@TempDir dir: File) {
+        val inner = zip(listOf("com/acme/Point.class" to ByteArray(1)))
+        val middle = zip(listOf("lib/inner.jar" to inner))
+        val outer = File(dir, "bundle").apply { writeBytes(zip(listOf("readme.txt" to ByteArray(1), "nested" to middle))) }
+        records(dir, "1", a, b)
+        touches(dir, "1", "2\t${AgentContract.TOUCH_JAR}\t${outer.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        assertEquals(2, firstTouches(dir)["com.acme.Point"])
+        assertEquals(null, firstTouches(dir)[AgentContract.FIRST_TOUCH_ANY])
+    }
+
+    @Test
+    fun `archives nested deeper than any real one touch every class`(@TempDir dir: File) {
+        val deep = (1..9).fold(zip(listOf("com/acme/Point.class" to ByteArray(1)))) { inner, _ -> zip(listOf("x.jar" to inner)) }
+        val outer = File(dir, "deep.zip").apply { writeBytes(deep) }
+        records(dir, "1", a, b)
+        touches(dir, "1", "2\t${AgentContract.TOUCH_JAR}\t${outer.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        assertEquals(2, firstTouches(dir)[AgentContract.FIRST_TOUCH_ANY])
+    }
+
     @Test
     fun `a recaptured test replaces its position and a retained one keeps its JVM's touches`(@TempDir dir: File) {
         records(dir, "1", a, b)

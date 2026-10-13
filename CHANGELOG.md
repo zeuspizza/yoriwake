@@ -64,6 +64,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   say) dates the test by that class. Map: discarded, with the same rebuild.
 - A complement run whose build generated a classpath file differently runs every test. Map: left
   alone.
+- A class a test reads out of a zip, war, aar or nested jar with its own zip code selects it. Map:
+  left alone; recorded from its next capture.
 
 ## [0.1.0] - 2026-10-04
 

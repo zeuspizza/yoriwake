@@ -48,8 +48,10 @@ import org.jacoco.core.data.ExecutionDataStore
 import org.jacoco.core.data.SessionInfoStore
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.util.UUID
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 
 /** A map that could not be written. Caught by the caller; never allowed to fail the host build. */
 internal class MapNotWritten(target: File) : Exception("[yoriwake] could not write $target")
@@ -694,9 +696,7 @@ internal object CoverageDecoder {
                     else named(binaryName(parts[2]))
                 TOUCH_READ -> namesForPath(parts[2]).forEach(named)
                 TOUCH_JAR -> {
-                    val entries = runCatching {
-                        ZipFile(parts[2]).use { zip -> zip.entries().toList().map { it.name } }
-                    }.getOrNull()
+                    val entries = runCatching { archiveEntries(parts[2]) }.getOrNull()
                     if (entries == null) {
                         both(FIRST_TOUCH_ANY, sequence)
                     } else {
@@ -708,6 +708,45 @@ internal object CoverageDecoder {
             }
         }
         if (!planStarted) touchNamed(FIRST_TOUCH_ANY, 0)
+    }
+
+    private const val MAX_ARCHIVE_DEPTH = 8
+
+    /**
+     * Every entry name in the archive at [path] and in every archive nested in it, a jar in a war
+     * or a zip in a jar, found by content. Null when nesting runs deeper than any real archive
+     * does: what a scanner read there cannot be told.
+     */
+    private fun archiveEntries(path: String): List<String>? = ZipFile(path).use { zip ->
+        val names = mutableListOf<String>()
+        for (entry in zip.entries()) {
+            names += entry.name
+            if (entry.isDirectory || namesForPath(entry.name).isNotEmpty()) continue
+            val nested = zip.getInputStream(entry).use { nestedEntries(it, 1) }
+            names += nested ?: return null
+        }
+        names
+    }
+
+    private fun nestedEntries(input: InputStream, depth: Int): List<String>? {
+        val buffered = input.buffered()
+        buffered.mark(4)
+        val signature = buffered.readNBytes(4)
+        buffered.reset()
+        if (!(signature.size == 4 && signature[0] == 'P'.code.toByte() && signature[1] == 'K'.code.toByte() &&
+                signature[2].toInt() == 3 && signature[3].toInt() == 4)) {
+            return emptyList()
+        }
+        if (depth > MAX_ARCHIVE_DEPTH) return null
+        val names = mutableListOf<String>()
+        val zip = ZipInputStream(buffered)
+        while (true) {
+            val entry = zip.nextEntry ?: break
+            names += entry.name
+            if (entry.isDirectory || namesForPath(entry.name).isNotEmpty()) continue
+            names += nestedEntries(zip, depth + 1) ?: return null
+        }
+        return names
     }
 
     /**

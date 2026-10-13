@@ -97,6 +97,51 @@ class TouchRecorderTest {
         assertEquals(listOf(AgentContract.TOUCH_JAR to File(dir, "scanned.jar").absolutePath), drained(recorder))
     }
 
+    private fun zipOf(file: File, vararg entries: Pair<String, ByteArray>): File {
+        ZipOutputStream(file.outputStream()).use { zip ->
+            entries.forEach { (name, bytes) -> zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry() }
+        }
+        return file
+    }
+
+    @Test
+    fun `an archive of any name, or none, opened by something other than the JDK's zip code counts by its content`(
+        @TempDir dir: File,
+    ) {
+        val recorder = TouchRecorder()
+        val archives = listOf("app.war", "app.ear", "lib.aar", "classes.zip", "bundle")
+            .map { zipOf(File(dir, it), "com/acme/A.class" to ByteArray(1)) }
+        // A launch script ahead of the archive, as a fully executable jar carries.
+        val scripted = File(dir, "app.run").apply {
+            writeBytes("#!/bin/sh\nexit 0\n".toByteArray() + zipOf(File(dir, "plain"), "com/acme/B.class" to ByteArray(1)).readBytes())
+        }
+        val text = File(dir, "notes.bin").apply { writeText("PK is not enough on its own, a zip needs its signature") }
+        // A zip of data names no class, so a temporary one gone before the records are read cannot
+        // count as every class.
+        val sheet = zipOf(File(dir, "report.xlsx"), "xl/workbook.xml" to "<workbook/>".toByteArray())
+        val nested = zipOf(File(dir, "dist.tar"), "lib/inner.jar" to zipOf(File(dir, "inner"), "a.txt" to ByteArray(1)).readBytes())
+        (archives + scripted + text + sheet).forEach(recorder::read)
+        recorder.read(nested)
+
+        assertEquals(
+            (archives + scripted + nested).map { AgentContract.TOUCH_JAR to it.absolutePath },
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `an archive entry that is an archive itself counts as every class in the outer archive`(@TempDir dir: File) {
+        val inner = zipOf(File(dir, "inner"), "com/acme/A.class" to ByteArray(1)).readBytes()
+        val outer = zipOf(File(dir, "outer.war"), "WEB-INF/lib/inner.jar" to inner, "index.html" to "<p>".toByteArray())
+        val recorder = TouchRecorder()
+        ZipFile(outer).use { zip ->
+            recorder.read(arrayOf<Any>(zip, zip.getEntry("index.html")))
+            recorder.read(arrayOf<Any>(zip, zip.getEntry("WEB-INF/lib/inner.jar")))
+        }
+
+        assertEquals(listOf(AgentContract.TOUCH_JAR to outer.absolutePath), drained(recorder))
+    }
+
     @Test
     fun `a recorder the agent never installed says it observed nothing`() {
         assertNotNull(TouchRecorder().incomplete())

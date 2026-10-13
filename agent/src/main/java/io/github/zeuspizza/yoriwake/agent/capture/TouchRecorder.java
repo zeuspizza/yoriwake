@@ -2,13 +2,19 @@ package io.github.zeuspizza.yoriwake.agent.capture;
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Path;
 import java.security.ProtectionDomain;
 import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -33,6 +39,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private final Set<String> seen = new HashSet<>();
     /** Reads and lookups seen since the plan started, so the first one after discovery is kept. */
     private final Set<String> seenNamed = new HashSet<>();
+    /** Archives found to hold no class, source or archive, by path, with the length and time they had. */
+    private final Map<String, String> classless = new HashMap<>();
     private boolean planStarted;
     private List<String[]> pending = new ArrayList<>();
     private boolean installed;
@@ -327,17 +335,25 @@ public final class TouchRecorder implements CaptureSession.Touches {
         try {
             if (opened instanceof Object[]) {
                 Object[] pair = (Object[]) opened;
-                String entry = ((ZipEntry) pair[1]).getName();
-                if (isClassOrSource(entry) && !definingAClass()) {
-                    touchNamed(AgentContract.TOUCH_READ, entry);
+                ZipFile zip = (ZipFile) pair[0];
+                ZipEntry entry = (ZipEntry) pair[1];
+                if (isClassOrSource(entry.getName())) {
+                    if (!definingAClass()) {
+                        touchNamed(AgentContract.TOUCH_READ, entry.getName());
+                    }
+                } else if (entryHoldsAZip(zip, entry)) {
+                    // An archive inside an archive: what reads it scans its entries with its own code.
+                    touchNamed(AgentContract.TOUCH_JAR, new File(zip.getName()).getAbsolutePath());
                 }
                 return;
             }
             String path = opened instanceof File ? ((File) opened).getPath() : String.valueOf(opened);
             if (isClassOrSource(path) && !definingAClass()) {
                 touchNamed(AgentContract.TOUCH_READ, path);
-            } else if (path.endsWith(".jar") && !openedByJdkZip()) {
-                // A scanner reading a jar with its own zip code: every class in it may be read.
+            } else if (path.endsWith(".jar") ? !openedByJdkZip()
+                    : holdsAZip(new File(path)) && !openedByJdkZip() && mayHoldClasses(new File(path))) {
+                // A scanner reading an archive with its own zip code: every class in it may be read.
+                // Known by content, not name: a war, an aar, or a zip of the classes is one too.
                 touchNamed(AgentContract.TOUCH_JAR, new File(path).getAbsolutePath());
             }
         } catch (Throwable t) {
@@ -409,6 +425,103 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private static boolean isClassOrSource(String path) {
         return path.endsWith(".class") || path.endsWith(".java") || path.endsWith(".kt")
                 || path.endsWith(".groovy") || path.endsWith(".scala");
+    }
+
+    /**
+     * Whether a file is a zip archive by its content: it starts with an entry or an empty archive's
+     * end record, or ends with an end record, as an archive behind a launch script does. Only a
+     * regular file is read, so a pipe or a device is never drained.
+     */
+    static boolean holdsAZip(File file) {
+        try {
+            if (!file.isFile() || file.length() < END_RECORD) {
+                return false;
+            }
+            try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
+                byte[] signature = new byte[4];
+                in.readFully(signature);
+                if (startsAZip(signature)) {
+                    return true;
+                }
+                in.seek(file.length() - END_RECORD);
+                in.readFully(signature);
+                return endsAZip(signature);
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            // What cannot be read here cannot be read by the test either.
+            return false;
+        }
+    }
+
+    /**
+     * Whether an archive found by its content can hold a class: a class or source entry, an archive
+     * entry, or no listing at all. One that holds none (a spreadsheet, a document, a zip of data)
+     * names no class, and is not reported, so one gone by the time the records are read cannot
+     * count as every class. Checked again when its length or time changes.
+     */
+    private boolean mayHoldClasses(File file) {
+        String path = file.getAbsolutePath();
+        String stamp = file.length() + "/" + file.lastModified();
+        synchronized (lock) {
+            if (stamp.equals(classless.get(path))) {
+                return false;
+            }
+        }
+        try (ZipFile zip = new ZipFile(file)) {
+            for (Enumeration<? extends ZipEntry> entries = zip.entries(); entries.hasMoreElements(); ) {
+                ZipEntry entry = entries.nextElement();
+                if (isClassOrSource(entry.getName()) || holdsAZip(zip, entry)) {
+                    return true;
+                }
+            }
+        } catch (IOException | RuntimeException unlisted) {
+            return true;
+        }
+        synchronized (lock) {
+            classless.put(path, stamp);
+        }
+        return false;
+    }
+
+    /**
+     * Whether an entry the JDK's zip code hands out holds a zip archive itself, such as a jar nested
+     * in a war. Read through a zip of its own: calling back into the hooked one, a jar file, would
+     * re-enter its signature verification.
+     */
+    private static boolean entryHoldsAZip(ZipFile hooked, ZipEntry entry) {
+        long size = entry.getSize();
+        if (entry.isDirectory() || (size >= 0 && size < END_RECORD)) {
+            return false;
+        }
+        try (ZipFile own = new ZipFile(hooked.getName())) {
+            ZipEntry same = own.getEntry(entry.getName());
+            return same != null && holdsAZip(own, same);
+        } catch (IOException | RuntimeException unreadable) {
+            return false;
+        }
+    }
+
+    /** Whether an entry of a zip this class opened itself holds a zip archive. */
+    private static boolean holdsAZip(ZipFile zip, ZipEntry entry) throws IOException {
+        long size = entry.getSize();
+        if (entry.isDirectory() || (size >= 0 && size < END_RECORD)) {
+            return false;
+        }
+        try (InputStream in = zip.getInputStream(entry)) {
+            return in != null && startsAZip(in.readNBytes(4));
+        }
+    }
+
+    /** The length of a zip's end record with no comment. */
+    private static final int END_RECORD = 22;
+
+    private static boolean startsAZip(byte[] b) {
+        return b.length == 4 && b[0] == 'P' && b[1] == 'K'
+                && ((b[2] == 3 && b[3] == 4) || (b[2] == 5 && b[3] == 6));
+    }
+
+    private static boolean endsAZip(byte[] b) {
+        return b.length == 4 && b[0] == 'P' && b[1] == 'K' && b[2] == 5 && b[3] == 6;
     }
 
     /** The JDK's own zip code opens every jar it reads entries from; those entries are hooked. */

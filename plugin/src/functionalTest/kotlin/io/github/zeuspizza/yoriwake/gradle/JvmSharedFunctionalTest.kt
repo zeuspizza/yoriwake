@@ -597,6 +597,112 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         assertEquals(names("M1ProviderReadTest", "M2CodecTest"), ran)
     }
 
+    @Test
+    fun `a test that reads a class out of a zip with its own zip code is selected when the class changes`(
+        @TempDir dir: File,
+    ) {
+        val ran = zipReader(
+            dir, "Z",
+            """
+            val classesZip = tasks.register<Zip>("classesZip") {
+                from(sourceSets.main.get().output.classesDirs)
+                archiveFileName.set("classes.zip")
+                destinationDirectory.set(layout.buildDirectory.dir("dist"))
+            }
+            """.trimIndent(),
+            "classesZip", "classes.zip", nested = false,
+        )
+
+        assertEquals(names("Z1ZipScanTest", "Z2CodecTest"), ran)
+    }
+
+    @Test
+    fun `a test that reads a class out of a jar nested in an archive with no extension is selected when it changes`(
+        @TempDir dir: File,
+    ) {
+        val ran = zipReader(
+            dir, "O",
+            """
+            val classesJar = tasks.register<Zip>("classesJar") {
+                from(sourceSets.main.get().output.classesDirs)
+                archiveFileName.set("classes.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("inner"))
+            }
+            val bundle = tasks.register<Zip>("bundle") {
+                from(classesJar) { into("lib") }
+                archiveFileName.set("bundle")
+                destinationDirectory.set(layout.buildDirectory.dir("dist"))
+            }
+            """.trimIndent(),
+            "bundle", "bundle", nested = true,
+        )
+
+        assertEquals(names("O1ZipScanTest", "O2CodecTest"), ran)
+    }
+
+    /**
+     * A test that reads Codec's class file out of the archive [task] builds as `dist/[archive]`, with
+     * `ZipInputStream` over the file and, when [nested], over a jar inside it; then a test that runs
+     * Codec. Neither opens the archive through the JDK's `ZipFile`, whose entry reads are hooked.
+     */
+    private fun zipReader(
+        dir: File,
+        prefix: String,
+        tasksScript: String,
+        task: String,
+        archive: String,
+        nested: Boolean,
+    ): Set<String> {
+        val find = if (nested) {
+            """
+            if (entry.getName().endsWith(".jar")) {
+                ZipInputStream inner = new ZipInputStream(zip);
+                for (ZipEntry e; (e = inner.getNextEntry()) != null; ) {
+                    if (e.getName().equals("dev/sample/Codec.class")) codec = new String(inner.readAllBytes(), StandardCharsets.ISO_8859_1);
+                }
+            }
+            """.trimIndent()
+        } else {
+            """
+            if (entry.getName().equals("dev/sample/Codec.class")) codec = new String(zip.readAllBytes(), StandardCharsets.ISO_8859_1);
+            """.trimIndent()
+        }
+        return selectedAfter(
+            dir, "src/main/java/dev/sample/Codec.java", { it.replace("reverse()", "reverse().append(\"\")") },
+            main(
+                "Codec",
+                "public class Codec { public String encode(String s) { return new StringBuilder(s).reverse().toString(); } }",
+            ),
+            first(prefix),
+            test(
+                "${prefix}1ZipScanTest",
+                """
+                @Test void noMainClassUsesJavaUtilDate() throws Exception {
+                    String codec = null;
+                    try (ZipInputStream zip = new ZipInputStream(new FileInputStream(System.getProperty("classes.archive")))) {
+                        for (ZipEntry entry; (entry = zip.getNextEntry()) != null; ) {
+                            $find
+                        }
+                    }
+                    assertNotNull(codec);
+                    assertFalse(codec.contains("java/util/Date"));
+                }
+                """.trimIndent(),
+                imports = listOf(
+                    "java.io.FileInputStream", "java.nio.charset.StandardCharsets", "java.util.zip.ZipEntry",
+                    "java.util.zip.ZipInputStream",
+                ).joinToString("\n") { "import $it;" },
+            ),
+            test("${prefix}2CodecTest", "@Test void reverses() { assertEquals(\"cba\", new Codec().encode(\"abc\")); }"),
+            buildScript = orderedBuild + "\n" + tasksScript + "\n" + """
+                tasks.test {
+                    dependsOn($task)
+                    systemProperty("classes.archive", layout.buildDirectory.file("dist/$archive").get().asFile.absolutePath)
+                }
+            """.trimIndent(),
+        )
+    }
+
     /**
      * A test that asks [loader] to load a native library file named [file], then a test that runs
      * Tool, then one that does not. The file does not exist: the load is seen as it starts, so the
