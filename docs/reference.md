@@ -984,6 +984,12 @@ yoriwake {
 }
 ```
 
+A pattern naming a class pins every test in it, its nested classes' included (`Outer.Inner` or
+`Outer$Inner` names one nested class). A pattern naming a method pins every invocation of a
+parameterised test and every dynamic test of a test factory. Vintage tests are named by their JUnit 4
+class and method, and Spock features by their specification and feature name
+(`com.acme.HandlerSpec.handles a request`).
+
 A test's own source can pin it with `@Tag("yoriwake-always-run")`, with nothing on the compile
 classpath.
 

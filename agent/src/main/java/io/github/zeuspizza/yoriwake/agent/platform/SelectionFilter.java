@@ -40,7 +40,10 @@ import java.util.Map;
 import org.junit.platform.engine.FilterResult;
 import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestTag;
+import org.junit.platform.engine.TestSource;
 import org.junit.platform.engine.UniqueId;
+import org.junit.platform.engine.support.descriptor.ClassSource;
+import org.junit.platform.engine.support.descriptor.MethodSource;
 import org.junit.platform.launcher.PostDiscoveryFilter;
 
 /**
@@ -262,7 +265,14 @@ public class SelectionFilter implements PostDiscoveryFilter {
                     return true;
                 }
             }
-            return alwaysRun.matches(nameOf(descriptor));
+            boolean pinned = alwaysRun.matches(nameOf(descriptor));
+            // Every name is matched, not only until one hits, so each pattern that matches counts.
+            String sourced = sourcedNameOf(descriptor);
+            if (sourced != null) {
+                pinned |= alwaysRun.matches(sourced);
+                pinned |= alwaysRun.matches(sourced.replace('$', '.'));
+            }
+            return pinned;
         } catch (Throwable ignored) {
             // A pin that cannot be evaluated must not decide anything, and must not break the run.
             return false;
@@ -291,6 +301,23 @@ public class SelectionFilter implements PostDiscoveryFilter {
             return null;
         }
         return method == null ? type : type + "." + method;
+    }
+
+    /**
+     * {@code com.acme.Outer$Inner.method}, from the class and method its engine names at discovery.
+     * The unique id names a nested class by its simple name and carries no class at all for a vintage
+     * test or a Spock feature, so a pattern naming the class would not reach them through it alone.
+     */
+    private static String sourcedNameOf(TestDescriptor descriptor) {
+        TestSource source = descriptor.getSource().orElse(null);
+        if (source instanceof MethodSource) {
+            MethodSource method = (MethodSource) source;
+            return method.getClassName() + "." + method.getMethodName();
+        }
+        if (source instanceof ClassSource) {
+            return ((ClassSource) source).getClassName();
+        }
+        return null;
     }
 
     /**
