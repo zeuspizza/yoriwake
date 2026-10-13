@@ -9,8 +9,25 @@ needed, once in full.
 - **Recall:** 0 missed of 471 failures the edits induced, across the 35 changes where a miss was
   possible, in 14 projects from 12 codebases.
 - **Narrowing:** 69 of 426 changes (16%) ran under 100% of the suite; the median of those ran 95%
-  of it. 16 of the 32 projects with selectable changes (README chart 1, 27 codebases) narrowed at
+  of it. 16 of the 32 projects with selectable changes (chart 1, 27 codebases) narrowed at
   least once. In 26 of the 32, and corpus-wide, the median change ran 100%.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/selected-share-dark.svg">
+  <img alt="Share of the test suite each change ran, one row per project that ran under 100% on at least one change" src="images/selected-share.svg">
+</picture>
+
+<p align="center"><sub>
+  Chart 1. Share of the suite each change ran: 426 changes in 32 projects from 27 codebases, at
+  <code>30be0e8</code>. The chart shows the 16 projects where at least one change ran less than
+  100% of the suite: each dot is such a change, placed at the % of its tests it ran; the count on
+  the right is the project's changes that ran 100%. 357 of the 426 ran 100% of the suite; 69 ran
+  less than 100%, and the median of those ran 95% of it. 16 of the 32 projects narrowed at least
+  one change. The other 16 projects ran 100% of the suite on every change: armeria, arrow,
+  detekt-junk, duckduckgo-android, glide, grails-core, iceberg, junit5, kafka, kestra,
+  kotlinx-serialization, micrometer, micronaut-core, mockito, mockito-junit4 and mockk. Tests, not
+  seconds; see <a href="#method">the method</a>.
+</sub></p>
 
 Per project, sorted by how much of the suite its changes ran on average, lowest first. The columns
 sum to the headlines; the raw results files are not published.
@@ -114,6 +131,18 @@ machine minutes apart. The full run's seconds sit beside each ratio, because a r
 travel: a faster machine shrinks the tests, not the fixed floor of configuration, compilation and
 JVM start. The suite length on chart 2 is not a predictor: across earlier measurements the overhead
 tracked how expensive a project is to configure.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/time-saved-dark.svg">
+  <img alt="Median share of the full run's time saved per change, against suite length" src="images/time-saved.svg">
+</picture>
+
+<p><sub>
+  Chart 2. Median share of the full run's wall clock saved per change, on the 6 projects where both
+  runs were timed on every change. Below the line, selection cost more than it saved; spring-boot
+  sits below a break in the axis, its value written beside it.
+  Paired on one machine, minutes apart; the seconds do not travel to yours.
+</sub></p>
 
 | project | tests | full run | tests run per change (median) | time saved per change (median) | changes |
 |---|---:|---:|---:|---:|---:|
