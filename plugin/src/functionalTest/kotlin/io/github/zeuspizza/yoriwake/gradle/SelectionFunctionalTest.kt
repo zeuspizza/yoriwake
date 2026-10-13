@@ -547,6 +547,45 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
     }
 
     /**
+     * A pattern naming a class pins every test the class contains, its nested classes' included.
+     *
+     * The pattern also matches the class's own methods, so a pin that missed the nested tests would
+     * raise no "matched NO test" warning: the user would believe the whole class protected.
+     */
+    @Test
+    fun `a pin on a class keeps the tests of its nested class`(@TempDir dir: File) {
+        val pinned = "src/test/java/dev/sample/A0PinnedTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Nested;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A0PinnedTest {
+                @Test void outer() { assertEquals(1, 1); }
+                @Nested class Inner {
+                    @Test void passes() { assertEquals(3, new Beta().thrice(1)); }
+                }
+            }
+        """.trimIndent()
+        build(
+            dir,
+            "build.gradle.kts" to (
+                minimalBuild + System.lineSeparator() +
+                    """yoriwake { alwaysRun.add("dev.sample.A0PinnedTest") }"""
+                ),
+            oneClass, oneTest, secondClass, pinned, classOrderByName,
+        )
+        changeAlphaAfterCapture(dir)
+
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        // By name the pinned class runs before AlphaTest, so nothing but the pin keeps Inner.
+        assertEquals(
+            setOf("dev.sample.A0PinnedTest", "dev.sample.A0PinnedTest\$Inner", "dev.sample.AlphaTest"),
+            ranTests(dir),
+        )
+    }
+
+    /**
      * A pattern that matches nothing is called out, because it is otherwise invisible.
      *
      * The build is green, the suite narrows exactly as it would have, and the user believes a flaky

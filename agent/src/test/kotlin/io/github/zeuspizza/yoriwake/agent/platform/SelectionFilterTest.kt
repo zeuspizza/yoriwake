@@ -9,6 +9,7 @@ import org.junit.platform.engine.TestDescriptor
 import org.junit.platform.engine.TestSource
 import org.junit.platform.engine.UniqueId
 import org.junit.platform.engine.support.descriptor.AbstractTestDescriptor
+import org.junit.platform.engine.support.descriptor.MethodSource
 import java.io.File
 import java.util.Optional
 import kotlin.test.assertFalse
@@ -30,6 +31,7 @@ class SelectionFilterTest {
         AgentContract.OBSERVE_PROPERTY,
         AgentContract.COMPLEMENT_RECORD_PROPERTY,
         AgentContract.REFUSED_PROPERTY,
+        AgentContract.ALWAYS_RUN_PROPERTY,
     )
 
     @AfterEach
@@ -40,6 +42,14 @@ class SelectionFilterTest {
         override fun getType() =
             if (test) TestDescriptor.Type.TEST else TestDescriptor.Type.CONTAINER
         override fun getSource(): Optional<TestSource> = Optional.empty()
+    }
+
+    /** A descriptor carrying the test source its engine gives it at discovery. */
+    private class Sourced(id: String, private val test: Boolean, private val source: TestSource) :
+        AbstractTestDescriptor(UniqueId.parse(id), id) {
+        override fun getType() =
+            if (test) TestDescriptor.Type.TEST else TestDescriptor.Type.CONTAINER
+        override fun getSource(): Optional<TestSource> = Optional.of(source)
     }
 
     private fun writeMap(dir: File, vararg lines: String): File {
@@ -100,6 +110,69 @@ class SelectionFilterTest {
         selectingAgainst(dir, "com.acme.Handler")
 
         assertFalse(SelectionFilter(false).apply(Descriptor(feature, test = true)).included())
+    }
+
+    /**
+     * Whether [pattern] pins [descriptor], whose test the change cannot reach: excluded without the
+     * pin, so an inclusion is the pin's alone.
+     */
+    private fun pins(dir: File, pattern: String, descriptor: TestDescriptor): Boolean {
+        System.clearProperty(AgentContract.ALWAYS_RUN_PROPERTY)
+        writeMap(
+            dir,
+            "SUCCESSFUL\t1000000\tcom.acme.B\t${descriptor.uniqueId}",
+            record("Alpha", "com.acme.A"),
+        )
+        selectingAgainst(dir, "com.acme.A")
+        assertTrue(SelectionFilter(false).apply(descriptor).excluded(), "unpinned, it must be left out")
+        System.setProperty(AgentContract.ALWAYS_RUN_PROPERTY, pattern)
+        return SelectionFilter(false).apply(descriptor).included()
+    }
+
+    @Test
+    fun `a pin on an enclosing class keeps a nested class's test`(@TempDir dir: File) {
+        val inner = Sourced(
+            "[engine:junit-jupiter]/[class:com.acme.OuterTest]/[nested-class:Inner]/[method:t()]",
+            test = true,
+            MethodSource.from("com.acme.OuterTest\$Inner", "t", ""),
+        )
+
+        assertTrue(pins(dir, "com.acme.OuterTest", inner))
+    }
+
+    @Test
+    fun `a pin on a class keeps its vintage tests`(@TempDir dir: File) {
+        val test = Sourced(
+            "[engine:junit-vintage]/[runner:com.acme.OldTest]/[test:passes(com.acme.OldTest)]",
+            test = true,
+            MethodSource.from("com.acme.OldTest", "passes", ""),
+        )
+
+        assertTrue(pins(dir, "com.acme.OldTest", test))
+    }
+
+    @Test
+    fun `a pin on a specification or on a feature by its name keeps the Spock feature`(@TempDir dir: File) {
+        // Spock names its feature in the source and only by an internal method name in the id.
+        val feature = Sourced(
+            "[engine:spock]/[spec:com.acme.HandlerSpec]/[feature:\$spock_feature_0_0]",
+            test = true,
+            MethodSource.from("com.acme.HandlerSpec", "handles a request", ""),
+        )
+
+        assertTrue(pins(dir, "com.acme.HandlerSpec", feature))
+        assertTrue(pins(File(dir, "feature"), "com.acme.HandlerSpec.handles a request", feature))
+    }
+
+    @Test
+    fun `a pin on a test factory method keeps the factory and so its dynamic tests`(@TempDir dir: File) {
+        val factory = Sourced(
+            "[engine:junit-jupiter]/[class:com.acme.FactoryTest]/[test-factory:cases()]",
+            test = false,
+            MethodSource.from("com.acme.FactoryTest", "cases", ""),
+        )
+
+        assertTrue(pins(dir, "com.acme.FactoryTest.cases", factory))
     }
 
     @Test

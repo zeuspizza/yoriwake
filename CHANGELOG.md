@@ -58,6 +58,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   alone.
 - Native loads, class definitions and foreign calls by your own code on the boot class path are
   recorded. Map: discarded, with the same rebuild.
+- An always-run pattern naming a class pins its nested-class tests too, and patterns now pin vintage
+  tests, Spock features and test factories. Map: left alone.
 - A class definition or foreign call made through an interface proxy that JDK code calls is
   recorded. Map: discarded, with the same rebuild.
 - A class file your code reads while a class loader defines a class (a `getPermissions` override,
