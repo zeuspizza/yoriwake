@@ -242,6 +242,10 @@ these are the rules that keep them selected:
   executes none of it. So a changed class selects every test that ran at or after the point it was
   first loaded, executed, or had its class or source file read in the same test JVM
   (`shares-jvm-with-change`). Tests that ran before that point stay skipped.
+  - An archive a test opens with code other than the JDK's `ZipFile` (a `ZipInputStream` over the
+    file, a scanner's own zip reader) counts as a read of every class file in it, and in every
+    archive nested in it. An archive is known by its content, not its name: a `.zip`, `.war` or
+    `.aar`, or a file with no extension, counts as a `.jar` does.
   - **This widens selection a lot when a suite runs in one JVM.** Discovery loads every test class,
     and often production classes with them, before the first test runs, so a change to any of those
     selects every test in that JVM. [Recording each test class in its own
