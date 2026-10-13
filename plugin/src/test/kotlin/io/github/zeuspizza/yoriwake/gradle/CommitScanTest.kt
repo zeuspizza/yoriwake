@@ -36,6 +36,18 @@ class CommitScanTest {
     }
 
     @Test
+    fun `a marker after a record separator byte in the same message is found`(@TempDir dir: File) {
+        val base = repo(dir)
+        commit(dir, "change codec\n\nfields: a\u001eb\n\nyoriwake: full")
+        commit(dir, "after")
+
+        val scan = assertIs<CommitScan.Read>(ChangeDetection.scanCommitMessages(raw(dir), base))
+
+        assertEquals("change codec", scan.marked?.subject)
+        assertEquals(sha(dir, "HEAD~1"), scan.marked?.sha)
+    }
+
+    @Test
     fun `a commit at the base itself is not in the range`(@TempDir dir: File) {
         repo(dir, message = "base\n\nyoriwake: full")
         commit(dir, "after")

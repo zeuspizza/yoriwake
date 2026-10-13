@@ -296,7 +296,7 @@ class FullRunRequestFunctionalTest : FunctionalTestSupport() {
         val real = System.getenv("PATH").split(File.pathSeparator).map { File(it, "git") }.first { it.canExecute() }
         File(bin, "git").apply {
             writeText(
-                "#!/bin/sh\ncase \"\$*\" in *%x1e*) exit 128;; esac\nexec ${real.absolutePath} \"\$@\"\n"
+                "#!/bin/sh\ncase \"\$*\" in *%H%n%B*) exit 128;; esac\nexec ${real.absolutePath} \"\$@\"\n"
             )
             setExecutable(true)
         }
