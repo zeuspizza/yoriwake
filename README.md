@@ -11,26 +11,48 @@
 </p>
 
 <p align="center">
-  Runs the tests a change can reach, from per-test coverage, and sets the rest aside.<br>
-  A Gradle plugin. Local, no service, and it would rather run everything than guess.
+  Run only the tests your change can affect.
 </p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/selected-share-dark.svg">
-  <img alt="Share of the test suite each change ran, one row per project that ran under 100% on at least one change" src="docs/images/selected-share.svg">
-</picture>
+**yoriwake** (選り分け, *yo-ri-wa-ke*, Japanese for sorting out) is a Gradle plugin that records
+which code each test executes, then on later runs skips the tests a change cannot reach. When it
+cannot prove that skipping is safe, it runs the whole suite and tells you why. It runs locally,
+inside your build: no service, no account.
 
-<p align="center"><sub>
-  Share of the suite each change ran: 426 changes in 32 projects from 27 codebases, at
-  <code>30be0e8</code>. The chart shows the 16 projects where at least one change ran less than
-  100% of the suite: each dot is such a change, placed at the % of its tests it ran; the count on
-  the right is the project's changes that ran 100%. 357 of the 426 ran 100% of the suite; 69 ran
-  less than 100%, and the median of those ran 95% of it. 16 of the 32 projects narrowed at least
-  one change. The other 16 projects ran 100% of the suite on every change: armeria, arrow,
-  detekt-junk, duckduckgo-android, glide, grails-core, iceberg, junit5, kafka, kestra,
-  kotlinx-serialization, micrometer, micronaut-core, mockito, mockito-junit4 and mockk. Tests, not
-  seconds; see <a href="docs/benchmarks.md">the methodology</a>.
-</sub></p>
+## Why
+
+Gradle reruns a test task whenever any of its inputs changed, and then it runs all of it. On a
+suite that takes minutes, most of those tests have nothing to do with the line you just edited.
+yoriwake adds test selection inside the task, decided from recorded per-test coverage rather than
+from build history, so the answer is a rule you can check, not a prediction.
+
+It is meant for:
+
+- the edit-test loop, a developer's or an AI agent's, on a suite that takes more than a couple of
+  minutes;
+- pull-request CI, with the full suite still running after merge, nightly or before a release.
+
+## Features
+
+- **Opt-in.** Without `-Pyoriwake.select` nothing is ever skipped; runs only record.
+- **Refuses rather than guesses.** A change coverage cannot see, such as a build script, a
+  resource, an annotation or a changed constant, runs everything, and the run says which.
+- **New tests always run.** A test the map has never seen, or never saw pass, is never skipped.
+- **Explains every decision.** A console summary per run, and a file with one row per test giving
+  its verdict and the rule that decided it.
+- **Tells you up front whether it will help.** `yoriwakeAuditTest` reads the map, runs no tests,
+  and reports how much of the suite a change reaches and what blocks narrowing, each blocker with
+  its remedy or a plain "no remedy".
+- **Pin what must always run.** `@Tag("yoriwake-always-run")` or `yoriwake { alwaysRun.add(...) }`.
+- **An old map costs speed, never safety.** Selection widens the diff back to the commit the map
+  was recorded at.
+- **Java, Kotlin and Android unit tests** on the JUnit Platform.
+- **[GitHub Action](https://github.com/zeuspizza/yoriwake-action)** that caches the map and picks
+  the flags per event.
+
+## Quick start
+
+Apply the plugin next to `jacoco`, which it requires and scopes:
 
 ```kotlin
 plugins {
@@ -40,17 +62,7 @@ plugins {
 }
 ```
 
-**yoriwake** (選り分け, *yo-ri-wa-ke*) is Japanese for sorting out: picking what you need from the
-rest.
-
-In the 0.1.0 sweep it skipped **0** of 471 failures a deliberate bug caused, across the 35 changes
-where skipping one was possible (14 projects from 12 codebases). Another 214 changes were forced to
-the whole suite because it could not prove a narrower run safe. A sample of generated edits, not a
-proof: [how that was measured, and what it cannot see](docs/benchmarks.md#recall).
-
-## Quickstart
-
-Apply the plugin as above. The `jacoco` plugin is required; yoriwake scopes it.
+Then:
 
 ```bash
 ./gradlew test                      # runs everything and records a coverage map
@@ -58,28 +70,21 @@ Apply the plugin as above. The `jacoco` plugin is required; yoriwake scopes it.
 ./gradlew test -Pyoriwake.select    # runs only the tests the change reaches
 ```
 
-Ask the audit first. It reads the map, runs no tests, and reports how much of the suite a change to
-one class reaches, which classes are reached so widely that touching one runs everything, and every
-blocker it can establish, each with its remedy or a plain "no remedy". Most of its answers are
-refusals rather than low numbers; it is built to tell you not to bother.
+Run the audit first. Most of its answers are refusals rather than low numbers: it is built to tell
+you not to bother when selection would not pay on your suite.
 
-Without `-Pyoriwake.select` nothing is ever skipped. A selecting run says what it decided:
+A selecting run says what it decided:
 
 ```
 [yoriwake] :test selecting against 6aa07c0 (merge base with the branch upstream): 1 changed classes, 0 paths coverage cannot see
 [yoriwake] of 593 tests discovered: reaches-change=47 not-known-to-pass=5 skipped=541
 ```
 
-`.gradle/yoriwake/<task>-<hash>/decisions.tsv` holds one row per test with its verdict and the
-rule that decided it. `yoriwakeExplainTest` answers for the change in front of you: what would run,
-and which class forces a full run if one does.
+`.gradle/yoriwake/<task>-<hash>/decisions.tsv` holds one row per test with its verdict and rule.
+`yoriwakeExplainTest` tells you, for the change in front of you, what would run and which class
+forces a full run if one does.
 
 ## How it works
-
-Gradle's incremental build reruns a test task whenever any of its inputs changed, and then runs all
-of it. yoriwake adds incremental testing inside the task: Gradle runs tests only for changed
-classes, meaning the tests whose recorded coverage reaches them. It is test impact analysis for
-Gradle, decided from per-test coverage rather than from build history.
 
 ```mermaid
 flowchart LR
@@ -91,111 +96,68 @@ flowchart LR
     S -->|"build script, resource, annotation, constant, unknown class"| F["full run, which re-records"]
 ```
 
-- **Record.** A run of the whole suite records which classes each test executed, plus what its test
-  JVM loaded, read or initialised once for every later test. Plain text, outside `build/`.
-- **Select.** With `-Pyoriwake.select`, the change set is the diff against the merge base, widened
-  back to the commit the map was recorded at. A JUnit Platform filter skips each test whose record
-  cannot reach it; a test the map has never seen, or never saw pass, always runs.
-- **Refuse.** Anything coverage cannot see, such as a build script, a resource, an annotation or a
-  changed constant, runs everything and says why.
-  [The full list](docs/reference.md#when-it-refuses-to-select).
+1. **Record.** A run of the whole suite records which classes each test executed, plus what its
+   test JVM loaded, read or initialised once for every later test. Plain text, outside `build/`.
+2. **Diff.** With `-Pyoriwake.select`, the change set is the diff against the merge base, widened
+   back to the commit the map was recorded at.
+3. **Select.** A JUnit Platform filter skips each test whose record cannot reach the change.
+4. **Refuse.** Anything coverage cannot see runs everything and says why.
+   [The full list](docs/reference.md#when-it-refuses-to-select).
 
-## Where it pays
+## Limits
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/time-saved-dark.svg">
-  <img alt="Median share of the full run's time saved per change, against suite length" src="docs/images/time-saved.svg">
-</picture>
+yoriwake sees only what happens inside the test JVM. A test that depends on a change through
+something else, such as a database, another process or a file kept between test JVMs, can be
+skipped when it should have failed, so keep a full run after merge or nightly. Order-dependent
+tests need pinning.
 
-<p><sub>
-  Median share of the full run's wall clock saved per change, on the 6 projects where both runs
-  were timed on every change. Below the line, selection cost more than it saved; spring-boot sits
-  below a break in the axis, its value written beside it.
-  Paired on one machine, minutes apart; the seconds do not travel to yours.
-</sub></p>
-
-| project | tests | full run | tests run per change (median) | time saved per change (median) | changes |
-|---|---:|---:|---:|---:|---:|
-| grpc-java | 1,536 | 6.5 s | 1,536 (100%) | −2% | 16 (8 forced) |
-| apache-groovy | 1,102 | 27.1 s | 747 (68%) | +22% | 7 (0 forced) |
-| mockito | 2,356 | 48.6 s | 2,356 (100%) | +7% | 16 (4 forced) |
-| spring-boot | 3,682 | 92.7 s | 3,672 (99.7%) | −431% | 13 (2 forced) |
-| rxjava | 13,921 | 177.6 s | 13,847 (99.5%) | +9% | 16 (2 forced) |
-| bitwarden-android | 7,341 | 591.3 s | 7,341 (100%) | −1% | 16 (9 forced) |
-
-"Full run" is the median full arm of the measured changes, not the suite length on the chart's
-x-axis. mockito ran every test on every change and still read +7%, so a difference of that size is
-not evidence of a saving; only apache-groovy's is clearly larger. spring-boot's selecting runs
-spent a median 404 s configuring the plugin, over four times its full run: the sweep's plugin
-re-read the working tree's untracked and ignored files once per test task, and spring-boot has 527
-test tasks and about 250,000 such files. Every other timing project spent under a second there.
-The released plugin lists the tree once per build and selects the same tests; every time on this
-page still describes the sweep's plugin ([why](docs/benchmarks.md#the-released-plugin)).
-
-A share of the suite is not a share of the time. Gradle configuration, compilation and JVM start
-do not shrink, and the run that records the map pays from nothing measurable to +140% over an
-uninstrumented one across 32 projects (median +16%, one recording each), driven by how expensive
-the build is to configure more than by how long its tests take. Before adopting, measure your own:
-`./gradlew yoriwakeAuditTest -Pyoriwake.audit.measureToll` with the two timings
+It also does not pay everywhere. Recording costs extra time, Gradle configuration and JVM start do
+not shrink, and on short suites it is usually slower, not faster. To weigh the recording cost on
+your build, run `./gradlew yoriwakeAuditTest -Pyoriwake.audit.measureToll` with the two timings
 [`scripts/measure-toll.sh`](scripts/measure-toll.sh) takes.
-[Every figure and its caveats](docs/benchmarks.md).
 
-## Who it is for
+Not supported or declined: Windows (never run there), Gradle Isolated Projects, JUnit in-JVM
+parallelism, and Gradle below 8.14. Plain JUnit 4 and TestNG are recorded but always run in full;
+JUnit 4 narrows through the vintage engine. A suite whose tests share setup in one JVM narrows
+less; [recording each class in its own JVM](docs/reference.md#recording-each-test-class-in-its-own-jvm)
+helps, at several times the recording cost. Every case:
+[what is not supported](docs/reference.md#what-is-not-supported).
 
-- An AI agent's or a developer's edit-test loop, on a suite that takes more than a couple of
-  minutes.
-- Pull-request CI, to skip unaffected tests in CI, with the full suite still running after merge,
-  nightly or before a release.
+## Requirements
 
-It is not a better version of Develocity Predictive Test Selection, which is a hosted service that
-learns from build history. This one is local, free, safety-first test selection: it decides from
-recorded coverage and runs everything when it cannot prove a narrower run safe.
+The Gradle daemon on JDK 21+, test JVMs on JDK 11+, Gradle 8.14+ (9.x included), `git` on `PATH`,
+and a project applying `java`, an Android plugin, or Kotlin Multiplatform with a JVM target
+(unverified).
 
-## When not to use it
+## CI
 
-Read these before anything else. [The reference](docs/reference.md#what-is-not-supported) has the
-details of each.
+On GitHub Actions, use [yoriwake-action](https://github.com/zeuspizza/yoriwake-action): it caches
+the map, fetches the history selection needs, records on the default branch and selects on pull
+requests. Elsewhere, cache `.gradle/yoriwake` and fetch enough history to reach the diff base:
+[the CI recipe](docs/reference.md#ci).
 
-- **When a missed failure is unaffordable without a later full run.** It skips a test that would
-  have failed when the dependency is one it cannot see: state another process, a database, the
-  network or a file keeps between test JVMs; a reviewed native library handed a class file's path
-  as data; the JDK's class-loading internals called by reflection; a dependency jar naming one of
-  your test classes; a file a build step generates from git state or the clock. Keep a full run
-  after merge or nightly.
-- **Order-dependent tests.** Selection changes which tests run together. Pin the ones you know
-  with `@Tag("yoriwake-always-run")` or `yoriwake { alwaysRun.add(...) }`.
-- **Very large builds pay a git listing per test task.** Each test task a selecting or recording
-  run executes lists the untracked and ignored files with git: about 9 seconds on spring-boot, so
-  minutes across hundreds of test tasks ([details](docs/reference.md#what-is-not-supported)).
-- **Short suites.** The floor and the recording toll are fixed; below a couple of minutes it is
-  usually slower, not faster.
-- **Suites that run in one JVM and share setup.** A change to a class the JVM loaded early selects
-  every later test in that JVM. [Recording each class in its own
-  JVM](docs/reference.md#recording-each-test-class-in-its-own-jvm) narrows it, at several times the
-  recording cost.
-- **Without the JUnit Platform.** Plain JUnit 4 and TestNG are recorded but always run in full;
-  JUnit 4 narrows only through the vintage engine. Kotest specs always run.
-- **Windows.** It has never run there. Maps move between Linux and macOS.
-- **Builds it declines.** Gradle below 8.14 on a JDK 21 daemon, Isolated Projects, and JUnit
-  in-JVM parallelism: every run is a full run, nothing is recorded, and the plugin says so. Below
-  8.14 on an older daemon JDK the build fails to resolve the plugin instead.
-- **Changes coverage cannot see.** Resources, build scripts and version catalogs run everything by
-  design, and so does a Kotlin change in a build that emits no `SourceDebugExtension`. A file your
-  tests write into the source tree outside `build/` counts as a change and forces every run.
+## How well it works
 
-Requirements: the Gradle daemon on JDK 21+, test JVMs on JDK 11+, Gradle 8.14+ (9.x included),
-`git` on `PATH`, and a project applying `java`, an Android plugin, or Kotlin Multiplatform with a
-JVM target (unverified). In CI, cache `.gradle/yoriwake` and fetch enough history to reach the
-diff base; an old map costs speed, never safety. [The CI recipe](docs/reference.md#ci).
+It is measured on open-source projects by generating edits that break tests and checking whether
+a selecting run misses the failures they cause. On most projects measured, most changes still ran
+the whole suite, either because a change reached nearly every test or because the plugin could not
+prove a narrower run safe. [The results, the method, and what that sample cannot
+show](docs/benchmarks.md).
+
+yoriwake is not a better version of Develocity Predictive Test Selection, a hosted service that
+learns from build history. It is local and free, and it would rather run everything than guess.
+[Prior art](docs/reference.md#prior-art).
 
 ## Documentation
 
 - [Reference](docs/reference.md): how it works, every property and task, what is not supported,
   upgrading, prior art
 - [Contract](docs/contract.md): the properties and files the plugin and the agent share
-- [Benchmarks](docs/benchmarks.md): the corpus, the method, and every figure on this page
+- [Benchmarks](docs/benchmarks.md): the projects, the method, and every published figure
 - [Contributing](CONTRIBUTING.md): building, testing, what a change to selection must prove
 - [Changelog](CHANGELOG.md): each release, and what it does to an existing map
 - [Security](SECURITY.md): reporting a vulnerability
+
+## Licence
 
 Apache-2.0, see [LICENSE](LICENSE); [NOTICE](NOTICE) lists what is shaded into the jars.
