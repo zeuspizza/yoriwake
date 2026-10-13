@@ -14,9 +14,10 @@
   Run only the tests your change can affect.
 </p>
 
-**yoriwake** is a Gradle plugin that records which code each test executes, then on later runs
-skips the tests a change cannot reach. When it cannot prove that skipping is safe, it runs the
-whole suite and tells you why. It runs locally, inside your build: no service, no account.
+**yoriwake** (選り分け, *yo-ri-wa-ke*, Japanese for sorting out) is a Gradle plugin that records
+which code each test executes, then on later runs skips the tests a change cannot reach. When it
+cannot prove that skipping is safe, it runs the whole suite and tells you why. It runs locally,
+inside your build: no service, no account.
 
 ## Why
 
@@ -156,10 +157,6 @@ learns from build history. It is local and free, and it would rather run everyth
 - [Contributing](CONTRIBUTING.md): building, testing, what a change to selection must prove
 - [Changelog](CHANGELOG.md): each release, and what it does to an existing map
 - [Security](SECURITY.md): reporting a vulnerability
-
-## The name
-
-選り分け (*yo-ri-wa-ke*) is Japanese for sorting out: picking what you need from the rest.
 
 ## Licence
 
