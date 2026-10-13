@@ -190,9 +190,14 @@ internal sealed interface ClasspathFilesVerdict {
 
 /**
  * The comparison every selecting call site runs after the test task's inputs are built, so it
- * reads what the test JVM will read. Top-level: a task action may not reach Project.
+ * reads what the test JVM will read. Top-level: a task action may not reach Project. [walked]
+ * receives the files it compared, when it walked them.
  */
-internal fun classpathFilesRule(mapDir: File, facts: ClasspathFacts): ClasspathFilesVerdict {
+internal fun classpathFilesRule(
+    mapDir: File,
+    facts: ClasspathFacts,
+    walked: (Map<String, String>) -> Unit = {},
+): ClasspathFilesVerdict {
     val recorded = CoverageDecoder.readClasspathFiles(mapDir)
         ?: return ClasspathFilesVerdict.Unrecorded("the map records no digests of this task's classpath files")
     val walk = runCatching { ClasspathFiles.walk(facts.classpath.files, facts.buildDirs.values, facts.rootDir) }
@@ -200,7 +205,7 @@ internal fun classpathFilesRule(mapDir: File, facts: ClasspathFacts): ClasspathF
     return when (walk) {
         is ClasspathFiles.Walk.Refused ->
             ClasspathFilesVerdict.Unrecorded("this task's classpath files could not be digested (${walk.reason})")
-        is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests)
+        is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked))
             .let { if (it.isEmpty) ClasspathFilesVerdict.Unchanged else ClasspathFilesVerdict.Moved(it) }
     }
 }

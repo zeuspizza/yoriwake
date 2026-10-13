@@ -4,6 +4,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.tasks.AuditTask
+import io.github.zeuspizza.yoriwake.gradle.wiring.LastLook
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestTaskWiring
 import io.github.zeuspizza.yoriwake.gradle.wiring.cacheDir
@@ -49,6 +50,15 @@ public abstract class YoriwakePlugin : Plugin<Project> {
         }
         if (declineIsolatedProjects(project, extension)) {
             return
+        }
+        // Here, before a build script adds its own `doFirst` actions: `doFirst` prepends, so this one
+        // runs after them, right before the test JVM starts. Moved after any added earlier once every
+        // build script has run. See LastLook.
+        if (!settings.disabled) {
+            val cacheDir = project.cacheDir()
+            project.tasks.withType(Test::class.java).configureEach { test ->
+                test.doFirst(LastLook.NAME, LastLook(MapLocation.forTask(cacheDir, test.path)))
+            }
         }
         val configured = java.util.concurrent.atomic.AtomicBoolean(false)
         HOST_PLUGINS.forEach { pluginId ->

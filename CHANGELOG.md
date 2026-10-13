@@ -71,6 +71,9 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   left alone; recorded from its next capture.
 - An edited test class nothing names also runs every test after its own first one, and every test
   in its JVM when your code ran during discovery. Map: discarded, with the same rebuild.
+- A classpath file the test task's own `doFirst` writes, or a jar only a manifest `Class-Path`
+  names, is compared too, on selecting and complement runs. Map: left alone (one with such a jar
+  forces once).
 
 ## [0.1.0] - 2026-10-04
 

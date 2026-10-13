@@ -27,6 +27,7 @@ class MapFilesReadTest {
         "\"loaded\"" to "the agent's per-worker raw lists, folded in by the decode",
         "MAP_DIGEST_FILE" to "the digest itself, never compared with the list",
         "MOVED_FILE" to "explains a forced run, read by nothing that decides",
+        "compared\"" to "the classpath files a run compared, handed to its own last look and deleted",
         "name" to "a name drawn from constants this scan sees elsewhere",
     )
 

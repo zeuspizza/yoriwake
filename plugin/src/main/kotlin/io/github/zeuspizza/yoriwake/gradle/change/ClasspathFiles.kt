@@ -2,7 +2,8 @@ package io.github.zeuspizza.yoriwake.gradle.change
 
 import java.io.File
 import java.security.MessageDigest
-import java.util.zip.ZipFile
+import java.util.jar.Attributes
+import java.util.jar.JarFile
 
 /**
  * The non-class files the build produced onto a test task's runtime classpath, by content.
@@ -32,6 +33,10 @@ internal object ClasspathFiles {
      * timestamps, so its whole-file digest moves on every clean rebuild). Dependency jars from
      * elsewhere are not the build's output. Paths are relative to [rootDir]; a jar entry is
      * `<jar>!/<entry>`. With [classes], class files are walked too.
+     *
+     * What a walked jar's manifest `Class-Path` names is on the test JVM's class path too, and on no
+     * classpath Gradle lists: it is walked wherever it lies, but in Gradle's module cache, whose paths
+     * name their content, and with its class files, which the class-digest rule never reads.
      */
     fun walk(
         classpath: Collection<File>,
@@ -48,7 +53,11 @@ internal object ClasspathFiles {
         }
         val digests = sortedMapOf<String, String>()
         var files = 0
-        for (entry in produced) {
+        // Each entry with whether its class files are walked; what a manifest names joins at the end.
+        val pending = ArrayDeque(produced.map { it to classes })
+        val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
+        while (pending.isNotEmpty()) {
+            val (entry, withClasses) = pending.removeFirst()
             when {
                 entry.isDirectory -> {
                     val stack = ArrayDeque(listOf(entry))
@@ -64,7 +73,7 @@ internal object ClasspathFiles {
                                 stack.addLast(file)
                                 continue
                             }
-                            if (!classes && file.name.endsWith(".class")) continue
+                            if (!withClasses && file.name.endsWith(".class")) continue
                             if (++files > maxFiles) return budgetSpent(maxFiles)
                             digests[pathOf(rootDir, file)] =
                                 runCatching { file.inputStream().use(::sha256) }.getOrDefault(UNREADABLE)
@@ -74,12 +83,25 @@ internal object ClasspathFiles {
                 entry.isFile && (entry.name.endsWith(".jar") || entry.name.endsWith(".zip")) -> {
                     val jar = pathOf(rootDir, entry)
                     val read = runCatching {
-                        ZipFile(entry).use { zip ->
+                        JarFile(entry, false).use { zip ->
                             for (zipped in zip.entries()) {
-                                if (zipped.isDirectory || (!classes && zipped.name.endsWith(".class"))) continue
+                                if (zipped.isDirectory || (!withClasses && zipped.name.endsWith(".class"))) continue
                                 if (++files > maxFiles) return budgetSpent(maxFiles)
                                 digests["$jar!/${zipped.name}"] =
                                     runCatching { zip.getInputStream(zipped).use(::sha256) }.getOrDefault(UNREADABLE)
+                            }
+                            val classPath = zip.manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH).orEmpty()
+                            for (token in classPath.split(' ', '\t', '\n', '\r', '\u000c').filter(String::isNotEmpty)) {
+                                val uri = runCatching { entry.toURI().resolve(token) }.getOrNull()
+                                // The JVM ignores a URL that is not a `file:` one.
+                                if (uri != null && !uri.scheme.equals("file", ignoreCase = true)) continue
+                                val named = uri?.let { runCatching { File(it).absoluteFile.normalize() }.getOrNull() }
+                                if (named == null) {
+                                    // Not resolved here, so it forces rather than guesses.
+                                    digests["$jar Class-Path $token"] = UNREADABLE
+                                } else if (!inModuleCache(named) && seen.add(named)) {
+                                    pending.addLast(named to true)
+                                }
                             }
                         }
                     }
@@ -127,6 +149,9 @@ internal object ClasspathFiles {
         }
         return Moved(moved)
     }
+
+    /** Gradle's module cache, whose paths name their content. */
+    private fun inModuleCache(file: File) = "/caches/modules-2/" in file.invariantSeparatorsPath
 
     private fun budgetSpent(maxFiles: Int) =
         Walk.Refused("the build-produced files on the classpath exceed the $maxFiles-file budget")

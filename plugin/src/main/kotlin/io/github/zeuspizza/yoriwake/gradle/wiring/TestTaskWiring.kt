@@ -167,6 +167,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
         val scopeOutcome = applyJacocoIncludes(project, test, scope)
+        // Every build script has run: after any doFirst they added, however early.
+        LastLook.moveLast(test)
 
         // Decline, do not throw, and do not capture: a map without an applied scope has unknown
         // extent, and selection on it could skip a failing test.
@@ -284,7 +286,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
             // Registered before the marker's deletion, so it runs after it and may write one.
-            if (runPlan.complementing) configureComplement(project, test, mapDir, runPlan, agent)
+            if (runPlan.complementing) configureComplement(project, test, mapDir, runPlan, agent, buildMemo)
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
@@ -341,16 +343,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     "runs in full. `yoriwakeAudit<Task>` reports this as `git-unavailable`."
             )
         }
-    }
-
-    /**
-     * Tells the test JVM that the daemon refused. Selection stays off, so an agent that misses or
-     * does not know the refusal property still runs everything.
-     */
-    internal fun refuse(test: Test, kind: RefusalKind, reason: String) {
-        test.systemProperty(SELECT_PROPERTY, "false")
-        test.systemProperty(REFUSED_PROPERTY, reason)
-        test.systemProperty(REFUSED_KIND_PROPERTY, kind.token)
     }
 
 
@@ -1041,6 +1033,16 @@ internal val DEVELOCITY_REFUSALS = setOf(
  */
 internal fun declinedUnderDevelocity(test: Test) =
     test.systemProperties[REFUSED_KIND_PROPERTY]?.toString() in DEVELOCITY_REFUSALS
+
+/**
+ * Tells the test JVM that the daemon refused. Selection stays off, so an agent that misses or
+ * does not know the refusal property still runs everything.
+ */
+internal fun refuse(test: Test, kind: RefusalKind, reason: String) {
+    test.systemProperty(SELECT_PROPERTY, "false")
+    test.systemProperty(REFUSED_PROPERTY, reason)
+    test.systemProperty(REFUSED_KIND_PROPERTY, kind.token)
+}
 
 /**
  * Honours `--project-cache-dir`. `rootDir`, not `rootProject.file(...)`, which is a

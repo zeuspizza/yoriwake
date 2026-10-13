@@ -28,6 +28,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.validCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
 import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
 import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
@@ -242,8 +243,21 @@ internal fun TestTaskWiring.configureSelection(
         )
 
         // A file the build generated onto the classpath from something git does not track moves
-        // with no change behind it; read now, after the test task's inputs are built.
-        val classpathFiles = classpathFilesRule(mapDir, classpathFacts)
+        // with no change behind it; read now, after the test task's inputs are built, and again by
+        // the last look, after the build's own doFirst actions.
+        val lastLook = LastLook.handOver(mapDir)
+        runCatching { lastLook.delete() }
+        var handedOver = true
+        val classpathFiles = classpathFilesRule(mapDir, classpathFacts) { compared ->
+            handedOver = runCatching {
+                LastLook.write(mapDir, rootDir, classpathFacts.buildDirs.values, classes = false, compared)
+            }.isSuccess
+        }.let { verdict ->
+            // Nothing for the last look to compare against, so nothing vouches for what the build's
+            // own doFirst actions write.
+            if (handedOver || verdict != ClasspathFilesVerdict.Unchanged) verdict
+            else ClasspathFilesVerdict.Unrecorded("the classpath files could not be handed to ${lastLook.name}")
+        }
         // An inline function's body is compiled into its call sites, so coverage cannot link
         // them; Kotlin's SMAP records the edge, and the consumers count as changed.
         val widening = widenForInlining(
@@ -449,6 +463,7 @@ internal fun TestTaskWiring.configureComplement(
     mapDir: File,
     runPlan: RunPlan,
     agent: File?,
+    buildMemo: BuildMemo?,
 ) {
     val from = runPlan.complementFrom ?: return
     val record = if (from.isEmpty()) {
@@ -504,12 +519,27 @@ internal fun TestTaskWiring.configureComplement(
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
     val validated: String = text!!
+    val rootDir = project.rootDir
+    // A build directory outside the root holds build output the classpath stamp reads too, so the
+    // last look compares it as well.
+    val buildDirs = projectFacts(project, buildMemo).buildDirs.values.toList()
+    val lastLook = LastLook.handOver(mapDir)
     test.doFirst {
         copy.delete()
+        runCatching { lastLook.delete() }
         if (declinedUnderDevelocity(test) || namedTestsLeftAlone(test, leftAlone) || refusedAtExecution(test)) return@doFirst
         val mismatch = SelectionRecord.mismatch(recorded, identity.observe(test))
             ?: runCatching { copy.parentFile.mkdirs(); writeAtomically(copy, validated) }
                 .exceptionOrNull()?.let { "its copy could not be written ($it)" }
+            // The build's own doFirst actions run after this: the last look compares the build's
+            // output on the classpath again, as the classpath stamp read it.
+            ?: when (val walk = runCatching { ClasspathFiles.walk(test.classpath.files, buildDirs, rootDir, classes = true) }
+                .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
+                is ClasspathFiles.Walk.Refused -> "the build output on its classpath, which could not be digested (${walk.reason})"
+                is ClasspathFiles.Walk.Found ->
+                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests) }
+                        .exceptionOrNull()?.let { "the build output on its classpath, which could not be written to ${lastLook.name} ($it)" }
+            }
         if (mismatch != null) {
             val reason = "the ${AgentContract.SELECTION_FILE} for ${test.path} in $where differs from this run in $mismatch"
             refuse(test, RefusalKind.COMPLEMENT_RECORD_MISMATCH, reason)

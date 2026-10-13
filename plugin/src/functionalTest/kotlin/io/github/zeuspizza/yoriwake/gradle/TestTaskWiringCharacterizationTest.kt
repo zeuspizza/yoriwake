@@ -71,7 +71,7 @@ class TestTaskWiringCharacterizationTest {
                     lines += "#" + index + " " + name
                     // The test execution itself is only located, not described: its outputs name
                     // workers and timings that vary between runs.
-                    if (name.contains("doFirst") || name.contains("doLast")) {
+                    if (name.contains("doFirst") || name.contains("doLast") || name.contains("yoriwake")) {
                         val propsAfter = t.systemProperties.mapValues { it.value?.toString() }
                         (propsBefore.keys + propsAfter.keys).sorted().forEach { k ->
                             if (propsBefore[k] != propsAfter[k]) lines += "  prop " + k + "=" + propsAfter[k]
@@ -246,8 +246,9 @@ class TestTaskWiringCharacterizationTest {
             #12 Execute doFirst {} action
               +file .gradle/yoriwake-agent/yoriwake-agent.jar
             #13 Execute doFirst {} action
-            #14 Execute executeTests
-            #15 Execute doLast {} action
+            #14 Execute yoriwake last look
+            #15 Execute executeTests
+            #16 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, captureActions.trimEnd())
@@ -275,6 +276,7 @@ class TestTaskWiringCharacterizationTest {
               prop yoriwake.change.accountedFor=false
               prop yoriwake.internal.capture.outputDir=
               +file .gradle/yoriwake/test-7f007aca/change-set
+              +file .gradle/yoriwake/test-7f007aca/classpath-files.compared
               log [yoriwake] :test: compared 4 compiled classes against 4 the map recorded: 0 changed with no source change behind them
               log [yoriwake] :test selecting against <sha> (merge base with main): 1 changed classes, 0 paths coverage cannot see
               log [yoriwake] :test: narrowing, so nothing is instrumented and the map is left alone. A partial run cannot produce a map worth keeping.
@@ -307,8 +309,10 @@ class TestTaskWiringCharacterizationTest {
             #16 Execute doFirst {} action
             #17 Execute doFirst {} action
               -file build/jacoco/test.exec
-            #18 Execute executeTests
-            #19 Execute doLast {} action
+            #18 Execute yoriwake last look
+              -file .gradle/yoriwake/test-7f007aca/classpath-files.compared
+            #19 Execute executeTests
+            #20 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, selectActions.trimEnd())
