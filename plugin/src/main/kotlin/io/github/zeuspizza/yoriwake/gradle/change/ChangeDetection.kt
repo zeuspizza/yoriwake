@@ -341,9 +341,14 @@ internal object ChangeDetection {
 
     fun trackedPaths(git: Runner, projectDir: File, against: String): List<String>? {
         // --no-renames: with rename detection git reports only the destination, and tests of the
-        // class that left the old path are never selected.
+        // class that left the old path are never selected. --ignore-submodules=none: a submodule
+        // whose `ignore` setting hides its changes is still reported, as its path. Untracked files
+        // in it count too: `untracked` would hide them in a submodule that sets no `ignore` at all.
         val tracked = git.run(
-            listOf("diff", "--name-only", "--no-renames", "--end-of-options", against)
+            listOf(
+                "diff", "--name-only", "--no-renames", "--ignore-submodules=none",
+                "--end-of-options", against,
+            )
         ) ?: return null
         // Only the diff list is rebased: `git diff --name-only` prints repo-relative paths, while
         // `git ls-files --others` prints cwd-relative ones.
@@ -381,7 +386,8 @@ internal object ChangeDetection {
      * clean tree, null when git could not answer.
      */
     fun status(git: Runner): List<String>? =
-        git.run(listOf("status", "--porcelain", "--untracked-files=all"))
+        // A changed submodule is not clean, whatever its `ignore` setting says.
+        git.run(listOf("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"))
 
     fun head(providers: ProviderFactory, projectDir: File, memo: BuildMemo? = null): String? =
         head(cachedRunner(providers, projectDir, memo))

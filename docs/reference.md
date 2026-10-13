@@ -17,7 +17,8 @@ guess.
   commit (the merge base with your branch's upstream by default; `origin/main`, `origin/master`,
   `main`, `master` as fallbacks) and widens that base back to the commit the map was captured at.
   Uncommitted, untracked and gitignored files count too, by content, so an edited ignored fixture
-  selects the tests that read it. Build state does not: `.gradle/`, `.kotlin/`, the build
+  selects the tests that read it. A changed git submodule counts as its path whatever its `ignore`
+  setting, untracked files in it included, its own build output too. Build state does not: `.gradle/`, `.kotlin/`, the build
   directories of this build's projects, and a `build/` directory beside any other Gradle build
   script (`buildSrc`, an included build, a project a TestKit test wrote). A change reaches a test
   that reads such a file through the tracked sources that produce it. A non-class file the build

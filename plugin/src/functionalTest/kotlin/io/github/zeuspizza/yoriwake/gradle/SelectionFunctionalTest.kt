@@ -1305,4 +1305,89 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertTrue("dev.sample.BetaTest#slow" in ran, "ran $ran")
         assertEquals("not-in-map", decisionReasons(dir).filterKeys { "slow" in it }.values.single().lowercase().replace('_', '-'))
     }
+
+    @Test
+    fun `a data file edited inside a submodule that ignores dirty trees runs the test that reads it`(
+        @TempDir dir: File,
+    ) {
+        val ran = submoduleDataChanged(dir, ignore = "dirty") { lib -> File(lib, "data/mode.txt").writeText("lenient") }
+
+        assertContains(ran, "dev.sample.ASubmoduleDataTest")
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"])
+    }
+
+    @Test
+    fun `a data file committed inside a submodule that ignores all changes runs the test that reads it`(
+        @TempDir dir: File,
+    ) {
+        // The new submodule commit is committed in the project too, so only the diff from the base
+        // can see it: the working tree matches HEAD.
+        val ran = submoduleDataChanged(dir, ignore = "all", base = "HEAD~1") { lib ->
+            File(lib, "data/mode.txt").writeText("lenient")
+            commit(lib, "lenient")
+            // Newer git leaves an `ignore = all` submodule out of `git add .` unless forced.
+            git(dir, "add", "-f", "lib")
+            commit(dir, "bump")
+        }
+
+        assertContains(ran, "dev.sample.ASubmoduleDataTest")
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"])
+    }
+
+    @Test
+    fun `a submodule edit a capture saw and then reverted runs the test that reads it`(@TempDir dir: File) {
+        // Clean again, the submodule is in no diff: only the snapshot of the capture that saw the
+        // edit can say the test saw content that is gone.
+        val ran = submoduleDataChanged(
+            dir, ignore = "dirty",
+            beforeCapture = { lib -> File(lib, "data/mode.txt").writeText("lenient") },
+        ) { lib -> git(lib, "checkout", "--", ".") }
+
+        assertContains(ran, "dev.sample.ASubmoduleDataTest")
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"])
+    }
+
+    /**
+     * A captured build whose test reads `lib/data/mode.txt` from a submodule `lib` that the
+     * committed `.gitmodules` tells git to [ignore]. [beforeCapture] and [afterCapture] change the
+     * submodule, Beta changes beside it, and the tests a selecting run against [base] ran come back.
+     * The data test sorts before BetaTest, so the Beta change alone never selects it.
+     */
+    private fun submoduleDataChanged(
+        dir: File,
+        ignore: String,
+        base: String = "HEAD",
+        beforeCapture: (File) -> Unit = {},
+        afterCapture: (File) -> Unit,
+    ): Set<String> {
+        build(
+            dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest,
+            classOrderByName,
+            ".gitmodules" to "[submodule \"lib\"]\n\tpath = lib\n\turl = ./lib\n\tignore = $ignore\n",
+            "src/test/java/dev/sample/ASubmoduleDataTest.java" to """
+                package dev.sample;
+                import java.nio.file.Files;
+                import java.nio.file.Paths;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertFalse;
+                class ASubmoduleDataTest {
+                    @Test void reads() throws Exception { assertFalse(Files.readString(Paths.get("lib/data/mode.txt")).isEmpty()); }
+                }
+            """.trimIndent(),
+        )
+        val lib = File(dir, "lib")
+        File(lib, "data/mode.txt").apply { parentFile.mkdirs() }.writeText("strict")
+        git(lib, "init")
+        commit(lib, "data")
+        committed(dir)
+        beforeCapture(lib)
+        runner(dir, "test").build()
+        File(dir, "build/test-results").deleteRecursively()
+
+        changeBeta(dir)
+        afterCapture(lib)
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=$base").build().output
+
+        return ranTests(dir).also { assertTrue(it.isNotEmpty(), output) }
+    }
 }
