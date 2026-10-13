@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-13
+
+**Your map:** discarded; the first full run of each task rebuilds it.
+
 ### Added
 
 - `-Pyoriwake.fullRun`, or a `yoriwake: full` line in a commit message, makes a selecting run run
@@ -100,5 +104,6 @@ First release. **Your map:** none exists yet; the first full run records one.
 - Pinning with `@Tag("yoriwake-always-run")`, `yoriwake { alwaysRun }` and `-Pyoriwake.alwaysRun`.
 - `-Pyoriwake.isolatedCapture`, which records the map with a fresh test JVM per test class.
 
-[Unreleased]: https://github.com/zeuspizza/yoriwake/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zeuspizza/yoriwake/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/zeuspizza/yoriwake/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zeuspizza/yoriwake/releases/tag/v0.1.0

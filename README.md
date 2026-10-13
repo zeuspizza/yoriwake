@@ -58,7 +58,7 @@ Apply the plugin next to `jacoco`, which it requires and scopes:
 plugins {
     java
     jacoco
-    id("io.github.zeuspizza.yoriwake") version "0.1.0"
+    id("io.github.zeuspizza.yoriwake") version "0.2.0"
 }
 ```
 
