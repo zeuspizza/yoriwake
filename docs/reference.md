@@ -240,6 +240,12 @@ tasks.jar {
 and apply `gradle-git-properties`, or its task, the same way. A test that asserts on such a value
 then needs the release build to see it.
 
+How often this costs a narrowed run, measured at the 0.2.0 release on 31 open-source test tasks: in
+three, JUnit 5, Resilience4j and OpenTelemetry Java, a jar manifest on the test classpath takes a
+new `Build-Time` or new OSGi bundle headers on every build, so no selecting run narrowed even at
+the commit the map was recorded at. A day of commits later, Kafka, Gradle, Iceberg, Micrometer and
+Grails builds had also moved a commit id, a build date or an SBOM.
+
 ## What coverage does not record
 
 Coverage records what each test executed. Some tests depend on a class without executing it, and
