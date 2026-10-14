@@ -303,6 +303,7 @@ class TestTaskWiringCharacterizationTest {
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/000004.exec
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/000005.exec
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/000006.exec
+              -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/env-reads.tsv
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/index.tsv
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/overhead.txt
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/plan-complete
