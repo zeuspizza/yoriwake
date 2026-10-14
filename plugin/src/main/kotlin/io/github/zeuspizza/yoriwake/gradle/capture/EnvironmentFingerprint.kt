@@ -36,7 +36,15 @@ internal object EnvironmentFingerprint {
 
     private const val PROPERTY = "sys:"
     private const val VARIABLE = "env:"
-    private val PLAIN = setOf("jdk.version", "jdk.vendor", "jdk.executable", "jdk.unavailable", "os.name", "os.arch")
+    private const val JDK_VERSION = "jdk.version"
+    private const val JDK_VENDOR = "jdk.vendor"
+    private const val JDK_EXECUTABLE = "jdk.executable"
+    private const val JDK_UNAVAILABLE = "jdk.unavailable"
+    private const val OS_NAME = "os.name"
+    private const val OS_ARCH = "os.arch"
+
+    /** Not secret, so stored and named as they are. */
+    private val PLAIN = setOf(JDK_VERSION, JDK_VENDOR, JDK_EXECUTABLE, JDK_UNAVAILABLE, OS_NAME, OS_ARCH)
 
     /**
      * What the daemon sees of the test JVM before it starts: the launcher's runtime version and
@@ -107,21 +115,21 @@ internal object EnvironmentFingerprint {
         data class Unrecorded(val reason: String) : Verdict()
     }
 
-    class Check(val verdict: Verdict, val ignored: List<String>)
+    class Check(val verdict: Verdict, val ignored: List<String> = emptyList())
 
     /** [view]'s fingerprint, each value normalized and, for properties and variables, digested with [salt]. */
     fun compute(view: View, salt: ByteArray, rules: Rules): Computed {
         val components = sortedMapOf<String, String>(ORDER)
         when {
             view.jdkVersion != null || view.jdkVendor != null -> {
-                components["jdk.version"] = view.jdkVersion ?: "unknown"
-                components["jdk.vendor"] = view.jdkVendor ?: "unknown"
+                components[JDK_VERSION] = view.jdkVersion ?: "unknown"
+                components[JDK_VENDOR] = view.jdkVendor ?: "unknown"
             }
-            view.executable != null -> components["jdk.executable"] = rules.normalize(view.executable)
-            else -> components["jdk.unavailable"] = "-"
+            view.executable != null -> components[JDK_EXECUTABLE] = rules.normalize(view.executable)
+            else -> components[JDK_UNAVAILABLE] = "-"
         }
-        components["os.name"] = view.osName ?: "unknown"
-        components["os.arch"] = view.osArch ?: "unknown"
+        components[OS_NAME] = view.osName ?: "unknown"
+        components[OS_ARCH] = view.osArch ?: "unknown"
         val ignored = sortedSetOf<String>()
         // The JVM keeps the last value given for a name.
         val properties = LinkedHashMap<String, String>()
@@ -150,10 +158,10 @@ internal object EnvironmentFingerprint {
      */
     fun check(mapDir: File, view: View, rules: Rules): Check {
         val jvms = runCatching { jvmsWithPositions(mapDir) }.getOrNull()
-            ?: return Check(Verdict.Unrecorded("the map's test positions could not be read"), emptyList())
-        if (jvms.isEmpty()) return Check(Verdict.Matches, emptyList())
+            ?: return Check(Verdict.Unrecorded("the map's test positions could not be read"))
+        if (jvms.isEmpty()) return Check(Verdict.Matches)
         val salt = readSalt(mapDir)
-            ?: return Check(Verdict.Unrecorded(UNRECORDED), emptyList())
+            ?: return Check(Verdict.Unrecorded(UNRECORDED))
         val current = compute(view, salt, rules)
         val recorded = readRecorded(mapDir, jvms)
             ?: return Check(Verdict.Unrecorded(UNRECORDED), current.ignored)
@@ -235,7 +243,7 @@ internal object EnvironmentFingerprint {
             decodedJvms.forEach { newRows += Tsv.join(it, id) }
         }
         writeAtomically(File(mapDir, ENVIRONMENT_FINGERPRINTS_FILE), table.entries.sortedBy { it.key }.joinToString("") { (id, components) ->
-            components.entries.sortedWith(compareBy(ORDER) { it.key }).joinToString("") { Tsv.join(id, it.key, it.value) + "\n" }
+            components.inOrder().joinToString("") { Tsv.join(id, it.key, it.value) + "\n" }
         })
         writeAtomically(File(mapDir, ENVIRONMENT_FILE), newRows.distinct().sorted().joinToString("") { "$it\n" })
     }
@@ -247,7 +255,7 @@ internal object EnvironmentFingerprint {
     /** The JDK's version first, as what differs most often, then the rest of the JDK, the OS, properties and variables. */
     private val ORDER: Comparator<String> = compareBy<String> { component ->
         when {
-            component == "jdk.version" -> 0
+            component == JDK_VERSION -> 0
             component.startsWith("jdk.") -> 1
             component.startsWith("os.") -> 2
             component.startsWith(PROPERTY) -> 3
@@ -281,11 +289,14 @@ internal object EnvironmentFingerprint {
 
     private fun idOf(components: Map<String, String>): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        components.entries.sortedWith(compareBy(ORDER) { it.key }).forEach {
+        components.inOrder().forEach {
             digest.update((Tsv.join(it.key, it.value) + "\n").toByteArray(Charsets.UTF_8))
         }
         return hex(digest.digest()).take(16)
     }
+
+    /** The order every fingerprint is written and its id hashed in, so the two cannot disagree. */
+    private fun Map<String, String>.inOrder() = entries.sortedWith(compareBy(ORDER) { it.key })
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 

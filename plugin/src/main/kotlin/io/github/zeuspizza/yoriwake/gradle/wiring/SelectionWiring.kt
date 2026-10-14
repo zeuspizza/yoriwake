@@ -729,17 +729,11 @@ private fun TestTaskWiring.refuseAChangedEnvironment(
 ) {
     test.doFirst {
         if (refusedAtExecution(test)) return@doFirst
-        val check = runCatching { EnvironmentFingerprint.check(mapDir, environmentView(test), rules) }
-            .getOrElse { EnvironmentFingerprint.Check(EnvironmentFingerprint.Verdict.Unrecorded("the environment could not be compared ($it)"), emptyList()) }
+        val check = checkEnvironment(mapDir, environmentView(test), rules)
         if (check.ignored.isNotEmpty()) {
             test.systemProperty(AgentContract.FINGERPRINT_IGNORED_PROPERTY, check.ignored.joinToString(","))
         }
-        val verdict = check.verdict
-        val (kind, reason) = when (verdict) {
-            EnvironmentFingerprint.Verdict.Matches -> return@doFirst
-            is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to verdict.reason
-            is EnvironmentFingerprint.Verdict.Unrecorded -> RefusalKind.ENVIRONMENT_UNRECORDED to verdict.reason
-        }
+        val (kind, reason) = environmentRefusal(check.verdict) ?: return@doFirst
         test.logger.lifecycle("[yoriwake] ${test.path}: $reason, so the whole suite runs.")
         refuse(test, kind, reason)
         // Never read under a refusal; deleted so a previous run's file is not mistaken for this one's.
@@ -759,6 +753,18 @@ private fun TestTaskWiring.refuseAChangedEnvironment(
             ),
         )
     }
+}
+
+/** [EnvironmentFingerprint.check], with a comparison that failed read as no fingerprint. */
+internal fun checkEnvironment(mapDir: File, view: EnvironmentFingerprint.View, rules: EnvironmentFingerprint.Rules) =
+    runCatching { EnvironmentFingerprint.check(mapDir, view, rules) }
+        .getOrElse { EnvironmentFingerprint.Check(EnvironmentFingerprint.Verdict.Unrecorded("the environment could not be compared ($it)")) }
+
+/** The refusal a verdict makes a selecting run take, or null when the environments match. */
+internal fun environmentRefusal(verdict: EnvironmentFingerprint.Verdict): Pair<RefusalKind, String>? = when (verdict) {
+    EnvironmentFingerprint.Verdict.Matches -> null
+    is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to verdict.reason
+    is EnvironmentFingerprint.Verdict.Unrecorded -> RefusalKind.ENVIRONMENT_UNRECORDED to verdict.reason
 }
 
 /**

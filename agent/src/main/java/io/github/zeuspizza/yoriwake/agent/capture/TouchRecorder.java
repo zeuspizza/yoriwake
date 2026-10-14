@@ -41,7 +41,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private final Set<String> seenNamed = new HashSet<>();
     /** Archives found to hold no class, source or archive, by path, with the length and time they had. */
     private final Map<String, String> classless = new HashMap<>();
-    private boolean planStarted;
+    /** Written under {@link #lock}; volatile so the environment sink reads it without the lock. */
+    private volatile boolean planStarted;
     private List<String[]> pending = new ArrayList<>();
     private boolean installed;
     private volatile String incomplete = "the yoriwake agent was not attached to this JVM";
@@ -123,12 +124,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
      */
     @Override
     public Set<String> environmentReads() {
-        synchronized (lock) {
-            if (!planStarted) {
-                return null;
-            }
-        }
-        return environmentIncomplete == null ? new java.util.TreeSet<>(environmentReads) : null;
+        return planStarted && environmentIncomplete == null ? new java.util.TreeSet<>(environmentReads) : null;
     }
 
     /**
@@ -137,21 +133,14 @@ public final class TouchRecorder implements CaptureSession.Touches {
      * tests': before it, the test worker reads its own.
      */
     void environmentRead(Object name) {
-        if (inside.get() != null) {
+        // Hosts read the same few variables over and over: a name already kept costs a lookup, no lock.
+        String key = name == null ? AgentContract.ENV_READ_WHOLE : name instanceof String ? (String) name : null;
+        if (key == null || !planStarted || environmentReads.contains(key) || inside.get() != null) {
             return;
-        }
-        synchronized (lock) {
-            if (!planStarted) {
-                return;
-            }
         }
         inside.set(Boolean.TRUE);
         try {
-            if (name == null) {
-                environmentReads.add(AgentContract.ENV_READ_WHOLE);
-            } else if (name instanceof String) {
-                environmentReads.add((String) name);
-            }
+            environmentReads.add(key);
         } catch (Throwable t) {
             environmentIncomplete = "a read of the environment could not be recorded: " + t;
         } finally {

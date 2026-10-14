@@ -1017,10 +1017,10 @@ private fun frameworkFilter(test: Test): String? {
 internal fun validNames(names: List<String>, property: String, owner: String): List<String> =
     names.map(String::trim).onEach { entry ->
         if (entry.isEmpty() || entry.all { it == '*' }) {
+            val problem = if (entry.isEmpty()) "names nothing" else "matches every name"
             throw org.gradle.api.InvalidUserDataException(
-                "[yoriwake] $owner: $property holds '$entry', which " +
-                    (if (entry.isEmpty()) "names nothing" else "matches every name") +
-                    ". List names, in which `*` matches any characters, such as $property.add(\"${if (property == "environmentInclude") "DB_MODE" else "build.number"}\")."
+                "[yoriwake] $owner: $property holds '$entry', which $problem. List names, in which `*` " +
+                    "matches any characters."
             )
         }
     }

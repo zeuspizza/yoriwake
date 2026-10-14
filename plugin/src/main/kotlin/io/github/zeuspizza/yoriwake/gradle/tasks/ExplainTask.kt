@@ -36,6 +36,8 @@ import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
 import io.github.zeuspizza.yoriwake.gradle.wiring.DevelocityDetection
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestPatterns
+import io.github.zeuspizza.yoriwake.gradle.wiring.checkEnvironment
+import io.github.zeuspizza.yoriwake.gradle.wiring.environmentRefusal
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentView
 import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
@@ -269,13 +271,7 @@ internal abstract class ExplainTask : DefaultTask() {
         }
         // As the run checks it, before it selects.
         environment?.let { rules ->
-            val verdict = runCatching { EnvironmentFingerprint.check(mapDir, environmentView.get(), rules).verdict }
-                .getOrElse { EnvironmentFingerprint.Verdict.Unrecorded("the environment could not be compared ($it)") }
-            val (kind, reason) = when (verdict) {
-                EnvironmentFingerprint.Verdict.Matches -> null
-                is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to verdict.reason
-                is EnvironmentFingerprint.Verdict.Unrecorded -> RefusalKind.ENVIRONMENT_UNRECORDED to verdict.reason
-            } ?: run {
+            val (kind, reason) = environmentRefusal(checkEnvironment(mapDir, environmentView.get(), rules).verdict) ?: run {
                 if (mapPresent(mapDir)) {
                     EnvironmentFingerprint.uncomparedReads(mapDir, rules).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
                 }
