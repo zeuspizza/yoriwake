@@ -494,6 +494,12 @@ public final class CaptureSession implements TestEvents {
         long startedAt = System.nanoTime();
         try {
             writer.write(id, durationNanos, outcome, data);
+            // A test that did not pass goes to disk at once. Gradle's --fail-fast stops the JVM
+            // after the first failure, on Windows with no shutdown hook to flush the batch, and a
+            // lost failure leaves the map saying the test passed. Failures are rare; passes batch.
+            if (!OUTCOME_SUCCESSFUL.equals(outcome) && !OUTCOME_NOT_A_TEST.equals(outcome)) {
+                writer.flush();
+            }
         } catch (IOException e) {
             recordFailure("Could not write record for " + id + ": " + e);
         }
