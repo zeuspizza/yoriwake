@@ -153,6 +153,12 @@ public final class AgentContract {
      */
     public static final String MAP_DIGEST_FILE = "map-digest";
 
+    /**
+     * The commit the map was last captured at. Absent means "unknown", never "current". Read by
+     * the GitHub Action to check that a restored map's history is on the base branch.
+     */
+    public static final String CAPTURE_COMMIT_FILE = "capture-commit";
+
     /** The instrumentation scope the map was captured under, one package prefix per line. */
     public static final String SCOPE_FILE = "scope";
 

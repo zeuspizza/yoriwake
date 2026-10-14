@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Changed
+
+- The CI reference leads with yoriwake-action; the contract lists `capture-commit`. Map: left alone.
+
 ## [0.2.0] - 2026-10-13
 
 **Your map:** discarded; the first full run of each task rebuilds it.
