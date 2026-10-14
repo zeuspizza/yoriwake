@@ -8,7 +8,9 @@ and is not repeated here.
 
 ## Build and test
 
-Requires JDK 21.
+Requires JDK 21 to run Gradle, and JDKs 11, 17 and 25 where Gradle's toolchain detection finds
+them: the functional suite runs a test JVM on each. `-Pyoriwake.functional.testJvms=21` skips the
+others for a local run.
 
 ```bash
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin

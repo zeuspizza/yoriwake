@@ -433,16 +433,54 @@ gives the library, and the class that calls `System.load` or `System.loadLibrary
 
 ## Requirements
 
-- **Gradle daemon JDK: 21 or newer.** The plugin's classes are compiled for Java 21.
-- **Test JVM JDK: 11 or newer.** The agent is compiled with `release = 11`, so it loads in a test
-  JVM a build's toolchain puts on Java 11.
+- **The [supported matrix](#supported-matrix):** the Gradle versions, daemon and test-JVM JDKs,
+  operating systems and test engines a release was tested on.
 - **`git` on the daemon's `PATH`.** A git that cannot be started is a change set that cannot be
   computed, so every selecting run is a full run and says so.
-- **Gradle: 8.14 or newer, 9.x included.** The functional suite runs on 8.14, the plugin's compile
-  floor, and on 9.8.0. No other version is tested. Below 8.14, on a JDK 21 daemon, the plugin
-  declines: every run is a full run, and the audit reports `gradle-too-old`. On an older daemon JDK
-  the plugin does not resolve at all: its metadata asks for JVM 21, so the build fails. Gradle
-  before 8.5 cannot run on JDK 21 (Gradle's compatibility matrix), so it always takes this path.
+- **A [supported host](#supported-hosts) plugin** on the project whose tests are selected.
+
+### Supported matrix
+
+A release supports what its functional suite ran, green, on the commit the release was tagged
+from. Each cell is one job of `.github/workflows/matrix.yml`: an operating system, a Gradle version
+and the JDK Gradle's daemon runs on, written `<os>/<gradle>/<jdk>` below. Each row names the cells
+that ran it and the tests that prove it, and a check on every pull request keeps the table and the
+cells in step.
+
+| Axis | Value | Cells | Proved by |
+|---|---|---|---|
+| Gradle | 8.14 | `*/8.14/*` | `MatrixCellIdentityTest` |
+| Gradle | 9.8.0 | `*/9.8.0/*` | `MatrixCellIdentityTest` |
+| Daemon JDK | 21 | `*/*/21` | `MatrixCellIdentityTest` |
+| Daemon JDK | 25, on Gradle 9.8.0 | `*/9.8.0/25` | `MatrixCellIdentityTest` |
+| Test JVM JDK | 11 | all | `TestJvmRangeFunctionalTest.test JVM on JDK 11` |
+| Test JVM JDK | 17 | all | `TestJvmRangeFunctionalTest.test JVM on JDK 17` |
+| Test JVM JDK | 21 | all | `TestJvmRangeFunctionalTest.test JVM on JDK 21` |
+| Test JVM JDK | 25, on Gradle 9.8.0 | `*/9.8.0/*` | `TestJvmRangeFunctionalTest.test JVM on JDK 25` |
+| OS | Linux | `linux/*/*` | `SelectionFunctionalTest` |
+| OS | macOS | `macos/*/*` | `SelectionFunctionalTest` |
+| Engine | JUnit Jupiter 5.11.4, narrowed | all | `SelectionFunctionalTest.a change selects only the tests that reach it` |
+| Engine | JUnit Jupiter 6.1.3, narrowed | all | `EngineSupportTest.a Jupiter suite on JUnit 6 is captured and selected` |
+| Engine | JUnit 4.13.2 on the vintage engine 5.11.4, narrowed | all | `EngineSupportTest.a JUnit 4 suite on the vintage engine is captured and selected` |
+| Engine | Spock 2.3-groovy-4.0, narrowed | all | `EngineSupportTest.a Spock specification is captured and selected` |
+| Host | `java` | all | `SelectionFunctionalTest` |
+
+The same run captures a map on Linux and selects against it on Linux and macOS, and captures one
+on macOS and selects against it on Linux.
+
+- **Gradle.** 8.14 is the plugin's compile floor; 9.8.0 is the newest version run. Versions between
+  them are not run. A newer Gradle is untested, not declined: the plugin keeps running there.
+  Below 8.14, on a JDK 21 daemon, the plugin declines: every run is a full run, and the audit
+  reports `gradle-too-old`. On an older daemon JDK the plugin does not resolve at all: its metadata
+  asks for JVM 21, so the build fails. Gradle before 8.5 cannot run on JDK 21 (Gradle's
+  compatibility matrix), so it always takes this path.
+- **Daemon JDK.** The plugin's classes are compiled for Java 21, so 21 is the floor.
+- **Test JVM JDK.** The agent is compiled with `release = 11`, so 11 is the floor. A test JVM on 25
+  is tested with Gradle 9.8.0 only: Gradle runs Java 25 toolchains from 9.1.
+- **Not in the table, so not tested on a release:** Windows, where the functional suite has not
+  run; Android and Kotlin Multiplatform hosts (below); Kotest, plain JUnit 4 and TestNG, which the
+  suite runs in every cell but which are captured and always run in full rather than narrowed
+  ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
 
 ### Supported hosts
 

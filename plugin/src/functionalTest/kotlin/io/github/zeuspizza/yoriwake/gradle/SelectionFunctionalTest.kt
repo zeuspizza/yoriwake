@@ -1125,6 +1125,8 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
             testImplementation(kotlin("test"))
             testRuntimeOnly("org.junit.platform:junit-platform-launcher")
         }
+        // Kotlin 2.1.20 targets at most Java 23, so the fixture keeps to 21 on any daemon JDK.
+        kotlin { jvmToolchain(21) }
         tasks.test { useJUnitPlatform() }
     """.trimIndent()
 
