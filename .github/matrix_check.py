@@ -34,9 +34,12 @@ REFERENCE_CELL = "linux/9.8.0/21"
 IDENTITY_TEST = "MatrixCellIdentityTest.the builds run on the Gradle and daemon JDK this cell asks for"
 
 CELL_LINE = re.compile(
-    r"^\s*-\s*\{\s*os:\s*(\w+),\s*runner:\s*[\w.-]+,\s*gradle:\s*'([\d.]+)',\s*task:\s*\w+,"
+    r"^\s*-\s*\{\s*os:\s*(\w+),\s*runner:\s*([\w.-]+),\s*gradle:\s*'([\d.]+)',\s*task:\s*\w+,"
     r"\s*jdk:\s*'(\d+)'\s*\}\s*$"
 )
+# What a cell's runner must start with for its OS label to be true: a label is the claim a row rests
+# on, and nothing the cell runs reports the operating system.
+RUNNERS = {"linux": "ubuntu-", "macos": "macos-", "windows": "windows-"}
 
 # The axes a cell is made of, with the label field each one is. A row on one of these names exactly
 # the cells with its value, so the table cannot claim a version the workflow does not run.
@@ -46,8 +49,23 @@ OS_NAMES = {"Linux": "linux", "macOS": "macos", "Windows": "windows"}
 
 
 def cells(workflow_text):
-    """Every cell the workflow runs, as `<os>/<gradle>/<jdk>` labels in file order."""
-    return ["/".join(match.groups()) for match in map(CELL_LINE.match, workflow_text.splitlines()) if match]
+    """Every cell the workflow runs, as `<os>/<gradle>/<jdk>` labels in file order.
+
+    A cell line this cannot read, or whose runner is not its label's OS, stops the check: a cell
+    left out would be checked by nothing, and a mislabelled one would prove another OS's row.
+    """
+    labels = []
+    for line in workflow_text.splitlines():
+        if not re.match(r"^\s*-\s*\{.*\bgradle:", line):
+            continue
+        match = CELL_LINE.match(line)
+        if not match:
+            raise SystemExit(f"matrix.yml: cannot read the cell line {line.strip()!r}")
+        os_name, runner, gradle, jdk = match.groups()
+        if not runner.startswith(RUNNERS.get(os_name, "\0")):
+            raise SystemExit(f"matrix.yml: the cell labelled {os_name} runs on {runner}")
+        labels.append(f"{os_name}/{gradle}/{jdk}")
+    return labels
 
 
 def table_rows(reference_text):
@@ -62,7 +80,11 @@ def table_rows(reference_text):
         if not line.startswith("|"):
             continue
         columns = [column.strip() for column in line.strip().strip("|").split("|")]
-        if len(columns) != 4 or columns[0] == "Axis" or set(columns[0]) <= set("-: "):
+        if columns[0] == "Axis" or set(columns[0]) <= set("-: "):
+            continue
+        # Still rendered as a row, so it must not drop out of the check.
+        if len(columns) != 4:
+            rows.append(("malformed", line.strip(), [], []))
             continue
         axis, value, named, proved = columns
         patterns = ["*/*/*" if part.strip() == "all" else part.strip().strip("`") for part in named.split(",")]
@@ -87,6 +109,9 @@ def table_problems(labels, rows):
     seen = {axis: set() for axis in CELL_AXES}
     for axis, value, patterns, proofs in rows:
         row = f"row {axis} {value!r}"
+        if axis == "malformed":
+            problems.append(f"{value}: a table row needs four columns: axis, value, cells, proving tests")
+            continue
         if axis not in CELL_AXES and axis not in OTHER_AXES:
             problems.append(f"{row}: unknown axis")
             continue

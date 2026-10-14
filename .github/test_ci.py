@@ -282,7 +282,7 @@ def _expect(problems, fragment, what):
 
 
 def case_the_reference_table_and_the_matrix_cells_agree():
-    """R3 on the real files: every row has its cells, every cell its rows."""
+    """On the real files: every table row has its cells, every cell its rows."""
     with open(matrix_check.WORKFLOW, encoding="utf-8") as handle:
         labels = matrix_check.cells(handle.read())
     with open(matrix_check.REFERENCE, encoding="utf-8") as handle:
@@ -306,6 +306,35 @@ def case_a_table_that_drifts_from_the_cells_is_reported():
         "row Gradle '8.14'", "a row naming another version's cells")
     if matrix_check.table_problems(LABELS, ROWS):
         problems += fail(f"a matching table was reported: {matrix_check.table_problems(LABELS, ROWS)}")
+    return problems
+
+
+def case_a_malformed_row_or_axis_is_reported():
+    """A row that renders but does not parse would otherwise be checked by nothing."""
+    problems = 0
+    text = "### Supported matrix\n| Axis | Value | Cells | Proved by |\n|---|---|---|---|\n| Engine | TestNG | all |\n"
+    problems += _expect(matrix_check.table_problems(LABELS, ROWS + matrix_check.table_rows(text)),
+                        "four columns", "a three-column row")
+    problems += _expect(matrix_check.table_problems(LABELS, ROWS + [("Platform", "x", ["*/*/*"], ["X"])]),
+                        "unknown axis", "an unknown axis")
+    problems += _expect(matrix_check.table_problems(LABELS, ROWS + [("Engine", "x", ["*/*/*"], [])]),
+                        "names no proving test", "a row with no proving test")
+    return problems
+
+
+def case_a_cell_line_that_cannot_be_read_or_lies_about_its_os_stops_the_check():
+    problems = 0
+    for line, what in (
+        ("          - { os: linux, runner: ubuntu-latest, gradle: '9.8.0', jdk: '21', task: functionalTestGradle9 }",
+         "reordered keys"),
+        ("          - { os: macos, runner: ubuntu-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '21' }",
+         "a macOS label on a Linux runner"),
+    ):
+        try:
+            matrix_check.cells(line)
+        except SystemExit:
+            continue
+        problems += fail(f"{what} was accepted")
     return problems
 
 
@@ -379,6 +408,39 @@ def case_a_row_whose_proving_test_was_skipped_fails_even_where_the_skip_is_allow
         allowed = [("TestJvmRangeFunctionalTest.test JVM on JDK 11", "*/*/*", "reason")]
         return _expect(_results(artifacts, allowlist=allowed), "did not pass", "a skipped proving test")
 
+def case_a_failed_test_or_missing_identity_fails_the_cell():
+    problems = 0
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        _cell(artifacts, "linux/8.14/21", cases=[
+            ("MatrixCellIdentityTest", IDENTITY, "passed"), ("TestJvmRangeFunctionalTest", JDK_11, "failed")])
+        problems += _expect(_results(artifacts), "linux/8.14/21: TestJvmRangeFunctionalTest.test JVM on JDK 11 failed",
+                            "a failed test")
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        _cell(artifacts, "linux/8.14/21", cases=[("TestJvmRangeFunctionalTest", JDK_11, "passed")])
+        problems += _expect(_results(artifacts), "identity test did not pass (absent)", "no identity test")
+    return problems
+
+
+def case_a_missing_or_wider_cell_fails():
+    problems = 0
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        problems += _expect(_results(artifacts), "linux/8.14/21: no artifact", "a cell that uploaded nothing")
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        _cell(artifacts, "linux/8.14/21", cases=[
+            ("MatrixCellIdentityTest", IDENTITY, "passed"), ("TestJvmRangeFunctionalTest", JDK_11, "passed"),
+            ("OnlyHereTest", "extra(File)", "passed")])
+        problems += _expect(_results(artifacts), "ran 1 test(s) the reference cell did not", "a test only one cell ran")
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        os.remove(os.path.join(_cell(artifacts, "linux/8.14/21"), "sha.txt"))
+        problems += _expect(_results(artifacts), "linux/8.14/21: no sha.txt", "a cell with no sha.txt")
+    return problems
+
+
 def case_a_job_that_ran_another_commit_fails():
     problems = 0
     with tempfile.TemporaryDirectory() as artifacts:
@@ -418,6 +480,8 @@ CASES = (
     case_every_workflow_pins_its_actions_by_sha,
     case_the_reference_table_and_the_matrix_cells_agree,
     case_a_table_that_drifts_from_the_cells_is_reported,
+    case_a_malformed_row_or_axis_is_reported,
+    case_a_cell_line_that_cannot_be_read_or_lies_about_its_os_stops_the_check,
     case_a_complete_run_is_green,
     case_a_cell_missing_a_test_the_reference_ran_fails_naming_it,
     case_a_skip_passes_only_where_the_allowlist_names_it,
@@ -425,6 +489,8 @@ CASES = (
     case_a_cell_that_ran_the_defaults_under_another_label_fails,
     case_a_row_whose_proving_test_ran_nowhere_fails,
     case_a_row_whose_proving_test_was_skipped_fails_even_where_the_skip_is_allowed,
+    case_a_failed_test_or_missing_identity_fails_the_cell,
+    case_a_missing_or_wider_cell_fails,
     case_a_job_that_ran_another_commit_fails,
     case_a_cell_with_two_tasks_results_fails,
 )

@@ -34,6 +34,12 @@ jobs:
           CANDIDATE: ${{ inputs.candidate }}
         run: |
           set -eu
+          # The gate's own steps come from this branch, not from the candidate, so only a release
+          # line may run it.
+          case "$GITHUB_REF_NAME" in
+            main|release/*) ;;
+            *) echo "dispatch from main or a release/<major>.<minor> branch, not $GITHUB_REF_NAME"; exit 1 ;;
+          esac
           if ! printf '%s' "$CANDIDATE" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "candidate must be a full 40-character commit SHA, got: $CANDIDATE"; exit 1
           fi
@@ -86,7 +92,7 @@ jobs:
           JDK: ${{ matrix.cell.jdk }}
         run: |
           set -eu
-          homes=$(printenv | grep -E '^JAVA_HOME_[0-9]+_(X64|ARM64)=' | cut -d= -f2- | paste -sd, -)
+          homes=$(printenv | grep -Ei '^JAVA_HOME_[0-9]+_(x64|arm64)=' | cut -d= -f2- | paste -sd, -)
           ./gradlew build --console=plain \
             -Pyoriwake.functional.gradle="$TASK" -Pyoriwake.functional.jdk="$JDK" \
             -Porg.gradle.java.installations.auto-detect=false \
