@@ -438,13 +438,6 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      # Whether Defender scans what the builds write, before anything is excluded from it.
-      - name: Defender's state on this runner
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AntivirusEnabled | Format-List
-          (Get-MpPreference).ExclusionPath
       - shell: bash
         run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 --continue --console=plain
       # Always, and an error when empty: the check below reads every shard's results.
@@ -493,13 +486,6 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      # Whether Defender scans what the builds write, before anything is excluded from it.
-      - name: Defender's state on this runner
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AntivirusEnabled | Format-List
-          (Get-MpPreference).ExclusionPath
       - shell: bash
         run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 --continue --console=plain
       # Always, and an error when empty: the check below reads every shard's results.
