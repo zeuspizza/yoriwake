@@ -79,7 +79,7 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         package dev.sample;
         import org.junit.jupiter.api.Test;
         class AModeTest {
-            @Test void readsTheMode() { System.getenv("DB_MODE"); new Alpha().twice(1); }
+            @Test void readsTheMode() { System.getenv("DB_MODE"); System.getenv(); new Alpha().twice(1); }
         }
     """.trimIndent()
 
@@ -229,11 +229,13 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
     @Test
     fun `a variable a test reads and nobody listed is not compared, and explain names it`(@TempDir dir: File) {
         recorded(dir, environment = System.getenv() + ("DB_MODE" to "a"))
-        println("[env-reads] " + File(mapDir(dir), AgentContract.ENV_READS_FILE).takeIf(File::isFile)?.readText())
+        // Names only: the variable each test read by name, and a star for the whole environment.
+        assertEquals(listOf("*", "DB_MODE"), File(mapDir(dir), AgentContract.ENV_READS_FILE).readLines())
 
         val explained = runner(dir, "yoriwakeExplainTest").withEnvironment(System.getenv() + ("DB_MODE" to "b")).build().output
         val line = explained.lines().single { "read by the tests and not compared" in it }
         assertContains(line, "DB_MODE")
+        assertTrue(explained.lines().any { "a test read the whole environment" in it }, explained)
 
         val output = runner(dir, "test", "-Pyoriwake.select")
             .withEnvironment(System.getenv() + ("DB_MODE" to "b")).build().output

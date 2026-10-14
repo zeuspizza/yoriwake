@@ -257,7 +257,9 @@ with other system properties or another locale, a test can take other paths, so 
 stores the test JVM's environment beside the map, and a selecting run whose environment differs
 runs every test (`environment-changed`), names the first thing that differs, and records the map
 again. A map with no fingerprint, as one recorded by 0.2.0, runs everything once
-(`environment-unrecorded`). Both are read from the test task as it starts, before its own
+(`environment-unrecorded`). A map recorded with a fresh test JVM per test class is left as it is,
+as on every other refusal: selecting runs run everything until a run without `-Pyoriwake.select`
+records it again. Both are read from the test task as it starts, before its own
 `doFirst` actions from the build script.
 
 What it compares:
@@ -284,7 +286,9 @@ What it does not compare:
 - what the build sets in its own `doFirst` actions, which run after yoriwake's;
 - JVM options other than `-D` (`-Xmx`, `--add-opens`, GC flags), and files on the classpath or in
   the JDK;
-- a variable read only by a child process the tests start.
+- a variable read only by a child process the tests start;
+- the machine's own time zone and locale when `TZ`, `LANG` and `LC_ALL` are unset: two machines in
+  different zones compare equal. Set `TZ`, or `-Duser.timezone` on the task, to compare it.
 
 A property whose value changes on every build, such as a build number, makes every selecting run
 run everything. Leave it out with `systemPropertyIgnore`; the decision record lists what it left
@@ -301,7 +305,10 @@ List a variable only when tests behave differently by its value, and never one w
 between the build that saves the map and the builds that restore it, such as `GITHUB_REF`: a pull
 request's capture is never saved, so every pull request build would run everything. Never list a
 secret. The salt travels with the map, so whoever restores the map can test guesses against a
-listed variable's digest; under the CI recipes that includes a pull request's build.
+listed variable's digest; under the CI recipes that includes a pull request's build. System
+properties are compared without being listed, so a property that carries a secret (a password, a
+token) is digested the same way: leave it out with `systemPropertyIgnore`, such as
+`systemPropertyIgnore.add("*password*")`, before relying on a cache other builds restore.
 
 ## What coverage does not record
 

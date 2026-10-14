@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -124,7 +125,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
      */
     @Override
     public Set<String> environmentReads() {
-        return planStarted && environmentIncomplete == null ? new java.util.TreeSet<>(environmentReads) : null;
+        return planStarted && environmentIncomplete == null ? new TreeSet<>(environmentReads) : null;
     }
 
     /**

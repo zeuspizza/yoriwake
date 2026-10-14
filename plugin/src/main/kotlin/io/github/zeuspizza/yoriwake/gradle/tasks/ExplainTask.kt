@@ -190,7 +190,7 @@ internal abstract class ExplainTask : DefaultTask() {
         // a narrower change set than the run executes.
         val age = widenToMapAge(
             resolvedBase, readCaptureStamp(mapDir),
-            File(mapDir, AgentContract.MAP_SCHEMA_VERSION_FILE).isFile,
+            mapPresent(mapDir),
         ) { a, b ->
             if (a.startsWith("-") || b.startsWith("-")) null
             else git.run(listOf("merge-base", "--end-of-options", a, b))

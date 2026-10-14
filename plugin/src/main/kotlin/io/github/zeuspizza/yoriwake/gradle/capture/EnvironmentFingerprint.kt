@@ -31,7 +31,10 @@ internal object EnvironmentFingerprint {
     /** 32 random bytes in hex, created by the first capture: the salt of every digest in the map. */
     const val SALT_FILE = "fingerprint-salt"
 
-    /** The variables every run compares: the JVM derives its default time zone and locale from them. */
+    /**
+     * The variables every run compares: the JVM derives its default time zone and locale from them.
+     * Unset, the machine's own settings decide, and those are not compared.
+     */
     val FIXED_VARIABLES = listOf("LANG", "LC_ALL", "TZ")
 
     private const val PROPERTY = "sys:"
