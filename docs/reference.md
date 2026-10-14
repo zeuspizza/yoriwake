@@ -578,14 +578,30 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
 ## CI
 
 A CI job starts with no map, so every run captures and none selects unless one is restored.
-Cache `.gradle/yoriwake`, restore the newest one available, and let a miss run everything.
 
-On GitHub Actions, use [yoriwake-action](https://github.com/zeuspizza/yoriwake-action). In one
-step it caches the map, fetches the history selection needs, records on the default branch, and
-on pull requests selects only from a map a run of the default branch vouched for (see [Who can
-write the map you restore](#who-can-write-the-map-you-restore)). Its README lists [when it runs
+On GitHub Actions, use [yoriwake-action](https://github.com/zeuspizza/yoriwake-action), at the
+release named after the plugin's (`v0.2.0` for `0.2.0`), in place of the step that runs Gradle:
+
+```yaml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '21' }
+      - uses: zeuspizza/yoriwake-action@v0.2.0
+```
+
+In one step it caches the map, fetches the history selection needs, records on the default branch,
+and on pull requests selects only from a map a run of the default branch vouched for (see [Who can
+write the map you restore](#who-can-write-the-map-you-restore)). Its README has [the whole
+workflow](https://github.com/zeuspizza/yoriwake-action#usage), with the permissions and events it
+needs, and lists [when it runs
 everything](https://github.com/zeuspizza/yoriwake-action#when-it-runs-everything) and the warning
 each case prints.
+
+### Without the action
+
+On another CI system, or in a workflow written by hand: cache `.gradle/yoriwake`, restore the
+newest one available, and let a miss run everything.
 
 Where one test command runs on every event, list the repository's default branch, so the command
 can select elsewhere and still run everything, and refresh the map, on that branch:

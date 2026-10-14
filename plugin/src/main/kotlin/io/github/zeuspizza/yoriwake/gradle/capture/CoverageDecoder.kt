@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.capture
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_SCOPED_RECORD_PREFIX
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLETE_SUFFIX
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COVERAGE_FILE
@@ -105,8 +106,8 @@ internal object CoverageDecoder {
      */
     const val RESOURCE_DIGESTS_FILE = "resource-digests"
 
-    /** The commit the map was last captured at. Absent means "unknown", never "current". */
-    const val CAPTURE_COMMIT_FILE = "capture-commit"
+    /** The commit the map was last captured at; see [AgentContract.CAPTURE_COMMIT_FILE]. */
+    const val CAPTURE_COMMIT_FILE = AgentContract.CAPTURE_COMMIT_FILE
 
     /**
      * Record directories of workers whose test JVM did not finish, sorted. Flushed or not, such a
