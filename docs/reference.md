@@ -137,6 +137,10 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - Develocity Test Distribution or Predictive Test Selection is enabled on the task
   (`develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`): a
   decline, so nothing is recorded either; see [What is not supported](#what-is-not-supported);
+- the test JVM's JDK, OS, system properties, time zone or locale, or a variable `environmentInclude`
+  lists, differ from those the map was recorded under (`environment-changed`), or the map records
+  none (`environment-unrecorded`, once); see [The environment
+  fingerprint](#the-environment-fingerprint);
 - on a run given `-Pyoriwake.trustedMaps`, a map the list does not name (`map-unverified`) or names
   with another digest (`map-untrusted`). The map is cleared and the run records a new one; see
   [Who can write the map you restore](#who-can-write-the-map-you-restore).
@@ -245,6 +249,59 @@ three, JUnit 5, Resilience4j and OpenTelemetry Java, a jar manifest on the test 
 new `Build-Time` or new OSGi bundle headers on every build, so no selecting run narrowed even at
 the commit the map was recorded at. A day of commits later, Kafka, Gradle, Iceberg, Micrometer and
 Grails builds had also moved a commit id, a build date or an SBOM.
+
+### The environment fingerprint
+
+A map says which tests a change reaches in the environment it was recorded in. On another JDK, or
+with other system properties or another locale, a test can take other paths, so each recording
+stores the test JVM's environment beside the map, and a selecting run whose environment differs
+runs every test (`environment-changed`), names the first thing that differs, and records the map
+again. A map with no fingerprint, as one recorded by 0.2.0, runs everything once
+(`environment-unrecorded`). Both are read from the test task as it starts, before its own
+`doFirst` actions from the build script.
+
+What it compares:
+
+- the JDK the test task's launcher names, by runtime version and vendor (or, with no launcher
+  metadata, the `executable` path), and the OS and architecture. These are stored as they are and
+  named with both values: `jdk.version was 17.0.9+9 when the map was recorded and is 21.0.4+7 now`;
+- every system property the task passes to the test JVM, `-D` arguments and argument providers
+  included, Gradle's own (`file.encoding`, `user.language`, `user.country`, `user.variant`)
+  included, yoriwake's excluded, as `sys:<name>`;
+- `TZ`, `LANG` and `LC_ALL`, and the environment variables `environmentInclude` lists, as
+  `env:<name>`. A listed name is compared whether or not it is set.
+
+Property and variable values are never stored, printed or logged: each is kept as a SHA-256 digest
+salted with 32 random bytes the map's first recording created (`fingerprint-salt`). Before a value
+is digested, the root project's directory, the Gradle user home and the user's home directory are
+replaced by placeholders, so a checkout in another directory or on another runner is no change.
+
+What it does not compare:
+
+- environment variables nobody listed, even ones a test reads. `yoriwakeExplain<Task>` names the
+  variables the tests read by name and are not compared, and says when a test read the whole
+  environment, from the last recording;
+- what the build sets in its own `doFirst` actions, which run after yoriwake's;
+- JVM options other than `-D` (`-Xmx`, `--add-opens`, GC flags), and files on the classpath or in
+  the JDK;
+- a variable read only by a child process the tests start.
+
+A property whose value changes on every build, such as a build number, makes every selecting run
+run everything. Leave it out with `systemPropertyIgnore`; the decision record lists what it left
+out as `fingerprint-ignored`:
+
+```kotlin
+yoriwake {
+    systemPropertyIgnore.add("build.number")   // `*` matches any characters
+    environmentInclude.add("DB_MODE")          // compared besides TZ, LANG and LC_ALL
+}
+```
+
+List a variable only when tests behave differently by its value, and never one whose value differs
+between the build that saves the map and the builds that restore it, such as `GITHUB_REF`: a pull
+request's capture is never saved, so every pull request build would run everything. Never list a
+secret. The salt travels with the map, so whoever restores the map can test guesses against a
+listed variable's digest; under the CI recipes that includes a pull request's build.
 
 ## What coverage does not record
 
@@ -674,6 +731,9 @@ requests to the action, which passes the trusted-map list.
 - **Plugin version.** A map records its format version, and a plugin reading a different one
   refuses the whole map. With the version in the key, an upgrade is an ordinary cache miss: one full
   run, which captures.
+- **JDK, when the job tests on several.** A map recorded on another JDK makes a selecting run run
+  everything as `environment-changed`, so each leg of a JDK matrix keeps its own map: add the
+  leg's JDK to the key, such as `${{ matrix.java }}`.
 - **Commit, with a prefix fallback.** An exact hit almost never happens. A map from an older commit
   is still useful and still safe.
 - **Not `raw/`.** The undecoded records are cleared by the next capture before it writes anything.
@@ -853,6 +913,11 @@ What the check cannot cover:
   later jobs, the default branch's included. Run pull requests on ephemeral runners.
 - **Other build-cache entries.** The verdict keys only the selecting test task's result; compiled
   classes restored from a cache a pull request wrote are outside it.
+
+A restored map can also be read. Besides which tests reach which classes, it holds the salted
+digests of the test task's system properties and of the variables `environmentInclude` lists,
+with their salt: whoever restores it, a pull request's build included, can check a guessed value
+against them. See [The environment fingerprint](#the-environment-fingerprint).
 
 ## Observing before you select
 
@@ -1044,6 +1109,8 @@ yoriwake {
     alwaysRun.add("com.acme.FlakyTest")    // a class, a method (Class.method), or a glob
     fullRunBranches.add("main")            // a selecting run here runs everything; see CI
     notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
+    environmentInclude.add("DB_MODE")      // a variable compared besides TZ, LANG and LC_ALL
+    systemPropertyIgnore.add("build.number") // a property left out of that comparison
 }
 ```
 
@@ -1058,6 +1125,10 @@ matching any characters, slashes included: `docs/*` is everything under `docs/`,
 Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
 a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
 nothing reads: a test that reads a listed file is skipped when only that file changed.
+
+`environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
+entry or one of only `*` fails the build. See [The environment
+fingerprint](#the-environment-fingerprint).
 
 A test's own source can pin it with `@Tag("yoriwake-always-run")`, with nothing on the compile
 classpath.

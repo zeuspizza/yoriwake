@@ -15,6 +15,11 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- A map recorded on another JDK, OS, set of system properties or locale makes selection run everything.
+  Map: repaired on the next build, which runs every test once and records the environment.
+
 ### Changed
 
 - The CI reference leads with yoriwake-action; the contract lists `capture-commit`. Map: left alone.
