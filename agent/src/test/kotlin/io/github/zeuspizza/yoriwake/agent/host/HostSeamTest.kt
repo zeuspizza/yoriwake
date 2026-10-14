@@ -19,7 +19,7 @@ class HostSeamTest {
             val code = file.readText().replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
                 .replace(Regex("//[^\n]*"), "")
             "org.gradle." in code || "org/gradle/" in code
-        }.map { it.relativeTo(sources).path }.toList()
+        }.map { it.relativeTo(sources).invariantSeparatorsPath }.toList()
         assertEquals(listOf("host/GradleHost.java"), naming)
     }
 }

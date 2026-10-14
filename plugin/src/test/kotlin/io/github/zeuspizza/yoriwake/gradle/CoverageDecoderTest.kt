@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.JUnitXmlFailures
 import org.jacoco.core.data.ExecutionData
 import org.jacoco.core.data.ExecutionDataWriter
 import org.junit.jupiter.api.Test
@@ -1641,6 +1642,46 @@ class CoverageDecoderTest {
 
         assertEquals(0, CoverageDecoder.carryFailures(dir))
         assertEquals(before, File(dir, AgentContract.COVERAGE_FILE).readText())
+    }
+
+    @Test
+    fun `a failure only Gradle saw marks every test of its class, when the test JVM lost the record`(
+        @TempDir dir: File,
+    ) {
+        // --fail-fast on Windows: the JVM is terminated before it writes its batch, so the records
+        // hold nothing, and only Gradle's own report knows which class failed.
+        mapOfTwo(dir)
+        records(dir, "1")
+
+        assertEquals(1, CoverageDecoder.carryFailures(dir, failedClasses = setOf("A")))
+
+        val rows = mapRows(dir)
+        assertEquals("FAILED", rows.getValue("[class:A]/[method:a()]")[0])
+        assertEquals("SUCCESSFUL", rows.getValue("[class:B]/[method:b()]")[0])
+        // A class whose name merely begins like a held one's is another class.
+        assertEquals(0, CoverageDecoder.carryFailures(dir, failedClasses = setOf("Bx")))
+        assertEquals("SUCCESSFUL", mapRows(dir).getValue("[class:B]/[method:b()]")[0])
+    }
+
+    @Test
+    fun `Gradle's report names the top-level class of every test that failed or errored`(@TempDir dir: File) {
+        File(dir, "TEST-a.xml").writeText(
+            """<?xml version="1.0" encoding="UTF-8"?>
+            <testsuite name="a"><testcase classname="com.acme.Outer${'$'}Inner" name="x()"><failure message="m"/></testcase>
+            <testcase classname="com.acme.Fine" name="y()"/></testsuite>""".trimIndent()
+        )
+        File(dir, "TEST-b.xml").writeText(
+            """<testsuite name="b"><testcase classname="com.acme.Broken" name="z()"><error/></testcase></testsuite>"""
+        )
+        File(dir, "TEST-c.xml").writeText("not xml")
+
+        val unreadable = mutableListOf<String>()
+        assertEquals(
+            setOf("com.acme.Outer", "com.acme.Broken"),
+            JUnitXmlFailures.classes(dir) { report, _ -> unreadable += report.name },
+        )
+        assertEquals(listOf("TEST-c.xml"), unreadable, "a report that does not parse is said, not skipped silently")
+        assertEquals(emptySet(), JUnitXmlFailures.classes(File(dir, "absent")))
     }
 
     @Test

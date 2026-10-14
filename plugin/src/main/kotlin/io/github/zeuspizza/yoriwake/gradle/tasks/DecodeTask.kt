@@ -7,6 +7,7 @@ import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
+import io.github.zeuspizza.yoriwake.gradle.capture.JUnitXmlFailures
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
@@ -101,6 +102,9 @@ internal abstract class DecodeTask : DefaultTask() {
 
     @get:Internal("work its test task's own doLast did not reach when a test failed")
     lateinit var afterTest: AfterTest
+
+    @get:Internal("Gradle's JUnit XML for the run, read for failures a stopped test JVM never recorded")
+    var junitXml: File? = null
 
     @TaskAction
     fun decode() {
@@ -242,7 +246,17 @@ internal abstract class DecodeTask : DefaultTask() {
                 startReflogs.second != reflogsNow.second -> "the stash's reflog changed during the run"
                 else -> "the run could not be dated"
             }
-            val failures = runCatching { CoverageDecoder.carryFailures(mapDir) }.getOrElse { problem ->
+            // Read on its own: a report that cannot be read must not cost the failures the agent's
+            // own records hold.
+            val reported = runCatching {
+                JUnitXmlFailures.classes(junitXml) { report, problem ->
+                    logger.warn("[yoriwake] $taskPath could not read $report for failures ($problem)")
+                }
+            }.getOrElse { problem ->
+                logger.warn("[yoriwake] $taskPath could not read Gradle's test report for failures ($problem)")
+                emptySet()
+            }
+            val failures = runCatching { CoverageDecoder.carryFailures(mapDir, reported) }.getOrElse { problem ->
                 logger.warn("[yoriwake] $taskPath could not mark this run's failures in the map ($problem)")
                 0
             }
@@ -536,6 +550,11 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.effectiveScope.set(wired.effectiveScope)
                 task.isolated.set(wired.isolated)
                 task.afterTest = wired.afterTest
+                // A File, not the property: wired as a property it carries the test task as its
+                // producer, which the configuration cache cannot store on this task. None when the
+                // report is off, since a directory left from an earlier run would then never change.
+                task.junitXml = test.reports.junitXml.outputLocation.asFile.orNull
+                    ?.takeIf { test.reports.junitXml.required.getOrElse(true) }
                 task.rootDir = project.rootDir
                 // Empty, stated rather than defaulted: these facts never reach
                 // `modulesOnClasspath`, so resolving `declared` would buy nothing.

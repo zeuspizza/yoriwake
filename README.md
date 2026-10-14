@@ -116,8 +116,9 @@ not shrink, and on short suites it is usually slower, not faster. To weigh the r
 your build, run `./gradlew yoriwakeAuditTest -Pyoriwake.audit.measureToll` with the two timings
 [`scripts/measure-toll.sh`](scripts/measure-toll.sh) takes.
 
-Not supported or declined: Windows (never run there), Gradle Isolated Projects, JUnit in-JVM
-parallelism, and Gradle below 8.14. Plain JUnit 4 and TestNG are recorded but always run in full;
+Not supported or declined: Gradle Isolated Projects, JUnit in-JVM parallelism, and Gradle below
+8.14. Linux, macOS and Windows are supported; [on Windows](docs/reference.md#windows), paths over
+260 characters need `core.longpaths`. A map is per operating system. Plain JUnit 4 and TestNG are recorded but always run in full;
 JUnit 4 narrows through the vintage engine. A suite whose tests share setup in one JVM narrows
 less; [recording each class in its own JVM](docs/reference.md#recording-each-test-class-in-its-own-jvm)
 helps, at several times the recording cost. Every case:

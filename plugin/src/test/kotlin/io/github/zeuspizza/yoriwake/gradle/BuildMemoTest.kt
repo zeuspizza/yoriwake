@@ -24,7 +24,7 @@ class BuildMemoTest {
         try {
             body(dir) { args ->
                 ProcessBuilder(listOf("git") + args)
-                    .directory(dir).redirectErrorStream(true).start().waitFor()
+                    .directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
             }
         } finally {
             dir.deleteRecursively()

@@ -49,6 +49,23 @@ class CaptureSessionTest {
         }
 
     @Test
+    fun `a failure is on disk when its test finishes, not when the run ends`() {
+        // Gradle's --fail-fast stops the JVM after the first failure. On Windows that is
+        // TerminateProcess: no shutdown hook runs, and a buffered record would be lost, leaving the
+        // map to say the test passed. This narrows the window, it cannot close it: Gradle may hear
+        // of the failure and stop the JVM first, which is why the decode also reads Gradle's report.
+        val session = session()
+        session.started(alpha)
+        session.finished(alpha, null)
+        session.started(beta)
+        session.failed(beta)
+        session.finished(beta, null)
+
+        // The tests' own rows; the session's class and unattributed windows ride along as NONE.
+        assertEquals(listOf("SUCCESSFUL" to alpha, "FAILED" to beta), recorded().filter { it.first != "NONE" })
+    }
+
+    @Test
     fun `a test that runs another test inside itself keeps its own window`() {
         // A test that hands a class to JUnitCore fires nested notifications; reading them flatly
         // would close the outer test's window at the inner test's start and lose its coverage.
@@ -355,11 +372,11 @@ class CaptureSessionTest {
 
     @Test
     fun `touches from a run that never ended are not marked complete`() {
-        val session = CaptureSession.open(stubAgent, records, "0", true, ScriptedTouches())
+        // Ended only by the teardown, after the assertion: the JVM died, so nothing may vouch for
+        // what it did not report.
+        val session = CaptureSession.open(stubAgent, records, "0", true, ScriptedTouches()).also { sessions += it }
         session.started(alpha)
         session.finished(alpha, null)
-        // No end: the JVM died, so nothing may vouch for what it did not report.
-        sessions.remove(session)
 
         assertFalse(File(records, "worker-0/${AgentContract.TOUCHES_FILE}").readLines().contains(AgentContract.TOUCHES_COMPLETE))
     }

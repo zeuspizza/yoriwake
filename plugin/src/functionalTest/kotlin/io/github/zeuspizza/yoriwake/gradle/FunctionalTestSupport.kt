@@ -110,6 +110,9 @@ abstract class FunctionalTestSupport {
         val exit = ProcessBuilder("git", *args)
             .directory(dir)
             .redirectErrorStream(true)
+            // Discarded, not left unread: under autocrlf git warns once per file, and a pipe
+            // nobody reads fills and blocks it for good.
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .start()
             .waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")} failed")

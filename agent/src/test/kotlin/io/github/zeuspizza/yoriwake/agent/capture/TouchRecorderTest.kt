@@ -30,8 +30,8 @@ class TouchRecorderTest {
 
         assertEquals(
             listOf(
-                AgentContract.TOUCH_READ to "build/classes/java/main/com/acme/Codec.class",
-                AgentContract.TOUCH_READ to "src/main/kotlin/com/acme/Utils.kt",
+                AgentContract.TOUCH_READ to File("build/classes/java/main/com/acme/Codec.class").path,
+                AgentContract.TOUCH_READ to Paths.get("src/main/kotlin/com/acme/Utils.kt").toString(),
             ),
             drained(recorder),
         )
@@ -59,7 +59,7 @@ class TouchRecorderTest {
         }.use { it.loadClass("com.acme.Other") }
 
         assertTrue(ran, "the loader's getPermissions ran while it defined the class")
-        assertEquals(listOf(AgentContract.TOUCH_READ to "build/classes/java/main/com/acme/Codec.class"), drained(recorder))
+        assertEquals(listOf(AgentContract.TOUCH_READ to File("build/classes/java/main/com/acme/Codec.class").path), drained(recorder))
     }
 
     /**
@@ -218,6 +218,36 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `a library loaded by path is named by its file, with either of Windows' separators`() {
+        // Windows' System.load takes '/' as readily as '\', so '/' may not be read as a bare name.
+        val recorder = TouchRecorder()
+        val back = "C:\\acme\\lib\\back.dll"
+        recorder.library(arrayOf<Any>(TouchRecorderTest::class.java, "C:/acme/lib/forward.dll"))
+        recorder.library(arrayOf<Any>(TouchRecorderTest::class.java, back))
+
+        val why = "a native library that is not on the reviewed list was loaded: "
+        // Off Windows a backslash is part of a name, so the whole name is the library's.
+        val backFile = if (File.separatorChar == '\\') "back.dll" else System.mapLibraryName(back)
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to why + "forward.dll", AgentContract.TOUCH_ALL to why + backFile),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a backslash off Windows cannot make an unreviewed file read as a reviewed one`() {
+        // On Linux and macOS this loads a file named `x\libzstd-...so`, which nobody reviewed;
+        // cutting at the backslash would match the reviewed zstd-jni name and narrow.
+        val recorder = TouchRecorder()
+        recorder.library(arrayOf<Any>(classNamed("com.github.luben.zstd.util.Native"),
+            "/tmp/x\\libzstd-jni-1.5.7-201234567890.so"))
+
+        // On Windows the backslash is a separator and the file really is zstd-jni's.
+        val expected = if (File.separatorChar == '\\') AgentContract.TOUCH_LOOKUP else AgentContract.TOUCH_ALL
+        assertEquals(expected, drained(recorder).single().first)
+    }
+
+    @Test
     fun `a native library the JDK loads for itself is not recorded`() {
         val recorder = TouchRecorder()
         recorder.library(arrayOf<Any>(String::class.java, "/jdk/lib/libnio.so"))
@@ -258,12 +288,29 @@ class TouchRecorderTest {
         val snappy = classNamed("org.xerial.snappy.SnappyLoader")
         recorder.library(arrayOf<Any>(snappy,
             "/tmp/snappy-1.1.10.8-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsnappyjava.dylib"))
-        recorder.library(arrayOf<Any>(classNamed("net.jpountz.util.Native"), "lz4-java"))
         // zstd-jni loads from an anonymous class nested in its loader.
         recorder.library(arrayOf<Any>(classNamed("com.github.luben.zstd.util.Native\$2"),
             "/tmp/libzstd-jni-1.5.7-201234567890.so"))
 
         assertEquals(listOf(any), drained(recorder))
+    }
+
+    @Test
+    fun `a reviewed library loaded by name is reviewed only under the names its review covered`() {
+        // loadLibrary's name becomes the platform's file name. The review covered the Linux and
+        // macOS builds, so on Windows the same call names a .dll nobody reviewed, and runs wide.
+        val recorder = TouchRecorder()
+        recorder.library(arrayOf<Any>(classNamed("net.jpountz.util.Native"), "lz4-java"))
+
+        // The Windows name is checked on every platform, not only where it arises.
+        kotlin.test.assertFalse(ReviewedLibraries.reviewed("net.jpountz.util.Native", "lz4-java.dll"))
+        val file = System.mapLibraryName("lz4-java")
+        val expected = if (file.endsWith(".dll")) {
+            listOf(AgentContract.TOUCH_ALL to "a native library that is not on the reviewed list was loaded: $file")
+        } else {
+            listOf(any)
+        }
+        assertEquals(expected, drained(recorder))
     }
 
     @Test

@@ -386,6 +386,9 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         // the whole of it on macOS. Resources, so every path forces a full run.
         build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest)
         committed(dir)
+        // The paths below pass Windows' 260 characters, which Git for Windows lists only with long
+        // paths on; without it git fails and the run refuses as git-unanswered instead.
+        git(dir, "config", "core.longpaths", "true")
         runner(dir, "test").build()
         val bulk = File(dir, "src/test/resources/bulk/" + List(3) { "d".repeat(80) + it }.joinToString("/"))
         bulk.mkdirs()

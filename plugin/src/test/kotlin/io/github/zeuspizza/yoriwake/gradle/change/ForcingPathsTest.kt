@@ -132,7 +132,7 @@ class ForcingPathsTest {
     @Test
     fun `a build under a subdirectory of the repo names no tracked path, inside it or outside`(@TempDir repo: File) {
         fun git(vararg args: String) {
-            val code = ProcessBuilder("git", *args).directory(repo).redirectErrorStream(true).start().waitFor()
+            val code = ProcessBuilder("git", *args).directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
             check(code == 0) { "git ${args.joinToString(" ")} failed with $code" }
         }
         git("init")

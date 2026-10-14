@@ -627,18 +627,17 @@ class TaskArtifactsTest {
         val unreadable = File(dir, "com/acme/Locked.class")
         unreadable.parentFile.mkdirs()
         unreadable.writeBytes(plainClass("com.acme.Locked"))
-        unreadable.setReadable(false)
         org.junit.jupiter.api.Assumptions.assumeTrue(
-            !unreadable.canRead(),
-            "this user can read a file with its read bit cleared (root?), so there is no way to " +
-                "make a class unreadable here",
+            makeUnreadable(unreadable),
+            "this user can read a file denied to it (root?), so there is no way to make a class " +
+                "unreadable here",
         )
 
         try {
             assertNull(output(dir).constantDigests())
         } finally {
             // Or @TempDir cannot clean up after itself.
-            unreadable.setReadable(true)
+            makeReadable(unreadable)
         }
     }
 

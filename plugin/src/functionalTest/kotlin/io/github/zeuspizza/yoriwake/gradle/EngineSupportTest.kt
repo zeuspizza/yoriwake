@@ -90,7 +90,7 @@ class EngineSupportTest {
 
     private fun git(dir: File, vararg args: String) {
         val exit = ProcessBuilder("git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args)
-            .directory(dir).redirectErrorStream(true).start().waitFor()
+            .directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")} failed")
     }
 

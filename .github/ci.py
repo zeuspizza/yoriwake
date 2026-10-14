@@ -9,6 +9,7 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py find-map samples/demo
     python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
     python .github/ci.py restore samples/demo/src/main/java/dev/demo/Alpha.java
+    python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Epsilon.java
     python .github/ci.py discard samples/demo --map
 """
 
@@ -23,7 +24,24 @@ import sys
 # against a mutation that did not happen.
 MUTATION = ("return n * 2;", "return n * 3;")
 
+# The second, for a class reached only by name: renaming Epsilon's `label` breaks the one test that
+# compares its methods with `registry.yaml`, and no bytecode reference leads to it.
+EPSILON_MUTATION = ("public String label()", "public String name()")
+
+MUTATIONS = {"Alpha.java": MUTATION, "Epsilon.java": EPSILON_MUTATION}
+
+
+def mutation_for(path):
+    """The mutation for a source file, by its name; refuses a file that has none."""
+    name = os.path.basename(path)
+    if name not in MUTATIONS:
+        raise SystemExit(f"refusing: no mutation is defined for {name}; known: {sorted(MUTATIONS)}")
+    return MUTATIONS[name]
+
 MAP_FILE = "coverage.tsv"
+
+# The decision record and its per-writer parts, `decisions.tsv.<pid>-<writer>.part`.
+DECISIONS_FILE = "decisions.tsv"
 
 
 def find_map(project_dir):
@@ -54,25 +72,33 @@ def edit(path, old, new):
     left a job asserting against an unmutated tree -- which reports every test as "ran but did not
     fail" rather than as a broken step.
     """
-    with open(path, encoding="utf-8") as handle:
+    # Bytes kept as they are, line endings included: on Windows, text mode would write CRLF into an
+    # LF checkout, and the restored file would differ from the commit after all.
+    with open(path, encoding="utf-8", newline="") as handle:
         before = handle.read()
     if old not in before:
         raise SystemExit(f"refusing: {path} does not contain {old!r}, so the edit would be silent")
-    with open(path, "w", encoding="utf-8") as handle:
+    with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(before.replace(old, new, 1))
 
 
 def discard_results(project_dir, drop_map=False):
     """Remove what a previous step left behind, so this step's evidence is its own.
 
-    Test results always. The map only when asked: a selecting step reads the map the capturing step
-    wrote, and deleting it there would delete the thing under test.
+    Test results and decision records always: a round whose run wrote no record must not be judged
+    by the previous round's. The map only when asked: a selecting step reads the map the capturing
+    step wrote, and deleting it there would delete the thing under test.
     """
     removed = []
     results = os.path.join(project_dir, "build", "test-results")
     if os.path.isdir(results):
         shutil.rmtree(results)
         removed.append(results)
+    for dirpath, _, filenames in os.walk(os.path.join(project_dir, ".gradle", "yoriwake")):
+        for name in filenames:
+            if name.startswith(DECISIONS_FILE):
+                os.remove(os.path.join(dirpath, name))
+                removed.append(os.path.join(dirpath, name))
     if drop_map:
         maps = os.path.join(project_dir, ".gradle", "yoriwake")
         if os.path.isdir(maps):
@@ -113,12 +139,13 @@ def main(argv=None):
         return 0
 
     if args.command == "mutate":
-        edit(args.source, *MUTATION)
+        edit(args.source, *mutation_for(args.source))
         print(f"mutated {args.source}", file=sys.stderr)
         return 0
 
     if args.command == "restore":
-        edit(args.source, MUTATION[1], MUTATION[0])
+        old, new = mutation_for(args.source)
+        edit(args.source, new, old)
         print(f"restored {args.source}", file=sys.stderr)
         return 0
 

@@ -126,7 +126,7 @@ gradlePlugin {
             implementationClass = "io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin"
             displayName = "yoriwake"
             description = "Runs the tests a change can reach and sets the rest aside: safety-first test selection and test impact analysis for Gradle, from per-test coverage. Local-first, no service."
-            tags = listOf("testing", "test-selection", "test-impact-analysis", "regression-test-selection", "incremental-testing", "junit", "coverage", "ci")
+            tags = listOf("testing", "test-selection", "test-impact-analysis", "regression-test-selection", "incremental-testing", "junit", "coverage", "ci", "windows")
             // Declare only what a test proves: a declared feature cannot be withdrawn later.
             // Isolated Projects is not declared; the plugin declines it by name.
             compatibility {

@@ -274,6 +274,9 @@ class CaptureLifecycleTest {
         l.executionStarted(identifier("b"))
 
         assertFalse(completionMarker(dir).exists(), "an abandoned plan was marked complete")
+        // Ended after the assertion, so the session lets go of its records: Windows will not
+        // delete a file a handle still holds.
+        l.testPlanExecutionFinished(null)
     }
 
     @Test

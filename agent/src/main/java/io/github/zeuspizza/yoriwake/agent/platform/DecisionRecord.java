@@ -215,23 +215,21 @@ public final class DecisionRecord {
 
     /** Writes {@code content} to {@code name} in {@code dir} by staging it and moving it into place. */
     private void publish(File dir, String name, String content, long pid, long write) {
+        // Staged and moved, so a reader never sees a prefix.
+        File target = new File(dir, name);
+        // Staging named per JVM, writer and write: forks share the directory, and one JVM holds
+        // a record per discovery request whose hooks run together. The final name is still
+        // last-writer-wins, but never a blend of two writers.
+        File staging = new File(
+                dir, name + "." + pid + "." + writerId + "." + write + ".writing");
         try {
             Files.createDirectories(dir.toPath());
-            // Staged and moved, so a reader never sees a prefix.
-            File target = new File(dir, name);
-            // Staging named per JVM, writer and write: forks share the directory, and one JVM holds
-            // a record per discovery request whose hooks run together. The final name is still
-            // last-writer-wins, but never a blend of two writers.
-            File staging = new File(
-                    dir, name + "." + pid + "." + writerId + "." + write + ".writing");
             try (Writer writer = Files.newBufferedWriter(
                     staging.toPath(), StandardCharsets.UTF_8)) {
                 writer.write(content);
             }
             try {
-                Files.move(staging.toPath(), target.toPath(),
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                moveReplacing(staging, target);
             } catch (java.nio.file.AtomicMoveNotSupportedException notAtomic) {
                 // Same directory, so unexpected; a non-atomic move still beats writing in place.
                 // The message says which move failed, since the two have different causes.
@@ -244,9 +242,52 @@ public final class DecisionRecord {
                 }
             }
         } catch (IOException | RuntimeException swallowed) {
+            // Never left behind: a staging file is no record, and nothing else would delete it.
+            staging.delete();
             // One line, no stack trace: this runs at shutdown in someone else's build.
             System.out.println("[yoriwake] could not write " + name + " (writer " + writerId
                     + ", write " + write + "): " + swallowed);
         }
     }
+
+    /**
+     * Moves {@code staging} over {@code target} atomically. Windows refuses a replace while another
+     * writer's replace of the same target is in flight (access denied), or while a virus scanner
+     * holds either file (a sharing violation), which POSIX never does; so a refusal is retried
+     * briefly, those holds lasting milliseconds. Bounded, because this runs at shutdown. A failure
+     * that waiting cannot change is not retried. Only Windows reaches the retry: the six-writer
+     * test lost two of six writes there without it.
+     */
+    private static void moveReplacing(File staging, File target) throws IOException {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                Files.move(staging.toPath(), target.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                return;
+            } catch (java.nio.file.FileSystemException refused) {
+                if (attempt == MOVE_ATTEMPTS || permanent(refused)) {
+                    throw refused;
+                }
+                try {
+                    Thread.sleep(attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw refused;
+                }
+            }
+        }
+    }
+
+    /** A move failure no wait resolves, including the one the caller falls back from. */
+    private static boolean permanent(java.nio.file.FileSystemException failure) {
+        return failure instanceof java.nio.file.AtomicMoveNotSupportedException
+                || failure instanceof java.nio.file.NoSuchFileException
+                || failure instanceof java.nio.file.DirectoryNotEmptyException
+                || failure instanceof java.nio.file.FileAlreadyExistsException
+                || failure instanceof java.nio.file.NotDirectoryException;
+    }
+
+    /** At most about a fifth of a second of waiting in all: 1 + 2 + ... + 19 ms. */
+    private static final int MOVE_ATTEMPTS = 20;
 }

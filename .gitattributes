@@ -1,0 +1,14 @@
+# Everything else checks out with the platform's line endings, as on any developer's machine; the
+# build and the tests must hold under both.
+
+# Run by a POSIX shell, which reads a trailing '\r' as part of the command.
+gradlew text eol=lf
+*.sh text eol=lf
+scripts/gitcount/git text eol=lf
+
+# Run by cmd.exe, which mis-parses labels and blocks in a file with bare '\n'.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Compared byte for byte with what the plugin writes, which is '\n' on every platform.
+plugin/src/test/resources/golden/** text eol=lf

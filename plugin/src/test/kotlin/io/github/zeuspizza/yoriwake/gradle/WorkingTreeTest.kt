@@ -19,7 +19,7 @@ class WorkingTreeTest {
 
     private fun git(dir: File, vararg args: String) {
         val exit = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true)
-            .start().waitFor()
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")} failed")
     }
 
@@ -345,14 +345,14 @@ class WorkingTreeTest {
     fun `a file unreadable where a capture starts and ends is not recorded as moved`(@TempDir dir: File) {
         val root = repo(dir)
         val secret = File(root, "secret.local").also { it.writeText("hidden") }
-        secret.setReadable(false)
+        org.junit.jupiter.api.Assumptions.assumeTrue(makeUnreadable(secret), "this user can read a file denied to it (root?)")
         try {
             val start = started(root)
             assertEquals(WorkingTree.Unknown, assertNotNull(WorkingTree.parse(start.first)).entries["secret.local"])
 
             assertEquals(emptyMap(), movedDuring(root, start))
         } finally {
-            secret.setReadable(true)
+            makeReadable(secret)
         }
     }
 

@@ -41,7 +41,7 @@ class EnvironmentCharacterizationTest {
         ${if (launcher == Launcher.TOOLCHAIN) "java { toolchain { languageVersion.set(JavaLanguageVersion.of($feature)) } }" else ""}
         tasks.test {
             useJUnitPlatform()
-            ${if (launcher == Launcher.EXECUTABLE) "executable = \"${File(javaHome, "bin/java").invariantSeparatorsPath}\"" else ""}
+            ${if (launcher == Launcher.EXECUTABLE) "executable = \"${File(javaHome, if (windows) "bin/java.exe" else "bin/java").invariantSeparatorsPath}\"" else ""}
             systemProperty("probe.declared", "declared")
             systemProperty("probe.path", layout.projectDirectory.asFile.absolutePath)
             jvmArgs("-Dprobe.argument=argument", "-Dprobe.bare")
@@ -137,7 +137,7 @@ class EnvironmentCharacterizationTest {
         assertEquals(jvm["jdk.version"], taskSays["jdk.version"], "the launcher's runtime version")
         // Gradle names some vendors its own way; the map records Gradle's name on both sides, so
         // the view only has to name the JVM's vendor.
-        val gradleVendor = mapOf("Eclipse Adoptium" to "Eclipse Temurin")
+        val gradleVendor = mapOf("Eclipse Adoptium" to "Eclipse Temurin", "Amazon.com Inc." to "Amazon Corretto")
         assertEquals(jvm["jdk.vendor"]?.let { gradleVendor[it] ?: it }, taskSays["jdk.vendor"], "the launcher's vendor")
         assertEquals(jvm["os.name"], taskSays["os.name"])
         assertEquals(jvm["os.arch"], taskSays["os.arch"])

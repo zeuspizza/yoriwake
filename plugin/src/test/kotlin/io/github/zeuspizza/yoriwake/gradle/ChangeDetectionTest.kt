@@ -160,7 +160,7 @@ class ChangeDetectionTest {
         val repo = java.nio.file.Files.createTempDirectory("yoriwake-repo").toFile()
         try {
             fun git(vararg args: String) = ProcessBuilder("git", *args)
-                .directory(repo).redirectErrorStream(true).start().waitFor()
+                .directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
             git("init")
             git("config", "core.autocrlf", "true")
             File(repo, "src/main/kotlin/com/acme").mkdirs()
@@ -184,7 +184,7 @@ class ChangeDetectionTest {
         val repo = java.nio.file.Files.createTempDirectory("yoriwake-untracked").toFile()
         try {
             fun git(vararg args: String) = ProcessBuilder("git", *args)
-                .directory(repo).redirectErrorStream(true).start().waitFor()
+                .directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
             git("init")
             File(repo, "src/main/kotlin/com/acme").mkdirs()
             File(repo, "src/main/kotlin/com/acme/Old.kt").writeText("class Old")
@@ -333,7 +333,7 @@ class ChangeDetectionTest {
         val repo = java.nio.file.Files.createTempDirectory("yoriwake-rename").toFile()
         try {
             fun git(vararg args: String) = ProcessBuilder("git", *args)
-                .directory(repo).redirectErrorStream(true).start().waitFor()
+                .directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
             git("init")
             File(repo, "src/main/kotlin/com/acme").mkdirs()
             File(repo, "src/main/kotlin/com/acme/Old.kt").writeText("class Old { val n = 1 }")
@@ -372,7 +372,7 @@ class ChangeDetectionTest {
         val repo = java.nio.file.Files.createTempDirectory("yoriwake-base").toFile()
         try {
             fun git(vararg args: String) = ProcessBuilder("git", *args)
-                .directory(repo).redirectErrorStream(true).start().waitFor()
+                .directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
             git("init", "--initial-branch=main")
             File(repo, "src/main/kotlin/com/acme").mkdirs()
             File(repo, "src/main/kotlin/com/acme/A.kt").writeText("class A")
@@ -412,7 +412,7 @@ class ChangeDetectionTest {
         try {
             fun git(dir: File, vararg args: String) {
                 val code = ProcessBuilder("git", *args)
-                    .directory(dir).redirectErrorStream(true).start().waitFor()
+                    .directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
                 check(code == 0) { "git ${args.joinToString(" ")} failed with $code" }
             }
             git(origin, "init", "--initial-branch=trunk")
@@ -424,7 +424,7 @@ class ChangeDetectionTest {
 
             clone.deleteRecursively()
             val cloned = ProcessBuilder("git", "clone", origin.absolutePath, clone.absolutePath)
-                .redirectErrorStream(true).start().waitFor()
+                .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
             check(cloned == 0) { "git clone failed with $cloned" }
             git(clone, "remote", "set-head", "origin", "--delete")
             val head = ProcessBuilder("git", "rev-parse", "HEAD")
@@ -450,7 +450,7 @@ class ChangeDetectionTest {
         try {
             fun git(vararg args: String) {
                 val code = ProcessBuilder("git", *args)
-                    .directory(repo).redirectErrorStream(true).start().waitFor()
+                    .directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
                 check(code == 0) { "git ${args.joinToString(" ")} failed with $code" }
             }
             git("init", "--initial-branch=main")
@@ -481,7 +481,7 @@ class ChangeDetectionTest {
     fun `no resolvable branch base yields null so the caller can fall back`() {
         val repo = java.nio.file.Files.createTempDirectory("yoriwake-nobase").toFile()
         try {
-            ProcessBuilder("git", "init").directory(repo).redirectErrorStream(true).start().waitFor()
+            ProcessBuilder("git", "init").directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
 
             assertEquals(null, ChangeDetection.defaultBase(providers, repo))
         } finally {
@@ -766,7 +766,7 @@ class RawStringDeclarationsTest {
         repoGit(dir, "-c", "user.email=t@e.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message)
 
     private fun repoGit(dir: File, vararg args: String) {
-        val exit = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true).start().waitFor()
+        val exit = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")}")
     }
 }

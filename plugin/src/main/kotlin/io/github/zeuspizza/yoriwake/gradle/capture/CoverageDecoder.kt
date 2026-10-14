@@ -278,8 +278,14 @@ internal object CoverageDecoder {
      * sees it pass. Their coverage and every other record stay as they were, so nothing in the map
      * describes a newer commit than its stamp; an outcome only ever runs a test. Such a test the map
      * does not hold is added with no coverage, which runs it as surely. Returns how many were marked.
+     *
+     * [failedClasses] are the classes Gradle's own report saw fail ([JUnitXmlFailures]). A test JVM
+     * stopped before it wrote its batch (--fail-fast on Windows, where no shutdown hook runs) leaves
+     * no record of its failure, so every test the map holds of such a class that reads as passing is
+     * marked failed: by class, since the report's names are not test ids, and a test marked failed
+     * only runs.
      */
-    fun carryFailures(mapDir: File): Int {
+    fun carryFailures(mapDir: File, failedClasses: Set<String> = emptySet()): Int {
         val failed = LinkedHashMap<String, String>()
         recordsDir(mapDir).listFiles { f: File -> f.isDirectory && f.name.startsWith(WORKER_DIR_PREFIX) }
             .orEmpty().sortedBy(File::getName).forEach { worker ->
@@ -294,19 +300,37 @@ internal object CoverageDecoder {
                     }
                 }
             }
-        if (failed.isEmpty()) return 0
+        if (failed.isEmpty() && failedClasses.isEmpty()) return 0
         val existing = existingLines(mapDir)
         // No map of this version: every test runs anyway.
         if (existing.isEmpty()) return 0
         // The map holds ids escaped, the records' index as Tsv.split returned them.
         val idOf = { line: String -> Tsv.unescape(testIdOf(line)) }
         val held = existing.mapTo(HashSet(), idOf)
+        // A class name bounded on both sides, so `com.acme.A` names neither `com.acme.AB` nor the
+        // package `com.acme.A.b`; a following `$` is its own nested class, and counts.
+        // One pattern for them all, so a run with many failing classes reads each line once.
+        val reported = failedClasses.takeIf { it.isNotEmpty() }?.let { classes ->
+            Regex("(?<![\\w.$])(?:" + classes.joinToString("|") { Regex.escape(it) } + ")(?![\\w.])")
+        }
+        var reportedOnly = 0
         val marked = existing.map { line ->
-            failed[idOf(line)]?.let { outcome -> outcome + line.substring(line.indexOf('\t')) } ?: line
+            val id = idOf(line)
+            failed[id]?.let { outcome -> outcome + line.substring(line.indexOf('\t')) }
+                ?: if (line.startsWith(OUTCOME_SUCCESSFUL + "\t") && reported?.containsMatchIn(id) == true) {
+                    reportedOnly++
+                    REPORTED_FAILED + line.substring(line.indexOf('\t'))
+                } else {
+                    line
+                }
         } + failed.filterKeys { it !in held }.map { (id, outcome) -> Tsv.join(outcome, "0", "", id) }
+        if (failed.isEmpty() && reportedOnly == 0) return 0
         writeAtomically(File(mapDir, COVERAGE_FILE), marked.joinToString("\n", postfix = "\n"))
-        return failed.size
+        return failed.size + reportedOnly
     }
+
+    /** The outcome a test is marked with when only Gradle's report saw its class fail. */
+    private const val REPORTED_FAILED = "FAILED"
 
     /**
      * The union of the variables this capture's workers read, beside the map for the explain task;

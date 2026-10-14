@@ -362,10 +362,13 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
     private fun failsAloneThenAnUnrelatedChange(dir: File, alphaTest: String) {
         build(
             dir,
+            // The switch is left out of the environment fingerprint: compared, it would make the
+            // selecting run below run everything for itself, and the carried failure would go untested.
             "build.gradle.kts" to minimalBuild.replace(
                 "tasks.test { useJUnitPlatform() }",
                 "tasks.test { useJUnitPlatform(); " +
-                    "systemProperty(\"sample.broken\", project.hasProperty(\"broken\").toString()) }",
+                    "systemProperty(\"sample.broken\", project.hasProperty(\"broken\").toString()) }\n" +
+                    "yoriwake { systemPropertyIgnore.add(\"sample.broken\") }",
             ),
             oneClass, secondClass, secondTest, classOrderByName,
             "src/test/java/dev/sample/AlphaTest.java" to alphaTest,

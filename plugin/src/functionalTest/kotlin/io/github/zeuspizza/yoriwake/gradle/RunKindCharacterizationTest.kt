@@ -140,7 +140,7 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
 
         assertEquals(
             "select=false refused=no-change-set records=on forkEvery=0 jacoco=true fullRunMarker=true",
-            observe(dir, SELECT, environment = mapOf("PATH" to failingDiff(dir) + File.pathSeparator + System.getenv("PATH"))),
+            observe(dir, SELECT, environment = withFirstOnPath(failingDiff(dir))),
         )
     }
 
@@ -166,17 +166,7 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
     private fun mapDir(dir: File) = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
 
     /** A `git` first on PATH that fails `git diff` and runs every other command as git would. */
-    private fun failingDiff(dir: File): String {
-        val bin = File(dir.parentFile, "${dir.name}-bin").apply { mkdirs() }
-        File(bin, "git").apply {
-            writeText("#!/bin/sh\nif [ \"\$1\" = diff ]; then exit 128; fi\nexec ${realGit()} \"\$@\"\n")
-            setExecutable(true)
-        }
-        return bin.absolutePath
-    }
-
-    private fun realGit(): String =
-        System.getenv("PATH").split(File.pathSeparator).map { File(it, "git") }.first { it.canExecute() }.absolutePath
+    private fun failingDiff(dir: File): File = gitShim(File(dir.parentFile, "${dir.name}-bin"), failCommands = listOf("diff"))
 
     private companion object {
         const val SELECT = "-Pyoriwake.select"

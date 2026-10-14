@@ -405,6 +405,8 @@ Two notes on the list:
   and whose OpenSSL build reads a configuration file and loads modules from paths the environment
   names; SQLite JDBC, which loads any native library an SQL statement names once
   `enable_load_extension` is set on a connection; and JNA, which calls any native function.
+- Only the Linux and macOS builds (`.so`, `.dylib`, `.jnilib`) were reviewed. A library's Windows
+  build (`.dll`) is not on the list, so on Windows each of these applies the wide rule.
 
 An entry covers the version reviewed. Each is reviewed again when its library ships a new major
 version, and until then a later version counts as the one reviewed. To propose a library, open an
@@ -459,14 +461,16 @@ cells in step.
 | Test JVM JDK | 25, on Gradle 9.8.0 | `*/9.8.0/*` | `TestJvmRangeFunctionalTest.test JVM on JDK 25` |
 | OS | Linux | `linux/*/*` | `SelectionFunctionalTest` |
 | OS | macOS | `macos/*/*` | `SelectionFunctionalTest` |
+| OS | Windows | `windows/*/*` | `SelectionFunctionalTest` |
 | Engine | JUnit Jupiter 5.11.4, narrowed | all | `SelectionFunctionalTest.a change selects only the tests that reach it` |
 | Engine | JUnit Jupiter 6.1.3, narrowed | all | `EngineSupportTest.a Jupiter suite on JUnit 6 is captured and selected` |
 | Engine | JUnit 4.13.2 on the vintage engine 5.11.4, narrowed | all | `EngineSupportTest.a JUnit 4 suite on the vintage engine is captured and selected` |
 | Engine | Spock 2.3-groovy-4.0, narrowed | all | `EngineSupportTest.a Spock specification is captured and selected` |
 | Host | `java` | all | `SelectionFunctionalTest` |
 
-The same run captures a map on Linux and selects against it on Linux and macOS, and captures one
-on macOS and selects against it on Linux.
+The same run captures a map on Linux and selects against it on Linux, and shows that a map from
+another operating system is refused: one from Linux on macOS, and one from macOS on Linux, each run
+everything as `environment-changed` ([The environment fingerprint](#the-environment-fingerprint)).
 
 - **Gradle.** 8.14 is the plugin's compile floor; 9.8.0 is the newest version run. Versions between
   them are not run. A newer Gradle is untested, not declined: the plugin keeps running there.
@@ -477,8 +481,7 @@ on macOS and selects against it on Linux.
 - **Daemon JDK.** The plugin's classes are compiled for Java 21, so 21 is the floor.
 - **Test JVM JDK.** The agent is compiled with `release = 11`, so 11 is the floor. A test JVM on 25
   is tested with Gradle 9.8.0 only: Gradle runs Java 25 toolchains from 9.1.
-- **Not in the table, so not tested on a release:** Windows, where the functional suite has not
-  run; Android and Kotlin Multiplatform hosts (below); Kotest, plain JUnit 4 and TestNG, which the
+- **Not in the table, so not tested on a release:** Android and Kotlin Multiplatform hosts (below); Kotest, plain JUnit 4 and TestNG, which the
   suite runs in every cell but which are captured and always run in full rather than narrowed
   ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
 
@@ -503,6 +506,29 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
 |---|---|
 | `no-host-plugin` | The project has test tasks but applies none of the plugins above. Apply `java` or an Android plugin to the project whose tests you want selected. |
 | `kotlin-multiplatform` | A Kotlin Multiplatform module whose JVM target the plugin cannot see, or cannot scope from its own source directories. |
+
+### Windows
+
+The functional suite runs on Windows in every cell of the matrix above, and on every pull request
+from a checkout with Windows line endings. A map is per operating system: one recorded on Linux or
+macOS makes a selecting run on Windows run every test as `environment-changed`, and the reverse, so
+a CI job that tests on several keeps one map per operating system, with the OS in its cache key.
+Three things differ:
+
+- **Paths longer than 260 characters.** Git for Windows lists them only with long paths enabled
+  (`git config core.longpaths true`). Without it, git fails on such a checkout, the change set
+  cannot be computed, and every selecting run is a full run that says so.
+- **Line endings, when a map or a selection record moves between Windows machines.** Under
+  `core.autocrlf`, Git for Windows' default, text files check out with `\r\n`, and resources
+  copied onto the test classpath keep it. A text resource that differs only in its line endings is
+  still a different file, which a test may read, so a run against a map captured in a checkout with
+  other line endings (a developer's `autocrlf` checkout and a CI runner's without it, say) runs
+  every test and says
+  `build output on this task's classpath changed since the map was captured: <file> (changed)`; a
+  [complement run](#running-what-a-selection-skipped) does the same with a selection record. Check
+  out with the same line endings wherever a map is shared, or pin them with a `.gitattributes`.
+- **Native libraries.** No Windows build is on the [reviewed list](#native-libraries), so on
+  Windows every native library applies the wide rule.
 
 ## What is not supported
 
@@ -611,8 +637,6 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   on the classpath is not yet investigated. To use yoriwake on such a task, turn the feature off
   for it; how the two could compose is not yet investigated.
 - **Plain JUnit 4 and TestNG selection.** Captured, never narrowed; see the next section.
-- **Windows.** Never run there. Maps have been shown to move between Linux and macOS in both
-  directions; Windows is unverified.
 - **Changes coverage cannot see.** Resources, build scripts and version catalogs force a full run by
   design.
 - **Tests that commit, check out or stash.** A capture during which HEAD or its reflog moves is not

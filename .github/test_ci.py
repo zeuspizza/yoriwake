@@ -22,6 +22,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import assert_selection  # noqa: E402
 import ci  # noqa: E402
 import matrix_check  # noqa: E402
 
@@ -138,17 +139,121 @@ def case_a_mutation_that_would_be_silent_fails_loudly():
 
 
 def case_restore_is_the_mutation_backwards():
+    """Byte for byte, line endings included: on Windows text mode wrote CRLF into an LF checkout."""
     problems = 0
     with tempfile.TemporaryDirectory() as root:
         source = os.path.join(root, "Alpha.java")
-        original = "int twice(int n) {\n    return n * 2;\n}\n"
-        with open(source, "w", encoding="utf-8") as handle:
+        original = b"int twice(int n) {\n    return n * 2;\n}\n"
+        with open(source, "wb") as handle:
             handle.write(original)
         ci.main(["mutate", source])
         ci.main(["restore", source])
-        with open(source, encoding="utf-8") as handle:
+        with open(source, "rb") as handle:
             if handle.read() != original:
                 problems += fail("restore did not return the file to its original bytes")
+    return problems
+
+
+def case_each_source_gets_its_own_mutation_and_restore():
+    """Epsilon also has `return n * 2;`; Alpha's mutation applied to it would break the wrong test."""
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        source = os.path.join(root, "Epsilon.java")
+        original = 'public int twice(int n) {\n    return n * 2;\n}\npublic String label() { return "E"; }\n'
+        with open(source, "w", encoding="utf-8") as handle:
+            handle.write(original)
+        ci.main(["mutate", source])
+        with open(source, encoding="utf-8") as handle:
+            after = handle.read()
+        if "public String name()" not in after or "return n * 3;" in after:
+            problems += fail(f"Epsilon was not given its own mutation: {after!r}")
+        ci.main(["restore", source])
+        with open(source, encoding="utf-8") as handle:
+            if handle.read() != original:
+                problems += fail("restore did not return Epsilon to its original bytes")
+    return problems
+
+
+def case_a_source_without_a_mutation_is_refused():
+    try:
+        ci.mutation_for("samples/demo/src/main/java/dev/demo/Beta.java")
+    except SystemExit:
+        return 0
+    return fail("a file with no defined mutation was accepted")
+
+
+def _selecting_run(root, ran, failed, decisions, notes):
+    """Writes what assert_selection reads: one result file and one decision record."""
+    results = os.path.join(root, "samples", "demo", "build", "test-results", "test")
+    os.makedirs(results)
+    cases = "".join(
+        f'<testcase classname="{t.rsplit(".", 1)[0]}" name="{t.rsplit(".", 1)[1]}()">'
+        + ("<failure/>" if t in failed else "") + "</testcase>"
+        for t in ran
+    )
+    with open(os.path.join(results, "TEST-run.xml"), "w", encoding="utf-8") as handle:
+        handle.write(f"<testsuite>{cases}</testsuite>")
+    map_dir = os.path.join(root, "samples", "demo", ".gradle", "yoriwake", "test-1fb574ab")
+    os.makedirs(map_dir)
+    with open(os.path.join(map_dir, "decisions.tsv"), "w", encoding="utf-8") as handle:
+        handle.write("".join(f"#!{key}\t{value}\n" for key, value in notes.items()))
+        handle.write("".join(f"{t}\t{verdict}\t{reason}\n" for t, (verdict, reason) in decisions.items()))
+
+
+def _asserts(ran, failed, decisions, notes, mutated="epsilon"):
+    """assert_selection's exit for one round over a fake run, its printing swallowed."""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as root:
+        _selecting_run(root, ran, failed, decisions, notes)
+        here = os.getcwd()
+        os.chdir(root)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return assert_selection.main(["--mutated", mutated])
+        finally:
+            os.chdir(here)
+
+
+def case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reason():
+    """Each check must be able to fail: a run that never read the map also runs the broken test."""
+    problems = 0
+    broken = "dev.demo.EpsilonRegistryTest.everyRegisteredTypeExposesTheMethodsTheRegistryPromises"
+    others = [f"dev.demo.{name}.t" for name in ("AlphaTest", "BetaTest", "GammaTest", "DeltaShapeTest")]
+    ran = [broken] + others
+    widened = {t: ("included", "FULL_RUN") for t in ran}
+    notes = {
+        "input.yoriwake.change.classes": "dev.demo.Epsilon",
+        "outcome": "full-run",
+        "full-run-kind": "no-coverage-for-changed",
+    }
+    if _asserts(ran, {broken}, widened, notes) != 0:
+        problems += fail("a correct Epsilon round was rejected")
+    if _asserts(ran, {broken}, {**widened, broken: ("included", "NOT_IN_MAP")}, notes) == 0:
+        problems += fail("the registry test included as NOT_IN_MAP passed; a map nobody read looks the same")
+    # What losing the resource scan looks like: Epsilon's absence reads as proof, and the run narrows.
+    narrowed = {broken: ("excluded", "SKIPPED"), **{t: ("excluded", "SKIPPED") for t in others}}
+    if _asserts([], set(), narrowed, {**notes, "outcome": "narrowed", "full-run-kind": ""}) == 0:
+        problems += fail("a run that skipped the registry test passed the Epsilon round")
+    if _asserts(ran, {broken}, widened, {**notes, "full-run-kind": "unmappable-paths"}) == 0:
+        problems += fail("a run widened for another reason passed as the resource scan's widening")
+    return problems
+
+
+def case_a_map_from_another_os_must_widen_the_run_and_say_why():
+    """A map is per operating system: a run that narrowed from another OS's map must fail the job."""
+    problems = 0
+    broken = ["dev.demo.AlphaTest.doubles", "dev.demo.AlphaTest.doublesAgain"]
+    others = [f"dev.demo.{name}.t" for name in ("BetaTest", "GammaTest")]
+    widened = {t: ("included", "DAEMON_REFUSED") for t in broken + others}
+    notes = {"full-run-kind": "daemon-refused", "refusal-kind": "environment-changed"}
+    if _asserts(broken + others, set(broken), widened, notes, "alpha-on-another-os") != 0:
+        problems += fail("a correct refusal of another operating system's map was rejected")
+    narrowed = {**{t: ("included", "REACHES_CHANGE") for t in broken}, **{t: ("excluded", "SKIPPED") for t in others}}
+    if _asserts(broken, set(broken), narrowed, {"outcome": "narrowed"}, "alpha-on-another-os") == 0:
+        problems += fail("a run that narrowed from another operating system's map passed")
+    if _asserts(broken + others, set(broken), widened, {**notes, "refusal-kind": "git-unavailable"}, "alpha-on-another-os") == 0:
+        problems += fail("a run widened for another reason passed as the environment's refusal")
     return problems
 
 
@@ -161,10 +266,16 @@ def case_discard_removes_results_and_leaves_the_map_alone_by_default():
         with open(os.path.join(results, "TEST-dev.demo.AlphaTest.xml"), "w", encoding="utf-8") as handle:
             handle.write("<testsuite/>")
         map_dir = _map_at(root, "test-1fb574ab")
+        decisions = [os.path.join(map_dir, name) for name in ("decisions.tsv", "decisions.tsv.42-1.part")]
+        for path in decisions:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("t\tincluded\tREACHES_CHANGE\n")
 
         ci.discard_results(root)
         if os.path.exists(results):
             problems += fail("a previous step's results survived; the next step would assert on them")
+        if any(os.path.exists(path) for path in decisions):
+            problems += fail("a previous round's decisions survived; the next round could be judged by them")
         if not os.path.exists(map_dir):
             problems += fail("the map was deleted without --map; the selecting step has nothing to read")
 
@@ -473,6 +584,10 @@ CASES = (
     case_the_mutation_changes_exactly_its_line,
     case_a_mutation_that_would_be_silent_fails_loudly,
     case_restore_is_the_mutation_backwards,
+    case_each_source_gets_its_own_mutation_and_restore,
+    case_a_source_without_a_mutation_is_refused,
+    case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reason,
+    case_a_map_from_another_os_must_widen_the_run_and_say_why,
     case_discard_removes_results_and_leaves_the_map_alone_by_default,
     case_discard_on_a_clean_tree_is_not_an_error,
     case_a_tag_pin_is_reported,
