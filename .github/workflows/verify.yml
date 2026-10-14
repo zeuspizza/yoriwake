@@ -3,13 +3,14 @@ name: verify
 # Builds and tests the plugin, then checks the thing a local run cannot: that a coverage map built
 # on one machine selects correctly on another, from a cold checkout.
 # A change only to Markdown or docs starts nothing, except docs/contract.md: the agent's tests
-# check its constants against that file.
+# check its constants against that file; and docs/reference.md, whose supported matrix test_ci.py
+# checks against matrix.yml.
 on:
   push:
     branches: [main]
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md']
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md', 'docs/reference.md']
   pull_request:
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md']
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md', 'docs/reference.md']
   workflow_dispatch:
 
 # A newer push to a pull request cancels its older run. Every push to main runs on its own, so no

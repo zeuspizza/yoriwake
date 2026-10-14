@@ -23,6 +23,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import ci  # noqa: E402
+import matrix_check  # noqa: E402
 
 
 def fail(message):
@@ -233,6 +234,175 @@ def case_every_workflow_pins_its_actions_by_sha():
     return problems
 
 
+LABELS = ["linux/8.14/21", "linux/9.8.0/21"]
+ROWS = [
+    ("Gradle", "8.14", ["*/8.14/*"], ["MatrixCellIdentityTest"]),
+    ("Gradle", "9.8.0", ["*/9.8.0/*"], ["MatrixCellIdentityTest"]),
+    ("Daemon JDK", "21", ["*/*/21"], ["MatrixCellIdentityTest"]),
+    ("OS", "Linux", ["linux/*/*"], ["MatrixCellIdentityTest"]),
+    ("Test JVM JDK", "11", ["*/*/*"], ["TestJvmRangeFunctionalTest.test JVM on JDK 11"]),
+]
+IDENTITY = "the builds run on the Gradle and daemon JDK this cell asks for(File)"
+JDK_11 = "test JVM on JDK 11(File)"
+
+
+def _cell(artifacts, label, sha="a" * 40, cases=None, observed=None, task="functionalTest"):
+    """A cell's artifact as the workflow uploads it: `sha.txt` and one task's JUnit XML."""
+    _, gradle, jdk = label.split("/")
+    directory = os.path.join(artifacts, "cell-" + label.replace("/", "-"))
+    os.makedirs(os.path.join(directory, task))
+    with open(os.path.join(directory, "sha.txt"), "w", encoding="utf-8") as handle:
+        handle.write(sha + "\n")
+    if cases is None:
+        cases = [("MatrixCellIdentityTest", IDENTITY, "passed"), ("TestJvmRangeFunctionalTest", JDK_11, "passed")]
+    by_class = {}
+    for name, case, status in cases:
+        by_class.setdefault(name, []).append((case, status))
+    for name, entries in by_class.items():
+        body = "".join(
+            f'<testcase name="{case}" classname="io.example.{name}">'
+            + {"passed": "", "skipped": "<skipped/>", "failed": "<failure message=\"x\"/>"}[status]
+            + "</testcase>"
+            for case, status in entries
+        )
+        out = f"yoriwake-cell {observed or f'gradle={gradle} jdk={jdk}'}" if name == "MatrixCellIdentityTest" else ""
+        with open(os.path.join(directory, task, f"TEST-io.example.{name}.xml"), "w", encoding="utf-8") as handle:
+            handle.write(f'<testsuite name="io.example.{name}">{body}<system-out><![CDATA[{out}]]></system-out></testsuite>')
+    return directory
+
+
+def _results(artifacts, labels=LABELS, rows=ROWS, allowlist=()):
+    return matrix_check.results_problems(artifacts, "a" * 40, labels, rows, list(allowlist))[0]
+
+
+def _expect(problems, fragment, what):
+    if not any(fragment in problem for problem in problems):
+        return fail(f"{what}: expected a problem naming {fragment!r}, got {problems}")
+    return 0
+
+
+def case_the_reference_table_and_the_matrix_cells_agree():
+    """R3 on the real files: every row has its cells, every cell its rows."""
+    with open(matrix_check.WORKFLOW, encoding="utf-8") as handle:
+        labels = matrix_check.cells(handle.read())
+    with open(matrix_check.REFERENCE, encoding="utf-8") as handle:
+        rows = matrix_check.table_rows(handle.read())
+    problems = 0
+    for problem in matrix_check.table_problems(labels, rows):
+        problems += fail(problem)
+    return problems
+
+
+def case_a_table_that_drifts_from_the_cells_is_reported():
+    problems = 0
+    problems += _expect(
+        matrix_check.table_problems(LABELS, ROWS + [("Gradle", "9.9.0", ["*/9.9.0/*"], ["X"])]),
+        "9.9.0", "a doc row with no cell")
+    problems += _expect(
+        matrix_check.table_problems(LABELS + ["linux/9.8.0/25"], ROWS),
+        "Daemon JDK 25", "a cell with no row")
+    problems += _expect(
+        matrix_check.table_problems(LABELS, [("Gradle", "8.14", ["*/9.8.0/*"], ["X"])] + ROWS[1:]),
+        "row Gradle '8.14'", "a row naming another version's cells")
+    if matrix_check.table_problems(LABELS, ROWS):
+        problems += fail(f"a matching table was reported: {matrix_check.table_problems(LABELS, ROWS)}")
+    return problems
+
+
+def case_a_complete_run_is_green():
+    problems = 0
+    with tempfile.TemporaryDirectory() as artifacts:
+        for label in LABELS:
+            _cell(artifacts, label)
+        for problem in _results(artifacts):
+            problems += fail(f"a complete run reported {problem}")
+    return problems
+
+
+def case_a_cell_missing_a_test_the_reference_ran_fails_naming_it():
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21", cases=[
+            ("MatrixCellIdentityTest", IDENTITY, "passed"), ("TestJvmRangeFunctionalTest", JDK_11, "passed"),
+            ("SelectionFunctionalTest", "a change selects(File)", "passed")])
+        _cell(artifacts, "linux/8.14/21")
+        return _expect(_results(artifacts), "SelectionFunctionalTest.a change selects", "a missing test")
+
+
+def case_a_skip_passes_only_where_the_allowlist_names_it():
+    problems = 0
+    cases = [("MatrixCellIdentityTest", IDENTITY, "passed"), ("TestJvmRangeFunctionalTest", JDK_11, "passed"),
+             ("DeclineFunctionalTest", "older Gradle(File)", "skipped")]
+    with tempfile.TemporaryDirectory() as artifacts:
+        for label in LABELS:
+            _cell(artifacts, label, cases=cases)
+        allowed = [("DeclineFunctionalTest.older Gradle", "*/*/*", "reason")]
+        if _results(artifacts, allowlist=allowed):
+            problems += fail(f"an allowlisted skip was reported: {_results(artifacts, allowlist=allowed)}")
+        elsewhere = [("DeclineFunctionalTest.older Gradle", "*/9.8.0/*", "reason")]
+        problems += _expect(_results(artifacts, allowlist=elsewhere), "linux/8.14/21: DeclineFunctionalTest",
+                            "a skip allowlisted for other cells")
+        problems += _expect(_results(artifacts), "skipped", "an unlisted skip")
+    return problems
+
+
+def case_a_cell_with_no_tests_fails():
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        _cell(artifacts, "linux/8.14/21", cases=[])
+        return _expect(_results(artifacts), "linux/8.14/21: ran no tests", "a cell with zero tests")
+
+
+def case_a_cell_that_ran_the_defaults_under_another_label_fails():
+    """The identity test passes on the defaults; only the label comparison catches the cell."""
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        _cell(artifacts, "linux/9.8.0/25", observed="gradle=9.8.0 jdk=21")
+        labels = ["linux/9.8.0/21", "linux/9.8.0/25"]
+        return _expect(_results(artifacts, labels=labels), "linux/9.8.0/25: the builds ran on", "a mislabelled cell")
+
+
+def case_a_row_whose_proving_test_ran_nowhere_fails():
+    """Absent from every cell, the reference included, so the comparison cannot see it."""
+    cases = [("MatrixCellIdentityTest", IDENTITY, "passed")]
+    with tempfile.TemporaryDirectory() as artifacts:
+        for label in LABELS:
+            _cell(artifacts, label, cases=cases)
+        return _expect(_results(artifacts), "row Test JVM JDK '11'", "a row whose test ran nowhere")
+
+
+def case_a_row_whose_proving_test_was_skipped_fails_even_where_the_skip_is_allowed():
+    """An allowlisted skip keeps the cell green, but the row the skipped test proves does not stand."""
+    cases = [("MatrixCellIdentityTest", IDENTITY, "passed"), ("TestJvmRangeFunctionalTest", JDK_11, "skipped")]
+    with tempfile.TemporaryDirectory() as artifacts:
+        for label in LABELS:
+            _cell(artifacts, label, cases=cases)
+        allowed = [("TestJvmRangeFunctionalTest.test JVM on JDK 11", "*/*/*", "reason")]
+        return _expect(_results(artifacts, allowlist=allowed), "did not pass", "a skipped proving test")
+
+def case_a_job_that_ran_another_commit_fails():
+    problems = 0
+    with tempfile.TemporaryDirectory() as artifacts:
+        for label in LABELS:
+            _cell(artifacts, label)
+        os.makedirs(os.path.join(artifacts, "sha-select-linux-on-macos"))
+        with open(os.path.join(artifacts, "sha-select-linux-on-macos", "sha.txt"), "w", encoding="utf-8") as handle:
+            handle.write("b" * 40)
+        problems += _expect(_results(artifacts), "sha-select-linux-on-macos: ran", "a cross-OS job on another sha")
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        _cell(artifacts, "linux/8.14/21", sha="c" * 40)
+        problems += _expect(_results(artifacts), "linux/8.14/21: ran ccc", "a cell on another sha")
+    return problems
+
+
+def case_a_cell_with_two_tasks_results_fails():
+    with tempfile.TemporaryDirectory() as artifacts:
+        _cell(artifacts, "linux/9.8.0/21")
+        directory = _cell(artifacts, "linux/8.14/21")
+        os.makedirs(os.path.join(directory, "functionalTestGradle9"))
+        return _expect(_results(artifacts), "one functional task", "results of two tasks")
+
+
 CASES = (
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
@@ -246,6 +416,17 @@ CASES = (
     case_a_tag_pin_is_reported,
     case_a_sha_without_its_version_comment_is_reported,
     case_every_workflow_pins_its_actions_by_sha,
+    case_the_reference_table_and_the_matrix_cells_agree,
+    case_a_table_that_drifts_from_the_cells_is_reported,
+    case_a_complete_run_is_green,
+    case_a_cell_missing_a_test_the_reference_ran_fails_naming_it,
+    case_a_skip_passes_only_where_the_allowlist_names_it,
+    case_a_cell_with_no_tests_fails,
+    case_a_cell_that_ran_the_defaults_under_another_label_fails,
+    case_a_row_whose_proving_test_ran_nowhere_fails,
+    case_a_row_whose_proving_test_was_skipped_fails_even_where_the_skip_is_allowed,
+    case_a_job_that_ran_another_commit_fails,
+    case_a_cell_with_two_tasks_results_fails,
 )
 
 
