@@ -355,11 +355,11 @@ class CaptureSessionTest {
 
     @Test
     fun `touches from a run that never ended are not marked complete`() {
-        val session = CaptureSession.open(stubAgent, records, "0", true, ScriptedTouches())
+        // Ended only by the teardown, after the assertion: the JVM died, so nothing may vouch for
+        // what it did not report.
+        val session = CaptureSession.open(stubAgent, records, "0", true, ScriptedTouches()).also { sessions += it }
         session.started(alpha)
         session.finished(alpha, null)
-        // No end: the JVM died, so nothing may vouch for what it did not report.
-        sessions.remove(session)
 
         assertFalse(File(records, "worker-0/${AgentContract.TOUCHES_FILE}").readLines().contains(AgentContract.TOUCHES_COMPLETE))
     }

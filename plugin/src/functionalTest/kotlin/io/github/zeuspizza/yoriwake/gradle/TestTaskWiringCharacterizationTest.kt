@@ -143,7 +143,7 @@ class TestTaskWiringCharacterizationTest {
 
     private fun git(vararg args: String) {
         val exit = ProcessBuilder("git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args)
-            .directory(dir).redirectErrorStream(true).start().waitFor()
+            .directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")} failed")
     }
 
@@ -163,7 +163,9 @@ class TestTaskWiringCharacterizationTest {
 
     /** Paths and the Gradle distribution's locations differ per machine; the names do not. */
     private fun normalise(text: String): String {
-        var result = text
+        // On Windows the test JVM's java.class.path arrives with its separators doubled, as
+        // escaped; the agent never reads it, so only the spelling differs.
+        var result = text.replace("\\\\", "\\")
         listOf(dir.canonicalPath, dir.absolutePath).forEach { result = result.replace(it, "<project>") }
         result = result.replace(File.separatorChar, '/')
         // Any other absolute path is outside the project: keep only its file name.

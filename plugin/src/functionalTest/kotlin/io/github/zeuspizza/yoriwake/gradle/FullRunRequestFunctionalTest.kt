@@ -291,15 +291,6 @@ class FullRunRequestFunctionalTest : FunctionalTestSupport() {
         ProcessBuilder("git", "rev-parse", "HEAD").directory(dir).start().inputStream.bufferedReader().readText().trim()
 
     /** A `git` first on PATH whose `log` of commit messages fails, and that runs anything else as git. */
-    private fun failingLog(dir: File): Map<String, String> {
-        val bin = File(dir.parentFile, "${dir.name}-bin").apply { mkdirs() }
-        val real = System.getenv("PATH").split(File.pathSeparator).map { File(it, "git") }.first { it.canExecute() }
-        File(bin, "git").apply {
-            writeText(
-                "#!/bin/sh\ncase \"\$*\" in *%H%n%B*) exit 128;; esac\nexec ${real.absolutePath} \"\$@\"\n"
-            )
-            setExecutable(true)
-        }
-        return mapOf("PATH" to bin.absolutePath + File.pathSeparator + System.getenv("PATH"))
-    }
+    private fun failingLog(dir: File): Map<String, String> =
+        withFirstOnPath(gitShim(File(dir.parentFile, "${dir.name}-bin"), failOn = listOf("%H%n%B")))
 }

@@ -119,7 +119,7 @@ class CommitScanTest {
     private fun sha(dir: File, ref: String) = ChangeDetection.rawGit(dir, listOf("rev-parse", ref))!!.trim()
 
     private fun git(dir: File, vararg args: String) {
-        val exit = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true).start().waitFor()
+        val exit = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")}")
     }
 }

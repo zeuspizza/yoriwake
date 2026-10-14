@@ -233,9 +233,10 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 return;
             }
             String name = (String) pair[1];
-            // load takes an absolute path; loadLibrary a name with no separator in it.
-            String file = name.indexOf(File.separatorChar) >= 0 ? new File(name).getName()
-                    : System.mapLibraryName(name);
+            // load takes an absolute path; loadLibrary a name with no separator in it. Either
+            // separator makes a path: Windows' load takes '/' as readily as '\'.
+            int separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+            String file = separator >= 0 ? name.substring(separator + 1) : System.mapLibraryName(name);
             if (caller != null && ReviewedLibraries.reviewed(caller.getName(), file)) {
                 touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);
             } else {

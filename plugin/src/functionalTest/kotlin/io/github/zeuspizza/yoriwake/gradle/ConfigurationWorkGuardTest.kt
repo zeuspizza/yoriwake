@@ -99,7 +99,7 @@ class ConfigurationWorkGuardTest {
     private fun sourceFileCount(dir: File): Long =
         dir.walkTopDown()
             // Not the TestKit projects under buildSrc's output: they are no project of this build.
-            .filter { it.isFile && it.extension == "java" && it.path.contains("/src/main/") }
+            .filter { it.isFile && it.extension == "java" && it.invariantSeparatorsPath.contains("/src/main/") }
             .filterNot { it.relativeTo(dir).invariantSeparatorsPath.startsWith("buildSrc/build/") }
             .count().toLong()
 
@@ -247,11 +247,15 @@ class ConfigurationWorkGuardTest {
     ): Observed {
         val gitLog = File(dir, "git-calls.log").also { it.delete() }
         val counters = File(dir, "counters.tsv").also { it.delete() }
-        val environment = System.getenv().toMutableMap()
-        if (withShim) {
-            environment["PATH"] = "${shimDir().absolutePath}${File.pathSeparator}${System.getenv("PATH")}"
-            environment["YORIWAKE_GIT_LOG"] = gitLog.absolutePath
-            environment["YORIWAKE_REAL_GIT"] = realGit()
+        val environment = when {
+            !withShim -> System.getenv()
+            // The repository's counting script on POSIX, so this also proves the script counts.
+            // Windows' ProcessBuilder runs only a `git.exe`, which the script cannot be.
+            windows -> withFirstOnPath(gitShim(File(dir.parentFile, "${dir.name}-gitcount"), log = gitLog))
+            else -> withFirstOnPath(shimDir()) + mapOf(
+                "YORIWAKE_GIT_LOG" to gitLog.absolutePath,
+                "YORIWAKE_REAL_GIT" to realGit(),
+            )
         }
 
         val output = GradleRunner.create()
@@ -276,7 +280,7 @@ class ConfigurationWorkGuardTest {
         if (expectGit && calls.isEmpty()) {
             error(
                 "no git call reached the shim, so its count is not evidence. The shim must be " +
-                    "discoverable as `${shimName()}` on PATH and the daemon must have been started " +
+                    "discoverable as `git` on PATH and the daemon must have been started " +
                     "with that PATH -- a daemon already running keeps the environment it started with."
             )
         }
@@ -351,28 +355,22 @@ class ConfigurationWorkGuardTest {
 
     private fun git(dir: File, vararg args: String) {
         val exit = ProcessBuilder(listOf("git") + args)
-            .directory(dir).redirectErrorStream(true).start().waitFor()
+            .directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")} failed in the fixture")
     }
 
-    private fun shimName(): String =
-        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "git.cmd" else "git"
+    private val windows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 
     private fun shimDir(): File {
         // The working directory is the plugin module or the repository root depending on the runner.
         var here: File? = File(".").canonicalFile
         while (here != null) {
             val candidate = File(here, "scripts/gitcount")
-            if (File(candidate, shimName()).isFile) return candidate
+            if (File(candidate, "git").isFile) return candidate
             here = here.parentFile
         }
-        error("scripts/gitcount/${shimName()} was not found; the guard cannot count git without it")
+        error("scripts/gitcount/git was not found; the guard cannot count git without it")
     }
-
-    private fun realGit(): String =
-        listOf("/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git")
-            .firstOrNull { File(it).canExecute() }
-            ?: error("no real git found for the shim to delegate to")
 
     private companion object {
         /** Configures everything and executes nothing, so every git call counted is configuration's. */

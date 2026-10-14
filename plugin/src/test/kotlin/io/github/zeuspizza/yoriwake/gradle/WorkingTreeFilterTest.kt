@@ -110,11 +110,9 @@ class WorkingTreeFilterTest {
         file(root, "build/reports/r.html")
         file(root, "data/fixture.local")
         val linked = File(root, "linked").toPath()
-        Files.createSymbolicLink(linked, File(root, "app2").toPath())
-        Files.createSymbolicLink(File(root, "excludedLink").toPath(), File(root, "data").toPath())
-        Files.createSymbolicLink(File(root, "app/build/libs").toPath().also {
-            it.parent.toFile().mkdirs()
-        }, File(root, "data").toPath())
+        symbolicLink(linked.toFile(), File(root, "app2"))
+        symbolicLink(File(root, "excludedLink"), File(root, "data"))
+        symbolicLink(File(root, "app/build/libs").also { it.parentFile.mkdirs() }, File(root, "data"))
 
         return git(root, "ls-files", "-z", "--others").split('\u0000').filter(String::isNotEmpty)
     }

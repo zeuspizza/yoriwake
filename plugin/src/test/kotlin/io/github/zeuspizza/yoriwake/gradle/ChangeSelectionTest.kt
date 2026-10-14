@@ -851,7 +851,10 @@ class ChangeSelectionTest {
         // Empty asserts "nothing changed outside this module" and can drop a sibling's change;
         // null means unknown and must buy the complete answer.
         val rootDir = java.io.File(tmp, "root").apply { mkdirs() }
-        val root = ProjectBuilder.builder().withProjectDir(rootDir).build()
+        // The user home outside the temporary directory: resolving the classpath leaves files in it
+        // that Gradle holds open until the JVM exits, and Windows will not delete those.
+        val root = ProjectBuilder.builder().withProjectDir(rootDir)
+            .withGradleUserHomeDir(java.io.File("build/tmp/projectBuilderUserHome")).build()
         val app = ProjectBuilder.builder().withName("app").withParent(root).build()
         val codegen = ProjectBuilder.builder().withName("codegen").withParent(root).build()
         // The real plugin, so the `Test` task has the source sets and output directories

@@ -47,6 +47,8 @@ class DecisionRecordTest {
 
         val complaints = captured.toString().lines().filter { it.contains("could not write") }
         assertTrue(complaints.isEmpty(), "${complaints.size} of 6 writers failed: ${complaints.take(2)}")
+        val staging = dir.list().orEmpty().filter { it.endsWith(".writing") }
+        assertTrue(staging.isEmpty(), "staging files left behind: $staging")
     }
 
     @Test

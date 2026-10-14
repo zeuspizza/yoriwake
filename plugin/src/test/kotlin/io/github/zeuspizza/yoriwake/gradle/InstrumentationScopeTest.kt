@@ -46,10 +46,7 @@ class InstrumentationScopeTest {
         // A dangling symlink is used because `setReadable(false)` does not stop a root user.
         val src = File(dir, "src").apply { mkdirs() }
         source(src, "main/kotlin/com/acme/Thing.kt", "com.acme")
-        java.nio.file.Files.createSymbolicLink(
-            File(src, "main/kotlin/com/acme/Ghost.kt").toPath(),
-            File(dir, "does-not-exist.kt").toPath(),
-        )
+        symbolicLink(File(src, "main/kotlin/com/acme/Ghost.kt"), File(dir, "does-not-exist.kt"))
 
         assertEquals(setOf(InstrumentationScope.DEFAULT_PACKAGE), InstrumentationScope.derive(listOf(src)))
     }

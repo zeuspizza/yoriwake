@@ -49,7 +49,9 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
         val dir = File(root, "select")
         val other = File(root, "complement")
         selected(dir)
-        git(root, "clone", "-q", dir.absolutePath, other.absolutePath)
+        // Checked out byte for byte as the fixture wrote it. Under autocrlf the clone's resources
+        // gain '\r', which is another build, and the complement rightly runs everything.
+        git(root, "clone", "-q", "-c", "core.autocrlf=false", dir.absolutePath, other.absolutePath)
         val saved = File(root, "saved").apply { File(dir, ".gradle/yoriwake").copyRecursively(this) }
 
         val output = runner(other, "test", "-Pyoriwake.complement=${saved.absolutePath}").build().output
@@ -229,14 +231,14 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     fun `a record that cannot be read runs every test, as having no record`(@TempDir dir: File) {
         captured(dir)
         val record = File(dir, "saved/${mapDir(dir).name}/${AgentContract.SELECTION_FILE}").apply { parentFile.mkdirs(); writeText("x") }
-        assumeTrue(record.setReadable(false) && !record.canRead(), "this platform cannot make a file unreadable to its owner")
+        assumeTrue(makeUnreadable(record), "this user can read a file denied to it (root?)")
         try {
             val output = runner(dir, "test", "-Pyoriwake.complement=saved").build().output
 
             assertRecordedInFull(dir, output, "complement-no-record")
             assertContains(output, "cannot be read as a file")
         } finally {
-            record.setReadable(true)
+            makeReadable(record)
         }
     }
 
