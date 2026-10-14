@@ -137,6 +137,10 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - Develocity Test Distribution or Predictive Test Selection is enabled on the task
   (`develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`): a
   decline, so nothing is recorded either; see [What is not supported](#what-is-not-supported);
+- the test JVM's JDK, OS, system properties, time zone or locale, or a variable `environmentInclude`
+  lists, differ from those the map was recorded under (`environment-changed`), or the map records
+  none (`environment-unrecorded`, once); see [The environment
+  fingerprint](#the-environment-fingerprint);
 - on a run given `-Pyoriwake.trustedMaps`, a map the list does not name (`map-unverified`) or names
   with another digest (`map-untrusted`). The map is cleared and the run records a new one; see
   [Who can write the map you restore](#who-can-write-the-map-you-restore).
@@ -245,6 +249,66 @@ three, JUnit 5, Resilience4j and OpenTelemetry Java, a jar manifest on the test 
 new `Build-Time` or new OSGi bundle headers on every build, so no selecting run narrowed even at
 the commit the map was recorded at. A day of commits later, Kafka, Gradle, Iceberg, Micrometer and
 Grails builds had also moved a commit id, a build date or an SBOM.
+
+### The environment fingerprint
+
+A map says which tests a change reaches in the environment it was recorded in. On another JDK, or
+with other system properties or another locale, a test can take other paths, so each recording
+stores the test JVM's environment beside the map, and a selecting run whose environment differs
+runs every test (`environment-changed`), names the first thing that differs, and records the map
+again. A map with no fingerprint, as one recorded by 0.2.0, runs everything once
+(`environment-unrecorded`). A map recorded with a fresh test JVM per test class is left as it is,
+as on every other refusal: selecting runs run everything until a run without `-Pyoriwake.select`
+records it again. Both are read from the test task as it starts, before its own
+`doFirst` actions from the build script.
+
+What it compares:
+
+- the JDK the test task's launcher names, by runtime version and vendor (or, with no launcher
+  metadata, the `executable` path), and the OS and architecture. These are stored as they are and
+  named with both values: `jdk.version was 17.0.9+9 when the map was recorded and is 21.0.4+7 now`;
+- every system property the task passes to the test JVM, `-D` arguments and argument providers
+  included, Gradle's own (`file.encoding`, `user.language`, `user.country`, `user.variant`)
+  included, yoriwake's excluded, as `sys:<name>`;
+- `TZ`, `LANG` and `LC_ALL`, and the environment variables `environmentInclude` lists, as
+  `env:<name>`. A listed name is compared whether or not it is set.
+
+Property and variable values are never stored, printed or logged: each is kept as a SHA-256 digest
+salted with 32 random bytes the map's first recording created (`fingerprint-salt`). Before a value
+is digested, the root project's directory, the Gradle user home and the user's home directory are
+replaced by placeholders, so a checkout in another directory or on another runner is no change.
+
+What it does not compare:
+
+- environment variables nobody listed, even ones a test reads. `yoriwakeExplain<Task>` names the
+  variables the tests read by name and are not compared, and says when a test read the whole
+  environment, from the last recording;
+- what the build sets in its own `doFirst` actions, which run after yoriwake's;
+- JVM options other than `-D` (`-Xmx`, `--add-opens`, GC flags), and files on the classpath or in
+  the JDK;
+- a variable read only by a child process the tests start;
+- the machine's own time zone and locale when `TZ`, `LANG` and `LC_ALL` are unset: two machines in
+  different zones compare equal. Set `TZ`, or `-Duser.timezone` on the task, to compare it.
+
+A property whose value changes on every build, such as a build number, makes every selecting run
+run everything. Leave it out with `systemPropertyIgnore`; the decision record lists what it left
+out as `fingerprint-ignored`:
+
+```kotlin
+yoriwake {
+    systemPropertyIgnore.add("build.number")   // `*` matches any characters
+    environmentInclude.add("DB_MODE")          // compared besides TZ, LANG and LC_ALL
+}
+```
+
+List a variable only when tests behave differently by its value, and never one whose value differs
+between the build that saves the map and the builds that restore it, such as `GITHUB_REF`: a pull
+request's capture is never saved, so every pull request build would run everything. Never list a
+secret. The salt travels with the map, so whoever restores the map can test guesses against a
+listed variable's digest; under the CI recipes that includes a pull request's build. System
+properties are compared without being listed, so a property that carries a secret (a password, a
+token) is digested the same way: leave it out with `systemPropertyIgnore`, such as
+`systemPropertyIgnore.add("*password*")`, before relying on a cache other builds restore.
 
 ## What coverage does not record
 
@@ -371,16 +435,54 @@ gives the library, and the class that calls `System.load` or `System.loadLibrary
 
 ## Requirements
 
-- **Gradle daemon JDK: 21 or newer.** The plugin's classes are compiled for Java 21.
-- **Test JVM JDK: 11 or newer.** The agent is compiled with `release = 11`, so it loads in a test
-  JVM a build's toolchain puts on Java 11.
+- **The [supported matrix](#supported-matrix):** the Gradle versions, daemon and test-JVM JDKs,
+  operating systems and test engines a release was tested on.
 - **`git` on the daemon's `PATH`.** A git that cannot be started is a change set that cannot be
   computed, so every selecting run is a full run and says so.
-- **Gradle: 8.14 or newer, 9.x included.** The functional suite runs on 8.14, the plugin's compile
-  floor, and on 9.8.0. No other version is tested. Below 8.14, on a JDK 21 daemon, the plugin
-  declines: every run is a full run, and the audit reports `gradle-too-old`. On an older daemon JDK
-  the plugin does not resolve at all: its metadata asks for JVM 21, so the build fails. Gradle
-  before 8.5 cannot run on JDK 21 (Gradle's compatibility matrix), so it always takes this path.
+- **A [supported host](#supported-hosts) plugin** on the project whose tests are selected.
+
+### Supported matrix
+
+A release supports what its functional suite ran, green, on the commit the release was tagged
+from. Each cell is one job of `.github/workflows/matrix.yml`: an operating system, a Gradle version
+and the JDK Gradle's daemon runs on, written `<os>/<gradle>/<jdk>` below. Each row names the cells
+that ran it and the tests that prove it, and a check on every pull request keeps the table and the
+cells in step.
+
+| Axis | Value | Cells | Proved by |
+|---|---|---|---|
+| Gradle | 8.14 | `*/8.14/*` | `MatrixCellIdentityTest` |
+| Gradle | 9.8.0 | `*/9.8.0/*` | `MatrixCellIdentityTest` |
+| Daemon JDK | 21 | `*/*/21` | `MatrixCellIdentityTest` |
+| Daemon JDK | 25, on Gradle 9.8.0 | `*/9.8.0/25` | `MatrixCellIdentityTest` |
+| Test JVM JDK | 11 | all | `TestJvmRangeFunctionalTest.test JVM on JDK 11` |
+| Test JVM JDK | 17 | all | `TestJvmRangeFunctionalTest.test JVM on JDK 17` |
+| Test JVM JDK | 21 | all | `TestJvmRangeFunctionalTest.test JVM on JDK 21` |
+| Test JVM JDK | 25, on Gradle 9.8.0 | `*/9.8.0/*` | `TestJvmRangeFunctionalTest.test JVM on JDK 25` |
+| OS | Linux | `linux/*/*` | `SelectionFunctionalTest` |
+| OS | macOS | `macos/*/*` | `SelectionFunctionalTest` |
+| Engine | JUnit Jupiter 5.11.4, narrowed | all | `SelectionFunctionalTest.a change selects only the tests that reach it` |
+| Engine | JUnit Jupiter 6.1.3, narrowed | all | `EngineSupportTest.a Jupiter suite on JUnit 6 is captured and selected` |
+| Engine | JUnit 4.13.2 on the vintage engine 5.11.4, narrowed | all | `EngineSupportTest.a JUnit 4 suite on the vintage engine is captured and selected` |
+| Engine | Spock 2.3-groovy-4.0, narrowed | all | `EngineSupportTest.a Spock specification is captured and selected` |
+| Host | `java` | all | `SelectionFunctionalTest` |
+
+The same run captures a map on Linux and selects against it on Linux and macOS, and captures one
+on macOS and selects against it on Linux.
+
+- **Gradle.** 8.14 is the plugin's compile floor; 9.8.0 is the newest version run. Versions between
+  them are not run. A newer Gradle is untested, not declined: the plugin keeps running there.
+  Below 8.14, on a JDK 21 daemon, the plugin declines: every run is a full run, and the audit
+  reports `gradle-too-old`. On an older daemon JDK the plugin does not resolve at all: its metadata
+  asks for JVM 21, so the build fails. Gradle before 8.5 cannot run on JDK 21 (Gradle's
+  compatibility matrix), so it always takes this path.
+- **Daemon JDK.** The plugin's classes are compiled for Java 21, so 21 is the floor.
+- **Test JVM JDK.** The agent is compiled with `release = 11`, so 11 is the floor. A test JVM on 25
+  is tested with Gradle 9.8.0 only: Gradle runs Java 25 toolchains from 9.1.
+- **Not in the table, so not tested on a release:** Windows, where the functional suite has not
+  run; Android and Kotlin Multiplatform hosts (below); Kotest, plain JUnit 4 and TestNG, which the
+  suite runs in every cell but which are captured and always run in full rather than narrowed
+  ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
 
 ### Supported hosts
 
@@ -696,6 +798,9 @@ requests to the action, which passes the trusted-map list.
 - **Plugin version.** A map records its format version, and a plugin reading a different one
   refuses the whole map. With the version in the key, an upgrade is an ordinary cache miss: one full
   run, which captures.
+- **JDK, when the job tests on several.** A map recorded on another JDK makes a selecting run run
+  everything as `environment-changed`, so each leg of a JDK matrix keeps its own map: add the
+  leg's JDK to the key, such as `${{ matrix.java }}`.
 - **Commit, with a prefix fallback.** An exact hit almost never happens. A map from an older commit
   is still useful and still safe.
 - **Not `raw/`.** The undecoded records are cleared by the next capture before it writes anything.
@@ -875,6 +980,11 @@ What the check cannot cover:
   later jobs, the default branch's included. Run pull requests on ephemeral runners.
 - **Other build-cache entries.** The verdict keys only the selecting test task's result; compiled
   classes restored from a cache a pull request wrote are outside it.
+
+A restored map can also be read. Besides which tests reach which classes, it holds the salted
+digests of the test task's system properties and of the variables `environmentInclude` lists,
+with their salt: whoever restores it, a pull request's build included, can check a guessed value
+against them. See [The environment fingerprint](#the-environment-fingerprint).
 
 ## Observing before you select
 
@@ -1066,6 +1176,8 @@ yoriwake {
     alwaysRun.add("com.acme.FlakyTest")    // a class, a method (Class.method), or a glob
     fullRunBranches.add("main")            // a selecting run here runs everything; see CI
     notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
+    environmentInclude.add("DB_MODE")      // a variable compared besides TZ, LANG and LC_ALL
+    systemPropertyIgnore.add("build.number") // a property left out of that comparison
 }
 ```
 
@@ -1080,6 +1192,10 @@ matching any characters, slashes included: `docs/*` is everything under `docs/`,
 Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
 a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
 nothing reads: a test that reads a listed file is skipped when only that file changed.
+
+`environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
+entry or one of only `*` fails the build. See [The environment
+fingerprint](#the-environment-fingerprint).
 
 A test's own source can pin it with `@Tag("yoriwake-always-run")`, with nothing on the compile
 classpath.

@@ -318,19 +318,20 @@ class ObservationFunctionalTest : FunctionalTestSupport() {
 
     /**
      * The two-class sample with classes that run before them by name: `QuxTest`, and a class whose
-     * setup, one whose teardown and one parameterised invocation fail when the test JVM sees
-     * `qux.fail`, which `-PquxFail` sets for one run, out of sight of any change set. Each reaches
+     * setup, one whose teardown and one parameterised invocation fail when the test JVM sees the
+     * variable `QUX_FAIL`, which `-PquxFail` sets for one run, out of sight of any change set and of
+     * the environment fingerprint, which compares no variable nobody listed. Each reaches
      * Alpha, so the map knows it passed, and none reaches Beta.
      */
     private fun capturedWithEarlyTests(dir: File) {
         val early = "src/test/java/dev/early"
         val imports = "package dev.early;\nimport org.junit.jupiter.api.*;\n"
-        val fails = "System.getProperty(\"qux.fail\") != null"
+        val fails = "System.getenv(\"QUX_FAIL\") != null"
         val reach = "new dev.sample.Alpha().twice(1);"
         build(
             dir,
             "build.gradle.kts" to minimalBuild +
-                "\ntasks.test { providers.gradleProperty(\"quxFail\").orNull?.let { systemProperty(\"qux.fail\", it) } }\n",
+                "\ntasks.test { providers.gradleProperty(\"quxFail\").orNull?.let { environment(\"QUX_FAIL\", it) } }\n",
             oneClass, oneTest, secondClass, secondTest, classOrderByName,
             "$early/QuxTest.java" to "${imports}class QuxTest { @Test void passes() { $reach Assertions.assertFalse($fails); } }",
             "$early/SetupTest.java" to "${imports}class SetupTest {\n" +

@@ -577,7 +577,8 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         // The test JVM is Java 21, where the foreign-function API is a preview. The method
         // reference's own class is hidden, so the class that wrote it, not the stream, is the caller.
         val previewBuild = orderedBuild.replace("useJUnitPlatform()", "useJUnitPlatform()\n    jvmArgs(\"--enable-preview\")") +
-            "\ntasks.withType<JavaCompile>().configureEach { options.compilerArgs.add(\"--enable-preview\"); options.release = 21 }\n"
+            "\ntasks.withType<JavaCompile>().configureEach { options.compilerArgs.add(\"--enable-preview\"); options.release = 21 }\n" +
+            "java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }\n"
         val ran = selectedAfter(
             dir, "src/main/java/dev/sample/Tool.java", { it.replace("\"tool\"", "\"tool!\"") },
             main("Tool", "public class Tool { public static String name() { return \"tool\"; } }"),

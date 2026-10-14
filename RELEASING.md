@@ -35,7 +35,9 @@ A release candidate is a commit, never a tag. Only the final step tags, and only
 publishes: `release.yml` publishes to the Gradle Plugin Portal on any `v*` tag, and a published
 version cannot be taken back, so no `v*` tag exists until every gate below has passed.
 
-- **Minor.** A commit of `main` with every change for the release merged.
+- **Minor.** A commit of `main` with every change for the release merged. Before it, a pull request
+  moves the functional suite's 9.x version to Gradle's newest release, with the cells of
+  `.github/workflows/matrix.yml` and the reference's [supported matrix](docs/reference.md#supported-matrix).
 - **Patch.** A commit on `release/<major>.<minor>`, which is pushed with each patch's tag. If the
   branch exists neither locally nor on `origin`, create it from the line's latest tag
   (`git tag -l 'v0.2.*' --sort=-v:refname | head -1`, then `git branch release/0.2 <that tag>`).
@@ -64,6 +66,7 @@ no minutes against a budget.
 | 5 | Every new flag, DSL property, token and file is documented in [docs/reference.md](docs/reference.md) or [docs/contract.md](docs/contract.md). | maintainer | none |
 | 6 | Each native library in [the reviewed list](docs/reference.md#native-libraries) is compared with its latest major release; a re-review issue is opened for each that moved. | maintainer | none |
 | 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so steps 1-6 stand; if anything else differs, the gates it touches run again on the final candidate. | maintainer | none |
+| 7b | `.github/workflows/matrix.yml`, dispatched from the final candidate's branch (`main` or `release/<major>.<minor>`) with the final candidate's SHA, is green in every job, so every row of the [supported matrix](docs/reference.md#supported-matrix) ran on the commit that is tagged. The run's link is recorded with the release. A cell red only on a newly bumped Gradle: revert the bump, which makes a new candidate, and open an issue for that Gradle version; a row never leaves the table because a bump failed. | maintainer dispatches | none on this public repository; about 1.5 hours of wall time, an estimate until a run measures it |
 | 8 | If the Portal description or tags changed: `./gradlew :plugin:publishPlugins --validate-only -PreleaseVersion=<version>` with the Portal keys. | maintainer | none |
 
 A gate that fails, or a confirmed finding left unfixed, stops the release. A campaign finding is open

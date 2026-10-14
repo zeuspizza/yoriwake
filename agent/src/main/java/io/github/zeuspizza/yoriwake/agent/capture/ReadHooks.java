@@ -53,6 +53,10 @@ import java.util.stream.Stream;
  * agent follows; a native library load; and native code reached through the foreign-function API
  * rather than a library load. Each has a sink of its own.
  *
+ * <p>Reads of the environment have one too. They reach no class: what they record is which
+ * variables the tests read, by name only, so a build can see the ones its environment fingerprint
+ * does not compare.
+ *
  * <p>The injected call is guarded by a null check and the sink never throws, so an open behaves
  * exactly as before.
  */
@@ -153,30 +157,44 @@ final class ReadHooks {
         {"java/lang/Runtime", "loadLibrary0", "(Ljava/lang/Class;Ljava/lang/String;)V", "-3"},
     };
 
+    /**
+     * The two ways code reads an environment variable: by name, where the sink gets the name, and
+     * the whole environment at once, where it gets null. Only names are ever passed on, never a
+     * value.
+     */
+    static final String[][] ENVIRONMENT = {
+        {"java/lang/System", "getenv", "(Ljava/lang/String;)Ljava/lang/String;", "0"},
+        {"java/lang/System", "getenv", "()Ljava/util/Map;", "-2"},
+    };
+
     private ReadHooks() {}
 
     /** Why the hooks are not all in place, per kind; null when they are. */
     static final class Installed {
         final String reads;
         final String lookups;
+        /** The environment hooks report apart: missing them only leaves the variables read unnamed. */
+        final String environment;
 
-        Installed(String reads, String lookups) {
+        Installed(String reads, String lookups, String environment) {
             this.reads = reads;
             this.lookups = lookups;
+            this.environment = environment;
         }
     }
 
     /**
      * Installs every hook. Reads, definitions, child processes and native code report under
      * {@code reads}, since a miss in any of them hides a class from every rule; lookups under
-     * {@code lookups}. Each is null when all of its hooks are in place, or says why not.
+     * {@code lookups}; reads of the environment under {@code environment}. Each is null when all of
+     * its hooks are in place, or says why not.
      */
     static Installed install(Instrumentation instrumentation, Consumer<Object> reads, Consumer<Object> lookups,
             Consumer<Object> defines, Consumer<Object> processes, Consumer<Object> natives,
-            Consumer<Object> libraries) {
+            Consumer<Object> libraries, Consumer<Object> environment) {
         if (!instrumentation.isRetransformClassesSupported()) {
             String why = "this JVM cannot retransform classes";
-            return new Installed(why, why);
+            return new Installed(why, why, why);
         }
         List<String[]> readHooks = new ArrayList<>();
         List<String[]> lookupHooks = new ArrayList<>();
@@ -184,6 +202,7 @@ final class ReadHooks {
         List<String[]> processHooks = new ArrayList<>();
         List<String[]> nativeHooks = new ArrayList<>();
         List<String[]> libraryHooks = new ArrayList<>();
+        List<String[]> environmentHooks = new ArrayList<>();
         Injector injector;
         String providerWhy;
         try {
@@ -197,12 +216,16 @@ final class ReadHooks {
             holder.getField("PROCESS").set(null, processes);
             holder.getField("NATIVE").set(null, natives);
             holder.getField("LIBRARY").set(null, libraries);
+            // A value of no kind the sink records: it loads what the sink needs and records nothing.
+            environment.accept(Boolean.TRUE);
+            holder.getField("ENV").set(null, environment);
             addAll(readHooks, READS, "SINK", false);
             providerWhy = addProviderHooks(readHooks);
             addAll(lookupHooks, LOOKUPS, "LOOKUP", false);
             addAll(defineHooks, DEFINES, "DEFINE", true);
             addAll(processHooks, PROCESSES, "PROCESS", false);
             addAll(libraryHooks, LIBRARIES, "LIBRARY", false);
+            addAll(environmentHooks, ENVIRONMENT, "ENV", false);
             for (String[] hook : NATIVES) {
                 // The API is absent before it existed; where its class exists every hook must hold.
                 if (load(hook[0]) != null) {
@@ -211,14 +234,14 @@ final class ReadHooks {
             }
             List<String[]> all = new ArrayList<>();
             for (List<String[]> hooks : Arrays.asList(readHooks, lookupHooks, defineHooks, processHooks, nativeHooks,
-                    libraryHooks)) {
+                    libraryHooks, environmentHooks)) {
                 all.addAll(hooks);
             }
             injector = new Injector(all);
             instrumentation.addTransformer(injector, true);
         } catch (Throwable t) {
             String why = "the hooks could not be installed: " + t;
-            return new Installed(why, why);
+            return new Installed(why, why, why);
         }
         Map<String, String> failed = new HashMap<>();
         for (String owner : injector.wanted.keySet()) {
@@ -239,7 +262,8 @@ final class ReadHooks {
                 installed("native-library", libraryHooks, injector, failed),
                 installed("native-code", nativeHooks, injector, failed));
         String lookupsWhy = installed("lookup", lookupHooks, injector, failed);
-        return new Installed(readsWhy, lookupsWhy);
+        String environmentWhy = installed("environment", environmentHooks, injector, failed);
+        return new Installed(readsWhy, lookupsWhy, environmentWhy);
     }
 
     /** Each hook with the holder field its sink sits in; when {@code ifPresent}, only where this JDK has it. */
@@ -424,13 +448,13 @@ final class ReadHooks {
 
     /**
      * {@code public final class java.lang.YoriwakeReadSink} with one {@code public static volatile
-     * Consumer} per sink: {@code SINK, LOOKUP, DEFINE, PROCESS, NATIVE, LIBRARY}.
+     * Consumer} per sink: {@code SINK, LOOKUP, DEFINE, PROCESS, NATIVE, LIBRARY, ENV}.
      */
     private static byte[] holderBytes() {
         ClassWriter writer = new ClassWriter(0);
         writer.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_SUPER,
                 HOLDER, null, "java/lang/Object", null);
-        for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY"}) {
+        for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "ENV"}) {
             writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, field,
                     "L" + CONSUMER + ";", null, null).visitEnd();
         }

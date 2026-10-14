@@ -148,6 +148,19 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `a recorder the agent never installed reports no environment reads, and a read touches no class`() {
+        val recorder = TouchRecorder()
+        recorder.environmentRead("DB_MODE")
+        recorder.environmentRead("DB_MODE")
+        recorder.environmentRead(null)
+        recorder.environmentRead(true)
+
+        // Not installed, so its reads were not all observed: none is reported, never a partial list.
+        assertEquals(null, recorder.environmentReads())
+        assertTrue(drained(recorder).isEmpty(), "a read of the environment is no touch of a class")
+    }
+
+    @Test
     fun `a class definition is a first touch, and a redefinition of a loaded class is not`() {
         val recorder = TouchRecorder()
         val observer = TouchRecorder.LoadObserver(recorder)

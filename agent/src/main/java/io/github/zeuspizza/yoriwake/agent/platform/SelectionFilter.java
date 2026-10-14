@@ -6,6 +6,8 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEME
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_RECORD_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FINGERPRINT_IGNORED_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FINGERPRINT_IGNORED_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FULL_RUN_KIND_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FULL_RUN_REASON_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY;
@@ -171,6 +173,11 @@ public class SelectionFilter implements PostDiscoveryFilter {
      */
     private void noteOutcome() {
         try {
+            String ignored = orEmpty(inputs().apply(FINGERPRINT_IGNORED_PROPERTY));
+            if (!ignored.isEmpty()) {
+                // Whatever the outcome: a build reading why a run narrowed sees what was not compared.
+                decisions.note(FINGERPRINT_IGNORED_NOTE, ignored);
+            }
             // From the properties, not the decision, so a refused run with no tests still records why.
             String refusal = daemonRefusal();
             if (refusal != null) {

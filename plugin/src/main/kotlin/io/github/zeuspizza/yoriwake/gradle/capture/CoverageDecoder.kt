@@ -171,6 +171,8 @@ internal object CoverageDecoder {
         worktreeSnapshot: (() -> WorkingTree.Reobserved?)? = null,
         /** Whether this capture forked a JVM per test class; see [JVM_MODE_FILE]. */
         isolated: Boolean = false,
+        /** This capture's environment; see [EnvironmentFingerprint]. Null leaves its JVMs without one. */
+        environment: Map<String, String>? = null,
     ): Outcome? {
         val workers = recordsDir(mapDir)
             .listFiles { f: File -> f.isDirectory && f.name.startsWith(WORKER_DIR_PREFIX) }
@@ -218,6 +220,10 @@ internal object CoverageDecoder {
         writeAtomically(File(mapDir, FIRST_TOUCH_FILE), firstTouches.joinToString("") { "$it\n" })
         writeAtomically(File(mapDir, NAMED_TOUCH_FILE), namedTouches.joinToString("") { "$it\n" })
         writeAtomically(File(mapDir, JVM_MODE_FILE), modes.joinToString("") { "$it\n" })
+        val decodedJvms = workers.map { "$run/${it.name}" }
+        val retainedJvms = positions.map { Tsv.split(it).first() }.filterNot { it in decodedJvms }.distinct()
+        EnvironmentFingerprint.write(mapDir, retainedJvms, decodedJvms, environment)
+        writeEnvironmentReads(mapDir, workers)
         writeScope(mapDir, includePackages)
         writeEffectiveScope(
             mapDir,
@@ -325,6 +331,24 @@ internal object CoverageDecoder {
 
     /** The outcome a test is marked with when only Gradle's report saw its class fail. */
     private const val REPORTED_FAILED = "FAILED"
+
+    /**
+     * The union of the variables this capture's workers read, beside the map for the explain task;
+     * removed when any worker's reads were not observed, which the explain task then says.
+     */
+    private fun writeEnvironmentReads(mapDir: File, workers: List<File>) {
+        val target = File(mapDir, AgentContract.ENV_READS_FILE)
+        val names = sortedSetOf<String>()
+        for (worker in workers) {
+            val read = runCatching { File(worker, AgentContract.ENV_READS_FILE).takeIf(File::isFile)?.readLines() }.getOrNull()
+            if (read == null) {
+                target.delete()
+                return
+            }
+            names += read.filter(String::isNotEmpty)
+        }
+        writeAtomically(target, names.joinToString("") { "$it\n" })
+    }
 
     /**
      * Only a full capture may touch the constants (the [writeCaptureCommit] gate): a digest that

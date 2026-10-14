@@ -62,6 +62,11 @@ public final class CaptureSession implements TestEvents {
 
         /** Discovery is over: reads and lookups from here on are kept even if discovery saw them. */
         default void planStarted() {}
+
+        /** The environment variables read by name, or null when the reads were not observed. */
+        default java.util.Set<String> environmentReads() {
+            return null;
+        }
     }
 
     private final JacocoAgent agent;
@@ -301,6 +306,15 @@ public final class CaptureSession implements TestEvents {
         } catch (Throwable t) {
             // The touches then lack their end marker, which the decoder reads as "all touched".
             recordFailure("the last touches: " + t);
+        }
+        try {
+            java.util.Set<String> environment = touches.environmentReads();
+            if (environment != null) {
+                writer.writeEnvironmentReads(environment);
+            }
+        } catch (Throwable t) {
+            // Not a capture failure: only the explain output's list of variables read is lost, and
+            // nothing selects by it.
         }
         // Flushed inside the metered window, since the flush is where the record I/O happens.
         long flushStartedAt = System.nanoTime();

@@ -17,7 +17,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
-- Windows is supported and tested on every pull request; a map moves between Windows and Linux when both check out with the same line endings. Map: left alone.
+- A map recorded on another JDK, OS, set of system properties or locale makes selection run everything.
+  Map: repaired on the next build, which runs every test once and records the environment.
+- A supported matrix in the reference: each row ran on every release's tagged commit. Map: left alone.
+- Windows is supported: tested on every pull request and in the supported matrix. Map: left alone.
 - A test that fails just before its JVM is stopped (`--fail-fast`, or a killed worker) stays failing in the map, so it keeps running. Map: left alone.
 
 ### Changed

@@ -23,6 +23,8 @@ repositories {
 
 val jacocoVersion = "0.8.12"
 val asmVersion = "9.10.1"
+// The JDK this build compiles and tests on, and the daemon JDK functional builds run on by default.
+val buildJdk = 21
 
 dependencies {
     // Decoding coverage happens here, on the daemon side, never in the agent. The JaCoCo agent jar
@@ -189,7 +191,7 @@ tasks.processResources {
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(buildJdk)
     // Public is only what a host build or the init script touches; everything else is internal.
     explicitApi()
 }
@@ -223,6 +225,17 @@ val functionalGradleVersions = mapOf(
     "breakAttemptsGradle9" to "9.8.0",
 )
 
+// The supported-matrix workflow runs one cell per job: one functional task, named here, on one daemon
+// JDK, which TestKit's builds inherit from the test JVM. Without either property every version runs
+// on the build's own JDK, as on a pull request.
+val functionalCellTask = providers.gradleProperty("yoriwake.functional.gradle").orNull?.also {
+    require(it in functionalGradleVersions) { "yoriwake.functional.gradle=$it names no functional task" }
+}
+val functionalCellJdk = providers.gradleProperty("yoriwake.functional.jdk").orNull?.toInt()
+// The JDKs a fixture's toolchain may use. TestKit builds have their own Gradle home and cannot see
+// the JDKs this build was told about, so the same paths are handed to them.
+val toolchainPaths = providers.gradleProperty("org.gradle.java.installations.paths").orNull.orEmpty()
+
 // Attempts to make selection skip a test that should run, each kept once it fails to, live in one
 // package of the functional sources and run as their own task on both versions: the functional
 // suite does not grow with every attempt, and the attempts run where a release or a fix asks.
@@ -245,11 +258,22 @@ testing {
                     testTask.configure {
                         // TestKit builds are slow; give them room rather than letting them fail as flakes.
                         maxHeapSize = "1g"
+                        // A CI log is all a failed run leaves: print each failure's message, not only its class.
+                        testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
                         systemProperty("yoriwake.functional.gradleVersion", functionalGradleVersions.getValue(name))
                         dependsOn("publishAllPublicationsToBuildLocalRepository")
                         systemProperty("yoriwake.localRepository", localRepository.get().asFile.absolutePath)
                         // The version this build publishes, release or snapshot, for the published-plugin test.
                         systemProperty("yoriwake.pluginVersion", project.version.toString())
+                        // What the identity test compares the TestKit daemon's JDK with.
+                        systemProperty("yoriwake.functional.expectedJdk", (functionalCellJdk ?: buildJdk).toString())
+                        systemProperty("yoriwake.functional.toolchainPaths", toolchainPaths)
+                        providers.gradleProperty("yoriwake.functional.testJvms").orNull?.let {
+                            systemProperty("yoriwake.functional.testJvms", it)
+                        }
+                        functionalCellJdk?.let { jdk ->
+                            javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(jdk) }
+                        }
                         if (name.startsWith("breakAttempts")) {
                             filter.includeTestsMatching("$breakAttemptsPackage.*")
                         } else {
@@ -262,11 +286,15 @@ testing {
     }
 }
 
-// `functionalTest` alone runs both versions. A `--tests` filter reaches only the task it follows,
-// so a filtered run names one version's task and excludes the other.
-tasks.named("functionalTest") { finalizedBy("functionalTestGradle9") }
-tasks.named("breakAttempts") { finalizedBy("breakAttemptsGradle9") }
-tasks.check { dependsOn("functionalTest", "functionalTestGradle9") }
+// Outside a matrix cell, `functionalTest` alone runs both versions. A `--tests` filter reaches only
+// the task it follows, so a filtered run names one version's task and excludes the other.
+if (functionalCellTask == null) {
+    tasks.named("functionalTest") { finalizedBy("functionalTestGradle9") }
+    tasks.named("breakAttempts") { finalizedBy("breakAttemptsGradle9") }
+    tasks.check { dependsOn("functionalTest", "functionalTestGradle9") }
+} else {
+    tasks.check { dependsOn(functionalCellTask) }
+}
 
 // The suite reads the plugin's internals, as `test` does.
 kotlin.target.compilations.named("functionalTest") {

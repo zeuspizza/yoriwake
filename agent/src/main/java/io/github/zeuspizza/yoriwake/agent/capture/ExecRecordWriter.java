@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
  *   worker-&lt;id&gt;/index.tsv     sequence, durationNanos, byteCount, outcome, testId
  *   worker-&lt;id&gt;/000001.exec   raw bytes from IAgent.getExecutionData(true)
  *   worker-&lt;id&gt;/touches.tsv   sequence, kind, value: first loads and reads, then #complete
+ *   worker-&lt;id&gt;/env-reads.tsv the environment variables read, by name
  * </pre>
  *
  * <p>One directory per worker, because Gradle forks parallel test JVMs and each has its own agent.
@@ -201,6 +202,17 @@ final class ExecRecordWriter implements Closeable {
                 new FileWriter(new File(workerDir, AgentContract.OVERHEAD_FILE), StandardCharsets.UTF_8, false))) {
             out.write(line);
             out.newLine();
+        }
+    }
+
+    /** See {@link AgentContract#ENV_READS_FILE}: one name per line, sorted. */
+    void writeEnvironmentReads(java.util.Set<String> names) throws IOException {
+        try (BufferedWriter out = new BufferedWriter(
+                new FileWriter(new File(workerDir, AgentContract.ENV_READS_FILE), StandardCharsets.UTF_8, false))) {
+            for (String name : new java.util.TreeSet<>(names)) {
+                out.write(Tsv.escape(name));
+                out.newLine();
+            }
         }
     }
 

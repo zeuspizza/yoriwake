@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -41,11 +42,15 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private final Set<String> seenNamed = new HashSet<>();
     /** Archives found to hold no class, source or archive, by path, with the length and time they had. */
     private final Map<String, String> classless = new HashMap<>();
-    private boolean planStarted;
+    /** Written under {@link #lock}; volatile so the environment sink reads it without the lock. */
+    private volatile boolean planStarted;
     private List<String[]> pending = new ArrayList<>();
     private boolean installed;
     private volatile String incomplete = "the yoriwake agent was not attached to this JVM";
     private volatile String lookupsIncomplete = "the yoriwake agent was not attached to this JVM";
+    /** Variables read by name, and {@link AgentContract#ENV_READ_WHOLE} for the whole environment. */
+    private final Set<String> environmentReads = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile String environmentIncomplete = "the yoriwake agent was not attached to this JVM";
     private final ThreadLocal<Boolean> inside = new ThreadLocal<>();
 
     TouchRecorder() {}
@@ -70,12 +75,14 @@ public final class TouchRecorder implements CaptureSession.Touches {
             nameIn(new byte[0]);
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
-                    this::childProcess, this::nativeCode, this::library);
+                    this::childProcess, this::nativeCode, this::library, this::environmentRead);
             incomplete = hooks.reads != null ? hooks.reads : JdkCode.imageAltered();
             lookupsIncomplete = hooks.lookups != null ? hooks.lookups : nativeAgent();
+            environmentIncomplete = hooks.environment;
         } catch (Throwable t) {
             incomplete = "could not observe class loading: " + t;
             lookupsIncomplete = incomplete;
+            environmentIncomplete = incomplete;
         }
     }
 
@@ -110,6 +117,36 @@ public final class TouchRecorder implements CaptureSession.Touches {
     @Override
     public String lookupsIncomplete() {
         return lookupsIncomplete;
+    }
+
+    /**
+     * The names of the environment variables this JVM's tests read, or null when its reads were not
+     * all observed or no test plan started. Never a value.
+     */
+    @Override
+    public Set<String> environmentReads() {
+        return planStarted && environmentIncomplete == null ? new TreeSet<>(environmentReads) : null;
+    }
+
+    /**
+     * The environment hooks' sink: a variable's name, or null for the whole environment. Any other
+     * value is the warm-up, and records nothing. Only reads once the test plan started are the
+     * tests': before it, the test worker reads its own.
+     */
+    void environmentRead(Object name) {
+        // Hosts read the same few variables over and over: a name already kept costs a lookup, no lock.
+        String key = name == null ? AgentContract.ENV_READ_WHOLE : name instanceof String ? (String) name : null;
+        if (key == null || !planStarted || environmentReads.contains(key) || inside.get() != null) {
+            return;
+        }
+        inside.set(Boolean.TRUE);
+        try {
+            environmentReads.add(key);
+        } catch (Throwable t) {
+            environmentIncomplete = "a read of the environment could not be recorded: " + t;
+        } finally {
+            inside.remove();
+        }
     }
 
     @Override

@@ -399,6 +399,22 @@ public abstract class YoriwakeExtension {
      */
     public abstract val notReadByTests: org.gradle.api.provider.ListProperty<String>
 
+    /**
+     * Environment variables compared between the run that recorded the map and a selecting run, as
+     * names in which `*` matches any characters: `environmentInclude.add("DB_MODE")`. `TZ`, `LANG`
+     * and `LC_ALL` are always compared. A listed variable whose value differs makes the run run
+     * every test and record the map again. Only a digest of each value is stored, salted per map,
+     * and the map travels wherever its cache does: never list a secret.
+     */
+    public abstract val environmentInclude: org.gradle.api.provider.ListProperty<String>
+
+    /**
+     * System properties of the test task left out of that comparison, as names in which `*` matches
+     * any characters: `systemPropertyIgnore.add("build.number")`. For a property whose value changes
+     * on every build, which would otherwise make every selecting run run everything.
+     */
+    public abstract val systemPropertyIgnore: org.gradle.api.provider.ListProperty<String>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)
