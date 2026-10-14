@@ -162,6 +162,8 @@ class EngineSupportTest {
                 testImplementation("org.apache.groovy:groovy:4.0.22")
                 testRuntimeOnly("org.junit.platform:junit-platform-launcher")
             }
+            // Groovy 4.0.22 cannot read Java 25 class files, so the fixture keeps to 21 on any daemon JDK.
+            java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
             tasks.test { useJUnitPlatform() }
             """.trimIndent()
         )
