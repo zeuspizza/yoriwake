@@ -22,6 +22,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import assert_selection  # noqa: E402
 import ci  # noqa: E402
 
 
@@ -179,6 +180,53 @@ def case_a_source_without_a_mutation_is_refused():
     return fail("a file with no defined mutation was accepted")
 
 
+def _selecting_run(root, ran, failed, decisions):
+    """Writes what assert_selection reads: one result file and one decision record."""
+    results = os.path.join(root, "samples", "demo", "build", "test-results", "test")
+    os.makedirs(results)
+    cases = "".join(
+        f'<testcase classname="{t.rsplit(".", 1)[0]}" name="{t.rsplit(".", 1)[1]}()">'
+        + ("<failure/>" if t in failed else "") + "</testcase>"
+        for t in ran
+    )
+    with open(os.path.join(results, "TEST-run.xml"), "w", encoding="utf-8") as handle:
+        handle.write(f"<testsuite>{cases}</testsuite>")
+    map_dir = os.path.join(root, "samples", "demo", ".gradle", "yoriwake", "test-1fb574ab")
+    os.makedirs(map_dir)
+    with open(os.path.join(map_dir, "decisions.tsv"), "w", encoding="utf-8") as handle:
+        handle.write("".join(f"{t}\t{verdict}\t{reason}\n" for t, (verdict, reason) in decisions.items()))
+
+
+def _asserts(ran, failed, decisions):
+    """assert_selection's exit for the Epsilon round over a fake run, its printing swallowed."""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as root:
+        _selecting_run(root, ran, failed, decisions)
+        here = os.getcwd()
+        os.chdir(root)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return assert_selection.main(["--mutated", "epsilon"])
+        finally:
+            os.chdir(here)
+
+
+def case_the_epsilon_round_fails_unless_the_map_reached_the_registry_test():
+    """Each check must be able to fail: a run that ignored the map also runs the broken test."""
+    problems = 0
+    broken = "dev.demo.EpsilonRegistryTest.everyRegisteredTypeExposesTheMethodsTheRegistryPromises"
+    skipped = {f"dev.demo.{name}.t": ("excluded", "SKIPPED") for name in ("AlphaTest", "BetaTest", "GammaTest", "DeltaShapeTest")}
+    good = {broken: ("included", "REACHES_CHANGE"), **skipped}
+    if _asserts([broken], {broken}, good) != 0:
+        problems += fail("a correct Epsilon round was rejected")
+    if _asserts([broken], {broken}, {**good, broken: ("included", "NOT_IN_MAP")}) == 0:
+        problems += fail("the registry test included as NOT_IN_MAP passed; a map nobody read looks the same")
+    if _asserts([broken, "dev.demo.BetaTest.t"], {broken}, good) == 0:
+        problems += fail("an unreachable test that ran passed the Epsilon round")
+    return problems
+
+
 def case_discard_removes_results_and_leaves_the_map_alone_by_default():
     """A selecting step reads the map the capturing step wrote; deleting it would delete the subject."""
     problems = 0
@@ -188,10 +236,16 @@ def case_discard_removes_results_and_leaves_the_map_alone_by_default():
         with open(os.path.join(results, "TEST-dev.demo.AlphaTest.xml"), "w", encoding="utf-8") as handle:
             handle.write("<testsuite/>")
         map_dir = _map_at(root, "test-1fb574ab")
+        decisions = [os.path.join(map_dir, name) for name in ("decisions.tsv", "decisions.tsv.42-1.part")]
+        for path in decisions:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("t\tincluded\tREACHES_CHANGE\n")
 
         ci.discard_results(root)
         if os.path.exists(results):
             problems += fail("a previous step's results survived; the next step would assert on them")
+        if any(os.path.exists(path) for path in decisions):
+            problems += fail("a previous round's decisions survived; the next round could be judged by them")
         if not os.path.exists(map_dir):
             problems += fail("the map was deleted without --map; the selecting step has nothing to read")
 
@@ -271,6 +325,7 @@ CASES = (
     case_restore_is_the_mutation_backwards,
     case_each_source_gets_its_own_mutation_and_restore,
     case_a_source_without_a_mutation_is_refused,
+    case_the_epsilon_round_fails_unless_the_map_reached_the_registry_test,
     case_discard_removes_results_and_leaves_the_map_alone_by_default,
     case_discard_on_a_clean_tree_is_not_an_error,
     case_a_tag_pin_is_reported,

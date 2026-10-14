@@ -252,9 +252,11 @@ public final class DecisionRecord {
 
     /**
      * Moves {@code staging} over {@code target} atomically. Windows refuses a replace while another
-     * writer's replace of the same target is in flight, which POSIX never does, so a refusal is
-     * retried briefly: the other writer's move finishes in microseconds. Bounded, because this
-     * runs at shutdown.
+     * writer's replace of the same target is in flight (access denied), or while a virus scanner
+     * holds either file (a sharing violation), which POSIX never does; so a refusal is retried
+     * briefly, those holds lasting milliseconds. Bounded, because this runs at shutdown. A failure
+     * that waiting cannot change is not retried. Only Windows reaches the retry: the six-writer
+     * test lost two of six writes there without it.
      */
     private static void moveReplacing(File staging, File target) throws IOException {
         for (int attempt = 1; ; attempt++) {
@@ -263,8 +265,8 @@ public final class DecisionRecord {
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING,
                         java.nio.file.StandardCopyOption.ATOMIC_MOVE);
                 return;
-            } catch (java.nio.file.AccessDeniedException refused) {
-                if (attempt == MOVE_ATTEMPTS) {
+            } catch (java.nio.file.FileSystemException refused) {
+                if (attempt == MOVE_ATTEMPTS || permanent(refused)) {
                     throw refused;
                 }
                 try {
@@ -275,6 +277,15 @@ public final class DecisionRecord {
                 }
             }
         }
+    }
+
+    /** A move failure no wait resolves, including the one the caller falls back from. */
+    private static boolean permanent(java.nio.file.FileSystemException failure) {
+        return failure instanceof java.nio.file.AtomicMoveNotSupportedException
+                || failure instanceof java.nio.file.NoSuchFileException
+                || failure instanceof java.nio.file.DirectoryNotEmptyException
+                || failure instanceof java.nio.file.FileAlreadyExistsException
+                || failure instanceof java.nio.file.NotDirectoryException;
     }
 
     /** At most about a fifth of a second of waiting in all: 1 + 2 + ... + 19 ms. */

@@ -359,8 +359,6 @@ class ConfigurationWorkGuardTest {
         assertEquals(0, exit, "git ${args.joinToString(" ")} failed in the fixture")
     }
 
-    private val windows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
-
     private fun shimDir(): File {
         // The working directory is the plugin module or the repository root depending on the runner.
         var here: File? = File(".").canonicalFile

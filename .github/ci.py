@@ -40,6 +40,9 @@ def mutation_for(path):
 
 MAP_FILE = "coverage.tsv"
 
+# The decision record and its per-writer parts, `decisions.tsv.<pid>-<writer>.part`.
+DECISIONS_FILE = "decisions.tsv"
+
 
 def find_map(project_dir):
     """Every map directory under a project, newest first.
@@ -80,14 +83,20 @@ def edit(path, old, new):
 def discard_results(project_dir, drop_map=False):
     """Remove what a previous step left behind, so this step's evidence is its own.
 
-    Test results always. The map only when asked: a selecting step reads the map the capturing step
-    wrote, and deleting it there would delete the thing under test.
+    Test results and decision records always: a round whose run wrote no record must not be judged
+    by the previous round's. The map only when asked: a selecting step reads the map the capturing
+    step wrote, and deleting it there would delete the thing under test.
     """
     removed = []
     results = os.path.join(project_dir, "build", "test-results")
     if os.path.isdir(results):
         shutil.rmtree(results)
         removed.append(results)
+    for dirpath, _, filenames in os.walk(os.path.join(project_dir, ".gradle", "yoriwake")):
+        for name in filenames:
+            if name.startswith(DECISIONS_FILE):
+                os.remove(os.path.join(dirpath, name))
+                removed.append(os.path.join(dirpath, name))
     if drop_map:
         maps = os.path.join(project_dir, ".gradle", "yoriwake")
         if os.path.isdir(maps):

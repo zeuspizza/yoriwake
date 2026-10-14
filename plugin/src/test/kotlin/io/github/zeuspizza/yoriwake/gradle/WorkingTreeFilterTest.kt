@@ -4,7 +4,6 @@ import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
-import java.nio.file.Files
 import kotlin.random.Random
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

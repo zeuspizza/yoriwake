@@ -37,6 +37,8 @@ internal fun makeReadable(file: File) {
 
 private fun denyRead(file: File): AclEntry = AclEntry.newBuilder()
     .setType(AclEntryType.DENY)
-    .setPrincipal(file.toPath().fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name")))
+    // The owner, not a name looked up: the test created the file, so it is this user (or, in an
+    // elevated process, the administrators group it acts as), with no domain lookup to go astray.
+    .setPrincipal(Files.getOwner(file.toPath()))
     .setPermissions(AclEntryPermission.READ_DATA)
     .build()

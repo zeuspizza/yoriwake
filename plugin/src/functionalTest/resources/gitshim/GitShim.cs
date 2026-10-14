@@ -29,7 +29,7 @@ class GitShim
             else if (key == "failcommand") failCommand.Add(value);
         }
         string joined = string.Join(" ", args);
-        if (log != null) File.AppendAllText(log, joined + "\n");
+        if (log != null) Append(log, joined + "\n");
         foreach (string each in fail) if (joined.Contains(each)) return 128;
         if (args.Length > 0 && failCommand.Contains(args[0])) return 128;
 
@@ -41,6 +41,18 @@ class GitShim
         {
             git.WaitForExit();
             return git.ExitCode;
+        }
+    }
+
+    // Concurrent git calls append to one log, and Windows lets one writer at a time open it, so a
+    // refused open is retried. A call still unlogged after that fails loudly: a count that silently
+    // dropped calls would read as fewer git calls than the build made.
+    static void Append(string log, string line)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try { File.AppendAllText(log, line); return; }
+            catch (IOException) { if (attempt == 200) throw; System.Threading.Thread.Sleep(5); }
         }
     }
 

@@ -106,8 +106,11 @@ def main(argv=None):
                     problems.append(f"{test} was {verdict} ({reason}); it cannot reach the change")
                 elif reason != "SKIPPED":
                     problems.append(f"{test} was excluded for {reason}, not SKIPPED")
-            if any(broken in test for broken in broken_classes) and verdict != "included":
-                problems.append(f"{test} was {verdict} ({reason}); the change breaks it")
+            # Included because the map links it to the change, not for another reason: a test the map
+            # does not know (NOT_IN_MAP) also runs and fails, so a map that was never read passes the
+            # checks above.
+            if any(broken in test for broken in broken_classes) and (verdict, reason) != ("included", "REACHES_CHANGE"):
+                problems.append(f"{test} was {verdict} ({reason}); the change breaks it, through the map")
         # A reason of SELECTION_NOT_REQUESTED everywhere means the flag never reached the test JVM,
         # which looks exactly like a suite nothing narrowed.
         if all(reason == "SELECTION_NOT_REQUESTED" for _, reason in made.values()):

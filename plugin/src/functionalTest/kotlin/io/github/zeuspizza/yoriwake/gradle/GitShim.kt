@@ -50,22 +50,27 @@ internal fun withFirstOnPath(bin: File): Map<String, String> {
     return environment
 }
 
-/** The git this JVM would run, by the same lookup the plugin's ProcessBuilder makes. */
+/**
+ * The real git: on POSIX the usual install locations first, since a shell that counts git calls
+ * puts `scripts/gitcount` first on PATH and its `git` would delegate to itself; then PATH, by the
+ * same lookup the plugin's ProcessBuilder makes.
+ */
 internal fun realGit(): String {
     val name = if (windows) "git.exe" else "git"
-    return System.getenv("PATH").split(File.pathSeparator).map { File(it, name) }
-        .firstOrNull { it.isFile && it.canExecute() }?.absolutePath
+    val installed = if (windows) emptyList() else listOf("/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git")
+    return (installed.map(::File) + System.getenv("PATH").split(File.pathSeparator).map { File(it, name) })
+        .firstOrNull { it.isFile && it.canExecute() && it.parentFile?.name != "gitcount" }?.absolutePath
         ?: error("no $name on PATH for the shim to delegate to")
 }
 
-private val windows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+internal val windows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 
 /** Compiled once per JVM, by the C# compiler every Windows 10 and later ships with .NET Framework. */
 private val compiledShim: File by lazy {
     val framework = File(System.getenv("WINDIR") ?: "C:\\Windows", "Microsoft.NET")
     val csc = listOf("Framework64", "Framework").map { File(framework, "$it\\v4.0.30319\\csc.exe") }
         .firstOrNull(File::isFile) ?: error("no csc.exe under $framework to compile the git shim")
-    val work = Files.createTempDirectory("yoriwake-gitshim").toFile()
+    val work = Files.createTempDirectory("yoriwake-gitshim").toFile().apply { deleteOnExit() }
     val source = File(work, "GitShim.cs")
     source.writeBytes(checkNotNull(GitShimSource::class.java.getResourceAsStream("/gitshim/GitShim.cs")).use { it.readBytes() })
     val exe = File(work, "git.exe")
@@ -73,6 +78,9 @@ private val compiledShim: File by lazy {
         .redirectErrorStream(true).start()
     val output = process.inputStream.bufferedReader().readText()
     check(process.waitFor() == 0 && exe.isFile) { "compiling the git shim failed: $output" }
+    // Deleted in reverse order of registration: the files, then their directory.
+    source.deleteOnExit()
+    exe.deleteOnExit()
     exe
 }
 

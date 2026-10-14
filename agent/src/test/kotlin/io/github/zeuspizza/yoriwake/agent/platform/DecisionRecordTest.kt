@@ -25,6 +25,28 @@ class DecisionRecordTest {
         .filter { it.isNotBlank() && !it.startsWith("#") }
 
     @Test
+    fun `a write that cannot be moved into place says so, leaves no staging file, and keeps its part`(
+        @TempDir dir: File,
+    ) {
+        // A directory where the shared file goes: no move replaces it, on any platform.
+        File(dir, "${AgentContract.DECISIONS_FILE}/occupied").apply { parentFile.mkdirs(); writeText("x") }
+        val record = DecisionRecord().apply { add("t:test", Verdict.REACHES_CHANGE) }
+        val captured = java.io.ByteArrayOutputStream()
+        val original = System.out
+        try {
+            System.setOut(java.io.PrintStream(captured, true))
+            record.writeTo(dir)
+        } finally {
+            System.setOut(original)
+        }
+
+        assertTrue("could not write ${AgentContract.DECISIONS_FILE}" in captured.toString(), captured.toString())
+        assertEquals(emptyList(), dir.list().orEmpty().filter { it.endsWith(".writing") }, "staging files left behind")
+        val parts = dir.listFiles { f -> f.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX) }.orEmpty()
+        assertEquals(1, parts.size, "the writer's own part was not written: ${dir.list().orEmpty().toList()}")
+    }
+
+    @Test
     fun `six records each writing once, the shape a real test JVM produces`(@TempDir dir: File) {
         // The Platform can make several discovery requests per JVM, each with its own record
         // writing at shutdown.

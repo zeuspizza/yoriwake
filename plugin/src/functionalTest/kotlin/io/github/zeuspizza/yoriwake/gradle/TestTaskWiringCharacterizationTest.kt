@@ -165,7 +165,7 @@ class TestTaskWiringCharacterizationTest {
     private fun normalise(text: String): String {
         // On Windows the test JVM's java.class.path arrives with its separators doubled, as
         // escaped; the agent never reads it, so only the spelling differs.
-        var result = text.replace("\\\\", "\\")
+        var result = if (windows) text.replace("\\\\", "\\") else text
         listOf(dir.canonicalPath, dir.absolutePath).forEach { result = result.replace(it, "<project>") }
         result = result.replace(File.separatorChar, '/')
         // Any other absolute path is outside the project: keep only its file name.
