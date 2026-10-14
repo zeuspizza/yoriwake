@@ -151,6 +151,34 @@ def case_restore_is_the_mutation_backwards():
     return problems
 
 
+def case_each_source_gets_its_own_mutation_and_restore():
+    """Epsilon also has `return n * 2;`; Alpha's mutation applied to it would break the wrong test."""
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        source = os.path.join(root, "Epsilon.java")
+        original = 'public int twice(int n) {\n    return n * 2;\n}\npublic String label() { return "E"; }\n'
+        with open(source, "w", encoding="utf-8") as handle:
+            handle.write(original)
+        ci.main(["mutate", source])
+        with open(source, encoding="utf-8") as handle:
+            after = handle.read()
+        if "public String name()" not in after or "return n * 3;" in after:
+            problems += fail(f"Epsilon was not given its own mutation: {after!r}")
+        ci.main(["restore", source])
+        with open(source, encoding="utf-8") as handle:
+            if handle.read() != original:
+                problems += fail("restore did not return Epsilon to its original bytes")
+    return problems
+
+
+def case_a_source_without_a_mutation_is_refused():
+    try:
+        ci.mutation_for("samples/demo/src/main/java/dev/demo/Beta.java")
+    except SystemExit:
+        return 0
+    return fail("a file with no defined mutation was accepted")
+
+
 def case_discard_removes_results_and_leaves_the_map_alone_by_default():
     """A selecting step reads the map the capturing step wrote; deleting it would delete the subject."""
     problems = 0
@@ -241,6 +269,8 @@ CASES = (
     case_the_mutation_changes_exactly_its_line,
     case_a_mutation_that_would_be_silent_fails_loudly,
     case_restore_is_the_mutation_backwards,
+    case_each_source_gets_its_own_mutation_and_restore,
+    case_a_source_without_a_mutation_is_refused,
     case_discard_removes_results_and_leaves_the_map_alone_by_default,
     case_discard_on_a_clean_tree_is_not_an_error,
     case_a_tag_pin_is_reported,

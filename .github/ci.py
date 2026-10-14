@@ -9,6 +9,7 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py find-map samples/demo
     python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
     python .github/ci.py restore samples/demo/src/main/java/dev/demo/Alpha.java
+    python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Epsilon.java
     python .github/ci.py discard samples/demo --map
 """
 
@@ -22,6 +23,20 @@ import sys
 # files agree on one edit and must keep agreeing -- change this pair together or the job asserts
 # against a mutation that did not happen.
 MUTATION = ("return n * 2;", "return n * 3;")
+
+# The second, for a class reached only by name: renaming Epsilon's `label` breaks the one test that
+# compares its methods with `registry.yaml`, and no bytecode reference leads to it.
+EPSILON_MUTATION = ("public String label()", "public String name()")
+
+MUTATIONS = {"Alpha.java": MUTATION, "Epsilon.java": EPSILON_MUTATION}
+
+
+def mutation_for(path):
+    """The mutation for a source file, by its name; refuses a file that has none."""
+    name = os.path.basename(path)
+    if name not in MUTATIONS:
+        raise SystemExit(f"refusing: no mutation is defined for {name}; known: {sorted(MUTATIONS)}")
+    return MUTATIONS[name]
 
 MAP_FILE = "coverage.tsv"
 
@@ -113,12 +128,13 @@ def main(argv=None):
         return 0
 
     if args.command == "mutate":
-        edit(args.source, *MUTATION)
+        edit(args.source, *mutation_for(args.source))
         print(f"mutated {args.source}", file=sys.stderr)
         return 0
 
     if args.command == "restore":
-        edit(args.source, MUTATION[1], MUTATION[0])
+        old, new = mutation_for(args.source)
+        edit(args.source, new, old)
         print(f"restored {args.source}", file=sys.stderr)
         return 0
 
