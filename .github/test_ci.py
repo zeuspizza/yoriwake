@@ -139,15 +139,16 @@ def case_a_mutation_that_would_be_silent_fails_loudly():
 
 
 def case_restore_is_the_mutation_backwards():
+    """Byte for byte, line endings included: on Windows text mode wrote CRLF into an LF checkout."""
     problems = 0
     with tempfile.TemporaryDirectory() as root:
         source = os.path.join(root, "Alpha.java")
-        original = "int twice(int n) {\n    return n * 2;\n}\n"
-        with open(source, "w", encoding="utf-8") as handle:
+        original = b"int twice(int n) {\n    return n * 2;\n}\n"
+        with open(source, "wb") as handle:
             handle.write(original)
         ci.main(["mutate", source])
         ci.main(["restore", source])
-        with open(source, encoding="utf-8") as handle:
+        with open(source, "rb") as handle:
             if handle.read() != original:
                 problems += fail("restore did not return the file to its original bytes")
     return problems
@@ -244,14 +245,14 @@ def case_a_map_from_another_os_must_widen_the_run_and_say_why():
     problems = 0
     broken = ["dev.demo.AlphaTest.doubles", "dev.demo.AlphaTest.doublesAgain"]
     others = [f"dev.demo.{name}.t" for name in ("BetaTest", "GammaTest")]
-    widened = {t: ("included", "FULL_RUN") for t in broken + others}
-    notes = {"outcome": "full-run", "full-run-kind": "environment-changed"}
+    widened = {t: ("included", "DAEMON_REFUSED") for t in broken + others}
+    notes = {"full-run-kind": "daemon-refused", "refusal-kind": "environment-changed"}
     if _asserts(broken + others, set(broken), widened, notes, "alpha-on-another-os") != 0:
         problems += fail("a correct refusal of another operating system's map was rejected")
     narrowed = {**{t: ("included", "REACHES_CHANGE") for t in broken}, **{t: ("excluded", "SKIPPED") for t in others}}
     if _asserts(broken, set(broken), narrowed, {"outcome": "narrowed"}, "alpha-on-another-os") == 0:
         problems += fail("a run that narrowed from another operating system's map passed")
-    if _asserts(broken + others, set(broken), widened, {**notes, "full-run-kind": "unmappable-paths"}, "alpha-on-another-os") == 0:
+    if _asserts(broken + others, set(broken), widened, {**notes, "refusal-kind": "git-unavailable"}, "alpha-on-another-os") == 0:
         problems += fail("a run widened for another reason passed as the environment's refusal")
     return problems
 

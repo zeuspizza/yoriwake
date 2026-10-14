@@ -48,12 +48,12 @@ EXPECTED = {
         },
     },
     # Alpha's change against a map recorded on another operating system: a map is per environment,
-    # so the run must not narrow at all, and must say that is why.
+    # so the daemon refuses to select at all, and its refusal names the environment.
     "alpha-on-another-os": {
         "broken": ("dev.demo.AlphaTest.doubles", "dev.demo.AlphaTest.doublesAgain"),
-        "reason": "FULL_RUN",
+        "reason": "DAEMON_REFUSED",
         "unreachable": (),
-        "notes": {"outcome": "full-run", "full-run-kind": "environment-changed"},
+        "notes": {"full-run-kind": "daemon-refused", "refusal-kind": "environment-changed"},
     },
 }
 

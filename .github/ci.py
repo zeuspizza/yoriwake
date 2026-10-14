@@ -72,11 +72,13 @@ def edit(path, old, new):
     left a job asserting against an unmutated tree -- which reports every test as "ran but did not
     fail" rather than as a broken step.
     """
-    with open(path, encoding="utf-8") as handle:
+    # Bytes kept as they are, line endings included: on Windows, text mode would write CRLF into an
+    # LF checkout, and the restored file would differ from the commit after all.
+    with open(path, encoding="utf-8", newline="") as handle:
         before = handle.read()
     if old not in before:
         raise SystemExit(f"refusing: {path} does not contain {old!r}, so the edit would be silent")
-    with open(path, "w", encoding="utf-8") as handle:
+    with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(before.replace(old, new, 1))
 
 
