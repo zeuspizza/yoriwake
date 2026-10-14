@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
@@ -35,6 +36,7 @@ import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
 import io.github.zeuspizza.yoriwake.gradle.wiring.DevelocityDetection
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestPatterns
+import io.github.zeuspizza.yoriwake.gradle.wiring.environmentView
 import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
 import org.gradle.api.DefaultTask
@@ -112,6 +114,13 @@ internal abstract class ExplainTask : DefaultTask() {
 
     @get:Internal("where git runs, not a set of files this task reads")
     lateinit var rootDir: File
+
+    /** What the test task says of its test JVM, read as the configuration cache stores its entry. */
+    @get:Internal("compared with the map's fingerprint, which Gradle cannot fingerprint")
+    abstract val environmentView: Property<EnvironmentFingerprint.View>
+
+    @get:Internal("the build's environmentInclude and systemPropertyIgnore, and the paths they normalize")
+    var environment: EnvironmentFingerprint.Rules? = null
 
     @get:Internal("read through the map's own reader, which knows which of its files matter")
     lateinit var mapDir: File
@@ -258,6 +267,30 @@ internal abstract class ExplainTask : DefaultTask() {
                 return
             }
         }
+        // As the run checks it, before it selects.
+        environment?.let { rules ->
+            val verdict = runCatching { EnvironmentFingerprint.check(mapDir, environmentView.get(), rules).verdict }
+                .getOrElse { EnvironmentFingerprint.Verdict.Unrecorded("the environment could not be compared ($it)") }
+            val (kind, reason) = when (verdict) {
+                EnvironmentFingerprint.Verdict.Matches -> null
+                is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to verdict.reason
+                is EnvironmentFingerprint.Verdict.Unrecorded -> RefusalKind.ENVIRONMENT_UNRECORDED to verdict.reason
+            } ?: run {
+                if (mapPresent(mapDir)) {
+                    EnvironmentFingerprint.uncomparedReads(mapDir, rules).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
+                }
+                return@let
+            }
+            logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
+            writeUnanswered(
+                mapDir, taskPath, base,
+                io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                reason,
+                refusalKind = kind.token,
+                branch = branch,
+            )
+            return
+        }
         val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
         if (!map.isUsable) {
             logger.lifecycle("[yoriwake] $taskPath would run everything: ${map.unusableReason()}")
@@ -370,6 +403,7 @@ internal abstract class ExplainTask : DefaultTask() {
             settings: Settings,
             fullRunBranches: List<String>,
             notReadByTests: List<String>,
+            environment: EnvironmentFingerprint.Rules,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -388,6 +422,8 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)
+                task.environment = environment
+                task.environmentView.set(project.provider { environmentView(test) })
                 task.develocity.set(DevelocityDetection.provider(project, test))
                 // Through a provider: Gradle applies `--tests`, and an init script's `whenReady` adds
                 // patterns, after this runs. Both are seen when the configuration cache stores its
@@ -418,6 +454,9 @@ internal abstract class ExplainTask : DefaultTask() {
         }
     }
 }
+
+/** Whether a map is there to have recorded the variables its tests read. */
+private fun mapPresent(mapDir: File) = File(mapDir, AgentContract.MAP_SCHEMA_VERSION_FILE).isFile
 
 /** Enough to see the pattern; a 300-class refactor should not print 300 lines. */
 private const val REPORTED_REFUSALS = 12

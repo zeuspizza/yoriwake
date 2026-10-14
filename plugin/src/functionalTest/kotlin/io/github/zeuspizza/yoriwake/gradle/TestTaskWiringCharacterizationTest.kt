@@ -242,13 +242,16 @@ class TestTaskWiringCharacterizationTest {
             #10 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/capture-head.pending
             #11 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
+              +file .gradle/yoriwake/test-7f007aca/environment.pending
+              +file .gradle/yoriwake/test-7f007aca/fingerprint-salt
             #12 Execute doFirst {} action
-              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+              +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
             #13 Execute doFirst {} action
-            #14 Execute yoriwake last look
-            #15 Execute executeTests
-            #16 Execute doLast {} action
+              +file .gradle/yoriwake-agent/yoriwake-agent.jar
+            #14 Execute doFirst {} action
+            #15 Execute yoriwake last look
+            #16 Execute executeTests
+            #17 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, captureActions.trimEnd())
@@ -273,6 +276,7 @@ class TestTaskWiringCharacterizationTest {
             #3 Execute doFirst {} action
             #4 Execute doFirst {} action
             #5 Execute doFirst {} action
+            #6 Execute doFirst {} action
               prop yoriwake.change.accountedFor=false
               prop yoriwake.internal.capture.outputDir=
               +file .gradle/yoriwake/test-7f007aca/change-set
@@ -280,16 +284,16 @@ class TestTaskWiringCharacterizationTest {
               log [yoriwake] :test: compared 4 compiled classes against 4 the map recorded: 0 changed with no source change behind them
               log [yoriwake] :test selecting against <sha> (merge base with main): 1 changed classes, 0 paths coverage cannot see
               log [yoriwake] :test: narrowing, so nothing is instrumented and the map is left alone. A partial run cannot produce a map worth keeping.
-            #6 Execute doFirst {} action
             #7 Execute doFirst {} action
             #8 Execute doFirst {} action
             #9 Execute doFirst {} action
-              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #10 Execute doFirst {} action
+              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #11 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #12 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #13 Execute doFirst {} action
+            #14 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/ran.marker
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv.<pid>-<n>.part
@@ -304,15 +308,16 @@ class TestTaskWiringCharacterizationTest {
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/plan-complete
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/raw-schema-version
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/touches.tsv
-            #14 Execute doFirst {} action
             #15 Execute doFirst {} action
             #16 Execute doFirst {} action
             #17 Execute doFirst {} action
+            #18 Execute doFirst {} action
+            #19 Execute doFirst {} action
               -file build/jacoco/test.exec
-            #18 Execute yoriwake last look
+            #20 Execute yoriwake last look
               -file .gradle/yoriwake/test-7f007aca/classpath-files.compared
-            #19 Execute executeTests
-            #20 Execute doLast {} action
+            #21 Execute executeTests
+            #22 Execute doLast {} action
               -file .gradle/yoriwake/test-7f007aca/after-test.pending
         """.trimIndent()
         assertEquals(expected, selectActions.trimEnd())

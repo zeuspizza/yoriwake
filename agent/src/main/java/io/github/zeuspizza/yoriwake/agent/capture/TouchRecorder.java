@@ -46,6 +46,9 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private boolean installed;
     private volatile String incomplete = "the yoriwake agent was not attached to this JVM";
     private volatile String lookupsIncomplete = "the yoriwake agent was not attached to this JVM";
+    /** Variables read by name, and {@link AgentContract#ENV_READ_WHOLE} for the whole environment. */
+    private final Set<String> environmentReads = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile String environmentIncomplete = "the yoriwake agent was not attached to this JVM";
     private final ThreadLocal<Boolean> inside = new ThreadLocal<>();
 
     TouchRecorder() {}
@@ -70,12 +73,14 @@ public final class TouchRecorder implements CaptureSession.Touches {
             nameIn(new byte[0]);
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
-                    this::childProcess, this::nativeCode, this::library);
+                    this::childProcess, this::nativeCode, this::library, this::environmentRead);
             incomplete = hooks.reads != null ? hooks.reads : JdkCode.imageAltered();
             lookupsIncomplete = hooks.lookups != null ? hooks.lookups : nativeAgent();
+            environmentIncomplete = hooks.environment;
         } catch (Throwable t) {
             incomplete = "could not observe class loading: " + t;
             lookupsIncomplete = incomplete;
+            environmentIncomplete = incomplete;
         }
     }
 
@@ -110,6 +115,37 @@ public final class TouchRecorder implements CaptureSession.Touches {
     @Override
     public String lookupsIncomplete() {
         return lookupsIncomplete;
+    }
+
+    /**
+     * The names of the environment variables this JVM read, or null when its reads were not all
+     * observed. Never a value.
+     */
+    @Override
+    public Set<String> environmentReads() {
+        return environmentIncomplete == null ? new java.util.TreeSet<>(environmentReads) : null;
+    }
+
+    /**
+     * The environment hooks' sink: a variable's name, or null for the whole environment. Any other
+     * value is the warm-up, and records nothing.
+     */
+    void environmentRead(Object name) {
+        if (inside.get() != null) {
+            return;
+        }
+        inside.set(Boolean.TRUE);
+        try {
+            if (name == null) {
+                environmentReads.add(AgentContract.ENV_READ_WHOLE);
+            } else if (name instanceof String) {
+                environmentReads.add((String) name);
+            }
+        } catch (Throwable t) {
+            environmentIncomplete = "a read of the environment could not be recorded: " + t;
+        } finally {
+            inside.remove();
+        }
     }
 
     @Override

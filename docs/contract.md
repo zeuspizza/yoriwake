@@ -40,6 +40,7 @@ the run as `change-set-unreadable`.
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
 | `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `tests-named`, `decline-undetermined` |
+| `FINGERPRINT_IGNORED_PROPERTY` | `yoriwake.fingerprint.ignored` | plugin → agent | The system properties `systemPropertyIgnore` left out of a selecting run's environment comparison, comma-separated. Set only when it left one out; the agent copies it into `decisions.tsv` as the `fingerprint-ignored` note |
 | `RUN_TOKEN_PROPERTY` | `yoriwake.run.token` | plugin → agent | A fresh value per selecting run of the task. Each decision record notes it, so the plugin merges only this run's |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |
 | `CHANGE_SET_UNREADABLE_KIND` | `change-set-unreadable` | plugin, agent | The refusal token of a run whose change-set file could not be written or read |
@@ -71,6 +72,8 @@ One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usuall
 | `FIRST_TOUCH_FILE` | `first-touch.tsv` | plugin | agent | `jvm \t sequence \t class`: the first record at or before which that JVM loaded the class, executed it, or read its class or source file |
 | `NAMED_TOUCH_FILE` | `named-touch.tsv` | plugin | agent | The same, counting only a lookup by name or a read after the plan started, and an execution in another class's window. What an exempt test class is dated by |
 | `JVM_MODE_FILE` | `jvm-mode.tsv` | plugin | plugin, people, tools | `jvm \t mode`: how that JVM was recorded, `isolated` or `shared` (see [Recording modes](#recording-modes)) |
+| `ENVIRONMENT_FILE` | `environment.tsv` | plugin | plugin, people, tools | `jvm \t fingerprint-id`: the environment that JVM was recorded in. A JVM that ran a test and has no row makes a selecting run run everything, as `environment-unrecorded` |
+| `ENVIRONMENT_FINGERPRINTS_FILE` | `environment-fingerprints.tsv` | plugin | plugin, people, tools | `fingerprint-id \t component \t value`, one block per environment: `jdk.version`, `jdk.vendor` (or `jdk.executable`), `os.name` and `os.arch` in plain text; `sys:<name>` and `env:<name>` as salted SHA-256 digests of their values, never the values. See [the environment fingerprint](reference.md#the-environment-fingerprint) |
 | `DECISIONS_FILE` | `decisions.tsv` | agent | people, tools | `test \t verdict \t reason` rows after `#!key \t value` notes, then `#+` rule lines (see [Decision rules](#decision-rules)). Last writer wins |
 | `DECISIONS_PART_SUFFIX` | `.part` | agent | people, tools | Ends `decisions.tsv.<pid>-<writer>.part`, one per writer, same format |
 | `OBSERVATION_FILE` | `observation.json` | plugin | people, tools | After an observing run: the failing tests selection would have left out, and the recorded time of the tests it would have skipped. See [Observing before you select](reference.md#observing-before-you-select) |
@@ -97,6 +100,7 @@ is written as it is.
 | `EXEC_FILE_FORMAT` | `%06d.exec` | One JaCoCo execution-data blob per record, named by its sequence |
 | `TOUCHES_FILE` | `touches.tsv` | `sequence \t kind \t value`: what the JVM loaded or read for the first time before the record with that sequence was taken. Ends with `#complete` when observation ended normally |
 | `OVERHEAD_FILE` | `overhead.txt` | One line: what capture cost this JVM |
+| `ENV_READS_FILE` | `env-reads.tsv` | The environment variables the JVM read, one name per line, escaped as a field; never a value. Written when every read was observed. The decode writes the union of a capture's workers beside the map under the same name, only when every worker wrote one; `yoriwakeExplain<Task>` reads it and nothing selects by it |
 | `RAW_SCHEMA_VERSION_FILE` | `raw-schema-version` | The raw version, one integer. Written before the first record |
 | `PLAN_COMPLETE_FILE` | `plan-complete` | Empty. Written only when the worker's whole run ended normally |
 
@@ -132,6 +136,7 @@ number in `index.tsv`. A touch between two records counts toward the later one.
 | `TOUCH_ALL` | `all` | From this record on, loads and reads were not all observed: a hook missing, a child process started, a native library not on the reviewed list loaded from outside the JDK, the foreign-function linker or a library lookup called from outside the JDK, or a class defined from bytes whose name could not be read. The value says why |
 | `TOUCHES_COMPLETE` | `#complete` | The last line of a complete `touches.tsv` |
 | `FIRST_TOUCH_ANY` | `*` | As a first-touch class: every class. Written for a JVM whose touches are missing, incomplete or unreadable, and never read as "none" |
+| `ENV_READ_WHOLE` | `*` | As a line of `env-reads.tsv`: a test read the whole environment |
 
 ### Recording modes
 
@@ -199,6 +204,7 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `FULL_RUN_REASON_NOTE` | `full-run-reason` | Why, as prose |
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
 | `DECLINES_NOTE` | `declines` | Every decline that held, as `yoriwake.declines` carried it. Absent when none did |
+| `FINGERPRINT_IGNORED_NOTE` | `fingerprint-ignored` | The system properties `systemPropertyIgnore` left out of the environment comparison, as `yoriwake.fingerprint.ignored` carried it. Absent when it left none out |
 | `OBSERVED_OUTCOME_NOTE` | `observed-outcome` | On an observing run, the outcome a selecting run of the same inputs would have noted: `outcome`, then its `full-run-kind` and `refusal-kind` when it has them, tab-separated. `outcome` says what ran, `full-run` |
 | `RUN_TOKEN_NOTE` | `run-token` | The run's `yoriwake.run.token`. Noted only when the run was given one |
 | `JVM_NOTE_PREFIX` | `jvm.` | Starts `jvm.<property>`, beside `run-token`: each of the test JVM's identity properties below, with its value |

@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
@@ -109,6 +110,7 @@ internal fun TestTaskWiring.configureSelection(
     runPlan: RunPlan,
     fromBuildScript: TestPatterns,
     notReadByTests: List<String>,
+    environment: EnvironmentFingerprint.Rules,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -350,6 +352,7 @@ internal fun TestTaskWiring.configureSelection(
         )
     }
 
+    refuseAChangedEnvironment(test, mapDir, environment, jacoco, changeSetFile, observing)
     refuseAStaleChangeSet(project, test, mapDir, against, stamp, paths, jacoco, changeSetFile, buildMemo, observing, notReadByTests)
     trusted?.let { listed ->
         refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)
@@ -590,7 +593,10 @@ private val NAMED_TESTS_REFUSALS = setOf(RefusalKind.TESTS_NAMED, RefusalKind.DE
 
 /** The kinds an action of the run itself decides; a later action leaves the run as they set it. */
 private val EXECUTION_REFUSALS =
-    setOf(RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED)
+    setOf(
+        RefusalKind.CHANGE_SET_STALE, RefusalKind.MAP_UNVERIFIED, RefusalKind.MAP_UNTRUSTED,
+        RefusalKind.ENVIRONMENT_CHANGED, RefusalKind.ENVIRONMENT_UNRECORDED,
+    )
         .map { it.token } + DEVELOCITY_REFUSALS + NAMED_TESTS_REFUSALS
 
 /**
@@ -703,6 +709,54 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
         applyCaptureDecision(
             test, mapDir, jacoco, observing,
             decideCapture(mapDir, mapUsable = false, fullRun = true, learnable = emptySet()),
+        )
+    }
+}
+
+/**
+ * Runs the whole suite when the test JVM's environment is not the one the map was recorded in, or
+ * the map records none; see [EnvironmentFingerprint]. The capture it falls back to records the
+ * environment as it is now, so the next run compares against it. Registered after the selecting
+ * action, so it runs before it; the stale-change-set and provenance checks run earlier still.
+ */
+private fun TestTaskWiring.refuseAChangedEnvironment(
+    test: Test,
+    mapDir: File,
+    rules: EnvironmentFingerprint.Rules,
+    jacoco: JacocoTaskExtension?,
+    changeSetFile: File,
+    observing: Boolean,
+) {
+    test.doFirst {
+        if (refusedAtExecution(test)) return@doFirst
+        val check = runCatching { EnvironmentFingerprint.check(mapDir, environmentView(test), rules) }
+            .getOrElse { EnvironmentFingerprint.Check(EnvironmentFingerprint.Verdict.Unrecorded("the environment could not be compared ($it)"), emptyList()) }
+        if (check.ignored.isNotEmpty()) {
+            test.systemProperty(AgentContract.FINGERPRINT_IGNORED_PROPERTY, check.ignored.joinToString(","))
+        }
+        val verdict = check.verdict
+        val (kind, reason) = when (verdict) {
+            EnvironmentFingerprint.Verdict.Matches -> return@doFirst
+            is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to verdict.reason
+            is EnvironmentFingerprint.Verdict.Unrecorded -> RefusalKind.ENVIRONMENT_UNRECORDED to verdict.reason
+        }
+        test.logger.lifecycle("[yoriwake] ${test.path}: $reason, so the whole suite runs.")
+        refuse(test, kind, reason)
+        // Never read under a refusal; deleted so a previous run's file is not mistaken for this one's.
+        runCatching { changeSetFile.delete() }
+        // A map that is not current: with no changed class the decision would otherwise call it
+        // current and not capture, and the old fingerprint would refuse every later run.
+        applyCaptureDecision(
+            test, mapDir, jacoco, observing,
+            decideCapture(
+                mapDir,
+                mapUsable = runCatching {
+                    io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
+                }.getOrDefault(false),
+                fullRun = true,
+                learnable = emptySet(),
+                ageKnown = false,
+            ),
         )
     }
 }

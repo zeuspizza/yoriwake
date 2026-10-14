@@ -20,6 +20,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.CONFIGURE_CO
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.TEST_TASKS_COUNTER
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
@@ -90,6 +91,13 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
         val fullRunBranches = RunPlan.fullRunBranches(extension.fullRunBranches.getOrElse(emptyList()), project.path)
         val notReadByTests = extension.notReadByTests.getOrElse(emptyList())
+        val environment = EnvironmentFingerprint.Rules(
+            validNames(extension.systemPropertyIgnore.getOrElse(emptyList()), "systemPropertyIgnore", project.path),
+            validNames(extension.environmentInclude.getOrElse(emptyList()), "environmentInclude", project.path),
+            project.rootDir.absolutePath,
+            project.gradle.gradleUserHomeDir.absolutePath,
+            System.getProperty("user.home").orEmpty(),
+        )
 
         // One instance for the whole build, so git questions are asked once rather than per `Test`
         // task. Null when the plugin loads through more than one classloader: slow, not wrong.
@@ -112,7 +120,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, notReadByTests, buildMemo) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, notReadByTests, environment, buildMemo) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -129,7 +137,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, notReadByTests) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, notReadByTests, environment) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -165,6 +173,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         alwaysRunDeclared: List<String>,
         fullRunBranches: List<String>,
         notReadByTests: List<String>,
+        environment: EnvironmentFingerprint.Rules,
         buildMemo: BuildMemo?,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
@@ -246,6 +255,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // First, so its action runs last: after the selecting action has decided whether this run
         // captures, and with nothing between it and the test JVM.
         recordClasspathFiles(project, test, mapDir, selecting, buildMemo)
+        recordEnvironment(test, mapDir, selecting, environment)
         observeWorkingTree(project, test, mapDir, selecting, buildMemo, startReading(project, buildMemo))
         discardPreviousRecords(test, recordsDir)
         recordWhetherTheRunDates(test, recordsDir, fromBuildScript)
@@ -292,7 +302,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
-            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests)
+            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, environment)
         } else {
             declineSelection(test, mapDir, runPlan)
         }
@@ -443,6 +453,24 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     "[yoriwake] ${test.path}: no classpath file digests recorded (${walk.reason})"
                 )
             }
+        }
+    }
+
+    /**
+     * Records the test JVM's environment as the task is about to start it, for the decode to write
+     * beside the map; see [EnvironmentFingerprint]. Only a run that captures records it, as the
+     * classpath files are.
+     */
+    private fun recordEnvironment(test: Test, mapDir: File, selecting: Boolean, rules: EnvironmentFingerprint.Rules) {
+        val pending = File(mapDir, EnvironmentFingerprint.PENDING_FILE)
+        val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
+        test.doFirst {
+            pending.delete()
+            if (declinedUnderDevelocity(test)) return@doFirst
+            if (selecting && !fullRunMarker.isFile) return@doFirst
+            // None recorded: the next selecting run runs everything and records one.
+            runCatching { EnvironmentFingerprint.writePending(mapDir, environmentView(test), rules) }
+                .onFailure { test.logger.info("[yoriwake] ${test.path}: no environment fingerprint recorded ($it)") }
         }
     }
 
@@ -980,6 +1008,34 @@ private fun frameworkFilter(test: Test): String? {
     }
     return filters.filter { it.second.isNotEmpty() }.takeIf { it.isNotEmpty() }
         ?.joinToString(" ") { (name, values) -> "$name=$values" }
+}
+
+/**
+ * [names] as listed, after checking that each names something and not everything: an empty entry
+ * or one of only `*` fails the build, naming [property].
+ */
+internal fun validNames(names: List<String>, property: String, owner: String): List<String> =
+    names.map(String::trim).onEach { entry ->
+        if (entry.isEmpty() || entry.all { it == '*' }) {
+            throw org.gradle.api.InvalidUserDataException(
+                "[yoriwake] $owner: $property holds '$entry', which " +
+                    (if (entry.isEmpty()) "names nothing" else "matches every name") +
+                    ". List names, in which `*` matches any characters, such as $property.add(\"${if (property == "environmentInclude") "DB_MODE" else "build.number"}\")."
+            )
+        }
+    }
+
+/**
+ * What [test] says of its test JVM before starting it; see [EnvironmentFingerprint.View]. The OS is
+ * the daemon's: the test JVM runs on the same machine.
+ */
+internal fun environmentView(test: Test): EnvironmentFingerprint.View {
+    val metadata = runCatching { test.javaLauncher.get().metadata }.getOrNull()
+    return EnvironmentFingerprint.View(
+        metadata?.javaRuntimeVersion, metadata?.vendor, test.executable,
+        System.getProperty("os.name"), System.getProperty("os.arch"),
+        test.allJvmArgs, test.environment.mapValues { it.value?.toString().orEmpty() },
+    )
 }
 
 /** The start reading of HEAD and its reflogs; see [CaptureStart]. */

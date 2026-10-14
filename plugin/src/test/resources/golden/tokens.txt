@@ -78,6 +78,8 @@ refusal-kind	decline-undetermined
 refusal-kind	develocity-test-distribution
 refusal-kind	develocity-test-selection
 refusal-kind	develocity-undetermined
+refusal-kind	environment-changed
+refusal-kind	environment-unrecorded
 refusal-kind	full-run-branch
 refusal-kind	full-run-commit
 refusal-kind	full-run-requested
