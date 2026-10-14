@@ -155,18 +155,22 @@ jobs:
         run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py --mutated epsilon
 
   # The cross-OS cases: the map captured on Linux above, selected against on Windows, and the
-  # reverse below. Manual only while Windows support is unverified; they become pull-request jobs
-  # once they have passed.
+  # reverse below.
   select-on-windows:
     name: select on windows, against a map captured on linux
     needs: capture
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       # Before the checkout: a clone that already dropped long-path files looks complete and cannot
-      # be repaired afterwards.
-      - name: allow long paths
-        run: git config --global core.longpaths true
+      # be repaired afterwards, and a checkout's line endings are fixed when it is made.
+      #
+      # A map moves between operating systems only between checkouts with the same line endings:
+      # a text resource on the test classpath that differs only in them is another build, and
+      # the run widens to everything. The supported setup is LF on every side.
+      - name: allow long paths, and check out with the repository's LF line endings
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -223,11 +227,15 @@ jobs:
   # selected against on Linux.
   capture-on-windows:
     name: build a map on windows
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
-      - name: allow long paths
-        run: git config --global core.longpaths true
+      # A map moves between operating systems only between checkouts with the same line endings:
+      # a text resource on the test classpath that differs only in them is another build, and
+      # the run widens to everything. The supported setup is LF on every side.
+      - name: allow long paths, and check out with the repository's LF line endings
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -305,7 +313,6 @@ jobs:
   # that cannot take them.
   build-windows:
     name: unit and agent suites on windows
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - name: allow long paths
@@ -329,7 +336,6 @@ jobs:
 
   functional-windows:
     name: functional on Gradle 8.14 on windows
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - name: allow long paths
@@ -353,7 +359,6 @@ jobs:
 
   functional-gradle9-windows:
     name: functional on Gradle 9 on windows
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - name: allow long paths

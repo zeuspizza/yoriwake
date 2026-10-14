@@ -341,6 +341,8 @@ Two notes on the list:
   and whose OpenSSL build reads a configuration file and loads modules from paths the environment
   names; SQLite JDBC, which loads any native library an SQL statement names once
   `enable_load_extension` is set on a connection; and JNA, which calls any native function.
+- Only the Linux and macOS builds (`.so`, `.dylib`, `.jnilib`) were reviewed. A library's Windows
+  build (`.dll`) is not on the list, so on Windows each of these applies the wide rule.
 
 An entry covers the version reviewed. Each is reviewed again when its library ships a new major
 version, and until then a later version counts as the one reviewed. To propose a library, open an
@@ -401,6 +403,28 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
 |---|---|
 | `no-host-plugin` | The project has test tasks but applies none of the plugins above. Apply `java` or an Android plugin to the project whose tests you want selected. |
 | `kotlin-multiplatform` | A Kotlin Multiplatform module whose JVM target the plugin cannot see, or cannot scope from its own source directories. |
+
+### Windows
+
+The build and the functional suite run on Windows, on both tested Gradle versions, from a
+checkout with Windows line endings. A map captured on Linux selects correctly on Windows and the
+reverse, given the same line endings on both sides (below). Three things differ:
+
+- **Paths longer than 260 characters.** Git for Windows lists them only with long paths enabled
+  (`git config core.longpaths true`). Without it, git fails on such a checkout, the change set
+  cannot be computed, and every selecting run is a full run that says so.
+- **Line endings, when a map or a selection record moves between machines.** Under
+  `core.autocrlf`, Git for Windows' default, text files check out with `\r\n`, and resources
+  copied onto the test classpath keep it. A text resource that differs only in its line endings is
+  still a different file, which a test may read, so a run against a map captured in a checkout with
+  other line endings runs every test and says
+  `build output on this task's classpath changed since the map was captured: <file> (changed)`; a
+  [complement run](#running-what-a-selection-skipped) does the same with a selection record. To
+  share a map between Windows and Linux or macOS, check out with the same line endings everywhere:
+  `core.autocrlf false` on Windows, or a `.gitattributes` with `* text=auto eol=lf`. A map made
+  and used on Windows alone needs neither.
+- **Native libraries.** No Windows build is on the [reviewed list](#native-libraries), so on
+  Windows every native library applies the wide rule.
 
 ## What is not supported
 
@@ -509,8 +533,6 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
   on the classpath is not yet investigated. To use yoriwake on such a task, turn the feature off
   for it; how the two could compose is not yet investigated.
 - **Plain JUnit 4 and TestNG selection.** Captured, never narrowed; see the next section.
-- **Windows.** Never run there. Maps have been shown to move between Linux and macOS in both
-  directions; Windows is unverified.
 - **Changes coverage cannot see.** Resources, build scripts and version catalogs force a full run by
   design.
 - **Tests that commit, check out or stash.** A capture during which HEAD or its reflog moves is not

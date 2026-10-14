@@ -15,6 +15,11 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- Windows is supported and tested on every pull request; a map moves between Windows and Linux when both check out with the same line endings. Map: left alone.
+- A test that fails just before its JVM is stopped (`--fail-fast`, or a killed worker) stays failing in the map, so it keeps running. Map: left alone.
+
 ### Changed
 
 - The CI reference leads with yoriwake-action; the contract lists `capture-commit`. Map: left alone.
