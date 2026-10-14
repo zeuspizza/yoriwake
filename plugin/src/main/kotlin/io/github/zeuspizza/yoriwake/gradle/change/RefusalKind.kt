@@ -91,6 +91,18 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     MAP_UNTRUSTED("map-untrusted"),
 
     /**
+     * The test JVM's JDK, OS, system properties or listed environment variables differ from those
+     * the map was recorded under. The capture this run makes records the new environment.
+     */
+    ENVIRONMENT_CHANGED("environment-changed"),
+
+    /**
+     * The map holds no readable environment fingerprint for a JVM that ran a test, as a map recorded
+     * before fingerprints were does. A capture fixes this.
+     */
+    ENVIRONMENT_UNRECORDED("environment-unrecorded"),
+
+    /**
      * Develocity Test Distribution runs this task's tests, possibly on other machines: yoriwake
      * declines, so it neither selects nor records. Turning it off for the task lifts this.
      */

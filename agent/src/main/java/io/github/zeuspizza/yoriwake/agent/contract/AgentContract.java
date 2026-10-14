@@ -99,6 +99,12 @@ public final class AgentContract {
     public static final String DECLINES_PROPERTY = "yoriwake.declines";
 
     /**
+     * The system properties {@code systemPropertyIgnore} left out of this selecting run's
+     * environment comparison, comma-separated. Set only when it left one out.
+     */
+    public static final String FINGERPRINT_IGNORED_PROPERTY = "yoriwake.fingerprint.ignored";
+
+    /**
      * A fresh value per run of a selecting test task. Each decision record carries it, so the decode
      * merges only the records this run wrote.
      */
@@ -263,6 +269,20 @@ public final class AgentContract {
      */
     public static final String JVM_MODE_FILE = "jvm-mode.tsv";
 
+    /**
+     * {@code jvm \t fingerprint-id}: the environment each JVM of the map was recorded in, named by
+     * its block in {@link #ENVIRONMENT_FINGERPRINTS_FILE}. A JVM that ran a test and has no row
+     * makes a selecting run run everything. Only the plugin reads it.
+     */
+    public static final String ENVIRONMENT_FILE = "environment.tsv";
+
+    /**
+     * {@code fingerprint-id \t component \t value}, one block per distinct environment: the JDK, OS
+     * and architecture in plain text, each system property ({@code sys:<name>}) and environment
+     * variable ({@code env:<name>}) as a salted digest of its value.
+     */
+    public static final String ENVIRONMENT_FINGERPRINTS_FILE = "environment-fingerprints.tsv";
+
     /** The JVM was forked for one test class and ran tests of that class alone. */
     public static final String MODE_ISOLATED = "isolated";
 
@@ -321,6 +341,17 @@ public final class AgentContract {
      * could not be read), so every class counts as touched; why.
      */
     public static final String TOUCH_ALL = "all";
+
+    /**
+     * The environment variables the test JVM read, one name per line, escaped as {@link Tsv} escapes
+     * a field; {@link #ENV_READ_WHOLE} for a read of the whole environment. Names only, never a
+     * value. Written per worker when every read was observed; the decode writes the union beside the
+     * map under the same name when every worker wrote one.
+     */
+    public static final String ENV_READS_FILE = "env-reads.tsv";
+
+    /** A line of {@link #ENV_READS_FILE} meaning a test read the whole environment. */
+    public static final String ENV_READ_WHOLE = "*";
 
     /** The last line of a {@link #TOUCHES_FILE} whose observation ended normally. */
     public static final String TOUCHES_COMPLETE = "#complete";
@@ -433,6 +464,9 @@ public final class AgentContract {
 
     /** Every decline that held, copied from {@link #DECLINES_PROPERTY}. */
     public static final String DECLINES_NOTE = "declines";
+
+    /** The properties left out of the environment comparison, copied from {@link #FINGERPRINT_IGNORED_PROPERTY}. */
+    public static final String FINGERPRINT_IGNORED_NOTE = "fingerprint-ignored";
 
     /**
      * What a selecting run of the same inputs would have noted as its outcome, on an observing run:

@@ -19,7 +19,7 @@ class MapFilesReadTest {
         "OBSERVATION_FILE" to "an observing run's report, read by nothing that decides",
         "FILE" to "the audit's task facts, a report",
         "TASK_FILE" to "the payback report",
-        "PENDING_FILE" to "the start reading of HEAD, the run's own",
+        "PENDING_FILE" to "the run's own start reading of HEAD, or of its environment, folded in by the decode",
         "STATS_PENDING_FILE" to "the start reading of the tree, the run's own",
         "START_FILE" to "a selecting run's start reading, the run's own",
         "COMPLEMENT_RECORD_FILE" to "a complement run's copy of a selection record it validated, the run's own",
@@ -27,6 +27,7 @@ class MapFilesReadTest {
         "\"loaded\"" to "the agent's per-worker raw lists, folded in by the decode",
         "MAP_DIGEST_FILE" to "the digest itself, never compared with the list",
         "MOVED_FILE" to "explains a forced run, read by nothing that decides",
+        "ENV_READS_FILE" to "the variables the tests read, by name, for the explain output; read by nothing that decides",
         "compared\"" to "the classpath files a run compared, handed to its own last look and deleted",
         "name" to "a name drawn from constants this scan sees elsewhere",
     )
@@ -41,6 +42,8 @@ class MapFilesReadTest {
         "ANNOTATION_DIGESTS_FILE" to "annotation-digests", "CAPTURE_COMMIT_FILE" to "capture-commit",
         "RESOURCE_DIGESTS_FILE" to "resource-digests",
         "SNAPSHOT_FILE" to "worktree-snapshot", "MAP_SCHEMA_VERSION_FILE" to "schema-version",
+        "ENVIRONMENT_FILE" to "environment.tsv", "ENVIRONMENT_FINGERPRINTS_FILE" to "environment-fingerprints.tsv",
+        "SALT_FILE" to "fingerprint-salt",
     )
 
     private val mapFileUse = Regex("""File\(\s*mapDir\s*,\s*([A-Za-z_.]+|"[^"]*")""")

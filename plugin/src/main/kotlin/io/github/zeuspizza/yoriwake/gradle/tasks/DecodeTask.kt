@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.bytecode.DigestScan
 import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
@@ -118,6 +119,9 @@ internal abstract class DecodeTask : DefaultTask() {
         val classpathFiles = pendingClasspathFiles(mapDir).let { file ->
             CoverageDecoder.readClasspathFilesFrom(file).also { runCatching { file.delete() } }
         }
+        // The environment the test JVMs started in, read once and removed as the walk above.
+        val environment = EnvironmentFingerprint.readPending(mapDir)
+            .also { runCatching { File(mapDir, EnvironmentFingerprint.PENDING_FILE).delete() } }
         val pending = CaptureStart.Pending.decode(
             pendingHead(mapDir).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
         )
@@ -330,6 +334,7 @@ internal abstract class DecodeTask : DefaultTask() {
                     )
                 },
                 isolated = isolated.getOrElse(false),
+                environment = environment,
             )
         }
         // A map we cannot write leaves the previous one alone; it never fails someone
