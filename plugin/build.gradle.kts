@@ -1,5 +1,6 @@
 import org.gradle.plugin.compatibility.compatibility
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import java.util.zip.CRC32
 
 plugins {
     `java-gradle-plugin`
@@ -232,6 +233,18 @@ val functionalCellTask = providers.gradleProperty("yoriwake.functional.gradle").
     require(it in functionalGradleVersions) { "yoriwake.functional.gradle=$it names no functional task" }
 }
 val functionalCellJdk = providers.gradleProperty("yoriwake.functional.jdk").orNull?.toInt()
+// A pull request's CI runs each functional suite as several jobs: `<index>/<count>` runs the test
+// classes whose top-level name hashes to `index`, so every class runs in exactly one shard. The
+// workflow checks that from the shards' results. Without it the whole suite runs.
+val functionalShard = providers.gradleProperty("yoriwake.functional.shard").orNull?.let { value ->
+    val parts = value.split("/")
+    val index = parts.getOrNull(0)?.toIntOrNull()
+    val count = parts.getOrNull(1)?.toIntOrNull()
+    require(parts.size == 2 && index != null && count != null && count > 0 && index in 1..count) {
+        "yoriwake.functional.shard=$value must be <index>/<count>, with 1 <= index <= count"
+    }
+    index to count
+}
 // The JDKs a fixture's toolchain may use. TestKit builds have their own Gradle home and cannot see
 // the JDKs this build was told about, so the same paths are handed to them.
 val toolchainPaths = providers.gradleProperty("org.gradle.java.installations.paths").orNull.orEmpty()
@@ -278,6 +291,18 @@ testing {
                             filter.includeTestsMatching("$breakAttemptsPackage.*")
                         } else {
                             filter.excludeTestsMatching("$breakAttemptsPackage.*")
+                        }
+                        functionalShard?.takeIf { !name.startsWith("breakAttempts") }?.let { (index, count) ->
+                            // By the class file's top-level name, so a nested class runs with the class
+                            // around it. CRC32, not hashCode: the same shard on every JVM and every run.
+                            // Plain values only in the lambda, for the configuration cache.
+                            exclude { file ->
+                                val path = file.relativePath.pathString
+                                if (file.isDirectory || !path.endsWith(".class")) return@exclude false
+                                val topLevel = path.removeSuffix(".class").substringBefore('$').replace('/', '.')
+                                val crc = CRC32().apply { update(topLevel.toByteArray()) }.value
+                                (crc % count).toInt() + 1 != index
+                            }
                         }
                     }
                 }
