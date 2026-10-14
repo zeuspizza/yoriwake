@@ -245,6 +245,8 @@ testing {
                     testTask.configure {
                         // TestKit builds are slow; give them room rather than letting them fail as flakes.
                         maxHeapSize = "1g"
+                        // A CI log is all a failed run leaves: print each failure's message, not only its class.
+                        testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
                         systemProperty("yoriwake.functional.gradleVersion", functionalGradleVersions.getValue(name))
                         dependsOn("publishAllPublicationsToBuildLocalRepository")
                         systemProperty("yoriwake.localRepository", localRepository.get().asFile.absolutePath)
