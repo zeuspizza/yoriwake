@@ -647,7 +647,8 @@ def case_every_way_a_test_class_can_go_untested_fails():
 
 
 def case_every_sharded_suite_runs_all_its_shards():
-    """The workflow's shard lists, the property's count and the check's count agree, 1..N."""
+    """The workflow's shard lists, the property's count and the check's count agree, 1..N; each
+    check job runs when a shard fails, fails then, and reads its own suite's results."""
     problems = 0
     with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
         text = handle.read()
@@ -665,10 +666,34 @@ def case_every_sharded_suite_runs_all_its_shards():
         n = int(count.group(1))
         if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
             problems += fail(f"{name}: shards {listed.group(1)} are not 1..{n}")
-        check = next((j for j in jobs if f"needs: {name}\n" in j), "")
-        if f"--count {n}\n" not in check + "\n":
+        check = next((j for j in jobs if f"needs: {name}\n" in j), "") + "\n"
+        if f"--count {n}\n" not in check:
             problems += fail(f"{name}: its check does not expect {n} shards")
+        # Without these a failed shard skips its check, and GitHub counts a skipped required check
+        # as passing.
+        if "    if: always()\n" not in check:
+            problems += fail(f"{name}: its check job does not run when a shard fails (if: always())")
+        if f"if: needs.{name}.result != 'success'" not in check or "exit 1" not in check:
+            problems += fail(f"{name}: its check job does not fail when a shard did not succeed")
+        # One suite's check must read that suite's results, not another's.
+        task = re.search(r"\./gradlew :plugin:(\w+)", job)
+        upload = re.search(r"name: (functional-\w+-(\w+)-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
+        if not task or not upload or upload.group(2) != task.group(1) or upload.group(3) != str(n):
+            problems += fail(f"{name}: its artifact name does not name its task and shard count")
+            continue
+        if f"path: plugin/build/test-results/{task.group(1)}/*.xml" not in job:
+            problems += fail(f"{name}: it does not upload {task.group(1)}'s results")
+        if f"pattern: {upload.group(1)}*\n" not in check:
+            problems += fail(f"{name}: its check does not download its own artifacts ({upload.group(1)}*)")
     return problems
+
+
+def case_no_downloaded_shard_is_every_shard_missing():
+    with tempfile.TemporaryDirectory() as root:
+        sources = _sources(root, SHARD_SOURCES)
+        found = functional_shards.check(os.path.join(root, "absent"), 2, sources)
+    expected = {"shard 1 of 2 left no results", "shard 2 of 2 left no results"}
+    return 0 if expected <= set(found) else fail(f"a missing shards directory gave {found}")
 
 
 CASES = (
@@ -676,6 +701,7 @@ CASES = (
     case_shards_that_partition_the_suite_pass,
     case_every_way_a_test_class_can_go_untested_fails,
     case_every_sharded_suite_runs_all_its_shards,
+    case_no_downloaded_shard_is_every_shard_missing,
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
     case_no_map_is_reported_rather_than_returned_as_success,

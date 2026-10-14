@@ -57,22 +57,25 @@ def candidates(sources=SOURCES):
 
 
 def ran_in(shard_dir):
-    """The top-level class of every testcase in a shard's XML, with the shard's test time."""
-    classes, seconds = set(), 0.0
+    """The top-level class of every testcase in a shard's XML, the shard's test time, and how many
+    of its testcases were skipped (a class whose tests all skip still counts as run, as unsharded)."""
+    classes, seconds, skipped = set(), 0.0, 0
     for path in glob.glob(os.path.join(shard_dir, "**", "*.xml"), recursive=True):
         root = ElementTree.parse(path).getroot()
         for case in root.iter("testcase"):
             classes.add((case.get("classname") or "").split("$", 1)[0])
             seconds += float(case.get("time") or 0)
+            skipped += case.find("skipped") is not None
     classes.discard("")
-    return classes, seconds
+    return classes, seconds, skipped
 
 
 def check(shards_dir, count, sources=SOURCES):
     """Problems with the shards under `shards_dir`, as lines; empty when they partition the suite."""
     problems = []
     shards = {}
-    for entry in sorted(os.listdir(shards_dir)):
+    # No directory at all, as when no artifact matched, is every shard missing, said as such.
+    for entry in sorted(os.listdir(shards_dir)) if os.path.isdir(shards_dir) else []:
         match = SHARD_DIR.search(entry)
         if not match or not os.path.isdir(os.path.join(shards_dir, entry)):
             continue
@@ -88,8 +91,8 @@ def check(shards_dir, count, sources=SOURCES):
     if not expected:
         problems.append(f"no test class found under {sources}; the check would prove nothing")
     where = {}
-    for index, (classes, seconds) in sorted(shards.items()):
-        print(f"shard {index}/{count}: {len(classes)} classes, {seconds / 60:.1f} min of tests")
+    for index, (classes, seconds, skipped) in sorted(shards.items()):
+        print(f"shard {index}/{count}: {len(classes)} classes, {seconds / 60:.1f} min of tests, {skipped} skipped")
         for name in classes:
             where.setdefault(name, []).append(index)
     for name in sorted(expected):
