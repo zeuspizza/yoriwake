@@ -135,7 +135,10 @@ class EnvironmentCharacterizationTest {
 
         // The launcher's metadata names the JDK the tests run on, whichever way it was chosen.
         assertEquals(jvm["jdk.version"], taskSays["jdk.version"], "the launcher's runtime version")
-        assertEquals(jvm["jdk.vendor"], taskSays["jdk.vendor"], "the launcher's vendor")
+        // Gradle names some vendors its own way; the map records Gradle's name on both sides, so
+        // the view only has to name the JVM's vendor.
+        val gradleVendor = mapOf("Eclipse Adoptium" to "Eclipse Temurin")
+        assertEquals(jvm["jdk.vendor"]?.let { gradleVendor[it] ?: it }, taskSays["jdk.vendor"], "the launcher's vendor")
         assertEquals(jvm["os.name"], taskSays["os.name"])
         assertEquals(jvm["os.arch"], taskSays["os.arch"])
 
