@@ -196,6 +196,77 @@ class EngineSupportTest {
         assertCapturedAndSelected(dir, listOf("Alpha", "Beta").associate { "${it}Spec" to subject(it, "n + n") })
     }
 
+    @Test
+    fun `a Jupiter suite on JUnit 6 is captured and selected`(@TempDir dir: File) {
+        // The rest of the suite pins JUnit 5; the newest major is tested here so the reference can
+        // name both. JUnit 6 needs Java 17, which every supported daemon JDK is above.
+        val subject = { name: String, body: String ->
+            "src/main/java/dev/engine/$name.java" to """
+                package dev.engine;
+                public class $name {
+                    public int twice(int n) { return $body; }
+                }
+            """.trimIndent()
+        }
+        val tests = listOf("Alpha", "Beta").map { name ->
+            "src/test/java/dev/engine/${name}Test.java" to """
+                package dev.engine;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class ${name}Test {
+                    @Test void doubles() { assertEquals(2, new $name().twice(1)); }
+                }
+            """.trimIndent()
+        }
+        project(
+            dir,
+            """
+                testImplementation(platform("org.junit:junit-bom:6.1.3"))
+                testImplementation("org.junit.jupiter:junit-jupiter")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            """.trimIndent(),
+            "useJUnitPlatform()",
+            subject("Alpha", "n * 2"), subject("Beta", "n * 2"), *tests.toTypedArray(),
+        )
+
+        assertCapturedAndSelected(dir, listOf("Alpha", "Beta").associate { "${it}Test" to subject(it, "n + n") })
+    }
+
+    @Test
+    fun `a JUnit 4 suite on the vintage engine is captured and selected`(@TempDir dir: File) {
+        val subject = { name: String, body: String ->
+            "src/main/java/dev/engine/$name.java" to """
+                package dev.engine;
+                public class $name {
+                    public int twice(int n) { return $body; }
+                }
+            """.trimIndent()
+        }
+        val tests = listOf("Alpha", "Beta").map { name ->
+            "src/test/java/dev/engine/${name}Test.java" to """
+                package dev.engine;
+                import org.junit.Test;
+                import static org.junit.Assert.assertEquals;
+                public class ${name}Test {
+                    @Test public void doubles() { assertEquals(2, new $name().twice(1)); }
+                }
+            """.trimIndent()
+        }
+        project(
+            dir,
+            """
+                testImplementation(platform("org.junit:junit-bom:5.11.4"))
+                testImplementation("junit:junit:4.13.2")
+                testRuntimeOnly("org.junit.vintage:junit-vintage-engine")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            """.trimIndent(),
+            "useJUnitPlatform()",
+            subject("Alpha", "n * 2"), subject("Beta", "n * 2"), *tests.toTypedArray(),
+        )
+
+        assertCapturedAndSelected(dir, listOf("Alpha", "Beta").associate { "${it}Test" to subject(it, "n + n") })
+    }
+
     /** Two Kotest specs, each reaching only its own subject; returns a writer of a subject's source. */
     private fun kotestProject(dir: File, testConfig: String = ""): (String, String) -> Pair<String, String> {
         // Kotest ships its own JUnit Platform engine rather than running on Jupiter.
