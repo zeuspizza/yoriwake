@@ -22,23 +22,37 @@ RESULTS = "samples/demo/build/test-results/test/*.xml"
 # see io.github.zeuspizza.yoriwake.agent.DecisionRecord.
 DECISIONS = "samples/demo/.gradle/yoriwake/*/decisions.tsv"
 
-# What each mutation in `.github/ci.py` breaks, and the test classes it cannot reach. Alpha is
-# reached through coverage; Epsilon only by name, from a resource, so only the resource scan keeps
-# its test. Change these together with ci.py's mutations.
+# What each mutation in `.github/ci.py` breaks, why the run must include it, and what it must
+# skip. Change these together with ci.py's mutations.
+#
+# Alpha is reached through coverage, so the run narrows: its tests run because the map links them
+# to the change, and the rest are skipped. Epsilon no test executes; a resource names it as a
+# string, which only the resource scan sees. That makes its absence from the map unprovable, so the
+# run widens to everything, for that reason and on that change. Were the scan lost, the absence
+# would read as proof, the run would narrow, and the registry test would be skipped.
 EXPECTED = {
     "alpha": {
         "broken": ("dev.demo.AlphaTest.doubles", "dev.demo.AlphaTest.doublesAgain"),
+        "reason": "REACHES_CHANGE",
         "unreachable": ("dev.demo.BetaTest", "dev.demo.GammaTest"),
+        "notes": {"input.yoriwake.change.classes": "dev.demo.Alpha"},
     },
     "epsilon": {
         "broken": ("dev.demo.EpsilonRegistryTest.everyRegisteredTypeExposesTheMethodsTheRegistryPromises",),
-        "unreachable": ("dev.demo.AlphaTest", "dev.demo.BetaTest", "dev.demo.GammaTest", "dev.demo.DeltaShapeTest"),
+        "reason": "FULL_RUN",
+        "unreachable": (),
+        "notes": {
+            "input.yoriwake.change.classes": "dev.demo.Epsilon",
+            "outcome": "full-run",
+            "full-run-kind": "no-coverage-for-changed",
+        },
     },
 }
 
 
-def decisions():
-    """{test id: (verdict, reason)}, or {} when no run has written one.
+def decisions(notes=None):
+    """{test id: (verdict, reason)}, or {} when no run has written one; the run's `#!` notes go
+    into `notes` when given.
 
     Absence is not treated as failure by the caller: this file arrived after the recall and
     selectivity checks below, and those must keep working on a run that predates it.
@@ -47,6 +61,9 @@ def decisions():
     for path in glob.glob(DECISIONS):
         with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
+                if line.startswith("#!") and notes is not None:
+                    key, _, value = line[2:].rstrip("\n").partition("\t")
+                    notes[key] = value
                 if not line.strip() or line.startswith("#"):
                     continue
                 parts = line.rstrip("\n").split("\t")
@@ -93,10 +110,11 @@ def main(argv=None):
         problems.append("no tests ran at all; the map or the build is broken, not the change set")
 
     # Why, not just what: a selector that was never consulted also passes the checks above.
-    made = decisions()
+    notes = {}
+    made = decisions(notes)
     if made:
         excluded = {t for t, (verdict, _) in made.items() if verdict == "excluded"}
-        if not excluded:
+        if expected["unreachable"] and not excluded:
             problems.append(
                 "the decision record shows nothing was excluded, so this run did not select at all"
             )
@@ -106,11 +124,15 @@ def main(argv=None):
                     problems.append(f"{test} was {verdict} ({reason}); it cannot reach the change")
                 elif reason != "SKIPPED":
                     problems.append(f"{test} was excluded for {reason}, not SKIPPED")
-            # Included because the map links it to the change, not for another reason: a test the map
-            # does not know (NOT_IN_MAP) also runs and fails, so a map that was never read passes the
-            # checks above.
-            if any(broken in test for broken in broken_classes) and (verdict, reason) != ("included", "REACHES_CHANGE"):
-                problems.append(f"{test} was {verdict} ({reason}); the change breaks it, through the map")
+            # Included for the reason the change gives, not another: a test the map does not know
+            # (NOT_IN_MAP) also runs and fails, so a map that was never read passes the checks above.
+            if any(broken in test for broken in broken_classes) and (verdict, reason) != ("included", expected["reason"]):
+                problems.append(f"{test} was {verdict} ({reason}); expected included ({expected['reason']})")
+        # The run's own account of what changed and what it did: a widening for another cause, or
+        # on another change, would otherwise pass for the expected one.
+        for key, value in expected["notes"].items():
+            if notes.get(key) != value:
+                problems.append(f"the decision record's {key} is {notes.get(key)!r}, expected {value!r}")
         # A reason of SELECTION_NOT_REQUESTED everywhere means the flag never reached the test JVM,
         # which looks exactly like a suite nothing narrowed.
         if all(reason == "SELECTION_NOT_REQUESTED" for _, reason in made.values()):

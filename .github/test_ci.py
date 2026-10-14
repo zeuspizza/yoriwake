@@ -180,7 +180,7 @@ def case_a_source_without_a_mutation_is_refused():
     return fail("a file with no defined mutation was accepted")
 
 
-def _selecting_run(root, ran, failed, decisions):
+def _selecting_run(root, ran, failed, decisions, notes):
     """Writes what assert_selection reads: one result file and one decision record."""
     results = os.path.join(root, "samples", "demo", "build", "test-results", "test")
     os.makedirs(results)
@@ -194,15 +194,16 @@ def _selecting_run(root, ran, failed, decisions):
     map_dir = os.path.join(root, "samples", "demo", ".gradle", "yoriwake", "test-1fb574ab")
     os.makedirs(map_dir)
     with open(os.path.join(map_dir, "decisions.tsv"), "w", encoding="utf-8") as handle:
+        handle.write("".join(f"#!{key}\t{value}\n" for key, value in notes.items()))
         handle.write("".join(f"{t}\t{verdict}\t{reason}\n" for t, (verdict, reason) in decisions.items()))
 
 
-def _asserts(ran, failed, decisions):
+def _asserts(ran, failed, decisions, notes):
     """assert_selection's exit for the Epsilon round over a fake run, its printing swallowed."""
     import contextlib
     import io
     with tempfile.TemporaryDirectory() as root:
-        _selecting_run(root, ran, failed, decisions)
+        _selecting_run(root, ran, failed, decisions, notes)
         here = os.getcwd()
         os.chdir(root)
         try:
@@ -212,18 +213,28 @@ def _asserts(ran, failed, decisions):
             os.chdir(here)
 
 
-def case_the_epsilon_round_fails_unless_the_map_reached_the_registry_test():
-    """Each check must be able to fail: a run that ignored the map also runs the broken test."""
+def case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reason():
+    """Each check must be able to fail: a run that never read the map also runs the broken test."""
     problems = 0
     broken = "dev.demo.EpsilonRegistryTest.everyRegisteredTypeExposesTheMethodsTheRegistryPromises"
-    skipped = {f"dev.demo.{name}.t": ("excluded", "SKIPPED") for name in ("AlphaTest", "BetaTest", "GammaTest", "DeltaShapeTest")}
-    good = {broken: ("included", "REACHES_CHANGE"), **skipped}
-    if _asserts([broken], {broken}, good) != 0:
+    others = [f"dev.demo.{name}.t" for name in ("AlphaTest", "BetaTest", "GammaTest", "DeltaShapeTest")]
+    ran = [broken] + others
+    widened = {t: ("included", "FULL_RUN") for t in ran}
+    notes = {
+        "input.yoriwake.change.classes": "dev.demo.Epsilon",
+        "outcome": "full-run",
+        "full-run-kind": "no-coverage-for-changed",
+    }
+    if _asserts(ran, {broken}, widened, notes) != 0:
         problems += fail("a correct Epsilon round was rejected")
-    if _asserts([broken], {broken}, {**good, broken: ("included", "NOT_IN_MAP")}) == 0:
+    if _asserts(ran, {broken}, {**widened, broken: ("included", "NOT_IN_MAP")}, notes) == 0:
         problems += fail("the registry test included as NOT_IN_MAP passed; a map nobody read looks the same")
-    if _asserts([broken, "dev.demo.BetaTest.t"], {broken}, good) == 0:
-        problems += fail("an unreachable test that ran passed the Epsilon round")
+    # What losing the resource scan looks like: Epsilon's absence reads as proof, and the run narrows.
+    narrowed = {broken: ("excluded", "SKIPPED"), **{t: ("excluded", "SKIPPED") for t in others}}
+    if _asserts([], set(), narrowed, {**notes, "outcome": "narrowed", "full-run-kind": ""}) == 0:
+        problems += fail("a run that skipped the registry test passed the Epsilon round")
+    if _asserts(ran, {broken}, widened, {**notes, "full-run-kind": "unmappable-paths"}) == 0:
+        problems += fail("a run widened for another reason passed as the resource scan's widening")
     return problems
 
 
@@ -325,7 +336,7 @@ CASES = (
     case_restore_is_the_mutation_backwards,
     case_each_source_gets_its_own_mutation_and_restore,
     case_a_source_without_a_mutation_is_refused,
-    case_the_epsilon_round_fails_unless_the_map_reached_the_registry_test,
+    case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reason,
     case_discard_removes_results_and_leaves_the_map_alone_by_default,
     case_discard_on_a_clean_tree_is_not_an_error,
     case_a_tag_pin_is_reported,
