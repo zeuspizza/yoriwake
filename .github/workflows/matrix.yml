@@ -8,8 +8,6 @@ name: supported matrix
 # Manual only, and dispatched from the candidate's own branch (`main` for a minor,
 # `release/<major>.<minor>` for a patch), so the workflow, the build and the table come from one line
 # of history. It costs hours of runner time, which is why no push or pull request starts it.
-#
-# Windows is not a cell: the functional suite does not yet pass there.
 on:
   workflow_dispatch:
     inputs:
@@ -66,6 +64,9 @@ jobs:
           - { os: macos, runner: macos-latest, gradle: '8.14', task: functionalTest, jdk: '21' }
           - { os: macos, runner: macos-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '21' }
           - { os: macos, runner: macos-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '25' }
+          - { os: windows, runner: windows-latest, gradle: '8.14', task: functionalTest, jdk: '21' }
+          - { os: windows, runner: windows-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '21' }
+          - { os: windows, runner: windows-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '25' }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -209,8 +210,11 @@ jobs:
       - name: run only the tests the change can reach
         run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
 
+      # A map is per operating system: from another, the run must refuse it and run everything.
       - name: the change's own tests ran and failed, the unrelated ones did not
-        run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py
+        env:
+          EXPECT: ${{ matrix.from == matrix.os && 'alpha' || 'alpha-on-another-os' }}
+        run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py --mutated "$EXPECT"
 
       - name: record the commit this job ran
         shell: bash

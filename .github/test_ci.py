@@ -199,8 +199,8 @@ def _selecting_run(root, ran, failed, decisions, notes):
         handle.write("".join(f"{t}\t{verdict}\t{reason}\n" for t, (verdict, reason) in decisions.items()))
 
 
-def _asserts(ran, failed, decisions, notes):
-    """assert_selection's exit for the Epsilon round over a fake run, its printing swallowed."""
+def _asserts(ran, failed, decisions, notes, mutated="epsilon"):
+    """assert_selection's exit for one round over a fake run, its printing swallowed."""
     import contextlib
     import io
     with tempfile.TemporaryDirectory() as root:
@@ -209,7 +209,7 @@ def _asserts(ran, failed, decisions, notes):
         os.chdir(root)
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                return assert_selection.main(["--mutated", "epsilon"])
+                return assert_selection.main(["--mutated", mutated])
         finally:
             os.chdir(here)
 
@@ -236,6 +236,23 @@ def case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reaso
         problems += fail("a run that skipped the registry test passed the Epsilon round")
     if _asserts(ran, {broken}, widened, {**notes, "full-run-kind": "unmappable-paths"}) == 0:
         problems += fail("a run widened for another reason passed as the resource scan's widening")
+    return problems
+
+
+def case_a_map_from_another_os_must_widen_the_run_and_say_why():
+    """A map is per operating system: a run that narrowed from another OS's map must fail the job."""
+    problems = 0
+    broken = ["dev.demo.AlphaTest.doubles", "dev.demo.AlphaTest.doublesAgain"]
+    others = [f"dev.demo.{name}.t" for name in ("BetaTest", "GammaTest")]
+    widened = {t: ("included", "FULL_RUN") for t in broken + others}
+    notes = {"outcome": "full-run", "full-run-kind": "environment-changed"}
+    if _asserts(broken + others, set(broken), widened, notes, "alpha-on-another-os") != 0:
+        problems += fail("a correct refusal of another operating system's map was rejected")
+    narrowed = {**{t: ("included", "REACHES_CHANGE") for t in broken}, **{t: ("excluded", "SKIPPED") for t in others}}
+    if _asserts(broken, set(broken), narrowed, {"outcome": "narrowed"}, "alpha-on-another-os") == 0:
+        problems += fail("a run that narrowed from another operating system's map passed")
+    if _asserts(broken + others, set(broken), widened, {**notes, "full-run-kind": "unmappable-paths"}, "alpha-on-another-os") == 0:
+        problems += fail("a run widened for another reason passed as the environment's refusal")
     return problems
 
 
@@ -569,6 +586,7 @@ CASES = (
     case_each_source_gets_its_own_mutation_and_restore,
     case_a_source_without_a_mutation_is_refused,
     case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reason,
+    case_a_map_from_another_os_must_widen_the_run_and_say_why,
     case_discard_removes_results_and_leaves_the_map_alone_by_default,
     case_discard_on_a_clean_tree_is_not_an_error,
     case_a_tag_pin_is_reported,

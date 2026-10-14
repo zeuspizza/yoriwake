@@ -184,7 +184,8 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         )
         recorded(dir, environment = System.getenv() + ci)
         val other = File(root, "pull-request")
-        git(root, "clone", "-q", dir.absolutePath, other.absolutePath)
+        // Byte for byte: under autocrlf the clone's resources would gain carriage returns: another build.
+        git(root, "clone", "-q", "-c", "core.autocrlf=false", dir.absolutePath, other.absolutePath)
         File(dir, ".gradle/yoriwake").copyRecursively(File(other, ".gradle/yoriwake"))
         changeBeta(other)
 

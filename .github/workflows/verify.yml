@@ -155,19 +155,17 @@ jobs:
       - name: the registry's test ran and failed, the unrelated ones did not
         run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py --mutated epsilon
 
-  # The cross-OS cases: the map captured on Linux above, selected against on Windows, and the
-  # reverse below.
+  # A map is per operating system: one captured on another makes a selecting run run every test
+  # (`environment-changed`), and these two jobs show that refusal in both directions, with the
+  # change's tests run and failed. Selection on Windows itself is the Windows-to-Windows job below.
   select-on-windows:
     name: select on windows, against a map captured on linux
     needs: capture
     runs-on: windows-latest
     steps:
       # Before the checkout: a clone that already dropped long-path files looks complete and cannot
-      # be repaired afterwards, and a checkout's line endings are fixed when it is made.
-      #
-      # A map moves between operating systems only between checkouts with the same line endings:
-      # a text resource on the test classpath that differs only in them is another build, and
-      # the run widens to everything. The supported setup is LF on every side.
+      # be repaired afterwards, and a checkout's line endings are fixed when it is made. LF, as on
+      # Linux, so the operating system is the only thing that differs.
       - name: allow long paths, and check out with the repository's LF line endings
         run: |
           git config --global core.longpaths true
@@ -196,43 +194,21 @@ jobs:
         run: python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
 
       # The mutation makes tests fail, so a non-zero exit is expected; the assertion decides the job.
-      - name: run only the tests the change can reach
+      - name: run with a map from another operating system
         shell: bash
         run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
 
       # YORIWAKE_REQUIRE_DECISIONS=1, which the local check also sets: without a decision record the
-      # assertion silently skips its whole WHY half, and a run that selected nothing looks the same
-      # as one that selected correctly. Windows is where that write is most likely to fail quietly,
-      # because MAX_PATH bites the `<task>-<hash>` directory the record lives in.
-      - name: the change's own tests ran and failed, the unrelated ones did not
+      # assertion silently skips its whole WHY half. Windows is where that write is most likely to
+      # fail quietly, because MAX_PATH bites the `<task>-<hash>` directory the record lives in.
+      - name: every test ran, because the map was recorded on another operating system
         shell: bash
-        run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py
+        run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py --mutated alpha-on-another-os
 
-      - name: restore Alpha and break Epsilon instead
-        shell: bash
-        run: |
-          set -eu
-          python .github/ci.py restore samples/demo/src/main/java/dev/demo/Alpha.java
-          python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Epsilon.java
-          python .github/ci.py discard samples/demo
-
-      - name: run only the tests the second change can reach
-        shell: bash
-        run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
-
-      - name: the registry's test ran and failed, the unrelated ones did not
-        shell: bash
-        run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py --mutated epsilon
-
-  # The reverse direction: a map captured on Windows, from a checkout with Windows line endings,
-  # selected against on Linux.
   capture-on-windows:
     name: build a map on windows
     runs-on: windows-latest
     steps:
-      # A map moves between operating systems only between checkouts with the same line endings:
-      # a text resource on the test classpath that differs only in them is another build, and
-      # the run widens to everything. The supported setup is LF on every side.
       - name: allow long paths, and check out with the repository's LF line endings
         run: |
           git config --global core.longpaths true
@@ -267,6 +243,61 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
+  # Selection on Windows, on another runner from a cold checkout, as `select` is on Linux.
+  select-on-windows-from-windows:
+    name: select on windows, against a map captured on windows
+    needs: capture-on-windows
+    runs-on: windows-latest
+    steps:
+      - name: allow long paths, and check out with the repository's LF line endings
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-map-windows
+          path: samples/demo/.gradle/yoriwake
+
+      - name: publish the plugin locally
+        shell: bash
+        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+
+      - name: break Alpha so its tests fail
+        shell: bash
+        run: python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
+
+      - name: run only the tests the change can reach
+        shell: bash
+        run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
+
+      - name: the change's own tests ran and failed, the unrelated ones did not
+        shell: bash
+        run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py
+
+      - name: restore Alpha and break Epsilon instead
+        shell: bash
+        run: |
+          set -eu
+          python .github/ci.py restore samples/demo/src/main/java/dev/demo/Alpha.java
+          python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Epsilon.java
+          python .github/ci.py discard samples/demo
+
+      - name: run only the tests the second change can reach
+        shell: bash
+        run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
+
+      - name: the registry's test ran and failed, the unrelated ones did not
+        shell: bash
+        run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py --mutated epsilon
+
   select-on-linux:
     name: select on linux, against a map captured on windows
     needs: capture-on-windows
@@ -290,24 +321,11 @@ jobs:
       - name: break Alpha so its tests fail
         run: python3 .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
 
-      - name: run only the tests the change can reach
+      - name: run with a map from another operating system
         run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
 
-      - name: the change's own tests ran and failed, the unrelated ones did not
-        run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py
-
-      - name: restore Alpha and break Epsilon instead
-        run: |
-          set -eu
-          python3 .github/ci.py restore samples/demo/src/main/java/dev/demo/Alpha.java
-          python3 .github/ci.py mutate samples/demo/src/main/java/dev/demo/Epsilon.java
-          python3 .github/ci.py discard samples/demo
-
-      - name: run only the tests the second change can reach
-        run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
-
-      - name: the registry's test ran and failed, the unrelated ones did not
-        run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py --mutated epsilon
+      - name: every test ran, because the map was recorded on another operating system
+        run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py --mutated alpha-on-another-os
 
   # The build on Windows, split as on Linux so the slowest suite sets the time. The checkout keeps
   # the runner's CRLF line endings, as a Windows developer's does; .gitattributes pins the files

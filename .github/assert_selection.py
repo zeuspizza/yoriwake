@@ -47,6 +47,14 @@ EXPECTED = {
             "full-run-kind": "no-coverage-for-changed",
         },
     },
+    # Alpha's change against a map recorded on another operating system: a map is per environment,
+    # so the run must not narrow at all, and must say that is why.
+    "alpha-on-another-os": {
+        "broken": ("dev.demo.AlphaTest.doubles", "dev.demo.AlphaTest.doublesAgain"),
+        "reason": "FULL_RUN",
+        "unreachable": (),
+        "notes": {"outcome": "full-run", "full-run-kind": "environment-changed"},
+    },
 }
 
 
@@ -141,6 +149,8 @@ def main(argv=None):
                 "test JVM, so this run proves nothing about selection"
             )
         print(f"decisions {len(made)}: {sum(1 for v, _ in made.values() if v == 'excluded')} excluded")
+        if notes.get("full-run-reason"):
+            print(f"full run: {notes['full-run-reason']}")
     elif os.environ.get("YORIWAKE_REQUIRE_DECISIONS") == "1":
         problems.append(f"no decision record under {DECISIONS}; the agent wrote none")
 
