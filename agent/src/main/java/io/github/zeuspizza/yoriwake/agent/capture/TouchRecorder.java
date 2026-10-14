@@ -118,21 +118,32 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     /**
-     * The names of the environment variables this JVM read, or null when its reads were not all
-     * observed. Never a value.
+     * The names of the environment variables this JVM's tests read, or null when its reads were not
+     * all observed or no test plan started. Never a value.
      */
     @Override
     public Set<String> environmentReads() {
+        synchronized (lock) {
+            if (!planStarted) {
+                return null;
+            }
+        }
         return environmentIncomplete == null ? new java.util.TreeSet<>(environmentReads) : null;
     }
 
     /**
      * The environment hooks' sink: a variable's name, or null for the whole environment. Any other
-     * value is the warm-up, and records nothing.
+     * value is the warm-up, and records nothing. Only reads once the test plan started are the
+     * tests': before it, the test worker reads its own.
      */
     void environmentRead(Object name) {
         if (inside.get() != null) {
             return;
+        }
+        synchronized (lock) {
+            if (!planStarted) {
+                return;
+            }
         }
         inside.set(Boolean.TRUE);
         try {
