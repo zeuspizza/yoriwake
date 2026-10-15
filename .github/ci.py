@@ -124,14 +124,16 @@ def needs_checks(paths):
     return any(path in CHECKED_DOCS or not (path.endswith(".md") or path.startswith("docs/")) for path in paths)
 
 
-def changed_paths(base, head):
+def changed_paths(base, head, cwd=None):
     """The paths a pull request changes, or None when git cannot say."""
     try:
-        done = subprocess.run(["git", "diff", "--name-only", f"{base}...{head}"],
-                              capture_output=True, text=True, check=True)
+        # No renames: a code file moved into docs/ would be listed under its new name only, and pass
+        # as docs. NUL-separated, so a quoted name never reaches the rule.
+        done = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", f"{base}...{head}"],
+                              capture_output=True, text=True, check=True, cwd=cwd)
     except (OSError, subprocess.CalledProcessError):
         return None
-    return done.stdout.splitlines()
+    return done.stdout.split("\0")
 
 
 def main(argv=None):

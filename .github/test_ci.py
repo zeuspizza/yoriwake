@@ -724,8 +724,11 @@ def case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to():
     with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
         text = handle.read()
     trigger = text.split("\njobs:\n", 1)[0]
-    if re.search(r"\n  pull_request:\n    paths", trigger):
+    if re.search(r"\n  pull_request:\n(    [^\n]*\n)*    paths", trigger):
         problems += fail("verify's pull_request trigger has a path filter: required checks would wait forever")
+    # Retargeted to main, a pull request into another branch would bring its skipped checks along.
+    if not re.search(r"\n  pull_request:\n    branches: \[main\]\n", trigger):
+        problems += fail("verify runs on pull requests into any branch, not only main")
     jobs = re.split(r"\n  (?=[\w-]+:\n)", text.split("\njobs:\n", 1)[1])
     for job in jobs:
         header = re.match(r"\s*([\w-]+):\n", job)
@@ -741,7 +744,32 @@ def case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to():
     return problems
 
 
+def case_a_code_file_moved_into_docs_still_needs_the_checks():
+    """With renames detected, the move is listed under its new name only and passes as docs."""
+    import subprocess
+
+    with tempfile.TemporaryDirectory() as root:
+        def git(*args):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root,
+                           check=True, capture_output=True)
+
+        git("init", "-q")
+        os.makedirs(os.path.join(root, "src"))
+        with open(os.path.join(root, "src", "Alpha.java"), "w", encoding="utf-8") as handle:
+            handle.write("class Alpha { int twice(int n) { return n * 2; } }\n" * 20)
+        git("add", ".")
+        git("commit", "-q", "-m", "base")
+        os.makedirs(os.path.join(root, "docs"))
+        git("mv", "src/Alpha.java", "docs/Alpha.java")
+        git("commit", "-q", "-m", "moved")
+        paths = ci.changed_paths("HEAD~1", "HEAD", cwd=root)
+    if not paths or "src/Alpha.java" not in paths:
+        return fail(f"the moved file's old path is not among the changes: {paths}")
+    return 0 if ci.needs_checks(paths) else fail("a code file moved into docs/ passed as a docs-only change")
+
+
 CASES = (
+    case_a_code_file_moved_into_docs_still_needs_the_checks,
     case_only_a_docs_change_skips_the_checks,
     case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,

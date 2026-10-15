@@ -10,7 +10,10 @@ on:
   push:
     branches: [main]
     paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md', 'docs/reference.md']
+  # Only pull requests into main: a docs-only pull request into another branch, retargeted to main,
+  # must not bring its skipped checks along. Retargeted, its required checks are missing until a push.
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # A newer push to a pull request cancels its older run. Every push to main runs on its own, so no
