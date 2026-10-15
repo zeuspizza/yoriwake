@@ -1,7 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -35,9 +34,8 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
         }
     """.trimIndent()
 
-    private val java25WithJacoco0812 =
-        "$minimalBuild\njava { toolchain { languageVersion = JavaLanguageVersion.of(25) } }\n" +
-            "jacoco { toolVersion = \"0.8.12\" }"
+    /** Java 21 classes under a JaCoCo whose official support ends at Java 20. */
+    private val jacocoBehindTheClasses = "$minimalBuild\njacoco { toolVersion = \"0.8.10\" }"
 
     private fun captured(dir: File, script: String): String {
         build(dir, "build.gradle.kts" to script, oneClass, secondClass, unused, oneTest, secondTest, classOrderByName)
@@ -68,9 +66,8 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `classes newer than the host's JaCoCo instruments run every test`(@TempDir dir: File) {
-        assumeTrue(FunctionalGradle.version.startsWith("9."), "Gradle before 9.1 does not support Java 25")
-        captured(dir, java25WithJacoco0812)
+    fun `classes newer than the host's JaCoCo officially instruments run every test`(@TempDir dir: File) {
+        captured(dir, jacocoBehindTheClasses)
 
         changeBeta(dir)
         val output = select(dir)
@@ -78,14 +75,13 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
         val notes = decisionNotes(dir)
         assertEquals("full-run", notes["outcome"], notes.toString())
         assertEquals("class-file-unsupported", notes["refusal-kind"], notes.toString())
-        assertContains(output, "JaCoCo 0.8.12 (`jacoco.toolVersion`) officially instruments up to Java 22")
+        assertContains(output, "JaCoCo 0.8.10 (`jacoco.toolVersion`) officially instruments up to Java 20")
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
     }
 
     @Test
-    fun `a change to a class no test loaded still runs every test when JaCoCo cannot instrument the build`(@TempDir dir: File) {
-        assumeTrue(FunctionalGradle.version.startsWith("9."), "Gradle before 9.1 does not support Java 25")
-        captured(dir, java25WithJacoco0812)
+    fun `a change to a class no test loaded still runs every test when JaCoCo does not officially support the build's Java`(@TempDir dir: File) {
+        captured(dir, jacocoBehindTheClasses)
 
         File(dir, "src/main/java/dev/sample/Unused.java").writeText(unused.second.replace("return n;", "return n + 0;"))
         select(dir)

@@ -1,7 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
-import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileSupport
 import io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport as AgentClassFileSupport
+import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileSupport
 import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileVersions
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -13,8 +13,9 @@ internal class CeilingRefusal(val kind: RefusalKind, val cause: String, val reme
 
 /**
  * The refusal for a task whose test JVM is newer than the agent's ASM reads, or whose own classes
- * are newer than the plugin's ASM reads or than the host's JaCoCo officially instruments, or null. Checked before every rule that reads those classes, so the
- * named cause wins over the unreadable digest or missing coverage it would otherwise surface as.
+ * are newer than the plugin's ASM reads or than the host's JaCoCo officially instruments, or null.
+ * Checked before every rule that reads those classes, so the named cause wins over the unreadable
+ * digest or missing coverage it would otherwise surface as.
  */
 internal fun classFileCeiling(facts: ClasspathFacts, artifacts: TaskArtifacts): CeilingRefusal? {
     val testJvm = facts.testJvm?.let { runCatching { it.orNull }.getOrNull() }

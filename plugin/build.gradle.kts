@@ -285,6 +285,9 @@ testing {
                         providers.gradleProperty("yoriwake.functional.testJvms").orNull?.let {
                             systemProperty("yoriwake.functional.testJvms", it)
                         }
+                        providers.gradleProperty("yoriwake.functional.earlyAccessJdk").orNull?.let {
+                            systemProperty("yoriwake.functional.earlyAccessJdk", it)
+                        }
                         functionalCellJdk?.let { jdk ->
                             javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(jdk) }
                         }

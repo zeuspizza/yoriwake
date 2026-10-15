@@ -1,0 +1,70 @@
+name: early-access JDK
+
+# Runs the test-JVM range test on the newest early-access JDK, so a JDK whose class files the
+# bundled ASM or the host's JaCoCo cannot read is known to be refused by name before it ships. What
+# the test expects is computed from the ceilings this commit carries: narrowing within every
+# ceiling, the named refusal above one. Anything else fails the job.
+#
+# Weekly, and dispatched on each release candidate (`RELEASING.md`). A scheduled workflow that sees
+# no repository activity for 60 days is disabled by GitHub; the release checklist checks it is on.
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  early-access:
+    name: test JVM on the newest early-access JDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # First, so its JAVA_HOME can be kept before the build's own JDK replaces it.
+      - uses: oracle-actions/setup-java@fff43251af9936a0e6a4d5d0946e14f1680e9b6b # v1.5.0
+        id: early-access
+        with:
+          website: jdk.java.net
+          release: EA
+      - name: keep the early-access JDK's home and feature version
+        id: jdk
+        env:
+          VERSION: ${{ steps.early-access.outputs.version }}
+        run: |
+          set -eu
+          feature=$(printf '%s' "$VERSION" | grep -Eo '^[0-9]+')
+          echo "home=$JAVA_HOME" >> "$GITHUB_OUTPUT"
+          echo "feature=$feature" >> "$GITHUB_OUTPUT"
+          echo "early-access JDK $VERSION (feature $feature) at $JAVA_HOME" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      # The early-access JDK and the build's own, by path only: a JDK found anywhere else would not
+      # be the one this job names.
+      - name: the range test on the early-access JDK
+        env:
+          FEATURE: ${{ steps.jdk.outputs.feature }}
+          EA_HOME: ${{ steps.jdk.outputs.home }}
+        run: |
+          set -eu
+          ./gradlew :plugin:functionalTestGradle9 --console=plain \
+            --tests '*TestJvmRangeFunctionalTest' \
+            -Pyoriwake.functional.earlyAccessJdk="$FEATURE" \
+            -Pyoriwake.functional.testJvms="$FEATURE" \
+            -Porg.gradle.java.installations.auto-detect=false \
+            -Porg.gradle.java.installations.paths="$EA_HOME,$JAVA_HOME"
+
+      - name: name the outcome
+        if: failure()
+        run: |
+          echo "The early-access JDK did not do what this commit's ceilings predict; the test's" \
+            "message names the JDK, the expected outcome and the decision notes." >> "$GITHUB_STEP_SUMMARY"
