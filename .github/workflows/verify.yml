@@ -2,15 +2,15 @@ name: verify
 
 # Builds and tests the plugin, then checks the thing a local run cannot: that a coverage map built
 # on one machine selects correctly on another, from a cold checkout.
-# A change only to Markdown or docs starts nothing, except docs/contract.md: the agent's tests
-# check its constants against that file; and docs/reference.md, whose supported matrix test_ci.py
-# checks against matrix.yml.
+# A pull request that changes only Markdown or docs runs nothing but the `changes` job, and every
+# other job reports skipped, which satisfies the required checks; docs/contract.md (the agent's
+# tests check its constants against it) and docs/reference.md (test_ci.py checks its supported
+# matrix against matrix.yml) count as code. A push to main keeps the path filter.
 on:
   push:
     branches: [main]
     paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md', 'docs/reference.md']
   pull_request:
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md', 'docs/reference.md']
   workflow_dispatch:
 
 # A newer push to a pull request cancels its older run. Every push to main runs on its own, so no
@@ -28,8 +28,36 @@ permissions:
 # shards: together they run everything `./gradlew build` runs, and the slowest shard sets the time.
 # A check job per suite, named as the suite, proves every test class ran in exactly one shard.
 jobs:
+  # Whether this run needs the build at all. A pull request that changes only docs skips every job
+  # below, and a skipped job satisfies a required check, where a path filter on the trigger would
+  # leave the required checks waiting forever. The jobs run unless this says `false`, so a detector
+  # that failed or said nothing runs everything: a wrong "docs only" would skip every check.
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          if [ "$EVENT" = pull_request ]; then
+            echo "code=$(python3 .github/ci.py needs-checks "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: unit and agent suites
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,6 +71,8 @@ jobs:
 
   functional-shard:
     name: functional on Gradle 8.14 (shard ${{ matrix.shard }}/2)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -70,8 +100,8 @@ jobs:
   # every test class the sources declare ran in exactly one of them.
   functional:
     name: functional on Gradle 8.14
-    needs: functional-shard
-    if: always()
+    needs: [changes, functional-shard]
+    if: always() && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: every shard succeeded
@@ -89,6 +119,8 @@ jobs:
 
   functional-gradle9-shard:
     name: functional on Gradle 9 (shard ${{ matrix.shard }}/2)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -116,8 +148,8 @@ jobs:
   # every test class the sources declare ran in exactly one of them.
   functional-gradle9:
     name: functional on Gradle 9
-    needs: functional-gradle9-shard
-    if: always()
+    needs: [changes, functional-gradle9-shard]
+    if: always() && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: every shard succeeded
@@ -135,6 +167,8 @@ jobs:
 
   capture:
     name: build a map
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -172,7 +206,8 @@ jobs:
 
   select:
     name: select on another machine
-    needs: capture
+    needs: [changes, capture]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       # A fresh checkout on a different runner, with no build outputs and no map of its own. This is
@@ -229,7 +264,8 @@ jobs:
   # change's tests run and failed. Selection on Windows itself is the Windows-to-Windows job below.
   select-on-windows:
     name: select on windows, against a map captured on linux
-    needs: capture
+    needs: [changes, capture]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     steps:
       # Before the checkout: a clone that already dropped long-path files looks complete and cannot
@@ -276,6 +312,8 @@ jobs:
 
   capture-on-windows:
     name: build a map on windows
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     steps:
       - name: allow long paths, and check out with the repository's LF line endings
@@ -315,7 +353,8 @@ jobs:
   # Selection on Windows, on another runner from a cold checkout, as `select` is on Linux.
   select-on-windows-from-windows:
     name: select on windows, against a map captured on windows
-    needs: capture-on-windows
+    needs: [changes, capture-on-windows]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     steps:
       - name: allow long paths, and check out with the repository's LF line endings
@@ -369,7 +408,8 @@ jobs:
 
   select-on-linux:
     name: select on linux, against a map captured on windows
-    needs: capture-on-windows
+    needs: [changes, capture-on-windows]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -401,6 +441,8 @@ jobs:
   # that cannot take them.
   build-windows:
     name: unit and agent suites on windows
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     steps:
       - name: allow long paths
@@ -424,6 +466,8 @@ jobs:
 
   functional-windows-shard:
     name: functional on Gradle 8.14 on windows (shard ${{ matrix.shard }}/8)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -453,8 +497,8 @@ jobs:
   # every test class the sources declare ran in exactly one of them.
   functional-windows:
     name: functional on Gradle 8.14 on windows
-    needs: functional-windows-shard
-    if: always()
+    needs: [changes, functional-windows-shard]
+    if: always() && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: every shard succeeded
@@ -472,6 +516,8 @@ jobs:
 
   functional-gradle9-windows-shard:
     name: functional on Gradle 9 on windows (shard ${{ matrix.shard }}/8)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -501,8 +547,8 @@ jobs:
   # every test class the sources declare ran in exactly one of them.
   functional-gradle9-windows:
     name: functional on Gradle 9 on windows
-    needs: functional-gradle9-windows-shard
-    if: always()
+    needs: [changes, functional-gradle9-windows-shard]
+    if: always() && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: every shard succeeded
