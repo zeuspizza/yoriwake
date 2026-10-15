@@ -39,7 +39,7 @@ the run as `change-set-unreadable`.
 | `CHANGE_SET_FILE_PROPERTY` | `yoriwake.change.file` | plugin → agent | The file holding the list-valued change-set properties. Set means that file alone answers for them |
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
-| `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `tests-named`, `decline-undetermined` |
+| `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `full-run-scheduled`, `tests-named`, `decline-undetermined` |
 | `FINGERPRINT_IGNORED_PROPERTY` | `yoriwake.fingerprint.ignored` | plugin → agent | The system properties `systemPropertyIgnore` left out of a selecting run's environment comparison, comma-separated. Set only when it left one out; the agent copies it into `decisions.tsv` as the `fingerprint-ignored` note |
 | `RUN_TOKEN_PROPERTY` | `yoriwake.run.token` | plugin → agent | A fresh value per selecting run of the task. Each decision record notes it, so the plugin merges only this run's |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |

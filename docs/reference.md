@@ -872,6 +872,19 @@ records as always.
 To bound how old a restored map may be, put a period in the key rather than pruning entries, for
 example the ISO week: one full run at each rollover.
 
+To bound how long a map can go without a full run on any branch, set `fullRunEveryBuilds` or
+`fullRunEveryDays`, or both; they are off by default. Once a `Test` task has executed that many times,
+or that many days have passed, since its last full run, its next selecting run runs every test as
+`full-run-scheduled`, naming the limit reached, and records like a run without the flag. Running every
+test for any reason, a full run that is not dated included, starts the count again. The count and the
+time live beside the map, so builds count per copy of the map: a pull request build restored from the
+default branch's entry starts from the saved count and saves nothing. On those builds days is the
+limit that means what it says. A count or time that cannot be read is due, as is a map recorded before
+either was written, so enabling a limit costs each task one full run. The cache key's period bounds
+how old a restored entry may be; the schedule bounds how long a map can hide a gap. With
+`fullRunBranches`, the default branch already runs in full on every build, so the schedule fires only
+where the map is not refreshed. `yoriwakeExplain<Task>` says how far away the next scheduled full run is.
+
 ### Recording each test class in its own JVM
 
 A test JVM runs some code once, such as a static initialiser or a context it builds and caches, and
@@ -937,6 +950,8 @@ A selecting run can be asked to run every test instead, without changing the CI 
   around the colon. Every commit the run selects over is read: those since the base, widened to the
   map's age, and HEAD itself. The console names the commit; the record says `full-run-commit`. A
   line that starts with `yoriwake:` and is anything else asks for nothing, and the run says so.
+- **`fullRunEveryBuilds` or `fullRunEveryDays` reached** since the task's last full run: see [When to
+  refresh](#when-to-refresh). The record says `full-run-scheduled`.
 
 Any of these makes the run a recording run: it captures and dates the map, and
 `-Pyoriwake.isolatedCapture` applies to it. A map recorded with a fresh test JVM per test class is
@@ -1210,6 +1225,8 @@ yoriwake {
     enabled = false                        // same as -Pyoriwake.disabled
     alwaysRun.add("com.acme.FlakyTest")    // a class, a method (Class.method), or a glob
     fullRunBranches.add("main")            // a selecting run here runs everything; see CI
+    fullRunEveryBuilds = 20                // every 20th build of a task runs everything; off by default
+    fullRunEveryDays = 7                   // or a week after the last full run, whichever first
     notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
     environmentInclude.add("DB_MODE")      // a variable compared besides TZ, LANG and LC_ALL
     systemPropertyIgnore.add("build.number") // a property left out of that comparison
