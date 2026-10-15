@@ -40,7 +40,8 @@ dependencies {
     // ASM, explicitly and ahead of the older copy JaCoCo brings. The daemon-side inline scan uses
     // this ASM, and an ASM that cannot read a class file's major version turns every such class
     // into "unknown", which forces a full run. Raise it whenever a JDK ships: when it lags, the
-    // suite still passes and silently stops narrowing. 9.10.1 is the first to read Java 26.
+    // suite still passes and silently stops narrowing. The newest Java it reads is
+    // `bytecode/ClassFileSupport`'s ceiling, derived from this ASM.
     implementation("org.ow2.asm:asm:$asmVersion")
     // JaCoCo pulls asm-commons and asm-tree at an older version; the shaded jar must not mix them.
     // One value for all three, so lowering it lowers every ASM module the jar carries.
