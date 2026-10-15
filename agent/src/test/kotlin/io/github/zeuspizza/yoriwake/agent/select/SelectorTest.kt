@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.select
 
+import io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -1234,7 +1235,7 @@ class SelectorTest {
     fun `an over-ceiling JVM runs every test`(@TempDir dir: File) {
         val map = map(dir, test("com.acme.FooTest", "com.acme.Foo"), test("com.acme.BarTest", "com.acme.Bar"))
         // A JVM below the agent's ceiling, judged against one lowered beneath it.
-        val reason = io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport.testJvmUnsupported("21", "60")
+        val reason = ClassFileSupport.testJvmUnsupported("21", "60")
         val change = ChangeSet.of(listOf("com.acme.Foo"), emptyList()).withTestJvmUnsupported(reason)
 
         val decision = Selector.decide(map, change, emptyList())

@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.capture
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import org.junit.jupiter.api.Test
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
@@ -41,11 +42,10 @@ class ClassFileSupportTest {
     fun `a JVM is judged against the agent's ceiling, which an override can only lower`() {
         assertEquals(null, ClassFileSupport.testJvmUnsupported("27", null))
         val above = ClassFileSupport.testJvmUnsupported("28", null)!!
-        assertTrue(above.startsWith(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TEST_JVM_UNSUPPORTED_KIND))
+        assertTrue(above.startsWith(AgentContract.TEST_JVM_UNSUPPORTED_KIND))
         assertTrue("reads up to Java 27" in above, above)
         assertTrue("reads up to Java 16" in ClassFileSupport.testJvmUnsupported("21", "60")!!)
         assertEquals(null, ClassFileSupport.testJvmUnsupported("21", "1000"))
         assertEquals(null, ClassFileSupport.testJvmUnsupported(null, "60"))
     }
-
 }

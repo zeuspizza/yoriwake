@@ -77,7 +77,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
             nameIn(new byte[0]);
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
             // JDK classes the agent's ASM cannot read take no hooks; said here, under its own name.
-            unsupported = ClassFileSupport.testJvmUnsupported(System.getProperty("java.specification.version"),
+            unsupported = ClassFileSupport.testJvmUnsupported(
+                    System.getProperty("java.specification.version"),
                     System.getProperty(AgentContract.AGENT_ASM_CEILING_PROPERTY));
             if (unsupported != null) {
                 lookupsIncomplete = unsupported;

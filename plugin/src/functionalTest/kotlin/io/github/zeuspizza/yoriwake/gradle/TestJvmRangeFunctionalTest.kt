@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport as AgentClassFileSupport
 import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileSupport
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -44,7 +45,7 @@ class TestJvmRangeFunctionalTest : FunctionalTestSupport() {
         capturesAndSelects(dir, jdk!!) { jacoco ->
             expectedOn(
                 jdk,
-                agentCeiling = io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport.asmCeiling(),
+                agentCeiling = AgentClassFileSupport.asmCeiling(),
                 pluginCeiling = ClassFileSupport.asmCeiling(),
                 jacocoJava = ClassFileSupport.jacocoCeiling(jacoco).java,
             )

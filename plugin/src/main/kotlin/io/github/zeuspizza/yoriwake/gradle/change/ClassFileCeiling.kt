@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileSupport
 import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileVersions
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
+import org.gradle.api.provider.Provider
 
 /** Why a run over classes too new for a reader of them cannot narrow, and what lifts it. */
 internal class CeilingRefusal(val kind: RefusalKind, val cause: String, val remedy: String) {
@@ -18,22 +19,23 @@ internal class CeilingRefusal(val kind: RefusalKind, val cause: String, val reme
  * digest or missing coverage it would otherwise surface as.
  */
 internal fun classFileCeiling(facts: ClasspathFacts, artifacts: TaskArtifacts): CeilingRefusal? {
-    val testJvm = facts.testJvm?.let { runCatching { it.orNull }.getOrNull() }
+    val testJvm = facts.testJvm.readOrNull()
     val classes = classCeiling(facts, artifacts, testJvm)
-    val agentCeiling = AgentClassFileSupport.effectiveCeiling(facts.agentCeiling?.let { runCatching { it.orNull }.getOrNull() })
-    val jvmMajor = testJvm?.let { it + JAVA_TO_MAJOR }
+    val agentCeiling = AgentClassFileSupport.effectiveCeiling(facts.agentCeiling.readOrNull())
+    val jvmMajor = testJvm?.let(ClassFileSupport::majorOfJava)
     if (jvmMajor != null && jvmMajor > agentCeiling) return testJvmRefusal(jvmMajor, agentCeiling, classes)
     return classes
 }
 
 private fun classCeiling(facts: ClasspathFacts, artifacts: TaskArtifacts, testJvm: Int?): CeilingRefusal? {
     val versions = artifacts.classFileVersions(testJvm) ?: return null
-    val jacoco = facts.jacocoVersion?.let { version ->
-        runCatching { version.orNull }.getOrNull().let { it to ClassFileSupport.jacocoCeiling(it) }
-    }
-    val jacocoCeiling = jacoco?.let { it.second.java + JAVA_TO_MAJOR } ?: Int.MAX_VALUE
+    // Null when the facts carry no JaCoCo version at all, which leaves JaCoCo's ceiling out.
+    val jacocoVersion = facts.jacocoVersion?.let { it.readOrNull() ?: "" }
+    val jacocoCeiling = jacocoVersion
+        ?.let { ClassFileSupport.majorOfJava(ClassFileSupport.jacocoCeiling(it.ifEmpty { null }).java) }
+        ?: Int.MAX_VALUE
     val ceiling = minOf(ClassFileSupport.asmCeiling(), jacocoCeiling)
-    if (versions.maxMajor > ceiling) return ceilingRefusal(versions, jacoco?.first, jacoco?.let { jacocoCeiling })
+    if (versions.maxMajor > ceiling) return ceilingRefusal(versions, jacocoVersion, jacocoCeiling)
     return null
 }
 
@@ -52,10 +54,16 @@ private fun testJvmRefusal(jvmMajor: Int, agentCeiling: Int, classes: CeilingRef
 
 /** The line a run prints when `jacoco.toolVersion` is not one the plugin knows, or null. */
 internal fun jacocoCeilingNote(facts: ClasspathFacts): String? =
-    facts.jacocoVersion?.let { ClassFileSupport.jacocoCeiling(runCatching { it.orNull }.getOrNull()).note }
+    facts.jacocoVersion?.let { ClassFileSupport.jacocoCeiling(it.readOrNull()).note }
 
-/** [jacocoCeiling] is the host JaCoCo's ceiling as a major version, null when it does not apply. */
-private fun ceilingRefusal(versions: ClassFileVersions, jacocoVersion: String?, jacocoCeiling: Int?): CeilingRefusal {
+/** A provider's value, or null when it is absent, unset or throws. */
+private fun <T : Any> Provider<T>?.readOrNull(): T? = this?.let { runCatching { it.orNull }.getOrNull() }
+
+/**
+ * [jacocoVersion] is the host's JaCoCo version, empty when unreadable and null when JaCoCo's ceiling
+ * does not apply; [jacocoCeiling] is that ceiling as a major version.
+ */
+private fun ceilingRefusal(versions: ClassFileVersions, jacocoVersion: String?, jacocoCeiling: Int): CeilingRefusal {
     val java = "Java ${ClassFileSupport.javaOf(versions.maxMajor)}"
     val asm = ClassFileSupport.asmCeiling()
     // Every reader the class is above, each with what lifts it.
@@ -63,9 +71,9 @@ private fun ceilingRefusal(versions: ClassFileVersions, jacocoVersion: String?, 
         if (versions.maxMajor > asm) {
             add("the plugin's ASM reads up to Java ${ClassFileSupport.javaOf(asm)}" to "a yoriwake whose ASM reads $java")
         }
-        if (jacocoCeiling != null && versions.maxMajor > jacocoCeiling) {
+        if (jacocoVersion != null && versions.maxMajor > jacocoCeiling) {
             add(
-                "JaCoCo ${jacocoVersion ?: "(its version unread)"} (`jacoco.toolVersion`) officially " +
+                "JaCoCo ${jacocoVersion.ifEmpty { "(its version unread)" }} (`jacoco.toolVersion`) officially " +
                     "instruments up to Java ${ClassFileSupport.javaOf(jacocoCeiling)}" to
                     "a `jacoco.toolVersion` that officially supports $java",
             )
@@ -79,5 +87,3 @@ private fun ceilingRefusal(versions: ClassFileVersions, jacocoVersion: String?, 
         remedy,
     )
 }
-
-private const val JAVA_TO_MAJOR = 44

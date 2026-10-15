@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.agent.capture;
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.util.regex.Pattern;
 import org.objectweb.asm.Opcodes;
 
 /**
@@ -10,6 +11,8 @@ import org.objectweb.asm.Opcodes;
  * cannot be injected into, so what its tests read cannot all be seen.
  */
 public final class ClassFileSupport {
+
+    private static final Pattern VERSION_FIELD = Pattern.compile("V\\d+|V1_\\d+");
 
     private static final int CEILING = ceilingOf(Opcodes.class);
 
@@ -28,10 +31,12 @@ public final class ClassFileSupport {
      * AgentContract#AGENT_ASM_CEILING_PROPERTY} names.
      */
     public static int effectiveCeiling(String override) {
+        if (override == null) {
+            return CEILING;
+        }
         try {
             return Math.min(CEILING, Integer.parseInt(override.trim()));
-        } catch (Throwable unset) {
-            // Unset or unreadable: the agent's own.
+        } catch (NumberFormatException unreadable) {
             return CEILING;
         }
     }
@@ -54,12 +59,16 @@ public final class ClassFileSupport {
                 + " or older, lifts this.";
     }
 
-    static int ceilingOf(Class<?> opcodes) {
+    /**
+     * The largest {@code V*} version constant of an ASM {@code Opcodes} class, masked to its major
+     * version; 0 when it cannot be read. The plugin passes its own ASM's.
+     */
+    public static int ceilingOf(Class<?> opcodes) {
         try {
             int highest = 0;
             for (Field field : opcodes.getFields()) {
                 if (Modifier.isStatic(field.getModifiers()) && field.getType() == int.class
-                        && field.getName().matches("V\\d+|V1_\\d+")) {
+                        && VERSION_FIELD.matcher(field.getName()).matches()) {
                     highest = Math.max(highest, field.getInt(null) & 0xFFFF);
                 }
             }

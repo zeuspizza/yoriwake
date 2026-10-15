@@ -99,14 +99,14 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
     @Test
     fun `a test JVM newer than the agent reads runs every test`(@TempDir dir: File) {
         // A system property of the task: the daemon reads it and refuses before the JVM starts.
-        val capture = captured(dir, belowTheAgentCeiling("systemProperty(\"yoriwake.internal.agentAsmCeiling\", \"60\")"))
-        assertContains(capture, "selecting runs of this task will run every test (test-jvm-unsupported)")
+        val capture = captured(dir, belowTheAgentCeiling("systemProperty(\"${AgentContract.AGENT_ASM_CEILING_PROPERTY}\", \"60\")"))
+        assertContains(capture, "selecting runs of this task will run every test (${AgentContract.TEST_JVM_UNSUPPORTED_KIND})")
 
         changeBeta(dir)
         val output = select(dir)
 
         val notes = decisionNotes(dir)
-        assertEquals("test-jvm-unsupported", notes["refusal-kind"], notes.toString())
+        assertEquals(AgentContract.TEST_JVM_UNSUPPORTED_KIND, notes["refusal-kind"], notes.toString())
         assertContains(output, "the yoriwake agent's ASM reads up to Java 16")
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
     }
@@ -114,7 +114,7 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
     @Test
     fun `a test JVM the daemon could not judge judges itself`(@TempDir dir: File) {
         // Through the JVM's own environment, which the daemon never reads: only the test JVM knows.
-        captured(dir, belowTheAgentCeiling("environment(\"JAVA_TOOL_OPTIONS\", \"-Dyoriwake.internal.agentAsmCeiling=60\")"))
+        captured(dir, belowTheAgentCeiling("environment(\"JAVA_TOOL_OPTIONS\", \"-D${AgentContract.AGENT_ASM_CEILING_PROPERTY}=60\")"))
         val touches = File(dir, ".gradle/yoriwake").walkTopDown()
             .filter { it.name == AgentContract.TOUCHES_FILE }.flatMap { it.readLines() }.toList()
         assertTrue(
@@ -127,7 +127,7 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
 
         val notes = decisionNotes(dir)
         assertEquals(null, notes["refusal-kind"], notes.toString())
-        assertEquals("test-jvm-unsupported", notes["full-run-kind"], notes.toString())
+        assertEquals(AgentContract.TEST_JVM_UNSUPPORTED_KIND, notes["full-run-kind"], notes.toString())
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
     }
 

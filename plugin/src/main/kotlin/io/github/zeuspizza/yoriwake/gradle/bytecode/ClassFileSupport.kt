@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.bytecode
 
+import io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport as AgentClassFileSupport
 import org.objectweb.asm.Opcodes
 
 /**
@@ -11,7 +12,7 @@ internal object ClassFileSupport {
     /** The ceiling of one JaCoCo version as a Java version, and why it was assumed when it was. */
     data class JacocoCeiling(val java: Int, val note: String?)
 
-    private val asm: Int by lazy { asmCeilingOf(Opcodes::class.java) }
+    private val asm: Int by lazy { AgentClassFileSupport.ceilingOf(Opcodes::class.java) }
 
     /**
      * The highest class-file major version the bundled ASM reads: its largest `Opcodes.V*`
@@ -19,12 +20,6 @@ internal object ClassFileSupport {
      * read, which refuses every class.
      */
     fun asmCeiling(): Int = asm
-
-    internal fun asmCeilingOf(opcodes: Class<*>): Int = runCatching {
-        opcodes.fields
-            .filter { it.name.matches(VERSION_FIELD) && it.type == Int::class.javaPrimitiveType }
-            .maxOf { (it.getInt(null) and 0xFFFF) }
-    }.getOrDefault(0)
 
     private val table: List<Pair<List<Int>, Int>> by lazy {
         ClassFileSupport::class.java.getResourceAsStream(TABLE)!!.bufferedReader().useLines { lines ->
@@ -43,7 +38,6 @@ internal object ClassFileSupport {
     fun jacocoCeiling(version: String?): JacocoCeiling {
         val wanted = version?.let(::parts)
             ?: return JacocoCeiling(table.first().second, "JaCoCo's version ${version ?: "(none)"} could not be read; assuming the oldest one yoriwake knows")
-        table.firstOrNull { compare(it.first, wanted) == 0 }?.let { return JacocoCeiling(it.second, null) }
         val newest = table.last()
         if (compare(wanted, newest.first) > 0) {
             return JacocoCeiling(
@@ -52,14 +46,15 @@ internal object ClassFileSupport {
                     "Java ${newest.second}, as ${newest.first.joinToString(".")} does",
             )
         }
-        val below = table.lastOrNull { compare(it.first, wanted) < 0 }
+        // Its own row, else the one below it.
+        val row = table.lastOrNull { compare(it.first, wanted) <= 0 }
             ?: return JacocoCeiling(table.first().second, "JaCoCo $version is older than any yoriwake knows")
-        return JacocoCeiling(below.second, null)
+        return JacocoCeiling(row.second, null)
     }
 
-    /** The class-file major version in [bytes]' header; above every ceiling when there is none. */
+    /** The class-file major version in [bytes]' header; -1 when it is too short to hold one. */
     fun majorOf(bytes: ByteArray): Int =
-        if (bytes.size < 8) Int.MAX_VALUE
+        if (bytes.size < 8) -1
         else ((bytes[6].toInt() and 0xff) shl 8) or (bytes[7].toInt() and 0xff)
 
     /** Whether [bytes] start with a class file's magic number and hold a version after it. */
@@ -68,7 +63,10 @@ internal object ClassFileSupport {
             bytes[2] == 0xBA.toByte() && bytes[3] == 0xBE.toByte()
 
     /** The Java version whose class files carry [major]. */
-    fun javaOf(major: Int): Int = major - 44
+    fun javaOf(major: Int): Int = major - JAVA_TO_MAJOR
+
+    /** The class-file major version of [java]'s class files. */
+    fun majorOfJava(java: Int): Int = java + JAVA_TO_MAJOR
 
     /** The leading numbers of a version, `0.8.16-SNAPSHOT` as 0, 8, 16; null without any. */
     private fun parts(version: String): List<Int>? =
@@ -82,7 +80,7 @@ internal object ClassFileSupport {
         return 0
     }
 
-    private val VERSION_FIELD = Regex("""V\d+|V1_\d+""")
+    private const val JAVA_TO_MAJOR = 44
 
     private const val TABLE = "/io/github/zeuspizza/yoriwake/gradle/jacoco-java-support.tsv"
 }

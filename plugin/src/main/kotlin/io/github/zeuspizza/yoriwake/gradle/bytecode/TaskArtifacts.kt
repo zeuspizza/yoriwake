@@ -554,7 +554,7 @@ internal class TaskArtifacts(
                 // version and `diagnose` tell a reader which.
                 val bytes = runCatching { entry.readBytes() }.getOrNull()
                 return@walkOwnClasses "${entry.absolutePath}" +
-                    (bytes?.let { " (class file v${classFileVersion(it)})" } ?: "") +
+                    (bytes?.let { " (class file v${ClassFileSupport.majorOf(it)})" } ?: "") +
                     " was not understood: " +
                     (bytes?.let { InlinedSources.diagnose(it) } ?: "its bytes could not be re-read")
             }
@@ -763,16 +763,17 @@ internal class TaskArtifacts(
             // under a token that names what is wrong.
             if (header == null || !ClassFileSupport.isClassHeader(header)) return
             val major = ClassFileSupport.majorOf(header)
-            if (newest.let { it == null || major > it.maxMajor }) newest = ClassFileVersions(major, name)
+            val current = newest
+            if (current == null || major > current.maxMajor) newest = ClassFileVersions(major, name)
         }
         fun loaded(path: String): Boolean {
+            if (!path.contains(MULTI_RELEASE_DIR)) return true
             val release = MULTI_RELEASE.find(path)?.groupValues?.get(1)?.toIntOrNull() ?: return true
             return testJvm == null || release <= testJvm
         }
 
         val stopped = walkOwnClasses(ownRoots()) { root, entry ->
-            val relative = entry.absolutePath.removePrefix(root.absolutePath).replace(File.separatorChar, '/')
-            if (loaded(relative)) {
+            if (loaded(entry.absolutePath.removePrefix(root.absolutePath).replace(File.separatorChar, '/'))) {
                 consider(classNameOf(root, entry), runCatching { entry.inputStream().use { it.readNBytes(8) } }.getOrNull())
             }
             null
@@ -856,10 +857,6 @@ internal class TaskArtifacts(
 
     private val scans = mutableMapOf<String, InlinedSources.Scan>()
 
-    /** The class file's major version, so a refusal shows a toolchain mismatch; -1 if too short. */
-    private fun classFileVersion(bytes: ByteArray): Int =
-        if (bytes.size >= 8) ((bytes[6].toInt() and 0xff) shl 8) or (bytes[7].toInt() and 0xff) else -1
-
     /** [InlineScan.Refused] when the jar could not be read, which is an unfinished scan. */
     private fun scanJar(
         jar: File,
@@ -880,7 +877,7 @@ internal class TaskArtifacts(
                 val scan = InlinedSources.scan(bytes)
                 if (!evidence.accept(scan)) {
                     return InlineScan.Refused(
-                        "${jar.name}!${entry.name} (class file v${classFileVersion(bytes)})" +
+                        "${jar.name}!${entry.name} (class file v${ClassFileSupport.majorOf(bytes)})" +
                             " was not understood: ${InlinedSources.diagnose(bytes)}",
                         InlineScan.Kind.INCOMPLETE,
                     )
@@ -912,6 +909,8 @@ internal class TaskArtifacts(
         const val MAX_RESOURCE_BYTES = 4L * 1024 * 1024
 
         const val MAX_FILES = 200_000
+
+        const val MULTI_RELEASE_DIR = "META-INF/versions/"
 
         val MULTI_RELEASE = Regex("""(?:^|/)META-INF/versions/(\d+)/""")
 

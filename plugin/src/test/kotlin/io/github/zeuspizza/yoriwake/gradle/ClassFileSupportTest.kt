@@ -41,6 +41,7 @@ class ClassFileSupportTest {
         assertEquals(ClassFileSupport.JacocoCeiling(25, null), ClassFileSupport.jacocoCeiling("0.8.14"))
         assertEquals(ClassFileSupport.JacocoCeiling(26, null), ClassFileSupport.jacocoCeiling("0.8.15"))
         assertEquals(ClassFileSupport.JacocoCeiling(22, null), ClassFileSupport.jacocoCeiling("0.8.12"))
+        assertNull(ClassFileSupport.jacocoCeiling("0.8.13").note)
     }
 
     @Test
@@ -69,8 +70,7 @@ class ClassFileSupportTest {
     @Test
     fun `the major version is read from the header alone`() {
         assertEquals(72, ClassFileSupport.majorOf(classAt(72)))
-        assertEquals(Int.MAX_VALUE, ClassFileSupport.majorOf(ByteArray(7)))
+        assertEquals(-1, ClassFileSupport.majorOf(ByteArray(7)))
         assertEquals(27, ClassFileSupport.javaOf(71))
-        assertNull(ClassFileSupport.jacocoCeiling("0.8.13").note)
     }
 }
