@@ -61,18 +61,4 @@ class TestJvmRangeFunctionalTest : FunctionalTestSupport() {
         assertEquals("narrowed", decisionNotes(dir)["outcome"], "no test was judged from the map on JDK $jdk")
         assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir))
     }
-
-    /**
-     * The JDKs the build was told about, and only those: a TestKit build has its own Gradle home,
-     * and on CI runners auto-detection misses where the JDKs are installed.
-     */
-    private fun toolchains(dir: File) {
-        val paths = System.getProperty("yoriwake.functional.toolchainPaths").orEmpty()
-        val lines = mutableListOf("org.gradle.java.installations.auto-download=false")
-        if (paths.isNotEmpty()) {
-            lines += "org.gradle.java.installations.auto-detect=false"
-            lines += "org.gradle.java.installations.paths=" + paths.replace("\\", "\\\\")
-        }
-        File(dir, "gradle.properties").writeText(lines.joinToString("\n", postfix = "\n"))
-    }
 }
