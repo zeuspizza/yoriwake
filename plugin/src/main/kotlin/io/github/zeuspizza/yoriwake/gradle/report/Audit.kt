@@ -75,6 +75,7 @@ internal object Audit {
         DECODE_REFUSED("decode-refused"),
         IN_JVM_PARALLELISM(RefusalKind.IN_JVM_PARALLELISM.token),
         SMAP_ABSENT(RefusalKind.SMAP_ABSENT.token),
+        CLASS_FILE_UNSUPPORTED(RefusalKind.CLASS_FILE_UNSUPPORTED.token),
         CLASSPATH_UNRESOLVED_HERE("classpath-unresolved-here"),
         INLINE_SCAN_INCOMPLETE("inline-scan-incomplete"),
         CLASSES_ABSENT_FROM_MAP("classes-absent-from-map"),

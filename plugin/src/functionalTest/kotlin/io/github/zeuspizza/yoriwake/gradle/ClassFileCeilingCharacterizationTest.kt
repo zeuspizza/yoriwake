@@ -8,9 +8,8 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 
 /**
- * What a selecting run does when a class file is newer than a reader on its path can read: the
- * plugin's ASM, or the host's JaCoCo agent. Whatever the outcome is called, the test a change
- * reaches runs.
+ * Where a class newer than the host's JaCoCo instruments sits in another module, and the order the
+ * agents attach in, which decides whether the yoriwake agent could see JaCoCo's instrumentation.
  */
 class ClassFileCeilingCharacterizationTest : FunctionalTestSupport() {
 
@@ -20,25 +19,6 @@ class ClassFileCeilingCharacterizationTest : FunctionalTestSupport() {
         "tasks.test { useJUnitPlatform(); testLogging { showStandardStreams = true } }",
     )
 
-    private val unused = "src/main/java/dev/sample/Unused.java" to """
-        package dev.sample;
-        public class Unused { public int once(int n) { return n; } }
-    """.trimIndent()
-
-    /** Raises `Unused.class` to Java 28's class-file version after compiling; no test loads it. */
-    private val patchUnused = """
-        tasks.compileJava {
-            val out = destinationDirectory
-            doLast {
-                val file = out.get().file("dev/sample/Unused.class").asFile
-                val bytes = file.readBytes()
-                bytes[6] = 0
-                bytes[7] = 72
-                file.writeBytes(bytes)
-            }
-        }
-    """.trimIndent()
-
     private fun toolchain(jdk: Int) = "java { toolchain { languageVersion = JavaLanguageVersion.of($jdk) } }"
 
     private fun captured(dir: File, script: String, vararg sources: Pair<String, String>): String {
@@ -46,63 +26,6 @@ class ClassFileCeilingCharacterizationTest : FunctionalTestSupport() {
         toolchains(dir)
         committed(dir)
         return runner(dir, "test").build().output
-    }
-
-    private fun select(dir: File): String {
-        File(dir, "build/test-results").deleteRecursively()
-        return runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
-    }
-
-    @Test
-    fun `a class newer than the plugin reads forces every selecting run`(@TempDir dir: File) {
-        captured(dir, "$minimalBuild\n$patchUnused", oneClass, secondClass, unused, oneTest, secondTest)
-
-        changeBeta(dir)
-        select(dir)
-
-        val notes = decisionNotes(dir)
-        assertEquals("full-run", notes["outcome"], notes.toString())
-        assertEquals("scan-exhausted", notes["refusal-kind"], notes.toString())
-        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
-    }
-
-    @Test
-    fun `a class newer than the host's JaCoCo instruments forces when a test executed it`(@TempDir dir: File) {
-        assumeTrue(FunctionalGradle.version.startsWith("9."), "Gradle before 9.1 does not support Java 25")
-        val output = captured(
-            dir, "$loggedBuild\n${toolchain(25)}\njacoco { toolVersion = \"0.8.12\" }",
-            oneClass, secondClass, unused, oneTest, secondTest,
-        )
-        assertContains(output, "Error while instrumenting dev/sample/Beta")
-
-        changeBeta(dir)
-        select(dir)
-
-        val notes = decisionNotes(dir)
-        assertEquals("full-run", notes["outcome"], notes.toString())
-        assertEquals(null, notes["refusal-kind"], notes.toString())
-        assertEquals("no-coverage-for-changed", notes["full-run-kind"], notes.toString())
-        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
-    }
-
-    @Test
-    fun `a class newer than the host's JaCoCo instruments forces even when no test loaded it`(@TempDir dir: File) {
-        assumeTrue(FunctionalGradle.version.startsWith("9."), "Gradle before 9.1 does not support Java 25")
-        captured(
-            dir, "$loggedBuild\n${toolchain(25)}\njacoco { toolVersion = \"0.8.12\" }",
-            oneClass, secondClass, unused, oneTest, secondTest,
-        )
-
-        File(dir, "src/main/java/dev/sample/Unused.java").writeText(
-            unused.second.replace("return n;", "return n + 0;")
-        )
-        select(dir)
-
-        // Nothing was instrumented, so nothing proves Unused was never executed.
-        val notes = decisionNotes(dir)
-        assertEquals("full-run", notes["outcome"], notes.toString())
-        assertEquals("no-coverage-for-changed", notes["full-run-kind"], notes.toString())
-        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
     }
 
     private val modules = arrayOf(

@@ -353,6 +353,12 @@ internal fun widenForInlining(
         )
     }
 
+    // First, and without the digest table: a class no reader of it can take is what leaves a map
+    // without one, and its cause would otherwise surface as an unreadable digest or no coverage.
+    classFileCeiling(facts, artifacts)?.let { ceiling ->
+        return InlineWidening.refuse(ceiling.reason, scanExhausted = false, kind = ceiling.kind)
+    }
+
     // Computed before the refusals so a forced run still records what the comparison found.
     val digest = digestRule?.let { rule -> compareDigests(rule, artifacts) }
     val bytesUnknown = digest != null && digest.silence != null

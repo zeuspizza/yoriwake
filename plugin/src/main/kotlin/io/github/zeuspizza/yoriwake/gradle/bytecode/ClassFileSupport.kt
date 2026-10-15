@@ -62,6 +62,11 @@ internal object ClassFileSupport {
         if (bytes.size < 8) Int.MAX_VALUE
         else ((bytes[6].toInt() and 0xff) shl 8) or (bytes[7].toInt() and 0xff)
 
+    /** Whether [bytes] start with a class file's magic number and hold a version after it. */
+    fun isClassHeader(bytes: ByteArray): Boolean =
+        bytes.size >= 8 && bytes[0] == 0xCA.toByte() && bytes[1] == 0xFE.toByte() &&
+            bytes[2] == 0xBA.toByte() && bytes[3] == 0xBE.toByte()
+
     /** The Java version whose class files carry [major]. */
     fun javaOf(major: Int): Int = major - 44
 

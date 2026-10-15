@@ -64,6 +64,9 @@ internal fun scanOrExplain(
     },
 )
 
+/** The newest class-file major version among a task's own classes, and the first class at it. */
+internal data class ClassFileVersions(val maxMajor: Int, val firstAtMax: String)
+
 /**
  * Why a bounded walk over this build's own classes stopped. [budgetSpent] is separate because a
  * budget is a number somebody can raise, and everything else is a file somebody has to look at.
@@ -746,6 +749,52 @@ internal class TaskArtifacts(
         return DigestScan.Found(digests, DigestScan.Counts(considered, digests.size, unreadable))
     }
 
+    /**
+     * The newest class-file version among the classes [classDigests] walks, and the first class
+     * found at it, read from each header alone: the digests are skipped when the map has none, and
+     * a class too new to read is exactly what leaves a map without them. A multi-release entry counts
+     * only where a test JVM of [testJvm] would load it, and everywhere when that is unknown. Null
+     * when the walk could not finish; the walks after it refuse on their own then.
+     */
+    internal fun classFileVersions(testJvm: Int?): ClassFileVersions? {
+        var newest: ClassFileVersions? = null
+        fun consider(name: String, header: ByteArray?) {
+            // Not a class file's header at all: the walks that read the whole class refuse on it,
+            // under a token that names what is wrong.
+            if (header == null || !ClassFileSupport.isClassHeader(header)) return
+            val major = ClassFileSupport.majorOf(header)
+            if (newest.let { it == null || major > it.maxMajor }) newest = ClassFileVersions(major, name)
+        }
+        fun loaded(path: String): Boolean {
+            val release = MULTI_RELEASE.find(path)?.groupValues?.get(1)?.toIntOrNull() ?: return true
+            return testJvm == null || release <= testJvm
+        }
+
+        val stopped = walkOwnClasses(ownRoots()) { root, entry ->
+            val relative = entry.absolutePath.removePrefix(root.absolutePath).replace(File.separatorChar, '/')
+            if (loaded(relative)) {
+                consider(classNameOf(root, entry), runCatching { entry.inputStream().use { it.readNBytes(8) } }.getOrNull())
+            }
+            null
+        }
+        if (stopped != null) return null
+        for (jar in ownJars) {
+            val read = runCatching {
+                ZipFile(jar).use { zip ->
+                    for (entry in zip.entries()) {
+                        if (entry.isDirectory || !entry.name.endsWith(".class") || !loaded(entry.name)) continue
+                        consider(
+                            entry.name.removeSuffix(".class").replace('/', '.'),
+                            zip.getInputStream(entry).use { it.readNBytes(8) },
+                        )
+                    }
+                }
+            }.isSuccess
+            if (!read) return null
+        }
+        return newest
+    }
+
     // Anything unsettled (unlistable, over budget) answers true, which forces.
     private fun holdsClasses(directory: File): Boolean {
         var visited = 0
@@ -863,6 +912,8 @@ internal class TaskArtifacts(
         const val MAX_RESOURCE_BYTES = 4L * 1024 * 1024
 
         const val MAX_FILES = 200_000
+
+        val MULTI_RELEASE = Regex("""(?:^|/)META-INF/versions/(\d+)/""")
 
         /** Dependency-jar bytes read before forcing; class files are skipped, not counted. */
         const val MAX_SCAN_BYTES = 128L * 1024 * 1024

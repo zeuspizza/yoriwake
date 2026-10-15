@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.bytecode.DigestScan
 import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
+import io.github.zeuspizza.yoriwake.gradle.change.classFileCeiling
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.JUnitXmlFailures
@@ -282,6 +283,15 @@ internal abstract class DecodeTask : DefaultTask() {
             }.getOrNull()
         } else {
             null
+        }
+        if (!selecting) {
+            // Recorded as usual; said now, so the full runs that follow are no surprise.
+            artifacts?.let { runCatching { classFileCeiling(facts, it) }.getOrNull() }?.let { ceiling ->
+                logger.lifecycle(
+                    "[yoriwake] $taskPath: selecting runs of this task will run every test " +
+                        "(${ceiling.kind.token}): ${ceiling.cause}. ${ceiling.remedy}"
+                )
+            }
         }
         val outcome = runCatching {
             CoverageDecoder.decode(
