@@ -99,7 +99,10 @@ public final class Selector {
             NO_COVERAGE_FOR_CHANGED("no-coverage-for-changed"),
 
             /** A class's compiled bytes changed with no source change, and no test recorded it. */
-            NO_COVERAGE_FOR_CHANGED_BYTES("no-coverage-for-changed-bytes");
+            NO_COVERAGE_FOR_CHANGED_BYTES("no-coverage-for-changed-bytes"),
+
+            /** The test JVM is newer than the agent's ASM reads, so what its tests read is unseen. */
+            TEST_JVM_UNSUPPORTED(AgentContract.TEST_JVM_UNSUPPORTED_KIND);
 
             private final String token;
 
@@ -280,6 +283,12 @@ public final class Selector {
             return Decision.fullRun(daemonRefusal, Decision.FullRunKind.DAEMON_REFUSED, knownTestIds);
         }
 
+        // The daemon could not judge this JVM (no launcher it could read), so the JVM judges itself.
+        String reason = change.testJvmUnsupported();
+        if (reason != null) {
+            return Decision.fullRun(reason, Decision.FullRunKind.TEST_JVM_UNSUPPORTED, knownTestIds);
+        }
+
         if (!unmappablePaths.isEmpty()) {
             // Coverage says nothing about build scripts, resources or generated sources, so
             // nothing can be ruled out.
@@ -411,6 +420,9 @@ public final class Selector {
                 return Rules.notComputed(AgentContract.RULES_NO_CHANGE_SET, forcing);
             }
             basis = AgentContract.RULES_FROM_REFUSED_INPUTS;
+        }
+        if (change.testJvmUnsupported() != null) {
+            forcing.add(Decision.FullRunKind.TEST_JVM_UNSUPPORTED);
         }
         Collection<String> changed = change.changedClasses();
         List<MapReader.Entry> entries = map.entries();

@@ -1,3 +1,4 @@
+audit-blocker	class-file-unsupported
 audit-blocker	classes-absent-from-map
 audit-blocker	classpath-unresolved-here
 audit-blocker	decode-refused
@@ -17,6 +18,7 @@ audit-blocker	not-on-junit-platform
 audit-blocker	recorded-no-coverage
 audit-blocker	scope-not-applied
 audit-blocker	smap-absent
+audit-blocker	test-jvm-unsupported
 audit-state	DO NOT ENABLE
 audit-state	NARROWING ONLY
 audit-state	NO CONCLUSION
@@ -57,6 +59,7 @@ full-run-kind	map-unusable
 full-run-kind	no-coverage-for-changed
 full-run-kind	no-coverage-for-changed-bytes
 full-run-kind	startup-coverage
+full-run-kind	test-jvm-unsupported
 full-run-kind	unmappable-paths
 map-outcome	FLAKY
 map-outcome	NONE
@@ -68,6 +71,7 @@ refusal-kind	annotations-unrecorded
 refusal-kind	bytes-unrecorded
 refusal-kind	change-set-stale
 refusal-kind	change-set-unreadable
+refusal-kind	class-file-unsupported
 refusal-kind	classpath-files-changed
 refusal-kind	classpath-files-unrecorded
 refusal-kind	complement-no-record
@@ -94,6 +98,7 @@ refusal-kind	smap-absent
 refusal-kind	snapshot-absent
 refusal-kind	stamp-absent
 refusal-kind	stamp-unrelatable
+refusal-kind	test-jvm-unsupported
 refusal-kind	tests-named
 refusal-kind	unnamed
 refusals-key	(inline widening)

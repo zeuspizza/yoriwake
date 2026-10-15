@@ -4,6 +4,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.select.MapReader
 import io.github.zeuspizza.yoriwake.gradle.bytecode.InlineScan
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.change.CeilingRefusal
 import io.github.zeuspizza.yoriwake.gradle.report.Audit.Blocker
 import io.github.zeuspizza.yoriwake.gradle.report.Audit.Counts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit.DEFAULT_UNATTRIBUTABLE_CEILING
@@ -275,6 +276,8 @@ internal fun Audit.blockers(
     facts: TaskFacts,
     scopeRefusal: ScopeOutcome.NotApplied? = null,
     inlineScan: InlineScan? = null,
+    /** A class or test JVM newer than a reader of it, which forces every selecting run. */
+    ceiling: CeilingRefusal? = null,
     compiledClasses: Int? = null,
     mapClasses: Int? = null,
     gitUnavailable: Boolean = false,
@@ -428,6 +431,7 @@ internal fun Audit.blockers(
             )
         )
     }
+    ceiling?.let { add(Blocker(it.kind.token, oneLine(it.cause), it.remedy)) }
     (inlineScan as? InlineScan.Refused)?.let { refused ->
         add(
             when (refused.kind) {

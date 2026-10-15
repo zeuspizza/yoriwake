@@ -32,6 +32,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
 import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
 import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
+import io.github.zeuspizza.yoriwake.gradle.change.jacocoCeilingNote
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.changeSet
@@ -261,6 +262,7 @@ internal fun TestTaskWiring.configureSelection(
             if (handedOver || verdict != ClasspathFilesVerdict.Unchanged) verdict
             else ClasspathFilesVerdict.Unrecorded("the classpath files could not be handed to ${lastLook.name}")
         }
+        jacocoCeilingNote(classpathFacts)?.let { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
         // An inline function's body is compiled into its call sites, so coverage cannot link
         // them; Kotlin's SMAP records the edge, and the consumers count as changed.
         val widening = widenForInlining(

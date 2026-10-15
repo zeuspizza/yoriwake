@@ -2,3 +2,4 @@
 # A skip not listed here fails the run: a test that did not run proves no row.
 DeclineFunctionalTest.a Gradle older than 8_14 gets a named decline, runs every test, and captures nothing | */9.8.0/* | drives its own older Gradle, so the 8.14 cells run it once
 TestJvmRangeFunctionalTest.test JVM on JDK 25 | */8.14/* | Gradle before 9.1 does not support Java 25
+TestJvmRangeFunctionalTest.test JVM on the newest early-access JDK | */*/* | run by the early-access workflow, which names the JDK it installs

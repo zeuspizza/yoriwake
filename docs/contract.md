@@ -46,6 +46,8 @@ the run as `change-set-unreadable`.
 | `CHANGE_SET_UNREADABLE_KIND` | `change-set-unreadable` | plugin, agent | The refusal token of a run whose change-set file could not be written or read |
 | `COMPLEMENT_RECORD_PROPERTY` | `yoriwake.complement.record` | plugin → agent | On a complement run whose selection record's stamp matched: the path of its copy, `complement.record`. The agent leaves out each test it lists as ran, unless the record's `jvm.` notes differ from this JVM |
 | `COMPLEMENT_RECORD_MISMATCH_KIND` | `complement-record-mismatch` | plugin, agent | The refusal token of a complement run whose selection record does not match it. The agent writes it as `refusal-kind` when the record's test JVM is not this one |
+| `TEST_JVM_UNSUPPORTED_KIND` | `test-jvm-unsupported` | plugin, agent | The token of a test JVM newer than the agent's ASM reads: the plugin's refusal kind when its launcher says so, the agent's full-run kind when only the test JVM can tell |
+| `AGENT_ASM_CEILING_PROPERTY` | `yoriwake.internal.agentAsmCeiling` | plugin → agent | For tests only: a class-file major version below the agent's ASM ceiling to judge the test JVM against instead. Never raises it; the plugin honours it when the task sets it |
 
 The agent also reads Gradle's `org.gradle.test.worker` to name its worker directory, and uses a few
 `yoriwake.internal.capture.*` and `yoriwake.junit4.*` properties inside one JVM. Those are not part

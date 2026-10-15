@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.gradle.tasks
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.bytecode.scanOrExplain
+import io.github.zeuspizza.yoriwake.gradle.change.classFileCeiling
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -105,6 +106,11 @@ internal abstract class AuditTask : DefaultTask() {
                     },
                     scan = { artifacts -> artifacts.classesInlining(prefixes) },
                 )
+            },
+            ceiling = facts?.let {
+                runCatching {
+                    classFileCeiling(it, TaskArtifacts(it.classpath.files, it.buildDirs.values, it.testOutputs.files))
+                }.getOrNull()
             },
             // The module's own classes against how many the map has seen: the same
             // population on both sides of the ratio.

@@ -28,7 +28,8 @@ dependencies {
     compileOnly("org.jacoco:org.jacoco.agent:$jacocoVersion:runtime")
 
     // The one runtime dependency, relocated. JUnit 4 has no ServiceLoader discovery and Gradle never
-    // exposes its RunNotifier, so hooking it means rewriting one method. ASM 9.10 reads Java 26.
+    // exposes its RunNotifier, so hooking it means rewriting one method. The newest Java it reads
+    // is `capture/ClassFileSupport`'s ceiling, derived from this ASM.
     bundled("org.ow2.asm:asm:9.10.1")
     // Never shipped: only TestNG's own ServiceLoader loads the TestNG listener, so TestNG is present
     // whenever that class resolves.

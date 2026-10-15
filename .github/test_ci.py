@@ -346,6 +346,24 @@ def case_every_workflow_pins_its_actions_by_sha():
     return problems
 
 
+def case_the_early_access_job_runs_weekly_bounded_and_read_only():
+    """Its value is a weekly answer before a JDK ships; a run that hangs or writes is not that."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "jdk-ea.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for needle, why in (
+        ("  schedule:\n    - cron: ", "it is not scheduled"),
+        ("  workflow_dispatch:", "it cannot be dispatched on a release candidate"),
+        ("permissions:\n  contents: read", "its token is not read-only"),
+        ("    timeout-minutes: 30", "its job has no 30-minute bound"),
+        ("release: EA", "it does not install an early-access build"),
+        ("-Pyoriwake.functional.earlyAccessJdk=", "it does not name the JDK to the range test"),
+    ):
+        if needle not in text:
+            problems += fail(f"jdk-ea.yml: {why}")
+    return problems
+
+
 LABELS = ["linux/8.14/21", "linux/9.8.0/21"]
 ROWS = [
     ("Gradle", "8.14", ["*/8.14/*"], ["MatrixCellIdentityTest"]),
@@ -808,6 +826,7 @@ CASES = (
     case_a_missing_or_wider_cell_fails,
     case_a_job_that_ran_another_commit_fails,
     case_a_cell_with_two_tasks_results_fails,
+    case_the_early_access_job_runs_weekly_bounded_and_read_only,
 )
 
 

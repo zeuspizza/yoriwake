@@ -22,6 +22,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A supported matrix in the reference: each row ran on every release's tagged commit. Map: left alone.
 - Windows is supported: tested on every pull request and in the supported matrix. Map: left alone.
 - A test that fails just before its JVM is stopped (`--fail-fast`, or a killed worker) stays failing in the map, so it keeps running. Map: left alone.
+- A class newer than the plugin or JaCoCo reads, or a test JVM newer than the agent reads, runs every test and names why (`class-file-unsupported`, `test-jvm-unsupported`). Map: left alone.
 
 ### Changed
 

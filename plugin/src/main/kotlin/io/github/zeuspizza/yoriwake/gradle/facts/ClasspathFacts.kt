@@ -29,6 +29,15 @@ internal data class ClasspathFacts(
     val testOutputs: org.gradle.api.file.FileCollection,
     /** The runtime classpath, held here because a Task reference cannot be configuration-cached. */
     val classpath: org.gradle.api.file.FileCollection,
+    /**
+     * The project's `jacoco.toolVersion`, absent when it cannot be read. Null only in tests of
+     * other rules, which then leave JaCoCo's ceiling out.
+     */
+    val jacocoVersion: org.gradle.api.provider.Provider<String>? = null,
+    /** The test JVM's feature version as its launcher reports it, absent when nobody can tell. */
+    val testJvm: org.gradle.api.provider.Provider<Int>? = null,
+    /** A lower agent ceiling the task hands its test JVM, for tests on installed JDKs; else absent. */
+    val agentCeiling: org.gradle.api.provider.Provider<String>? = null,
 )
 
 /**
@@ -101,6 +110,17 @@ internal fun classpathFacts(
     ownPath = ownPath,
     testOutputs = test.testClassesDirs,
     classpath = test.classpath,
+    jacocoVersion = project.provider {
+        project.extensions.findByType(org.gradle.testing.jacoco.plugins.JacocoPluginExtension::class.java)?.toolVersion
+    },
+    // Absent, never thrown, when the launcher cannot be probed (an `executable` that is a script):
+    // the configuration cache resolves this when it stores, and the test JVM then judges itself.
+    testJvm = test.javaLauncher.let { launcher ->
+        project.provider { runCatching { launcher.get().metadata.languageVersion.asInt() }.getOrNull() }
+    },
+    agentCeiling = test.systemProperties.let { properties ->
+        project.provider { properties[io.github.zeuspizza.yoriwake.agent.contract.AgentContract.AGENT_ASM_CEILING_PROPERTY]?.toString() }
+    },
     )
 }
 

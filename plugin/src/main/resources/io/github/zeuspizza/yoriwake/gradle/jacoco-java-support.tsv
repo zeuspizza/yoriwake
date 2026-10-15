@@ -1,0 +1,17 @@
+# JaCoCo version, then the highest Java version it officially instruments, from its change log.
+# Experimental support does not count: JaCoCo instruments such a class by lowering its header for an
+# ASM that predates it, so a new bytecode form could be instrumented wrongly with nothing to say so.
+0.8.0	9
+0.8.1	10
+0.8.3	11
+0.8.4	12
+0.8.5	13
+0.8.6	14
+0.8.7	16
+0.8.8	18
+0.8.9	20
+0.8.11	21
+0.8.12	22
+0.8.13	24
+0.8.14	25
+0.8.15	26

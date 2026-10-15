@@ -213,4 +213,18 @@ abstract class FunctionalTestSupport {
         git(dir, "init")
         commit(dir, "base")
     }
+
+    /**
+     * The JDKs the build was told about, and only those: a TestKit build has its own Gradle home,
+     * and on CI runners auto-detection misses where the JDKs are installed.
+     */
+    protected fun toolchains(dir: File) {
+        val paths = System.getProperty("yoriwake.functional.toolchainPaths").orEmpty()
+        val lines = mutableListOf("org.gradle.java.installations.auto-download=false")
+        if (paths.isNotEmpty()) {
+            lines += "org.gradle.java.installations.auto-detect=false"
+            lines += "org.gradle.java.installations.paths=" + paths.replace("\\", "\\\\")
+        }
+        File(dir, "gradle.properties").writeText(lines.joinToString("\n", postfix = "\n"))
+    }
 }

@@ -144,6 +144,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - on a run given `-Pyoriwake.trustedMaps`, a map the list does not name (`map-unverified`) or names
   with another digest (`map-untrusted`). The map is cleared and the run records a new one; see
   [Who can write the map you restore](#who-can-write-the-map-you-restore).
+- a class of the task's own output compiled for a newer Java than the plugin reads, or than the
+  project's JaCoCo officially instruments (`class-file-unsupported`), or a test JVM newer than the
+  agent reads (`test-jvm-unsupported`); see [New JDKs](#new-jdks).
 
 Tests named on the command line with `--tests`, or added to the task's filter after the build
 script ran, all run: a selecting run declines selection for that task (`tests-named`), runs every
@@ -484,6 +487,36 @@ everything as `environment-changed` ([The environment fingerprint](#the-environm
 - **Not in the table, so not tested on a release:** Android and Kotlin Multiplatform hosts (below); Kotest, plain JUnit 4 and TestNG, which the
   suite runs in every cell but which are captured and always run in full rather than narrowed
   ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
+
+### New JDKs
+
+Three readers parse class files whose version each new JDK raises, and each has a ceiling:
+
+| Reader | Reads | Ceiling in this release | Above it |
+|---|---|---|---|
+| The plugin's ASM | the task's own compiled classes, for digests, constants, annotations and inline bodies | Java 27 | `class-file-unsupported` |
+| Your project's JaCoCo (`jacoco.toolVersion`) | the same classes, to instrument them | the newest Java its release notes officially support; experimental support does not count | `class-file-unsupported` |
+| The agent's ASM | the test JVM's own JDK classes, to see what tests read | Java 27 | `test-jvm-unsupported` |
+
+A selecting run checks both before anything else that reads the classes, from each class file's
+header, so it holds whatever the map records. It runs every test, names the first class at the
+newest version (or the test JVM's Java version), each reader it is above, and what lifts it:
+
+- **`class-file-unsupported`**, from the plugin's ASM: a newer yoriwake. From JaCoCo: a
+  `jacoco.toolVersion` that officially supports that Java. A JaCoCo version yoriwake does not know
+  is held to the newest one it does, and the run says so in one line. A build that swaps the JaCoCo
+  agent artifact is judged by the `toolVersion` it sets. A multi-release jar entry counts only where
+  the test JVM would load it.
+- **`test-jvm-unsupported`**: a newer yoriwake, or a test toolchain of an older Java. When Gradle
+  cannot report the test JVM's version (an `executable` it cannot probe), the agent checks the JVM
+  it runs in: the run is a full run of that kind, and a recording run marks every class touched.
+
+A recording run in either situation records as usual and prints one line saying selecting runs will
+run every test, and why. `yoriwakeAudit<Task>` reports both as blockers.
+
+Gradle 8.14 defaults to JaCoCo 0.8.13 (Java 24) and Gradle 9.8.0 to 0.8.15 (Java 26), so a project
+compiling for a newer Java on its default JaCoCo runs every test until `jacoco.toolVersion` is
+raised.
 
 ### Supported hosts
 
