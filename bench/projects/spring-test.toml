@@ -1,0 +1,22 @@
+# The qualification verdict for this project lives in `bench/qualification.txt` (qualified
+# at plugin 5f97c7d). It is deliberately NOT repeated here: seven project files once still
+# claimed NOT QUALIFIED for projects the table had passed.
+#
+# WHY THIS ONE. The corpus's only JVM that runs TestNG, Jupiter and Vintage tests side by side
+# (3,860 tests, one Platform launch), and the heaviest user of the Spring TestContext cache in the
+# corpus. It is the shape a later fix addressed: before f3835f7 its map held only the 346 TestNG
+# tests. It also runs spring-core-test's `@CompileWithForkedClassLoader`, the nested class loader
+# behind the lost `decisions.tsv` writes.
+#
+# BORROWS spring-framework's checkout at the same commit, as kafka-core borrows kafka's. Built and
+# run locally (76s test task).
+name = "spring-test"
+# A first guess, not derived from an observed rate: this module has never been swept.
+sweep_limit = 8
+url = "https://github.com/spring-projects/spring-framework.git"
+commit = "60e5abff7f65b1cceb006e9ed35561b15b6e14e7"
+path = "bench/checkouts/spring-framework"
+module = "spring-test"
+flags = []
+sources = ["spring-test/src/main/java/org/springframework/test"]
+daemon_jvmargs = "-Xmx4g"

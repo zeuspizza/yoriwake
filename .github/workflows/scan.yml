@@ -1,0 +1,32 @@
+name: scan
+
+# The backstop for the scan every push runs first (CONTRIBUTING.md): what a pull request adds, its
+# commit messages, and its title and body, from which the squash commit on main is written. Its own
+# workflow, so editing a description re-scans it without re-running the build.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: no private references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -eu
+          status=0
+          python3 bench/scan_private.py --range "$BASE" "$HEAD" || status=1
+          python3 bench/scan_private.py --message PR_TITLE PR_BODY || status=1
+          exit "$status"

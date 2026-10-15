@@ -1,0 +1,42 @@
+# NOT A PROJECT, AND NOT AN ANTI-TARGET. This is detekt -- same checkout, same commit, same module,
+# the same 3,593 tests -- scoped to one uncovered file. All six of its rows force with
+# `the map has no coverage for dev.detekt.rules.style.Junk`, which is "empty is not unknown" working
+# exactly as designed. Its +28.4% is the price of that safety on an uncovered file, not evidence
+# about build shape. Do not read it as a shape row, and do not compare it against okhttp.
+#
+# One file, because one declaration is the question.
+#
+# detekt-rules-style has exactly two inline functions and only one of them is mutable:
+# `inline fun <reified T> KtExpression.isGuardClause(): Boolean {`. An inline body is copied into
+# every call site, so the code that runs lives in the caller and coverage records no edge to the
+# declaring file at all. demo-kotlin proved selection misses that on an eleven-test fixture; this
+# asks the same question of 2,259 real tests.
+#
+# Scoped to the file rather than the package so the answer costs eight minutes instead of the two
+# hours a sweep would need to draw this declaration by chance.
+name = "detekt-junk"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 32
+
+# NOT A SEPARATE PROJECT. This is detekt's own checkout at the SAME commit and the
+# SAME module, scoped to one uncovered file. Counting it would mean counting detekt
+# twice in any breadth claim.
+#
+# `corpus_state.py` reads this key and reports such builds in their own block, in no
+# denominator. Removing it moves this build into the corpus count as a project, which a
+# case in bench/test_corpus_state.py asserts against.
+fixture = true
+# Reuses the detekt checkout rather than cloning it again: the map captured there is
+# the one the question is about, and a second clone would need its own ten-minute capture to ask the
+# same thing. The harness does not pin a `path` project, which is honest -- the caller owns that
+# checkout, and it is already at 6aa07c06.
+path = "bench/checkouts/detekt"
+commit = "6aa07c067e181a72700c90f893c02ae91ce56676"
+module = "detekt-rules-style"
+flags = ["-PenablePTS=false"]
+sources = ["detekt-rules-style/src/main/kotlin/dev/detekt/rules/style/Junk.kt"]

@@ -1,0 +1,69 @@
+# BLOCKED, and the blocker is ours. junit5's build enables Gradle's Isolated Projects, which
+# forbids the cross-project access this plugin's scope derivation is built on:
+#
+#   Initialization script 'scripts/yoriwake.init.gradle.kts':
+#     Project ':base' cannot access 'Project.plugins' functionality on subprojects via 'allprojects'
+#
+# Do not re-attempt by tweaking the init script -- YoriwakePlugin.kt:776 and ChangeSelection.kt:716,723
+# read `rootProject.allprojects` too, and `gradle.projectsEvaluated` is the mechanism that made the
+# scope correct in the first place.
+
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this
+# corpus has found actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/junit5.toml
+#
+# WHY THIS ONE: Deterministic and unambiguously on the Platform, since it IS the Platform. Also the self-referential case: the agent is a PostDiscoveryFilter running inside its own project's tests.
+#
+# Run `python bench/qualify.py bench/projects/junit5.toml` before anything else. That is
+# the stage where every defect this corpus has found actually turned up -- a decode that ran out of
+# heap, a suite that parked forever on a latch, an ASM floor that could not read a Java 24 jar, a
+# build whose own logic needed a newer JDK than the daemon. None came from a sweep.
+#
+# The module below is a first guess. If it hangs, needs a container or a network, or turns out to be
+# off the JUnit Platform, move to a sibling rather than writing the project off: four projects were
+# written off in this repository's history and all four ran once someone read the actual error.
+name = "junit5"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/junit-team/junit5.git"
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "35c56a8e02f6f2ae6c0ea3616097b1cfefe17d2a"
+# REPOINTED. The recorded cause was wrong TWICE OVER, and both halves are
+# corrected here rather than left in a table nobody re-checks.
+#
+# 1. It was filed under Kotlin Multiplatform. It is not: `gradle.properties` line 11 sets
+#    `org.gradle.isolated-projects=true`, which forbids the cross-project access this plugin's scope
+#    derivation is built on. The block comment at the top of this file has the exact error.
+# 2. `junit-jupiter-engine/src/test/` holds one `README.md`. The tests moved to the `jupiter-tests`
+#    module, so the original module could not have produced a row whatever else was fixed.
+#
+# Isolated Projects is turned OFF for the measurement rather than worked around in the plugin. That
+# is a property of the MEASUREMENT and it is a caveat on any figure from here: this row describes a
+# junit5 build configured the way this harness needs, not the way junit5 ships.
+module = "jupiter-tests"
+flags = ["-Dorg.gradle.isolated-projects=false"]
+# NO LONGER EMPTY, and pointed at ANOTHER MODULE'S main sources on purpose. `jupiter-tests` is a
+# test-only module -- `src/test` and nothing else -- so mutating inside it would break the test being
+# mutated, which is always selected and asks the recall question of nothing. What its tests exercise
+# is `junit-jupiter-engine`, so that is where a change worth selecting against lives. This makes
+# every row here a CROSS-MODULE change, which is the shape the module-boundary rules are weakest on.
+sources = ["junit-jupiter-engine/src/main/java"]
+
+# Set before the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"

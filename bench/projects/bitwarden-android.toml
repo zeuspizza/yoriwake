@@ -1,0 +1,64 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/bitwarden-android.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: The only large Android app the screen found already on the JUnit Platform by default --
+#   `useJUnitPlatform` in the root build script, JUnit 5 plus vintage. Every other Android
+#   candidate needs the vintage init script first.
+#
+# KNOWN RISK: Needs ANDROID_HOME. `test_task` is an Android variant task, as glide and demo-android
+#   already are; asking for `test` here is not a smaller run but no run.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "bitwarden-android"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/bitwarden/android.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "65bab9f27a4834f80418ea1d94b61e63f20bcb35"
+module = "app"
+# NOT `test`. Asking for a task that does not exist is not a smaller run, it is NO run:
+# kotlinx-coroutines compiled for 6m 25s, printed BUILD SUCCESSFUL, exited 0 and ran
+# zero tests. A green build that ran nothing is the shape of the silent miss this
+# project exists to prevent.
+# CORRECTED. `testDebugUnitTest` is AMBIGUOUS here: `app/build.gradle.kts`
+# declares a `mode` flavour dimension with `standard` and `fdroid` (lines 141-147), so the variant
+# tasks are `testStandardDebugUnitTest` and `testFdroidDebugUnitTest` and the unqualified name
+# matches neither. The module was never wrong.
+#
+# `standard` rather than `fdroid` because it is the shipping variant -- `fdroid` exists to strip the
+# proprietary dependencies, so its suite is a subset and a row drawn from it would describe less of
+# the app than the row claims.
+test_task = "testStandardDebugUnitTest"
+# The compile gate's task. Derived from `test_task` it names `<test_task>Classes`, which an
+# Android unit-test variant does not have; the Java compile task's graph carries the Kotlin,
+# kapt and ksp phases a mutation can fail in. Read from this project's own build logs, as
+# duckduckgo-android's is.
+test_classes_task = "compileStandardDebugUnitTestJavaWithJavac"
+flags = []
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["app/src/main/kotlin"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"

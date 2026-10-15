@@ -1,0 +1,19 @@
+/*
+ * Harness only: turns off a guest build's own Develocity Predictive Test Selection.
+ *
+ * duckduckgo-android, armeria and junit5 enable it for local builds, so the Develocity server
+ * skipped classes in both arms of a sweep row -- ground truth included. A missed test was then
+ * blamed on this tool, and a capture recorded coverage for a subset of the suite.
+ *
+ * Set when the task graph is ready, after every build script's own `configureEach`, because each
+ * guest sets the property in its own way. Not in scripts/yoriwake.init.gradle.kts, which is what a user
+ * applies: what a user's build does with its own selector is the user's business.
+ */
+gradle.taskGraph.whenReady { graph ->
+    graph.allTasks.findAll { it instanceof Test }.each { task ->
+        def develocity = task.extensions.findByName('develocity')
+        if (develocity != null && develocity.hasProperty('predictiveTestSelection')) {
+            develocity.predictiveTestSelection.enabled.set(false)
+        }
+    }
+}

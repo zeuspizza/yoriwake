@@ -1,0 +1,30 @@
+# The sample fixture, used to prove the harness itself works: nine tests, seconds per run, a known
+# answer. A benchmark harness that has never produced a result is exactly the kind of measurement
+# this project keeps finding wrong.
+#
+# Copied out of the yoriwake checkout into its own checkout before use (`copy_of` is relative to
+# the yoriwake checkout). The harness hard-resets what it manages, and pointing it at samples/demo
+# in place meant resetting that repository's working tree. As its own repo it can also narrow properly, since the change set is no longer polluted
+# by unrelated edits elsewhere in this project.
+name = "demo"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 10
+
+# A LOCAL SAMPLE BUILD, NOT A PROJECT. `samples/demo` is written by the yoriwake repository to
+# exercise the plugin, so a recall row from it is evidence that the harness works, never
+# evidence about a build nobody here chose.
+#
+# `corpus_state.py` reads this key and reports such builds in their own block, in no
+# denominator. Removing it moves this build into the corpus count as a project, which a
+# case in bench/test_corpus_state.py asserts against.
+fixture = true
+copy_of = "samples/demo"
+commit = "local"
+module = ""
+flags = []
+sources = ["src/main/java"]

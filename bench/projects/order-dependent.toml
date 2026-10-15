@@ -1,0 +1,16 @@
+# A PLANTED-MISS CONTROL FIXTURE, never a project. `AaaFirstTest` and `ZzzSecondTest`
+# share `Counter`'s static state in one JVM, and the sample pins the class order: `ZzzSecondTest`
+# passes only after `AaaFirstTest` ran. It is the shared-JVM-state case complement ground truth
+# must not lose: a dropped test that fails only after a selected test left state behind, which a
+# complement run alone cannot reproduce. `bench/controls.py` sweeps it under a plugin with a
+# miss planted in it; its rows go to results/control/ and count toward no figure.
+name = "order-dependent"
+
+sweep_limit = 6
+
+fixture = true
+copy_of = "samples/order-dependent"
+commit = "local"
+module = ""
+flags = []
+sources = ["src/main/java"]

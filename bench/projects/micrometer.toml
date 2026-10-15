@@ -1,0 +1,72 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and seven of these files once still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: qualify before sweeping -- that stage is where every defect this
+# corpus has found actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/micrometer.toml
+#
+# WHY THIS ONE: Deliberate ANTI-TARGET candidate: many small modules with short suites is the ratio that loses. Kept whatever it measures -- a corpus with no losing case is not believed.
+#
+# Run `python bench/qualify.py bench/projects/micrometer.toml` before anything else. That is
+# the stage where every defect this corpus has found actually turned up -- a decode that ran out of
+# heap, a suite that parked forever on a latch, an ASM floor that could not read a Java 24 jar, a
+# build whose own logic needed a newer JDK than the daemon. None came from a sweep.
+#
+# The module below is a first guess. If it hangs, needs a container or a network, or turns out to be
+# off the JUnit Platform, move to a sibling rather than writing the project off: four projects were
+# written off in this repository's history and all four ran once someone read the actual error.
+name = "micrometer"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/micrometer-metrics/micrometer.git"
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "7efb0bcfb7c97972d73534d953c0ea04a2edd999"
+module = "micrometer-core"
+# Checked: micrometer-core needs no container. The three Testcontainers users in this
+# repository are `docs/` and `implementations/micrometer-registry-elastic/`, so a verdict for this
+# module is unaffected by whether a Docker daemon is running -- which matters, because a run with
+# Docker down would otherwise produce a blocker that is an artifact of the machine rather than a
+# fact about the project. The comment above wondered whether this module needed one; it does not.
+flags = []
+sources = ["micrometer-core/src/main/java/io/micrometer/core/instrument"]
+
+# `sources` WAS EMPTY, and an empty one is not "mutate everything" -- the mutation grammar
+# found zero targets, applied nothing, and the sweep reported 0 missed of 0 induced failures.
+# The harness refuses to read that as a safety result ("NO ROW ASKED A RECALL QUESTION"), which
+# is the only reason it was visible at all. Scoped to the module under measurement, because a
+# mutation outside it cannot break a test the measured task runs.
+
+
+# Set before the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"
+
+# BLOCKED, BY THIS PLUGIN, on a suite that is otherwise GREEN.
+#
+# `:micrometer-core:test` dies with 771 copies of
+#
+#     java.lang.ClassNotFoundException:
+#       jdk.internal.reflect.GeneratedSerializationConstructorAccessor1
+#
+# and produces no test results. With `-Pyoriwake.disabled` the same task is BUILD SUCCESSFUL in 57s with
+# nothing failing at all -- so the plugin turns a fully green build into zero evidence.
+#
+# Same cause as grpc-java, and the second project to show it: `includeNoLocationClasses`, which this
+# plugin sets unconditionally for Robolectric, makes JaCoCo instrument the JDK's runtime-generated
+# serialization accessors and breaks them. See bench/projects/grpc-java.toml for the three-arm
+# experiment that isolates it.
+#
+# The earlier UNRESOLVED verdict here -- "exit 4294967295", a kill on a machine out of memory -- was
+# not this. That attempt died; this one ran and was broken by us.

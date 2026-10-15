@@ -1,0 +1,59 @@
+/*
+ * Harness only: writes one line per test that finishes, to the file named by
+ * -Dyoriwake.harness.testOutcomes:
+ *
+ *   taskPath \t class \t ancestor... \t displayName \t name \t result
+ *
+ * The ancestors are the descriptors between the class and the test, outermost first: a template,
+ * factory or feature, named by its legacy name (`b()`, `testFoo(int)`). The JUnit XML names a test
+ * by its display name alone, so two methods whose invocations share one (`formatVersion = 1`) share
+ * an XML key; this file keeps them apart. Fields escape `\`, tab, CR and newline as the agent's
+ * decision record does.
+ *
+ * A TestListener in the daemon, not the test JVM: no test classpath, task input or anything the
+ * plugin digests changes. Each line is written as its test finishes, so a failed task keeps its
+ * lines. Every task it listens to prints `yoriwake-harness: test outcomes <taskPath>` when its run
+ * starts; a log without that line means no listener ran. The harness sets the property only on
+ * builds run with --no-configuration-cache.
+ */
+def out = System.getProperty('yoriwake.harness.testOutcomes')
+if (out != null) {
+    def file = new File(out)
+    def escape = { String value ->
+        (value ?: '').replace('\\', '\\\\').replace('\t', '\\t').replace('\r', '\\r').replace('\n', '\\n')
+    }
+    gradle.taskGraph.whenReady { graph ->
+        graph.allTasks.findAll { it instanceof Test }.each { Test task ->
+            def path = task.path
+            task.addTestListener(new TestListener() {
+                void beforeSuite(TestDescriptor suite) {
+                    if (suite.parent == null) {
+                        println "yoriwake-harness: test outcomes ${path}"
+                    }
+                }
+
+                void afterSuite(TestDescriptor suite, TestResult result) {}
+
+                void beforeTest(TestDescriptor test) {}
+
+                void afterTest(TestDescriptor test, TestResult result) {
+                    // Up from the test to the descriptor named after its class. None found is
+                    // written as an empty class, which the reader refuses as unattributable.
+                    def ancestors = []
+                    def parent = test.parent
+                    while (parent != null && parent.name != test.className) {
+                        ancestors.add(0, parent.name)
+                        parent = parent.parent
+                    }
+                    def cls = parent == null ? '' : test.className
+                    def fields = [path, cls] + (parent == null ? [] : ancestors) +
+                            [test.displayName, test.name, result.resultType.toString()]
+                    def line = fields.collect { escape(it as String) }.join('\t') + '\n'
+                    synchronized (file) {
+                        file << line
+                    }
+                }
+            })
+        }
+    }
+}

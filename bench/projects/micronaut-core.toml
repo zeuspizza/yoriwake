@@ -1,0 +1,75 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and seven of these files once still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: qualify before sweeping -- that stage is where every defect this
+# corpus has found actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/micronaut-core.toml
+#
+# WHY THIS ONE: Annotation-processor heavy. Generated sources are exactly the case the compiled-bytes experiment cares
+# about, and no project in the corpus has them.
+#
+# KNOWN RISK: Default branch is 5.2.x, not main. Generated sources that embed a timestamp or a hostname would
+# break the determinism that experiment measured -- if this project forces constantly, that is the finding.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit Platform,
+# move to a sibling rather than writing the project off: four projects were written off here and all
+# four ran once someone read the actual error.
+name = "micronaut-core"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/micronaut-projects/micronaut-core.git"
+
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "8f7a86f21b78fe595ebca275834a67418991da13"
+# `micronaut-core`, not `core`. settings.gradle says `include "core"`, but the
+# `io.micronaut.build.shared.settings` plugin renames every subproject with a `micronaut-` prefix
+# under the root project `micronaut-parent`, so the Gradle path is `:micronaut-core`. Named `core`,
+# qualification failed with "project 'core' not found in root project 'micronaut-parent'" -- the
+# same shape as grpc-java's, and the same kind of wrong: a name in this file, not a blocked project.
+module = "micronaut-core"
+# The Gradle project is `:micronaut-core`; the DIRECTORY is still `core`, because the rename happens
+# in a settings plugin and does not move any files. Without this, results are read from a directory
+# that does not exist and 7,394 tests (2 skipped) are reported as "a green build that ran nothing".
+module_dir = "core"
+# WITHOUT THIS THE SUITE RECORDS NOTHING, and the run looks like a success. micronaut-core's
+# convention plugin (`MicronautQualityChecksParticipantPlugin`) switches the JaCoCo task extension
+# off unless the build is running inside GitHub Actions, so 7,394 tests execute with no agent
+# attached and no map is written -- diagnosed, and re-confirmed later when a
+# re-capture ran for 66.9s and reported "no map for this module". The plugin declines with
+# `jacoco-disabled` and names this property; supplying it is what makes the project measurable here.
+flags = ["-Pmicronaut.jacoco.enabled=true"]
+# CLOSED. It was empty because no recall sweep had been run under the flag above, which
+# was a reason to distrust a row rather than a reason to ask nothing: an empty `sources` is not a
+# neutral state, because `git log -- ` with nothing after it matches EVERY commit, so the replay was
+# either refused or sampling arbitrary history. The directory is `core/`, not `micronaut-core/` --
+# the Gradle name is renamed by a settings plugin and no file moves, which is the same trap
+# `module_dir` above exists for.
+#
+# `.groovy` is deliberately absent: this module has no `src/main/groovy`, and the mutation grammar
+# globs only `.java` and `.kt` in any case, so naming a Groovy root would produce an empty target
+# list and a results file with zero rows -- the "green build that ran nothing" shape.
+sources = ["core/src/main/java"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"
+
+# NEEDS A JDK 25 DAEMON, which is a machine fact and not a property of the project.
+# Qualification failed with:
+#
+#     Dependency requires at least JVM runtime version 25. This build uses a Java 21 JVM.
+#
+# `daemon_java_version` supplies it, found by major version rather than by path, exactly as ktlint
+# and spring-framework already do. Do not conclude the project is unusable from the message above.
+daemon_java_version = 25

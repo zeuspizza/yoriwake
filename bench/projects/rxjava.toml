@@ -1,0 +1,41 @@
+# UNBLOCKED. `:compileJava` succeeds on this machine.
+#
+# The old note said RxJava 4 needs a JDK 26 toolchain that Gradle cannot fetch, because the build
+# declares no toolchain download repository. That premise was right and the conclusion went stale:
+# Gradle no longer needs to fetch one. Another project's build provisioned Adoptium 26 into
+# ~/.gradle/jdks, and Gradle detects its own provisioned JDKs, so the toolchain resolves.
+#
+# The first retry still failed, and not for a toolchain reason: a stranded Gradle daemon held
+# ~/.gradle/caches/9.7.1/javaCompile. Killing python does not kill the Gradle daemons and test
+# workers it started, and one of those had been holding the lock since an earlier sweep. Worth
+# knowing before writing a project off twice.
+#
+# Measured (the verdict itself lives in bench/qualification.txt): 14,221 tests
+# in 9m34s, 3 already failing, 864 skipped. The largest suite in the corpus by a factor of six,
+# and the only one long enough that capture overhead amortises --
+# resilience4j's 32-second suite is the opposite case, where fixed cost dominates everything.
+#
+# Pinned to the default branch, which is now RxJava 4 -- the first attempt pinned a 3.x commit
+# and cloned the default branch, so the SHA named a tree that was not there.
+#
+# Java, single Gradle project, and parameterised-heavy: RxJava's suite leans hard on JUnit
+# parameterisation, which is the construct the selection filter handles least directly. JUnit models
+# a parameterised test as a CONTAINER whose invocations do not exist until execution, and waving all
+# containers through once ran 1,888 of detekt's 3,588 tests for an edit that reached nine.
+name = "rxjava"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/ReactiveX/RxJava.git"
+commit = "947e681bca8aa5526a52a51e3953c82148ccb36b"
+module = ""
+flags = []
+sources = ["src/main/java/io/reactivex/rxjava4/internal/util"]
+
+# The 14,221-test capture OOMed the daemon while decoding on the default heap.
+# Decode needs between 256m and 384m for this suite on its own; this is headroom over that plus
+# whatever the build itself is still holding. See daemon_jvm_flags in run.py.
+daemon_jvmargs = "-Xmx2g"

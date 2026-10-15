@@ -1,0 +1,56 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/grails-core.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: 2,618 Spock specs, a second and independent Spock sample. Two samples is what separates a
+#   property of Spock from a property of one project's build.
+#
+# KNOWN RISK: The Spock version is not in a root version catalog, so Platform wiring needs confirming on
+#   a real run. The module below is a guess from the tree and may not be where the specs are.
+#   THE "GROOVY ONLY, SO NO RECALL ROW" NOTE WAS WRONG, and it is corrected here rather than carried
+#   (checked on the tree). The directory is called `groovy`, and the mutation grammar
+#   globs `**/*.java` and `**/*.kt` UNDER a source root rather than trusting its name --
+#   `grails-core/src/main/groovy` holds 178 `.java` files against 68 `.groovy` ones. So this project
+#   can produce recall rows, and they are evidence about its Java half, exactly as kafka `core`'s are.
+#   Its 68 Groovy files stay unmutatable, and that is the real limit.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "grails-core"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/grails/grails-core.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "a5758d657f3090205a43e9c435246ad2adb7bc7a"
+# FILLED IN from a real module listing, not from the tree: `settings.gradle`
+# line 76 includes `grails-core` by name among about eighty projects, and `grails-core/src/test`
+# holds 77 `*Spec.groovy` files. The key was deliberately absent before, because absent means "not
+# yet known" while `module = ""` already means "the root project", and `qualify.py` refuses the
+# former rather than guessing.
+module = "grails-core"
+flags = []
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["grails-core/src/main/groovy"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"

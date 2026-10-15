@@ -1,0 +1,44 @@
+/*
+ * Harness only: writes each task's start and end, one line per task, to the file named by
+ * -Dyoriwake.harness.taskTimes: `path \t startEpochMs \t endEpochMs \t outcome`.
+ *
+ * What a sweep arm's wall clock is made of: configuration before the first task, the test task
+ * itself, and the plugin's decode finalizer. A build-event listener, so it is configuration-cache
+ * compatible and adds nothing to the test JVM. The same listener measured isolated capture.
+ */
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+import org.gradle.build.event.BuildEventsListenerRegistry
+import org.gradle.tooling.events.FinishEvent
+import org.gradle.tooling.events.OperationCompletionListener
+import org.gradle.tooling.events.task.TaskFailureResult
+import org.gradle.tooling.events.task.TaskFinishEvent
+import org.gradle.tooling.events.task.TaskSkippedResult
+import org.gradle.tooling.events.task.TaskSuccessResult
+
+abstract class YoriwakeHarnessTaskTimes implements BuildService<Params>, OperationCompletionListener {
+    interface Params extends BuildServiceParameters {
+        org.gradle.api.provider.Property<String> getOut()
+    }
+
+    synchronized void onFinish(FinishEvent event) {
+        if (!(event instanceof TaskFinishEvent)) {
+            return
+        }
+        def result = event.result
+        def outcome = result instanceof TaskFailureResult ? 'failed'
+                : result instanceof TaskSkippedResult ? 'skipped'
+                : result instanceof TaskSuccessResult && result.upToDate ? 'up-to-date'
+                : result instanceof TaskSuccessResult && result.fromCache ? 'from-cache'
+                : 'executed'
+        new File(parameters.out.get()) << "${event.descriptor.taskPath}\t${result.startTime}\t${result.endTime}\t${outcome}\n"
+    }
+}
+
+def out = System.getProperty('yoriwake.harness.taskTimes')
+if (out != null) {
+    def service = gradle.sharedServices.registerIfAbsent('yoriwakeHarnessTaskTimes', YoriwakeHarnessTaskTimes) {
+        it.parameters.out.set(out)
+    }
+    gradle.services.get(BuildEventsListenerRegistry).onTaskCompletion(service)
+}

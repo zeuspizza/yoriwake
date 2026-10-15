@@ -1,0 +1,241 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/duckduckgo-android.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: Large Android with a real unit-test suite, on the Platform via vintage. The Android half of
+#   the corpus is two small projects today.
+#
+# KNOWN RISK: 195 build files, so the configuration cost may dominate. Robolectric in places, which needs
+#   the `includeNoLocationClasses` fix that shipped in c24bf33 -- this is a chance to see it work
+#   on a project nobody tuned it for. The variant task name is a guess.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "duckduckgo-android"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/duckduckgo/Android.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "07c41b9c65fe08165eb72ed13d77e68249708af9"
+module = "app"
+# NOT `test`. Asking for a task that does not exist is not a smaller run, it is NO run:
+# kotlinx-coroutines compiled for 6m 25s, printed BUILD SUCCESSFUL, exited 0 and ran
+# zero tests. A green build that ran nothing is the shape of the silent miss this
+# project exists to prevent.
+# THE SCOPE COLLAPSED, AND THE EXIT CODE IS A DIFFERENT FACT. The table
+# records `audit-did-not-run(exit 1)`, which names a symptom no reader can act on. Two separate
+# things happened. The capture attached and derived `scope=derived(*) includes=[*]` -- the whole
+# build -- which is the documented one-unreadable-file failure mode and the reason this project
+# cannot answer. Then the build failed, for its own reason: `There were failing tests`, against
+# `already_failing=71` in the qualification table. The guest's suite fails 71 tests on this machine
+# and that is not the blocker; the collapse is, and the collapse is ours.
+#
+# ESTABLISHED, AND IT IS FIVE FILES RATHER THAN ONE. A scope analysis
+# names them: five zero-byte `.kt` sources under main source roots. A file that declares no package
+# reads as the default package, and `collapseToRoots` short-circuits on that -- so any one of the
+# five is enough to widen the whole build to `*`, and all five have to go for the scope to hold.
+# Remedy below.
+test_task = "testPlayDebugUnitTest"
+# AND A SECOND, INDEPENDENT BLOCKER UNDERNEATH THE SCOPE COLLAPSE.
+# Staging fixed the scope -- the plugin's own capture line reads `scope=derived(com.duckduckgo.*, ...)`
+# over 188 patterns where it read `derived(*)` before -- and the project STILL forced every row, for
+# a different reason:
+#
+#     the map does not record the scope it was captured under, so a changed class it does not
+#     mention still forces a full run.
+#
+# The map holds `raw/`, `decisions.tsv`, `ran.marker` and `full-run.marker` and NO `coverage.tsv`,
+# `scope` or `schema-version`, and `task-facts` carries `recordedCoverage=`, `workers=` and
+# `decodeRefused=` all EMPTY. The finalizer writes one of those three on every path it can take and
+# deletes both markers as its first act, so it did not run and fail -- it did not run. `yoriwakeDecode`
+# appears ZERO times in the capture log across 2,661 executed tasks.
+#
+# That is iceberg's signature exactly, and so is the cause: this project sets
+# `org.gradle.configureondemand=true` in its own `gradle.properties` (line 22). Under
+# configure-on-demand the graph for the requested task is built before `projectsEvaluated` fires, so
+# the finalizer edge is added to a graph already read. Same remedy as iceberg's.
+#
+# PROVED BY A CONTROLLED PAIR, 44 SECONDS, same instrument iceberg's entry uses -- same command,
+# same checkout, one flag:
+#
+#     :app:testPlayDebugUnitTest --dry-run                          -> no yoriwakeDecode task at all
+#     :app:testPlayDebugUnitTest --dry-run --no-configure-on-demand -> :app:yoriwakeDecodeTestPlayDebug\
+#                                                                      UnitTest SKIPPED
+#
+# NOT A BLANKET RULE, and the corpus was checked rather than assumed. Exactly FOUR
+# projects on disk set `org.gradle.configureondemand=true`: caffeine, duckduckgo-android,
+# grails-core and iceberg. Two of the four have an unmerged map and two decode fine, so the setting
+# is necessary and not sufficient -- which is why nothing declines on it and the harness reports the
+# SYMPTOM instead (a map holding raw records and no `coverage.tsv`). Both bitten projects now carry
+# the flag, and no third instance is hiding in the corpus.
+#
+# HONESTY, STACKING ON THE STAGING NOTE ABOVE: this project is now measured with five empty sources
+# removed AND with configure-on-demand off, which its own properties file turns on. Both arms share
+# both, so savings and recall stay comparable, but any claim about this project carries both
+# conditions.
+#
+# ALSO SET HERE: `org.gradle.configuration-cache=true`, which iceberg does not set. If the decode
+# still does not run with the flag below, that is the next suspect rather than the heap.
+#
+# SWEPT WITH BOTH REMEDIES, AND IT ANSWERS NOW -- WEAKLY. 16 rows in 2h29m from 713
+# available targets: 9 `checked`, 6 `no-effect`, 1 `build-failed`. **2 rows where a miss was
+# possible, 0 missed.** The map merged for the first time in this project's history: 2,491 records
+# at 0.9996 attributable, 12,443 classes covered.
+#
+# THE TOOL BARELY HELPS THIS PROJECT, and that is the finding rather than the zero. Only 2 of 16
+# rows narrowed at all, both to about four fifths of the suite -- 4,874/6,252 and 4,971/6,249 --
+# and BOTH come from the same file, `DuckDuckGoUrlDetector.kt`. Thirteen rows forced: nine because
+# the map has no coverage for the changed class, four as `constant-changed` refusals. So the recall
+# evidence here is two rows drawn from one class, which is a weak clean result and must be quoted
+# as one.
+#
+# WHY IT FORCES SO OFTEN, and it is not the scope any more. The target ordering marks these rows
+# `reach: covered` because the FILE is covered, while the class the mutation edits is not in the
+# map -- `AndroidDefaultBrowserDetector`, `DataSetChangeObserver` and others like them. A large
+# Android module declares many classes per file, including generated observers and adapters no test
+# touches, so "file covered" and "changed class covered" come apart here far more than on a JVM
+# library.
+#
+# THE SUITE SIZE IS NOT STABLE, and any future recall claim has to deal with this first. Across
+# these rows the full arm ran 6,249, 6,252, 6,286 and 6,349 tests -- a swing of about 100 between
+# runs of the same suite. On three rows the SELECTED arm ran more tests than the ground-truth arm.
+# It did not corrupt these rows (`decision_outcome` is read from the selector's own decision record
+# rather than from arm sizes, which is exactly why that field exists), and nothing was missed. But
+# a ground-truth arm that can silently omit 100 tests cannot support a recall figure: a failure
+# among those 100 would be invisible and the row would read clean. This is the shape
+# an unstable guest showed on kafka-core, where a small baseline turned into reported misses -- on a
+# project carrying 71 already-failing tests. It was swept at the
+# default 2 baseline repeats; a real recall claim from here wants the instability measured first.
+#
+# SO IT BUYS ITS OWN. `baseline_repeats` is a project-file key with `--baseline-repeats`
+# as its default, exactly as `sweep_limit` stands to `--limit`. Four rather than two, and the cost
+# is stated rather than waved at: `extra_baseline_failures` runs once per project per SWEEP, not per
+# row, so this is two additional full suite runs -- of the order of ten minutes against this
+# project's 2h29m, and the only way a union of already-failing tests can span the ~100-test swing
+# between runs of this suite.
+#
+# Raising `--baseline-repeats` corpus-wide instead would buy one extra full run per project per
+# sweep to answer a question about this one: two hours on kafka-core's 7,399-second suite alone.
+#
+# IT AGES THIS PROJECT'S STORED ROWS, deliberately. Those sixteen rows established their
+# already-failing set over two runs and these will establish it over four, and a file holding both
+# describes neither -- so the harness starts fresh rather than resuming. That costs nothing extra
+# here, because the selector changes landing beside this key move `selector_digest` and re-sweep the
+# corpus anyway.
+baseline_repeats = 4
+#
+# THE COMPILE GATE HAS NEVER RUN ON THIS PROJECT (a correction). All 31 `compile-*.log`
+# files under bench/logs/duckduckgo-android/ end in `Cannot locate tasks that match
+# ':app:testPlayDebugUnitTestClasses' as task 'testPlayDebugUnitTestClasses' not found in project
+# ':app'`, and not one carries a compiler diagnostic. `test_classes_task()` derives that name from
+# the `test_task` above, and `:app` does not have it. So `mutations_rejected: 0` on this project's
+# rows means "the gate was never asked", not "the gate asked and accepted" -- and the row recorded
+# as `build-failed` for `VpnMenuStateProvider.kt::body::isActive` was an invalid mutation nothing
+# screened. The selected arm's log carries the four `e:` diagnostics that prove it invalid.
+#
+# This was first written up as a gate CLASSIFICATION defect -- the gate catching a KAPT-phase
+# failure and recording the row anyway -- which was wrong and conflated the gate log with the arm
+# log. The fault is in the task derivation, and it is why `assert_recall.py` fails this project.
+#
+# THE REMEDY: name the task this guest actually has. `:app` has NEITHER
+# `testPlayDebugUnitTestClasses` NOR `playDebugUnitTestClasses` -- both were asked with `--dry-run`
+# and both came back "not found in project ':app'". `compilePlayDebugUnitTestJavaWithJavac` exists,
+# and its graph carries `kspPlayDebugUnitTestKotlin`, `kaptGenerateStubsPlayDebugUnitTestKotlin`,
+# `kaptPlayDebugUnitTestKotlin` and `compilePlayDebugUnitTestKotlin` -- every phase a mutation on
+# this guest can fail in, including the KAPT one the first write-up guessed at.
+#
+# The harness no longer takes the derived name on trust: `assert_classes_task` dry-runs it once per
+# project before the capture and refuses by name when the guest does not have it. So this key is
+# the remedy for THIS project and the refusal is the remedy for the next one.
+test_classes_task = "compilePlayDebugUnitTestJavaWithJavac"
+#
+# AND THE DECISION RECORD UNDER-REPORTS BY THOUSANDS: `decision_vs_arm_gap` is -6134 to -3970, with
+# `decision_mismatches` on both narrowed rows. The arm is ground truth for what ran, so the rows
+# stand, but the record cannot be used to audit them. That is a known, deferred writer defect, now
+# seen on a third project after kotlinx-serialization and the spring pair.
+flags = ["--no-configure-on-demand"]
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["app/src/main/java"]
+
+# THE REMEDY FOR THE COLLAPSE ABOVE. The harness removes these files from
+# the checkout before it captures, and COMMITS the removal, so `HEAD` describes the tree being
+# measured.
+#
+# THE COMMIT IS THE WHOLE CORRECTNESS OF IT, and the first version got this wrong. It deleted the
+# files and left them uncommitted, re-deleting after every `git reset --hard`. That stages what the
+# capture sees and ALSO poisons every question asked of it: the selecting arm runs `-Pyoriwake.base=HEAD`,
+# the plugin answers that with `git diff --name-only --no-renames HEAD`, and an uncommitted deletion
+# of a tracked file is reported by that diff. All five paths would have joined the change set of
+# every row -- five changed sources with no compiled class behind them, which is the shape that
+# makes the selector force a full run. A forced run cannot skip a test, so this project would have
+# reported `0 missed` that was true by construction and answered no recall question, at the cost of
+# a 16-row sweep. Found in review before any of it was spent.
+#
+# ONLY ZERO-BYTE FILES, and the harness refuses anything else by name and size. Removing an empty
+# file cannot change what the compiler produces; removing one with content edits the guest's code,
+# and a measurement of an edited guest is not a measurement of this project. A path that is absent is
+# refused too, so an upstream rename cannot turn this off silently.
+#
+# THE NEAR MISS IS REAL, and it is the reason the size check is not ceremony: there are TWO files
+# called `SyncActivity.kt`. The zero-byte one is under `.../ui/`; a 34,666-byte one lives under
+# `.../ui/dashboard/` and is not the file being dropped.
+#
+# HONESTY: measured this way duckduckgo-android is not stock upstream -- it is the project with five
+# empty source files committed out of the checkout. Both arms see the same staged tree, so savings
+# and recall stay comparable, but any claim about this project carries "once the five empty sources
+# are out of the tree".
+#
+# AND NO EXISTING STAMP CAN WITNESS IT, which is why the row carries its own. `selector_digest`
+# hashes the selector, not `bench/`, so staging changes how the project is measured while
+# ageing no results file, and `commit` and `plugin_commit` are unmoved by it too. Each row therefore
+# records `staged_sources`, and a sweep whose staging set differs from the stored one starts a fresh
+# file instead of resuming. The staged tree is reproducible from `commit` plus that list; the
+# staging commit's own SHA is deliberately not recorded, because it exists only in this machine's
+# clone and no reader could check it out.
+#
+# MOVE THE RESULTS FILE ASIDE AND PASS `--recapture` anyway, for the map rather than the rows. The
+# existing `coverage.tsv` here was captured under the `*` scope, so selecting against it would be
+# selecting against a map of the whole classpath.
+#
+# AND `--replay` IS REFUSED for this project: history replay checks out other commits, which would
+# leave the staging commit behind and un-stage the tree with nothing saying so.
+# PROBABLY OBSOLETE NOW, AND DELIBERATELY STILL HERE. The selector now treats a file
+# that declares NOTHING -- empty, or commented out line by line -- as contributing nothing rather
+# than as the default package, which is exactly these five files. So this staging may no longer be
+# doing anything, and dropping it would remove the "measured with five empty sources removed"
+# condition from every figure taken here.
+#
+# NOT DROPPED YET because removing it EDITS THE MEASURED TREE: `stage_checkout` commits the removal,
+# so the tree the capture sees changes, and `staged_sources` on every stored row changes with it.
+# That belongs WITH a sweep and never beside one. Verify by capturing once without it and reading
+# `effective-scope` back -- if it still derives its 188 patterns, this key can go.
+drop_empty_sources = [
+  "app/src/main/java/com/duckduckgo/app/browser/webview/WebViewFeatureFlagReporter.kt",
+  "app/src/main/java/com/duckduckgo/app/browser/autofill/AutofillCredentialsSelectionResultHandler.kt",
+  "network-protection/network-protection-impl/src/main/java/com/duckduckgo/networkprotection/impl/autoexclude/MockAutoExcludeList.kt",
+  "sync/sync-impl/src/main/java/com/duckduckgo/sync/impl/ui/SyncActivity.kt",
+  "sync/sync-impl/src/main/java/com/duckduckgo/sync/impl/ui/setup/SetupAccountActivity.kt",
+]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"

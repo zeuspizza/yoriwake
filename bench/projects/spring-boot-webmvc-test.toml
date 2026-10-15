@@ -1,0 +1,22 @@
+# The qualification verdict for this project lives in `bench/qualification.txt` (qualified
+# at plugin 5f97c7d). It is deliberately NOT repeated here: seven project files once still
+# claimed NOT QUALIFIED for projects the table had passed.
+#
+# WHY THIS ONE. `@WebMvcTest` slices on the Spring context cache: every test builds or reuses a
+# cached application context, which is the shape the shared-JVM first-touch rule and isolated
+# capture differ most on (measured: 8.9x recording,
+# 96.6% -> 86.2% selected). spring-boot's `core:spring-boot` module caches almost no contexts.
+#
+# BORROWS spring-boot's checkout at the same commit. Built and run locally.
+name = "spring-boot-webmvc-test"
+# A first guess, not derived from an observed rate: this module has never been swept.
+sweep_limit = 8
+url = "https://github.com/spring-projects/spring-boot.git"
+commit = "93b23c40c28a331a16530c34189e27781b367aec"
+path = "bench/checkouts/spring-boot"
+module = "module:spring-boot-webmvc-test"
+module_dir = "module/spring-boot-webmvc-test"
+flags = []
+sources = ["module/spring-boot-webmvc-test/src/main/java/org/springframework/boot"]
+daemon_jvmargs = "-Xmx4g"
+daemon_java_version = 25

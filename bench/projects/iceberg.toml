@@ -1,0 +1,184 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/iceberg.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: JUnit 5 and large, and `core` sidesteps the Spark and Flink version matrix that multiplies
+#   this build's module count.
+#
+# KNOWN RISK: Testcontainers appears in several modules. Confirm it is absent from `core` specifically;
+#   the screen checked the build files, not a run.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "iceberg"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/apache/iceberg.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "9299fe6926db7c09e2fe7f53e8129d994c37859c"
+module = "iceberg-core"
+# The Gradle project is `:iceberg-core`; the DIRECTORY is still `core/`. `settings.gradle` renames
+# every project (`project(':core').name = 'iceberg-core'`, line 50) and no file moves. Without this
+# key the harness reads results from a directory that does not exist and files a suite that ran as
+# "a green build that ran nothing" -- the same trap micronaut-core's `module_dir` exists for.
+#
+# CORRECTED. The blocker recorded against this project was a first guess
+# at the module name, not a property of the build.
+#
+# AND THE MAP IS NOT MISSING, IT IS UNMERGED. The verdict says there is no
+# map, which reads as "capture never happened". It did: `.gradle/yoriwake/iceberg-core-test-09480036/`
+# holds `raw/`, a 665 KB `decisions.tsv`, `task-facts`, `ran.marker` and `full-run.marker`. What is
+# absent is `coverage.tsv`, the MERGED map -- so `find_map` finds nothing and reports no map. The
+# decode finalizer either did not run or did not complete, and that is a defect of ours rather than
+# a property of iceberg.
+#
+# NARROWED TO "DID NOT RUN AT ALL". Three facts settle it. `task-facts`
+# carries `recordedCoverage=`, `workers=` and `decodeRefused=` all EMPTY, and the finalizer writes
+# one of those three on every path it can take. `ran.marker` and `full-run.marker` are both still on
+# disk, and the finalizer deletes each as its first act. And `> Task ...yoriwakeDecode` appears nowhere in
+# the qualify log, which ends `17 actionable tasks: 17 executed` with `:iceberg-core:test` last.
+# So the task was never in the graph -- it did not run and fail, it did not run.
+#
+# NOT BECAUSE THE BUILD WENT RED, which was the obvious suspect and is disproved: across the 40
+# qualify logs, every project whose plugin attached executed `yoriwakeDecode`, including the nine whose
+# build FAILED (anki-android, glide, grpc-java, kafka, kafka-core, kestra, kotlinx-coroutines,
+# resilience4j, spring-security). That is what the finalizer was written for. iceberg is the only
+# project where the plugin attached, the build SUCCEEDED, and the task is missing.
+#
+# What is stranded meanwhile: 17,573 `.exec` files under `raw/worker-38/`, which is a full capture of
+# an 8,785-test suite with nothing to merge them.
+#
+# REPRODUCES IN 7 SECONDS, AND THE EDGE THAT IS MISSING IS NAMED.
+#
+#     ./gradlew -I scripts/yoriwake.init.gradle.kts :iceberg-core:test --dry-run
+#
+# ends with `:iceberg-core:test SKIPPED` and no `yoriwakeDecodeTest`. The same command against the demo
+# checkout prints `:test SKIPPED` then `:yoriwakeDecodeTest SKIPPED`, so the instrument is validated
+# against a case where the finalizer is known to run rather than trusted on its own.
+#
+# What is NOT wrong, each checked rather than assumed:
+#   - the plugin configures the project: `[yoriwake] configuring :iceberg-core via java`.
+#   - the task is REGISTERED. `:iceberg-core:tasks --all` lists `yoriwakeDecodeTest`, and so does
+#     `:iceberg-api`, and both match the demo control exactly. So `decodeAfterRun` ran.
+#   - iceberg does not wipe it. Its only two `finalizedBy` uses are on `rootTask` and `jmh`.
+#   - it is not iceberg-core. No iceberg module puts the finalizer in the graph, so it is
+#     project-wide.
+#
+# CAUSE FOUND, AND IT IS `org.gradle.configureondemand=true`. Proved by a
+# controlled pair -- same command, same checkout, one flag:
+#
+#     :iceberg-core:test --dry-run                           -> ends at :iceberg-core:test
+#     :iceberg-core:test --dry-run --no-configure-on-demand  -> :iceberg-core:yoriwakeDecodeTest SKIPPED
+#
+# iceberg sets it in its own `gradle.properties`. The edge IS wired -- an instrumented build prints
+# `finalizedBy now: [yoriwakeDecodeTest]` for this very task -- and under configure-on-demand the
+# finalizer is still left out of the graph. Forcing the task to be realised rather than registered
+# lazily does not help; that was tried and made no difference.
+#
+# NOT A BLANKET RULE, which is why nothing declines on the setting. grails-core sets the same flag
+# and decodes fine, so refusing whenever it is present would break a project that works. The
+# harness now detects the SYMPTOM instead: a map directory holding raw records and no
+# `coverage.tsv` is reported as captured-but-never-merged rather than as absent, which is
+# accurate whatever the cause and names this one as a known trigger.
+#
+# AND NO PLUGIN CHANGE IS NEEDED FOR THE VERDICT, which was checked before one was written. This
+# directory holds `raw/` and no `schema-version`, which is exactly `MapReader`'s CAPTURE_INCOMPLETE
+# condition -- so an adopter already gets "the map at ... was never finished: it holds records but
+# no schema-version, which only a completed capture writes". The plugin was already right; the
+# harness was the half that conflated the two, and that is fixed.
+#
+# WHETHER THE WIRING CAN SURVIVE configure-on-demand AT ALL is a separate question and is NOT
+# answered here. The plugin wires every test task from `gradle.projectsEvaluated`, and under
+# configure-on-demand the graph for the requested task is built before that fires -- the edge is
+# added to a graph already read. Moving the wiring earlier is a lifecycle change with a worse
+# failure mode than the one it fixes: AGP creates its unit-test tasks in its own `afterEvaluate`,
+# so wiring in ours would miss them and every Android guest would lose its decode. That is a
+# behaviour change nobody can measure without a corpus sweep, so it wants its own plan and its own
+# budget rather than a place in this one.
+module_dir = "core"
+
+# REMEDY APPLIED: `--no-configure-on-demand`, which is the flag the
+# controlled `--dry-run` pair above named. Both arms take it, so the finalizer is in the graph for
+# the capture and for every selecting run measured against that capture.
+#
+# HONESTY: iceberg declares `org.gradle.configureondemand=true` in its own `gradle.properties`, so
+# measured this way iceberg is NOT stock upstream -- it is iceberg in a configuration its
+# maintainers do not use. Both arms share the flag, so savings and recall stay comparable, but any
+# claim about this project carries the condition "once its build configures every project".
+#
+# WHAT TO READ BACK IS THE MAP DIRECTORY, NOT THE EXIT CODE. A `coverage.tsv` beside the `raw/` tree
+# is the proof the finalizer ran; the build was already green on every run where the map was never
+# merged, which is how this went unnoticed. And the decode has never completed here: it will merge
+# an 8,785-test suite's records at the 4g set below -- the same heap hibernate-orm's decode died on
+# with an OutOfMemoryError. If it OOMs, the heap is the blocker and the sweep is not started.
+#
+# THE REMEDY WORKS, AND THE DECODE RAN FOR THE FIRST TIME. Qualified with
+# the flag: 8,785 tests in 1,057.6s across 119 modules, and the read-back that matters --
+#
+#     coverage.tsv    9,654 lines, where there was none
+#     task-facts      recordedCoverage=true, workers=1, decodeRefused= (empty)
+#     capture line    map updated: 17,570 records captured, 9,654 known, 5 unattributable
+#
+# All three of those fields were EMPTY before, which is how it was established the finalizer had not
+# run rather than run and failed. The 17,573 `.exec` files that were stranded under `raw/` with
+# nothing to merge them now have something.
+#
+# AND IT COMPLETED AT THE DECLARED 4g, which was the gate this check was told to stop at. The plan's
+# stopping rule was that if the decode died with an OutOfMemoryError at 4g -- the heap hibernate-orm's
+# decode died on -- then the heap is the blocker and no sweep is started. It did not die. Merging an
+# 8,785-test suite's records took the same heap that was set before the first OOM and never tested.
+#
+# SWEPT, AND IT IS THE CLEAREST RESULT THE CORPUS HAS. 17 rows: 12 narrowed, 5 forced,
+# **6 rows where a miss was possible and 0 missed**, with 36 induced failures caught across those
+# six. Selection ran 7.0% to 24.4% of the suite, median 12.3%. No stalls and no rejected mutations.
+#
+# This is what the tool looks like on a project it fits: a native JUnit 5 Platform JVM build whose
+# map attributes nearly everything -- 6,371 classes, 1,765 covered targets against 101 uncovered.
+# Compare duckduckgo-android, swept the same day, which narrowed twice in sixteen rows and only to
+# about four fifths of its suite.
+#
+# THE FILE HOLDS 17 ROWS AND EACH IS STAMPED `sweep_limit = 16`, and the reason is recorded rather
+# than tidied away. The sweep crashed twice in `remove_tree` (see below) and was resumed; on a
+# resumed run `accepted` counted from zero, so banked targets were skipped without consuming a slot
+# and the run measured further rows on top. Fixed in the same session -- `accepted` now starts at
+# what the file already holds -- but these 17 rows were measured before that. The extra row is a
+# real measurement, not padding.
+#
+# AND ROWS 1-13 AND 14-17 WERE MEASURED AGAINST TWO SEPARATE CAPTURES of the same commit, same
+# flags, same staging, because the first crash left the map half-deleted and the resume re-captured.
+# `map_records` is stamped per row so a reader can see it. The two captures agree closely (17,570
+# records / 9,654 known, then 6,371 classes / 1,765 covered targets), but they are not the same map
+# and this file says so rather than letting the results imply one.
+#
+# TWO HARNESS DEFECTS SURFACED HERE AND BOTH ARE FIXED. `remove_tree`'s recovery handler chmod'd
+# directories to 0o200 -- write-only, which strips the read and execute a directory needs to be
+# traversed -- so it created the unremovable state it existed to repair, and then could not retry
+# out of it because it re-invoked `os.open` without flags. Then, with that fixed, the same function
+# hit a race: `restore_map` empties a map directory while the build's decode finalizer is still
+# writing `task-facts` into it. Both are guarded now.
+flags = ["--no-configure-on-demand"]
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["core/src/main/java"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"

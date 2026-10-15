@@ -1,0 +1,82 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/kotest.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: Kotlin on the Platform with 1,027 jvmTest files, and a multiplatform build -- so it asks the
+#   Kotlin Multiplatform question at a size the two kotlinx projects do not.
+#
+# KNOWN RISK: It is its own test framework, so its change shapes are unlike an application's. Expect the
+#   `kotlin-multiplatform` decline; that is part of why it is here.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "kotest"
+url = "https://github.com/kotest/kotest.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "f67085473cedd1a96ea71d40b8b4511ef5b2a86a"
+# WHY THE TABLE'S RECORDED CAUSE IS NOT THE REAL ONE, and why this cannot be repointed.
+# The verdict stays in qualification.txt; what is here is the diagnosis, per the header above.
+#
+# Kotlin Multiplatform, JVM target without `withJava()`: the module applies `java-base` and none of
+# the five host plugin ids, so the plugin declines with `kotlin-multiplatform` and nothing is
+# captured. kotlinx-coroutines and kotlinx-serialization escaped this by moving to a JVM-only sibling
+# that has real tests; kotest has none -- every module with tests in this build is multiplatform, so
+# there is nowhere to move the row to.
+#
+# CHECKABLE: `grep -rl "withJava" --include=build.gradle.kts .` returns nothing in this checkout.
+module = "kotest-framework:kotest-framework-engine"
+# NOT `test`. Asking for a task that does not exist is not a smaller run, it is NO run:
+# kotlinx-coroutines compiled for 6m 25s, printed BUILD SUCCESSFUL, exited 0 and ran
+# zero tests. A green build that ran nothing is the shape of the silent miss this
+# project exists to prevent.
+test_task = "jvmTest"
+flags = []
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["kotest-framework/kotest-framework-engine/src/jvmMain/kotlin"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"
+
+# ATTACHES NOW, AND IS BLOCKED ON A DIFFERENT DEFECT. The multiplatform
+# attach works -- the plugin configures `:kotest-framework:kotest-framework-engine:jvmTest` and
+# qualify reports 3814 tests in 106.8s across 98 modules -- and the map it captures is scoped `*`:
+#
+#     effective-scope: include  *
+#
+# THAT IS NOT THE MULTIPLATFORM ATTACH. It is the one-unreadable-file mode, and these are the
+# two files:
+#
+#     kotest-intellij-plugin/src/main/kotlin/io/kotest/plugin/intellij/inspections/ShouldBeInstanceOfQuickFix.kt
+#     kotest-intellij-plugin/src/main/kotlin/io/kotest/plugin/intellij/inspections/ShouldBeInstanceOfInspection.kt
+#
+# FIXED IN THE SELECTOR, and this project is no longer blocked. Both files are commented
+# out LINE BY LINE, `package` declaration included, so the scan found no package and read them as
+# the default package -- which nothing narrower than `*` covers. But a wholly commented-out file
+# compiles to no class at all, so it cannot put anything in the default package. The derivation now
+# separates "no package line, but there IS code" (the default package, still collapses) from "no
+# package line and no code" (contributes nothing).
+#
+# THE READ-BACK IS THE MAP, and it is a real scope now:
+#
+#     effective-scope: 35 includes -- io.kotest.assertions.*, io.kotest.common.*, io.kotest.core.*,
+#                      io.kotest.engine.*, io.kotest.data.*, io.kotest.extensions.* and the rest
+#     qualify:         3814 tests in 68.8s wall, 98 modules
+#
+# No staging, so unlike duckduckgo-android this project is measured stock: nothing was removed from
+# the checkout and no condition attaches to a figure taken here.

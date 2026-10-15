@@ -1,0 +1,37 @@
+# The Kotlin twin of the demo fixture, and the reason it exists is one file.
+#
+# Recordability refuses EVERY Kotlin class, because telling an `inline` member from an ordinary one
+# needs kotlin.Metadata and the plugin carries no metadata library. That refusal is conservative and
+# correct, but it means the absence-of-coverage rule -- the tool's most valuable narrowing rule --
+# cannot fire on any Kotlin project. On a detekt replay it was three of five forced full runs.
+#
+# Narrowing that refusal to inline members only is the highest-value change available. It also
+# LOOSENS A SKIP RULE on a language where this project has never caught a single induced failure:
+# the five it has are Java. This fixture closes that gap in two minutes rather than forty, so the
+# rule can be developed against a test that really fails.
+#
+# Inlined.kt is the hazard in miniature. `aboveZero` is inline, so its body is compiled into
+# InlinedTest's own bytecode; coverage sees InlinedTest executing itself and `Inlined` looks
+# untouched. Skip that test on a change to Inlined.kt and the one test that fails is the one that
+# was not run.
+name = "demo-kotlin"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 8
+
+# A LOCAL SAMPLE BUILD, NOT A PROJECT. A published figure already used
+# this convention, keeping demo-kotlin "out of the five".
+#
+# `corpus_state.py` reads this key and reports such builds in their own block, in no
+# denominator. Removing it moves this build into the corpus count as a project, which a
+# case in bench/test_corpus_state.py asserts against.
+fixture = true
+copy_of = "samples/demo-kotlin"
+commit = "local"
+module = ""
+flags = []
+sources = ["src/main/kotlin"]

@@ -1,0 +1,57 @@
+# NO LONGER "the project that can never produce selection evidence". It was, for as long as its
+# suite ran on JUnit 4's own runner: the agent's SelectionFilter is a JUnit Platform
+# PostDiscoveryFilter, so a suite that never reaches the Platform is never offered to it and nothing
+# can be deselected however good the map is.
+#
+# `scripts/junit-vintage.init.gradle.kts` puts it on the Platform without editing the checkout, and
+# that turned zero into: 4,639 records captured, all 2,356 tests discovered by the
+# filter, and an ordinary class change selecting about 10% of the suite --
+#
+#     internal/matchers/Find          497 of 4640 (10.7%)
+#     internal/matchers/CompareEqual  490 of 4640 (10.6%)
+#     internal/verification/AtMost    511 of 4640 (11.0%)
+#     internal/stubbing/.../ThrowsException  636 of 4640 (13.7%)
+#
+# HONESTY: measured with vintage applied, so this is not stock upstream mockito -- its test runtime
+# gained an engine and `useJUnitPlatform()`. Both arms share it, so ratios are comparable, but any
+# claim here carries the condition "once its tests run on the Platform".
+#
+# MockUtil was the first class tried and it forces, correctly: it is loaded during test-JVM startup,
+# so no test owns it. `yoriwakeExplain` said so in 14 seconds after two 4-minute runs had not.
+#
+# Java, multi-module. The plain-JUnit-4 project: mockito-core does not call useJUnitPlatform(), so it
+# runs on Gradle's default JUnit 4 runner. That once meant no capture at all; the agent now
+# rewrites RunNotifier and the map is built.
+#
+# WHAT THIS SWEEP CAN AND CANNOT SHOW. Deselection is a JUnit Platform PostDiscoveryFilter and has no
+# equivalent here, so every run is a full run and "0 missed" is true by construction. That is worth
+# having -- it is the re-verification a new capture path needs, and it proves capture on this runner
+# does not BREAK a suite -- but it is not evidence that selection is safe here, because selection
+# never happens. Read the selected/full counts, not just the headline.
+#
+# SWEEP IT AT A SMALL LIMIT (--limit 2). Because nothing is ever deselected, every mutation costs two
+# full runs of a 5,686-test suite and answers a question that is true by construction. Two mutations
+# confirm capture works on this runner and that the arithmetic is sound; the eight after them buy
+# nothing but runner hours.
+#
+# It also cannot exercise the defect that made this runner dangerous: the JUnit 4 hook stealing the
+# Platform listener's coverage needed the agent attached to a VINTAGE task, and the sweep never
+# passes -Pyoriwake.internal.loaded. That case is pinned by EngineSupportTest instead.
+name = "mockito"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/mockito/mockito.git"
+commit = "5a676bcd9ef9a10db46e1dc34e190eb46faa2687"
+module = "mockito-core"
+flags = ["-I", "{yoriwake}/scripts/junit-vintage.init.gradle.kts"]
+# internal/stubbing, not internal/util. The util package leads with AndroidPlatform, whose methods
+# are stubs no JVM test ever calls, so a --limit 2 sweep mutated two pieces of dead code and
+# asked the recall question of nothing -- assert_recall.py correctly refused to call that a pass.
+# The stubbing package is the core the suite exercises on every test, so a small limit still asks
+# a real question, which is what makes the small limit affordable.
+sources = ["mockito-core/src/main/java/org/mockito/internal/stubbing"]

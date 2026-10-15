@@ -1,0 +1,41 @@
+# Kotlin, multi-module, JUnit 5. Added to widen the corpus beyond detekt, which produced every
+# recall number this project has.
+#
+# WORKS LOCALLY. Both recorded blockers were real and both are now answered.
+#
+# 1. The daemon JVM, which is NOT a toolchain. ktlint's `build-logic` is itself compiled for JVM 26,
+#    so the daemon that evaluates the build must be 26 -- the build fails before any toolchain is
+#    consulted, with "Dependency requires at least JVM runtime version 26. This build uses a Java 21
+#    JVM." A toolchain chooses what compiles and runs tests; this chooses what Gradle runs on, and no
+#    toolchain setting can reach it. `daemon_java_version` below supplies it, found by major version
+#    under ~/.gradle/jdks rather than by a path this file has no business knowing.
+#
+# 2. Windows MAX_PATH. The clone failed part way with "Filename too long" and left no checkout at
+#    all. `git -c core.longpaths=true clone` fixes it, and run.py now sets it per checkout.
+#
+# MODULE: ktlint-ruleset-standard, 2,752 tests and none failing, against ktlint-rule-engine's 226.
+# The larger module is the one worth a slot; 114 test files against 18.
+name = "ktlint"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 8
+url = "https://github.com/pinterest/ktlint.git"
+commit = "2b6028e450e90885426fc821f457b49751a49172"
+module = "ktlint-ruleset-standard"
+daemon_java_version = 26
+flags = []
+
+# The engine internals: editorconfig loading, suppression, rule ordering. Behaviour-dense and well
+# covered, which is what a recall question needs -- a mutation in code nothing tests asks nothing.
+# Both sides of a module edge, as detekt has. ktlint-ruleset-standard is the module under test and
+# depends on ktlint-rule-engine, so a mutation in the engine is a cross-module change that must reach
+# these tests, and one in the ruleset is the in-module case. The previous value named only the engine,
+# so every target was cross-module and the module under test was never mutated at all.
+sources = [
+    "ktlint-ruleset-standard/src/main/kotlin",
+    "ktlint-rule-engine/src/main/kotlin/io/github/ktlint/core/rule/engine/internal",
+]
