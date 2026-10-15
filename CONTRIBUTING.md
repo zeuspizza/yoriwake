@@ -10,7 +10,8 @@ and is not repeated here.
 
 Requires JDK 21 to run Gradle, and JDKs 11, 17 and 25 where Gradle's toolchain detection finds
 them: the functional suite runs a test JVM on each. `-Pyoriwake.functional.testJvms=21` skips the
-others for a local run.
+others for a local run. CI runs each functional suite in shards by test class;
+`-Pyoriwake.functional.shard=3/8` runs the same classes as its shard 3 of 8, to reproduce one.
 
 ```bash
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin

@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import assert_selection  # noqa: E402
 import ci  # noqa: E402
+import functional_shards  # noqa: E402
 import matrix_check  # noqa: E402
 
 
@@ -576,7 +577,131 @@ def case_a_cell_with_two_tasks_results_fails():
         return _expect(_results(artifacts), "one functional task", "results of two tasks")
 
 
+def _sources(root, files):
+    """Writes Kotlin sources under `root` and returns their directory."""
+    for name, text in files.items():
+        path = os.path.join(root, "src", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    return os.path.join(root, "src")
+
+
+def _shard(root, index, count, classes):
+    """One shard's results: a testcase per class (a nested class's name included)."""
+    path = os.path.join(root, "shards", f"functional-linux-functionalTest-{index}-of-{count}")
+    os.makedirs(path)
+    cases = "".join(f'<testcase classname="{name}" name="t()" time="1.5"/>' for name in classes)
+    with open(os.path.join(path, f"TEST-{index}.xml"), "w", encoding="utf-8") as handle:
+        handle.write(f"<testsuite>{cases}</testsuite>")
+
+
+SHARD_SOURCES = {
+    "a/AlphaTest.kt": "package a\n\nclass AlphaTest {\n    @Test\n    fun one() {}\n}\n",
+    "a/BetaTest.kt": "package a\n\nclass BetaTest {\n    @ParameterizedTest\n    fun many() {}\n}\n",
+    # A base class, a fixture's source in a string, and the separately run package: no candidates.
+    "a/Support.kt": "package a\n\nabstract class Support {\n    val fixture = \"\"\"\n        class Fixture {\n            @Test void x() {}\n        }\n    \"\"\"\n}\n",
+    "breaking/AttemptTest.kt": "package io.github.zeuspizza.yoriwake.gradle.breaking\n\nclass AttemptTest {\n    @Test\n    fun t() {}\n}\n",
+}
+
+
+def case_the_source_scan_finds_the_test_classes_and_only_them():
+    with tempfile.TemporaryDirectory() as root:
+        found = functional_shards.candidates(_sources(root, SHARD_SOURCES))
+    return 0 if found == {"a.AlphaTest", "a.BetaTest"} else fail(f"candidates were {sorted(found)}")
+
+
+def case_shards_that_partition_the_suite_pass():
+    with tempfile.TemporaryDirectory() as root:
+        sources = _sources(root, SHARD_SOURCES)
+        _shard(root, 1, 2, ["a.AlphaTest", "a.AlphaTest$Nested"])
+        _shard(root, 2, 2, ["a.BetaTest"])
+        problems = functional_shards.check(os.path.join(root, "shards"), 2, sources)
+    return fail(f"a partition was rejected: {problems}") if problems else 0
+
+
+def case_every_way_a_test_class_can_go_untested_fails():
+    """Each check must be able to fail: a green shard set that skipped a class is the defect."""
+    problems = 0
+    scenarios = {
+        "a class in no shard": ([["a.AlphaTest"], []], "a.BetaTest ran in no shard"),
+        "a class in two shards": ([["a.AlphaTest", "a.BetaTest"], ["a.BetaTest"]], "ran in shards"),
+        "a missing shard": ([["a.AlphaTest", "a.BetaTest"], None], "shard 2 of 2 left no results"),
+        "a class the scan missed": ([["a.AlphaTest"], ["a.BetaTest", "a.Gamma"]], "the source scan missed it"),
+    }
+    for label, (shards, expected) in scenarios.items():
+        with tempfile.TemporaryDirectory() as root:
+            sources = _sources(root, SHARD_SOURCES)
+            os.makedirs(os.path.join(root, "shards"))
+            for index, classes in enumerate(shards, start=1):
+                if classes is not None:
+                    _shard(root, index, 2, classes)
+            found = functional_shards.check(os.path.join(root, "shards"), 2, sources)
+        if not any(expected in problem for problem in found):
+            problems += fail(f"{label} passed the check: {found}")
+    with tempfile.TemporaryDirectory() as root:
+        os.makedirs(os.path.join(root, "shards", "functional-linux-functionalTest-1-of-1"))
+        if not functional_shards.check(os.path.join(root, "shards"), 1, os.path.join(root, "none")):
+            problems += fail("a check with no test classes to compare against passed")
+    return problems
+
+
+def case_every_sharded_suite_runs_all_its_shards():
+    """The workflow's shard lists, the property's count and the check's count agree, 1..N; each
+    check job runs when a shard fails, fails then, and reads its own suite's results."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    jobs = re.split(r"\n  (?=[\w-]+:\n)", text)
+    sharded = [job for job in jobs if "-Pyoriwake.functional.shard=" in job]
+    if not sharded:
+        return fail("verify.yml runs no functional suite in shards")
+    for job in sharded:
+        name = job.split(":", 1)[0]
+        listed = re.search(r"shard: \[([\d, ]+)\]", job)
+        count = re.search(r"-Pyoriwake\.functional\.shard=\$\{\{ matrix\.shard \}\}/(\d+)", job)
+        if not listed or not count:
+            problems += fail(f"{name}: no shard list or shard count")
+            continue
+        n = int(count.group(1))
+        if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
+            problems += fail(f"{name}: shards {listed.group(1)} are not 1..{n}")
+        check = next((j for j in jobs if f"needs: {name}\n" in j), "") + "\n"
+        if f"--count {n}\n" not in check:
+            problems += fail(f"{name}: its check does not expect {n} shards")
+        # Without these a failed shard skips its check, and GitHub counts a skipped required check
+        # as passing.
+        if "    if: always()\n" not in check:
+            problems += fail(f"{name}: its check job does not run when a shard fails (if: always())")
+        if f"if: needs.{name}.result != 'success'" not in check or "exit 1" not in check:
+            problems += fail(f"{name}: its check job does not fail when a shard did not succeed")
+        # One suite's check must read that suite's results, not another's.
+        task = re.search(r"\./gradlew :plugin:(\w+)", job)
+        upload = re.search(r"name: (functional-\w+-(\w+)-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
+        if not task or not upload or upload.group(2) != task.group(1) or upload.group(3) != str(n):
+            problems += fail(f"{name}: its artifact name does not name its task and shard count")
+            continue
+        if f"path: plugin/build/test-results/{task.group(1)}/*.xml" not in job:
+            problems += fail(f"{name}: it does not upload {task.group(1)}'s results")
+        if f"pattern: {upload.group(1)}*\n" not in check:
+            problems += fail(f"{name}: its check does not download its own artifacts ({upload.group(1)}*)")
+    return problems
+
+
+def case_no_downloaded_shard_is_every_shard_missing():
+    with tempfile.TemporaryDirectory() as root:
+        sources = _sources(root, SHARD_SOURCES)
+        found = functional_shards.check(os.path.join(root, "absent"), 2, sources)
+    expected = {"shard 1 of 2 left no results", "shard 2 of 2 left no results"}
+    return 0 if expected <= set(found) else fail(f"a missing shards directory gave {found}")
+
+
 CASES = (
+    case_the_source_scan_finds_the_test_classes_and_only_them,
+    case_shards_that_partition_the_suite_pass,
+    case_every_way_a_test_class_can_go_untested_fails,
+    case_every_sharded_suite_runs_all_its_shards,
+    case_no_downloaded_shard_is_every_shard_missing,
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
     case_no_map_is_reported_rather_than_returned_as_success,
