@@ -29,12 +29,12 @@ jobs:
         with:
           website: jdk.java.net
           release: EA
+      # From the JDK's own `release` file: the action's `version` output is not the Java version.
       - name: keep the early-access JDK's home and feature version
         id: jdk
-        env:
-          VERSION: ${{ steps.early-access.outputs.version }}
         run: |
           set -eu
+          VERSION=$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "$JAVA_HOME/release")
           feature=$(printf '%s' "$VERSION" | grep -Eo '^[0-9]+')
           echo "home=$JAVA_HOME" >> "$GITHUB_OUTPUT"
           echo "feature=$feature" >> "$GITHUB_OUTPUT"
