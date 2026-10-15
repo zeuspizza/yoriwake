@@ -1,9 +1,13 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.change.DigestRule
+import io.github.zeuspizza.yoriwake.gradle.change.classFileCeiling
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
+import io.github.zeuspizza.yoriwake.gradle.report.Audit
+import io.github.zeuspizza.yoriwake.gradle.report.blockers
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -15,6 +19,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** A selecting run over a class newer than a reader of it can take runs every test, and says why. */
@@ -181,5 +186,29 @@ class ClassFileCeilingTest {
         val widening = widen(facts(dir, testJvm = 21, agentCeiling = "60", classes = mapOf("com.acme.A" to classAt("com.acme.A", 65))))
 
         assertEquals(RefusalKind.TEST_JVM_UNSUPPORTED, widening.refusalKind)
+    }
+
+    @Test
+    fun `an unreadable JaCoCo version refuses rather than trusting the classes`(@TempDir dir: File) {
+        val widening = widen(facts(dir, jacoco = null, classes = mapOf("com.acme.A" to classAt("com.acme.A", 65))))
+
+        assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, widening.refusalKind)
+        assertContains(widening.refusal!!, "JaCoCo (its version unread)")
+    }
+
+    @Test
+    fun `the audit names each ceiling refusal as a blocker with its remedy`(@TempDir dir: File) {
+        val classes = mapOf("com.acme.Late" to classAt("com.acme.Late", 72))
+        val tooNewClass = facts(File(dir, "class"), classes = classes)
+        val tooNewJvm = facts(File(dir, "jvm"), testJvm = 28, classes = mapOf("com.acme.A" to classAt("com.acme.A", 65)))
+
+        for ((facts, token) in listOf(tooNewClass to "class-file-unsupported", tooNewJvm to "test-jvm-unsupported")) {
+            val ceiling = classFileCeiling(facts, TaskArtifacts(facts.classpath.files, facts.buildDirs.values))
+            val blocker = Audit.blockers(Audit.TaskFacts(Audit.TaskFacts.PLATFORM, null), ceiling = ceiling)
+                .single { it.token == token }
+
+            assertFalse(blocker.detail.contains('\n'))
+            assertContains(assertNotNull(blocker.remedy), "lifts this")
+        }
     }
 }
