@@ -1,0 +1,60 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/caffeine.toml
+#
+# WHY THIS ONE: Deterministic and heavy in generated code. If compiled-bytes determinism (so far measured
+# on eleven class files of one fixture) fails anywhere, it fails on generated sources at scale.
+#
+# KNOWN RISK: The suite may be short relative to its fixed cost, which would make it an anti-target. That is a
+# result, not a reason to drop it.
+#
+# BLOCKED BY ITS OWN BUILD, ESTABLISHED BY A CONTROL ARM. caffeine's build throws on any
+# skipped test -- `gradle/plugins/src/main/kotlin/lifecycle/testing.caffeine.gradle.kts:116`, "Do not
+# skip tests (e.g. ...)" -- and in this environment its suite skips cases. With this plugin ACTIVE the
+# run failed on `hottestWeighted_negative(Eviction)[148]`; with `-Pyoriwake.disabled`, which leaves the
+# build entirely alone, the same suite failed on `keySet_contains(Map, CacheContext)[286]` after
+# 42m30s. The blocker reproduces without the plugin, so it is a fact about this build rather than
+# something this tool does to it. Two earlier causes were fixed on the way to finding it: the in-JVM
+# parallelism check used to fail the build before a test JVM started, and the agent was compiled at a
+# class-file version caffeine's Java 11 test JVM could not load.
+#
+# A SECOND CONTROL WAS NOT BOUGHT, AND THIS IS WHY. It would have been
+# one more `:caffeine:test` with NO INIT SCRIPT, to settle whether the skips are caffeine's
+# own or a perturbation from the agent. The arm above already answers it: `-Pyoriwake.disabled` is not a
+# quieter plugin, it is a no-op -- `YoriwakePlugin.apply` returns before anything is declared, so no agent
+# is attached, no JaCoCo setting is written and no task is registered. The plugin's own comment says
+# so, because the toll measurement's control arm depends on it. An init-script-free run would differ
+# only in whether the plugin class sits unused on the daemon classpath.
+#
+# So it closes on evidence already in hand rather than spending 42m30s of a machine the corpus
+# sweep needs. If that premise is ever shown wrong, the run to make is that init-script-free one.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit Platform,
+# move to a sibling rather than writing the project off: four projects were written off here and all
+# four ran once someone read the actual error.
+name = "caffeine"
+url = "https://github.com/ben-manes/caffeine.git"
+
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "e3fad04bc635340ffc00b328449e88a0c6bdaa4b"
+module = "caffeine"
+flags = []
+# Its own module's main sources, verified against `module` above and present in the checkout. An
+# empty list here made `replay_commits` match every commit in history and `mutation_targets`
+# yield nothing, neither of which said so.
+sources = ["caffeine/src/main/java"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"

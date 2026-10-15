@@ -1,0 +1,20 @@
+// The harness's positive control for per-method result keys (benchmarks/control_result_keys.py):
+// a class whose two templates are invoked under the same method-less display names, as iceberg's
+// class-level parameterization does. `-Dfixture.fail=1` makes `b` fail at `v = 1`.
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.3'
+}
+
+test {
+    useJUnitPlatform()
+    systemProperty 'fixture.fail', System.getProperty('fixture.fail', '')
+}

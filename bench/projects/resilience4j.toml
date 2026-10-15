@@ -1,0 +1,36 @@
+# Java on the JUnit Platform, across 29 real modules. The corpus had no such project: kestra is Java
+# but the task is effectively one module, detekt is Kotlin, and mockito-core runs on plain JUnit 4
+# where nothing is ever deselected. So this is the only place where classpath scoping and per-test
+# deselection are both exercised on Java at once.
+name = "resilience4j"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 8
+url = "https://github.com/resilience4j/resilience4j.git"
+commit = "a8a33164256ddb6e4bbc168f5c47ac34a348ee7f"
+module = "resilience4j-circuitbreaker"
+flags = []
+
+# 237 distinct tests, 32.5s uninstrumented. ONE fails on the unmutated tree, not the four
+# qualification reported -- qualification counted a different module's run. The harness subtracts
+# pre-existing failures before asking any recall question either way.
+#
+# WINDOWS: needs `git config core.longpaths true`, which run.py now sets per checkout. Without it the
+# first sweep died in one second with "Filename too long" and left a checkout that looked cloned
+# while missing test sources.
+#
+# Capture costs +152% here (81.8s against 32.5s), far above kestra's +5% and detekt's +41%. The cost
+# is mostly fixed -- agent attach and class transformation across 29 modules -- so it falls hardest
+# on short suites, which are the ones with least to gain from selection.
+
+# Both sides of a real module edge: resilience4j-circuitbreaker declares
+# api(project(":resilience4j-core")), so a mutation in core is a cross-module change that must reach
+# this task, and a mutation in circuitbreaker is the in-module case.
+sources = [
+    "resilience4j-circuitbreaker/src/main/java",
+    "resilience4j-core/src/main/java",
+]

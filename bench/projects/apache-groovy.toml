@@ -1,0 +1,60 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/apache-groovy.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: A GROOVY SOURCE TREE UNDER TEST, which the corpus has never had. `InstrumentationScope` has
+#   read `.groovy` since the extension was added and nobody has watched a Groovy module derive a
+#   scope, attach and narrow on a real build.
+#
+# KNOWN RISK: JUnit 3 and 4 legacy tests are mixed in, so part of this suite can be captured and never
+#   deselected. The mutation grammar also globs only `.java` and `.kt`, so a recall row cannot be
+#   produced from the Groovy sources today.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "apache-groovy"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 11
+url = "https://github.com/apache/groovy.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "6e21db629c295c1753966e665581f4e2c9a043d0"
+# `groovy-json`, chosen from a real module listing rather than guessed. It is the
+# Groovy row's whole point: `subprojects/groovy-json/src/main` holds BOTH `groovy/` and `java/`, so
+# the scope derivation has Groovy sources to read AND the mutation grammar -- which globs only
+# `.java` and `.kt` -- has something to target. grails-core has the first and not the second, which
+# is why it cannot produce a recall row at all.
+module = "groovy-json"
+# THE GRADLE NAME IS NOT THE DIRECTORY, and this project is the second instance of the trap
+# micronaut-core recorded. `settings.gradle` includes the subprojects by bare name and then sets
+# `prj.projectDir = "$rootDir/subprojects/$prj.name"`, so the Gradle path is `:groovy-json` while
+# the build output lands in `subprojects/groovy-json/build`. Without this the harness reads results
+# from a directory that does not exist: the first attempt ran 1,102 tests, captured 2,234 records,
+# and was recorded as "a green build that ran NO TESTS".
+module_dir = "subprojects/groovy-json"
+flags = []
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["subprojects/groovy-json/src/main/java", "subprojects/groovy-json/src/main/groovy"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"

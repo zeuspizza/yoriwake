@@ -1,0 +1,89 @@
+# NOT YET QUALIFIED. Added as the first project chosen for the shape the tool is FOR,
+# rather than for whatever built locally.
+#
+# WHY THIS ONE. Everything measured so far says the same thing: the tool's fixed cost is dominated
+# by applying the plugin to a multi-module build at configuration time -- about 10 seconds on
+# okhttp's 28 modules, whose test task is 4 seconds. That cost does not care how long the tests run,
+# so it is ruinous on a 13-second suite and irrelevant on a ten-minute one. okhttp is therefore not
+# a target and never was; it is a worst case that was in the corpus because it built.
+#
+# spring-framework is the opposite shape and a realistic user: a large modular Gradle build whose
+# individual module suites run for minutes, on a codebase where a change usually touches one module.
+# If selection does not pay here it does not pay anywhere, and that is worth knowing either way.
+#
+# WHAT TO EXPECT, so nobody reads a slow first run as a failure:
+#   - The clone is large and the first build downloads a lot. Neither is measured.
+#   - The capture runs the whole module suite under instrumentation and then decodes it. rxjava's
+#     14,221 tests needed between 256m and 384m to decode and OOMed the default daemon heap, so the
+#     heap below is set deliberately rather than hopefully. See daemon_jvm_flags in run.py.
+#   - Spring's own build applies its conventions plugins; the yoriwake init script is layered on top and
+#     has not been tried against them.
+#
+# UNKNOWNS TO RESOLVE ON FIRST RUN, in the order they will bite:
+#   1. The JDK the daemon needs. Spring's build has moved ahead of the JVM this machine defaults to
+#     before. If the build fails before compiling anything, read the version it asks for and set
+#     daemon_java_version, exactly as ktlint needed. Do not conclude the project is unusable --
+#     four projects were written off that way and all four ran once the real blocker was read.
+#   2. RESOLVED, the hard way -- see the module note below. It arrived as async file I/O rather than
+#     as a network call, and it hangs rather than fails. When a suite goes quiet, jstack the test
+#     worker before assuming it is slow.
+#   3. Windows path length. core.longpaths is set per checkout by the harness, which is what
+#     unblocked resilience4j.
+name = "spring-framework"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 21
+url = "https://github.com/spring-projects/spring-framework.git"
+commit = "60e5abff7f65b1cceb006e9ed35561b15b6e14e7"
+
+# spring-core was the first choice and it HANGS FOREVER on this machine. Do not spend another hour
+# rediscovering it:
+#
+#     "Test worker" WAITING (parking)
+#       java.util.concurrent.CountDownLatch.await
+#       org.springframework.core.io.buffer.DataBufferUtilsTests.readAndWriteAsynchronousFileChannel:1124
+#
+# An async file-channel test parks on a latch that is never counted down, after a dozen sibling
+# DataBufferUtilsTests cases fail against the Netty pooled allocator. The suite never completes, so
+# `run()`'s 3600s timeout is the only thing that ends it -- an hour spent to learn nothing. Found in
+# twenty minutes with one jstack, which is the cheap instrument for "is it working or stuck": no
+# file in the checkout had been written for two minutes while the JVM ticked over at a tenth of a
+# core.
+#
+# spring-beans instead: comparable size, no async I/O, no container, no network. If it qualifies,
+# spring-context is the interesting follow-up -- its tests reach across far more of the codebase,
+# which is where narrowing actually gets hard.
+module = "spring-beans"
+flags = []
+
+# Chosen to span the REACH spectrum, not just to be well covered. Measured from this project's own
+# map (its per-package figures):
+#
+#     org.springframework.beans.AbstractNestablePropertyAccessor   mean reach 36.8%   (a hub)
+#     org.springframework.beans.propertyeditors                    mean reach  6.7%
+#     org.springframework.beans.factory.support                    mean reach  4.9%
+#     org.springframework.beans.factory.annotation                 mean reach  0.5%   (the common case)
+#
+# The first sweep pointed only at `org/springframework/beans`, whose targets are dominated by
+# accessor classes half the suite reaches. Every row narrowed to 1256 of 2194 -- and that is a real
+# answer to a hard question, but it is not the question most changes ask. The map says the MEDIAN
+# class here is reached by 7 tests of 2,290; nothing in the corpus had ever measured a change like
+# that on a real project.
+#
+# So both ends are named. A benchmark that only ever mutates hubs reports the tool as marginal; one
+# that only mutates leaves reports it as miraculous. The corpus needs to say which is which.
+sources = [
+    "spring-beans/src/main/java/org/springframework/beans/factory/annotation",
+    "spring-beans/src/main/java/org/springframework/beans/factory/support",
+    "spring-beans/src/main/java/org/springframework/beans/propertyeditors",
+    "spring-beans/src/main/java/org/springframework/beans",
+]
+
+# Set before the first run rather than after the first OOM. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced every later
+# run while still paying to instrument.
+daemon_jvmargs = "-Xmx4g"

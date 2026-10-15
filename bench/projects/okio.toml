@@ -1,0 +1,57 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and seven of these files once still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/okio.toml
+#
+# ADDED from the candidate screen. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: A small, fast multiplatform project: the cheap fixture for the decline path, where a
+#   reproduction costs seconds rather than the six minutes kotlinx-coroutines takes to compile.
+#
+# KNOWN RISK: Too small to be a savings target, and it is not offered as one.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "okio"
+url = "https://github.com/square/okio.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "e8dad1a9a86b96b04e51aa941e834b400114667c"
+# WHY THE TABLE'S RECORDED CAUSE IS NOT THE REAL ONE -- AND WHY THIS IS THE FIXTURE THE DEFERRED
+# PLUGIN CHANGE WANTS. The verdict stays in qualification.txt.
+#
+# The cause is the one arrow, kotest and mockk share: a Kotlin Multiplatform JVM target that does not
+# call `withJava()`, so the module applies `java-base` and none of the five host plugin ids, and the
+# plugin declines with `kotlin-multiplatform`.
+#
+# WHY THIS ONE IS THE CLEANEST FIXTURE FOR IT: okio is the smallest of the four, its JVM sources sit
+# in a conventional `src/jvmMain/kotlin`, and it has no Android or compiler-plugin target to confuse
+# the scope derivation. One plugin change -- attaching to a KMP JVM target without `withJava()` --
+# unblocks all four at once, and this is where it should be proved first. Deferred deliberately:
+# attaching where the plugin currently declines means a build that ran everything starts SKIPPING,
+# which needs its own recall evidence and its own plan.
+module = "okio"
+# NOT `test`. Asking for a task that does not exist is not a smaller run, it is NO run:
+# kotlinx-coroutines compiled for 6m 25s, printed BUILD SUCCESSFUL, exited 0 and ran
+# zero tests. A green build that ran nothing is the shape of the silent miss this
+# project exists to prevent.
+test_task = "jvmTest"
+flags = []
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["okio/src/jvmMain/kotlin"]
+
+# ATTACHES AND CAPTURES ITS OWN MODULE.
+#
+#     effective-scope: include  okio.*
+#     qualify:         5086 tests in 201.5s wall, 18 modules
+#
+# One include, this module's own package. Satisfies the own-package check the same way mockk does.

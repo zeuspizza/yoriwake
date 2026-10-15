@@ -1,0 +1,99 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/arrow.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: Kotlin Multiplatform with a real JVM suite -- 330 jvmTest files. The corpus has two
+#   multiplatform rows, both diagnosed once and never re-checked.
+#
+# KNOWN RISK: Property-based tests move wall clocks around, so this is a decline-path fixture rather than
+#   a timing target. Expect `kotlin-multiplatform`.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "arrow"
+url = "https://github.com/arrow-kt/arrow.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "6ab9df9a506e02edf838c702069478ab71f8de84"
+# WHY THE TABLE'S RECORDED CAUSE IS NOT THE REAL ONE. The verdict itself stays in
+# qualification.txt -- this file states the diagnosis the table has no room for, never the pass
+# or fail, for the reason the header above gives.
+#
+# The table says "the build failed -- Selection failed". That is the module path, not the plugin:
+# arrow's `settings.gradle.kts` is FLAT -- `include("arrow-core")`, line 65 -- so `:arrow-libs:core:
+# arrow-core` names no project and Gradle fails before anything is asked of the selector. Corrected
+# below, so the next reader diagnoses the real blocker rather than this one.
+#
+# THE REAL BLOCKER, which the correction does not lift: `arrow-core` is a Kotlin Multiplatform module
+# whose JVM target does not call `withJava()`, so it applies `java-base` and none of the five host
+# plugin ids, and the plugin declines with `kotlin-multiplatform`. That is a plugin change, not a
+# project-file fix, and it is deferred.
+module = "arrow-core"
+# THE GRADLE NAME IS NOT THE DIRECTORY, which is the Micronaut case exactly. arrow's
+# settings file includes this project as `:arrow-core` while its sources and build output live under
+# `arrow-libs/core/arrow-core`. Without this the harness reads test results from `arrow-core/build/`,
+# finds an empty directory, and reports "the build exited 0 but ran NO TESTS" -- while the capture
+# log shows `:arrow-core:jvmTest` running and 1,308 records captured across ten workers. A green
+# build that ran nothing is the shape this corpus exists to catch, and here it was the harness
+# looking in the wrong place rather than the guest.
+module_dir = "arrow-libs/core/arrow-core"
+# NOT `test`. Asking for a task that does not exist is not a smaller run, it is NO run:
+# kotlinx-coroutines compiled for 6m 25s, printed BUILD SUCCESSFUL, exited 0 and ran
+# zero tests. A green build that ran nothing is the shape of the silent miss this
+# project exists to prevent.
+test_task = "jvmTest"
+flags = []
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["arrow-libs/core/arrow-core/src/commonMain/kotlin"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"
+
+# ATTACHES NOW, AND IS BLOCKED ON THE SAME SCOPE COLLAPSE AS kotest.
+# The multiplatform attach works and the module is measured for the first time -- qualify reports
+# 644 tests in 52.7s across 50 modules, and the capture records 1,308 records across ten workers --
+# and the map is scoped `*`:
+#
+#     effective-scope: include  *
+#
+# RE-CAPTURED FROM AN EMPTY MAP DIRECTORY TO BE SURE, because a merge keeps the previous capture's
+# scope file. It still derives `*`. A prediction script expects 5 patterns here and the plugin does
+# not reproduce it; that script says itself the plugin is the authority where they disagree, so the
+# map's `*` is the answer and the prediction is not quotable.
+#
+# AND AGAIN AFTER THE SCAN WAS WIDENED to every `<target>Main` directory, which puts this module's
+# own `androidAndJvmMain` into the union. Still `*`.
+#
+# CAUSE ESTABLISHED, AND IT IS NOT A DEFECT. Five files under
+# `arrow-libs/suspendapp/suspendapp-test-app/src/*Main/kotlin` -- `app.kt` and four `main.kt` --
+# declare no package AND declare code. They genuinely live in the default package, and nothing
+# narrower than `*` covers a default-package class, so widening is the correct answer and this
+# plugin is right.
+#
+# NOT THE SAME SHAPE AS kotest, which was fixed in the same session: kotest's two files are wholly
+# commented out and compile to nothing, so they cannot put a class anywhere. The distinction the
+# derivation now makes is whether any CODE was seen, and arrow falls on the other side of it.
+#
+# The scope is build-GLOBAL, so one such file anywhere in arrow's build collapses every module in
+# it. Measuring a different arrow module would not help.
+#
+# BLOCKED with that evidence rather than swept, for the reason kotest is: a map over the whole
+# classpath cannot support a claim about this module.
+#
+# WHAT WAS FIXED HERE AND IS WORTH KEEPING is `module_dir` above -- without it this project reported
+# "the build exited 0 but ran NO TESTS" while its capture log showed the tests running.

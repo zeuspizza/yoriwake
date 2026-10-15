@@ -16,12 +16,22 @@ others for a local run. CI runs each functional suite in shards by test class;
 ```bash
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin
 python3 .github/test_ci.py   # the CI helper scripts' own tests
+python3 bench/scan_private.py --push   # before every push
 ```
+
+`bench/scan_private.py --push` refuses references to the maintainers' private notes (their
+identifiers, dates and documents) in what the push adds to `bench/`, `docs/`, `.github/` and this
+file, and in its commit messages; the `scan` workflow runs it on every pull request, its title and
+body included.
 
 `./gradlew build` is the gate a pull request must pass. It includes the coverage gates; a change
 that lowers coverage below them fails the build.
 
 `samples/` holds small projects the functional tests and CI exercise; `fixtures/` holds test data.
+
+`bench/` is the benchmark harness ([its README](bench/README.md)): each `bench/test_*.py` runs on its
+own (`python3 bench/test_run.py`), and `python3 bench/run.py bench/projects/demo.toml` measures the
+demo project, the quickest check that the harness works on a machine.
 
 ## The ordering
 

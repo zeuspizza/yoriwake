@@ -1,0 +1,62 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project". Qualify before sweeping -- that stage is
+# where every defect this corpus has found actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/kafka.toml
+#
+# WHY THIS ONE: Very large Java, module suites in minutes. The direct test of the claim that a fixed
+# configuration cost amortises -- the thing okhttp disproves at the small end.
+#
+# KNOWN RISK: Kafka's integration tests are famously port-bound and flaky; :clients is the unit-test module and
+# is the reason this project is scoped there. If it still binds ports, that breaks the hermetic
+# requirement and it becomes a recall fixture rather than a savings row.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit Platform,
+# move to a sibling rather than writing the project off: four projects were written off here and all
+# four ran once someone read the actual error.
+name = "kafka"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 21
+url = "https://github.com/apache/kafka.git"
+
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "54a57d7c70ee7f1811da282fc2adc594f3b55372"
+module = "clients"
+# THE GUEST'S STATIC ANALYSIS IS EXCLUDED, AND THAT IS A CAVEAT ON EVERY ROW FROM HERE.
+#
+# Measured. kafka runs Checkstyle and SpotBugs over MAIN sources in the test task's
+# dependency chain, and both reject the harness's mutations:
+#
+#   :clients:checkstyleMain  '{' at column 19 should have line break after. [LeftCurly]
+#   :core:spotbugsMain       a constant mutated to collide with its sibling version constants
+#
+# `assert_recall.py` exits 1 on any build-failed row, so these cost kafka `clients` 8 of 21 rows and
+# kafka `core` its only row. The first was fixed in the generator (the injection is now a formatted
+# block); the second cannot be -- a mutation is semantically odd by construction, which is what a
+# semantic analyser is built to notice.
+#
+# This harness measures test SELECTION. A guest's own style and bug-pattern gates running ahead of
+# its tests are not part of that question, so they are excluded here -- the same class of caveat as
+# junit5's `-Dorg.gradle.isolated-projects=false` and gradle's `--dependency-verification=off`. Any
+# row from this project describes a build configured the way this harness needs, not the way kafka
+# ships.
+flags = ["-x", "checkstyleMain", "-x", "spotbugsMain"]
+# `clients` is the module under test and this is its main source root, present in the checkout.
+sources = ["clients/src/main/java"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"

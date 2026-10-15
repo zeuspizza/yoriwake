@@ -1,0 +1,130 @@
+# The qualification verdict lives in `bench/qualification.txt`. What lives here is the
+# CAUSE, which the table has no room for.
+#
+# PROBED: the corpus recorded "the build SUCCEEDED but the plugin never attached". It
+# does not attach because a multiplatform module applies `java-base` and none of the
+# five host plugin ids -- and when the gate was widened to let it attach, it derived a scope of
+# thirteen packages belonging to OTHER modules' conventional source directories, with this module's
+# own `kotlinx.coroutines.*` absent, and recorded no coverage at all. A non-empty scope that speaks
+# for the wrong packages is worse than no scope: it does not decline.
+#
+# `yoriwakeAudit` now reports this as `kotlin-multiplatform` with a remedy line rather than as the
+# `no-packages-derived` proxy.
+# HOW TO ADD ONE: bench/README.md, "Adding a project". Qualify before sweeping -- that stage is
+# where every defect this corpus has found actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/kotlinx-coroutines.toml
+#
+# WHY THIS ONE: Kotlin, inline-heavy. Both silent misses this project has found were Kotlin-specific -- inline bodies copied into call sites, const val folded into consumers. This is where a third would live.
+#
+# Run `python bench/qualify.py bench/projects/kotlinx-coroutines.toml` before anything else. That is
+# the stage where every defect this corpus has found actually turned up -- a decode that ran out of
+# heap, a suite that parked forever on a latch, an ASM floor that could not read a Java 24 jar, a
+# build whose own logic needed a newer JDK than the daemon. None came from a sweep.
+#
+# The module below is a first guess. If it hangs, needs a container or a network, or turns out to be
+# off the JUnit Platform, move to a sibling rather than writing the project off: four projects were
+# written off in this repository's history and all four ran once someone read the actual error.
+name = "kotlinx-coroutines"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/Kotlin/kotlinx.coroutines.git"
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "f63a04bacb8beeafcc9d49199b1e4bb08931b7eb"
+# REPOINTED, AND WHAT THIS ROW NOW MEASURES CHANGED WITH IT.
+#
+# The recorded cause -- "this project is Kotlin Multiplatform, so the plugin declines" -- is wrong
+# about the PROJECT and right only about `-core`. The root build script chooses per module
+# (`build.gradle.kts` lines 80-88): `isMultiplatform` gets `kotlin-multiplatform`, everything else
+# gets `kotlin-jvm-conventions`, which applies `java` and gives an ordinary `test` task. Only three
+# modules take the first branch.
+#
+# KNOWN RISK, stated because it is the whole caveat on any figure drawn here: this row measures a JVM
+# SIBLING, not `kotlinx-coroutines-core`. The inline-heavy code that made this project worth having
+# in the corpus lives in `-core`, which still declines. A clean recall row here says nothing about
+# the multiplatform module, and the multiplatform attach is deferred to its own plan.
+module = "kotlinx-coroutines-debug"
+
+# An ordinary JVM module, so an ordinary `test` task. Its sources sit directly under `src/` and
+# `test/` rather than `src/main/kotlin`, which is this build's layout and not a mistake.
+test_task = "test"
+# ON THE PLATFORM VIA VINTAGE, AND GRADED LOWER THAN moshi's. The multiplatform text
+# above is the cause recorded against `-core`. What blocks THIS row is what the
+# table records since the repoint -- `blockers=not-on-junit-platform`, against a run that captured a
+# real map of 69 tests -- so the suite reaches JUnit 4's own runner and never the Platform filter.
+# Same remedy and same script as mockito, grpc-java, moshi and kotlinx-serialization.
+#
+# WHY THIS ONE IS GRADED LOWER, and the premise it rests on was checked rather than assumed.
+# The three Vintage candidates were scoped as one group on the premise that none uses
+# Robolectric, which is what makes glide's Vintage remedy empty. Build references
+# counted: moshi 0, kotlinx-serialization 0, kotlinx-coroutines 3. All three of this project's are in
+# `ui/kotlinx-coroutines-android`, `ui/.../android-unit-tests` and
+# `integration/kotlinx-coroutines-play-services` -- NONE in `kotlinx-coroutines-debug`, the module
+# under measurement. So the premise holds for the measured module and is weaker for the build around
+# it, which is why it was taken on its own: a failure here does not hold up the two clean cases.
+#
+# AND THE SCRIPT REACHES FURTHER THAN THE MEASURED MODULE. It forces `useJUnitPlatform()` on every
+# Test task in every project of the build, so it can fail at configuration time in a module nobody
+# is measuring. `qualify.py` is the gate that catches that before a sweep is spent on it; a failure
+# in a sibling the measured task does not need is recorded here, not worked around.
+#
+# READ `scope=` ON THE CAPTURE LINE BEFORE TRUSTING ANY FIGURE FROM THIS PROJECT. Its derived scope
+# is 13 packages, against one each for moshi and kotlinx-serialization. A widened scope here is a new
+# instance of the one-unreadable-file collapse duckduckgo-android carries, and is reported as one
+# rather than absorbed.
+#
+# HONESTY: measured this way the project is not stock upstream -- its test runtime gained an engine
+# and `useJUnitPlatform()`. Both arms share the change, so savings and recall stay comparable, but
+# any claim about this project carries the condition "once its tests run on the Platform". It stacks
+# on the caveat already above: this row measures a JVM sibling, not `-core`.
+#
+# THE MAP MUST BE RE-CAPTURED. This checkout also holds a pre-Vintage `coverage.tsv`, so selection
+# against it narrows nothing. Move the results file aside and pass `--recapture`.
+#
+# THE VINTAGE REMEDY DOES NOT WORK HERE, AND THE PROJECT STAYS BLOCKED.
+# Tried, failed at the qualify gate in 18 seconds, no sweep spent. The flag is LEFT IN PLACE because
+# it is the evidence: removing it would make this file describe a remedy nobody tried.
+#
+# AND IT IS NOT THE FAILURE THIS ROW WAS GRADED LOWER FOR. The risk on the books was the script
+# forcing `useJUnitPlatform()` in a SIBLING module nobody measures. What actually happened is in the
+# MEASURED module's own classpath, and it is a capability conflict rather than a compile or
+# Robolectric problem:
+#
+#     Could not resolve all dependencies for configuration
+#       ':kotlinx-coroutines-debug:testRuntimeClasspath'
+#     > Module 'org.jetbrains.kotlin:kotlin-test-junit' has been rejected:
+#         Cannot select module with conflict on capability
+#         'org.jetbrains.kotlin:kotlin-test-framework-impl:2.2.20' also provided by
+#         ['org.jetbrains.kotlin:kotlin-test-junit5:2.2.20' (jvmJUnit5RuntimeElements)]
+#
+# The mechanism, stated so nobody re-tries it blind: `kotlinx-coroutines-debug` depends on
+# `kotlin-test`, which multiplexes to `kotlin-test-junit` for a JUnit 4 runner. Adding
+# `useJUnitPlatform()` makes the same `kotlin-test` want its JUnit 5 flavour, `kotlin-test-junit5`.
+# Both publish the `kotlin-test-framework-impl` capability, so Gradle refuses to resolve either. This
+# is a property of how Kotlin ships `kotlin-test`, not of this module's code, and it is why moshi and
+# kotlinx-serialization were unaffected: neither routes its test framework through `kotlin-test`.
+#
+# WHAT WOULD LIFT IT, AND WHY IT WAS NOT DONE. A `capabilitiesResolution` rule in
+# `scripts/junit-vintage.init.gradle.kts` selecting the junit5 variant would probably resolve it.
+# That script is shared by mockito, grpc-java, moshi and kotlinx-serialization -- all four currently
+# working, two of them swept -- so editing it invalidates their results to buy one
+# module that the caveat above already says can carry no recall claim. The trade is not worth it at
+# this module's value. If it is ever attempted, it needs its own plan and a re-sweep of all four.
+flags = ["-I", "{yoriwake}/scripts/junit-vintage.init.gradle.kts"]
+# NO LONGER EMPTY. An empty pathspec matches every commit, so the replay was either refused or
+# sampling arbitrary history; and `mutation_targets` returned nothing, so a sweep would have written
+# a results file with zero rows and reported `0 missed of 0` as though it were a safety result.
+sources = ["kotlinx-coroutines-debug/src"]
+
+# Set before the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"

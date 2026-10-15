@@ -1,0 +1,52 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/geode.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: Large, JUnit 5, and it separates unit from integration into different source sets -- so the
+#   hermetic part is addressable without excluding tests by hand.
+#
+# KNOWN RISK: `test` must be the unit source set. The integration and distributed sets bind ports, and a
+#   port-bound suite makes ground truth wrong rather than slow.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "geode"
+url = "https://github.com/apache/geode.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "8692281b59fdaa55063c05cd439b6aca7734a46d"
+# THE RECORDED CAUSE NAMED SOMETHING THE READER CANNOT ACT ON. The verdict stays in
+# qualification.txt; the diagnosis is here.
+#
+# The table says "Failed to create Jar file .../plugin-0.1.0-SNAPSHOT.jar". That is the symptom. The
+# cause is a version floor: geode builds on Gradle 7.3.3 (see `gradle/wrapper/gradle-wrapper.properties`),
+# whose buildscript instrumentation ships ASM 9.2, and ASM 9.2 rejects class-file major version 62
+# and above. This plugin's classes are major version 65 (`javap -verbose` on any of them), so the
+# instrumentation cannot read the jar it is asked to create.
+#
+# THE SUPPORTED GRADLE FLOOR IS 8.14, and it is stated rather than lowered. That is the lowest version
+# the functional guards actually run at -- `ConfigurationWorkGuardTest.GRADLE_VERSIONS` is
+# ["8.14", "9.7.0"] -- so it is the lowest version any claim here is evidence about. Lowering the
+# plugin's class-file target to reach 7.3.3 would be a supported-range change, not a corpus fix.
+module = "geode-core"
+flags = []
+# The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
+# every commit, which is the opposite of what this key is for, and the replay refuses it.
+sources = ["geode-core/src/main/java"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx4g"

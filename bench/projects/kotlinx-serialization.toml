@@ -1,0 +1,106 @@
+# The qualification verdict lives in `bench/qualification.txt`. What lives here is the
+# CAUSE, which the table has no room for.
+#
+# NOT PROBED HERE. The corpus recorded "the build SUCCEEDED but the plugin never attached", and the
+# structural reason holds for this project: a multiplatform module applies `java-base` and none of
+# the five host plugin ids, so the plugin declines with `kotlin-multiplatform`.
+#
+# What was MEASURED was measured on kotlinx-coroutines: widening the
+# gate to let it attach derived a scope of thirteen packages belonging to OTHER modules'
+# conventional source directories, with the module's own packages absent, and the run recorded no
+# coverage at all. A non-empty scope that speaks for the wrong packages is worse than no scope: it
+# does not decline. This project is the same shape and no measurement was taken on it.
+#
+# `yoriwakeAudit` now reports this as `kotlin-multiplatform` with a remedy line rather than as the
+# `no-packages-derived` proxy.
+# HOW TO ADD ONE: bench/README.md, "Adding a project". Qualify before sweeping -- that stage is
+# where every defect this corpus has found actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/kotlinx-serialization.toml
+#
+# WHY THIS ONE: Kotlin, inline-heavy AND codegen. Both silent misses this project has found were Kotlin-specific --
+# inline bodies copied into call sites, const val folded into consumers -- so this is where a third
+# is most likely to live.
+#
+# KNOWN RISK: Multiplatform build: the JVM target must isolate cleanly or there is nothing to measure. Long
+# generated class names are a Windows MAX_PATH hazard here, as they were on demo-kotlin.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit Platform,
+# move to a sibling rather than writing the project off: four projects were written off here and all
+# four ran once someone read the actual error.
+name = "kotlinx-serialization"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/Kotlin/kotlinx.serialization.git"
+
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "397bb560096fcb7b2a9363741690cca3d28124ba"
+# REPOINTED, AND WHAT THIS ROW NOW MEASURES CHANGED WITH IT.
+#
+# Same shape as kotlinx-coroutines: the multiplatform verdict is true of `-core` and not of the
+# build. `formats/hocon` declares `plugins { kotlin("jvm") }` outright, so the plugin attaches and
+# the tests run under an ordinary `test` task.
+#
+# KNOWN RISK, and there are two. This row measures a JVM SIBLING, not `kotlinx-serialization-core` --
+# the codegen-and-inline code this project was chosen for is in `-core`, which still declines. And
+# the module is THIN: ten test files, against `-core`'s several hundred. A clean recall row drawn
+# from ten files is a weak clean row, and any published figure has to say so.
+module = "kotlinx-serialization-hocon"
+module_dir = "formats/hocon"
+
+test_task = "test"
+# ON THE PLATFORM VIA VINTAGE. The multiplatform text above is the cause
+# recorded against `-core` and is not what blocks THIS row. Since the repoint to the hocon sibling
+# the table records `blockers=not-on-junit-platform` against a run that captured a real map (80
+# tests, `narrowing=narrowing-only`): the module runs on JUnit 4's own runner, the agent's
+# SelectionFilter is a Platform `PostDiscoveryFilter`, so it is never consulted and every run is a
+# full run. A `0 missed` taken that way is true by construction.
+#
+# Same remedy and same script as mockito, grpc-java and moshi.
+#
+# HONESTY: measured this way the project is not stock upstream -- its test runtime gained an engine
+# and `useJUnitPlatform()`. Both arms share the change, so savings and recall stay comparable, but
+# any claim about this project carries the condition "once its tests run on the Platform". It stacks
+# on the caveat already above: this row measures a thin JVM sibling of ten test files, not `-core`.
+#
+# THE MAP MUST BE RE-CAPTURED. The existing `coverage.tsv` is keyed to the runner Vintage replaces,
+# so selection against it narrows nothing. Move the results file aside and pass `--recapture`.
+#
+# SWEPT, AND THE REMEDY WORKS WHILE THE ROW BUYS NOTHING. Both halves are true and the
+# second is the one a reader needs.
+#
+# The remedy works: the map is now 80 `[engine:junit-vintage]` ids and no `junit4`, `decision_outcome`
+# is non-null on both rows (`narrowed` and `full-run`), and the suite reaches the Platform filter it
+# never reached before. 110 seconds, at selector digest 5078ac5c294c.
+#
+# The row buys nothing: **2 rows, 0 where a miss was possible, 0 missed.** `targets_available` is
+# TWO -- the mutation grammar finds two targets in this whole module -- and both rows ran all 80
+# tests. The `0 missed` here is true by construction exactly as the pre-Vintage figure was, for a
+# different reason: not because selection never happened, but because there is almost nothing to
+# select from. This confirms the thinness caveat already stated above rather than removing it, and no
+# recall claim may rest on this project.
+#
+# ONE ROW READS `decision_matches_arm: False` AND IT IS BOOKKEEPING, NOT A MISS. The decision record
+# counted 81 included items -- 80 tests plus a container -- while the arm counts 80 distinct tests,
+# so the comparison disagrees on a row that selected the entire suite. Worth knowing before anyone
+# reads it as a selection defect; the row's `missed` is empty.
+#
+# WHAT WOULD ACTUALLY HELP is `-core`, which still declines as `kotlin-multiplatform` and is where
+# the inline-and-codegen code this project was chosen for lives. The init-script route to that was
+# tried and is closed.
+flags = ["-I", "{yoriwake}/scripts/junit-vintage.init.gradle.kts"]
+# NO LONGER EMPTY. See the kotlinx-coroutines file for why an empty list is not a neutral state.
+sources = ["formats/hocon/src/main"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"

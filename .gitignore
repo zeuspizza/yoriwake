@@ -11,3 +11,10 @@ __pycache__/
 # Agent instruction files stay local.
 CLAUDE.md
 AGENTS.md
+
+# The benchmark harness's working state
+bench/checkouts/
+bench/logs/
+bench/results/
+bench/scratch/
+__pycache__/

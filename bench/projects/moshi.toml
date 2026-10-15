@@ -1,0 +1,94 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and seven of these files once still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: qualify before sweeping -- that stage is where every defect this
+# corpus has found actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/moshi.toml
+#
+# WHY THIS ONE: Kotlin codegen through a KSP processor. Small enough that its fixed cost may dominate -- a genuine
+# anti-target candidate rather than a hoped-for win, and the corpus needs those.
+#
+# KNOWN RISK: If it lands net-slower it stays in the corpus and gets reported. A corpus with no losing case is
+# not believed.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit Platform,
+# move to a sibling rather than writing the project off: four projects were written off here and all
+# four ran once someone read the actual error.
+name = "moshi"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 32
+url = "https://github.com/square/moshi.git"
+
+# Pinned to a full 40-character SHA. The harness clones ONCE and never re-clones, so a commit
+# newer than an existing checkout is simply absent -- which is what blocked micrometer and
+# junit5 with "fatal: reference is not a tree". checkout_project now fetches the commit and
+# retries before failing.
+#
+# NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
+# was written into eleven of these files and into a commit message before anyone checked it.
+commit = "889013ec2edb8d8034902662a1dc8c4f3b3f8111"
+module = "moshi"
+# ON THE PLATFORM VIA VINTAGE, because without it nothing here can ever be
+# deselected. The table recorded `blockers=not-on-junit-platform` against a run that captured a real
+# derived scope: moshi does not call `useJUnitPlatform()`, so its suite runs on JUnit 4's own runner,
+# and the agent's SelectionFilter is a Platform `PostDiscoveryFilter` that is never consulted. Every
+# run is a full run however good the map is, and a full run cannot miss anything -- so a `0 missed`
+# from this project before the remedy was true by construction and answered no recall question.
+#
+# junit-vintage-engine is the JUnit team's own supported path and runs JUnit 4 tests unchanged on the
+# Platform. It is the same script already carrying mockito and grpc-java; it took
+# mockito from 0 visible tests to 2,356.
+#
+# HONESTY: measured this way moshi is not stock upstream -- its test runtime gained an engine and
+# `useJUnitPlatform()`. Both arms share the change, so savings and recall stay comparable, but any
+# claim about this project carries the condition "once its tests run on the Platform".
+#
+# THE MAP MUST BE RE-CAPTURED, not reused. The existing checkout holds a `coverage.tsv` keyed to the
+# runner Vintage replaces, so selecting against it would match no test id and narrow nothing. Move
+# `bench/results/moshi.json` aside and pass `--recapture`; `selector_digest` does not move for a
+# project-file change, so the harness would otherwise resume the pre-remedy rows.
+#
+# SWEPT, AND IT ANSWERS NOW. 30 rows at `sweep_limit = 32` from 33 available targets:
+# 18 `checked`, 9 `no-effect`, 3 `stalled`. **6 rows where a miss was possible, 0 missed.** The
+# narrowest selection was 66 of 1,292 tests (5.1%); the map holds 1,294 records at 0.9954
+# attributable. 36 minutes, at selector digest 5078ac5c294c.
+#
+# WHAT THE REMEDY ACTUALLY BOUGHT, stated as the difference rather than as the figure: `decision_outcome`
+# is non-null on 27 of 30 rows -- `narrowed` on 14 and `full-run` on 13. Before this it was null
+# everywhere, because the agent's filter is a Platform PostDiscoveryFilter and the suite never
+# reached it. Every earlier run was a full run, and a full run cannot skip a test, so this project's
+# previous `0 missed` was true by construction and asked nothing. These six rows asked.
+#
+# THREE ROWS WERE LOST TO A MUTATION-INDUCED OOM, and they are recorded as `stalled` with every
+# measurement field null rather than counted as clean. All three were `-JsonValueReader::nextBoolean`,
+# `-JsonUtf8Reader::body::nextBoolean` and `JsonScope::constant::EMPTY_ARRAY`; the selected arm's log
+# ends in `java.lang.OutOfMemoryError at JsonReaderTest.java:1023` on
+# `readJsonValueListMultipleTypes`. A reader that no longer terminates its scan exhausts the heap,
+# the worker stops writing, and the stall detector kills it after 10 minutes. That is the mutation
+# grammar meeting a JSON parser, not a fact about selection -- but it costs 10 minutes a row, which
+# is most of the difference between this project's estimate and its 36 minutes.
+#
+# THE MAP HAD TO BE DISCARDED, NOT RE-CAPTURED OVER. The first capture under Vintage merged into the
+# existing map and came back holding 1,292 `[engine:junit-vintage]` ids AND 1,287 `[engine:junit4]`
+# ids from the runner Vintage had just replaced. `--recapture` now discards the map directory first;
+# before that it re-ran the capture and merged, which is not the same thing.
+flags = ["-I", "{yoriwake}/scripts/junit-vintage.init.gradle.kts"]
+# SCOPED TO THE MODULE UNDER MEASUREMENT. An EMPTY list is not "mutate everything": the mutation
+# grammar finds zero targets, applies nothing, and the sweep reports 0 missed of 0 induced failures
+# -- which the harness refuses to read as a safety result ("NO ROW ASKED A RECALL QUESTION"), and
+# that refusal is the only reason this was visible at all. Found when moshi,
+# spring-boot and micronaut-core all swept 16 targets and asked nothing.
+#
+# A mutation outside the measured module cannot break a test the measured task runs, so this names
+# the module's own main sources and nothing else.
+sources = ["moshi/src/main/java/com/squareup/moshi"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221 tests on the
+# default daemon heap and left a map with no scope file, which then forced every later run.
+daemon_jvmargs = "-Xmx4g"

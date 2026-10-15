@@ -1,0 +1,21 @@
+# Kotlin, green suite, 3,593 tests in one module. The reference benchmark: every figure of the
+# first verification came from this project and commit.
+name = "detekt"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 13
+url = "https://github.com/detekt/detekt.git"
+commit = "6aa07c067e181a72700c90f893c02ae91ce56676"
+module = "detekt-rules-style"
+
+# detekt ships Gradle's own predictive test selection, which would thin the baseline and flatter
+# every number we report.
+flags = ["-PenablePTS=false"]
+
+# Both in-module and cross-module mutations: detekt-psi-utils is a different Gradle project, which
+# is where the multi-module rule is actually exercised.
+sources = ["detekt-rules-style/src/main/kotlin", "detekt-psi-utils/src/main/kotlin"]

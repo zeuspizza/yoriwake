@@ -1,0 +1,70 @@
+# Kotlin, JVM, JUnit Platform. Added to widen the corpus beyond detekt and kestra.
+#
+# NOT the `okhttp` module, which was the first attempt and does not work: it is a Kotlin
+# Multiplatform target with no JVM test task at all, so `:okhttp:test` fails with "task 'test' is
+# ambiguous ... Candidates are: 'testAndroid', 'testAndroidHostTest'". `okhttp-tls` is plain
+# `kotlin("jvm")` and applies okhttp.testing-conventions, which calls useJUnitPlatform() -- so tests
+# can actually be deselected there. Its tests are written against JUnit 4 but run through the
+# vintage engine, which is on the Platform.
+#
+# UNBLOCKED, and the fix was a download rather than a workaround.
+#
+# okhttp's toolchain asks for Eclipse Temurin 21 specifically. Gradle could not DOWNLOAD one --
+# "No defined toolchain download url for WINDOWS on x86_64 architecture" -- but it auto-DETECTS local
+# JDKs including their vendor, so a Temurin 21 extracted into ~/.jdks satisfies the request without
+# any download being attempted. Corretto 21 does not: the vendor constraint is explicit and cannot be
+# overridden from the command line.
+#
+#     ~/.jdks/jdk-21.0.12.1+1, IMPLEMENTOR="Eclipse Adoptium"
+#
+# 112 tests, 1 skipped, none failing, in 5m48s. Small, and that is the point of it: okhttp-tls is
+# plain kotlin("jvm") applying okhttp.testing-conventions, which calls useJUnitPlatform(), so tests
+# can actually be deselected here. Its tests are JUnit 4 running through the vintage engine.
+#
+# The alternative was injecting a foojay toolchain resolver into someone else's build from our init
+# script, which would have made the benchmark measure a configuration no okhttp user has.
+name = "okhttp"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 8
+url = "https://github.com/square/okhttp.git"
+commit = "c467a32e881fe24f620ace35f0da307c426f47ff"
+module = "okhttp-tls"
+flags = []
+
+sources = ["okhttp-tls/src/main/kotlin/okhttp3/tls"]
+
+# BLOCKED ON macOS, having QUALIFIED on Windows at 35.6s. The difference is a toolchain
+# download, not the project:
+#
+#     Unable to download toolchain matching the requirements
+#     ({languageVersion=21, vendor=Eclipse Temurin, ...}):
+#     No defined toolchain download url for MAC_OS on aarch64 architecture.
+#
+# okhttp asks for Temurin 21 SPECIFICALLY. This machine has three JDK 21s -- Azul, Microsoft and a
+# JetBrains runtime -- and none of them is Temurin, so the vendor clause matches nothing and Gradle
+# has no aarch64 URL to fetch one from. Installing a Temurin 21 under ~/.gradle/jdks or ~/.jdks
+# would clear it; nothing about the plugin is involved.
+#
+# UNBLOCKED, and the Windows recipe does not transfer verbatim.
+#
+# The request is not a toolchain for the compile: `gradle/gradle-daemon-jvm.properties` pins the
+# DAEMON to `toolchainVendor=ADOPTIUM`, `toolchainVersion=21`. Either way it wants a real Temurin 21
+# on the disk, since Gradle has no aarch64 macOS download URL for one.
+#
+# **`~/.jdks` is the wrong place on a Mac.** That is what worked on Windows, and here Gradle's
+# IntelliJ detector scans `~/Library/Java/JavaVirtualMachines` instead -- a Temurin unpacked into
+# `~/.jdks` is invisible to `gradlew javaToolchains` and the build fails identically, which reads
+# like the download never happened. This is the same macOS layout trap that made every
+# Gradle-provisioned toolchain invisible to `find_jdk`; note that `find_jdk` still searches only
+# `~/.gradle/jdks` and `~/.jdks`, so a JDK placed here for Gradle is NOT one `daemon_java_version`
+# can find.
+#
+#     ~/Library/Java/JavaVirtualMachines/temurin-21.0.12.1, IMPLEMENTOR="Eclipse Adoptium"
+#     https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=aarch64&image_type=jdk&os=mac&vendor=eclipse
+#
+# 112 tests on macOS, matching the Windows count exactly.

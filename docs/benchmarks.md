@@ -104,6 +104,13 @@ failures are the ground truth.
 - **Timing projects.** Both runs are timed on every change of six projects chosen in advance to span
   suite length: grpc-java, apache-groovy, mockito, spring-boot, rxjava, bitwarden-android.
 
+The harness that measured this is in [`bench/`](../bench/README.md): how to run one project, what
+counts as a result, and how to add a project. Its results files are described field by field in
+the [sweep data dictionary](sweep-data-dictionary.md). A sweep can also run on GitHub's runners
+(`.github/workflows/sweep.yml`), one job per project to record and one per slice of its changes to
+measure; what a change to the plugin asks of it (nothing, a replay, the reduced arm or every
+project) follows from the paths it touched (`bench/tier.py`).
+
 ### Recall
 
 A miss is possible only on a change that both ran under 100% and induced a failure. Before the
@@ -312,3 +319,7 @@ A codebase is one upstream repository; projects drawn from the same one count on
   git state. The first is fixed since 0.1.0; the second is in the
   [reference](reference.md#what-is-not-supported).
 - A figure from an earlier plugin commit is not comparable and is not quoted.
+- **Time measured on GitHub's runners is quoted only as a ratio of two arms from one job.** Shared
+  runners vary between jobs and over a day, so an absolute time from one, or a ratio whose arms ran
+  in different jobs, is not a measurement of the tool. The charts place CI-measured projects by
+  suite size in tests and leave out any row whose arms ran in two jobs, saying how many.

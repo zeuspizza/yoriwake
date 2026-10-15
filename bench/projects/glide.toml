@@ -1,0 +1,144 @@
+# glide, 35k stars, and the reason it is here is the reason it was nearly impossible.
+#
+# glide is pure JUnit 4 -- `junit = "4.13.2"`, `import org.junit.Test`, `@RunWith(JUnit4.class)`, no
+# `useJUnitPlatform` anywhere -- which is what a screen of the largest Android projects found almost
+# everywhere: Signal-Android (29k), nowinandroid (22k) and tivi (6.7k) are all the same. A suite
+# running off the JUnit Platform is never offered to the agent's PostDiscoveryFilter, so nothing can
+# be deselected however good the coverage map is.
+#
+# `scripts/junit-vintage.init.gradle.kts` is the general escape, and it is not speculative: applied
+# to mockito -- the corpus's documented can-never-answer case -- it captured 4,639 records and
+# narrowed an ordinary class change to about 10% of a 2,356-test suite. AnkiDroid ships vintage in
+# production for the same reason.
+#
+# HONESTY: measured this way, glide is not stock upstream. Its test runtime gains an engine and
+# `useJUnitPlatform()`. Both benchmark arms share it, so savings and recall stay comparable, but any
+# claim of the form "yoriwake works on glide" carries the condition "once its tests run on the Platform".
+name = "glide"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 32
+url = "https://github.com/bumptech/glide.git"
+commit = "83f3b6712884a29d3a0d6af55d115f1803eaa275"
+# `library:test`, NOT `library`. Glide keeps its unit tests in a separate module: `:library` has 3
+# test files and qualified at 59 tests, while `:library:test` holds 137. Qualifying the wrong module
+# does not fail -- it succeeds, on a suite two orders of magnitude too small to measure anything,
+# which is the quietest way to waste a sweep.
+module = "library:test"
+test_task = "testDebugUnitTest"
+# The compile gate's task. Derived from `test_task` it names `<test_task>Classes`, which an
+# Android unit-test variant does not have; the Java compile task's graph carries the Kotlin,
+# kapt and ksp phases a mutation can fail in. Read from this project's own build logs, as
+# duckduckgo-android's is.
+test_classes_task = "compileDebugUnitTestJavaWithJavac"
+flags = ["-Pyoriwake.internal.classSelection"]
+# The CODE under test is in :library; the TESTS that cover it are in :library:test.
+sources = ["library/src/main/java"]
+daemon_jvmargs = "-Xmx4g"
+
+# REQUIRES an Android SDK via ANDROID_HOME. Gradle 9.4.1 and AGP 9.2.0 -- the plugin was checked
+# against Gradle 9.7.1 on samples/demo before any of this was attempted, and captures and narrows
+# there, so Gradle 9 is not the risk.
+#
+# The commit is the real default-branch head, resolved with `git ls-remote --symref ... HEAD`.
+# qualify.py refuses a commit that is not 40 characters, but it cannot tell a wrong 40 from a right
+# one -- which is why it is resolved rather than typed.
+
+# BLOCKED, and the reason is general enough to matter more than glide does.
+#
+# VINTAGE CANNOT DISCOVER A ROBOLECTRIC SUITE. The Platform's discovery phase loads every test class
+# eagerly on the ordinary classpath; Robolectric substitutes a sandboxed classloader only when its
+# runner executes. So the classes glide's tests name do not exist yet at discovery:
+#
+#     TestEngine with ID 'junit-vintage' failed to discover tests
+#       NoClassDefFoundError: android/app/IActivityManager
+#       NoClassDefFoundError: com/android/internal/appwidget/IAppWidgetService
+#
+# Most Android unit tests use Robolectric, so vintage does NOT generally lift the JUnit 4 limit on
+# Android. It does lift it on plain JVM projects -- mockito is the proof, 4,639 records and ~10%
+# selection -- and that distinction is the finding.
+#
+# WHAT WAS BRIEFLY CLAIMED HERE AND WAS WRONG. An earlier version of this file said glide qualified
+# with vintage and selected 3.4%. The 1,523 tests and 3.4% were real numbers but they came from
+# `yoriwakeExplain`, which computes from the MAP and the change set and needs no Platform at all. The
+# suite itself never reached the Platform: ten sweep logs say "does not run on the JUnit Platform",
+# and none ever reported a discovery tally. The map was captured class-granularly, and at runtime
+# class-granular selection kept every class -- 1523/1523 on every row.
+#
+# The sweep is what exposed it. Qualification passed, the map's report gave a beautiful profile (median
+# 0.2%, max 7.7%), and yoriwakeExplain reported 3.4%. All three were consistent and none of them ran the
+# selected suite.
+
+# THE ANSWER FOR ROBOLECTRIC IS NOT VINTAGE. It is the class-granular path that already exists,
+# behind -Pyoriwake.internal.classSelection, which needs no Platform at all and therefore no discovery pass to
+# trip over Robolectric's sandbox. Measured on a change to com.bumptech.glide.util.LruCache:
+#
+#     133 test classes excluded
+#     54 tests completed, 1 failed        <- the induced failure WAS caught
+#     BUILD FAILED in 1m 1s               <- against roughly six minutes for the full suite
+#
+# 54 of 1,523 is 3.5%, which is what yoriwakeExplain predicted from the map (3.4%) -- the first time
+# those two have agreed on this project with the suite actually running.
+#
+# THAT FLAG IS EXPERIMENTAL AND OFF BY DEFAULT, and this file does not argue it should be on. It was
+# turned off because a mockito sweep found 14 failing tests never selected, all of them JUnit 4
+# runner or rule tests that run other tests inside themselves. TestBoundaries has since been fixed
+# to keep a stack of in-progress tests and attribute a nested run to the OUTER test, which is
+# precisely that defect -- but nothing has re-measured recall since. One caught failure is not
+# recall. The sweep below is what would settle it.
+
+# AND THE SWEEP SAID NO. -Pyoriwake.internal.classSelection was tried here precisely because TestBoundaries had
+# since been fixed to attribute a nested run to the OUTER test, which was the defect the flag was
+# disabled for, and nothing had re-measured it. Five rows in:
+#
+#     Options.java::body::equals   6 fail, selected 9/1523  ->  MISSED 6
+#
+# Six tests failed in the full run and NOT ONE was selected. That is the silent miss the flag exists
+# to prevent, so the gate is not stale after all and the flag stays off. The single caught failure on
+# LruCache that prompted this was one lucky row, and one caught failure is not recall.
+#
+# LIKELY CAUSE, not yet proven: Robolectric runs each test inside a sandboxed classloader, so
+# JaCoCo's probes for app classes loaded in that sandbox are not attributed to the running test the
+# way they are on an ordinary classpath. The map holding only 114 covered classes out of glide's
+# many hundreds is consistent with that. Proving it is the next piece of work, and it is a capture
+# problem, not a selection one.
+#
+# The full sweep was stopped after five rows: 122 answerable targets at roughly five minutes each is
+# six to ten hours, and the recall question was already answered. Resume with --limit N if a miss
+# RATE is wanted rather than the fact of a miss.
+
+# FIXED, and the fix was in capture, not selection. Robolectric runs each test inside a
+# sandboxed classloader whose JaCoCo probes never reach the runtime the agent queries, so 1,220 of
+# 1,522 records came back SUCCESSFUL WITH AN EMPTY CLASS LIST -- "this test ran, passed, and depends
+# on nothing". The selector believed it, deselected them forever, and missed six failing tests.
+#
+# The decoder now records an unattributable test as UNKNOWN, which Selector.alwaysRun runs. Empty is
+# not "covers nothing"; it is "could not attribute", which is the rule this project applies
+# everywhere else. Re-measured on the exact mutation that missed:
+#
+#     before   Options::equals   6 fail, selected 9/1523     ->  MISSED 6
+#     after    Options::equals   7 fail, selected 1227/1523  ->  MISSED 0
+#
+# Ground truth taken from a full run and compared test by test, not from the summary line.
+#
+# The savings are honest rather than flattering: 1,221 tests are unattributable and now run every
+# time, so this is 2m19 against 3m12, about 28%. Making Robolectric attributable -- so those tests
+# get real coverage -- is the next piece of work and would be worth far more than any selection
+# change.
+
+# SOLVED, and the fix was one JaCoCo setting rather than anything in selection.
+# `inclnolocationclasses=false` made JaCoCo skip every class Robolectric defines in its sandbox, so
+# nothing was ever instrumented. The plugin now sets includeNoLocationClasses. Same mutation:
+#
+#     original bug                  9/1523   MISSED 6
+#     recorded UNKNOWN, always run  1227/1523  MISSED 0
+#     with includeNoLocationClasses  454/1523  MISSED 0
+#
+# Map: 978 covered classes (was 114), zero unattributable (was 1,221), median change 0.5% of the
+# suite, no class reached by more than half of it.
+#
+# A wall-clock savings figure still needs a sweep; selecting 30% is not running in 30% of the time.

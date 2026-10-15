@@ -1,0 +1,20 @@
+/*
+ * Harness only: raises every test task's maxParallelForks for the isolated-capture recording arm.
+ *
+ * `-Pyoriwake.isolatedCapture` gives each test class a JVM of its own and keeps the host's
+ * maxParallelForks, which is 1 on most guests, so a suite of 150 classes starts 150 JVMs one after
+ * another. The sweep's isolated arm records with as many forks as the machine has cores instead,
+ * because that is how a nightly recording job would run it. Its recording time is therefore NOT
+ * the host's configuration and is stamped as such (`capture_max_parallel_forks`).
+ *
+ * Set when the task graph is ready, after every build script's own `configureEach`, for the same
+ * reason as guest-selection-off.init.gradle.
+ */
+def forks = System.getProperty('yoriwake.harness.maxParallelForks')
+if (forks != null) {
+    gradle.taskGraph.whenReady { graph ->
+        graph.allTasks.findAll { it instanceof Test }.each { task ->
+            task.maxParallelForks = forks as int
+        }
+    }
+}

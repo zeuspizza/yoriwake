@@ -1,0 +1,53 @@
+# The Android fixture, and the only thing in this repository that proves the plugin works on
+# Android at all.
+#
+# Android was once unsupported, silently: AGP applies `java-base` and never `java`, so
+# the `plugins.withId("java")` gate kept yoriwake off the whole ecosystem while printing nothing. Three
+# separate assumptions had to change -- the gate, the per-variant classpath names
+# (`debugRuntimeClasspath`, never `runtimeClasspath`), and the missing SourceSetContainer -- and all
+# three were found by READING code. Reading found them; only running proves they are fixed, and this
+# is what runs.
+#
+# Measured from a standing start: attaches, scopes JaCoCo to dev.demoandroid.*, captures
+# 14 records, and on a one-class change selects 2 of 6 tests while still catching the failure.
+name = "demo-android"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 6
+
+# A LOCAL SAMPLE BUILD, NOT A PROJECT. It exists to exercise the Android attach
+# path; nobody outside this repository has this build.
+#
+# `corpus_state.py` reads this key and reports such builds in their own block, in no
+# denominator. Removing it moves this build into the corpus count as a project, which a
+# case in bench/test_corpus_state.py asserts against.
+fixture = true
+copy_of = "samples/demo-android"
+commit = "local"
+module = "library"
+
+# NOT `test`. Android's unit-test tasks are per variant, and `test` is a lifecycle task depending on
+# them -- asking for it here runs nothing. This fixture exists partly to keep that honest.
+test_task = "testDebugUnitTest"
+# The compile gate's task. Derived from `test_task` it names `<test_task>Classes`, which an
+# Android unit-test variant does not have; the Java compile task's graph carries the Kotlin,
+# kapt and ksp phases a mutation can fail in. Read from this project's own build logs, as
+# duckduckgo-android's is.
+test_classes_task = "compileDebugUnitTestJavaWithJavac"
+
+flags = []
+sources = ["library/src/main/java"]
+
+# REQUIRES AN ANDROID SDK, located via ANDROID_HOME or ANDROID_SDK_ROOT. local.properties is
+# deliberately NOT committed: an absolute path is wrong on every machine but one, and in a
+# .properties file a Windows path's backslashes are escapes -- `C:\Users\...` becomes `C:Users...`
+# and AGP fails with "the syntax of the file, directory or volume name is incorrect", which reads
+# like a plugin bug and is not one.
+#
+# Needs compileSdk 33 and a JDK the pinned AGP accepts. AGP 8.1 on a JDK 21 daemon dies inside
+# JdkImageTransform/jlink -- also looks like a project problem, also is not one -- so 8.5.2 is
+# pinned instead.

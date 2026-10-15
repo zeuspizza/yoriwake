@@ -1,0 +1,87 @@
+# The qualification verdict for this project lives in `bench/qualification.txt`,
+# which the harness writes from a real run. It is deliberately NOT repeated here: it was,
+# and once seven of these files still claimed NOT QUALIFIED for projects the
+# table had passed, with nothing comparing the two.
+# HOW TO ADD ONE: bench/README.md, "Adding a project".
+# Qualify before sweeping -- that stage is where every defect this corpus has found
+# actually turned up, none of them from a sweep:
+#     python bench/qualify.py bench/projects/gradle.toml
+#
+# ADDED from a screen of candidate projects. Nothing here has been cloned, built, or attached to by
+# this plugin; the verdict is whatever `qualify.py` writes into the table, and this file
+# deliberately does not guess at it -- twelve files once cached a verdict here and seven of
+# them contradicted the table. Four projects were also once written off on the strength of a
+# table and all four ran once someone read the actual error. This file is the question.
+#
+# WHY THIS ONE: Spock 2.4 on the JUnit Platform, at a scale nothing else offers: 544 `*Spec.groovy` files.
+#   The Spock representative the ecosystem work needs.
+#
+# KNOWN RISK: 2,640 build files, far past anything in the corpus, and this plugin's configuration cost
+#   scales with the build rather than with the suite. A refusal here is an answer about
+#   configuration cost, not a failed candidate. `integTest` forks daemons and must be excluded;
+#   the module below needs choosing from a real listing before this is qualified.
+#
+# The module below is a FIRST GUESS. If it hangs, wants a container, or is off the JUnit
+# Platform, move to a sibling rather than writing the project off.
+name = "gradle"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# no prior ratio, so the default of 16. Re-price after the first pass.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 16
+url = "https://github.com/gradle/gradle.git"
+
+# Pinned to a full 40-character SHA, which `qualify.py` checks before it clones. Taken from
+# the repository's default branch.
+commit = "0f58e631c43b1e07f9a5967676fe562b1dcf9cbc"
+# FILLED IN from a real module listing rather than from the tree.
+#
+# Gradle's project NAMES are flat while its directories are not. `settings.gradle.kts` nests
+# `platform("core") { module("core-runtime") { subproject("files") } }`, and `subproject` is
+# `settings.include(projectName)` followed by a `projectDir` override (see
+# `build-logic-settings/architecture-docs/.../Builders.kt`). So the Gradle project is `:files` and
+# the directory is `platforms/core-runtime/files` -- the same shape `module_dir` exists for on
+# micronaut-core and iceberg, reached by a third mechanism.
+#
+# WHY `files`: the selection criterion was a LEAF with a plain `test` task and no `integTest` or
+# `crossVersionTest` source set, because those fork daemons and would measure the harness. Of the
+# modules that pass it, this has the most tests (24 test files over 59 main Java files) and the
+# fewest dependencies. Its tests are Spock, which is what this project is in the corpus for.
+module = "files"
+module_dir = "platforms/core-runtime/files"
+# DEPENDENCY VERIFICATION IS OFF FOR THE MEASUREMENT, and that is a caveat on any figure from here.
+#
+# Found when the first qualification failed with
+#
+#     Dependency verification failed for configuration 'classpath'
+#     One artifact failed verification: annotations-13.0.jar (org.jetbrains:annotations:13.0)
+#     from repository MavenLocal
+#
+# gradle/gradle ships `gradle/verification-metadata.xml` with a checksum for every artifact it
+# resolves, and this harness resolves the plugin under test from MavenLocal -- which drags in a
+# Kotlin-stdlib transitive the metadata does not vouch for.
+#
+# THIS IS AN ADOPTION FINDING, NOT A HARNESS QUIRK. Any host build with dependency verification
+# enabled will refuse this plugin until its own metadata is updated to cover the plugin and its
+# transitives. Nothing in this project recorded that before.
+# AND ISOLATED PROJECTS, WHICH IS THE SECOND BLOCKER AND THE HARDER ONE.
+# With verification off, the build succeeded and the plugin declined by name:
+#
+#     [yoriwake] Isolated Projects is enabled, so predictive test selection is not applied to this build.
+#
+# Same cause as junit5, and turned off the same way, for the
+# measurement only. THAT IS A CAVEAT ON EVERY FIGURE FROM HERE: this row describes a gradle build
+# configured the way this harness needs, not the way gradle ships. It matters more here than on
+# junit5, because this build has 1,395 build files and Isolated Projects is exactly the feature that
+# changes what configuring them costs.
+flags = ["--dependency-verification=off", "-Dorg.gradle.isolated-projects=false"]
+# CORRECTED. `sources = ["subprojects"]` described a layout that has moved: `subprojects/`
+# now holds three projects (`core`, `core-api`, `composite-builds`) and everything else lives under
+# `platforms/*`. Pointed at the module under test, as every other project file is.
+sources = ["platforms/core-runtime/files/src/main/java"]
+
+# Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
+# tests on the default daemon heap and left a map with no scope file, which then forced
+# every later run.
+daemon_jvmargs = "-Xmx6g"

@@ -1,0 +1,31 @@
+# MEMORY: build.gradle:212 sets `maxHeapSize = "4048m"`, so the test worker alone claims 4 GB. On a
+# 16 GB machine with ~7 GB free that plus the daemon plus the toolchain does not fit, and every timed
+# run dies with "Gradle build daemon disappeared unexpectedly" at :core:test -- the moment the worker
+# forks. Not an OOM: there is no OutOfMemoryError in the logs, and grepping for one matches Gradle's
+# own -XX:+HeapDumpOnOutOfMemoryError debug line and yields a confident wrong answer.
+
+# WINDOWS: core/build cannot be deleted by ordinary means, and Gradle cannot clean it either.
+# Micronaut's generated bean-definition paths reach 300 characters, past the 260-char MAX_PATH, so
+# `rm -rf` and PowerShell's Remove-Item both fail and a rebuild dies with "Failed to clean up stale
+# outputs" on :core:processTestResources -- which reads like a corrupt checkout and is not. Clear it
+# with robocopy mirroring an empty directory, after killing every JVM: one of the remaining files is
+# a processTestResources output that any live java.exe holds open.
+
+# Java, Micronaut, and a suite with 28 pre-existing failures. Chosen for what it does not share with
+# detekt: the always-run rule dominates on a red suite, and a DI-heavy test JVM pays a large fixed
+# startup cost that selection cannot remove.
+name = "kestra"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.
+# derived from this project's own observed rate of rows where a miss was possible per
+# target: four such rows divided by that ratio.
+# `sweep_corpus.py` uses it in place of its own --limit; the value that wrote each row is
+# stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
+sweep_limit = 9
+url = "https://github.com/kestra-io/kestra.git"
+# Full 40 characters. This was a 10-character abbreviation. It resolved because the checkout
+# carries full history, but an abbreviation in a pin is ambiguous by construction; pin the hash.
+commit = "c11fe3466f66cd1fe1eb76f3a0034095411156a9"
+module = "core"
+flags = []
+sources = ["core/src/main/java/io/kestra/core/utils"]
