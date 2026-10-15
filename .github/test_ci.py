@@ -666,12 +666,12 @@ def case_every_sharded_suite_runs_all_its_shards():
         n = int(count.group(1))
         if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
             problems += fail(f"{name}: shards {listed.group(1)} are not 1..{n}")
-        check = next((j for j in jobs if f"needs: {name}\n" in j), "") + "\n"
+        check = next((j for j in jobs if re.search(rf"\n    needs: (\[changes, )?{re.escape(name)}\]?\n", j)), "") + "\n"
         if f"--count {n}\n" not in check:
             problems += fail(f"{name}: its check does not expect {n} shards")
         # Without these a failed shard skips its check, and GitHub counts a skipped required check
         # as passing.
-        if "    if: always()\n" not in check:
+        if not re.search(r"\n    if: always\(\)( &&[^\n]*)?\n", check):
             problems += fail(f"{name}: its check job does not run when a shard fails (if: always())")
         if f"if: needs.{name}.result != 'success'" not in check or "exit 1" not in check:
             problems += fail(f"{name}: its check job does not fail when a shard did not succeed")
@@ -696,7 +696,82 @@ def case_no_downloaded_shard_is_every_shard_missing():
     return 0 if expected <= set(found) else fail(f"a missing shards directory gave {found}")
 
 
+def case_only_a_docs_change_skips_the_checks():
+    """A wrong "docs only" skips every check, which GitHub counts as passing: each way in is tested."""
+    problems = 0
+    cases = {
+        ("README.md",): False,
+        ("docs/ci.md", "CHANGELOG.md"): False,
+        ("docs/contract.md",): True,
+        ("docs/reference.md", "README.md"): True,
+        ("README.md", "plugin/build.gradle.kts"): True,
+        ("docs/images/chart.svg",): False,
+        (".github/workflows/verify.yml",): True,
+        (): True,
+        ("",): True,
+    }
+    for paths, expected in cases.items():
+        if ci.needs_checks(list(paths)) != expected:
+            problems += fail(f"needs_checks({list(paths)}) should be {expected}")
+    return problems
+
+
+def case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to():
+    """On a pull request verify always starts, and each job runs unless `changes` said `false`: a
+    trigger path filter would leave required checks waiting, and a job running only on `true` would
+    be skipped, as passing, when the detector failed."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    trigger = text.split("\njobs:\n", 1)[0]
+    if re.search(r"\n  pull_request:\n(    [^\n]*\n)*    paths", trigger):
+        problems += fail("verify's pull_request trigger has a path filter: required checks would wait forever")
+    # Retargeted to main, a pull request into another branch would bring its skipped checks along.
+    if not re.search(r"\n  pull_request:\n    branches: \[main\]\n", trigger):
+        problems += fail("verify runs on pull requests into any branch, not only main")
+    jobs = re.split(r"\n  (?=[\w-]+:\n)", text.split("\njobs:\n", 1)[1])
+    for job in jobs:
+        header = re.match(r"\s*([\w-]+):\n", job)
+        if not header or header.group(1) == "changes":
+            continue
+        name = header.group(1)
+        needs = re.search(r"\n    needs: ([^\n]+)", job)
+        condition = re.search(r"\n    if: ([^\n]+)", job)
+        if not needs or "changes" not in needs.group(1):
+            problems += fail(f"{name}: does not wait for the changes job")
+        if not condition or "needs.changes.outputs.code != 'false'" not in condition.group(1):
+            problems += fail(f"{name}: does not run unless the changes job said false")
+    return problems
+
+
+def case_a_code_file_moved_into_docs_still_needs_the_checks():
+    """With renames detected, the move is listed under its new name only and passes as docs."""
+    import subprocess
+
+    with tempfile.TemporaryDirectory() as root:
+        def git(*args):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root,
+                           check=True, capture_output=True)
+
+        git("init", "-q")
+        os.makedirs(os.path.join(root, "src"))
+        with open(os.path.join(root, "src", "Alpha.java"), "w", encoding="utf-8") as handle:
+            handle.write("class Alpha { int twice(int n) { return n * 2; } }\n" * 20)
+        git("add", ".")
+        git("commit", "-q", "-m", "base")
+        os.makedirs(os.path.join(root, "docs"))
+        git("mv", "src/Alpha.java", "docs/Alpha.java")
+        git("commit", "-q", "-m", "moved")
+        paths = ci.changed_paths("HEAD~1", "HEAD", cwd=root)
+    if not paths or "src/Alpha.java" not in paths:
+        return fail(f"the moved file's old path is not among the changes: {paths}")
+    return 0 if ci.needs_checks(paths) else fail("a code file moved into docs/ passed as a docs-only change")
+
+
 CASES = (
+    case_a_code_file_moved_into_docs_still_needs_the_checks,
+    case_only_a_docs_change_skips_the_checks,
+    case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,
     case_shards_that_partition_the_suite_pass,
     case_every_way_a_test_class_can_go_untested_fails,

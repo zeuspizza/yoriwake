@@ -11,11 +11,13 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py restore samples/demo/src/main/java/dev/demo/Alpha.java
     python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Epsilon.java
     python .github/ci.py discard samples/demo --map
+    python .github/ci.py needs-checks <base-sha> <head-sha>
 """
 
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 
 # The mutation the cross-OS check applies: Alpha.twice doubles, so tripling breaks exactly the two
@@ -107,6 +109,33 @@ def discard_results(project_dir, drop_map=False):
     return removed
 
 
+# Docs the checks read: the agent's tests compare their constants with the contract, and test_ci.py
+# compares the reference's supported matrix with matrix.yml.
+CHECKED_DOCS = {"docs/contract.md", "docs/reference.md"}
+
+
+def needs_checks(paths):
+    """Whether a change to `paths` needs the build and its checks: anything but Markdown or `docs/`,
+    or a doc the checks read. No paths is an answer nobody could give, so it needs them: the wrong
+    "no" skips every check, and GitHub counts a skipped required check as passing."""
+    paths = [path for path in paths if path.strip()]
+    if not paths:
+        return True
+    return any(path in CHECKED_DOCS or not (path.endswith(".md") or path.startswith("docs/")) for path in paths)
+
+
+def changed_paths(base, head, cwd=None):
+    """The paths a pull request changes, or None when git cannot say."""
+    try:
+        # No renames: a code file moved into docs/ would be listed under its new name only, and pass
+        # as docs. NUL-separated, so a quoted name never reaches the rule.
+        done = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", f"{base}...{head}"],
+                              capture_output=True, text=True, check=True, cwd=cwd)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return done.stdout.split("\0")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -124,7 +153,16 @@ def main(argv=None):
     discard.add_argument("project_dir")
     discard.add_argument("--map", action="store_true", help="also delete the map directory")
 
+    checks = sub.add_parser("needs-checks", help="print true unless a pull request changes only docs")
+    checks.add_argument("base")
+    checks.add_argument("head")
+
     args = parser.parse_args(argv)
+
+    if args.command == "needs-checks":
+        paths = changed_paths(args.base, args.head)
+        print("true" if paths is None or needs_checks(paths) else "false")
+        return 0
 
     if args.command == "find-map":
         found = find_map(args.project_dir)
