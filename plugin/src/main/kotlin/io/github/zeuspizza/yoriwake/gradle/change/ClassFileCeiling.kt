@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
 import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileSupport
+import io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport as AgentClassFileSupport
 import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileVersions
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -11,12 +12,20 @@ internal class CeilingRefusal(val kind: RefusalKind, val cause: String, val reme
 }
 
 /**
- * The refusal for a task whose own classes are newer than the plugin's ASM reads or than the host's
- * JaCoCo officially instruments, or null. Checked before every rule that reads those classes, so the
+ * The refusal for a task whose test JVM is newer than the agent's ASM reads, or whose own classes
+ * are newer than the plugin's ASM reads or than the host's JaCoCo officially instruments, or null. Checked before every rule that reads those classes, so the
  * named cause wins over the unreadable digest or missing coverage it would otherwise surface as.
  */
 internal fun classFileCeiling(facts: ClasspathFacts, artifacts: TaskArtifacts): CeilingRefusal? {
     val testJvm = facts.testJvm?.let { runCatching { it.orNull }.getOrNull() }
+    val classes = classCeiling(facts, artifacts, testJvm)
+    val agentCeiling = AgentClassFileSupport.effectiveCeiling(facts.agentCeiling?.let { runCatching { it.orNull }.getOrNull() })
+    val jvmMajor = testJvm?.let { it + JAVA_TO_MAJOR }
+    if (jvmMajor != null && jvmMajor > agentCeiling) return testJvmRefusal(jvmMajor, agentCeiling, classes)
+    return classes
+}
+
+private fun classCeiling(facts: ClasspathFacts, artifacts: TaskArtifacts, testJvm: Int?): CeilingRefusal? {
     val versions = artifacts.classFileVersions(testJvm) ?: return null
     val jacoco = facts.jacocoVersion?.let { version ->
         runCatching { version.orNull }.getOrNull().let { it to ClassFileSupport.jacocoCeiling(it) }
@@ -25,6 +34,19 @@ internal fun classFileCeiling(facts: ClasspathFacts, artifacts: TaskArtifacts): 
     val ceiling = minOf(ClassFileSupport.asmCeiling(), jacocoCeiling)
     if (versions.maxMajor > ceiling) return ceilingRefusal(versions, jacoco?.first, jacoco?.let { jacocoCeiling })
     return null
+}
+
+/** Named first when the classes are too new as well, which the cause then lists. */
+private fun testJvmRefusal(jvmMajor: Int, agentCeiling: Int, classes: CeilingRefusal?): CeilingRefusal {
+    val java = ClassFileSupport.javaOf(jvmMajor)
+    val upTo = ClassFileSupport.javaOf(agentCeiling)
+    return CeilingRefusal(
+        RefusalKind.TEST_JVM_UNSUPPORTED,
+        "the test JVM runs Java $java; the yoriwake agent's ASM reads up to Java $upTo, so what its " +
+            "tests read cannot all be seen" + (classes?.let { "; and ${it.cause}" } ?: ""),
+        "A yoriwake whose ASM reads Java $java, or a test toolchain of Java $upTo or older, lifts this." +
+            (classes?.let { " ${it.remedy}" } ?: ""),
+    )
 }
 
 /** The line a run prints when `jacoco.toolVersion` is not one the plugin knows, or null. */

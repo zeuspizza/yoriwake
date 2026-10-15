@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.select;
 
+import io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport;
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import java.io.File;
 import java.io.StringReader;
@@ -138,7 +139,10 @@ public final class FilterRule {
                 .withChangedBytes(splitProperty(property, AgentContract.CHANGED_BYTES_PROPERTY))
                 // Answers before the map or change set is consulted, so a refused run cannot be
                 // narrowed by a later rule.
-                .withDaemonRefusal(refusalFrom(property));
+                .withDaemonRefusal(refusalFrom(property))
+                .withTestJvmUnsupported(ClassFileSupport.testJvmUnsupported(
+                        System.getProperty("java.specification.version"),
+                        property.apply(AgentContract.AGENT_ASM_CEILING_PROPERTY)));
         MapReader.Result map = MapReader.read(mapDir);
         Selector.Decision decision = Selector.decide(map, change, Collections.<String>emptyList());
         // After the decision and apart from it, so recording every rule cannot change what runs.

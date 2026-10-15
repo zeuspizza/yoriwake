@@ -18,6 +18,7 @@ audit-blocker	not-on-junit-platform
 audit-blocker	recorded-no-coverage
 audit-blocker	scope-not-applied
 audit-blocker	smap-absent
+audit-blocker	test-jvm-unsupported
 audit-state	DO NOT ENABLE
 audit-state	NARROWING ONLY
 audit-state	NO CONCLUSION
@@ -58,6 +59,7 @@ full-run-kind	map-unusable
 full-run-kind	no-coverage-for-changed
 full-run-kind	no-coverage-for-changed-bytes
 full-run-kind	startup-coverage
+full-run-kind	test-jvm-unsupported
 full-run-kind	unmappable-paths
 map-outcome	FLAKY
 map-outcome	NONE
@@ -96,6 +98,7 @@ refusal-kind	smap-absent
 refusal-kind	snapshot-absent
 refusal-kind	stamp-absent
 refusal-kind	stamp-unrelatable
+refusal-kind	test-jvm-unsupported
 refusal-kind	tests-named
 refusal-kind	unnamed
 refusals-key	(inline widening)

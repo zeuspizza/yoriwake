@@ -127,6 +127,18 @@ public final class AgentContract {
     public static final String CHANGE_SET_UNREADABLE_KIND = "change-set-unreadable";
 
     /**
+     * The refusal and full-run kind of a test JVM newer than the agent's ASM reads. Defined here
+     * because the daemon refuses it from the launcher and the agent from the JVM it runs in.
+     */
+    public static final String TEST_JVM_UNSUPPORTED_KIND = "test-jvm-unsupported";
+
+    /**
+     * Lowers the class-file version the agent takes its ASM to read, for tests that need a test JVM
+     * above it on an installed JDK. Never raises it.
+     */
+    public static final String AGENT_ASM_CEILING_PROPERTY = "yoriwake.internal.agentAsmCeiling";
+
+    /**
      * The refusal kind of a complement run whose selection record does not match it. Defined here
      * because the agent raises it too, when the record's test JVM is not this one.
      */

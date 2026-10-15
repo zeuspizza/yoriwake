@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.capture;
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import org.objectweb.asm.Opcodes;
@@ -20,6 +21,37 @@ public final class ClassFileSupport {
      */
     public static int asmCeiling() {
         return CEILING;
+    }
+
+    /**
+     * The ceiling this JVM is judged against: the agent's, or a lower one {@link
+     * AgentContract#AGENT_ASM_CEILING_PROPERTY} names.
+     */
+    public static int effectiveCeiling(String override) {
+        try {
+            return Math.min(CEILING, Integer.parseInt(override.trim()));
+        } catch (Throwable unset) {
+            // Unset or unreadable: the agent's own.
+            return CEILING;
+        }
+    }
+
+    /**
+     * Why a JVM of this {@code java.specification.version} is newer than the agent's ASM reads,
+     * starting with the token; null when it is not, or when its version cannot be read.
+     * {@code override} is {@link AgentContract#AGENT_ASM_CEILING_PROPERTY}'s value, or null.
+     */
+    public static String testJvmUnsupported(String specification, String override) {
+        int feature = featureOf(specification);
+        int ceiling = effectiveCeiling(override);
+        if (feature < 0 || feature + 44 <= ceiling) {
+            return null;
+        }
+        return AgentContract.TEST_JVM_UNSUPPORTED_KIND + ": this test JVM runs Java " + feature
+                + "; the yoriwake agent's ASM reads up to Java " + (ceiling - 44)
+                + ", so what its tests read cannot all be seen. Every test runs. A yoriwake whose ASM"
+                + " reads Java " + feature + ", or a test JVM of Java " + (ceiling - 44)
+                + " or older, lifts this.";
     }
 
     static int ceilingOf(Class<?> opcodes) {
@@ -44,6 +76,9 @@ public final class ClassFileSupport {
      */
     public static int featureOf(String specification) {
         try {
+            if (specification == null) {
+                return -1;
+            }
             String s = specification.trim();
             return Integer.parseInt(s.startsWith("1.") ? s.substring(2) : s);
         } catch (Throwable t) {

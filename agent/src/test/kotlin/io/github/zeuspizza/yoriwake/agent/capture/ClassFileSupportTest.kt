@@ -6,6 +6,7 @@ import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /** The highest class-file version the agent's ASM reads, proven against ASM's own check. */
 class ClassFileSupportTest {
@@ -35,4 +36,16 @@ class ClassFileSupportTest {
         assertEquals(21, ClassFileSupport.featureOf("21"))
         assertEquals(-1, ClassFileSupport.featureOf("garbage"))
     }
+
+    @Test
+    fun `a JVM is judged against the agent's ceiling, which an override can only lower`() {
+        assertEquals(null, ClassFileSupport.testJvmUnsupported("27", null))
+        val above = ClassFileSupport.testJvmUnsupported("28", null)!!
+        assertTrue(above.startsWith(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TEST_JVM_UNSUPPORTED_KIND))
+        assertTrue("reads up to Java 27" in above, above)
+        assertTrue("reads up to Java 16" in ClassFileSupport.testJvmUnsupported("21", "60")!!)
+        assertEquals(null, ClassFileSupport.testJvmUnsupported("21", "1000"))
+        assertEquals(null, ClassFileSupport.testJvmUnsupported(null, "60"))
+    }
+
 }

@@ -153,6 +153,13 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
      * newer yoriwake, or a newer `jacoco.toolVersion`, lifts this.
      */
     CLASS_FILE_UNSUPPORTED("class-file-unsupported"),
+
+    /**
+     * The test JVM runs a newer Java than the agent's ASM reads, so the read hooks cannot go into
+     * its JDK's classes and what its tests read cannot all be seen. A newer yoriwake, or an older
+     * toolchain for the tests, lifts this.
+     */
+    TEST_JVM_UNSUPPORTED(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TEST_JVM_UNSUPPORTED_KIND),
     ;
 
     companion object {

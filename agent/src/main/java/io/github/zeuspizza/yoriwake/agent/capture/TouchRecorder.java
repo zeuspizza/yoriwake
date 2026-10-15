@@ -47,6 +47,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private List<String[]> pending = new ArrayList<>();
     private boolean installed;
     private volatile String incomplete = "the yoriwake agent was not attached to this JVM";
+    /** Why this JVM is newer than the agent reads; kept apart, so no later failure renames it. */
+    private volatile String unsupported;
     private volatile String lookupsIncomplete = "the yoriwake agent was not attached to this JVM";
     /** Variables read by name, and {@link AgentContract#ENV_READ_WHOLE} for the whole environment. */
     private final Set<String> environmentReads = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -74,6 +76,14 @@ public final class TouchRecorder implements CaptureSession.Touches {
             JdkCode.isJdk(java.util.function.Function.identity().getClass());
             nameIn(new byte[0]);
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
+            // JDK classes the agent's ASM cannot read take no hooks; said here, under its own name.
+            unsupported = ClassFileSupport.testJvmUnsupported(System.getProperty("java.specification.version"),
+                    System.getProperty(AgentContract.AGENT_ASM_CEILING_PROPERTY));
+            if (unsupported != null) {
+                lookupsIncomplete = unsupported;
+                environmentIncomplete = unsupported;
+                return;
+            }
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
                     this::childProcess, this::nativeCode, this::library, this::environmentRead);
             incomplete = hooks.reads != null ? hooks.reads : JdkCode.imageAltered();
@@ -111,7 +121,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
 
     @Override
     public String incomplete() {
-        return incomplete;
+        return unsupported != null ? unsupported : incomplete;
     }
 
     @Override

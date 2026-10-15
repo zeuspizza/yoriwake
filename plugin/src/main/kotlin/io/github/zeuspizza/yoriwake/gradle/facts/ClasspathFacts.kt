@@ -36,6 +36,8 @@ internal data class ClasspathFacts(
     val jacocoVersion: org.gradle.api.provider.Provider<String>? = null,
     /** The test JVM's feature version as its launcher reports it, absent when nobody can tell. */
     val testJvm: org.gradle.api.provider.Provider<Int>? = null,
+    /** A lower agent ceiling the task hands its test JVM, for tests on installed JDKs; else absent. */
+    val agentCeiling: org.gradle.api.provider.Provider<String>? = null,
 )
 
 /**
@@ -111,7 +113,14 @@ internal fun classpathFacts(
     jacocoVersion = project.provider {
         project.extensions.findByType(org.gradle.testing.jacoco.plugins.JacocoPluginExtension::class.java)?.toolVersion
     },
-    testJvm = test.javaLauncher.map { it.metadata.languageVersion.asInt() },
+    // Absent, never thrown, when the launcher cannot be probed (an `executable` that is a script):
+    // the configuration cache resolves this when it stores, and the test JVM then judges itself.
+    testJvm = test.javaLauncher.let { launcher ->
+        project.provider { runCatching { launcher.get().metadata.languageVersion.asInt() }.getOrNull() }
+    },
+    agentCeiling = test.systemProperties.let { properties ->
+        project.provider { properties[io.github.zeuspizza.yoriwake.agent.contract.AgentContract.AGENT_ASM_CEILING_PROPERTY]?.toString() }
+    },
     )
 }
 

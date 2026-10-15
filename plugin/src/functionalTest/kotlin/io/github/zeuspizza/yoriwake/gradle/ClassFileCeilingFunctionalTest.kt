@@ -1,11 +1,13 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * A class of the build's own output newer than the plugin's ASM reads, or than the host's JaCoCo
@@ -91,4 +93,46 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
         assertEquals("class-file-unsupported", decisionNotes(dir)["refusal-kind"])
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
     }
+
+    /** A test JVM on this JDK judged against an agent ceiling below it, set the way [how] says. */
+    private fun belowTheAgentCeiling(how: String) = minimalBuild.replace(
+        "tasks.test { useJUnitPlatform() }",
+        "tasks.test { useJUnitPlatform(); $how }",
+    )
+
+    @Test
+    fun `a test JVM newer than the agent reads runs every test`(@TempDir dir: File) {
+        // A system property of the task: the daemon reads it and refuses before the JVM starts.
+        val capture = captured(dir, belowTheAgentCeiling("systemProperty(\"yoriwake.internal.agentAsmCeiling\", \"60\")"))
+        assertContains(capture, "selecting runs of this task will run every test (test-jvm-unsupported)")
+
+        changeBeta(dir)
+        val output = select(dir)
+
+        val notes = decisionNotes(dir)
+        assertEquals("test-jvm-unsupported", notes["refusal-kind"], notes.toString())
+        assertContains(output, "the yoriwake agent's ASM reads up to Java 16")
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
+    }
+
+    @Test
+    fun `a test JVM the daemon could not judge judges itself`(@TempDir dir: File) {
+        // Through the JVM's own environment, which the daemon never reads: only the test JVM knows.
+        captured(dir, belowTheAgentCeiling("environment(\"JAVA_TOOL_OPTIONS\", \"-Dyoriwake.internal.agentAsmCeiling=60\")"))
+        val touches = File(dir, ".gradle/yoriwake").walkTopDown()
+            .filter { it.name == AgentContract.TOUCHES_FILE }.flatMap { it.readLines() }.toList()
+        assertTrue(
+            touches.any { it.contains("\t${AgentContract.TOUCH_ALL}\t${AgentContract.TEST_JVM_UNSUPPORTED_KIND}: ") },
+            "touches: $touches",
+        )
+
+        changeBeta(dir)
+        select(dir)
+
+        val notes = decisionNotes(dir)
+        assertEquals(null, notes["refusal-kind"], notes.toString())
+        assertEquals("test-jvm-unsupported", notes["full-run-kind"], notes.toString())
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
+    }
+
 }

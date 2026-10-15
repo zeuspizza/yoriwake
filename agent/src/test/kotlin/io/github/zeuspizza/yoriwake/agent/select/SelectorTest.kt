@@ -1229,4 +1229,20 @@ class SelectorTest {
         assertTrue(decision.isFullRun)
         assertEquals(Selector.Decision.FullRunKind.UNMAPPABLE_PATHS, decision.fullRunKind())
     }
+
+    @Test
+    fun `an over-ceiling JVM runs every test`(@TempDir dir: File) {
+        val map = map(dir, test("com.acme.FooTest", "com.acme.Foo"), test("com.acme.BarTest", "com.acme.Bar"))
+        // A JVM below the agent's ceiling, judged against one lowered beneath it.
+        val reason = io.github.zeuspizza.yoriwake.agent.capture.ClassFileSupport.testJvmUnsupported("21", "60")
+        val change = ChangeSet.of(listOf("com.acme.Foo"), emptyList()).withTestJvmUnsupported(reason)
+
+        val decision = Selector.decide(map, change, emptyList())
+
+        assertTrue(decision.isFullRun)
+        assertEquals(Selector.Decision.FullRunKind.TEST_JVM_UNSUPPORTED, decision.fullRunKind())
+        assertContains(decision.fullRunReason(), "this test JVM runs Java 21")
+        assertContains(Selector.rules(map, change, true).forcingKinds(), AgentContract.TEST_JVM_UNSUPPORTED_KIND)
+    }
+
 }

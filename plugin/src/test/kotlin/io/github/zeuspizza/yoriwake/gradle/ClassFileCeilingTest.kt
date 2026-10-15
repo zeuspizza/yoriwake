@@ -35,6 +35,7 @@ class ClassFileCeilingTest {
         dir: File,
         jacoco: String? = "0.8.15",
         testJvm: Int? = 21,
+        agentCeiling: String? = null,
         classes: Map<String, ByteArray> = emptyMap(),
         jars: Map<String, Map<String, ByteArray>> = emptyMap(),
     ): ClasspathFacts {
@@ -66,6 +67,7 @@ class ClassFileCeilingTest {
             classpath = project.files(output, *jarFiles.toTypedArray()),
             jacocoVersion = project.provider { jacoco },
             testJvm = project.provider { testJvm },
+            agentCeiling = project.provider { agentCeiling },
         )
     }
 
@@ -148,5 +150,36 @@ class ClassFileCeilingTest {
         assertFalse(onJdk21.refusalKind == RefusalKind.CLASS_FILE_UNSUPPORTED, onJdk21.refusal)
         assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, onJdk25.refusalKind)
         assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, unknown.refusalKind)
+    }
+
+    @Test
+    fun `a test JVM newer than the agent reads refuses by name`(@TempDir dir: File) {
+        val widening = widen(facts(dir, testJvm = 28, classes = mapOf("com.acme.A" to classAt("com.acme.A", 65))))
+
+        assertEquals(RefusalKind.TEST_JVM_UNSUPPORTED, widening.refusalKind)
+        assertContains(widening.refusal!!, "Java 28")
+        assertContains(widening.refusal!!, "the yoriwake agent's ASM reads up to Java 27")
+    }
+
+    @Test
+    fun `a test JVM the agent reads refuses nothing`(@TempDir dir: File) {
+        val widening = widen(facts(dir, testJvm = 27, classes = mapOf("com.acme.A" to classAt("com.acme.A", 65))))
+
+        assertFalse(widening.refusalKind == RefusalKind.TEST_JVM_UNSUPPORTED, widening.refusal)
+    }
+
+    @Test
+    fun `a test JVM and a class both too new name the test JVM and list the class`(@TempDir dir: File) {
+        val widening = widen(facts(dir, testJvm = 28, classes = mapOf("com.acme.Late" to classAt("com.acme.Late", 72))))
+
+        assertEquals(RefusalKind.TEST_JVM_UNSUPPORTED, widening.refusalKind)
+        assertContains(widening.refusal!!, "com.acme.Late is compiled for Java 28")
+    }
+
+    @Test
+    fun `the test task's own agent ceiling lowers the daemon's`(@TempDir dir: File) {
+        val widening = widen(facts(dir, testJvm = 21, agentCeiling = "60", classes = mapOf("com.acme.A" to classAt("com.acme.A", 65))))
+
+        assertEquals(RefusalKind.TEST_JVM_UNSUPPORTED, widening.refusalKind)
     }
 }
