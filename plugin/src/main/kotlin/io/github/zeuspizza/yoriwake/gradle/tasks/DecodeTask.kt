@@ -10,6 +10,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.JUnitXmlFailures
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
+import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
@@ -92,6 +93,10 @@ internal abstract class DecodeTask : DefaultTask() {
     @get:Input
     abstract val isolated: Property<Boolean>
 
+    /** Whether `fullRunEveryBuilds` or `fullRunEveryDays` is set, so the decode keeps their count. */
+    @get:Input
+    abstract val scheduleSet: Property<Boolean>
+
     @get:Internal("where git runs, not a set of files this task reads")
     lateinit var rootDir: File
 
@@ -106,6 +111,17 @@ internal abstract class DecodeTask : DefaultTask() {
 
     @get:Internal("Gradle's JUnit XML for the run, read for failures a stopped test JVM never recorded")
     var junitXml: File? = null
+
+    /** The schedule's count, kept only when a limit is set; a failed write never fails the decode. */
+    private fun recordSchedule(taskPath: String, fullRun: Boolean) {
+        if (!scheduleSet.getOrElse(false)) return
+        Schedule.record(mapDir, fullRun)?.let { problem ->
+            logger.warn(
+                "[yoriwake] $taskPath could not record this run for the scheduled full run ($problem), " +
+                    "so the scheduled full run may come later than configured."
+            )
+        }
+    }
 
     @TaskAction
     fun decode() {
@@ -181,6 +197,7 @@ internal abstract class DecodeTask : DefaultTask() {
             complemented.delete()
             if (marker.delete()) {
                 fullRunMarker.delete()
+                recordSchedule(taskPath, fullRun = false)
                 logger.lifecycle(SelectionRecord.complemented(mapDir).line(taskPath, commit))
                 return
             }
@@ -196,6 +213,9 @@ internal abstract class DecodeTask : DefaultTask() {
             val reason = runCatching { leftAlone.readText().trim() }.getOrDefault("")
             leftAlone.delete()
             fullRunMarker.delete()
+            // A declined run ran every test, which is what the schedule bounds, though the map stays as
+            // it was; one that ran only the tests named for it did not.
+            recordSchedule(taskPath, fullRun = datesTheMap)
             logger.lifecycle("[yoriwake] $taskPath: $reason")
             return
         }
@@ -232,6 +252,9 @@ internal abstract class DecodeTask : DefaultTask() {
             )
         }
         val datesMap = observedEverything && unfinished.isEmpty() && !headMoved && !reflogMoved
+        // Keyed on running everything, not on the decode stamping the map: a full run with no worker
+        // records returns before any stamp, and the count must still reset there.
+        recordSchedule(taskPath, fullRun = datesMap)
         val hasWorkerRecords = CoverageDecoder.recordsDir(mapDir).listFiles().orEmpty()
             .any { it.isDirectory && it.name.startsWith(AgentContract.WORKER_DIR_PREFIX) }
         // Merged undated, these records would describe code the stamp's commit does not hold, and a
@@ -522,6 +545,8 @@ internal abstract class DecodeTask : DefaultTask() {
         /** Whether this run forked a JVM per test class while it captured. */
         val isolated: Boolean,
         val afterTest: AfterTest,
+        /** Whether a scheduled full run is configured, so the decode keeps its count. */
+        val scheduleSet: Boolean = false,
     )
 
     internal companion object {
@@ -559,6 +584,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.undatedReason.set(wired.undatedReason)
                 task.effectiveScope.set(wired.effectiveScope)
                 task.isolated.set(wired.isolated)
+                task.scheduleSet.set(wired.scheduleSet)
                 task.afterTest = wired.afterTest
                 // A File, not the property: wired as a property it carries the test task as its
                 // producer, which the configuration cache cannot store on this task. None when the

@@ -87,6 +87,7 @@ refusal-kind	environment-unrecorded
 refusal-kind	full-run-branch
 refusal-kind	full-run-commit
 refusal-kind	full-run-requested
+refusal-kind	full-run-scheduled
 refusal-kind	in-jvm-parallelism
 refusal-kind	map-untrusted
 refusal-kind	map-unverified

@@ -12,8 +12,8 @@ import org.gradle.api.InvalidUserDataException
  * What kind of run one test task makes: the single answer every wiring site reads, so no two of
  * them can disagree about whether a run selects.
  *
- * A run asked to select can be declined: asked on the command line, by a branch the build lists, or
- * in a commit message to run everything, it records instead, and says why. A run asked to observe
+ * A run asked to select can be declined: asked on the command line, by a branch the build lists, in
+ * a commit message, or by a scheduled full run falling due, it records instead, and says why. A run asked to observe
  * stays observing, and the selection it observes is the declined one.
  */
 internal class RunPlan(
@@ -88,6 +88,8 @@ internal class RunPlan(
             scan: (String) -> CommitScan,
             fullRunBranches: List<String> = emptyList(),
             checkedOut: () -> CheckedOut = { error("the branch was asked for with no branch listed") },
+            /** Why a scheduled full run is due, or null; asked only for a run asked to select or observe. */
+            scheduled: () -> String? = { null },
         ): RunPlan {
             val set = listOfNotNull(
                 Settings.SELECT.takeIf { settings.select },
@@ -107,7 +109,7 @@ internal class RunPlan(
                 else -> return RunPlan(Kind.RECORD, Kind.RECORD, widening = null)
             }
             val widened = widening()
-            val (declines, notes, branch) = declines(settings.fullRun, fullRunBranches, checkedOut, widened.age, scan)
+            val (declines, notes, branch) = declines(settings.fullRun, fullRunBranches, checkedOut, widened.age, scan, scheduled)
             // An observing run already records; a decline applies only to the selection it observes.
             val kind = if (declines.isEmpty() || asked == Kind.OBSERVE) asked else Kind.RECORD
             return RunPlan(
@@ -147,6 +149,7 @@ internal class RunPlan(
             checkedOut: () -> CheckedOut,
             age: MapAge,
             scan: (String) -> CommitScan,
+            scheduled: () -> String? = { null },
         ): Declines {
             val declines = mutableListOf<Decline>()
             val notes = mutableListOf<String>()
@@ -198,6 +201,7 @@ internal class RunPlan(
                     )
                 }
             }
+            scheduled()?.let { declines += Decline(RefusalKind.FULL_RUN_SCHEDULED, it) }
             if (declines.isEmpty() && branch != null) {
                 notes += "not a full-run branch ($branch), so selection goes ahead"
             }

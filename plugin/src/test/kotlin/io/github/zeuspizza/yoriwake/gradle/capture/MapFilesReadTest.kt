@@ -30,6 +30,9 @@ class MapFilesReadTest {
         "ENV_READS_FILE" to "the variables the tests read, by name, for the explain output; read by nothing that decides",
         "compared\"" to "the classpath files a run compared, handed to its own last look and deleted",
         "name" to "a name drawn from constants this scan sees elsewhere",
+        "COUNT_FILE" to "the scheduled full run's count, rewritten by every decode; a changed one can only postpone " +
+            "a full run, which selects as a build without the schedule does",
+        "TIME_FILE" to "the scheduled full run's time, as COUNT_FILE",
     )
 
     private val digestedByName = mapOf(

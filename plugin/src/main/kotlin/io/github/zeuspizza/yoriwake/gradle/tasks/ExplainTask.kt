@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
@@ -99,6 +100,16 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val notReadByTests: ListProperty<String>
 
+    /** The build's `fullRunEveryBuilds`; unset when it has none. */
+    @get:Input
+    @get:Optional
+    abstract val fullRunEveryBuilds: Property<Int>
+
+    /** The build's `fullRunEveryDays`; unset when it has none. */
+    @get:Input
+    @get:Optional
+    abstract val fullRunEveryDays: Property<Int>
+
     /** Whether `-Pyoriwake.trustedMaps` was passed, which makes the run check the map's provenance. */
     @get:Input
     @get:Optional
@@ -143,6 +154,14 @@ internal abstract class ExplainTask : DefaultTask() {
     /** Set when the plugin declined the `Test` task, which leaves nothing to explain. */
     @get:Internal("the decline's sentence, printed as is")
     var declined: String? = null
+
+    /** Why the scheduled full run is due, as the run decides it; null with no limit set. */
+    private fun scheduled(): String? {
+        val builds = fullRunEveryBuilds.orNull
+        val days = fullRunEveryDays.orNull
+        if (builds == null && days == null) return null
+        return Schedule.dueIn(mapDir, builds, days)
+    }
 
     @TaskAction
     fun explain() {
@@ -206,10 +225,16 @@ internal abstract class ExplainTask : DefaultTask() {
             fullRunBranches.getOrElse(emptyList()),
             { ChangeDetection.checkedOut { ChangeDetection.rawGit(rootDir, it) } },
             unknown ?: age,
-        ) { since ->
-            ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(rootDir, it) }, since)
-        }
+            { since -> ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(rootDir, it) }, since) },
+            { scheduled() },
+        )
         notes.forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
+        if (declines.isEmpty() && (fullRunEveryBuilds.isPresent || fullRunEveryDays.isPresent)) {
+            Schedule.untilDue(
+                Schedule.read(File(mapDir, Schedule.COUNT_FILE)), Schedule.read(File(mapDir, Schedule.TIME_FILE)),
+                fullRunEveryBuilds.orNull, fullRunEveryDays.orNull,
+            )?.let { logger.lifecycle("[yoriwake] $taskPath: $it") }
+        }
         declines.firstOrNull()?.let { decline ->
             logger.lifecycle("[yoriwake] $taskPath would run everything: ${decline.reason}")
             writeUnanswered(
@@ -398,6 +423,7 @@ internal abstract class ExplainTask : DefaultTask() {
             testName: String,
             settings: Settings,
             fullRunBranches: List<String>,
+            schedule: Schedule.Limits,
             notReadByTests: List<String>,
             environment: EnvironmentFingerprint.Rules,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
@@ -418,6 +444,8 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)
+                schedule.builds?.let(task.fullRunEveryBuilds::set)
+                schedule.days?.let(task.fullRunEveryDays::set)
                 task.environment = environment
                 task.environmentView.set(project.provider { environmentView(test) })
                 task.develocity.set(DevelocityDetection.provider(project, test))

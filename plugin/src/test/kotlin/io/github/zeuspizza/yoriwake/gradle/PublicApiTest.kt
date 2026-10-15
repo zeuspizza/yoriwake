@@ -67,7 +67,10 @@ class PublicApiTest {
             .toSet()
 
         assertEquals(
-            setOf("enabled", "alwaysRun", "fullRunBranches", "notReadByTests", "environmentInclude", "systemPropertyIgnore"),
+            setOf(
+                "enabled", "alwaysRun", "fullRunBranches", "fullRunEveryBuilds", "fullRunEveryDays", "notReadByTests",
+                "environmentInclude", "systemPropertyIgnore",
+            ),
             properties,
         )
     }

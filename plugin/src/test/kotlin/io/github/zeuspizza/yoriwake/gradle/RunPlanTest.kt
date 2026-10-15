@@ -299,4 +299,26 @@ class RunPlanTest {
         }
         assertEquals(listOf("main", "release/*"), RunPlan.fullRunBranches(listOf(" main ", "release/*"), ":"))
     }
+
+    @Test
+    fun `a scheduled full run that is due declines after a marked commit, and is asked only when selecting`() {
+        val due = "20 builds since the last full run (limit 20)"
+
+        val plan = RunPlan.resolve(settings(Settings.SELECT), { known }, { marked }, scheduled = { due })
+        assertEquals(RunPlan.Kind.RECORD, plan.kind)
+        assertEquals(listOf(RefusalKind.FULL_RUN_COMMIT, RefusalKind.FULL_RUN_SCHEDULED), plan.declines.map { it.kind })
+        assertTrue(RefusalKind.FULL_RUN_SCHEDULED.requested)
+        assertEquals(due, plan.declines.last().reason)
+
+        assertEquals(RunPlan.Kind.SELECT, RunPlan.resolve(settings(Settings.SELECT), { known }, { clean }, scheduled = { null }).kind)
+        assertEquals(RunPlan.Kind.RECORD, RunPlan.resolve(settings(), { error("asked for the base") }, { error("scanned") }, scheduled = { error("asked the schedule") }).kind)
+    }
+
+    @Test
+    fun `an observing run stays observing when the schedule is due`() {
+        val plan = RunPlan.resolve(settings(Settings.OBSERVE), { known }, { clean }, scheduled = { "due" })
+
+        assertEquals(RunPlan.Kind.OBSERVE, plan.kind)
+        assertEquals(RefusalKind.FULL_RUN_SCHEDULED, plan.declines.single().kind)
+    }
 }

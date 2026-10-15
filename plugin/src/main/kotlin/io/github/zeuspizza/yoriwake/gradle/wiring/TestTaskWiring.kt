@@ -13,6 +13,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERT
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
+import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
@@ -90,6 +91,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // Read with `enabled`, for the same reason.
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
         val fullRunBranches = RunPlan.fullRunBranches(extension.fullRunBranches.getOrElse(emptyList()), project.path)
+        val schedule = Schedule.Limits(
+            atLeastOne(extension.fullRunEveryBuilds.orNull, "fullRunEveryBuilds", project.path),
+            atLeastOne(extension.fullRunEveryDays.orNull, "fullRunEveryDays", project.path),
+        )
         val notReadByTests = extension.notReadByTests.getOrElse(emptyList())
         val environment = EnvironmentFingerprint.Rules(
             validNames(extension.systemPropertyIgnore.getOrElse(emptyList()), "systemPropertyIgnore", project.path),
@@ -120,7 +125,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, notReadByTests, environment, buildMemo) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, environment, buildMemo) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -137,7 +142,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, notReadByTests, environment) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, environment) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -172,6 +177,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         scope: List<String>?,
         alwaysRunDeclared: List<String>,
         fullRunBranches: List<String>,
+        schedule: Schedule.Limits,
         notReadByTests: List<String>,
         environment: EnvironmentFingerprint.Rules,
         buildMemo: BuildMemo?,
@@ -235,6 +241,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     ChangeDetection.cachedRawGit(project.providers, project.rootDir, buildMemo, it, recordFailures = false)
                 }
             },
+            scheduled = { if (schedule.set) scheduleDue(project, mapDir, schedule) else null },
         )
         val selecting = runPlan.selecting
         if (runPlan.observing) {
@@ -343,6 +350,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 // What this run asked for; the decoder still checks that each JVM ran one class.
                 isolated = settings.isolatedCapture && !selecting,
                 afterTest = afterTest,
+                scheduleSet = schedule.set,
             ),
             fromBuildScript,
         )
@@ -1173,4 +1181,23 @@ internal data class FilterVerdict(
         const val UNFILTERED = "yes"
         const val FILTERED = "no"
     }
+}
+
+/** Why the scheduled full run is due for this map, through a value source a reused entry re-obtains. */
+internal fun scheduleDue(project: Project, mapDir: File, schedule: Schedule.Limits): String? =
+    project.providers.of(Schedule.Source::class.java) {
+        it.parameters.mapDir.set(mapDir.absolutePath)
+        schedule.builds?.let { builds -> it.parameters.builds.set(builds) }
+        schedule.days?.let { days -> it.parameters.days.set(days) }
+    }.orNull
+
+/** [value] when unset or at least one; anything lower fails the build naming [property]. */
+internal fun atLeastOne(value: Int?, property: String, owner: String): Int? {
+    if (value != null && value < 1) {
+        throw org.gradle.api.InvalidUserDataException(
+            "[yoriwake] $owner: $property is $value; it counts builds or days between full runs, so it " +
+                "must be 1 or more. Leave it unset to never schedule a full run."
+        )
+    }
+    return value
 }
