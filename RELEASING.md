@@ -67,6 +67,7 @@ no minutes against a budget.
 | 6 | Each native library in [the reviewed list](docs/reference.md#native-libraries) is compared with its latest major release; a re-review issue is opened for each that moved. | maintainer | none |
 | 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so steps 1-6 stand; if anything else differs, the gates it touches run again on the final candidate. | maintainer | none |
 | 7b | `.github/workflows/matrix.yml`, dispatched from the final candidate's branch (`main` or `release/<major>.<minor>`) with the final candidate's SHA, is green in every job, so every row of the [supported matrix](docs/reference.md#supported-matrix) ran on the commit that is tagged. The run's link is recorded with the release. A cell red only on a newly bumped Gradle: revert the bump, which makes a new candidate, and open an issue for that Gradle version; a row never leaves the table because a bump failed. | maintainer dispatches | none on this public repository; about 1.5 hours of wall time, an estimate until a run measures it |
+| 7c | `.github/workflows/jdk-ea.yml`, dispatched from the same branch, is green: the newest early-access JDK did what the candidate's ceilings predict. | maintainer dispatches | none on this public repository; under 30 minutes |
 | 8 | If the Portal description or tags changed: `./gradlew :plugin:publishPlugins --validate-only -PreleaseVersion=<version>` with the Portal keys. | maintainer | none |
 
 A gate that fails, or a confirmed finding left unfixed, stops the release. A campaign finding is open
@@ -93,6 +94,26 @@ release waits for every one.
   removes its fixes' lines from `## [Unreleased]`.
 - If the release fixes a silent skip, the advisory is updated with the fixed version, and adopters
   who reported it are told.
+
+## A new JDK
+
+When a JDK reaches general availability, or its first release candidate once ASM and JaCoCo
+releases that read it exist:
+
+1. Merge the ASM and JaCoCo upgrades that read it, after the build, the functional suite and the
+   private mutation checks pass on them. The ASM ceiling follows ASM on its own; check its release
+   notes name the new `V<n>`. Add JaCoCo's row to
+   `plugin/src/main/resources/io/github/zeuspizza/yoriwake/gradle/jacoco-java-support.tsv` from its
+   change log, official support only. `DigestGoldenTest` fails if the ASM upgrade changed class
+   digests: say so in the CHANGELOG line, as every existing map then runs everything once.
+2. Add the JDK's case to `TestJvmRangeFunctionalTest` and its row to the reference's [supported
+   matrix](docs/reference.md#supported-matrix), with the JDK in `matrix.yml`'s `setup-java` list,
+   and update the ceilings in the reference's [New JDKs](docs/reference.md#new-jdks).
+3. Check `.github/workflows/jdk-ea.yml` is still enabled (GitHub disables a schedule after 60 days
+   without activity) and its last run was green.
+4. One CHANGELOG line names the JDK and the map's effect.
+
+`jdk-ea.yml` is also dispatched on each release candidate, beside `matrix.yml` (step 7b).
 
 ## A silent skip
 
