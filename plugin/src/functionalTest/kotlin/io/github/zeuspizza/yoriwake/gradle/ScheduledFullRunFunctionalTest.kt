@@ -167,4 +167,20 @@ class ScheduledFullRunFunctionalTest : FunctionalTestSupport() {
         assertEquals("0", count(dir))
         assertTrue("isolatedCapture" in output, output)
     }
+
+    @Test
+    fun `a due run that names its tests does not start the count again`(@TempDir dir: File) {
+        captured(dir, "fullRunEveryBuilds = 2")
+        selectAfterAChange(dir)
+        assertEquals("1", count(dir))
+
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "--tests", "dev.sample.AlphaTest").build()
+        assertEquals(setOf("dev.sample.AlphaTest"), ranTests(dir))
+        assertEquals("2", count(dir), "only the named tests ran, which is no full run")
+
+        val output = selectAfterAChange(dir)
+        assertEquals(bothTests, ranTests(dir), output)
+        assertEquals("full-run-scheduled", decisionNotes(dir)["refusal-kind"], output)
+    }
 }

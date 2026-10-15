@@ -197,6 +197,7 @@ internal abstract class DecodeTask : DefaultTask() {
             complemented.delete()
             if (marker.delete()) {
                 fullRunMarker.delete()
+                recordSchedule(taskPath, fullRun = false)
                 logger.lifecycle(SelectionRecord.complemented(mapDir).line(taskPath, commit))
                 return
             }
@@ -212,8 +213,9 @@ internal abstract class DecodeTask : DefaultTask() {
             val reason = runCatching { leftAlone.readText().trim() }.getOrDefault("")
             leftAlone.delete()
             fullRunMarker.delete()
-            // It ran every test, which is what the schedule bounds, though the map stays as it was.
-            recordSchedule(taskPath, fullRun = true)
+            // A declined run ran every test, which is what the schedule bounds, though the map stays as
+            // it was; one that ran only the tests named for it did not.
+            recordSchedule(taskPath, fullRun = datesTheMap)
             logger.lifecycle("[yoriwake] $taskPath: $reason")
             return
         }

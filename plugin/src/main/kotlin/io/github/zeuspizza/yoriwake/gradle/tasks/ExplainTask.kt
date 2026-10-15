@@ -160,13 +160,7 @@ internal abstract class ExplainTask : DefaultTask() {
         val builds = fullRunEveryBuilds.orNull
         val days = fullRunEveryDays.orNull
         if (builds == null && days == null) return null
-        return Schedule.due(
-            mapPresent(mapDir),
-            Schedule.read(File(mapDir, Schedule.COUNT_FILE)),
-            Schedule.read(File(mapDir, Schedule.TIME_FILE)),
-            Schedule.read(File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE))?.lineSequence()?.firstOrNull(),
-            java.time.Instant.now(), builds, days,
-        )
+        return Schedule.dueIn(mapDir, builds, days)
     }
 
     @TaskAction
@@ -235,7 +229,7 @@ internal abstract class ExplainTask : DefaultTask() {
             { scheduled() },
         )
         notes.forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
-        if (declines.isEmpty()) {
+        if (declines.isEmpty() && (fullRunEveryBuilds.isPresent || fullRunEveryDays.isPresent)) {
             Schedule.untilDue(
                 Schedule.read(File(mapDir, Schedule.COUNT_FILE)), Schedule.read(File(mapDir, Schedule.TIME_FILE)),
                 fullRunEveryBuilds.orNull, fullRunEveryDays.orNull,

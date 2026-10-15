@@ -85,6 +85,17 @@ internal object Schedule {
         return if (parts.isEmpty()) null else "full run due ${parts.joinToString(" or ")}"
     }
 
+    /** [due] for the map in [mapDir], read from its files. */
+    fun dueIn(mapDir: File, builds: Int?, days: Int?, now: Instant = Instant.now()): String? = due(
+        mapExists = File(mapDir, io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_SCHEMA_VERSION_FILE).isFile,
+        count = read(File(mapDir, COUNT_FILE)),
+        time = read(File(mapDir, TIME_FILE)),
+        captureCommit = read(File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE))?.lineSequence()?.firstOrNull(),
+        now = now,
+        builds = builds,
+        days = days,
+    )
+
     /** The file's text, or null when it is absent or cannot be read. */
     fun read(file: File): String? = runCatching { file.takeIf(File::isFile)?.readText() }.getOrNull()
 
@@ -105,17 +116,6 @@ internal object Schedule {
             val days: Property<Int>
         }
 
-        override fun obtain(): String? {
-            val mapDir = File(parameters.mapDir.get())
-            return due(
-                mapExists = File(mapDir, io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_SCHEMA_VERSION_FILE).isFile,
-                count = read(File(mapDir, COUNT_FILE)),
-                time = read(File(mapDir, TIME_FILE)),
-                captureCommit = read(File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE))?.lineSequence()?.firstOrNull(),
-                now = Instant.now(),
-                builds = parameters.builds.orNull,
-                days = parameters.days.orNull,
-            )
-        }
+        override fun obtain(): String? = dueIn(File(parameters.mapDir.get()), parameters.builds.orNull, parameters.days.orNull)
     }
 }
