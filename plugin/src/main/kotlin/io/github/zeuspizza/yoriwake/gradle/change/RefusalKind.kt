@@ -136,6 +136,12 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     FULL_RUN_COMMIT("full-run-commit", requested = true),
 
     /**
+     * `fullRunEveryBuilds` or `fullRunEveryDays` was reached since the last full run; as above. The
+     * full run resets the count.
+     */
+    FULL_RUN_SCHEDULED("full-run-scheduled", requested = true),
+
+    /**
      * A complement run found no selection record for its task: no selecting run that narrowed at a
      * clean tree left one there. Everything runs and the map is recorded.
      */

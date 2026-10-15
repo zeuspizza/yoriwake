@@ -391,6 +391,19 @@ public abstract class YoriwakeExtension {
     public abstract val fullRunBranches: org.gradle.api.provider.ListProperty<String>
 
     /**
+     * Runs every test once this many builds of a `Test` task have passed without a full run, so a gap
+     * in the map cannot hide for longer: `fullRunEveryBuilds = 20`. A build is one execution of the
+     * task; the count lives beside the map and travels with it. Unset by default.
+     */
+    public abstract val fullRunEveryBuilds: org.gradle.api.provider.Property<Int>
+
+    /**
+     * Runs every test once this many days have passed since the last full run of a `Test` task:
+     * `fullRunEveryDays = 7`. Unset by default; with both set, whichever is reached first.
+     */
+    public abstract val fullRunEveryDays: org.gradle.api.provider.Property<Int>
+
+    /**
      * Files neither the tests nor the build ever read, as globs over paths relative to the root
      * project: `notReadByTests.addAll("*.md", "LICENSE")`. Paths match whole, and `*` matches any
      * characters, slashes included, so `docs` followed by a slash and a star is every file under
