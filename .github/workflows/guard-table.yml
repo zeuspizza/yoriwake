@@ -1,0 +1,37 @@
+name: guard table
+
+# The guard table itself: every anchor matches exactly once, and a pull request that removes a
+# guard, re-aims one (its target, anchor, suite or expected test) or takes a suite out of the fast
+# set fails, naming each. A maintainer approves such a change with the `weakens-guards` label,
+# which only people with triage access can add; adding or removing it re-runs this check. Its own
+# workflow, so a label re-runs this and not the guards.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  table:
+    name: no guard weakened
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/test_prove_guards.py
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'weakens-guards') }}
+        run: |
+          set -eu
+          if python3 scripts/prove_guards.py --against "$BASE"; then
+            exit 0
+          elif [ "$APPROVED" = true ]; then
+            echo "::notice::the weakened guards above are approved by the weakens-guards label"
+          else
+            exit 1
+          fi

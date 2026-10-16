@@ -12,6 +12,7 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py mutate samples/demo/src/main/java/dev/demo/Epsilon.java
     python .github/ci.py discard samples/demo --map
     python .github/ci.py needs-checks <base-sha> <head-sha>
+    python .github/ci.py touches-product <base-sha> <head-sha>
 """
 
 import argparse
@@ -124,6 +125,17 @@ def needs_checks(paths):
     return any(path in CHECKED_DOCS or not (path.endswith(".md") or path.startswith("docs/")) for path in paths)
 
 
+# The sources a pull request must pass every guard for: what the plugin and agent ship.
+PRODUCT_SOURCES = ("plugin/src/main/", "agent/src/main/")
+
+
+def touches_product(paths):
+    """Whether a change to `paths` reaches the shipped sources, so every guard must run. No paths
+    is an answer nobody could give, so it does: the wrong "no" leaves the change to fast mode."""
+    paths = [path for path in paths if path.strip()]
+    return not paths or any(path.startswith(PRODUCT_SOURCES) for path in paths)
+
+
 def changed_paths(base, head, cwd=None):
     """The paths a pull request changes, or None when git cannot say."""
     try:
@@ -157,7 +169,17 @@ def main(argv=None):
     checks.add_argument("base")
     checks.add_argument("head")
 
+    product = sub.add_parser("touches-product",
+                             help="print true unless a pull request leaves the shipped sources alone")
+    product.add_argument("base")
+    product.add_argument("head")
+
     args = parser.parse_args(argv)
+
+    if args.command == "touches-product":
+        paths = changed_paths(args.base, args.head)
+        print("true" if paths is None or touches_product(paths) else "false")
+        return 0
 
     if args.command == "needs-checks":
         paths = changed_paths(args.base, args.head)

@@ -734,6 +734,63 @@ def case_only_a_docs_change_skips_the_checks():
     return problems
 
 
+def case_a_change_to_product_sources_runs_every_guard():
+    """Full mode is the gate for the plugin's and agent's sources, so an unknown change is one."""
+    problems = 0
+    cases = {
+        ("plugin/src/main/kotlin/A.kt",): True,
+        ("README.md", "agent/src/main/java/A.java"): True,
+        ("agent/src/test/kotlin/ATest.kt", "bench/run.py"): False,
+        ("plugin/build.gradle.kts",): False,
+        (): True,
+        ("",): True,
+    }
+    for paths, expected in cases.items():
+        if ci.touches_product(list(paths)) != expected:
+            problems += fail(f"touches_product({list(paths)}) should be {expected}")
+    return problems
+
+
+def case_the_guard_workflows_are_read_only_and_cover_every_pull_request():
+    """A pull request cannot rewrite the harness that judges it, and none goes unguarded."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        guards = handle.read()
+    with open(os.path.join(WORKFLOWS, "guard-table.yml"), encoding="utf-8") as handle:
+        table = handle.read()
+    for name, text in (("guards.yml", guards), ("guard-table.yml", table)):
+        if re.search(r"^\s*pull_request_target:", text, re.M):
+            problems += fail(f"{name}: runs a pull request's code with the base branch's token")
+        if "permissions:\n  contents: read" not in text:
+            problems += fail(f"{name}: its token is not read-only")
+        if "secrets." in text:
+            problems += fail(f"{name}: uses a secret")
+    for needle, why in (
+        ("  schedule:\n    - cron: ", "it is not scheduled nightly"),
+        ("  workflow_dispatch:", "it cannot be dispatched before a release"),
+        ("--mode fast", "it does not run fast mode"),
+        ("--changed", "it does not run the guards the change can affect"),
+        ("--mode full", "it does not run full mode"),
+        ("touches-product", "full mode is not chosen by the product sources"),
+        ("needs.changes.outputs.product != 'false'", "full mode runs only when product sources surely changed"),
+        ("needs.changes.outputs.product != 'true'", "fast mode is not skipped when full mode runs"),
+        ("    timeout-minutes: ", "a job has no time bound"),
+    ):
+        if needle not in guards:
+            problems += fail(f"guards.yml: {why}")
+    if not re.search(r"report-failure:\n(    [^\n]*\n)*    if: failure\(\) && github.event_name == 'schedule'", guards):
+        problems += fail("guards.yml: a nightly failure opens no issue")
+    for needle, why in (
+        ("--against", "it does not compare the guard table with the base branch"),
+        ("test_prove_guards.py", "it does not check every anchor"),
+        ("labeled", "a maintainer's approval does not re-run it"),
+        ("weakens-guards", "no label approves a weakened guard"),
+    ):
+        if needle not in table:
+            problems += fail(f"guard-table.yml: {why}")
+    return problems
+
+
 def case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to():
     """On a pull request verify always starts, and each job runs unless `changes` said `false`: a
     trigger path filter would leave required checks waiting, and a job running only on `true` would
@@ -789,6 +846,8 @@ def case_a_code_file_moved_into_docs_still_needs_the_checks():
 CASES = (
     case_a_code_file_moved_into_docs_still_needs_the_checks,
     case_only_a_docs_change_skips_the_checks,
+    case_a_change_to_product_sources_runs_every_guard,
+    case_the_guard_workflows_are_read_only_and_cover_every_pull_request,
     case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,
     case_shards_that_partition_the_suite_pass,

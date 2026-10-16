@@ -1648,6 +1648,10 @@ def case_a_provisioned_toolchain_is_found_at_any_of_its_layouts():
 
         original = os.path.expanduser
         os.path.expanduser = lambda path: root if path == "~/.gradle/jdks" else original(path)
+        # A runner's own JDKs are named in the environment and found first, so the toolchain root
+        # is only what this half reads when they are out of the way.
+        runner_jdks = {name: os.environ.pop(name) for name in list(os.environ)
+                       if re.fullmatch(r"JAVA_HOME_\d+_(?:X64|ARM64)", name)}
         try:
             for major, relative in layouts.items():
                 found = run.find_jdk(major)
@@ -1672,6 +1676,7 @@ def case_a_provisioned_toolchain_is_found_at_any_of_its_layouts():
                 del os.environ["JAVA_HOME_25_X64"]
         finally:
             os.path.expanduser = original
+            os.environ.update(runner_jdks)
     finally:
         shutil.rmtree(root, ignore_errors=True)
     return failures

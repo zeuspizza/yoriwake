@@ -1,8 +1,8 @@
 """Refuses a push that would publish the maintainers' private working vocabulary.
 
 The harness was developed in a private repository, against plans whose identifiers, dates and
-documents mean nothing to a reader here. This scan keeps them out of `bench/`, `docs/`,
-`CONTRIBUTING.md` and `.github/`, and out of the commit messages that carry them.
+documents mean nothing to a reader here. This scan keeps them out of `bench/`, `scripts/`,
+`docs/`, `CONTRIBUTING.md` and `.github/`, and out of the commit messages that carry them.
 
     python3 bench/scan_private.py --push            # what a push of HEAD would add to origin/main
     python3 bench/scan_private.py --range BASE HEAD # what a pull request adds (CI)
@@ -17,7 +17,7 @@ import re
 import subprocess
 import sys
 
-SCOPE = ("bench/", "docs/", ".github/", "CONTRIBUTING.md")
+SCOPE = ("bench/", "scripts/", "docs/", ".github/", "CONTRIBUTING.md")
 
 # The scan's own patterns and the test that seeds them.
 EXEMPT = {"bench/scan_private.py", "bench/test_scan_private.py"}
@@ -35,7 +35,7 @@ RULES = [
     ("private repository", re.compile(r"yoriwake-labs"), True),
     ("home path", re.compile(r"(?:/Users/|/home/)[A-Za-z]"), True),
     ("spike", re.compile(r"\bspike\b", re.I), True),
-    ("private tool", re.compile(r"prove_guards|session_tokens"), True),
+    ("private tool", re.compile(r"session_tokens"), True),
     ("assistant", re.compile(r"\bclaude\b", re.I), True),
 ]
 
@@ -44,7 +44,7 @@ MESSAGE_RULES = [rule for rule in RULES if rule[0] != "date"]
 
 
 def in_scope(path):
-    return path not in EXEMPT and (path.startswith(SCOPE[:3]) or path == SCOPE[3])
+    return path not in EXEMPT and (path.startswith(SCOPE[:-1]) or path == SCOPE[-1])
 
 
 def rules_for(path):
