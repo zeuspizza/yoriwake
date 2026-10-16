@@ -1,0 +1,11 @@
+# A service with persistence: Conductor's workflow engine (the maintained conductor-oss fork), its
+# core module. Qualify before sweeping: bench/README.md, "Adding a project".
+name = "conductor"
+url = "https://github.com/conductor-oss/conductor.git"
+commit = "c52919afd0ec2ffde0196afbab10762d2d48ed28"
+module = "conductor-core"
+# The settings rename every subproject to conductor-<name>; the directory keeps its own.
+module_dir = "core"
+flags = []
+sources = ["core/src/main/java"]
+daemon_jvmargs = "-Xmx3g"

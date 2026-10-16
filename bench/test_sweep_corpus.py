@@ -13,6 +13,7 @@ returns instead of asserting would be collected by pytest and pass however many 
 single test_* entry point below asserts.
 """
 
+import glob
 import json
 import os
 import re
@@ -742,6 +743,92 @@ def case_the_workflow_reads_each_project_s_flags_from_the_sweep_itself():
     if any(arg.startswith("/") for args in plan.values() for arg in args):
         failures += fail("a planned command names a path of this machine")
     return failures
+
+
+def case_the_headline_states_misses_against_the_rows_that_could_miss_and_the_undetermined():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import readme_charts  # noqa: PLC0415
+    failures = 0
+    possible = _row("narrowed", full_failures=2, missed=[], undetermined=["T::u"])
+    with tempfile.TemporaryDirectory() as directory:
+        a = _results("demo", [possible, _row("full-run", selected_distinct=10, full_failures=1)],
+                     directory, project="demo", plugin_commit="p1")
+        b = _results("okio", [_row("narrowed")], directory, project="okio", plugin_commit="p1")
+        projects, _ = readme_charts.load("shared", [a, b])
+    text = readme_charts.headline(projects, {"demo": "demo", "okio": "okio"})
+    for phrase in ("0 missed of 2 failures", "1 change where a miss was possible",
+                   "1 undetermined", "2 projects from 2 codebases"):
+        if phrase not in text:
+            failures += fail(f"the headline does not say {phrase!r}: {text}")
+    if re.search(r"saved|\d s\b|seconds", text):
+        failures += fail(f"the headline quotes time, which is per project and paired only: {text}")
+    try:
+        readme_charts.headline({"demo": {"rows": [_row("narrowed")]}}, {"demo": "demo"})
+        failures += fail("a headline with no row where a miss was possible was drawn")
+    except SystemExit:
+        pass
+    try:
+        readme_charts.headline(projects, {"demo": "demo"})
+        failures += fail("a project missing from the codebase map was counted")
+    except SystemExit as refused:
+        if "okio" not in str(refused):
+            failures += fail(f"the refusal does not name the project: {refused}")
+    return failures
+
+
+def case_the_codebase_map_covers_every_project_and_groups_the_spring_five():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import readme_charts  # noqa: PLC0415
+    failures = 0
+    codebases = readme_charts.read_codebases()
+    projects = {os.path.basename(p)[:-5] for p in
+                glob.glob(os.path.join(sweep_corpus.BENCH, "projects", "*.toml"))}
+    if set(codebases) != projects:
+        failures += fail(f"projects and the codebase map differ: {sorted(set(codebases) ^ projects)}")
+    spring = {codebases.get(n) for n in ("spring-boot", "spring-boot-webmvc-test",
+                                          "spring-framework", "spring-security", "spring-test")}
+    if spring != {"spring"}:
+        failures += fail(f"the five Spring projects are not one codebase: {spring}")
+    return failures
+
+
+def case_charts_drawn_from_a_release_asset_are_its_rows_at_one_plugin_commit():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import readme_charts  # noqa: PLC0415
+    failures = 0
+    with tempfile.TemporaryDirectory() as release:
+        merged = os.path.join(release, "merged")
+        os.makedirs(merged)
+        _results("demo", [_row("narrowed"), _row("full-run", selected_distinct=10)], merged,
+                 project="demo", plugin_commit="p1")
+        with open(os.path.join(merged, "sweep.json"), "w", encoding="utf-8") as handle:
+            json.dump({"arm": "full", "projects": ["demo"]}, handle)
+        projects, _ = readme_charts.load_release(release)
+        if [len(p["rows"]) for p in projects.values()] != [2]:
+            failures += fail(f"the release's rows were not the rows drawn: {projects}")
+        _results("okio", [_row("narrowed")], merged, project="okio", plugin_commit="p2")
+        try:
+            readme_charts.load_release(release)
+            failures += fail("a release holding two plugin commits was drawn")
+        except SystemExit:
+            pass
+    return failures
+
+
+def case_the_breakdown_by_codebase_folds_projects_that_share_one():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import readme_charts  # noqa: PLC0415
+    possible = _row("narrowed", full_failures=1)
+    projects = {"kafka": {"rows": [possible, _row("full-run", selected_distinct=10)]},
+                "kafka-core": {"rows": [_row("narrowed", full_failures=2, missed=["T::m"])]},
+                "okio": {"rows": [_row("narrowed")]}}
+    table = readme_charts.codebase_breakdown(projects, {"kafka": "kafka", "kafka-core": "kafka",
+                                                        "okio": "okio"})
+    expected = [{"codebase": "kafka", "projects": ["kafka", "kafka-core"], "changes": 3,
+                 "miss_possible": 2, "missed": 1},
+                {"codebase": "okio", "projects": ["okio"], "changes": 1, "miss_possible": 0,
+                 "missed": 0}]
+    return 0 if table == expected else fail(f"breakdown {table}")
 
 
 def test_sweep_corpus():

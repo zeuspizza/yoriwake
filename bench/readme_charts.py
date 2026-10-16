@@ -31,6 +31,8 @@ import statistics
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import corpus_state  # noqa: E402  (one definition of a row where a miss was possible)
 RESULTS = os.path.join(HERE, "results")
 
 # The reference palette's single series hue and surfaces, per mode (dataviz references/palette.md).
@@ -106,6 +108,73 @@ def load(arm, paths=None, commit=None):
         raise SystemExit("files from more than one plugin_commit; pass --commit: " + "; ".join(
             f"{stamp}: {', '.join(names)}" for stamp, names in sorted(stamps.items(), key=str)))
     return projects, skipped
+
+
+def load_release(path):
+    """`load` over a published sweep's release asset: its merged results files, at one plugin
+    commit, which `load` refuses to mix."""
+    paths = [p for p in glob.glob(os.path.join(path, "merged", "**", "*.json"), recursive=True)
+             if os.path.basename(p) != "sweep.json"]
+    if not paths:
+        raise SystemExit(f"no merged results files under {path}/merged")
+    return load("shared", paths)
+
+
+def read_codebases(path=os.path.join(HERE, "codebases.json")):
+    """{project: codebase}: projects that share a repository, and the five Spring projects, are one
+    codebase, so a count of projects does not read as a count of independent code."""
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _plural(count, word):
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def headline(projects, codebases):
+    """The recall headline: missed failures against the failures induced, over the changes where a
+    miss was possible, with the undetermined count, and projects counted with their codebases.
+    No time figure: time is quoted per project, as a ratio of two arms from one job."""
+    absent = sorted(name for name in projects if name not in codebases)
+    if absent:
+        raise SystemExit(f"no codebase for {', '.join(absent)} in codebases.json; a headline counts "
+                         f"projects with their codebases")
+    possible = {name: [r for r in p["rows"] if corpus_state.miss_was_possible(r)]
+                for name, p in projects.items()}
+    asked = sum(len(rows) for rows in possible.values())
+    if not asked:
+        raise SystemExit("no change where a miss was possible; a recall headline over none says "
+                         "nothing")
+    rows = [r for p in projects.values() for r in p["rows"]]
+    missed = sorted(test for r in rows for test in r.get("missed") or [])
+    # Over the changes that could miss only: a forced change's failures were never at risk.
+    induced = sum(r.get("full_failures") or 0 for rows_ in possible.values() for r in rows_)
+    undetermined = sum(len(r.get("undetermined") or []) + len(r.get("shared_key") or [])
+                       for r in rows)
+    where = [name for name, rows in possible.items() if rows]
+    text = (f"{_plural(len(projects), 'project')} from "
+            f"{_plural(len(set(codebases[n] for n in projects)), 'codebase')}: "
+            f"{len(missed)} missed of {induced} failures the edits induced, across "
+            f"{_plural(asked, 'change')} where a miss was possible (in "
+            f"{_plural(len(where), 'project')} from "
+            f"{_plural(len(set(codebases[n] for n in where)), 'codebase')}); "
+            f"{undetermined} undetermined.")
+    return text + (f" Missed: {', '.join(missed)}." if missed else "")
+
+
+def codebase_breakdown(projects, codebases):
+    """One row per codebase, beside the per-project table: projects that share a codebase are one
+    body of code, so their changes are read together."""
+    grouped = {}
+    for name in sorted(projects):
+        grouped.setdefault(codebases[name], []).append(name)
+    table = []
+    for codebase, names in sorted(grouped.items()):
+        rows = [r for n in names for r in projects[n]["rows"]]
+        table.append({"codebase": codebase, "projects": names, "changes": len(rows),
+                      "miss_possible": sum(1 for r in rows if corpus_state.miss_was_possible(r)),
+                      "missed": sum(len(r.get("missed") or []) for r in rows)})
+    return table
 
 
 def left_out(skipped):
@@ -356,10 +425,16 @@ def main(argv=None):
     parser.add_argument("--commit", help="draw only files stamped with this plugin_commit")
     parser.add_argument("--pool-timing-caps", action="store_true",
                         help="draw files timed under different caps together; the title says so")
+    parser.add_argument("--release", metavar="DIR",
+                        help="draw from a published sweep's unpacked release asset")
+    parser.add_argument("--headline", action="store_true", help="also print the recall headline")
     parser.add_argument("results", nargs="*", help="results files (default: bench/results)")
     args = parser.parse_args(argv)
     if args.sample:
         projects, skipped, note = sample(), {}, " (SYNTHETIC SAMPLE, not a measurement)"
+    elif args.release:
+        projects, skipped = load_release(args.release)
+        note = ""
     else:
         projects, skipped = load(args.arm, args.results, args.commit)
         note = "" if args.arm == "shared" else " (isolated capture)"
@@ -386,6 +461,8 @@ def main(argv=None):
             print(path)
     drawn = [row for p in projects.values() for row in p["rows"]]
     mix = Counter(row.get("ground_truth") or "full" for row in drawn)
+    if args.headline:
+        print(headline(projects, read_codebases()))
     print(f"{len(projects)} projects, {len(drawn)} rows drawn, {left_out(skipped)}; ground truth: "
           + ", ".join(f"{count} {name}" for name, count in sorted(mix.items())))
     return 0
