@@ -25,6 +25,7 @@ SEEDS = {
     "private repository": "filed in yoriwake-labs",
     "home path": "read from /Users/someone/checkouts",
     "spike": "the spike showed it",
+    "private tool": "counted with session_tokens",
 }
 
 
@@ -51,7 +52,8 @@ def _write(root, path, text):
 
 def case_each_seed_fails_in_each_scanned_place():
     failures = 0
-    for place in ("bench/run.py", "docs/guide.md", "CONTRIBUTING.md", ".github/workflows/x.yml"):
+    for place in ("bench/run.py", "docs/guide.md", "CONTRIBUTING.md", ".github/workflows/x.yml",
+                  "scripts/prove_guards.py"):
         for rule, seed in SEEDS.items():
             with tempfile.TemporaryDirectory() as root:
                 _write(root, place, f"clean line\n{seed}\n")
@@ -69,7 +71,9 @@ def case_a_clean_tree_and_unscanned_places_pass():
         _write(root, "bench/run.py", "def run():\n    return 'U-turn, R-value, UTF-8, R2D2-free'\n")
         _write(root, "plugin/Main.kt", "// KTD4, 2026-09-07\n")
         _write(root, "docs/benchmarks.md", "Measured 2026-10-01 to 2026-10-03.\n")
-        hits = scan_private.scan_paths(root, ["bench", "docs", "plugin"])
+        # The guard harness is public, so its name is not a private reference.
+        _write(root, "CONTRIBUTING.md", "Run `python3 scripts/prove_guards.py --mode fast`.\n")
+        hits = scan_private.scan_paths(root, ["bench", "docs", "plugin", "CONTRIBUTING.md"])
         return fail(f"clean tree: {hits}") if hits else 0
 
 

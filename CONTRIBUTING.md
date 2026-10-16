@@ -17,11 +17,12 @@ others for a local run. CI runs each functional suite in shards by test class;
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin
 python3 .github/test_ci.py   # the CI helper scripts' own tests
 python3 bench/scan_private.py --push   # before every push
+python3 scripts/prove_guards.py --changed origin/main   # the guards your change can affect
 ```
 
 `bench/scan_private.py --push` refuses references to the maintainers' private notes (their
-identifiers, dates and documents) in what the push adds to `bench/`, `docs/`, `.github/` and this
-file, and in its commit messages; the `scan` workflow runs it on every pull request, its title and
+identifiers, dates and documents) in what the push adds to `bench/`, `scripts/`, `docs/`,
+`.github/` and this file, and in its commit messages; the `scan` workflow runs it on every pull request, its title and
 body included.
 
 `./gradlew build` is the gate a pull request must pass. It includes the coverage gates; a change
@@ -62,10 +63,36 @@ Any change to what is captured, what counts as changed, or what gets deselected:
 A change that makes selection narrower deserves more suspicion, not less: fixes for silent skips
 make the numbers worse.
 
-Before merging a change to selection, the maintainers also run private mutation checks that break
-each guard in turn and confirm that a test notices. They need files outside this repository, so
-they are not part of the public build. If they find a guard your change left untested, you will
-hear which one.
+## The guards
+
+Each rule that keeps a test from being skipped has a guard: an entry in `scripts/prove_guards.py`
+that puts the defect back into the source (a literal fragment and what replaces it), runs one
+suite, and expects one named test to fail. A guard that no test catches means the rule is
+unprotected, however green the build is.
+
+```bash
+python3 scripts/prove_guards.py --mode fast             # the cheap suites
+python3 scripts/prove_guards.py --changed origin/main   # every guard your change can affect
+python3 scripts/prove_guards.py --guard "<label>"       # one guard
+python3 scripts/prove_guards.py                         # every guard; the gate for plugin/ and agent/
+python3 scripts/test_prove_guards.py                    # the harness's own tests, every anchor included
+```
+
+Each run prints one line per guard and a closing line saying how many it attempted out of how
+many: `fired` with the test that failed is a pass; `NOTHING CAUGHT IT`, `this proves a different
+test` and `NOT PROVED` (the suite broke, or failed before any mutation) fail the run. By default the
+guards run in four worktrees under `sandbox/prove-guards/` and never write your tree; with
+`--jobs 1` they mutate your tree in place, so do not edit while one runs.
+
+On a pull request, CI runs fast mode and the guards the change can affect; a change to
+`plugin/src/main` or `agent/src/main` runs every guard instead, and every guard runs nightly. A
+separate check fails a pull request that removes a guard, or changes its target, fragment, suite or
+expected test, or takes a suite out of fast mode, until a maintainer approves it.
+
+**A new rule comes with its guard.** Add the entry to `MUTATIONS`: a label that says what breaks,
+the source, a fragment that appears exactly once in it, its replacement, the suite, and a phrase
+from the test that must fail (from its name for a Gradle suite, from its printed `FAIL:` line for a
+Python one). Then run `--guard "<label>"` and watch it fire, before and after the rule lands.
 
 ## Pull requests
 

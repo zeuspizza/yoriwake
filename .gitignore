@@ -18,3 +18,6 @@ bench/logs/
 bench/results/
 bench/scratch/
 __pycache__/
+
+# The guard harness's worker trees
+sandbox/

@@ -1,0 +1,2 @@
+# A change to the guard table is a change to what every pull request is held to.
+/scripts/prove_guards.py @erik-bessegato
