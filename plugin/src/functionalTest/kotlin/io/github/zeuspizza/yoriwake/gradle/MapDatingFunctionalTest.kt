@@ -445,9 +445,13 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
     ).mapNotNull { name -> File(mapDirOf(dir), name).takeIf(File::isFile)?.let { name to it.readBytes().toList() } }
         .toMap()
 
+    // The switch is left out of the environment fingerprint: compared, it would make every selecting
+    // run after an acting capture run everything, and the change set under test would go unread. It
+    // stays a system property so that a run under `-Pact` is never up to date.
     private fun actingBuild(extra: String = "") = minimalBuild.replace(
         "tasks.test { useJUnitPlatform() }",
-        "tasks.test { useJUnitPlatform(); systemProperty(\"act\", project.hasProperty(\"act\").toString()) }\n$extra",
+        "tasks.test { useJUnitPlatform(); systemProperty(\"act\", project.hasProperty(\"act\").toString()) }\n" +
+            "yoriwake { systemPropertyIgnore.add(\"act\") }\n$extra",
     )
 
     /** A test that runs [action] (Java statements) during the run, under `-Pact` only. */
@@ -631,8 +635,17 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         between()
         changeAlpha(dir)
         File(dir, "build/test-results").deleteRecursively()
-        runner(dir, "test", "-Pyoriwake.select").build()
+        val output = runner(dir, "test", "-Pyoriwake.select").build().output
+        assertSelected(dir, output)
         return ranTests(dir)
+    }
+
+    /**
+     * The selecting run decided on the change set rather than refusing: a refusal, a changed
+     * environment among them, runs everything and would satisfy any "this test ran" assertion.
+     */
+    private fun assertSelected(dir: File, output: String) {
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
     }
 
     private val readData = "java.nio.file.Path.of(\"data.txt\")"
@@ -673,7 +686,7 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         runner(dir, "test", "-Pact").build()
         changeAlpha(dir)
         File(dir, "build/test-results").deleteRecursively()
-        runner(dir, "test", "-Pyoriwake.select").build()
+        assertSelected(dir, runner(dir, "test", "-Pyoriwake.select").build().output)
 
         assertTrue("dev.sample.AReaderTest" in ranTests(dir), "ran ${ranTests(dir)}")
     }
