@@ -156,8 +156,10 @@ def javac_build(root):
     def build(log_path):
         out = tempfile.mkdtemp(dir=os.path.dirname(log_path))
         try:
-            for task, folder in (("compileJava", "src/main/java"), ("compileTestJava", "src/test/java")):
-                sources = [os.path.join(d, f) for d, _, fs in os.walk(os.path.join(root, "core", folder))
+            for task, folder in (("compileJava", "src/main/java"),
+                                 ("compileTestJava", "src/test/java")):
+                sources = [os.path.join(d, f)
+                           for d, _, fs in os.walk(os.path.join(root, "core", folder))
                            for f in fs if f.endswith(".java")]
                 done = subprocess.run(["javac", "-d", out, "-cp", out, *sources],
                                       capture_output=True, text=True)
@@ -280,7 +282,8 @@ def case_a_test_compile_failure_is_retried_as_the_full_revert():
     if fields["revert_variant"] != "full" or f"{TEST}/CalcTest.java" in fields["revert_scope"]:
         failures += fail(f"the row's fields do not say the tests were reverted: {fields}")
     if "member-deleted" not in fields["revert_labels"] or "member-added" in fields["revert_labels"]:
-        failures += fail(f"an added method reverted is not a deleted member: {fields['revert_labels']}")
+        failures += fail(f"an added method reverted is not a deleted member: "
+                         f"{fields['revert_labels']}")
     return failures
 
 
@@ -302,7 +305,8 @@ def case_a_test_compile_failure_counts_as_build_failed_again():
                                         os.path.join(logs, "gate.log"))
     if (variant, reason) != ("full", "test-compile"):
         failures += fail(f"a full revert failing its tests gave {(variant, reason)}")
-    counts = revert.rejection_counts([[revert.label(candidate), reason, variant, candidate["labels"]]])
+    counts = revert.rejection_counts([[revert.label(candidate), reason, variant,
+                                       candidate["labels"]]])
     if counts.get("test-compile", {}).get("count") != 1 \
             or counts["test-compile"]["labels"].get("member-added") != 1:
         failures += fail(f"rejections are not counted by reason and census label: {counts}")
@@ -424,7 +428,8 @@ def case_the_draw_order_is_fixed_by_seed_and_census_and_takes_strata_in_turn():
         failures += fail(f"the fixture reaches strata {present}, not all three")
     if sorted(strata[:len(present)]) != sorted(present):
         failures += fail(f"a stratum was drawn twice before every one was drawn once: {strata}")
-    synthetic = [{"sha": f"{i:040x}", "stratum": "single-file", "patch_id": str(i)} for i in range(12)]
+    synthetic = [{"sha": f"{i:040x}", "stratum": "single-file", "patch_id": str(i)}
+                 for i in range(12)]
     orders = {tuple(c["sha"] for c in revert.draw_order(synthetic, seed)[0]) for seed in (1, 2, 3)}
     if len(orders) == 1:
         failures += fail("the order does not depend on the seed")

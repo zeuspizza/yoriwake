@@ -360,6 +360,25 @@ deletes), the paths left out (`revert_scope`) and the variant applied.
 - **Reach:** a shape with fewer rows where a miss was possible than the target gets no revert
   figure and is reported "not reached by revert/v1".
 
+**The window, from a compile-only dry run** (`revert.py --dry-run`: the gate over every eligible
+commit, no tests) of resilience4j, ktlint and okio at their pins. At 200 commits, 29 of 39 applied
+reverts survived the gate, and 0 of 4 that change a signature. Under a third in a family only
+reverts reach widens the window once, so the sweep reads 400 commits: there 45 of 58 survived, and
+2 of 7 signature changes, still under a third and reported as it stands. okio has most of the
+rejections (10 of its 19 at 400): its source root is `jvmMain`, and a revert limited to it leaves
+the common code it was written against.
+
+| Census label (400 commits) | Survived the gate |
+|---|---|
+| `body-value` | 18 of 25 |
+| `body-void` | 21 of 27 |
+| `member-added` | 16 of 27 |
+| `member-deleted` | 2 of 5 |
+| `signature` | 2 of 7 |
+| `visibility` | 1 of 1 |
+| `several-files` | 14 of 24 |
+| `several-modules` | 12 of 16 |
+
 What it may claim: real change shapes in their real proportions, as far as they survive the gate.
 It is not adversarial, and its failures sit in tests that often execute the changed class, so a
 revert figure is reported on its own and never pooled with a mutation set's.

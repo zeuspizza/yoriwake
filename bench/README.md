@@ -82,6 +82,8 @@ reading a stack trace needs the logs of the machine that ran the sweep.
   it narrow? `write_qualification.py` collates the answers into `qualification.txt`.
 - `controls.py`: sweeps small fixtures against a plugin built to miss, and fails unless the harness
   reports the miss.
+- `revert.py --dry-run`: the compile gate alone over every commit `--shapes revert/v1` could
+  revert, and how many survive it per census label.
 - `replay_decisions.py`: asks the current selector every recall question a sweep already paid
   for, in seconds and offline.
 - `config_cost.py`: what applying the plugin costs a project before it runs a test.

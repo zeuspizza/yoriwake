@@ -4834,11 +4834,11 @@ def main():
         ordered = [t for t in all_targets if not keyed_in(done, f"revert::{t[0]}", "revert", 0)]
         provenance = {}
         RUN_STAMPS["revert"] = {
-            "window": revert.WINDOW, "census_classifier": revert.census.CLASSIFIER,
+            "window": revert.SWEEP_WINDOW, "census_classifier": revert.census.CLASSIFIER,
             "eligible": len(revert_order), "not_eligible": not_eligible,
             "strata": dict(Counter(c["stratum"] for c in revert_order)),
             "rejections": revert_rejections}
-        print(f"  {len(revert_order)} commit(s) of the last {revert.WINDOW} revert cleanly at the "
+        print(f"  {len(revert_order)} commit(s) of the last {revert.SWEEP_WINDOW} revert cleanly at the "
               f"pin ({RUN_STAMPS['revert']['strata']}); not eligible: {not_eligible or 'none'}",
               flush=True)
     else:

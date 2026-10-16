@@ -53,9 +53,13 @@ sys.path.insert(0, HERE)
 import census  # noqa: E402
 
 SET = "revert/v1"
-# The window the sweep reads, and the one it may widen to once. See `window_decision`.
+# The census window, and the one it may widen to once. See `window_decision`.
 WINDOW = census.DEFAULT_WINDOW
 WIDENED_WINDOW = 400
+# THE WINDOW THE SWEEP READS: widened once. The dry run over resilience4j, ktlint and okio found
+# 0 of 4 signature reverts surviving the gate at 200 commits, and 2 of 7 at 400, still under a
+# third; a second shortfall widens nothing, so signature is reported as it stands.
+SWEEP_WINDOW = WIDENED_WINDOW
 SURVIVAL_FLOOR = 1 / 3
 # The families no mutation set builds: a revert is their only source.
 REVERT_ONLY = ("signature", "visibility", "several-files", "several-modules")
@@ -214,7 +218,7 @@ def draw_order(candidates, seed):
     return kept, duplicates
 
 
-def candidates(checkout, project, seed, window=WINDOW, commits=None):
+def candidates(checkout, project, seed, window=SWEEP_WINDOW, commits=None):
     """The eligible commits of the window in draw order, and the count of each not-eligible reason.
 
     `commits` is the census of the window, `[{"sha", "labels"}]`; read from the checkout when not
@@ -249,7 +253,8 @@ STYLE_TASK = re.compile(r"checkstyle|spotless|ktlint|detekt|lint|license|apichec
 
 def gate_failure(log):
     """Why the compile gate failed, from its log: one of `REJECTIONS`, or None when the cause is
-    not one the revert made (a daemon that died, a missing toolchain), which stays `build-failed`."""
+    not one the revert made (a daemon that died, a missing toolchain), which stays
+    `build-failed`."""
     if UNRESOLVED.search(log):
         return "dependency-resolution"
     names = {(a or b).rsplit(":", 1)[-1] for a, b in FAILED_TASK.findall(log)}
@@ -312,7 +317,8 @@ def should_draw(stratum_name, findings, stratum_of, limit, narrowed_target, coun
     rows = [row for row in findings if stratum_of.get(row.get("target")) == stratum_name]
     if len(rows) >= limit:
         return False
-    if narrowed_target is not None and sum(1 for row in rows if counts_toward(row)) >= narrowed_target:
+    reached = sum(1 for row in rows if counts_toward(row))
+    if narrowed_target is not None and reached >= narrowed_target:
         return False
     return True
 
@@ -462,7 +468,8 @@ def main(argv=None):
             "rows": rows, "not_eligible": not_eligible, "survival": result,
             "rejected": dict(Counter(row["reason"] or f"exit {row['code']}" for row in rows
                                      if not row["survived"])),
-            "full_variant_survived": sum(1 for r in rows if r["variant"] == "full" and r["survived"])}
+            "full_variant_survived": sum(1 for r in rows
+                                         if r["variant"] == "full" and r["survived"])}
         pooled += rows
         print(f"{project['name']}: {result['overall']['survived']} of "
               f"{result['overall']['applied']} survived; not eligible {not_eligible}", flush=True)
