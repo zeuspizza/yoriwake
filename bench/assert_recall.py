@@ -279,6 +279,12 @@ def main(path, summary_path=None):
         results = json.load(handle)
 
     findings = results.get("mutations", [])
+    # ONE POPULATION A FILE. A history replay's rows count toward no recall figure; mixed into a
+    # file of mutation rows they would be counted as if they did.
+    if len({f.get("kind") == "history" for f in findings}) > 1:
+        print(f"FAIL: {results.get('project')}: the file mixes history-replay rows with mutation "
+              f"rows, and a replay's rows count toward no recall figure")
+        return 1
     checked = [f for f in findings if f.get("status") == "checked"]
     # Required, not defaulted. `f.get("missed")` answers None for an entry that never carried the
     # key, which reads as "nothing was missed" -- a schema drift in the harness would turn this gate

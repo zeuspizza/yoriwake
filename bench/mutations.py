@@ -448,3 +448,46 @@ def has_constant(path):
 
 def can_rename(path):
     return path.endswith(".kt")
+
+
+def apply(checkout, relative, kind, index):
+    """Applies one mutation of `kind` to `relative` in `checkout`, returning its label, or None when
+    it does not apply.
+
+    Here rather than beside the sweep because it composes shapes -- `renamed` is a move followed by
+    a body mutation of the destination -- and a composition is part of the grammar
+    `grammar_digest` stamps: a change to it changes the population a sweep draws.
+    """
+    from recall_check import mutate  # noqa: PLC0415  (the body generator; recall_check is the caller's)
+    path = os.path.join(checkout, relative)
+    if kind in ("body", "aliased"):
+        name = mutate(path, index)
+        return None if name is None else f"{relative}::{kind}::{name}"
+    if kind == "constant":
+        name = constant(path, index)
+        return None if name is None else f"{relative}::constant::{name}"
+    if kind == "schema":
+        name = schema(path, index)
+        return None if name is None else f"{relative}::schema::{name}"
+    if kind == "inline":
+        name = inline_body(path, index)
+        return None if name is None else f"{relative}::inline::{name}"
+    if kind == "nested-constant":
+        name = nested_constant(path, index)
+        return None if name is None else f"{relative}::nested-constant::{name}"
+    if kind == "second-type":
+        name = second_type(path, index)
+        return None if name is None else f"{relative}::second-type::{name}"
+    if kind == "renamed":
+        # Moved AND broken. A pure move changes no behaviour, so ground truth has no failures and
+        # "0 missed" says nothing at all -- the shape would be exercised while the recall question
+        # went unasked. The move creates the dangerous change-set shape; the body mutation gives it
+        # something to miss.
+        moved = renamed(path, checkout)
+        if moved is None:
+            return None
+        destination = path.replace(".kt", "Moved.kt")
+        if mutate(destination, index) is None:
+            return None
+        return f"{relative}::renamed::{moved}"
+    return None

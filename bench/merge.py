@@ -55,6 +55,12 @@ def merge_project(recording, accepted, shards):
             if data.get(stamp) != recording.get(stamp):
                 raise Refused(f"{recording.get('project')}: {name} has {stamp} "
                               f"{data.get(stamp)!r}, the recording job {recording.get(stamp)!r}")
+    # The shape set is a results file's stamp, which the accepted list does not carry.
+    for shard in shards:
+        if shard.get("target_shapes") != recording.get("target_shapes"):
+            raise Refused(f"{recording.get('project')}: shard {shard.get('shard')} has target_shapes "
+                          f"{shard.get('target_shapes')!r}, the recording job "
+                          f"{recording.get('target_shapes')!r}")
     count = len(accepted["slices"])
     seen = {}
     for shard in shards:
@@ -148,9 +154,21 @@ def main(argv=None):
         return 1
     os.makedirs(args.out, exist_ok=True)
     for name, data in merged.items():
-        with open(os.path.join(args.out, f"{name}.json"), "w", encoding="utf-8") as handle:
+        # A named shape set lands in its own directory, as `run.py` writes it.
+        shapes = data.get("target_shapes") or run.DEFAULT_SHAPES
+        out_path, _ = run.results_location(args.out, "", name, shapes)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=1)
-    with open(os.path.join(args.out, "sweep.json"), "w", encoding="utf-8") as handle:
+    # Beside the files it summarises: a named set's sweep never replaces the default set's.
+    shapes = {data.get("target_shapes") or run.DEFAULT_SHAPES for data in merged.values()}
+    if len(shapes) > 1:
+        print(f"REFUSED: one sweep holds projects of the {sorted(shapes)} shape sets", file=sys.stderr)
+        return 1
+    sweep_dir = args.out if shapes <= {run.DEFAULT_SHAPES} else os.path.join(
+        args.out, run.shape_folder(sorted(shapes - {run.DEFAULT_SHAPES})[0]))
+    os.makedirs(sweep_dir, exist_ok=True)
+    with open(os.path.join(sweep_dir, "sweep.json"), "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=1)
     print(json.dumps(summary))
     return 0

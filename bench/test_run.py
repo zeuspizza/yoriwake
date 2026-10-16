@@ -1321,7 +1321,7 @@ def case_an_unanswered_repeat_clears_nothing():
 
 
 def case_the_recall_arm_kinds_reach_their_generators():
-    """A kind `apply_mutation` does not know returns None, which reads as "asked nothing".
+    """A kind `mutations.apply` does not know returns None, which reads as "asked nothing".
 
     That is the quiet failure this harness keeps finding: a shape registered in the grammar and
     unhandled at the call site produces a run that skips every one of its targets and reports a
@@ -1344,9 +1344,9 @@ def case_the_recall_arm_kinds_reach_their_generators():
         for kind, (name, text) in cases.items():
             with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
                 handle.write(text)
-            label = run.apply_mutation(root, name, kind, 0)
+            label = run.mutations.apply(root, name, kind, 0)
             if label is None or f"::{kind}::" not in label:
-                print(f"  FAIL: apply_mutation returned {label!r} for kind {kind!r}; the shape "
+                print(f"  FAIL: mutations.apply returned {label!r} for kind {kind!r}; the shape "
                       f"would be skipped on every target")
                 failures += 1
     finally:
@@ -4712,7 +4712,83 @@ def case_a_shard_refuses_a_list_drawn_under_other_stamps():
     return failures
 
 
+def case_a_named_shape_set_writes_its_own_results_and_scratch():
+    """A named set never overwrites the default set's results file or reuses its map backups."""
+    failures = 0
+    default = run.results_location("R", "L", "demo", run.DEFAULT_SHAPES)
+    if default != (os.path.join("R", "demo.json"), os.path.join("L", "demo")):
+        print(f"  FAIL: the default set moved: {default}")
+        failures += 1
+    named = run.results_location("R", "L", "demo", "recall-arm")
+    if named != (os.path.join("R", "recall-arm", "demo.json"), os.path.join("L", "demo.recall-arm")):
+        print(f"  FAIL: a named set does not have its own paths: {named}")
+        failures += 1
+    isolated = run.results_location("R", "L", "demo", "recall-arm", isolated=True)
+    if isolated != (os.path.join("R", "recall-arm", "demo.isolated.json"),
+                    os.path.join("L", "demo.isolated.recall-arm")):
+        print(f"  FAIL: the isolated arm of a named set: {isolated}")
+        failures += 1
+    return failures
+
+
+def case_a_mutation_row_counts_the_files_and_modules_it_changed():
+    """A mutation's own diff decides its change counts, not a constant 1."""
+    import subprocess
+    root = tempfile.mkdtemp(prefix="yoriwake-mutation-paths-")
+    failures = 0
+    try:
+        def git(*args):
+            subprocess.run(["git", "-C", root, "-c", "user.email=t@t", "-c", "user.name=t",
+                            "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+        for path in ("core/src/main/A.kt", "core/src/main/B.kt", "other/src/main/C.java"):
+            os.makedirs(os.path.dirname(os.path.join(root, path)), exist_ok=True)
+            with open(os.path.join(root, path), "w", encoding="utf-8") as handle:
+                handle.write("x\n")
+        git("init", "-q")
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        if run.mutation_change_counts(root) != (0, 0):
+            print(f"  FAIL: a clean checkout counted {run.mutation_change_counts(root)}")
+            failures += 1
+        with open(os.path.join(root, "core/src/main/A.kt"), "w", encoding="utf-8") as handle:
+            handle.write("y\n")
+        # Staged with `git mv`, as the `renamed` shape moves its file: one rename entry in git's
+        # status, and still two files changed.
+        git("mv", "other/src/main/C.java", "other/src/main/CMoved.java")
+        if run.mutation_change_counts(root) != (3, 2):
+            print(f"  FAIL: an edit and a move counted {run.mutation_change_counts(root)}, not (3, 2)")
+            failures += 1
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return failures
+
+
+def case_editing_the_shape_composition_moves_the_grammar_digest():
+    """Composing shapes is part of the grammar, so a change to it changes the stamp."""
+    root = tempfile.mkdtemp(prefix="yoriwake-grammar-")
+    try:
+        for name in run.GRAMMAR_SOURCE_FILES:
+            os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
+            shutil.copyfile(os.path.join(run.ROOT, name), os.path.join(root, name))
+        before = run.grammar_digest(root)
+        path = os.path.join(root, "bench", "mutations.py")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        assert 'destination = path.replace(".kt", "Moved.kt")' in text
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text.replace('"Moved.kt"', '"Relocated.kt"'))
+        if run.grammar_digest(root) == before:
+            print("  FAIL: a change to how `renamed` is composed left grammar_digest where it was")
+            return 1
+        return 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 CASES = (case_every_case_in_this_file_is_registered,
+         case_editing_the_shape_composition_moves_the_grammar_digest,
+         case_a_mutation_row_counts_the_files_and_modules_it_changed,
+         case_a_named_shape_set_writes_its_own_results_and_scratch,
          case_a_shard_is_named_k_of_n,
          case_every_row_a_target_appends_carries_its_kind_and_index,
          case_a_row_measured_on_ci_names_the_runner_and_the_job,

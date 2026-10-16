@@ -123,7 +123,12 @@ def result_key_fields(rows):
             "result_keys_fallbacks": dict(causes.most_common()) or None}
 
 
-def summarise(name, capture_mode="shared"):
+def results_file(name, shapes, isolated=False):
+    """The results file `run.py` writes for this project under this shape set."""
+    return run.results_location(os.path.join(BENCH, "results"), "", name, shapes, isolated)[0]
+
+
+def summarise(name, capture_mode="shared", shapes=run.DEFAULT_SHAPES):
     """What this project's results file now says, or why it says nothing.
 
     `capture_mode` picks the arm's file: `<name>.json` for the shared arm, `<name>.isolated.json`
@@ -134,15 +139,15 @@ def summarise(name, capture_mode="shared"):
     failures asked nothing, and reporting its zero as a safety result is the failure mode this
     corpus exists to avoid.
     """
-    suffix = ".isolated" if capture_mode == "isolated" else ""
-    path = os.path.join(BENCH, "results", f"{name}{suffix}.json")
+    path = results_file(name, shapes, capture_mode == "isolated")
     if not os.path.isfile(path):
-        return {"project": name, "capture_mode": capture_mode, "status": "no results file"}
+        return {"project": name, "capture_mode": capture_mode, "shape_set": shapes,
+                "status": "no results file"}
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError) as error:
-        return {"project": name, "status": f"unreadable ({type(error).__name__})"}
+        return {"project": name, "shape_set": shapes, "status": f"unreadable ({type(error).__name__})"}
 
     rows = data.get("mutations") or []
     # A SELECTING ARM THAT DECIDED NOTHING asked nothing, and is not a row of this sample: kept out
@@ -261,6 +266,7 @@ def summarise(name, capture_mode="shared"):
     return {
         "project": name,
         "status": "swept",
+        "shape_set": shapes,
         **sweep_fields(data, rows),
         "plugin_commit": data.get("plugin_commit"),
         # How hard this project was asked, and out of how much. "16 of 1,059" and "16 of 18" are
@@ -521,7 +527,8 @@ ISOLATED_ALSO = ("opentelemetry-java", "spring-framework", "spring-boot-webmvc-t
                  "spring-test")
 
 
-def shared_arm_command(name, project, limit, recapture, lighter, ground_truth="full"):
+def shared_arm_command(name, project, limit, recapture, lighter, ground_truth="full",
+                       shapes=run.DEFAULT_SHAPES):
     """`run.py`'s arguments for one project's shared arm. `lighter` applies the 0.1.0 stopping rule
     above; both arms time only the timing subset, its first `TIMING_CAP` rows, from 0.2."""
     command = [sys.executable, os.path.join(BENCH, "run.py"), project, "--limit", str(limit)]
@@ -530,7 +537,8 @@ def shared_arm_command(name, project, limit, recapture, lighter, ground_truth="f
     command += (["--timing-cap", str(TIMING_CAP)] if name in TIMING_SUBSET else ["--recall-only"])
     if ground_truth != "full":
         command += ["--ground-truth", ground_truth]
-    return command + (["--recapture"] if recapture else [])
+    command += ["--recapture"] if recapture else []
+    return command + (["--shapes", shapes] if shapes != run.DEFAULT_SHAPES else [])
 
 
 def ground_truth_for(name, arm, requested):
@@ -599,6 +607,9 @@ def setup_forced_projects(summaries):
 def argument_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=16)
+    parser.add_argument("--set", default=run.DEFAULT_SHAPES, choices=run.SHAPE_SETS,
+                        help="the shape set to sweep (default: default); a named set writes its "
+                             "own results directory")
     parser.add_argument("--qualification", default=os.path.join(BENCH, "qualification.txt"))
     # EXTEND, NOT REPLACE: `--skip a --skip b` used to keep only `b`, so every 0.1.0 sweep run that
     # repeated the flag swept the projects it was told to leave out.
@@ -676,6 +687,7 @@ def main(argv=None):
                                         project_limit(os.path.join(BENCH, "projects",
                                                                    f"{name}.toml"), args.limit),
                                         recapture=True, lighter=args.arm == "full",
+                                        shapes=args.set,
                                         ground_truth=ground_truth_for(name, args.arm,
                                                                       args.ground_truth))[2:]}
             for name in names]))
@@ -695,7 +707,7 @@ def main(argv=None):
     # WHAT THIS SWEEP WILL COST, before it starts; it moves no cap and stops nothing.
     limits = {name: project_limit(os.path.join(BENCH, "projects", f"{name}.toml"), args.limit)
               for name in names}
-    projected = cost_projection(names, os.path.join(BENCH, "results"), limits,
+    projected = cost_projection(names, os.path.dirname(results_file("x", args.set)), limits,
                                 qualification_seconds(args.qualification), args.arm,
                                 args.ground_truth)
     print(f"  projected: {sum(p['hours'] for p in projected.values()):.1f} h over "
@@ -733,12 +745,12 @@ def main(argv=None):
                 # question against maps it just built.
                 shared_arm_command(name, project, limit,
                                    recapture=args.recapture or args.arm == "reduced",
-                                   lighter=args.arm == "full",
+                                   lighter=args.arm == "full", shapes=args.set,
                                    ground_truth=ground_truth_for(name, args.arm,
                                                                  args.ground_truth)),
                 stdout=handle, stderr=subprocess.STDOUT, cwd=ROOT,
             ).returncode
-        summary = summarise(name)
+        summary = summarise(name, shapes=args.set)
         # ON THE ROW AND NOT ONLY ON THE BANNER. `sweep-summary.jsonl` is a durable log read
         # long after the run that wrote it, and a reduced-arm line that does not say so is a recall
         # figure a later reader can mistake for a corpus one.
@@ -751,7 +763,7 @@ def main(argv=None):
         print("    " + json.dumps(summary), flush=True)
 
         # Not reaped first: the daemon the shared arm warmed is the one its rows were timed in.
-        shared_results = os.path.join(BENCH, "results", f"{name}.json")
+        shared_results = results_file(name, args.set)
         if args.no_isolated_arm or not os.path.isfile(shared_results):
             continue
         skip, workers = (isolated_arm_skip_reason(name, shared_results) if args.arm == "full"
@@ -772,10 +784,11 @@ def main(argv=None):
         with open(isolated_log, "w", encoding="utf-8") as handle:
             code = subprocess.run(
                 [sys.executable, os.path.join(BENCH, "run.py"), project, "--isolated-capture",
-                 "--pair-with", shared_results, "--recapture"],
+                 "--pair-with", shared_results, "--recapture"]
+                + (["--shapes", args.set] if args.set != run.DEFAULT_SHAPES else []),
                 stdout=handle, stderr=subprocess.STDOUT, cwd=ROOT,
             ).returncode
-        summary = summarise(name, capture_mode="isolated")
+        summary = summarise(name, capture_mode="isolated", shapes=args.set)
         summary["arm"] = args.arm
         summary["exit"] = code
         summary["seconds"] = round(time.time() - started, 1)
@@ -791,7 +804,7 @@ def main(argv=None):
     reports = []
     for name in dict.fromkeys(s["project"] for s in summaries):
         try:
-            with open(os.path.join(BENCH, "results", f"{name}.json"), encoding="utf-8") as handle:
+            with open(results_file(name, args.set), encoding="utf-8") as handle:
                 reports.append(cost.report(json.load(handle)))
         except (OSError, ValueError):
             continue

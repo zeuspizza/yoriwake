@@ -103,6 +103,11 @@ failures are the ground truth.
   own ground truth.
 - **Timing projects.** Both runs are timed on every change of six projects chosen in advance to span
   suite length: grpc-java, apache-groovy, mockito, spring-boot, rxjava, bitwarden-android.
+- **Shape sets.** The figures here are drawn from the `default` set of edit shapes, which does not
+  grow. Any other set (`--shapes`, `--set`) writes its own results directory,
+  `bench/results/<set>/`, is stamped with its name, and is never pooled with another: the readers
+  refuse a directory that holds two sets, two sweeps of different sets compared row for row, and a
+  history replay's rows among edit rows.
 
 The harness that measured this is in [`bench/`](../bench/README.md): how to run one project, what
 counts as a result, and how to add a project. Its results files are described field by field in
@@ -280,6 +285,55 @@ A codebase is one upstream repository; projects drawn from the same one count on
 | demo (fixture) | – | this repository's own sample build | fixture | this repository | 8.14 | default | 83.87 to 87.83 |
 | demo-android (fixture) | – | this repository's own sample build (Android) | fixture | this repository | 8.14 | default | 41.16 to 56.18 |
 | demo-kotlin (fixture) | – | this repository's own sample build (Kotlin) | fixture | this repository | 8.14 | default | 21.04 to 22.28 |
+
+## The census of real commits
+
+What the commits in the corpus projects' own histories change, so the mutation sample can be
+checked against it. `bench/census.py` reads git history only: for each project with a repository,
+the last 200 first-parent commits up to and including its pinned commit, a merge counted by
+its diff against its first parent. Each commit is labelled by the paths it touches and, for main
+code in the measured module (its main source sets, or the source roots its project file declares),
+by the hunks git's `java` and `kotlin` diff drivers place in their enclosing declaration. The
+output, `bench/census/census.json` (classifier `census/v1`, digest `ec9cc490356b`), is
+reproducible from the pins: the same pins give byte-identical output.
+
+The census is context for choosing what to sample. It never enters a recall figure.
+
+42 projects, 8400 commits, 1548 of them changing main code in the
+measured module. In 3 projects (gradle, junit5, spring-boot-webmvc-test) no commit of the window touches the measured
+module. A commit carries every label that applies, so shares do not add up.
+
+Agreement is with 66 commits labelled by reading their diffs (`bench/census/labelled.json`),
+ten of them checked again by a second reader. The sample was drawn from commits the classifier
+labels in-module code, two a project where two were available, so it measures how those commits
+are labelled; it cannot show a commit the classifier fails to recognise as in-module code.
+
+| Label (of in-module code commits) | Share | Agreement |
+|---|---|---|
+| `body-value` | 57.5% | 54 of 66 |
+| `member-added` | 44.3% | 61 of 66 |
+| `body-void` | 47.0% | 61 of 66 |
+| `member-deleted` | 19.4% | 59 of 66 |
+| `constant` | 10.8% | 64 of 66 |
+| `signature` | 15.0% | 60 of 66 |
+| `file-added` | 13.3% | 65 of 66 |
+| `visibility` | 2.8% | 66 of 66 |
+| `kotlin` | 34.1% | 66 of 66 |
+| `several-files` | 49.7% | 66 of 66 |
+| `several-modules` | 26.8% | 66 of 66 |
+
+| Label (of all commits) | Share | Agreement |
+|---|---|---|
+| `build-script` | 19.9% | 66 of 66 |
+| `version-catalog` | 13.3% | 66 of 66 |
+| `resource` | 2.3% | 66 of 66 |
+| `service-file` | 0.6% | 66 of 66 |
+| `docs` | 10.8% | 66 of 66 |
+
+The hunk labels are the weakest. A method moved, split or deleted whole is a judgement call the
+classifier and a reader make differently. The classifier does not see a parameter added to a
+parameter list that spans several lines (no declaration line changes), and it reads a declaration
+reformatted across lines as removed and added.
 
 ## Caveats
 

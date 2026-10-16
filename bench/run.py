@@ -66,7 +66,7 @@ RESULTS = os.path.join(HERE, "results")
 CONTROL_RESULTS = os.path.join(RESULTS, "control")
 
 sys.path.insert(0, HERE)
-from recall_check import mutate, targets_in  # noqa: E402  (shares the mutation grammar)
+from recall_check import targets_in  # noqa: E402  (shares the mutation grammar)
 sys.path.insert(0, HERE)
 import mutations  # noqa: E402
 import config_cost  # noqa: E402  (the plugin's counters file has one reader)
@@ -1609,40 +1609,16 @@ def results_of(checkout, module, since, task, build="build", *, log_path, task_p
     return Outcomes(ran, failed, methods, cause)
 
 
-def apply_mutation(checkout, relative, kind, index):
-    """Applies one mutation, returning a label or None when it does not apply."""
-    path = os.path.join(checkout, relative)
-    if kind in ("body", "aliased"):
-        name = mutate(path, index)
-        return None if name is None else f"{relative}::{kind}::{name}"
-    if kind == "constant":
-        name = mutations.constant(path, index)
-        return None if name is None else f"{relative}::constant::{name}"
-    if kind == "schema":
-        name = mutations.schema(path, index)
-        return None if name is None else f"{relative}::schema::{name}"
-    if kind == "inline":
-        name = mutations.inline_body(path, index)
-        return None if name is None else f"{relative}::inline::{name}"
-    if kind == "nested-constant":
-        name = mutations.nested_constant(path, index)
-        return None if name is None else f"{relative}::nested-constant::{name}"
-    if kind == "second-type":
-        name = mutations.second_type(path, index)
-        return None if name is None else f"{relative}::second-type::{name}"
-    if kind == "renamed":
-        # Moved AND broken. A pure move changes no behaviour, so ground truth has no failures and
-        # "0 missed" says nothing at all -- the shape would be exercised while the recall question
-        # went unasked. The move creates the dangerous change-set shape; the body mutation gives it
-        # something to miss.
-        moved = mutations.renamed(path, checkout)
-        if moved is None:
-            return None
-        destination = path.replace(".kt", "Moved.kt")
-        if mutate(destination, index) is None:
-            return None
-        return f"{relative}::renamed::{moved}"
-    return None
+def mutation_change_counts(checkout):
+    """`(files, modules)` the applied mutation changed: tracked edits, deletions and new files
+    against HEAD, git-ignored output left out. Modules as the first path segment, as the history
+    replay counts them."""
+    # `--no-renames`: the `renamed` shape stages its move, which git otherwise reports as one entry.
+    done = subprocess.run(["git", "-C", checkout, "-c", "core.quotePath=false", "status",
+                           "--porcelain", "--no-renames", "--untracked-files=all"],
+                          capture_output=True, text=True, check=True)
+    paths = [line[3:] for line in done.stdout.splitlines() if line.strip()]
+    return len(paths), len({p.split("/", 1)[0] for p in paths if "/" in p})
 
 
 def map_dirs_for_task(checkout, module, task):
@@ -1980,6 +1956,30 @@ GRAMMAR_SOURCE_FILES = ("bench/mutations.py", "bench/target_ordering.py",
                         "bench/recall_check.py")
 
 
+def shape_folder(shapes):
+    """The directory name a named shape set's files live under."""
+    return shapes.replace("/", "-")
+
+
+def results_location(results_root, logs_root, name, shapes, isolated=False, control=False):
+    """`(results file, scratch directory)` for a project under a shape set.
+
+    The default set keeps `<results>/<project>.json`, so every earlier comparison still reads the
+    same file. A named set writes `<results>/<set>/<project>.json` and its own scratch, so its map
+    backups are its own too: one path for every set once let a named run overwrite the published
+    default file, and its rows were restored by hand.
+    """
+    stem = name + (".isolated" if isolated else "")
+    if shapes == DEFAULT_SHAPES:
+        out_path = os.path.join(results_root, stem + ".json")
+        scratch = os.path.join(logs_root, stem + (".control" if control else ""))
+    else:
+        folder = shape_folder(shapes)
+        out_path = os.path.join(results_root, folder, stem + ".json")
+        scratch = os.path.join(logs_root, stem + (".control" if control else "") + "." + folder)
+    return out_path, scratch
+
+
 def grammar_digest(root=None):
     """A digest of the mutation grammar's source, so a results file says which rules drew its rows.
 
@@ -1996,9 +1996,9 @@ def grammar_digest(root=None):
     HONEST ABOUT ITS OWN REACH: a hash of whole files, so a comment in one of them moves it, and
     `recall_check.py`'s runner code moves it too. The over-report is the safe direction. What it
     does NOT cover is in this file: the compile gate, which rejects rather than generates -- its
-    effect on a sample is recorded per file in `mutations_rejected` and `rejected_targets` -- and
-    `apply_mutation`, which dispatches each shape to its generator and composes `renamed` as a move
-    followed by a body mutation of the destination. A change to that composition moves no stamp.
+    effect on a sample is recorded per file in `mutations_rejected` and `rejected_targets`. The
+    composition of shapes (`renamed` as a move, then a body mutation) is `mutations.apply`, so it is
+    covered.
     """
     base = root or ROOT
     digest = hashlib.sha256()
@@ -4196,19 +4196,11 @@ def main():
     arm_name = "isolated" if args.isolated_capture else "shared"
     # A control's scratch, evidence and map stamp are its own, so no measurement reads them.
     arm_label = arm_name + ("-control" if args.control else "")
-    scratch = os.path.join(HERE, "logs", project["name"] + (".isolated" if args.isolated_capture
-                                                            else "")
-                           + (".control" if args.control else ""))
     results_root = CONTROL_RESULTS if args.control else RESULTS
+    out_path, scratch = results_location(results_root, os.path.join(HERE, "logs"), project["name"],
+                                         args.shapes, args.isolated_capture, args.control)
     os.makedirs(scratch, exist_ok=True)
-    os.makedirs(results_root, exist_ok=True)
-    # ONE PATH, WHATEVER GRAMMAR DREW THE ROWS. A `--shapes recall-arm` run overwrites the published
-    # default-grammar file wholesale, and every later reader compares against whatever was left here.
-    # The resume guard below stops two grammars MIXING in one file; it does not stop an experimental
-    # arm REPLACING the baseline, and `sweep_corpus.py` never reads `target_shapes` at all. Restored
-    # by hand once after exactly that. Copy the file aside before running a named arm.
-    out_path = os.path.join(results_root, project["name"] + (".isolated" if args.isolated_capture
-                                                              else "") + ".json")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     if shard:
         RUN_STAMPS["shard"] = list(shard)
         out_path = os.path.join(scratch, f"shard-{shard[0]}-of-{shard[1]}.json")
@@ -4315,7 +4307,8 @@ def main():
     # medium project and a sweep that pays that on every resume is a sweep nobody resumes.
     previous = {}
     # A shard's capture and baseline are the recording job's, whose header is the results file.
-    header_path = (os.path.join(results_root, project["name"] + ".json") if shard else out_path)
+    header_path = (results_location(results_root, os.path.join(HERE, "logs"), project["name"],
+                                    args.shapes)[0] if shard else out_path)
     if os.path.isfile(header_path):
         with open(header_path, encoding="utf-8") as handle:
             previous = json.load(handle)
@@ -4788,7 +4781,7 @@ def main():
               flush=True)
         write_results(out_path, project, module, capture_seconds, baseline_seconds, findings,
                       map_dir=map_dir, daemon_uptime_at_start=daemon_uptime_at_start)
-        archive_run_evidence(project, arm_label, scratch, out_path, map_dir)
+        archive_run_evidence(project, arm_label, scratch, out_path, map_dir, args.shapes)
         return 0
 
     # THE WHOLE POPULATION, BEFORE THE RESUME FILTER, so `targets_available` means the same thing
@@ -4851,7 +4844,7 @@ def main():
         RUN_STAMPS["preflight"] = preflight
         if preflight.get("setup_forced"):
             stop_setup_forced(preflight["setup_forced"], "preflight", [])
-            archive_run_evidence(project, arm_label, scratch, out_path, map_dir)
+            archive_run_evidence(project, arm_label, scratch, out_path, map_dir, args.shapes)
             return SETUP_FORCED_EXIT
     # THE WHOLE ORDERING, counting ACCEPTED rows against the limit rather than slicing first.
     # `ordered[:args.limit]` spent a slot on every target the loop then declined -- a mutation the
@@ -4955,7 +4948,8 @@ def main():
             if reset:
                 print(f"    removed {len(reset)} file(s) earlier runs wrote: {', '.join(reset[:3])}"
                       f"{' ...' if len(reset) > 3 else ''}", flush=True)
-            label = apply_mutation(checkout, rel_path, kind, index)
+            label = mutations.apply(checkout, rel_path, kind, index)
+            change_files, change_modules = mutation_change_counts(checkout) if label else (0, 0)
             if label is None:
                 # COUNTED, because it stopped costing a row. While the limit was a slice, a generator
                 # that could not apply anything burned the whole budget and the empty results file said
@@ -5400,7 +5394,7 @@ def main():
                 "selected_arm": arm_stats(selected_log),
                 "full_arm": arm_stats(full_log) if paired_row is None else (paired_row.get("full_arm")),
                 **sweep_row_fields(decisions, selected_ran, induced, write_failures, replay_map,
-                                   change_files=1, change_modules=1),
+                                   change_files=change_files, change_modules=change_modules),
                 "missed": [f"{c}::{n}" for c, n in missed],
                 "order_dependent": [f"{c}::{n}" for c, n in order_dependent_tests],
                 # NEVER CLEAN AND NEVER MISSED. A test whose display name carries an identity hash has a
@@ -5515,7 +5509,7 @@ def main():
                   rejected_targets=rejected, rejected_mutations=rejected_mutations,
                   grammar=grammar)
     if not args.only_target:
-        archive_run_evidence(project, arm_label, scratch, out_path, map_dir)
+        archive_run_evidence(project, arm_label, scratch, out_path, map_dir, args.shapes)
 
     stamp_rows(findings, stamped)
     subprocess.run(["git", "-C", checkout, "checkout", "--", "."], check=True)
@@ -5570,7 +5564,7 @@ def main():
     return 1 if unmatched_labels else 0
 
 
-def archive_run_evidence(project, arm_name, scratch, out_path, map_dir):
+def archive_run_evidence(project, arm_name, scratch, out_path, map_dir, shapes=DEFAULT_SHAPES):
     """Keeps this invocation's raw evidence as one compressed file, so later questions are answered
     offline rather than by another sweep: every log, the decision records with their parts, the
     replay maps each selecting arm read, each row's raw records (without `.exec` unless
@@ -5582,7 +5576,9 @@ def archive_run_evidence(project, arm_name, scratch, out_path, map_dir):
     the uncompressed copies stay in the scratch rather than being removed once archived. The
     archive's path and size are stamped on the results file.
     """
-    archive = os.path.join(HERE, "logs", "evidence", f"{project['name']}-{arm_name}.tar.gz")
+    # A named shape set's evidence is its own, never a replacement for the default set's.
+    suffix = "" if shapes == DEFAULT_SHAPES else "-" + shape_folder(shapes)
+    archive = os.path.join(HERE, "logs", "evidence", f"{project['name']}-{arm_name}{suffix}.tar.gz")
     members = [(scratch, os.path.basename(scratch)),
                (out_path, os.path.join("results", os.path.basename(out_path)))]
     if map_dir:
