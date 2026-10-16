@@ -1,3 +1,4 @@
+# A comment that changes nothing.
 """
 What a sweep will cost before it starts, and what it cost after. Neither is a stop or a
 cap: the cost follows from the sample rules, and this only says what it is.
