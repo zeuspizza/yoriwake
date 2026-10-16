@@ -21,8 +21,9 @@ Per commit:
   tests use what C added), the full revert of C's main code and the measured module's tests is
   tried once and the row is stamped `revert_variant: full`;
 - rejected after applying, each counted by reason and by census label: main compile, test
-  compile (both variants), dependency resolution, a style gate. A compile result is never a recall
-  outcome.
+  compile (both variants), a style gate. A compile result is never a recall outcome. A failure
+  with no compiler diagnostic, or a dependency that does not resolve, is not the revert's: it
+  stays `build-failed`.
 
 Commits are drawn in a seeded order inside three strata taken from the census labels (single file,
 several files, several modules), round-robin, so every stratum is reached. Nothing in the order or
@@ -68,10 +69,13 @@ STRATA = ("single-file", "several-files", "several-modules")
 MISS_POSSIBLE_TARGET = 4
 NOT_ELIGIBLE = ("no-main-code", "binary", "rename-crosses-roots", "comment-only",
                 "does-not-apply", "duplicate-patch")
-REJECTIONS = ("main-compile", "test-compile", "dependency-resolution", "style-gate")
+REJECTIONS = ("main-compile", "test-compile", "style-gate")
 # What a revert does to what C did: a member C added is one the row deletes.
 INVERSE = {"member-added": "member-deleted", "member-deleted": "member-added",
            "file-added": "file-deleted", "file-deleted": "file-added"}
+# Census labels of paths no revert touches: the roots hold the measured module's main code.
+UNREVERTED = ("other-module-code", "build-script", "resource", "service-file", "version-catalog",
+              "docs")
 
 
 def _git(checkout, *args, stdin=None, check=True):
@@ -85,6 +89,21 @@ def _git(checkout, *args, stdin=None, check=True):
 def inverted(labels):
     """C's census labels as the revert makes them."""
     return sorted({INVERSE.get(label, label) for label in labels})
+
+
+def revert_labels(candidate, variant="main"):
+    """C's census labels as the row makes them: inverted, without the labels of paths the variant
+    left in place. `test` stays only when the full revert took the module's tests back, and
+    `several-files` and `several-modules` only when the reverted main code spans them."""
+    code = [p for p in candidate["paths"] if p.endswith(census.CODE)]
+    dropped = set(UNREVERTED)
+    if variant != "full" or len(candidate["full_paths"]) == len(candidate["paths"]):
+        dropped.add("test")
+    if len(code) < 2:
+        dropped.add("several-files")
+    if len({census._module_of(p) for p in code}) < 2:
+        dropped.add("several-modules")
+    return [name for name in inverted(candidate["labels"]) if name not in dropped]
 
 
 def stratum(labels):
@@ -184,7 +203,7 @@ def examine(checkout, project, sha, labels, module):
                     if not _under(p, roots) and _module_test(p, module)})
     touched = {p for _, old, new in changes for p in (old, new)}
     candidate = {"sha": sha, "parent": parent, "labels": sorted(labels),
-                 "revert_labels": inverted(labels), "stratum": stratum(labels),
+                 "stratum": stratum(labels),
                  "paths": paths, "full_paths": paths + tests,
                  "scope": sorted(touched - set(paths))}
     text = patch(checkout, candidate)
@@ -247,18 +266,25 @@ def label(candidate):
 
 FAILED_TASK = re.compile(r"Execution failed for task '([^']+)'|> Task (\S+) FAILED")
 UNRESOLVED = re.compile(r"Could not resolve (?:all |[\w.-]+:[\w.-]+)")
+# What `run.compiler_rejected_the_source` reads as a compiler diagnostic: javac and kotlinc print
+# `error:`, Gradle prints the `Compilation error` banner.
+DIAGNOSTIC = re.compile(r"error:|Compilation error")
 STYLE_TASK = re.compile(r"checkstyle|spotless|ktlint|detekt|lint|license|apicheck|pmd|spotbugs",
                         re.IGNORECASE)
 
 
 def gate_failure(log):
     """Why the compile gate failed, from its log: one of `REJECTIONS`, or None when the cause is
-    not one the revert made (a daemon that died, a missing toolchain), which stays
-    `build-failed`."""
+    not one the revert made, which stays `build-failed`. A failed compile task is a rejection only
+    beside a compiler diagnostic: a daemon that died, a compiler out of memory or a missing
+    toolchain fail the task too. A dependency that does not resolve is never the revert's, since a
+    revert limited to the source roots edits no dependency declaration."""
     if UNRESOLVED.search(log):
-        return "dependency-resolution"
+        return None
     names = {(a or b).rsplit(":", 1)[-1] for a, b in FAILED_TASK.findall(log)}
     compiles = [n for n in names if re.match(r"(compile|kapt|ksp)", n)]
+    if compiles and not DIAGNOSTIC.search(log):
+        return None
     if any("Test" not in n for n in compiles):
         return "main-compile"
     if compiles:

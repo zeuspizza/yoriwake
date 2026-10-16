@@ -77,7 +77,7 @@ def table(root, lines):
 
 def verdict_of(root, name, rows, *, blockers="none", stamp=None, targets_available=40,
                mutations_rejected=None, digest=None, omit_digest=False,
-               project=None, header=None):
+               project=None, header=None, shape_set="default"):
     """One project's verdict, over a real one-commit git repo so the stamp question is real."""
     repo = os.path.join(root, "repo")
     os.makedirs(repo, exist_ok=True)
@@ -98,7 +98,7 @@ def verdict_of(root, name, rows, *, blockers="none", stamp=None, targets_availab
                         digest=digest, omit_digest=omit_digest, header=header)
     qualified = cs.qualification(table(root, [
         f"QUALIFIED  {name}  module=m blockers={blockers} tests=10"]))
-    return cs.examine(name, directory, qualified, project or {}, repo), repo, head
+    return cs.examine(name, directory, qualified, project or {}, repo, shape_set), repo, head
 
 
 def case_the_two_subtracted_counts_reach_the_verdict():
@@ -587,6 +587,21 @@ def case_a_file_assert_recall_refuses_is_never_clean():
     return failed
 
 
+def case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it():
+    """Reverts publish their rejections instead of a ceiling; every other set keeps the ceiling."""
+    failed = 0
+    for shape_set, refused in ((run.REVERT_SET, False), ("recall-arm", True)):
+        with tempfile.TemporaryDirectory() as root:
+            entry, _, _ = verdict_of(root, "p", [narrowed_row() for _ in range(16)],
+                                     mutations_rejected=5, shape_set=shape_set,
+                                     header={"target_shapes": shape_set})
+            if ("ceiling" in (entry["reason"] or "")) != refused:
+                print(f"  FAIL: 5 rejected of 21 offered in {shape_set} read {entry['verdict']}: "
+                      f"{entry['reason']}")
+                failed += 1
+    return failed
+
+
 def case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere():
     """A project stopped as setup-forced is a failure with its reason, never clean."""
     failed = 0
@@ -642,6 +657,7 @@ def case_a_results_directory_holds_one_shape_set_and_no_history_rows():
 
 
 CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
+         case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it,
          case_a_results_directory_holds_one_shape_set_and_no_history_rows,
          case_a_file_holding_control_rows_is_refused,
          case_a_file_assert_recall_refuses_is_never_clean,

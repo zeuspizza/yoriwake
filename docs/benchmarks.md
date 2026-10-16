@@ -345,7 +345,8 @@ tree and the map agree; the tests the commit added or changed then run against t
 `bench/revert.py` decides which commits and how; the rows run through the same loop as mutation
 rows and carry the same fields, plus the commit (`revert_commit`, `target: revert::<sha>`), its
 census labels as the revert makes them (`revert_labels`: a member the commit added is one the row
-deletes), the paths left out (`revert_scope`) and the variant applied.
+deletes, and labels of paths the row left in place are dropped), the paths left out
+(`revert_scope`) and the variant applied.
 
 - **Not eligible, counted by reason:** no main code under the roots, a binary file, a rename with
   one side outside the roots, a comment-only diff, a reverse patch that does not apply at the pin,
@@ -353,8 +354,10 @@ deletes), the paths left out (`revert_scope`) and the variant applied.
 - **The full revert:** when the main-code revert fails only in test compilation, because the pinned
   tests use what the commit added, the commit's test changes in the measured module are reverted
   too, once, and the row says `revert_variant: full`.
-- **Rejected, counted by reason and census label:** main compile, test compile, dependency
-  resolution, a style gate. There is no rejection ceiling; the counts are published instead.
+- **Rejected, counted by reason and census label:** main compile, test compile, a style gate. A
+  compile failure counts only beside a compiler diagnostic; without one, or with a dependency that
+  does not resolve, the row stays `build-failed`. There is no rejection ceiling; the counts are
+  published instead.
 - **Draw:** seeded inside three strata from the census labels (single file, several files, several
   modules), taken in turn, each stopping at its own row cap and narrowed target.
 - **Reach:** a shape with fewer rows where a miss was possible than the target gets no revert

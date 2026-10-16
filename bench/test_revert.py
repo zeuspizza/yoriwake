@@ -298,7 +298,8 @@ def case_a_test_compile_failure_counts_as_build_failed_again():
 
     def broken(log_path):
         with open(log_path, "w", encoding="utf-8") as handle:
-            handle.write("Execution failed for task ':core:compileTestJava'.\n")
+            handle.write("error: cannot find symbol\n"
+                         "Execution failed for task ':core:compileTestJava'.\n")
         return 1
 
     code, variant, reason = revert.gate(repo.root, candidate, broken, lambda: reset(repo.root),
@@ -317,12 +318,20 @@ def case_the_gate_names_each_rejection_from_the_log():
     failures = 0
     for log, want in (
             ("> Task :core:compileJava FAILED\nerror: cannot find symbol", "main-compile"),
-            ("> Task :core:compileKotlin FAILED\ne: Unresolved reference", "main-compile"),
-            ("Execution failed for task ':lib:compileJava'.", "main-compile"),
-            ("> Task :okio:compileTestKotlinJvm FAILED", "test-compile"),
-            ("> Task :app:compileDebugUnitTestKotlin FAILED", "test-compile"),
+            ("> Task :core:compileKotlin FAILED\ne: Unresolved reference\n"
+             "> Compilation error. See log for more details", "main-compile"),
+            ("error: cannot find symbol\nExecution failed for task ':lib:compileJava'.",
+             "main-compile"),
+            ("> Task :okio:compileTestKotlinJvm FAILED\n> Compilation error", "test-compile"),
+            ("> Task :app:compileDebugUnitTestKotlin FAILED\n> Compilation error", "test-compile"),
             ("Could not resolve all files for configuration ':core:compileClasspath'.\n"
-             "> Task :core:compileJava FAILED", "dependency-resolution"),
+             "> Task :core:compileJava FAILED\nerror: package org.sample does not exist", None),
+            ("Could not resolve org.sample:lib:1.0.\n> Connection reset", None),
+            ("> Task :core:compileJava FAILED\n> java.lang.OutOfMemoryError: Java heap space",
+             None),
+            ("> Task :okio:compileKotlinJvm FAILED\ne: java.lang.OutOfMemoryError\n"
+             "Internal compiler error", None),
+            ("> Task :core:compileJava FAILED\nGradle build daemon disappeared unexpectedly", None),
             ("> Task :core:checkstyleMain FAILED", "style-gate"),
             ("> Task :core:spotlessJavaCheck FAILED", "style-gate"),
             ("Gradle build daemon disappeared unexpectedly", None)):
@@ -342,14 +351,16 @@ def case_deleting_and_adding_a_file_revert_to_its_return_and_its_removal():
     revert.apply(repo.root, deleted)
     if repo.read(f"{MAIN}/Old.java") is None:
         failures += fail("reverting a deletion did not bring the file back")
-    if "file-added" not in deleted["revert_labels"]:
-        failures += fail(f"a deleted file reverted is not an added one: {deleted['revert_labels']}")
+    if "file-added" not in revert.revert_labels(deleted):
+        failures += fail(f"a deleted file reverted is not an added one: "
+                         f"{revert.revert_labels(deleted)}")
     reset(repo.root)
     revert.apply(repo.root, added)
     if repo.read(f"{MAIN}/Fresh.java") is not None:
         failures += fail("reverting an addition left the file")
-    if "file-deleted" not in added["revert_labels"]:
-        failures += fail(f"an added file reverted is not a deleted one: {added['revert_labels']}")
+    if "file-deleted" not in revert.revert_labels(added):
+        failures += fail(f"an added file reverted is not a deleted one: "
+                         f"{revert.revert_labels(added)}")
     return failures
 
 
@@ -390,6 +401,47 @@ def case_a_commit_over_two_modules_reverts_the_roots_and_names_what_it_dropped()
     files, modules = run.mutation_change_counts(repo.root)
     if (files, modules) != (1, 1):
         failures += fail(f"the real counts are {(files, modules)}, not one file in one module")
+    fields = run.revert_fields(candidate, "main")
+    if "several-modules" not in fields["census_labels"]:
+        failures += fail(f"the census labels lost several-modules: {fields['census_labels']}")
+    made = [name for name in ("several-modules", "other-module-code", "resource")
+            if name in fields["revert_labels"]]
+    if made:
+        failures += fail(f"the row is labelled with {made}, which it left in place")
+    return failures
+
+
+def _gate_with(codes, log, reset_ok=True):
+    """`revert.gate` over stub builds: each returns the next code and writes `log`."""
+    f = fixture()
+    calls = []
+
+    def build(log_path):
+        calls.append(log_path)
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write(log)
+        return codes[len(calls) - 1]
+
+    logs = tempfile.mkdtemp(dir=f["tmp"])
+    result = revert.gate(f["repo"].root, eligible("adds a method"), build, lambda: reset_ok,
+                         os.path.join(logs, "gate.log"), stalled=124)
+    return result, len(calls)
+
+
+def case_the_gate_retries_a_test_compile_failure_only():
+    failures = 0
+    result, builds = _gate_with([1, 0], "error: cannot find symbol\n"
+                                        "> Task :core:compileJava FAILED\n")
+    if (result, builds) != ((1, "main", "main-compile"), 1):
+        failures += fail(f"a main-compile failure gave {result} after {builds} build(s)")
+    result, _ = _gate_with([124], "")
+    if result != (124, "main", None):
+        failures += fail(f"a stalled build gave {result}, not a stall with no rejection")
+    result, builds = _gate_with([1, 0], "error: cannot find symbol\n"
+                                        "> Task :core:compileTestJava FAILED\n", reset_ok=False)
+    if (result, builds) != ((1, "full", "test-compile"), 1):
+        failures += fail(f"a reset that failed before the full revert gave {result} after "
+                         f"{builds} build(s)")
     return failures
 
 

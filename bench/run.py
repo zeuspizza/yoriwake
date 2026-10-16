@@ -3839,7 +3839,7 @@ def revert_fields(candidate, variant):
     reverted = set(candidate["paths"] if variant != "full" else candidate["full_paths"])
     return {"revert_commit": candidate["sha"],
             "census_labels": candidate["labels"],
-            "revert_labels": candidate["revert_labels"],
+            "revert_labels": revert.revert_labels(candidate, variant),
             "revert_stratum": candidate["stratum"],
             "revert_variant": variant,
             "revert_scope": sorted(set(candidate["scope"] + candidate["full_paths"]) - reverted)}
