@@ -49,9 +49,12 @@ class AttemptSelfTest : BreakAttempt() {
 
     @Test
     fun `an attempt the build script forces is held by force, naming the kind`(@TempDir dir: File) {
+        // The factor is left out of the environment fingerprint, so the build script's edit is the
+        // only thing that forces the run.
         val factorBuild = minimalBuild.replace(
             "tasks.test { useJUnitPlatform() }",
-            "tasks.test { useJUnitPlatform(); systemProperty(\"factor\", \"2\") }",
+            "tasks.test { useJUnitPlatform(); systemProperty(\"factor\", \"2\") }\n" +
+                "yoriwake { systemPropertyIgnore.add(\"factor\") }",
         )
         val readsFactor = "src/test/java/dev/sample/AlphaTest.java" to """
             package dev.sample;
@@ -71,6 +74,7 @@ class AttemptSelfTest : BreakAttempt() {
 
         assertEquals(BreakAttempt.Outcome.HELD_BY_FORCE, result.outcome, result.why)
         assertTrue("unmappable-paths" in result.why, result.why)
+        assertTrue("environment-changed" !in result.why, result.why)
     }
 
     @Test
