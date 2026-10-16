@@ -309,7 +309,7 @@ def agent_suite():
     named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
     if not named:
         compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
-        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0][:80]}"] \
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
             if compile_errors else ["the agent suite failed without naming a test"]
     return named
 
@@ -328,7 +328,7 @@ def jdk_identity_suite():
     named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
     if not named:
         compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
-        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0][:80]}"] \
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
             if compile_errors else ["the jdk identity suite failed without naming a test"]
     return named
 
@@ -388,7 +388,7 @@ def unit_suite():
     named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
     if not named:
         compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
-        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0][:80]}"] \
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
             if compile_errors else ["the unit suite failed without naming a test"]
     return named
 
@@ -446,7 +446,7 @@ def functional_suite(test_class=None):
     named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
     if not named:
         compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
-        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0][:80]}"] \
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
             if compile_errors else ["the functional suite failed without naming a test"]
     return named
 
@@ -460,7 +460,7 @@ def decoder_suite():
     named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
     if not named:
         compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
-        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0][:80]}"] \
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
             if compile_errors else ["the decoder suite failed without naming a test"]
     return named
 
@@ -476,7 +476,7 @@ def guard_suite():
     named = [l.strip() for l in lines if "ConfigurationWorkGuardTest >" in l and "FAILED" in l]
     if not named:
         compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
-        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0][:80]}"] \
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
             if compile_errors else ["the guard suite failed without naming a test"]
     return named
 
@@ -499,7 +499,7 @@ def break_suite():
     named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
     if not named:
         compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
-        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0][:80]}"] \
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
             if compile_errors else ["the break suite failed without naming a test"]
     return named
 
@@ -3382,7 +3382,7 @@ def _prove_in_worker(index):
     if standing:
         scope = f" ({test_class})" if test_class else ""
         return index, None, (f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
-                             f"{standing[0][:60]}")
+                             f"{standing[0]}")
     target = source(path)
     original = read_source(target)
     write_source(target, original.replace(old, new, 1))
@@ -3669,7 +3669,7 @@ def main(argv=None):
             continue
         standing = suite()
         print(f"  {name:22} -> {len(standing)} failing"
-              + ("" if not standing else f"  <-- MUST BE 0: {standing[0][:60]}"))
+              + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
         if standing:
             print("\nThe suite fails before any mutation, so nothing below can be believed.")
             return 1
@@ -3682,7 +3682,7 @@ def main(argv=None):
         if test_class and test_class not in baselined:
             standing = suite(test_class)
             print(f"  baseline {test_class:44} -> {len(standing)} failing"
-                  + ("" if not standing else f"  <-- MUST BE 0: {standing[0][:60]}"))
+                  + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
             if standing:
                 print("\nThe class fails before any mutation, so its guards cannot be believed.")
                 return 1
