@@ -3344,6 +3344,34 @@ def prepare_workers(count):
     return trees
 
 
+# What each Gradle suite compiles before it can run. A cold tree compiles all of it on its first
+# baseline, and four cold trees compiling Kotlin at once ran the compiler out of memory: a worker's
+# baselines then failed unmutated and every guard it held went unproved. So each tree compiles
+# these first, one tree at a time, and the parallel phase only recompiles what a mutation touched.
+WARM_UP = {
+    "unit": ":plugin:testClasses", "decoder": ":plugin:testClasses",
+    "agent": ":agent:testClasses", "jdk identity": ":agent:testClasses",
+    "functional": ":plugin:functionalTestClasses",
+    "configuration guards": ":plugin:functionalTestClasses",
+    "break": ":plugin:functionalTestClasses",
+}
+
+
+def warm_up_tasks(selected):
+    """The compile tasks the selected guards' suites need, in a stable order."""
+    return sorted({WARM_UP[SUITE_NAMES[m[4]]] for m in selected if SUITE_NAMES[m[4]] in WARM_UP})
+
+
+def _warm_up(trees, tasks):
+    """Compiles `tasks` in each tree, one tree at a time. Returns a refusal line, or None."""
+    for tree in trees:
+        done = subprocess.run(["./gradlew", "-q", *tasks], capture_output=True, text=True, cwd=tree)
+        if done.returncode != 0:
+            tail = (done.stderr or done.stdout).strip().splitlines()
+            return f"{tree} does not compile unmutated: {tail[-1] if tail else '?'}"
+    return None
+
+
 def _enter(tree):
     """Makes this process work in a worker's tree: as its cwd, and by setting."""
     os.chdir(tree)
@@ -3400,6 +3428,13 @@ def _run_parallel(args, selected, skipped, reasons):
     slots_needed = min(args.jobs, len(selected))
     print(f"preparing {slots_needed} worker tree(s) under {WORKER_ROOT}/", flush=True)
     paths = prepare_workers(slots_needed)
+    tasks = warm_up_tasks(selected)
+    if tasks:
+        print(f"compiling {' '.join(tasks)} in each worker tree, one at a time", flush=True)
+        refusal = _warm_up(paths, tasks)
+        if refusal:
+            print(f"REFUSING: {refusal}")
+            return 1
     context = multiprocessing.get_context("spawn")
     manager = context.Manager()
     slots = manager.Queue()

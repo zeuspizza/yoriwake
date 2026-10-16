@@ -248,6 +248,25 @@ def case_a_removed_or_weakened_guard_is_named_against_the_base():
     return failures
 
 
+def case_cold_worker_trees_compile_one_at_a_time_before_the_guards():
+    """Four cold trees compiling Kotlin at once ran the compiler out of memory and failed a
+    worker's baselines; each tree compiles first, alone, only what the selected suites run."""
+    failures = 0
+    python_only = [guard()]
+    unit = [guard(suite=pg.unit_suite)]
+    agent = [guard(suite=pg.agent_suite)]
+    functional = [guard(suite=pg.functional_suite)]
+    if pg.warm_up_tasks(python_only):
+        failures += fail(f"a Python-only run compiles: {pg.warm_up_tasks(python_only)}")
+    for selected, task in ((unit, ":plugin:testClasses"), (agent, ":agent:testClasses"),
+                           (functional, ":plugin:functionalTestClasses")):
+        if task not in pg.warm_up_tasks(selected):
+            failures += fail(f"{selected[0][4].__name__} does not compile {task} first")
+    if ":plugin:functionalTestClasses" in pg.warm_up_tasks(unit):
+        failures += fail("a unit-only run compiles the functional sources")
+    return failures
+
+
 def case_every_case_in_this_file_is_registered():
     import re
     source = open(__file__, encoding="utf-8").read()
@@ -376,7 +395,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_gradle_suite_not_named_safe_runs_under_the_lock,
          case_functional_guards_pair_by_class_and_configuration_guards_run_alone,
          case_guard_names_its_own_guards_and_refuses_an_unknown_one,
-         case_a_removed_or_weakened_guard_is_named_against_the_base)
+         case_a_removed_or_weakened_guard_is_named_against_the_base,
+         case_cold_worker_trees_compile_one_at_a_time_before_the_guards)
 
 
 def test_prove_guards():
