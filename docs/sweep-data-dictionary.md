@@ -127,6 +127,7 @@ failure would save more hours and keep fewer of those rows.
 | `capture_max_parallel_forks` | `--isolated-forks` (default: cores); None on the shared arm | overhead shared vs isolated (the isolated figure is not the host's layout) |
 | `paired_with` | `--pair-with`; each row is matched to its paired row per mutation, `(target, kind, index)`, and a paired file holding one mutation twice is refused (files written before 2026-10-08 matched by label, so two declarations of one name could take each other's ground truth) | provenance of the isolated rows' ground truth |
 | `rejected_mutations` | the compile gate's rejections as `[target, kind, index]`, beside the labels in `rejected_targets`; None before 2026-10-08 | resume: a rejected declaration does not skip its namesakes |
+| `revert` | `revert/v1` only: the census window and classifier, eligible commits per stratum, not-eligible counts by reason, rejections as `[target, reason, variant, census labels]` and counted by reason and label, and per inverted label the rows, the miss-possible rows and whether the shape is reached | published beside a revert figure; no rejection ceiling applies |
 | `narrowed_target` | `--narrowed-target` of the invocation that last wrote the file; None = no rule | sample definition (rows carry their own) |
 | `recall_only` | `--recall-only` of that invocation | true: forced rows ran once, no time-saved figure from this file |
 | `ground_truth_mode` | `--ground-truth` of the invocation; None in older files | which rows could have taken a complement |
@@ -183,6 +184,8 @@ failure would save more hours and keep fewer of those rows.
 | `control` | true on a planted-miss control row; None in older files | refused in every figure |
 | `gate_seconds` | the compile gate since the last accepted row, rejected draws included; None in older files | cost projection and report |
 | `followup_seconds` | the isolated re-runs a miss triggered; None in older files | left out of every cost figure |
+| `revert_commit`, `census_labels`, `revert_labels`, `revert_stratum` | `revert/v1` only: the reverted commit, its census labels, the same labels as the revert makes them (an added member or file becomes a deleted one) and its stratum (`single-file`, `several-files`, `several-modules`) | a revert figure per shape; "not reached by revert/v1" |
+| `revert_variant`, `revert_scope` | `revert/v1` only: `main` (main code under the roots) or `full` (the measured module's tests too, after a test-compile failure); the commit's paths the row did not revert | what a revert row changed; `change_files` and `change_modules` count the reverted tree |
 | `timed` | whether the row's two arms are a paired time: false under `--recall-only`, past the timing cap and on a paired arm; None in older files | chart 2's sample |
 | `untracked_reset` | the untracked and ignored files removed before the row (often `[]`); false with the reset off; None in older files | a 0.1 row that forced on a file an earlier run wrote may narrow from 0.2 |
 | existing: `replay`, `full_run_reason`, `map_capture_commit`, `map_records`, `map_attributable`, `*_conditions`, `reachability`, `sweep_limit` | unchanged | replay, freshness, machine load |

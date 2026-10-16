@@ -98,6 +98,12 @@ from target_ordering import (  # noqa: E402
     reach_of,
     weave,
 )
+import revert  # noqa: E402
+
+# REVERTS OF REAL COMMITS, a set of its own: no generator draws its rows, so it is registered here
+# rather than in the mutation grammar, and its own sources are what its `grammar_digest` hashes.
+REVERT_SET = revert.SET
+SHAPE_SETS = SHAPE_SETS + (REVERT_SET,)
 
 
 
@@ -1954,6 +1960,9 @@ def selector_digest(root=None):
 # makes. `recall_check.py` is in because the `body` and `aliased` shapes are its `mutate`.
 GRAMMAR_SOURCE_FILES = ("bench/mutations.py", "bench/target_ordering.py",
                         "bench/recall_check.py")
+# What decides which commits a revert row reverts, and how: eligibility, strata and draw order, and
+# the census labels the strata come from.
+REVERT_GRAMMAR_FILES = ("bench/revert.py", "bench/census.py")
 
 
 def shape_folder(shapes):
@@ -1980,7 +1989,7 @@ def results_location(results_root, logs_root, name, shapes, isolated=False, cont
     return out_path, scratch
 
 
-def grammar_digest(root=None):
+def grammar_digest(root=None, files=GRAMMAR_SOURCE_FILES):
     """A digest of the mutation grammar's source, so a results file says which rules drew its rows.
 
     WHY `target_shapes` IS NOT ENOUGH. It names the shape SET a sweep drew from, and every published
@@ -2003,7 +2012,7 @@ def grammar_digest(root=None):
     base = root or ROOT
     digest = hashlib.sha256()
     hashed = 0
-    for name in GRAMMAR_SOURCE_FILES:
+    for name in files:
         path = os.path.join(base, name)
         if not os.path.isfile(path):
             continue
@@ -2014,7 +2023,7 @@ def grammar_digest(root=None):
     # Refused for the reason `selector_digest` refuses: the digest of nothing is a stable value
     # every file would agree with.
     if not hashed:
-        raise SystemExit(f"no grammar source found at {GRAMMAR_SOURCE_FILES} beneath {base}; "
+        raise SystemExit(f"no grammar source found at {files} beneath {base}; "
                          f"refusing to stamp a results file with the digest of an empty tree")
     return digest.hexdigest()[:12]
 
@@ -3824,6 +3833,27 @@ def write_accepted(path, project, grammar, targets, rejected, args):
                    "targets": targets, "rejected": rejected}, handle, indent=1)
 
 
+def revert_fields(candidate, variant):
+    """What a revert row carries beside a mutation row's fields: the commit, its census labels as
+    the revert makes them, the variant applied and the paths it left out."""
+    reverted = set(candidate["paths"] if variant != "full" else candidate["full_paths"])
+    return {"revert_commit": candidate["sha"],
+            "census_labels": candidate["labels"],
+            "revert_labels": candidate["revert_labels"],
+            "revert_stratum": candidate["stratum"],
+            "revert_variant": variant,
+            "revert_scope": sorted(set(candidate["scope"] + candidate["full_paths"]) - reverted)}
+
+
+def stamp_revert(stamp, findings, narrowed_target):
+    """The revert set's file stamp, brought up to date with `findings`: rejections counted by
+    reason and census label, and which shapes have enough miss-possible rows for a figure."""
+    stamp["rejected"] = revert.rejection_counts(stamp.get("rejections") or [])
+    stamp["reach"] = revert.reach(findings, counts_toward_narrowed_target,
+                                  narrowed_target or revert.MISS_POSSIBLE_TARGET)
+    stamp["not_reached"] = revert.not_reached(stamp["reach"])
+
+
 def write_results(out_path, project, module, capture_seconds, baseline_seconds, findings,
                   target_seed=None, map_dir=None, daemon_uptime_at_start=None,
                   shapes=None, targets_available=None,
@@ -3833,6 +3863,8 @@ def write_results(out_path, project, module, capture_seconds, baseline_seconds, 
     # and a write torn by a kill or a mid-serialization error left an unreadable file behind and
     # lost a project's rows once already. `os.replace` keeps the previous checkpoint until the new
     # one is whole -- the same staging `snapshot_for_replay` and the plugin's `AtomicWrite` use.
+    if RUN_STAMPS.get("revert") is not None:
+        stamp_revert(RUN_STAMPS["revert"], findings, RUN_STAMPS.get("narrowed_target"))
     staging = out_path + ".writing"
     with open(staging, "w", encoding="utf-8") as handle:
         json.dump({
@@ -4220,7 +4252,11 @@ def main():
     # The same rejections keyed per mutation, so a rejected declaration does not reject its
     # namesakes; see `rejected_keys`.
     rejected_mutations = []
-    grammar = grammar_digest()
+    revert_set = args.shapes == REVERT_SET
+    # `[target, reason, variant, census labels]` per revert the gate rejected, carried across
+    # resumes as `rejected` is: the counts by reason and label are published with the figure.
+    revert_rejections = []
+    grammar = grammar_digest(files=REVERT_GRAMMAR_FILES if revert_set else GRAMMAR_SOURCE_FILES)
     if os.path.isfile(out_path):
         with open(out_path, encoding="utf-8") as handle:
             stored = json.load(handle)
@@ -4294,6 +4330,7 @@ def main():
             findings = stored.get("mutations", [])
             rejected = list(stored.get("rejected_targets") or [])
             rejected_mutations = [list(key) for key in stored.get("rejected_mutations") or []]
+            revert_rejections = list((stored.get("revert") or {}).get("rejections") or [])
             grammar = resumed_grammar(stored, findings, grammar)
     # Per mutation, not per label: see `row_key`.
     done = {row_key(finding) for finding in findings}
@@ -4784,35 +4821,56 @@ def main():
         archive_run_evidence(project, arm_label, scratch, out_path, map_dir, args.shapes)
         return 0
 
-    # THE WHOLE POPULATION, BEFORE THE RESUME FILTER, so `targets_available` means the same thing
-    # on a first pass and on a resume. Filtering first would make it shrink every time the file grew.
-    all_targets, repeated_targets = distinct_targets(mutation_targets(checkout, project, args.shapes))
-    if repeated_targets:
-        print(f"  {repeated_targets} target(s) were drawn twice through overlapping source roots "
-              f"and are measured once", flush=True)
-    targets_available = len(all_targets)
-    # Filtered before the limit is applied: applied first, a resumed sweep spends its whole
-    # budget re-skipping rows it already has and measures nothing new.
-    pending = pending_targets(all_targets, findings)
-    # SPANNING BEFORE ANSWERABLE, and the two are different questions. `mutation_targets` returns
-    # targets in sorted path order, so the first N are `Abstract*` -- hubs, which force a full run,
-    # which makes recall look perfect and narrowing look terrible in the same breath. This spreads
-    # the sample across the map's own reach counts first; `by_coverage` then buckets it, and neither
-    # stage disturbs the other's ordering.
-    reach = reach_counts(map_dir)
-    pending = by_reach(pending, reach, args.target_seed)
-    # Answerable targets first. Without this the limit is spent on classes nothing loads, and the
-    # sweep reports zero missed failures out of zero induced ones -- which is not a safety result.
-    covered = covered_classes(map_dir)
-    ordered, provenance = by_coverage(pending, covered)
-    if covered:
-        counts = Counter(provenance.values())
-        print(f"  {len(covered)} classes covered by the map; targets: "
-              f"{counts['covered']} covered, {counts['unknown']} unresolved, "
-              f"{counts['uncovered']} uncovered (answerable ones run first)", flush=True)
-    else:
-        print("  no map to order targets by, so every target is unknown rather than uncovered",
+    reach = covered = None
+    revert_by_sha, stratum_of = {}, {}
+    if revert_set:
+        # THE ELIGIBLE COMMITS OF THE CENSUS WINDOW, in their draw order, each checked to revert
+        # cleanly at the pin. Not eligible is counted by reason and takes no slot.
+        revert_order, not_eligible = revert.candidates(checkout, project, args.target_seed)
+        revert_by_sha = {c["sha"]: c for c in revert_order}
+        stratum_of = {revert.label(c): c["stratum"] for c in revert_order}
+        all_targets = [(c["sha"], "revert", 0) for c in revert_order]
+        targets_available = len(all_targets)
+        ordered = [t for t in all_targets if not keyed_in(done, f"revert::{t[0]}", "revert", 0)]
+        provenance = {}
+        RUN_STAMPS["revert"] = {
+            "window": revert.WINDOW, "census_classifier": revert.census.CLASSIFIER,
+            "eligible": len(revert_order), "not_eligible": not_eligible,
+            "strata": dict(Counter(c["stratum"] for c in revert_order)),
+            "rejections": revert_rejections}
+        print(f"  {len(revert_order)} commit(s) of the last {revert.WINDOW} revert cleanly at the "
+              f"pin ({RUN_STAMPS['revert']['strata']}); not eligible: {not_eligible or 'none'}",
               flush=True)
+    else:
+        # THE WHOLE POPULATION, BEFORE THE RESUME FILTER, so `targets_available` means the same thing
+        # on a first pass and on a resume. Filtering first would make it shrink every time the file grew.
+        all_targets, repeated_targets = distinct_targets(mutation_targets(checkout, project, args.shapes))
+        if repeated_targets:
+            print(f"  {repeated_targets} target(s) were drawn twice through overlapping source roots "
+                  f"and are measured once", flush=True)
+        targets_available = len(all_targets)
+        # Filtered before the limit is applied: applied first, a resumed sweep spends its whole
+        # budget re-skipping rows it already has and measures nothing new.
+        pending = pending_targets(all_targets, findings)
+        # SPANNING BEFORE ANSWERABLE, and the two are different questions. `mutation_targets` returns
+        # targets in sorted path order, so the first N are `Abstract*` -- hubs, which force a full run,
+        # which makes recall look perfect and narrowing look terrible in the same breath. This spreads
+        # the sample across the map's own reach counts first; `by_coverage` then buckets it, and neither
+        # stage disturbs the other's ordering.
+        reach = reach_counts(map_dir)
+        pending = by_reach(pending, reach, args.target_seed)
+        # Answerable targets first. Without this the limit is spent on classes nothing loads, and the
+        # sweep reports zero missed failures out of zero induced ones -- which is not a safety result.
+        covered = covered_classes(map_dir)
+        ordered, provenance = by_coverage(pending, covered)
+        if covered:
+            counts = Counter(provenance.values())
+            print(f"  {len(covered)} classes covered by the map; targets: "
+                  f"{counts['covered']} covered, {counts['unknown']} unresolved, "
+                  f"{counts['uncovered']} uncovered (answerable ones run first)", flush=True)
+        else:
+            print("  no map to order targets by, so every target is unknown rather than uncovered",
+                  flush=True)
     classes_args = [f":{module}:{classes_task}" if module else classes_task]
     write_kwargs = dict(target_seed=args.target_seed, map_dir=map_dir,
                         daemon_uptime_at_start=daemon_uptime_at_start, shapes=args.shapes,
@@ -4835,8 +4893,14 @@ def main():
     if not args.only_target and paired_rows is None and not shard:
         # The whole population in the sweep's own order, not what a resume left: the same file
         # every leg.
+        # A revert row edits no declaration of its own, so its preflight file comes from the
+        # default grammar's bodies, as a mutation set's does.
+        pool = (distinct_targets(mutation_targets(checkout, project))[0] if revert_set
+                else all_targets)
+        if reach is None:
+            reach, covered = reach_counts(map_dir), covered_classes(map_dir)
         candidates = [path for path, kind, _ in
-                      by_coverage(by_reach(all_targets, reach, args.target_seed), covered)[0]
+                      by_coverage(by_reach(pool, reach, args.target_seed), covered)[0]
                       if kind == "body"]
         preflight = run_preflight(checkout, project, list(dict.fromkeys(candidates)), scratch,
                                   map_dir, map_backup, snapshot, select_flags, [task_path],
@@ -4915,8 +4979,9 @@ def main():
             print(f"\n  re-measuring {len(redo)} row(s) whose ground truth was a complement, "
                   f"with the full arm, now that it is off for this project", flush=True)
             done.difference_update(row_key(row) for row in redo)
-            passes.insert(position, ("rerun", [(row["target"].split("::", 1)[0], row["kind"],
-                                                row["index"]) for row in redo]))
+            # A revert row's item is its commit, the part of its target after `revert::`.
+            passes.insert(position, ("rerun", [(row["target"].split("::", 1)[row["kind"] == "revert"],
+                                                row["kind"], row["index"]) for row in redo]))
 
     if complement_off:
         queue_remeasure(0)
@@ -4927,10 +4992,17 @@ def main():
         for rel_path, kind, index in items:
             stamp_rows(findings, stamped)
             findings[:] = drop_superseded(findings)
-            if not rerunning and not shard and accepted >= args.limit:
+            # A REVERT SET STOPS PER STRATUM: each draws up to the limit and its own narrowed
+            # target, from decisions and induced failures only.
+            if revert_set and not rerunning and not shard:
+                if not revert.should_draw(stratum_of.get(f"revert::{rel_path}"), findings,
+                                          stratum_of, args.limit, args.narrowed_target,
+                                          counts_toward_narrowed_target):
+                    continue
+            elif not rerunning and not shard and accepted >= args.limit:
                 break
-            if not rerunning and not shard and narrowed_target_reached(findings,
-                                                                       args.narrowed_target):
+            elif not rerunning and not shard and narrowed_target_reached(findings,
+                                                                         args.narrowed_target):
                 print(f"  narrowed target reached: {args.narrowed_target} rows narrowed and induced a "
                       f"failure, in {accepted} rows (cap {args.limit}); drawing no more targets",
                       flush=True)
@@ -4948,7 +5020,16 @@ def main():
             if reset:
                 print(f"    removed {len(reset)} file(s) earlier runs wrote: {', '.join(reset[:3])}"
                       f"{' ...' if len(reset) > 3 else ''}", flush=True)
-            label = mutations.apply(checkout, rel_path, kind, index)
+            candidate = revert_by_sha.get(rel_path) if kind == "revert" else None
+            if kind == "revert":
+                label = revert.label(candidate) if candidate else None
+                if label and (keyed_in(done, label, kind, index)
+                              or keyed_in(rejected_seen, label, kind, index)):
+                    continue
+                if label and not revert.apply(checkout, candidate):
+                    label = None
+            else:
+                label = mutations.apply(checkout, rel_path, kind, index)
             change_files, change_modules = mutation_change_counts(checkout) if label else (0, 0)
             if label is None:
                 # COUNTED, because it stopped costing a row. While the limit was a slice, a generator
@@ -4991,9 +5072,30 @@ def main():
             # ONCE. This ran twice with identical arguments and the same log path, so the second call
             # measured an up-to-date build and overwrote the log of the one that did the work.
             gate_started = time.time()
-            code, mutation_rejected = compile_or_reject(
-                checkout, project, classes_args, os.path.join(scratch, f"compile-{stem}.log"),
-                gradle)
+            revert_variant = None
+            if candidate is not None:
+                def reset_tree():
+                    if not restore(checkout):
+                        return False
+                    if snapshot is not None:
+                        reset_untracked(checkout, project, snapshot)
+                    return True
+
+                # THE MAIN-CODE REVERT FIRST, and the full revert once when only the tests failed
+                # to compile. Every other failure the revert made is a counted rejection.
+                code, revert_variant, revert_reason = revert.gate(
+                    checkout, candidate,
+                    lambda log: gradle(checkout, project, classes_args, log)[0], reset_tree,
+                    os.path.join(scratch, f"compile-{stem}.log"), STALLED)
+                mutation_rejected = revert_reason is not None
+                if mutation_rejected:
+                    revert_rejections.append([label, revert_reason, revert_variant,
+                                              candidate["labels"]])
+                change_files, change_modules = mutation_change_counts(checkout)
+            else:
+                code, mutation_rejected = compile_or_reject(
+                    checkout, project, classes_args, os.path.join(scratch, f"compile-{stem}.log"),
+                    gradle)
             gate_spent += time.time() - gate_started
             if stalled(code, label, findings, "compile"):
                 continue
@@ -5008,8 +5110,13 @@ def main():
                 # target keeps only the rejections a single job would have met.
                 recorded_rejections.append([label, kind, index, len(recorded)])
                 rejected_seen.add((label, kind, index))
-                print("    REJECTED: the mutated tree did not compile, so this is a generator defect "
-                      "and not a row; taking the next target", flush=True)
+                if candidate is not None:
+                    print(f"    REJECTED: the revert failed the gate ({revert_reason}, "
+                          f"{revert_variant} variant); counted, and taking the next commit",
+                          flush=True)
+                else:
+                    print("    REJECTED: the mutated tree did not compile, so this is a generator "
+                          "defect and not a row; taking the next target", flush=True)
                 continue
             # PAST THE GATE, so this target is one of the N the limit promises.
             gate_seconds, gate_spent = round(gate_spent, 1), 0.0
@@ -5395,6 +5502,7 @@ def main():
                 "full_arm": arm_stats(full_log) if paired_row is None else (paired_row.get("full_arm")),
                 **sweep_row_fields(decisions, selected_ran, induced, write_failures, replay_map,
                                    change_files=change_files, change_modules=change_modules),
+                **(revert_fields(candidate, revert_variant) if candidate is not None else {}),
                 "missed": [f"{c}::{n}" for c, n in missed],
                 "order_dependent": [f"{c}::{n}" for c, n in order_dependent_tests],
                 # NEVER CLEAN AND NEVER MISSED. A test whose display name carries an identity hash has a
@@ -5540,8 +5648,17 @@ def main():
     if declined:
         print(f"{declined} target(s) were DECLINED by the generator, which produced no mutation for "
               f"them; they consumed no row and are not a compile failure", flush=True)
+    if revert_set:
+        stamp = RUN_STAMPS["revert"]
+        stamp_revert(stamp, findings, args.narrowed_target)
+        print(f"reverts: {stamp['eligible']} eligible, not eligible {stamp['not_eligible'] or 'none'}, "
+              f"rejected {({k: v['count'] for k, v in stamp['rejected'].items()}) or 'none'}",
+              flush=True)
+        if stamp["not_reached"]:
+            print(f"not reached by {REVERT_SET}: {', '.join(stamp['not_reached'])}", flush=True)
     if rejected:
-        refused = rejection_rate_refuses(len(rejected), len(findings))
+        # No shared ceiling for reverts: a real commit the gate rejects is counted, not a defect.
+        refused = not revert_set and rejection_rate_refuses(len(rejected), len(findings))
         print(f"{len(rejected)} mutation(s) were REJECTED by the compile gate and consumed no row"
               f"{' -- ABOVE the ceiling, so this is a refusal rather than a statistic'
                  if refused else ''}", flush=True)
