@@ -1,0 +1,12 @@
+# An application with heavy integration tests: Apache Fineract's core banking service, Spring Boot,
+# the module with its own unit and Testcontainers tests. Qualify before sweeping:
+# bench/README.md, "Adding a project".
+name = "fineract"
+url = "https://github.com/apache/fineract.git"
+commit = "020f1e637e5d8e87386c35fa02fd7dc89e26012e"
+module = "fineract-provider"
+flags = []
+sources = ["fineract-provider/src/main/java"]
+daemon_jvmargs = "-Xmx4g"
+# Its OpenAPI step loads the module's own classes, compiled for Java 25, in the daemon.
+daemon_java_version = 25

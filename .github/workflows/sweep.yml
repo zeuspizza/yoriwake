@@ -20,7 +20,7 @@ on:
       tier:
         description: auto decides from the change since base
         type: choice
-        options: [auto, replay, reduced, full]
+        options: [auto, replay, reduced, full, control]
         default: auto
       base:
         description: the commit the last published figures describe (empty is the latest v* tag)
@@ -34,6 +34,8 @@ on:
         description: space-separated projects to restrict a full sweep to (empty is every project)
         type: string
         default: demo
+      # Measured on the demo: a runner's selected arm took a median 1.38 times, and its compile gate
+      # 1.5 times, what the same rows took on the machine that measured the last local times.
       factor:
         description: runner seconds per local second, measured on the demo
         type: string
@@ -76,6 +78,24 @@ jobs:
           fi
           echo "projects=$projects" >> "$GITHUB_OUTPUT"
           echo "tier: $TIER"
+
+  # The positive control: a plugin built with a planted miss, swept on the fixtures. It fails unless
+  # every fixture reports the miss, so a harness that lost the ability to see one cannot pass.
+  control:
+    needs: plan
+    if: needs.plan.outputs.tier == 'control'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+      - run: python3 bench/controls.py
 
   # Selection logic alone: the last published sweep's rows re-asked of this selector, offline. A
   # pass or a fail, never new figures.
@@ -280,7 +300,7 @@ jobs:
 
   # Only a scheduled run has nobody watching it; a dispatched one is read by whoever started it.
   report-failure:
-    needs: [plan, replay, record, slices, shard, merge]
+    needs: [plan, control, replay, record, slices, shard, merge]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
