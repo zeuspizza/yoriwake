@@ -211,7 +211,8 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: record-${{ matrix.slice.project }}
-          path: record
+          # Outside the checkout: an untracked file in it makes run.py refuse the tree as dirty.
+          path: ${{ runner.temp }}/record
       - name: measure this slice
         env:
           NAME: ${{ matrix.slice.project }}
@@ -219,7 +220,7 @@ jobs:
           SHARD: ${{ matrix.slice.shard }}/${{ matrix.slice.of }}
         run: |
           set -eu
-          tar -xzf "record/$NAME/state.tar.gz" -C bench
+          tar -xzf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench
           mapfile -t args < <(jq -r '.[] | select(. != "--recapture")' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted "bench/logs/$NAME/accepted.json" \
             --shard "$SHARD"
