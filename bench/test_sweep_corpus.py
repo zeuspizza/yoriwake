@@ -121,7 +121,7 @@ def case_a_row_in_no_bucket_is_named_rather_than_absorbed():
     return failures
 
 
-def case_a_refusal_whose_kind_did_not_arrive_is_still_a_refusal():
+def not_run_a_refusal_whose_kind_did_not_arrive_is_still_a_refusal():
     failures = 0
     # Version skew, or a fixture that set one property and not the other. Bucketing on the presence
     # of the FINE token put such a row back among the ordinary forced runs -- the population this
