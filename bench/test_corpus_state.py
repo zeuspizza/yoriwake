@@ -618,7 +618,31 @@ def case_a_file_holding_control_rows_is_refused():
     return failed
 
 
+def case_a_results_directory_holds_one_shape_set_and_no_history_rows():
+    """A figure drawn from one directory speaks for one population."""
+    failed = 0
+    with tempfile.TemporaryDirectory() as root:
+        entry, _, _ = verdict_of(root, "p", [narrowed_row()], header={"target_shapes": "recall-arm"})
+        if entry["verdict"] != cs.DIRTY or "recall-arm" not in (entry["reason"] or ""):
+            print(f"  FAIL: a recall-arm file in the default directory read as {entry['verdict']}")
+            failed += 1
+    with tempfile.TemporaryDirectory() as root:
+        entry, repo, _ = verdict_of(root, "p", [narrowed_row()], header={"target_shapes": "recall-arm"})
+        named = cs.examine("p", os.path.join(root, "results"), cs.qualification(
+            table(root, ["QUALIFIED  p  module=m blockers=none tests=10"])), {}, repo, "recall-arm")
+        if named["verdict"] == cs.DIRTY and "set" in (named["reason"] or ""):
+            print(f"  FAIL: a named set's own file was refused in its own directory: {named['reason']}")
+            failed += 1
+    with tempfile.TemporaryDirectory() as root:
+        entry, _, _ = verdict_of(root, "p", [narrowed_row(), {**narrowed_row(), "kind": "history"}])
+        if entry["verdict"] != cs.DIRTY or "history" not in (entry["reason"] or ""):
+            print(f"  FAIL: a history row among mutation rows read as {entry['verdict']}")
+            failed += 1
+    return failed
+
+
 CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
+         case_a_results_directory_holds_one_shape_set_and_no_history_rows,
          case_a_file_holding_control_rows_is_refused,
          case_a_file_assert_recall_refuses_is_never_clean,
          case_the_two_subtracted_counts_reach_the_verdict,

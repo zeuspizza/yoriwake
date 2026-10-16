@@ -203,8 +203,9 @@ def depths(rows):
     return sorted({row["sweep_limit"] for row in rows if isinstance(row.get("sweep_limit"), int)})
 
 
-def examine(name, results_dir, qualified, project=None, root=None):
-    """One project's verdict, with everything the published table needs to print beside it."""
+def examine(name, results_dir, qualified, project=None, root=None, shape_set="default"):
+    """One project's verdict, with everything the published table needs to print beside it.
+    `shape_set` is the set `results_dir` holds: `default` at the top, a named set in its own."""
     entry = {"project": name, "rows": 0, "miss_possible": 0, "missed": 0, "unattributed_rows": 0,
              "container_failed": 0, "mutations_rejected": None,
              "depth": None, "targets_available": None, "reason": None, "grammar": None,
@@ -245,6 +246,17 @@ def examine(name, results_dir, qualified, project=None, root=None):
         return {**entry, "verdict": DIRTY,
                 "reason": "its results file holds planted-miss control rows, which measured a "
                           "plugin with a defect put in on purpose and count toward no figure"}
+    # ONE DIRECTORY, ONE POPULATION. A file drawn from another shape set, or a history replay's rows
+    # among mutation rows, would put two populations under one figure.
+    if data.get("target_shapes") not in (None, shape_set):
+        return {**entry, "verdict": DIRTY,
+                "reason": f"its rows were drawn from the {data.get('target_shapes')} set, not the "
+                          f"{shape_set} set this directory holds"}
+    kinds = {row.get("kind") == "history" for row in rows}
+    if len(kinds) > 1:
+        return {**entry, "verdict": DIRTY,
+                "reason": "its results file mixes history-replay rows with mutation rows, and a "
+                          "replay's rows count toward no recall figure"}
     if data.get("project_outcome") == SETUP_FORCED:
         return {**entry, "verdict": SETUP_FORCED,
                 "reason": f"stopped at the {(data.get('setup_forced') or {}).get('at')}: "
@@ -388,7 +400,7 @@ def load_project(name):
         return tomllib.load(handle)
 
 
-def survey(results_dir, qualification_path, root=None):
+def survey(results_dir, qualification_path, root=None, shape_set="default"):
     qualified = qualification(qualification_path)
     entries = []
     for name, row in qualified.items():
@@ -399,7 +411,7 @@ def survey(results_dir, qualification_path, root=None):
                             "targets_available": None, "fixture": bool(load_project(name).get("fixture")),
                             "reason": f"not qualified: {row['detail'][:110]}"})
             continue
-        entries.append(examine(name, results_dir, qualified, load_project(name), root))
+        entries.append(examine(name, results_dir, qualified, load_project(name), root, shape_set))
     return entries
 
 
@@ -489,7 +501,11 @@ def main():
     parser.add_argument("--results", default=os.path.join(HERE, "results"))
     parser.add_argument("--qualification", default=os.path.join(HERE, "qualification.txt"))
     parser.add_argument("--json", action="store_true", help="the entries, for a table generator")
+    parser.add_argument("--set", default="default",
+                        help="the shape set to survey: its files are under --results/<set>/")
     args = parser.parse_args()
+    results_dir = args.results if args.set == "default" else os.path.join(
+        args.results, run.shape_folder(args.set))
 
     # REFUSED, NOT REPORTED AS CLEAN. `all([])` is True, so a missing or format-drifted
     # qualification table produced an empty corpus, an empty composition line and exit 0 -- the
@@ -498,7 +514,7 @@ def main():
     if not os.path.isfile(args.qualification):
         raise SystemExit(f"no qualification table at {args.qualification}; refusing to report an "
                          f"empty corpus as a clean one")
-    entries = survey(args.results, args.qualification)
+    entries = survey(results_dir, args.qualification, shape_set=args.set)
     if not entries:
         raise SystemExit(f"no QUALIFIED, BLOCKED or UNRESOLVED rows parsed from "
                          f"{args.qualification}; refusing to report an empty corpus as a clean one")

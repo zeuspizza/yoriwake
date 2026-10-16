@@ -831,6 +831,21 @@ def case_the_breakdown_by_codebase_folds_projects_that_share_one():
     return 0 if table == expected else fail(f"breakdown {table}")
 
 
+def case_a_named_set_is_swept_and_summarised_under_its_own_name():
+    failures = 0
+    command = sweep_corpus.shared_arm_command("demo", "bench/projects/demo.toml", 4, False, False,
+                                              shapes="recall-arm")
+    if command[-2:] != ["--shapes", "recall-arm"]:
+        failures += fail(f"the named set does not reach run.py: {command}")
+    default = sweep_corpus.shared_arm_command("demo", "bench/projects/demo.toml", 4, False, False)
+    if "--shapes" in default:
+        failures += fail(f"the default set grew a flag: {default}")
+    summary = sweep_corpus.summarise("no-such-project", shapes="recall-arm")
+    if summary.get("shape_set") != "recall-arm":
+        failures += fail(f"a summary does not name its set: {summary}")
+    return failures
+
+
 def test_sweep_corpus():
     failures = 0
     for name, case in sorted(globals().items()):

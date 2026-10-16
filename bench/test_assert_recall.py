@@ -59,6 +59,22 @@ def run_gate(results):
         return finished.returncode, finished.stdout + finished.stderr
 
 
+class AFigureHoldsOnePopulation(unittest.TestCase):
+    """A history replay's rows count toward no recall figure, so a file mixing them is refused."""
+
+    def test_history_rows_among_mutation_rows_are_refused(self):
+        code, out = run_gate({"project": "p", "mutations": [
+            mutation(), mutation(target="src/main/java/B.java::history::abc", kind="history")]})
+        self.assertEqual(code, 1, out)
+        self.assertIn("history", out)
+
+    def test_a_replay_alone_is_still_read(self):
+        code, out = run_gate({"project": "p", "mutations": [
+            mutation(target="x::history::abc", kind="history")]})
+        self.assertNotIn("mixes", out)
+        self.assertEqual(code, 0, out)
+
+
 class ForcedFullRunsAreNotNarrowing(unittest.TestCase):
     """A recorded reason means the selector declined; the counts do not get a vote."""
 

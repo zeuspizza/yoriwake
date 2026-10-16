@@ -73,6 +73,16 @@ def case_a_difference_confined_to_flagged_rows_is_reported_not_counted():
     return failures
 
 
+def case_sweeps_drawn_from_two_shape_sets_are_not_compared():
+    a = {**_file(_row(0)), "target_shapes": "default"}
+    b = {**_file(_row(0)), "target_shapes": "recall-arm"}
+    report = compare_results.compare(a, b)
+    failures = 0
+    if report["agree"] or not any("recall-arm" in line for line in report["differences"]):
+        failures += fail(f"two shape sets were compared row for row: {report}")
+    return failures
+
+
 def test_compare_results():
     failures = 0
     for name, case in sorted(globals().items()):

@@ -1,0 +1,826 @@
+[
+ {
+  "project": "anki-android",
+  "sha": "0f2a31aa94c52eeae939049f94bff3682ef76070",
+  "labels": [
+   "body-value",
+   "body-void",
+   "file-added",
+   "in-module-code",
+   "kotlin",
+   "member-added",
+   "other-module-code",
+   "several-files",
+   "several-modules"
+  ],
+  "note": "Adds LauncherDestination (common module) and routes the widget's launcher intent through the navigator"
+ },
+ {
+  "project": "anki-android",
+  "sha": "d6e9fb9d77b24c1243bda8015500574eb668a8d7",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "kotlin",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "Multimedia screens go edge-to-edge: activity and fragment apply window insets"
+ },
+ {
+  "project": "apache-groovy",
+  "sha": "2c12ac003c677ee21ea5be282cd93f36003360b1",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "test"
+  ],
+  "note": "groovy-json ReaderCharacterSource: accumulate spanning chunks in a CharBuf instead of re-copying"
+ },
+ {
+  "project": "apache-groovy",
+  "sha": "6e7b76ff2acbda0f8ff200f0a1d3d9866ca92583",
+  "labels": [
+   "body-value",
+   "body-void",
+   "constant",
+   "in-module-code",
+   "member-added",
+   "test"
+  ],
+  "note": "LazyMap switches to backing map past 32 entries, sizes LinkedHashMap without rehash"
+ },
+ {
+  "project": "armeria",
+  "sha": "a4595aea4c8e3566dd8a2135e4817b0aaf69d7db",
+  "labels": [
+   "body-value",
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "signature",
+   "test"
+  ],
+  "note": "Adds proto serialization option to gRPC HTTP/JSON transcoding and refactors marshaller deserialization"
+ },
+ {
+  "project": "armeria",
+  "sha": "c662297af6fa81b6bbea463ed29e68e28a1ad7b5",
+  "labels": [
+   "body-value",
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "signature",
+   "test"
+  ],
+  "note": "Make gRPC exception handlers async-capable (applyAsync) and thread CompletableFuture through call close paths"
+ },
+ {
+  "project": "bitwarden-android",
+  "sha": "9d7979a5015515532514be4cb9e72d85759797cd",
+  "labels": [
+   "body-value",
+   "body-void",
+   "constant",
+   "file-added",
+   "in-module-code",
+   "kotlin",
+   "member-added",
+   "member-deleted",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "signature",
+   "test"
+  ],
+  "note": "Moves encrypted disk sources to Keystore-encrypted prefs with migration and a migration logger",
+  "reviewed": "second reader, maintainer delegated"
+ },
+ {
+  "project": "bitwarden-android",
+  "sha": "f92ae63c2c5e31ad0ddc35b3d5256d6503563dc7",
+  "labels": [
+   "body-value",
+   "file-added",
+   "in-module-code",
+   "kotlin",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "Adds precedence-resolved EffectiveSendPolicy to PolicyManager and uses it in send view models"
+ },
+ {
+  "project": "caffeine",
+  "sha": "24f85637dd8909970cac60a8f422b1ed7208f550",
+  "labels": [
+   "body-value",
+   "docs",
+   "in-module-code",
+   "test"
+  ],
+  "note": "caffeine BoundedLocalCache compute passes the caller's key to the remapping function; docs/CI tweaks"
+ },
+ {
+  "project": "caffeine",
+  "sha": "4f9a8e3c98002e964d3908d6a3ce1ec6be3eb741",
+  "labels": [
+   "body-value",
+   "docs",
+   "in-module-code",
+   "member-added",
+   "test"
+  ],
+  "note": "Window climber deepens retry ladder when density reverses a confirmed starvation probe"
+ },
+ {
+  "project": "conductor",
+  "sha": "01104010727d90153217b0ce39bc7f819c2af850",
+  "labels": [
+   "body-value",
+   "build-script",
+   "docs",
+   "in-module-code",
+   "member-added",
+   "other-module-code",
+   "resource",
+   "several-files",
+   "several-modules",
+   "test"
+  ],
+  "note": "Moves agentspan-server to agentspan module and adds conductor agent execution (start agent in WorkflowExecutor, secrets listing)"
+ },
+ {
+  "project": "conductor",
+  "sha": "ab389ddf0b3d8afc2fff2dce838870c505bac406",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "member-added",
+   "other-module-code",
+   "several-modules",
+   "signature",
+   "test"
+  ],
+  "note": "Extract shared context-injection helpers in agentspan compilers and reshape Join agent output handling"
+ },
+ {
+  "project": "detekt",
+  "sha": "6df1cf12a58c13abc30b85a3544f212857892c1b",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "kotlin",
+   "member-added",
+   "resource",
+   "test"
+  ],
+  "note": "Adds ignoreSealedClasses option to AbstractClassCanBeInterface rule and default config"
+ },
+ {
+  "project": "detekt",
+  "sha": "a972b0284d580ab6e720c525e6f59ea828fefdd9",
+  "labels": [
+   "docs",
+   "in-module-code",
+   "kotlin",
+   "test"
+  ],
+  "note": "ForbiddenImport: only KDoc and config description text changed, plus glob docs"
+ },
+ {
+  "project": "duckduckgo-android",
+  "sha": "e34b1f698dae28f72ff0558ff7b5cc36154e37dc",
+  "labels": [
+   "body-value",
+   "body-void",
+   "file-added",
+   "in-module-code",
+   "kotlin",
+   "member-added",
+   "member-deleted",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "signature",
+   "test"
+  ],
+  "note": "duckduckgo: per-tab Duck.ai entry-point session table (Room migration 62->63), repository, pixel changes"
+ },
+ {
+  "project": "duckduckgo-android",
+  "sha": "f3e4c39b2d7ca519d99dfc0f2d778808ce61e7a1",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "kotlin"
+  ],
+  "note": "Import-complete onboarding rows get check/cross icons and bold counts"
+ },
+ {
+  "project": "fineract",
+  "sha": "05138e8973ce350efc0b7ea583fe1eae814c6bf7",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "test"
+  ],
+  "note": "Adds group by clause to center collection sheet query"
+ },
+ {
+  "project": "fineract",
+  "sha": "c5cc48a1371c14d2688be32bd99462c29c4b98e4",
+  "labels": [
+   "in-module-code",
+   "member-added",
+   "other-module-code",
+   "several-modules"
+  ],
+  "note": "Add missing fields to savings product and charge template Swagger response models"
+ },
+ {
+  "project": "geode",
+  "sha": "24613d9f1a759f9c94009a75fd935b1f0f8383e3",
+  "labels": [
+   "body-value",
+   "file-added",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "Pings borrow connections via new ServerLocationExtension so the matching endpoint is reused"
+ },
+ {
+  "project": "geode",
+  "sha": "7d7a98b10355cb25985c031bfd2a67c77f1b6e43",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "test",
+   "visibility"
+  ],
+  "note": "Geode delays endpoint closing via a scheduled executor in DirectChannel instead of a new thread"
+ },
+ {
+  "project": "glide",
+  "sha": "6769e761b60e57f5db970286858ba3b1a8425073",
+  "labels": [
+   "body-value",
+   "build-script",
+   "in-module-code",
+   "member-deleted",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "test",
+   "version-catalog"
+  ],
+  "note": "glide: build tooling/Gradle upgrade with this-escape/final/serial lint cleanups; DecodeJob compareTo simplified"
+ },
+ {
+  "project": "glide",
+  "sha": "83f3b6712884a29d3a0d6af55d115f1803eaa275",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "Glide experiment to trim memory on UI_HIDDEN level"
+ },
+ {
+  "project": "grails-core",
+  "sha": "4f55b785d69f579134cafe6b66de2a747efe0028",
+  "labels": [
+   "build-script",
+   "file-deleted",
+   "in-module-code",
+   "member-deleted",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "test"
+  ],
+  "note": "Moves test-support mocks from main to testFixtures across modules",
+  "reviewed": "second reader, maintainer delegated"
+ },
+ {
+  "project": "grails-core",
+  "sha": "c6cdd02d6c6c971f44ada07a4f5f3eccac2d8dc9",
+  "labels": [
+   "build-script",
+   "docs",
+   "in-module-code",
+   "other-module-code",
+   "several-modules",
+   "test",
+   "visibility"
+  ],
+  "note": "Groovydoc link audit task, CI/docs/infra changes; MultiTransactionStatus made public"
+ },
+ {
+  "project": "grpc-java",
+  "sha": "53053bac53e9aa6e729829d377910e5895d22b00",
+  "labels": [
+   "in-module-code"
+  ],
+  "note": "MetricRecorderImpl defensively copies the sink list in its constructor"
+ },
+ {
+  "project": "grpc-java",
+  "sha": "96807d8984997ba4a0e4fd66e7b26cbc624b46f2",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "test"
+  ],
+  "note": "SPIFFE bundle loading skips keys with missing or empty x5c instead of throwing"
+ },
+ {
+  "project": "hibernate-orm",
+  "sha": "0797bf1aca5abd59f7fff716ef0d4be67a867cd8",
+  "labels": [
+   "body-value",
+   "file-added",
+   "in-module-code",
+   "several-files",
+   "test"
+  ],
+  "note": "hibernate: findMultiple honours deleted entities and proxies when loading from the second-level cache"
+ },
+ {
+  "project": "hibernate-orm",
+  "sha": "607acc11a9ff29200466e7febb7419aac842fadc",
+  "labels": [
+   "body-value",
+   "body-void",
+   "file-added",
+   "in-module-code",
+   "member-added",
+   "member-deleted",
+   "several-files",
+   "test"
+  ],
+  "note": "Hibernate extracts limit/offset JDBC parameters into JdbcParameterFactory; ColumnValueParameter gets explicit methods"
+ },
+ {
+  "project": "iceberg",
+  "sha": "0b1193cba1fac4fbe153e6b99b06bbb52e6c6b3b",
+  "labels": [
+   "body-value",
+   "in-module-code"
+  ],
+  "note": "SnapshotProducer creates manifest output file via ops.encryption().encrypt instead of EncryptingFileIO"
+ },
+ {
+  "project": "iceberg",
+  "sha": "27bfd00d67b2d00e3d4ea3e96832248bdc5107f6",
+  "labels": [
+   "body-value",
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "signature",
+   "test"
+  ],
+  "note": "Validate delete files per snapshot in MergingSnapshotProducer to allow multiple DVs per data file"
+ },
+ {
+  "project": "kafka",
+  "sha": "18cdc642d8ce7aff66f5db9b682e552c09e2c796",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "test"
+  ],
+  "note": "FileRecords.close trims before flushing so fsync covers the truncated length"
+ },
+ {
+  "project": "kafka",
+  "sha": "239a3e49909d70dfcf2bc00fab93fa7e244333fd",
+  "labels": [
+   "body-value",
+   "body-void",
+   "file-added",
+   "in-module-code",
+   "member-added",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "test"
+  ],
+  "note": "Kafka request builders throw new UnsupportedProtocolFieldException; streams and heartbeat manager detect it"
+ },
+ {
+  "project": "kafka-core",
+  "sha": "54fce551708722daae60bcec9aeecb671fea3945",
+  "labels": [
+   "in-module-code",
+   "test"
+  ],
+  "note": "kafka: dynamic metric reporter props override also sets node.id (KIP-1232)"
+ },
+ {
+  "project": "kafka-core",
+  "sha": "bb565033c2eed401928c7f524415db2b63af4574",
+  "labels": [
+   "body-value",
+   "in-module-code"
+  ],
+  "note": "Kafka ApiVersions: trace log when cluster/node id rejected"
+ },
+ {
+  "project": "kestra",
+  "sha": "18d0db973c6a4aa4357384af53dccee5ad2df765",
+  "labels": [
+   "in-module-code",
+   "several-files"
+  ],
+  "note": "Adds old-package aliases to @Plugin annotations on tasks, triggers and conditions"
+ },
+ {
+  "project": "kestra",
+  "sha": "d93761efc0311ac8cbadbaa5d67f93678221977a",
+  "labels": [
+   "body-value",
+   "build-script",
+   "in-module-code",
+   "member-added",
+   "other-module-code",
+   "resource",
+   "several-files",
+   "several-modules",
+   "signature",
+   "test"
+  ],
+  "note": "Switch Kestra execution input/resume handling from StreamingFileUpload to CompletedPart multipart bodies"
+ },
+ {
+  "project": "kotlinx-serialization",
+  "sha": "27e352d5c208229d66e83dd717891c87788d16b4",
+  "labels": [
+   "build-script",
+   "in-module-code",
+   "kotlin",
+   "several-files",
+   "visibility"
+  ],
+  "note": "Moves global compiler options into a buildSrc plugin; makes hocon API explicitly public"
+ },
+ {
+  "project": "ktlint",
+  "sha": "915d34b31d33f15bf001058ead21e76c7df7d61a",
+  "labels": [
+   "body-void",
+   "docs",
+   "file-deleted",
+   "in-module-code",
+   "kotlin",
+   "member-deleted",
+   "several-files",
+   "test"
+  ],
+  "note": "ktlint removes PackageImportSpacingRule, folds its logic into BlankLineBeforeImports"
+ },
+ {
+  "project": "ktlint",
+  "sha": "b024d79c631fdcbf640d86979c22f68c80dcd73d",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "kotlin",
+   "test"
+  ],
+  "note": "ktlint ClassSignatureRule: skip whitespace fix before super type after an EOL comment"
+ },
+ {
+  "project": "micrometer",
+  "sha": "7ae7d241e4943e2c2d2789e43ba74dac06bcce24",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "test"
+  ],
+  "note": "AbstractTimer holds pauseDetector as Object to avoid optional LatencyUtils class resolution"
+ },
+ {
+  "project": "micrometer",
+  "sha": "a4ba53986179631550d9d97c23ce88f049fdf9d8",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "test"
+  ],
+  "note": "MultiGauge.register reworked to keep per-row state and update gauges in place"
+ },
+ {
+  "project": "micronaut-core",
+  "sha": "91e1851c73b364e08cc92ffe14a477115126b3ef",
+  "labels": [
+   "build-script",
+   "constant",
+   "in-module-code",
+   "member-added",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "test"
+  ],
+  "note": "Add primitive get/set dispatch to generated bean introspection to avoid boxing"
+ },
+ {
+  "project": "micronaut-core",
+  "sha": "dd474c5124e93b1703ef32a31ef00f59a6839cc4",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "member-added",
+   "test"
+  ],
+  "note": "AnnotationValue accessors accept collections of held values; toString sorts members"
+ },
+ {
+  "project": "mockito",
+  "sha": "ee8a330da0218f32d5964acdeaa3ac39e2c6ce14",
+  "labels": [
+   "body-value",
+   "constant",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "Mockito prints objects without own toString reflectively in ValuePrinter and refEq"
+ },
+ {
+  "project": "mockito",
+  "sha": "ef9ee5529853d96028b520f84a41ffd41afc9a1d",
+  "labels": [
+   "in-module-code"
+  ],
+  "note": "mockito inline generator: exclude private and java.* package-private static methods from advice"
+ },
+ {
+  "project": "mockito-junit4",
+  "sha": "915ed6e4f98896192908ad94ea6e00cd92879d7a",
+  "labels": [
+   "body-value",
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "Mockito disabled mocks get a settings stand-in; clearMock reuses it"
+ },
+ {
+  "project": "mockito-junit4",
+  "sha": "bfab74365e91135b2f88ccb0228372a8799d9279",
+  "labels": [
+   "body-value",
+   "file-added",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "Falls back to Java 8 location factory on Android where StackWalker is buggy; adds AndroidPlatform"
+ },
+ {
+  "project": "moshi",
+  "sha": "2894cd15392eb3675bf819f4cf92bf72cbb25f36",
+  "labels": [
+   "body-value",
+   "body-void",
+   "in-module-code",
+   "kotlin",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "signature",
+   "test",
+   "version-catalog"
+  ],
+  "note": "Bump ktlint to 1.4.1 and reformat Kotlin sources accordingly"
+ },
+ {
+  "project": "moshi",
+  "sha": "e0e5e994ece2c197f765c3d9b0b2e748454dbec4",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "kotlin",
+   "other-module-code",
+   "several-modules",
+   "version-catalog"
+  ],
+  "note": "Bumps ktfmt and reformats Kotlin sources (mostly in other modules, Util.kt in moshi)"
+ },
+ {
+  "project": "okhttp",
+  "sha": "461b63d036261cf89ab69a79f2a28b344a9146eb",
+  "labels": [
+   "build-script",
+   "in-module-code",
+   "kotlin",
+   "member-deleted",
+   "several-files"
+  ],
+  "note": "okhttp-tls drops hand-written hashCode overrides; animal-sniffer ignores boxed types"
+ },
+ {
+  "project": "opentelemetry-java",
+  "sha": "78d01773cefe655aa993e118e9afc45d9f8cfc80",
+  "labels": [
+   "body-value",
+   "docs",
+   "in-module-code",
+   "member-added",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "test"
+  ],
+  "note": "otel: Sampler gains shutdown()/close(), TracerSharedState shuts sampler down; Jaeger sampler updated"
+ },
+ {
+  "project": "opentelemetry-java",
+  "sha": "b1918793697c93413fa7d05b901a03ecb50a9f95",
+  "labels": [
+   "in-module-code"
+  ],
+  "note": "SpanLimitsBuilder javadoc: limits must not be negative"
+ },
+ {
+  "project": "resilience4j",
+  "sha": "a736c0e4f8224ac5d3195c748aea7ca6aab8a915",
+  "labels": [
+   "in-module-code",
+   "other-module-code",
+   "several-modules"
+  ],
+  "note": "Fixes duplicated 'the the' typos in javadoc and comments"
+ },
+ {
+  "project": "resilience4j",
+  "sha": "d6e80d7023d621db1a982daf768c8ec1b469766f",
+  "labels": [
+   "body-value",
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "member-deleted",
+   "other-module-code",
+   "several-files",
+   "several-modules",
+   "test"
+  ],
+  "note": "Add circuit breaker config to transition to CLOSED or OPEN after half-open wait duration",
+  "reviewed": "second reader, maintainer delegated"
+ },
+ {
+  "project": "rxjava",
+  "sha": "78230e3787879d1e7a3683d4c8cb53261ab8175b",
+  "labels": [
+   "body-value",
+   "body-void",
+   "build-script",
+   "in-module-code",
+   "member-added",
+   "member-deleted",
+   "several-files",
+   "test"
+  ],
+  "note": "Disposable no longer extends AutoCloseable; adds asAutoCloseable and drops resource suppressions"
+ },
+ {
+  "project": "rxjava",
+  "sha": "cc40f641ee2e26ecc3adbb97272499c33c3ea3ec",
+  "labels": [
+   "file-added",
+   "in-module-code",
+   "member-added",
+   "several-files",
+   "test"
+  ],
+  "note": "RxJava Streamable gains blockingFirst, last, lastOrError, skip, flattenAsStreamable; docs and annotations"
+ },
+ {
+  "project": "spring-boot",
+  "sha": "682816229a8531e39783b161e3aa0b3d4db07abf",
+  "labels": [
+   "in-module-code",
+   "other-module-code",
+   "several-modules",
+   "signature"
+  ],
+  "note": "spring-boot: nullable annotation placement in PropertyMapper.to plus two other modules"
+ },
+ {
+  "project": "spring-boot",
+  "sha": "d305cc0ddc30d8d323e7bdc849a3b601d734be96",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "other-module-code",
+   "several-modules",
+   "signature"
+  ],
+  "note": "Nullable annotation on extract param; Assert.state tokenKey non-null in cloudfoundry SecurityService"
+ },
+ {
+  "project": "spring-framework",
+  "sha": "0dc2d03093549a2c472640075dc5f45b69ce7a55",
+  "labels": [
+   "in-module-code",
+   "other-module-code",
+   "several-files",
+   "several-modules"
+  ],
+  "note": "Message source locale-cache hardening, enum conversion fix, deserializer filter, misc across modules"
+ },
+ {
+  "project": "spring-framework",
+  "sha": "6e9534df4d743776463d61d8362ef42dbfadb730",
+  "labels": [
+   "body-void",
+   "constant",
+   "in-module-code",
+   "member-added",
+   "test"
+  ],
+  "note": "Bound recursion depth when stripping property paths in PropertyEditorRegistrySupport"
+ },
+ {
+  "project": "spring-petclinic",
+  "sha": "47dfd4f388f7a3cb92482e09ceb3882ce8e9c56a",
+  "labels": [
+   "in-module-code",
+   "several-files",
+   "test"
+  ],
+  "note": "Formatting only in main (javadoc blank line, trailing newline); test app tweaks"
+ },
+ {
+  "project": "spring-petclinic",
+  "sha": "50866def72014963764577e1f737cdd6b9f9f691",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "several-files",
+   "signature",
+   "test"
+  ],
+  "note": "Petclinic PetController drops ModelMap params and reworks duplicate-name checks; @NotBlank on name"
+ },
+ {
+  "project": "spring-security",
+  "sha": "29f8dd53cd6e384245436caf36bf9024e8913b26",
+  "labels": [
+   "in-module-code",
+   "member-added",
+   "test"
+  ],
+  "note": "spring-security: PrePostMethodSecurityConfiguration autowires an optional PermissionEvaluator"
+ },
+ {
+  "project": "spring-security",
+  "sha": "d1fb6141c1a060ce6a3198a02c85e53af61de71b",
+  "labels": [
+   "body-void",
+   "in-module-code",
+   "member-added",
+   "test"
+  ],
+  "note": "OAuth2ResourceServerSpec gains authenticationSuccessHandler option"
+ },
+ {
+  "project": "spring-test",
+  "sha": "8b894933aef40b8662f25ae60ea56cb136e22895",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "test"
+  ],
+  "note": "MockCookie.parse rejects empty header via Assert.hasText"
+ },
+ {
+  "project": "spring-test",
+  "sha": "e78d3df566a30786d586702fb91c6f2e79f91eba",
+  "labels": [
+   "body-value",
+   "in-module-code",
+   "test"
+  ],
+  "note": "MockCookie.parse validates null rather than blank header"
+ }
+]

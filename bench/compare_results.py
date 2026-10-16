@@ -22,6 +22,11 @@ def _rows(data):
 
 
 def compare(a, b):
+    # Two shape sets are two populations: their rows are not the same sample.
+    if (a.get("target_shapes") or "default") != (b.get("target_shapes") or "default"):
+        return {"agree": False, "flagged": [], "rows": 0,
+                "differences": [f"drawn from the {a.get('target_shapes')} and the "
+                                f"{b.get('target_shapes')} shape sets, which are not one sample"]}
     left, right = _rows(a), _rows(b)
     differences, flagged = [], []
     for key in sorted(set(left) | set(right), key=str):

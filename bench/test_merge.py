@@ -218,6 +218,37 @@ def case_the_sweep_says_whether_the_isolated_arm_ran():
     return 0 if summary.get("isolated_arm") == "not run" else fail(f"summary: {summary}")
 
 
+def case_a_named_set_merges_into_its_own_directory_and_refuses_another_sets_shard():
+    import tempfile
+    failures = 0
+    rows = [_row(i, narrowed=True, broke=True) for i in range(2)]
+    named = {"target_shapes": "recall-arm"}
+    other = {**_shard(rows[1:], 2, 2), **named, "target_shapes": "default"}
+    why = _refused(lambda: merge.merge_project({**_recording(), **named},
+                                               {**_accepted(2, [[0, 1], [1, 2]]), **named},
+                                               [{**_shard(rows[:1], 1, 2), **named}, other]))
+    if not why or "target_shapes" not in why:
+        failures += fail(f"a shard drawn from another set was merged: {why}")
+    with tempfile.TemporaryDirectory() as tmp:
+        artifacts = os.path.join(tmp, "art", "p")
+        os.makedirs(artifacts)
+        for name, data in (("recording.json", {**_recording(), **named, "project": "p"}),
+                           ("accepted.json", {**_accepted(2, [[0, 2]]), **named, "project": "p"}),
+                           ("shard-1-of-1.json", {**_shard(rows, 1, 1), **named, "project": "p"})):
+            with open(os.path.join(artifacts, name), "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+        out = os.path.join(tmp, "results")
+        code = merge.main([os.path.join(tmp, "art"), "--planned", "p", "--arm", "full", "--out", out])
+        if code != 0 or not os.path.isfile(os.path.join(out, "recall-arm", "p.json")):
+            failures += fail(f"a named set's merge did not land in its own directory (exit {code})")
+        if os.path.exists(os.path.join(out, "p.json")):
+            failures += fail("a named set's merge wrote the default set's file")
+        if not os.path.isfile(os.path.join(out, "recall-arm", "sweep.json")) or \
+                os.path.exists(os.path.join(out, "sweep.json")):
+            failures += fail("a named set's sweep summary is not beside its files")
+    return failures
+
+
 def test_merge():
     failures = 0
     for name, case in sorted(globals().items()):
