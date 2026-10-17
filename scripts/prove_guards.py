@@ -177,6 +177,8 @@ TARGET_ORDERING = "bench/target_ordering.py"
 MUTATIONS_SRC = "bench/mutations.py"
 POOL_MUTATIONS = "bench/pool_mutations.py"
 FORCING_MUTATIONS = "bench/forcing_mutations.py"
+FAMILY_ORDER = "bench/family_order.py"
+REPLAY_ORDER = "bench/replay_order.py"
 SWEEP_DATA = "bench/sweep_data.py"
 OWN_PROCESSES = "bench/own_processes.py"
 PREFLIGHT = "bench/sweep_preflight.py"
@@ -254,6 +256,13 @@ def revert_suite():
     """The revert set's checks: eligibility, the reverse patches and their variants, the strata
     and the draw, over fixture repositories and javac."""
     return _python_checks("bench/test_revert.py")
+
+
+def order_suite():
+    """`pool/v1`'s draw order and per-family stops, and the learned order's replay, over fixture
+    rows, results files and `git init`s in temporary directories."""
+    return [line for script in ("bench/test_family_order.py", "bench/test_replay_order.py")
+            for line in _python_checks(script)]
 
 
 def controls_suite():
@@ -545,6 +554,8 @@ SUITES = [
     ("replay", replay_suite, 3),
     # Pure Python over temp files, so it is the cheapest suite here after `sweep`.
     ("mutations", mutations_suite, 0.5),
+    # Pure Python; three `git init`s in temporary directories, and the import of `run.py`.
+    ("order", order_suite, 3),
     # Pure Python over one fixture repository, with javac for the gate's stand-in.
     ("revert", revert_suite, 10.5),
     ("decoder", decoder_suite, 5),
@@ -569,7 +580,8 @@ SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
 # `functional` and `agent` are what full mode is for: they are most of the harness's time, and a
 # change to the agent or plugin sources runs full mode anyway. Treat the summary line the script
 # PRINTS as the authority on what a mode covers.
-FAST_SUITES = {"sweep", "sharding", "scan", "controls", "preflight", "corpus", "mutations", "revert",
+FAST_SUITES = {"sweep", "sharding", "scan", "controls", "preflight", "corpus", "mutations", "order",
+               "revert",
                "decoder",
                "jdk identity", "unit", "qualify", "config cost", "configuration guards"}
 
@@ -3135,8 +3147,8 @@ MUTATIONS = [
      '            row.setdefault("kind", kind)\n', "            pass\n", python_suite,
      "a stalled row was not stamped"),
     ("the merge keeps rejections drawn past the narrowed target", "bench/merge.py",
-     '        met = [entry for entry in accepted["rejected"] if entry[3] < len(kept)]',
-     '        met = [entry for entry in accepted["rejected"] if True]', sharding_suite,
+     "                   else entry[3] < len(kept))]",
+     "                   else True)]", sharding_suite,
      "rejections after truncation"),
     ("the scan skips a file whose name git quotes", "bench/scan_private.py",
      '        hits += scan_added(sha, git(root, "-c", "core.quotePath=false", "show", "--format=",',
@@ -3272,6 +3284,65 @@ MUTATIONS = [
     ("the forcing set runs on the reduced arm", "bench/sweep_corpus.py",
      '    if args.set == run.FORCING_SET and args.arm == "reduced":', "    if False:",
      sweep_suite, "forcing/v1 ran on the reduced arm"),
+    # `pool/v1`'s family round-robin, its per-family stops and the learned order.
+    ("the draw reads whether a row missed", FAMILY_ORDER,
+     '    reached = sum(1 for row in findings if row.get("kind") == kind and counts_toward(row))',
+     '    reached = sum(1 for row in findings if row.get("kind") == kind and counts_toward(row)\n'
+     '                  and not row.get("missed"))', order_suite,
+     "flipping every row's missed set changed the draw"),
+    ("a family gets a second draw before every family got one", FAMILY_ORDER,
+     "    families = sorted(queues, key=lambda family: _rank(seed, family))",
+     "    return [t for f in sorted(queues, key=lambda f: _rank(seed, f)) for t in queues[f]]",
+     order_suite, "not one of each family"),
+    ("a family stops at the project's target, not its own", FAMILY_ORDER,
+     '    reached = sum(1 for row in findings if row.get("kind") == kind and counts_toward(row))',
+     "    reached = sum(1 for row in findings if counts_toward(row))", order_suite,
+     "stopped with body instead of at its own cap"),
+    ("a family's row cap counts every family's rows", FAMILY_ORDER,
+     "    if family_rows(kind, findings, recorded) >= cap:",
+     "    if len(findings) + len(recorded) >= cap:", order_suite,
+     "did not stop at the cap of 3"),
+    ("the learned order ranks an archived target", FAMILY_ORDER,
+     "    fresh = [t for t in ordered if t not in archived]",
+     "    fresh, archived = list(ordered), set()", order_suite,
+     "an archived target was ranked"),
+    ("the learned order is stamped as the round-robin", FAMILY_ORDER,
+     '    return f"{ORDERING}+{LEARNED}" if adopted else ORDERING', "    return ORDERING",
+     order_suite, "the learned order is stamped as the round-robin"),
+    ("a pool merge stops every family at the project's target", "bench/merge.py",
+     '    pool = recording.get("target_shapes") == run.POOL_SHAPES',
+     "    pool = False", order_suite, "the merge kept"),
+    ("a pool merge keeps a rejection drawn after its family's last row", "bench/merge.py",
+     "               if (entry[3] <= stopped_at.get(entry[1], len(ordered)) if pool",
+     "               if (entry[3] < stopped_at.get(entry[1], len(ordered)) if pool", order_suite,
+     "a rejection drawn after its family stopped was kept, or one before dropped"),
+    ("a pool merge keeps the recording job's empty family counters", "bench/merge.py",
+     "    if pool and stops is not None:", "    if False:", order_suite,
+     "the merged file's family counters are not a single job's"),
+    ("a recording job's family cap ignores the targets it accepted", FAMILY_ORDER,
+     "            + sum(1 for entry in recorded if entry[1] == kind))", "            )",
+     order_suite, "a family with its cap of targets accepted still draws"),
+    ("the accepted list does not carry the pool's family target", PY_SRC,
+     '                   "family_target": (RUN_STAMPS.get("family_order") or {}).get("target"),',
+     '                   "family_target": None,', order_suite,
+     "the accepted list has family_target"),
+    ("a sharded pool run takes a timing cap", PY_SRC,
+     "    if sharding and args.timing_cap is not None and args.shapes == POOL_SHAPES:",
+     "    if False:", python_suite, "with --timing-cap was not refused"),
+    ("a sharded pool plan takes a timing cap", "bench/sweep_corpus.py",
+     "        if args.set == run.POOL_SHAPES and timed:", "        if False:", sweep_suite,
+     "pool/v1 was planned with a timing cap on a sharded run"),
+    ("the order replay reads whether a row missed", REPLAY_ORDER,
+     "    return run.counts_toward_narrowed_target(row)",
+     '    return run.counts_toward_narrowed_target(row) and not row.get("missed")', order_suite,
+     "every row's missed set flipped changed the comparison"),
+    ("a project losing its last miss-possible row does not block adoption", REPLAY_ORDER,
+     '                             and not result["projects_losing"])', ")", order_suite,
+     "a family where a project loses its last such row was adopted"),
+    ("the pool's draw order is not in its grammar digest", PY_SRC,
+     '{POOL_SHAPES: ("bench/pool_mutations.py", "bench/family_order.py",',
+     '{POOL_SHAPES: ("bench/pool_mutations.py",', python_suite,
+     "a change to family_order.py left the pool's grammar digest alone"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
@@ -3284,6 +3355,7 @@ SUITE_TESTS = {
     "corpus": ("bench/test_corpus_state.py",),
     "replay": ("bench/test_replay_decisions.py", "bench/Replay.java"),
     "mutations": ("bench/test_mutations.py",),
+    "order": ("bench/test_family_order.py", "bench/test_replay_order.py"),
     "revert": ("bench/test_revert.py",),
     "decoder": ("plugin/src/test/",),
     # The agent `test` task puts the boot fixture on the boot class path, so it proves agent guards.

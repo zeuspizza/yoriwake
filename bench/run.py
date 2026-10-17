@@ -108,6 +108,9 @@ SHAPE_SETS = SHAPE_SETS + (REVERT_SET,)
 import pool_mutations  # noqa: E402
 from pool_mutations import POOL_SHAPES  # noqa: E402
 SHAPE_SETS = SHAPE_SETS + (POOL_SHAPES,)
+# `pool/v1`'s draw order and per-family stops, digested with that set only: see `family_order`.
+import family_order  # noqa: E402
+
 # `forcing/v1` likewise: see `forcing_mutations`.
 import forcing_mutations  # noqa: E402
 from forcing_mutations import FORCING_SET  # noqa: E402
@@ -2008,7 +2011,9 @@ REVERT_GRAMMAR_FILES = ("bench/revert.py", "bench/census.py")
 
 # A named set's own generators, digested with that set only, so adding a set leaves the default
 # set's digest, and every default results file's resume, where they were.
-SET_GRAMMAR_FILES = {POOL_SHAPES: ("bench/pool_mutations.py",),
+SET_GRAMMAR_FILES = {POOL_SHAPES: ("bench/pool_mutations.py", "bench/family_order.py",
+                                   # Absent until a replay adopts the learned order for a family.
+                                   "bench/order/learned-v1.json"),
                      # With the files its families reuse: `throw-entry`'s grammar, the revert
                      # set's patches, and the measured module the census names.
                      FORCING_SET: ("bench/forcing_mutations.py", "bench/pool_mutations.py",
@@ -3926,6 +3931,8 @@ def write_accepted(path, project, grammar, targets, rejected, args):
                    "grammar_digest": grammar,
                    "fixture_digest": RUN_STAMPS.get("fixture_digest"), "sweep_limit": args.limit,
                    "narrowed_target": args.narrowed_target, "timing_cap": args.timing_cap,
+                   # `pool/v1`'s per-family target, which `merge.py` truncates each family by.
+                   "family_target": (RUN_STAMPS.get("family_order") or {}).get("target"),
                    "recall_only": args.recall_only, "ground_truth": args.ground_truth,
                    "targets": targets, "rejected": rejected}, handle, indent=1)
 
@@ -3962,6 +3969,10 @@ def write_results(out_path, project, module, capture_seconds, baseline_seconds, 
     # one is whole -- the same staging `snapshot_for_replay` and the plugin's `AtomicWrite` use.
     if RUN_STAMPS.get("revert") is not None:
         stamp_revert(RUN_STAMPS["revert"], findings, RUN_STAMPS.get("narrowed_target"))
+    stops = RUN_STAMPS.get("family_order")
+    if stops is not None:
+        stops["families"] = family_order.counters(findings, stops["cap"], stops["target"],
+                                                  counts_toward_narrowed_target)
     staging = out_path + ".writing"
     with open(staging, "w", encoding="utf-8") as handle:
         json.dump({
@@ -3980,7 +3991,8 @@ def write_results(out_path, project, module, capture_seconds, baseline_seconds, 
             #
             # NULL on a history replay, which draws no targets at all -- it runs the project's own
             # commits. Recording an ordering there would describe a sampling decision nobody made.
-            "target_ordering": ORDERING if target_seed is not None else None,
+            "target_ordering": ((RUN_STAMPS.get("family_order") or {}).get("ordering") or ORDERING
+                                if target_seed is not None else None),
             "target_seed": target_seed,
             # WHICH GRAMMAR DREW THESE TARGETS. `default` is the population every published corpus
             # figure came from; anything else is a named arm and its rows may not be compared with
@@ -4271,6 +4283,13 @@ def main():
     if sharding and (args.only_target or args.pair_with or args.replay or args.control
                      or args.isolated_capture):
         parser.error("a sharded sweep is a shared-arm mutation sweep")
+    # A SHARDED `pool/v1` RUN CANNOT TIME THE ROWS A SINGLE JOB WOULD. The timing cap times the first
+    # rows by draw position, a shard counts that position on the recording job's whole list, and a
+    # single job skips the targets of a family that already stopped, so the two would time
+    # different rows.
+    if sharding and args.timing_cap is not None and args.shapes == POOL_SHAPES:
+        parser.error(f"--timing-cap times rows by draw position, which a sharded {POOL_SHAPES} "
+                     f"run counts differently from a single job; run it unsharded or recall-only")
     if args.shard and args.recapture:
         parser.error("a shard measures against the recording job's map; --recapture would replace it")
     if args.accepted_out and args.shard:
@@ -4355,6 +4374,8 @@ def main():
     rejected_mutations = []
     revert_set = args.shapes == REVERT_SET
     pool = args.shapes == POOL_SHAPES
+    # `pool/v1` stops per family: at `--narrowed-target` when given, else at its own target.
+    family_target = (args.narrowed_target or family_order.FAMILY_TARGET) if pool else None
     forcing = args.shapes == FORCING_SET
     # `[target, reason]` per dependency revert the gate rejected, carried across resumes likewise.
     forcing_rejections = []
@@ -4997,6 +5018,21 @@ def main():
         # sweep reports zero missed failures out of zero induced ones -- which is not a safety result.
         covered = covered_classes(map_dir)
         ordered, provenance = (pool_mutations.by_coverage if pool else by_coverage)(pending, covered)
+        if pool:
+            # FAMILIES TAKE TURNS, so every family gets its first draw before any gets a second,
+            # each family's targets in the order above. A family stops at its own target or cap.
+            model = family_order.load_model()
+            sizes = ({t[0]: os.path.getsize(os.path.join(checkout, t[0])) for t in ordered}
+                     if model else None)
+            ordered = family_order.draw_order(ordered, args.target_seed, reach, sizes, model,
+                                              project["name"])
+            RUN_STAMPS["family_order"] = {
+                "ordering": family_order.ordering_name(model),
+                "learned": sorted((model or {}).get("adopted") or []),
+                "target": family_target, "cap": args.limit}
+            print(f"  {RUN_STAMPS['family_order']['ordering']}: each family stops at "
+                  f"{family_target} row(s) narrowed and induced, or at {args.limit} row(s)",
+                  flush=True)
         if covered:
             counts = Counter(provenance.values())
             print(f"  {len(covered)} classes covered by the map; targets: "
@@ -5135,6 +5171,11 @@ def main():
                 if not revert.should_draw(stratum_of.get(f"revert::{rel_path}"), findings,
                                           stratum_of, args.limit, args.narrowed_target,
                                           counts_toward_narrowed_target):
+                    continue
+            # A POOL FAMILY STOPS AT ITS OWN TARGET OR ROW CAP; the others go on drawing.
+            elif pool and not rerunning and not shard:
+                if family_order.family_stop(kind, findings, recorded, args.limit, family_target,
+                                            counts_toward_narrowed_target):
                     continue
             elif not rerunning and not shard and accepted >= args.limit:
                 break
@@ -5288,9 +5329,9 @@ def main():
                 # A shard measures a list already drawn, and has no limit to bound the rest by.
                 if pool and not rerunning and not shard and refused_whatever_follows(
                         sum(1 for key in rejected_mutations if key[1] == kind),
-                        sum(1 for row in findings if row.get("kind") == kind)
-                        + sum(1 for entry in recorded if entry[1] == kind),
-                        args.limit - accepted):
+                        family_order.family_rows(kind, findings, recorded),
+                        # The family's own cap bounds what it can still draw.
+                        args.limit - family_order.family_rows(kind, findings, recorded)):
                     later = [t for t in items[position + 1:] if t[1] == kind]
                     items[position + 1:] = [t for t in items[position + 1:] if t[1] != kind]
                     abandoned[kind] += len(later)
@@ -5348,7 +5389,8 @@ def main():
                                     selected_log)
             if invalid:
                 findings.append({**invalid, "kind": kind, "index": index, "sweep_limit": args.limit,
-                                 "narrowed_target": args.narrowed_target})
+                                 "narrowed_target": args.narrowed_target,
+                                 **({"family_target": family_target} if pool else {})})
                 continue
             # The set itself lives beside the arm's log rather than in the results file: on a
             # 3,700-test suite it is hundreds of kilobytes, and a results file that cannot be read as a
@@ -5634,6 +5676,8 @@ def main():
                 "sweep_limit": args.limit,
                 # AND THE STOPPING RULE THAT ENDED THE DRAW, per row for the same reason; None = none.
                 "narrowed_target": args.narrowed_target,
+                # `pool/v1`'s per-family target; its per-family cap is `sweep_limit`.
+                **({"family_target": family_target} if pool else {}),
                 "status": status,
                 # Whether the map knew this class before the mutation ran. An inert row means something
                 # different for each: "uncovered" is the expected outcome and says the absence rule was

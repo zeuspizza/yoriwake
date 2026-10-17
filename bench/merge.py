@@ -12,8 +12,9 @@ where a miss was possible.
 
 The narrowed target stops a single job once enough of its rows narrowed, which a list fixed before
 measuring cannot know. So shards measure the whole list, and the merge keeps rows in draw order up
-to the one that reaches the target: the sample a single job would have drawn. The rows past it are
-counted in `rows_past_target`.
+to the one that reaches the target: the sample a single job would have drawn. `pool/v1` stops per
+family, so there each family's rows are kept up to the one that reaches that family's target. The
+rows past it are counted in `rows_past_target`.
 
     python3 bench/merge.py --arm full --planned demo okio --out bench/results DIR
 
@@ -28,6 +29,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import corpus_state  # noqa: E402
+import family_order  # noqa: E402
 import run  # noqa: E402
 from sweep_corpus import REDUCED_ARM  # noqa: E402
 
@@ -94,15 +96,31 @@ def merge_project(recording, accepted, shards):
 
     kept = []
     ordered = sorted(rows.values(), key=lambda row: position[_key(row)])
-    for row in ordered:
-        kept.append(row)
-        if run.narrowed_target_reached(kept, accepted.get("narrowed_target")):
-            break
+    pool = recording.get("target_shapes") == run.POOL_SHAPES
+    if pool:
+        # `pool/v1` stops per family: a family's rows after the one that reached its target go,
+        # the other families' stay.
+        kept, stopped_at = family_order.kept_in_draw_order(
+            ordered, accepted.get("family_target"), run.counts_toward_narrowed_target)
+    else:
+        for row in ordered:
+            kept.append(row)
+            if run.narrowed_target_reached(kept, accepted.get("narrowed_target")):
+                break
     merged = {key: value for key, value in recording.items() if key != "shard"}
     merged.update(mutations=kept, shards=count, rows_past_target=len(ordered) - len(kept))
-    # The compile gate's rejections a single job would have met: those drawn before its last row.
+    # The recording job measured no row, so its per-family counters are empty; a single job's are
+    # counted over the rows it kept.
+    stops = merged.get("family_order")
+    if pool and stops is not None:
+        merged["family_order"] = {**stops, "families": family_order.counters(
+            kept, stops["cap"], stops["target"], run.counts_toward_narrowed_target)}
+    # The compile gate's rejections a single job would have met: those drawn before its last row,
+    # or for `pool/v1`, before the row that stopped their family.
     if "rejected" in accepted:
-        met = [entry for entry in accepted["rejected"] if entry[3] < len(kept)]
+        met = [entry for entry in accepted["rejected"]
+               if (entry[3] <= stopped_at.get(entry[1], len(ordered)) if pool
+                   else entry[3] < len(kept))]
         merged.update(rejected_targets=[label for label, _, _, _ in met] or None,
                       rejected_mutations=[[label, kind, index] for label, kind, index, _ in met]
                       or None,

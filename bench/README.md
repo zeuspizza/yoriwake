@@ -84,6 +84,8 @@ reading a stack trace needs the logs of the machine that ran the sweep.
   reports the miss.
 - `revert.py --dry-run`: the compile gate alone over every commit `--shapes revert/v1` could
   revert, and how many survive it per census label.
+- `replay_order.py [RESULTS_DIR ...]`: whether a learned order inside `pool/v1`'s families would
+  have drawn more rows where a miss was possible than `reach-stratified/v1`, from results files.
 - `replay_decisions.py`: asks the current selector every recall question a sweep already paid
   for, in seconds and offline.
 - `config_cost.py`: what applying the plugin costs a project before it runs a test.

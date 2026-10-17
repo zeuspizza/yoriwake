@@ -123,7 +123,16 @@ failures are the ground truth.
   sweep, and once no row the limit still allows could bring it under, it is not drawn again. Its
   generators are digested with this set only, so the default set's `grammar_digest` does not move.
   The demo fixtures carry each shape with a test that fails when it breaks: Java on `demo`, Kotlin
-  on `demo-kotlin`.
+  on `demo-kotlin`. Its order is `family-round-robin/v1`: every family (each shape) takes a turn,
+  in a seeded order, so each gets its first edit before any gets a second, and inside a family the
+  edits keep the reach-stratified order. Each family stops on its own, at 4 edits that narrowed and
+  induced a failure or at the project's cap (`sweep_limit`) in edits of that family; both are
+  stamped on every row. A learned order inside a family's strata, scored from features alone
+  (stratum, covering-test count, file size) and fitted on earlier sweeps' rows, is used for a
+  family only when `bench/replay_order.py` shows it drawing more rows where a miss was possible in
+  a leave-one-project-out replay, with no project losing its last such row. Over the 0.1.0 sweep's
+  files no family passed (`body`, `constant`, `schema`, `renamed`, `aliased`: equal counts in the
+  first four edits of every family), so the round-robin draws alone.
 - **`forcing/v1`.** Changes yoriwake runs every test for today, because their paths alone decide
   it: `resource-value` (one value edited in a `.properties`, `.yml`, `.json` or `.xml` file under
   the measured module's `src/main/resources`), `services` (one provider line removed from a

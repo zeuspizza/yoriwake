@@ -783,6 +783,18 @@ def case_the_forcing_set_refuses_the_reduced_arm():
     return fail("forcing/v1 ran on the reduced arm")
 
 
+def case_the_pool_set_refuses_a_sharded_plan_with_a_timing_cap():
+    """The workflow shards every project, and a sharded pool run cannot time a single job's rows."""
+    try:
+        sweep_corpus.main(["--set", sweep_corpus.run.POOL_SHAPES, "--arm", "reduced",
+                           "--print-commands"])
+    except SystemExit as refusal:
+        if "grpc-java" in str(refusal) and "timing cap" in str(refusal):
+            return 0
+        return fail(f"pool/v1's plan refused for another reason: {refusal}")
+    return fail("pool/v1 was planned with a timing cap on a sharded run")
+
+
 def case_the_workflow_reads_each_project_s_flags_from_the_sweep_itself():
     import contextlib  # noqa: PLC0415
     import io  # noqa: PLC0415

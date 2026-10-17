@@ -691,6 +691,13 @@ def main(argv=None):
             f"projects; refusing to report an empty sweep as a finished one"
         )
     if args.print_commands:
+        # THE WORKFLOW SHARDS EVERY PROJECT, and `run.py` refuses a sharded `pool/v1` run with a
+        # timing cap: refused here, before any project is recorded.
+        timed = [n for n in names if n in TIMING_SUBSET]
+        if args.set == run.POOL_SHAPES and timed:
+            raise SystemExit(f"{run.POOL_SHAPES} cannot be sharded with a timing cap, and "
+                             f"{', '.join(timed)} would get one; leave them out with --skip or "
+                             f"sweep them unsharded")
         # THE WORKFLOW'S PLAN, from the rules above rather than a copy of them: each project's
         # `run.py` flags, without this machine's paths.
         print(json.dumps([
