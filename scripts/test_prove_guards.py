@@ -267,6 +267,25 @@ def case_cold_worker_trees_compile_one_at_a_time_before_the_guards():
     return failures
 
 
+def case_a_tree_that_does_not_compile_names_the_compiler_errors():
+    """The refusal used to carry only Gradle's last line, which names no file."""
+    failures = 0
+    kotlin = ("e: file:///w/plugin/src/functionalTest/kotlin/A.kt:12:5 Unresolved reference 'x'.\n"
+              "\nFAILURE: Build failed with an exception.\n\n* What went wrong:\n"
+              "Execution failed for task ':plugin:compileFunctionalTestKotlin'.\n"
+              "> Compilation error. See log for more details\n\nBUILD FAILED in 1m 3s\n")
+    java = "/w/agent/src/main/java/B.java:7: error: cannot find symbol\nBUILD FAILED in 9s\n"
+    plain = "FAILURE: Build failed with an exception.\n\n* What went wrong:\nTask 'x' not found.\n\nBUILD FAILED in 2s\n"
+    for output, expected in ((kotlin, "A.kt:12:5 Unresolved reference"), (java, "B.java:7: error: cannot find symbol"),
+                             (plain, "Task 'x' not found.")):
+        found = pg.compile_errors(output)
+        if not any(expected in line for line in found):
+            failures += fail(f"expected a line with {expected!r}, got {found}")
+    if pg.compile_errors("e: one\n" * 30) != ["e: one"] * 10:
+        failures += fail("the error lines are not capped at ten")
+    return failures
+
+
 def case_every_case_in_this_file_is_registered():
     import re
     source = open(__file__, encoding="utf-8").read()
@@ -396,7 +415,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_functional_guards_pair_by_class_and_configuration_guards_run_alone,
          case_guard_names_its_own_guards_and_refuses_an_unknown_one,
          case_a_removed_or_weakened_guard_is_named_against_the_base,
-         case_cold_worker_trees_compile_one_at_a_time_before_the_guards)
+         case_cold_worker_trees_compile_one_at_a_time_before_the_guards,
+         case_a_tree_that_does_not_compile_names_the_compiler_errors)
 
 
 def test_prove_guards():
