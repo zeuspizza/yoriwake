@@ -83,6 +83,18 @@ def case_sweeps_drawn_from_two_shape_sets_are_not_compared():
     return failures
 
 
+def case_sweeps_of_two_fixture_trees_are_not_compared():
+    a = {**_file(_row(0)), "fixture_digest": "aaa"}
+    b = {**_file(_row(0)), "fixture_digest": "bbb"}
+    failures = 0
+    report = compare_results.compare(a, b)
+    if report["agree"] or not any("fixture trees" in line for line in report["differences"]):
+        failures += fail(f"two fixture trees were compared row for row: {report}")
+    if not compare_results.compare(_file(_row(0)), _file(_row(0)))["agree"]:
+        failures += fail("two files with no fixture stamp, as a corpus project's are, disagreed")
+    return failures
+
+
 def test_compare_results():
     failures = 0
     for name, case in sorted(globals().items()):

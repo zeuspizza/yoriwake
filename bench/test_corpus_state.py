@@ -334,6 +334,42 @@ def case_a_fixture_is_in_no_denominator_and_the_key_is_what_puts_it_there():
     return failed
 
 
+def case_a_fixture_measured_on_another_tree_is_a_stale_stamp():
+    """A fixture runs at `commit = "local"`, so its tree's digest is what dates its rows."""
+    failed = 0
+    project = {"fixture": True, "copy_of": "samples/fx"}
+
+    def fixture_repo(root):
+        repo = os.path.join(root, "repo")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        git(repo, "config", "user.email", "t@e")
+        git(repo, "config", "user.name", "t")
+        write(repo, "plugin/src/main/Selector.kt", "// v1\n")
+        write(repo, "samples/fx/src/A.java", "class A {}\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "selector and fixture")
+        return repo
+
+    with tempfile.TemporaryDirectory() as root:
+        current = run.fixture_digest(project, fixture_repo(root))
+        entry, _, _ = verdict_of(root, "p", [narrowed_row()], project=project,
+                                 header={"fixture_digest": current})
+        if entry["verdict"] == cs.STALE_STAMP:
+            print(f"  FAIL: a fixture measured on its current tree read stale: {entry['reason']}")
+            failed += 1
+    for stored, what in (("0" * 12, "another tree"), (None, "no fixture stamp")):
+        with tempfile.TemporaryDirectory() as root:
+            fixture_repo(root)
+            entry, _, _ = verdict_of(root, "p", [narrowed_row()], project=project,
+                                     header={"fixture_digest": stored})
+            if entry["verdict"] != cs.STALE_STAMP or "fixture tree" not in (entry["reason"] or ""):
+                print(f"  FAIL: a fixture file with {what} read {entry['verdict']}: "
+                      f"{entry['reason']}")
+                failed += 1
+    return failed
+
+
 def case_an_unstable_guest_leaves_the_denominator_and_says_why():
     """kafka-core: a guest whose own tests fail unmutated cannot evidence recall.
 
@@ -602,6 +638,28 @@ def case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it():
     return failed
 
 
+def case_a_pool_file_is_refused_per_family_as_assert_recall_reads_it():
+    """`pool/v1`'s ceiling is per family: one family above it is not clean however low the
+    project's total."""
+    failed = 0
+    pool = {"target_shapes": run.POOL_SHAPES}
+    # 5 of 15 throw-entry draws rejected: 33% of the family, 5 of 45 (11%) of the project.
+    rows = ([narrowed_row(kind="throw-entry") for _ in range(10)] +
+            [narrowed_row(kind="void-return") for _ in range(30)])
+    rejections = [[f"T{i}.java::throw-entry::f", "throw-entry", 0] for i in range(5)]
+    with tempfile.TemporaryDirectory() as root:
+        entry, repo, _ = verdict_of(root, "p", rows, mutations_rejected=5,
+                                    header={**pool, "rejected_mutations": rejections})
+        entry = cs.examine("p", os.path.join(root, "results"), cs.qualification(
+            table(root, ["QUALIFIED  p  module=m blockers=none tests=10"])), {}, repo,
+            run.POOL_SHAPES)
+        if entry["verdict"] != cs.DIRTY or "throw-entry" not in (entry["reason"] or ""):
+            print(f"  FAIL: a refused family under a low project total read {entry['verdict']}: "
+                  f"{entry['reason']}")
+            failed += 1
+    return failed
+
+
 def case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere():
     """A project stopped as setup-forced is a failure with its reason, never clean."""
     failed = 0
@@ -659,6 +717,7 @@ def case_a_results_directory_holds_one_shape_set_and_no_history_rows():
 CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
          case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it,
          case_a_results_directory_holds_one_shape_set_and_no_history_rows,
+         case_a_pool_file_is_refused_per_family_as_assert_recall_reads_it,
          case_a_file_holding_control_rows_is_refused,
          case_a_file_assert_recall_refuses_is_never_clean,
          case_the_two_subtracted_counts_reach_the_verdict,
@@ -681,6 +740,7 @@ CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
          case_a_file_whose_depth_is_unrecorded_is_not_clean,
          case_a_resumed_file_reports_its_depths_rather_than_one_of_them,
          case_a_fixture_is_in_no_denominator_and_the_key_is_what_puts_it_there,
+         case_a_fixture_measured_on_another_tree_is_a_stale_stamp,
          case_an_unstable_guest_leaves_the_denominator_and_says_why,
          case_the_composition_counts_only_rows_where_a_miss_was_possible,
          case_a_blocked_project_is_cannot_answer_rather_than_absent,

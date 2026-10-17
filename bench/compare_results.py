@@ -27,6 +27,12 @@ def compare(a, b):
         return {"agree": False, "flagged": [], "rows": 0,
                 "differences": [f"drawn from the {a.get('target_shapes')} and the "
                                 f"{b.get('target_shapes')} shape sets, which are not one sample"]}
+    # And two trees of one fixture are two suites: a row can agree on its target and still have run
+    # different tests.
+    if a.get("fixture_digest") != b.get("fixture_digest"):
+        return {"agree": False, "flagged": [], "rows": 0,
+                "differences": [f"measured on fixture trees {a.get('fixture_digest')} and "
+                                f"{b.get('fixture_digest')}, which are not one sample"]}
     left, right = _rows(a), _rows(b)
     differences, flagged = [], []
     for key in sorted(set(left) | set(right), key=str):

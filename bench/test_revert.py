@@ -573,7 +573,7 @@ def case_the_set_has_its_own_results_path_and_grammar():
     args = run.argument_parser().parse_args(["p.toml", "--shapes", "revert/v1"])
     if args.shapes != "revert/v1":
         failures += fail("--shapes revert/v1 is not accepted")
-    if run.grammar_digest(files=run.REVERT_GRAMMAR_FILES) == run.grammar_digest():
+    if run.grammar_digest(shapes=run.REVERT_SET) == run.grammar_digest():
         failures += fail("the revert set's grammar digest is the default's")
     return failures
 

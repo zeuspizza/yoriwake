@@ -175,6 +175,7 @@ ABSENCE_EVIDENCE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/c
 PY_ISOLATION = "bench/isolation.py"
 TARGET_ORDERING = "bench/target_ordering.py"
 MUTATIONS_SRC = "bench/mutations.py"
+POOL_MUTATIONS = "bench/pool_mutations.py"
 SWEEP_DATA = "bench/sweep_data.py"
 OWN_PROCESSES = "bench/own_processes.py"
 PREFLIGHT = "bench/sweep_preflight.py"
@@ -896,6 +897,24 @@ MUTATIONS = [
      '    r"(?m)^(?P<head>[^\\S\\n]*(?:public|private|internal)?\\s*const\\s+val\\s+\\w+(?:\\s*:\\s*\\w+)?\\s*=\\s*)"\n    r"(?P<value>\\"(?:\\\\.|[^\\"\\\\])*\\"|-?(?:0[xXbB][0-9a-fA-F_]+|\\d[\\d_]*)[lLuUfFdD]?)"',
      '    r"(?m)^(?P<head>[^\\S\\n]*(?:public|private|internal)?\\s*const\\s+val\\s+\\w+(?:\\s*:\\s*\\w+)?\\s*=\\s*)"\n    r"(?P<value>\\"(?:\\\\.|[^\\"\\\\])*\\"|-?\\d+)"', mutations_suite,
      "no fragment of the binary literal survives"),
+    # The `pool/v1` generators, one guard each. Each reintroduces a defect class the default
+    # generators already paid for, or one that would edit something the family excludes.
+    ("the void-return edit goes braceless", POOL_MUTATIONS,
+     '    _write(path, _entry(text, match, ("if (true) {", "    " + statement, "}")))',
+     '    _write(path, _entry(text, match, ("if (true) " + statement,)))', mutations_suite,
+     "one return at its entry, braced on its own lines"),
+    ("a constructor is drawn as a method for throw-entry", POOL_MUTATIONS,
+     'if m.group("type") not in _JAVA_NOT_A_TYPE and m.group("name") not in _JAVA_NOT_A_TYPE]',
+     'if True]', mutations_suite,
+     "Shapes.java yields no throw-entry target"),
+    ("override-add adds equals to a class with no hashCode", POOL_MUTATIONS,
+     "        for name, declared, lines in OVERRIDES[extension]:",
+     "        for name, declared, lines in reversed(OVERRIDES[extension]):", mutations_suite,
+     "hashCode is added before equals"),
+    ("member-delete leaves the deleted method's Javadoc dangling", POOL_MUTATIONS,
+     '        found.append((_with_leading_comment(text, start), end, match.group("name")))',
+     '        found.append((start, end, match.group("name")))', mutations_suite,
+     "it is gone whole, with its Javadoc"),
     ("a project that names no sources yields no targets in silence again", TARGET_ORDERING,
      '    if not project.get("sources"):', '    if False:', python_suite,
      "the refusal named neither the key nor the project"),

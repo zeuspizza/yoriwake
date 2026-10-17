@@ -480,6 +480,34 @@ class RejectedMutations(unittest.TestCase):
                               "mutations": [mutation() for _ in range(11)]})
         self.assertEqual(1, code, out)
         self.assertIn("above the", out)
+    def pool(self, refused_rows, other_rows):
+        """A `pool/v1` file whose throw-entry family is refused: 5 of 7 draws rejected."""
+        return {"project": "p", "target_shapes": "pool/v1", "mutations_rejected": 5,
+                "rejected_mutations": [[f"A.java::throw-entry::f{i}", "throw-entry", i]
+                                       for i in range(5)],
+                "mutations": refused_rows + other_rows}
+
+    def test_a_refused_family_is_named_and_the_others_still_stand(self):
+        code, out = run_gate(self.pool([mutation(kind="throw-entry")] * 2,
+                                       [mutation(kind="void-return")] * 20))
+        self.assertEqual(0, code, out)
+        self.assertIn("REFUSED family throw-entry", out)
+        self.assertIn("2 row(s) of refused families", out)
+
+    def test_a_refused_familys_failures_do_not_pass_the_nothing_broke_gate(self):
+        """Its rows are not read, so failures only they induced tested nothing."""
+        code, out = run_gate(self.pool([mutation(kind="throw-entry")] * 2,
+                                       [mutation(kind="void-return", full_failures=0,
+                                                 status="no-effect")] * 20))
+        self.assertEqual(1, code, out)
+        self.assertIn("no mutation broke anything", out)
+
+    def test_a_miss_in_a_refused_family_still_fails(self):
+        """A test that should have run and did not is a defect whatever shaped the sample."""
+        code, out = run_gate(self.pool([mutation(kind="throw-entry", missed=["k.ATest::a"])],
+                                       [mutation(kind="void-return")] * 20))
+        self.assertEqual(1, code, out)
+        self.assertIn("MISSED", out)
 
     def test_a_build_failed_row_still_fails_beside_rejections(self):
         """The gate discards non-compiling mutations; it does not soften a real broken build."""

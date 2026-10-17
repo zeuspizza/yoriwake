@@ -32,7 +32,9 @@ import run  # noqa: E402
 from sweep_corpus import REDUCED_ARM  # noqa: E402
 
 # What every file of one project must agree on, or its rows describe different things.
-STAMPS = ("project", "commit", "plugin_commit", "selector_digest", "grammar_digest")
+# `fixture_digest` included: two trees of one fixture are two samples, as two shape sets are.
+STAMPS = ("project", "commit", "plugin_commit", "selector_digest", "grammar_digest",
+          "fixture_digest")
 
 
 class Refused(Exception):

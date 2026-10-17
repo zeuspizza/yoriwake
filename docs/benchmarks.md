@@ -108,6 +108,22 @@ failures are the ground truth.
   `bench/results/<set>/`, is stamped with its name, and is never pooled with another: the readers
   refuse a directory that holds two sets, two sweeps of different sets compared row for row, and a
   history replay's rows among edit rows.
+- **Fixtures.** A sample swept from this repository (`demo`, `demo-kotlin`) is stamped with a digest
+  of its tracked files, `fixture_digest`; a sweep on a changed tree starts fresh, and the readers
+  refuse to compare or merge rows of two trees.
+- **`pool/v1`.** The default shapes, with `schema` capped at one edit per project, plus four
+  families real commits make and the default set never plants: `void-return` (an early return at
+  the entry of a void Java method or a block-bodied Unit Kotlin function), `throw-entry` (an
+  `IllegalStateException` thrown at the entry of any method or function with a body, whatever it
+  returns), `override-add` (a `toString`, `hashCode` or `equals` that returns a fixed value, added
+  to a class that lacks it) and `member-delete` (one overriding method deleted). Constructors,
+  initialisers and declarations without a body are never edited. The compile gate's ceiling applies
+  per family, and an edit it rejects is replaced by the same family's next one. A family above it
+  is refused: its rows count toward no figure, though a missed test among them still fails the
+  sweep, and once no row the limit still allows could bring it under, it is not drawn again. Its
+  generators are digested with this set only, so the default set's `grammar_digest` does not move.
+  The demo fixtures carry each shape with a test that fails when it breaks: Java on `demo`, Kotlin
+  on `demo-kotlin`.
 
 The harness that measured this is in [`bench/`](../bench/README.md): how to run one project, what
 counts as a result, and how to add a project. Its results files are described field by field in

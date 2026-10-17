@@ -9,4 +9,11 @@ public class Beta {
     public String label() {
         return "Beta";
     }
+
+    // Final, so the default edit shapes, which read `public int name(`, draw nothing new here: the
+    // default set's targets on this fixture stay what they were.
+    @Override
+    public final int hashCode() {
+        return 7;
+    }
 }

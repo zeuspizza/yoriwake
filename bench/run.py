@@ -104,6 +104,10 @@ import revert  # noqa: E402
 # rather than in the mutation grammar, and its own sources are what its `grammar_digest` hashes.
 REVERT_SET = revert.SET
 SHAPE_SETS = SHAPE_SETS + (REVERT_SET,)
+# `pool/v1` lives in its own file, digested with that set only: see `pool_mutations`.
+import pool_mutations  # noqa: E402
+from pool_mutations import POOL_SHAPES  # noqa: E402
+SHAPE_SETS = SHAPE_SETS + (POOL_SHAPES,)
 
 
 
@@ -1865,6 +1869,32 @@ def task_is_missing(log_path):
     return "Cannot locate tasks that match" in log or "not found in project" in log
 
 
+def refused_families(rejected_mutations, findings, ceiling=MUTATION_REJECTION_CEILING):
+    """`pool/v1`'s ceiling, which is per family: `{family: (rejected, offered)}` for each family
+    whose rejection rate is above it.
+
+    Per family because what a guest's gates reject differs by family: a Kotlin build with
+    `allWarningsAsErrors` rejects every `void-return` and nothing else. Over the whole project those
+    rejections would refuse every family's rows, or hide under the others' accepted ones. A family
+    above the ceiling is refused on its own, and the other families' rows still stand.
+    """
+    rejected = Counter(key[1] for key in rejected_mutations or [])
+    accepted = Counter(row.get("kind") for row in findings)
+    return {family: (count, count + accepted[family]) for family, count in sorted(rejected.items())
+            if rejection_rate_refuses(count, accepted[family], ceiling)}
+
+
+def refused_whatever_follows(rejected, accepted, remaining, ceiling=MUTATION_REJECTION_CEILING):
+    """Whether a `pool/v1` family with `rejected` draws discarded and `accepted` rows is above the
+    ceiling even if every one of the `remaining` rows the limit still allows were its own.
+
+    Past that point the family is refused at the end of the sweep whatever is drawn next, so a
+    further draw of it buys a compile and no row anyone reads. Without the bound, a family a guest
+    rejects wholesale is redrawn target by target through the whole project.
+    """
+    return rejection_rate_refuses(rejected, accepted + max(remaining, 0), ceiling)
+
+
 def rejection_rate_refuses(rejected, accepted, ceiling=MUTATION_REJECTION_CEILING):
     """Whether a project's rejection rate is a refusal rather than a statistic.
 
@@ -1964,6 +1994,10 @@ GRAMMAR_SOURCE_FILES = ("bench/mutations.py", "bench/target_ordering.py",
 # the census labels the strata come from.
 REVERT_GRAMMAR_FILES = ("bench/revert.py", "bench/census.py")
 
+# A named set's own generators, digested with that set only, so adding a set leaves the default
+# set's digest, and every default results file's resume, where they were.
+SET_GRAMMAR_FILES = {POOL_SHAPES: ("bench/pool_mutations.py",)}
+
 
 def shape_folder(shapes):
     """The directory name a named shape set's files live under."""
@@ -1989,7 +2023,7 @@ def results_location(results_root, logs_root, name, shapes, isolated=False, cont
     return out_path, scratch
 
 
-def grammar_digest(root=None, files=GRAMMAR_SOURCE_FILES):
+def grammar_digest(root=None, shapes=DEFAULT_SHAPES):
     """A digest of the mutation grammar's source, so a results file says which rules drew its rows.
 
     WHY `target_shapes` IS NOT ENOUGH. It names the shape SET a sweep drew from, and every published
@@ -2008,10 +2042,15 @@ def grammar_digest(root=None, files=GRAMMAR_SOURCE_FILES):
     effect on a sample is recorded per file in `mutations_rejected` and `rejected_targets`. The
     composition of shapes (`renamed` as a move, then a body mutation) is `mutations.apply`, so it is
     covered.
+
+    PER SET: a named set's own files (`SET_GRAMMAR_FILES`) are hashed with the shared ones for that
+    set only.
     """
     base = root or ROOT
     digest = hashlib.sha256()
     hashed = 0
+    files = (REVERT_GRAMMAR_FILES if shapes == REVERT_SET
+             else GRAMMAR_SOURCE_FILES + SET_GRAMMAR_FILES.get(shapes, ()))
     for name in files:
         path = os.path.join(base, name)
         if not os.path.isfile(path):
@@ -2049,6 +2088,46 @@ def resumed_grammar(stored, findings, current):
     if findings and stored.get("grammar_digest") is None:
         return None
     return current
+
+
+def fixture_digest(project, root=None):
+    """A digest of an in-repo sample's tracked files, or None for a project that is not one.
+
+    A fixture is measured at `commit = "local"`, so no stamp in a results file moves when its
+    sources or tests do: a test added to the sample changes the suite every row ran and the map the
+    targets are ordered by, and a resume would carry rows of both trees under one header. This is
+    the stamp that tells them apart. Sorted by path, with the path hashed beside the content, as
+    `selector_digest` does.
+    """
+    if not project.get("copy_of"):
+        return None
+    base = root or SOURCE
+    listed = subprocess.run(["git", "-C", base, "ls-files", "-z", "--", project["copy_of"]],
+                            capture_output=True, check=True).stdout.decode("utf-8")
+    digest = hashlib.sha256()
+    hashed = 0
+    for name in sorted(path for path in listed.split("\0") if path):
+        path = os.path.join(base, name)
+        if not os.path.isfile(path):
+            continue
+        digest.update(name.encode("utf-8"))
+        with open(path, "rb") as handle:
+            digest.update(handle.read())
+        hashed += 1
+    if not hashed:
+        raise SystemExit(f"no tracked file under {project['copy_of']} beneath {base}; refusing to "
+                         f"stamp a results file with the digest of an empty tree")
+    return digest.hexdigest()[:12]
+
+
+def fixture_changed(stored, current):
+    """Whether rows in a stored results file were measured on a fixture tree other than `current`.
+
+    NULL IS A MISMATCH for a fixture, the `staged_sources` discipline rather than `grammar`'s: a
+    fixture's file without the stamp cannot say which tree it ran on, and a fixture costs seconds
+    to sweep again. A project that is not a fixture has no tree to change.
+    """
+    return current is not None and stored.get("fixture_digest") != current
 
 
 def plugin_commit():
@@ -3781,7 +3860,8 @@ def narrowed_target_reached(findings, target):
 # What an accepted list and the run measuring a slice of it must agree on: the list is the order
 # one grammar drew against one map under one selector, and a shard measuring it under another
 # would merge rows of two different samples.
-ACCEPTED_STAMPS = ("selector_digest", "grammar_digest", "plugin_commit", "commit")
+ACCEPTED_STAMPS = ("selector_digest", "grammar_digest", "plugin_commit", "commit",
+                   "fixture_digest")
 
 
 def stamp_rows(findings, stamped):
@@ -3827,7 +3907,8 @@ def write_accepted(path, project, grammar, targets, rejected, args):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump({"project": project["name"], "commit": project["commit"],
                    "plugin_commit": plugin_commit(), "selector_digest": measured_selector_digest(),
-                   "grammar_digest": grammar, "sweep_limit": args.limit,
+                   "grammar_digest": grammar,
+                   "fixture_digest": RUN_STAMPS.get("fixture_digest"), "sweep_limit": args.limit,
                    "narrowed_target": args.narrowed_target, "timing_cap": args.timing_cap,
                    "recall_only": args.recall_only, "ground_truth": args.ground_truth,
                    "targets": targets, "rejected": rejected}, handle, indent=1)
@@ -4221,6 +4302,10 @@ def main():
     # measure one project at a depth another project asked for.
     repeats = (args.baseline_repeats if args.only_target
                else baseline_repeats_for(project, args.baseline_repeats))
+    # THE FIXTURE TREE THIS RUN MEASURES, read once from the tree the copy is about to be taken
+    # from, so an edit made while the sweep runs cannot restamp rows measured before it. Null for a
+    # project that is not a fixture.
+    RUN_STAMPS["fixture_digest"] = fixture_digest(project)
     checkout = checkout_project(project, keep_state=bool(shard))
     # Sampled before this sweep starts a daemon of its own, so it describes what the sweep INHERITED
     # rather than what it built. None where the question cannot be asked; see daemon_uptime_seconds.
@@ -4253,10 +4338,11 @@ def main():
     # namesakes; see `rejected_keys`.
     rejected_mutations = []
     revert_set = args.shapes == REVERT_SET
+    pool = args.shapes == POOL_SHAPES
     # `[target, reason, variant, census labels]` per revert the gate rejected, carried across
     # resumes as `rejected` is: the counts by reason and label are published with the figure.
     revert_rejections = []
-    grammar = grammar_digest(files=REVERT_GRAMMAR_FILES if revert_set else GRAMMAR_SOURCE_FILES)
+    grammar = grammar_digest(shapes=args.shapes)
     if os.path.isfile(out_path):
         with open(out_path, encoding="utf-8") as handle:
             stored = json.load(handle)
@@ -4320,6 +4406,9 @@ def main():
         elif grammar_changed(stored, grammar):
             print(f"results were drawn under grammar {stored.get('grammar_digest')}, "
                   f"not {grammar}; starting fresh", flush=True)
+        elif fixture_changed(stored, RUN_STAMPS.get("fixture_digest")):
+            print(f"results were measured on fixture tree {stored.get('fixture_digest')}, "
+                  f"not {RUN_STAMPS.get('fixture_digest')}; starting fresh", flush=True)
         # A SETUP-FORCED PROJECT IS RE-RUN FROM ITS FIRST ROW once its setup is fixed: none of its
         # rows counts, so none is resumed.
         elif stored.get("project_outcome") == SETUP_FORCED:
@@ -4844,7 +4933,9 @@ def main():
     else:
         # THE WHOLE POPULATION, BEFORE THE RESUME FILTER, so `targets_available` means the same thing
         # on a first pass and on a resume. Filtering first would make it shrink every time the file grew.
-        all_targets, repeated_targets = distinct_targets(mutation_targets(checkout, project, args.shapes))
+        all_targets, repeated_targets = distinct_targets(
+            pool_mutations.mutation_targets(checkout, project) if pool
+            else mutation_targets(checkout, project, args.shapes))
         if repeated_targets:
             print(f"  {repeated_targets} target(s) were drawn twice through overlapping source roots "
                   f"and are measured once", flush=True)
@@ -4862,7 +4953,7 @@ def main():
         # Answerable targets first. Without this the limit is spent on classes nothing loads, and the
         # sweep reports zero missed failures out of zero induced ones -- which is not a safety result.
         covered = covered_classes(map_dir)
-        ordered, provenance = by_coverage(pending, covered)
+        ordered, provenance = (pool_mutations.by_coverage if pool else by_coverage)(pending, covered)
         if covered:
             counts = Counter(provenance.values())
             print(f"  {len(covered)} classes covered by the map; targets: "
@@ -4895,12 +4986,12 @@ def main():
         # every leg.
         # A revert row edits no declaration of its own, so its preflight file comes from the
         # default grammar's bodies, as a mutation set's does.
-        pool = (distinct_targets(mutation_targets(checkout, project))[0] if revert_set
-                else all_targets)
+        population = (distinct_targets(mutation_targets(checkout, project))[0] if revert_set
+                      else all_targets)
         if reach is None:
             reach, covered = reach_counts(map_dir), covered_classes(map_dir)
         candidates = [path for path, kind, _ in
-                      by_coverage(by_reach(pool, reach, args.target_seed), covered)[0]
+                      by_coverage(by_reach(population, reach, args.target_seed), covered)[0]
                       if kind == "body"]
         preflight = run_preflight(checkout, project, list(dict.fromkeys(candidates)), scratch,
                                   map_dir, map_backup, snapshot, select_flags, [task_path],
@@ -4929,7 +5020,8 @@ def main():
     recorded, recorded_rejections = [], []
     if shard:
         stamps = {"selector_digest": measured_selector_digest(), "grammar_digest": grammar,
-                  "plugin_commit": plugin_commit(), "commit": project["commit"]}
+                  "plugin_commit": plugin_commit(), "commit": project["commit"],
+                  "fixture_digest": RUN_STAMPS.get("fixture_digest")}
         why = accepted_mismatch(accepted_list, stamps)
         if why:
             print(f"REFUSING: {why}", flush=True)
@@ -4944,6 +5036,8 @@ def main():
                   "be comparable; aborting", flush=True)
             return 1
     declined = 0
+    # Per `pool/v1` family, the targets left undrawn once the family was refused mid-sweep.
+    abandoned = Counter()
     # Labels for `--only-target` and for paired rows written without an index; every other paired
     # row is matched by its mutation BEFORE it is applied, so no declaration is applied only to be
     # discarded.
@@ -4989,7 +5083,7 @@ def main():
     while passes and not stop_all:
         phase, items = passes.pop(0)
         rerunning = phase == "rerun"
-        for rel_path, kind, index in items:
+        for position, (rel_path, kind, index) in enumerate(items):
             stamp_rows(findings, stamped)
             findings[:] = drop_superseded(findings)
             # A REVERT SET STOPS PER STRATUM: each draws up to the limit and its own narrowed
@@ -5029,7 +5123,8 @@ def main():
                 if label and not revert.apply(checkout, candidate):
                     label = None
             else:
-                label = mutations.apply(checkout, rel_path, kind, index)
+                label = (pool_mutations.apply if pool else mutations.apply)(checkout, rel_path,
+                                                                           kind, index)
             change_files, change_modules = mutation_change_counts(checkout) if label else (0, 0)
             if label is None:
                 # COUNTED, because it stopped costing a row. While the limit was a slice, a generator
@@ -5117,6 +5212,21 @@ def main():
                 else:
                     print("    REJECTED: the mutated tree did not compile, so this is a generator "
                           "defect and not a row; taking the next target", flush=True)
+                # From the same family, so a family a guest rejects is not sampled less, until the
+                # family is refused however the rest of the sweep goes; then none of it is drawn.
+                # A shard measures a list already drawn, and has no limit to bound the rest by.
+                if pool and not rerunning and not shard and refused_whatever_follows(
+                        sum(1 for key in rejected_mutations if key[1] == kind),
+                        sum(1 for row in findings if row.get("kind") == kind)
+                        + sum(1 for entry in recorded if entry[1] == kind),
+                        args.limit - accepted):
+                    later = [t for t in items[position + 1:] if t[1] == kind]
+                    items[position + 1:] = [t for t in items[position + 1:] if t[1] != kind]
+                    abandoned[kind] += len(later)
+                    print(f"    {kind} is above the ceiling whatever the rest of this sweep draws; "
+                          f"its {len(later)} remaining target(s) are not drawn", flush=True)
+                elif pool:
+                    pool_mutations.redraw(items, position, kind)
                 continue
             # PAST THE GATE, so this target is one of the N the limit promises.
             gate_seconds, gate_spent = round(gate_spent, 1), 0.0
@@ -5656,14 +5766,22 @@ def main():
               flush=True)
         if stamp["not_reached"]:
             print(f"not reached by {REVERT_SET}: {', '.join(stamp['not_reached'])}", flush=True)
+    for family, count in abandoned.items():
+        print(f"{count} {family} target(s) were NOT DRAWN: the family was above the ceiling "
+              f"whatever the rest of the sweep drew", flush=True)
     if rejected:
         # No shared ceiling for reverts: a real commit the gate rejects is counted, not a defect.
-        refused = not revert_set and rejection_rate_refuses(len(rejected), len(findings))
+        # `pool/v1`'s ceiling is per family.
+        refused = not revert_set and not pool and rejection_rate_refuses(len(rejected), len(findings))
         print(f"{len(rejected)} mutation(s) were REJECTED by the compile gate and consumed no row"
               f"{' -- ABOVE the ceiling, so this is a refusal rather than a statistic'
                  if refused else ''}", flush=True)
         for label in rejected:
             print(f"    rejected: {label}", flush=True)
+        for family, (count, offered) in (refused_families(rejected_mutations, findings)
+                                         if pool else {}).items():
+            print(f"  {family}: {count} of {offered} rejected -- ABOVE the ceiling, so this "
+                  f"family is refused; fix the generator before its rows are read", flush=True)
     if inert:
         where = Counter(f.get("reachability", "unknown") for f in inert)
         print(f"  of those {len(inert)}: {where['uncovered']} on classes nothing loads, "
