@@ -116,6 +116,17 @@ import forcing_mutations  # noqa: E402
 from forcing_mutations import FORCING_SET  # noqa: E402
 SHAPE_SETS = SHAPE_SETS + (FORCING_SET,)
 
+# THE NULL CHANGE AND THE NEUTRAL EDIT, a control's two rows and never a measurement: no figure
+# draws from them, so they are not in SHAPE_SETS, which `sweep_corpus.py --set` offers. The null
+# change edits nothing and must run the whole suite as `empty-change-set`; the neutral edit is the
+# preflight's comment on a `package` line and must report no miss.
+NEUTRAL_SET = "neutral/v1"
+NULL_CHANGE, NEUTRAL_EDIT = "null-change", "neutral-edit"
+# The null change's target names no file: it has none.
+NULL_CHANGE_PATH = "(nothing)"
+# The sets whose control may run on a corpus checkout.
+CORPUS_CONTROL_SETS = (REVERT_SET, FORCING_SET, POOL_SHAPES)
+
 
 
 def wrapper(checkout):
@@ -631,6 +642,40 @@ def apply_preflight_edit(checkout, relative):
                 handle.write("\n".join(lines))
             return number + 1
     return None
+
+
+def control_refusal(project, shapes, control, families=None):
+    """Why a run may not measure `project` under `shapes` as asked, or None."""
+    if shapes == NEUTRAL_SET and not control:
+        return f"{NEUTRAL_SET} is a control's null change and neutral edit; pass --control"
+    if families and not (control and shapes == POOL_SHAPES):
+        return "--families narrows a pool/v1 control's draw; a measurement draws every family"
+    # A REVERT, FORCING OR POOL CONTROL NEEDS HISTORY, A GROOVY ROOT OR A SHAPE no fixture copied
+    # fresh has, so it runs on a corpus checkout. Its map is stamped with the control's arm, so the
+    # next measurement of that checkout re-captures rather than reusing it.
+    if control and not (project.get("fixture") and project.get("copy_of")) \
+            and shapes not in CORPUS_CONTROL_SETS:
+        return ("--control measures a planted plugin, on a fixture copied fresh each run only, or "
+                f"{' or '.join(CORPUS_CONTROL_SETS)} on a corpus checkout; never another set on a "
+                "checkout whose map another run could reuse")
+    return None
+
+
+def neutral_targets(checkout, project):
+    """`neutral/v1`'s targets: the null change, then a neutral edit for every default body target's
+    file in path order; the first that has a `package` line is the row."""
+    sources = [path for path, kind, _ in distinct_targets(mutation_targets(checkout, project))[0]
+               if kind in ("body", "aliased")]
+    return ([(NULL_CHANGE_PATH, NULL_CHANGE, 0)]
+            + [(path, NEUTRAL_EDIT, 0) for path in sorted(dict.fromkeys(sources))])
+
+
+def apply_neutral(checkout, relative, kind):
+    """Applies a `neutral/v1` row. Returns its label, or None when the file has no package line."""
+    if kind == NULL_CHANGE:
+        return f"{NULL_CHANGE_PATH}::{NULL_CHANGE}::nothing"
+    line = apply_preflight_edit(checkout, relative)
+    return None if line is None else f"{relative}::{NEUTRAL_EDIT}::line-{line}"
 
 
 # THE KINDS WHOSE REASON IS ABOUT THE PROJECT, NOT THE CHANGE. `unmappable-paths` lists the paths
@@ -3885,13 +3930,17 @@ ACCEPTED_STAMPS = ("selector_digest", "grammar_digest", "plugin_commit", "commit
                    "fixture_digest")
 
 
-def stamp_rows(findings, stamped):
-    """Gives the rows appended since `stamped` = (start, kind, index) that kind and index."""
+def stamp_rows(findings, stamped, control=False):
+    """Gives the rows appended since `stamped` = (start, kind, index) that kind and index, and the
+    `control` stamp on a control run: a stalled, failed or cache-hit row is appended without it, and
+    a reader would take the file for a measurement's."""
     if stamped is not None:
         start, kind, index = stamped
         for row in findings[start:]:
             row.setdefault("kind", kind)
             row.setdefault("index", index)
+            if control:
+                row.setdefault("control", True)
 
 
 def parse_shard(text):
@@ -4182,7 +4231,7 @@ def argument_parser():
     # the population every future sweep samples and make figures taken before and after
     # incomparable. `recall-arm` is the digest rule's own grammar; it is asked for by name and is
     # recorded in the results file, so a reader can always tell which population a row came from.
-    parser.add_argument("--shapes", choices=SHAPE_SETS, default=DEFAULT_SHAPES,
+    parser.add_argument("--shapes", choices=SHAPE_SETS + (NEUTRAL_SET,), default=DEFAULT_SHAPES,
                         help="which mutation grammar to draw targets from; recorded in the results")
     # A KNOB WITH A DEFAULT, NOT A CONSTANT, because it buys recall honesty with wall clock: each
     # repeat above the first is one more full suite run per project per sweep. See
@@ -4248,6 +4297,10 @@ def argument_parser():
     # planted in it: fixtures only, its own results directory and map stamp, every row stamped.
     parser.add_argument("--control", action="store_true",
                         help="a planted-miss control run: writes results/control/<project>.json")
+    # A CONTROL ASKS SOME FAMILIES ONLY, and drawing the others costs rows nobody reads. Never on a
+    # measurement, whose population is the whole set.
+    parser.add_argument("--families", nargs="+", default=None, metavar="KIND",
+                        help="with --control and pool/v1: draw only these families' targets")
     parser.add_argument("--no-untracked-reset", action="store_true",
                         help="leave untracked and ignored files earlier runs wrote in the tree")
     # A SHARDED SWEEP, for CI: one recording job fixes the list, shards measure slices of it, and
@@ -4307,10 +4360,10 @@ def main():
 
     with open(args.project, "rb") as handle:
         project = tomllib.load(handle)
+    refusal = control_refusal(project, args.shapes, args.control, args.families)
+    if refusal:
+        parser.error(refusal)
     if args.control:
-        if not (project.get("fixture") and project.get("copy_of")):
-            parser.error("--control measures a planted plugin, on a fixture copied fresh each run "
-                         "only; never on a corpus checkout whose map another run could reuse")
         if args.isolated_capture or args.replay or args.only_target:
             parser.error("--control is a shared-arm mutation sweep")
         args.recapture = True
@@ -4377,6 +4430,7 @@ def main():
     # `pool/v1` stops per family: at `--narrowed-target` when given, else at its own target.
     family_target = (args.narrowed_target or family_order.FAMILY_TARGET) if pool else None
     forcing = args.shapes == FORCING_SET
+    neutral = args.shapes == NEUTRAL_SET
     # `[target, reason]` per dependency revert the gate rejected, carried across resumes likewise.
     forcing_rejections = []
     # `[target, reason, variant, census labels]` per revert the gate rejected, carried across
@@ -4526,6 +4580,8 @@ def main():
         "narrowed_target": args.narrowed_target,
         "recall_only": args.recall_only,
         "control": args.control,
+        # The families a control drew from; None is every family of the set.
+        "control_families": args.families,
         # None: every row of a timing sweep is timed (and every row before the cap existed).
         "timing_cap": args.timing_cap,
         # This invocation's `--ground-truth`; each row stamps the truth it got.
@@ -4976,6 +5032,10 @@ def main():
         print(f"  {FORCING_SET} ({RUN_STAMPS['forcing']['population']}): "
               f"{dict(Counter(kind for _, kind, _ in all_targets))}; up to "
               f"{forcing_mutations.ROWS_PER_FAMILY} row(s) a family", flush=True)
+    elif neutral:
+        all_targets = neutral_targets(checkout, project)
+        targets_available = len(all_targets)
+        ordered, provenance = pending_targets(all_targets, findings), {}
     elif revert_set:
         # THE ELIGIBLE COMMITS OF THE CENSUS WINDOW, in their draw order, each checked to revert
         # cleanly at the pin. Not eligible is counted by reason and takes no slot.
@@ -5007,6 +5067,8 @@ def main():
         # Filtered before the limit is applied: applied first, a resumed sweep spends its whole
         # budget re-skipping rows it already has and measures nothing new.
         pending = pending_targets(all_targets, findings)
+        if args.families:
+            pending = [target for target in pending if target[1] in args.families]
         # SPANNING BEFORE ANSWERABLE, and the two are different questions. `mutation_targets` returns
         # targets in sorted path order, so the first N are `Abstract*` -- hubs, which force a full run,
         # which makes recall look perfect and narrowing look terrible in the same breath. This spreads
@@ -5063,10 +5125,10 @@ def main():
     if not args.only_target and paired_rows is None and not shard:
         # The whole population in the sweep's own order, not what a resume left: the same file
         # every leg.
-        # A revert or forcing row edits no method body of its own, so its preflight file comes from
-        # the default grammar's bodies, as a mutation set's does.
+        # A revert, forcing or neutral row edits no method body of its own, so its preflight file
+        # comes from the default grammar's bodies, as a mutation set's does.
         population = (distinct_targets(mutation_targets(checkout, project))[0]
-                      if revert_set or forcing else all_targets)
+                      if revert_set or forcing or neutral else all_targets)
         if reach is None:
             reach, covered = reach_counts(map_dir), covered_classes(map_dir)
         candidates = [path for path, kind, _ in
@@ -5163,7 +5225,7 @@ def main():
         phase, items = passes.pop(0)
         rerunning = phase == "rerun"
         for position, (rel_path, kind, index) in enumerate(items):
-            stamp_rows(findings, stamped)
+            stamp_rows(findings, stamped, args.control)
             findings[:] = drop_superseded(findings)
             # A REVERT SET STOPS PER STRATUM: each draws up to the limit and its own narrowed
             # target, from decisions and induced failures only.
@@ -5218,6 +5280,8 @@ def main():
                     label = None
             elif forcing:
                 label = forcing_mutations.apply(checkout, rel_path, kind, index)
+            elif neutral:
+                label = apply_neutral(checkout, rel_path, kind)
             else:
                 label = (pool_mutations.apply if pool else mutations.apply)(checkout, rel_path,
                                                                            kind, index)
@@ -5830,6 +5894,9 @@ def main():
         print(f"\n--only-target matched no target for: {', '.join(unmatched_labels)}. Labels are the "
               f"`target` field of a results file, exactly.", flush=True)
 
+    # The last target's rows too, before they are written: the loop stamps a row only when it goes
+    # round again.
+    stamp_rows(findings, stamped, args.control)
     # ONCE MORE AFTER THE LOOP, because the writer inside it only runs when a row is accepted.
     # A leg whose every target was rejected wrote nothing at all, so the rejections -- the only
     # evidence that the leg did anything -- died with the process, and the next resume re-offered
@@ -5846,7 +5913,6 @@ def main():
     if not args.only_target:
         archive_run_evidence(project, arm_label, scratch, out_path, map_dir, args.shapes)
 
-    stamp_rows(findings, stamped)
     subprocess.run(["git", "-C", checkout, "checkout", "--", "."], check=True)
     # THE MAP AS MEASURED, not as the last row's selecting run left it: the next invocation -- a
     # resumed leg, or the next shard -- backs up whatever is on disk as the map every row restores.

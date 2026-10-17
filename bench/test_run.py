@@ -4278,6 +4278,55 @@ def case_the_preflight_edit_moves_no_line(tmp):
     return failures
 
 
+def case_the_neutral_set_is_a_null_change_and_a_neutral_edit():
+    """The null change edits nothing; the neutral edit is the preflight's; and the set runs only as a
+    control, since no figure may draw from it."""
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        body = "    public int twice(int n) {\n        return n * 2;\n    }\n}\n"
+        _write(tmp, "src/main/java/p/B.java", "package p;\n\npublic class B {\n" + body)
+        _write(tmp, "src/main/java/p/A.java", "public class A {\n" + body)
+        targets = run.neutral_targets(tmp, {"name": "t", "sources": ["src/main/java"]})
+        if targets != [(run.NULL_CHANGE_PATH, run.NULL_CHANGE, 0),
+                       ("src/main/java/p/A.java", run.NEUTRAL_EDIT, 0),
+                       ("src/main/java/p/B.java", run.NEUTRAL_EDIT, 0)]:
+            failures += fail(f"the neutral set's targets are {targets}")
+        if run.apply_neutral(tmp, run.NULL_CHANGE_PATH, run.NULL_CHANGE) is None:
+            failures += fail("the null change declined")
+        if run.apply_neutral(tmp, "src/main/java/p/A.java", run.NEUTRAL_EDIT) is not None:
+            failures += fail("a neutral edit was applied to a file with no package line")
+        label = run.apply_neutral(tmp, "src/main/java/p/B.java", run.NEUTRAL_EDIT)
+        with open(os.path.join(tmp, "src/main/java/p/B.java"), encoding="utf-8") as handle:
+            edited = handle.read()
+        if label != f"src/main/java/p/B.java::{run.NEUTRAL_EDIT}::line-1" \
+                or run.PREFLIGHT_COMMENT not in edited:
+            failures += fail(f"the neutral edit was not the preflight's comment ({label})")
+    if run.NEUTRAL_SET in run.SHAPE_SETS:
+        failures += fail("the neutral set is offered as a measurement set")
+    fixture = {"fixture": True, "copy_of": "samples/demo"}
+    for what, project, shapes, control in (
+            ("the neutral set without --control", fixture, run.NEUTRAL_SET, False),
+            ("a neutral control on a corpus checkout", {}, run.NEUTRAL_SET, True),
+            ("a default control on a corpus checkout", {}, run.DEFAULT_SHAPES, True)):
+        if run.control_refusal(project, shapes, control) is None:
+            failures += fail(f"{what} was accepted")
+    for what, project, shapes, control in (
+            ("a revert control on a corpus checkout", {}, run.REVERT_SET, True),
+            ("a forcing control on a corpus checkout", {}, run.FORCING_SET, True),
+            ("a pool control on a corpus checkout", {}, run.POOL_SHAPES, True),
+            ("a neutral control on a fixture", fixture, run.NEUTRAL_SET, True),
+            ("a measurement of a corpus checkout", {}, run.POOL_SHAPES, False)):
+        if run.control_refusal(project, shapes, control) is not None:
+            failures += fail(f"{what} was refused")
+    if run.control_refusal(fixture, run.POOL_SHAPES, False, ["aliased"]) is None:
+        failures += fail("--families on a measurement was accepted")
+    if run.control_refusal(fixture, run.FORCING_SET, True, ["aliased"]) is None:
+        failures += fail("--families on a forcing control was accepted")
+    if run.control_refusal({}, run.POOL_SHAPES, True, ["aliased"]) is not None:
+        failures += fail("--families on a pool control was refused")
+    return failures
+
+
 _FOO_ROW = "core/src/main/java/org/x/Foo.java::body::m"
 
 
@@ -4732,6 +4781,12 @@ def case_every_row_a_target_appends_carries_its_kind_and_index():
         failures += fail(f"a stalled row was not stamped: {findings[1]}")
     if (findings[0]["kind"], findings[2]["index"]) != ("body", 3):
         failures += fail("a row's own kind or index was overwritten, or an earlier row was stamped")
+    if any("control" in row for row in findings):
+        failures += fail("a measurement's row was stamped a control row")
+    findings.append({"target": "c", "status": "stalled"})
+    run.stamp_rows(findings, (3, "constant", 0), control=True)
+    if findings[3].get("control") is not True or "control" in findings[0]:
+        failures += fail(f"a control run's stalled row was not stamped a control row: {findings}")
     return failures
 
 
@@ -5008,6 +5063,7 @@ def case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows():
 
 
 CASES = (case_every_case_in_this_file_is_registered,
+         case_the_neutral_set_is_a_null_change_and_a_neutral_edit,
          case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_alone,
          case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows,
          case_the_pool_ceiling_refuses_a_family_and_not_the_others,

@@ -77,7 +77,25 @@ or "does not apply", never zero. Figures derived from these fields carry the cav
   fixtures `demo`, `demo-kotlin` and `order-dependent` are swept against it with `run.py --control`
   into `results/control/` (scratch `logs/<project>.control/`, its own map stamp and evidence). Every
   project must report a miss; `corpus_state.py` and `readme_charts.py` refuse a file holding a
-  `control` row.
+  `control` row. `--set` runs a named set's control into `results/control/<set>/`: `pool/v1`
+  (demo, demo-kotlin) and `revert/v1` (spring-framework's spring-beans) under the same plant,
+  where every family must report a miss on some project (pool/v1's fixtures ask body and its own
+  four families; `--corpus` asks aliased, constant, renamed and schema on moshi and okhttp,
+  drawing only those with `run.py --families`). A family with no row that narrowed and induced a
+  failure cannot show a miss: it passes as UNCONTROLLED, printed with its reason, only when
+  `controls.UNCONTROLLED` declares it (`renamed`, `schema`), and fails otherwise;
+  `forcing/v1` (demo, demo-kotlin; `--corpus`: ktlint for `dependency-revert`, grails-core for
+  `groovy-body`) under `planted_no_force()`, which reads every forcing family's paths as unread,
+  and with `NO_FORCE_RULES` (the classpath-files and environment refusals that force those rows
+  behind the path rule) off, where every family's row must narrow as the harness detects it, a
+  family a test reads the file of (`READ_BY_A_TEST`) must report a miss, and the families only
+  asked to narrow are printed, with any of their rows whose failing test coverage selected; and
+  `neutral/v1` (every demo fixture, no plant), whose null change must be a full run of kind
+  `empty-change-set` that ran tests and whose neutral edit (the preflight's comment) must induce
+  no failure and report no miss. `run.py --shapes neutral/v1`
+  runs only with `--control`, and `--control` runs on a corpus checkout only for `revert/v1`,
+  `forcing/v1` and `pool/v1`, its map stamped `shared-control`. `--verdict` judges a leg's results
+  files on disk without running it.
 - Both arms write one map directory per task. `run.py` re-captures when the map on disk was
   recorded by the other arm (`jvm-mode.tsv`) or has another schema than the checkout's
   `AgentContract.MAP_SCHEMA_VERSION`.
@@ -134,6 +152,7 @@ failure would save more hours and keep fewer of those rows.
 | `ground_truth_mode` | `--ground-truth` of the invocation; None in older files | which rows could have taken a complement |
 | `complement_switched_off` | `{at, disagreements}` when a check row disagreed under `auto`; None otherwise | the complement is off for this project |
 | `control` | true on a planted-miss control run (`--control`); None in older files | every reader refuses it |
+| `control_families` | the families a pool/v1 control drew from (`--families`); None is every family | a control's |
 | `timing_cap` | `--timing-cap` of that invocation; None = every row of a timing sweep was timed, and every older file | which timing sample a paired-time figure pools |
 | `capture_seconds` / `baseline_seconds` | wall clock of the capture and uninstrumented baseline builds (isolated: baseline copied from the pair) | recording overhead shared vs isolated; chart 2 x-axis (suite length) |
 | `capture_arm`, `baseline_arm` | arm record (below) for those two builds | peak memory with agent recording vs without agent; test JVM count |

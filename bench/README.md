@@ -81,7 +81,8 @@ reading a stack trace needs the logs of the machine that ran the sweep.
 - `qualify.py <project.toml>`: does it build, run tests hermetically, attach the plugin, and would
   it narrow? `write_qualification.py` collates the answers into `qualification.txt`.
 - `controls.py`: sweeps small fixtures against a plugin built to miss, and fails unless the harness
-  reports the miss.
+  reports the miss; `--set` does it per family of a named set, against a plugin built not to force
+  for `forcing/v1`, and checks the null change and a neutral edit for `neutral/v1`.
 - `revert.py --dry-run`: the compile gate alone over every commit `--shapes revert/v1` could
   revert, and how many survive it per census label.
 - `replay_order.py [RESULTS_DIR ...]`: whether a learned order inside `pool/v1`'s families would
