@@ -420,7 +420,9 @@ def main(path, summary_path=None):
               f"({100.0 * rejected / offered:.1f}%) and consumed no row")
         for target in results.get("rejected_targets") or []:
             print(f"      {target}")
-        if run.rejection_rate_refuses(rejected, len(findings)):
+        # Reverts have no shared ceiling: a real commit the gate rejects is counted by reason.
+        if results.get("target_shapes") != run.REVERT_SET \
+                and run.rejection_rate_refuses(rejected, len(findings)):
             print(f"FAIL: the generator wrote source this project would not compile on "
                   f"{100.0 * rejected / offered:.1f}% of its targets, above the "
                   f"{100.0 * run.MUTATION_REJECTION_CEILING:.0f}% ceiling. The sample was shaped by "

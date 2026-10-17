@@ -363,7 +363,8 @@ def examine(name, results_dir, qualified, project=None, root=None, shape_set="de
     # THE SAME CEILING `assert_recall` REFUSES ON. Clean means `assert_recall` passes, and above
     # the ceiling it does not: the sample was shaped by the generator rather than by the project.
     rejected = data.get("mutations_rejected")
-    if rejected and run.rejection_rate_refuses(rejected, len(rows)):
+    if rejected and data.get("target_shapes") != run.REVERT_SET \
+            and run.rejection_rate_refuses(rejected, len(rows)):
         return {**entry, "verdict": DIRTY,
                 "reason": f"{rejected} of {rejected + len(rows)} mutations were rejected by the "
                           f"compile gate, above the "

@@ -335,6 +335,57 @@ classifier and a reader make differently. The classifier does not see a paramete
 parameter list that spans several lines (no declaration line changes), and it reads a declaration
 reformatted across lines as removed and added.
 
+## Reverts of real commits
+
+The `revert/v1` set (`--shapes revert/v1`, `--set revert/v1`) measures edits developers made
+rather than edits the harness makes up. For a commit in the census window that changes main code
+under the project's `sources` roots, a row applies the reverse of that commit's diff, limited to
+those roots, to the pinned tree and keeps the pinned tests. The map was captured at the pin, so the
+tree and the map agree; the tests the commit added or changed then run against the code before it.
+`bench/revert.py` decides which commits and how; the rows run through the same loop as mutation
+rows and carry the same fields, plus the commit (`revert_commit`, `target: revert::<sha>`), its
+census labels as the revert makes them (`revert_labels`: a member the commit added is one the row
+deletes, and labels of paths the row left in place are dropped), the paths left out
+(`revert_scope`) and the variant applied.
+
+- **Not eligible, counted by reason:** no main code under the roots, a binary file, a rename with
+  one side outside the roots, a comment-only diff, a reverse patch that does not apply at the pin,
+  a patch identical to one drawn earlier.
+- **The full revert:** when the main-code revert fails only in test compilation, because the pinned
+  tests use what the commit added, the commit's test changes in the measured module are reverted
+  too, once, and the row says `revert_variant: full`.
+- **Rejected, counted by reason and census label:** main compile, test compile, a style gate. A
+  compile failure counts only beside a compiler diagnostic; without one, or with a dependency that
+  does not resolve, the row stays `build-failed`. There is no rejection ceiling; the counts are
+  published instead.
+- **Draw:** seeded inside three strata from the census labels (single file, several files, several
+  modules), taken in turn, each stopping at its own row cap and narrowed target.
+- **Reach:** a shape with fewer rows where a miss was possible than the target gets no revert
+  figure and is reported "not reached by revert/v1".
+
+**The window, from a compile-only dry run** (`revert.py --dry-run`: the gate over every eligible
+commit, no tests) of resilience4j, ktlint and okio at their pins. At 200 commits, 29 of 39 applied
+reverts survived the gate, and 0 of 4 that change a signature. Under a third in a family only
+reverts reach widens the window once, so the sweep reads 400 commits: there 45 of 58 survived, and
+2 of 7 signature changes, still under a third and reported as it stands. okio has most of the
+rejections (10 of its 19 at 400): its source root is `jvmMain`, and a revert limited to it leaves
+the common code it was written against.
+
+| Census label (400 commits) | Survived the gate |
+|---|---|
+| `body-value` | 18 of 25 |
+| `body-void` | 21 of 27 |
+| `member-added` | 16 of 27 |
+| `member-deleted` | 2 of 5 |
+| `signature` | 2 of 7 |
+| `visibility` | 1 of 1 |
+| `several-files` | 14 of 24 |
+| `several-modules` | 12 of 16 |
+
+What it may claim: real change shapes in their real proportions, as far as they survive the gate.
+It is not adversarial, and its failures sit in tests that often execute the changed class, so a
+revert figure is reported on its own and never pooled with a mutation set's.
+
 ## Caveats
 
 - **One machine, one sweep, one commit.** Nothing was repeated on Linux or Windows.

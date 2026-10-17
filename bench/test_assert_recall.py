@@ -463,6 +463,24 @@ class RejectedMutations(unittest.TestCase):
         self.assertEqual(1, code, out)
         self.assertIn("above the", out)
 
+    def test_a_revert_file_above_the_ceiling_passes_and_names_its_rejections(self):
+        """Reverts have no shared ceiling: a real commit the gate rejects is counted instead."""
+        code, out = run_gate({"project": "p", "target_shapes": "revert/v1",
+                              "mutations_rejected": 5,
+                              "rejected_targets": [f"revert::{i:040x}" for i in range(5)],
+                              "mutations": [mutation() for _ in range(11)]})
+        self.assertEqual(0, code, out)
+        self.assertIn("5 of 16 mutations were rejected", out)
+
+    def test_a_named_mutation_set_above_the_ceiling_still_fails(self):
+        """The exemption is the revert set's alone."""
+        code, out = run_gate({"project": "p", "target_shapes": "recall-arm",
+                              "mutations_rejected": 5,
+                              "rejected_targets": [f"A.java::constant::C{i}" for i in range(5)],
+                              "mutations": [mutation() for _ in range(11)]})
+        self.assertEqual(1, code, out)
+        self.assertIn("above the", out)
+
     def test_a_build_failed_row_still_fails_beside_rejections(self):
         """The gate discards non-compiling mutations; it does not soften a real broken build."""
         code, out = run_gate({"project": "p", "mutations_rejected": 1,

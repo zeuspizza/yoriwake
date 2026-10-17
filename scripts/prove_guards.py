@@ -248,6 +248,12 @@ def mutations_suite():
     return _python_checks("bench/test_mutations.py")
 
 
+def revert_suite():
+    """The revert set's checks: eligibility, the reverse patches and their variants, the strata
+    and the draw, over fixture repositories and javac."""
+    return _python_checks("bench/test_revert.py")
+
+
 def controls_suite():
     """The sweep rules that run without a build: the planted-miss controls' verdict and the
     plant, and the cost projection and report."""
@@ -537,6 +543,8 @@ SUITES = [
     ("replay", replay_suite, 3),
     # Pure Python over temp files, so it is the cheapest suite here after `sweep`.
     ("mutations", mutations_suite, 0.5),
+    # Pure Python over one fixture repository, with javac for the gate's stand-in.
+    ("revert", revert_suite, 10.5),
     ("decoder", decoder_suite, 5),
     ("agent", agent_suite, 6),
     # About 1.4s warm with a mutation applied, both tasks.
@@ -559,7 +567,8 @@ SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
 # `functional` and `agent` are what full mode is for: they are most of the harness's time, and a
 # change to the agent or plugin sources runs full mode anyway. Treat the summary line the script
 # PRINTS as the authority on what a mode covers.
-FAST_SUITES = {"sweep", "sharding", "scan", "controls", "preflight", "corpus", "mutations", "decoder",
+FAST_SUITES = {"sweep", "sharding", "scan", "controls", "preflight", "corpus", "mutations", "revert",
+               "decoder",
                "jdk identity", "unit", "qualify", "config cost", "configuration guards"}
 
 # The two staging fragments the guards below reintroduce defects into. Named constants because
@@ -3119,6 +3128,49 @@ MUTATIONS = [
     ("the scan stops reading a pull request's title and body", "bench/scan_private.py",
      '    return scan_text(label, text or "", MESSAGE_RULES)', "    return []", scan_suite,
      "a plan id in a pull request title passed"),
+    # The revert set: which commits it reverts, how, and in what order.
+    ("a test-compile failure counts as build-failed again", "bench/revert.py",
+     '    if compiles:\n        return "test-compile"', '    if compiles:\n        return None',
+     revert_suite, "read as None, not test-compile"),
+    ("a revert reaches paths outside the source roots", "bench/revert.py",
+     "    paths = sorted({p for _, old, new in changes for p in (old, new) if _under(p, roots)})",
+     "    paths = sorted({p for _, old, new in changes for p in (old, new)})",
+     revert_suite, "the revert reaches beyond the roots"),
+    ("a reverse patch that does not apply takes a slot", "bench/revert.py",
+     "    if not applies(checkout, text):", "    if False:", revert_suite,
+     "a commit whose lines a later commit changed was drawn"),
+    ("one patch reverted twice is drawn twice", "bench/revert.py",
+     '        if candidate.get("patch_id") in seen:', "        if False:", revert_suite,
+     "of the two identical patches were drawn"),
+    ("a stratum is drawn out before the next is reached", "bench/revert.py",
+     "            if by_stratum[name]:\n                ordered.append(by_stratum[name].pop(0))",
+     "            while by_stratum[name]:\n                ordered.append(by_stratum[name].pop(0))",
+     revert_suite, "a stratum was drawn twice before every one was drawn once"),
+    ("the revert draw reads whether a row missed", "bench/revert.py",
+     "    reached = sum(1 for row in rows if counts_toward(row))",
+     '    reached = sum(1 for row in rows if counts_toward(row) and not row.get("missed"))',
+     revert_suite, "missed set changed the draw"),
+    ("a second revert shortfall widens the window again", "bench/revert.py",
+     "    if WIDENED_WINDOW not in by_window:", "    if True:", revert_suite,
+     "a second shortfall widened again"),
+    ("a failed compile task with no compiler diagnostic is a revert rejection", "bench/revert.py",
+     "    if compiles and not DIAGNOSTIC.search(log):", "    if False:", revert_suite,
+     "Java heap space' read as main-compile"),
+    ("an unresolved dependency is a revert rejection", "bench/revert.py",
+     "    if UNRESOLVED.search(log):\n        return None", "    if False:\n        return None",
+     revert_suite, "Could not resolve all files"),
+    ("a revert row is labelled several-modules for code it left in place", "bench/revert.py",
+     '        dropped.add("several-modules")', "        pass", revert_suite,
+     "which it left in place"),
+    ("a main-compile revert rejection is retried as the full revert", "bench/revert.py",
+     '    if reason != "test-compile":', "    if reason is None:", revert_suite,
+     "a main-compile failure gave"),
+    ("a revert results file is held to the shared rejection ceiling", "bench/corpus_state.py",
+     '    if rejected and data.get("target_shapes") != run.REVERT_SET \\',
+     "    if rejected and True \\", corpus_suite, "offered in revert/v1 read"),
+    ("every set skips the shared rejection ceiling", "bench/corpus_state.py",
+     '    if rejected and data.get("target_shapes") != run.REVERT_SET \\',
+     "    if rejected and False \\", corpus_suite, "offered in recall-arm read"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
@@ -3131,6 +3183,7 @@ SUITE_TESTS = {
     "corpus": ("bench/test_corpus_state.py",),
     "replay": ("bench/test_replay_decisions.py", "bench/Replay.java"),
     "mutations": ("bench/test_mutations.py",),
+    "revert": ("bench/test_revert.py",),
     "decoder": ("plugin/src/test/",),
     # The agent `test` task puts the boot fixture on the boot class path, so it proves agent guards.
     "agent": ("agent/src/test/", "agent/src/bootFixture/"),
