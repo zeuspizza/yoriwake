@@ -367,6 +367,28 @@ classifier and a reader make differently. The classifier does not see a paramete
 parameter list that spans several lines (no declaration line changes), and it reads a declaration
 reformatted across lines as removed and added.
 
+### What the plugin decides for each shape
+
+Before a shape is measured, a functional test in `ChangeShapesFunctionalTest` pins what selection
+does with it: a shape that narrows must still run the test that executed the change, and a shape
+that forces must name its kind.
+
+| Shape | Test | Decision |
+|---|---|---|
+| Early return at the entry of a void method | `a void method returning early at its entry runs the test that called it` | narrowed to the caller's test |
+| Early throw in a Kotlin function returning `Int` | `a Kotlin function returning Int that throws at its entry runs its caller's test` | narrowed to the caller's test |
+| Overriding `toString` deleted | `an overriding toString deleted runs the test that formatted the class` | narrowed to the formatting test |
+| `toString` override added | `a toString override added to a class without one runs the test that formatted it` | narrowed to the formatting test |
+| Groovy method body | `a Groovy method body edited runs everything, as paths coverage cannot map` | full run, `unmappable-paths` |
+| Trailing comment on a main-class line | `a trailing comment on a line of a main class narrows to the tests that ran the class` | narrowed to the class's test |
+| Value in a main resource | `a value edited in a main resource runs everything` | full run, `unmappable-paths` |
+| Line removed from a service file | `a line removed from a service file runs everything` | full run, `unmappable-paths` |
+| System property added to the test task | `a system property added to the test task runs everything` | full run, `daemon-refused` (`environment-changed`) |
+| Version in the version catalog | `a version changed in the version catalog runs everything` | full run, `unmappable-paths` |
+
+The Kotlin fixture inlines one function of its own. Without any inlined body in the output, the
+inline scan refuses (`smap-absent`) and the same edit runs everything.
+
 ## Reverts of real commits
 
 The `revert/v1` set (`--shapes revert/v1`, `--set revert/v1`) measures edits developers made
