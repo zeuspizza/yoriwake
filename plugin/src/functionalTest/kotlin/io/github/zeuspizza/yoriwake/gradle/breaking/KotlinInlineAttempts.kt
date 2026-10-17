@@ -25,7 +25,7 @@ class KotlinInlineAttempts : BreakAttempt() {
         """,
     )
 
-    private val kotlinBuild = """
+    private val forkedKotlinBuild = """
         plugins {
             kotlin("jvm") version "2.1.20"
             jacoco
@@ -87,7 +87,7 @@ class KotlinInlineAttempts : BreakAttempt() {
         val result = attempt(
             dir, "dev.demokt.A1WrappedTest", Aim.Row("reaches-change"),
             listOf(inlined, wrapper, target, belowTenTest, wrapperTest, alpha, alphaTest),
-            buildScript = kotlinBuild,
+            buildScript = forkedKotlinBuild,
         ) { changeAboveZero(it) }
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
@@ -104,7 +104,7 @@ class KotlinInlineAttempts : BreakAttempt() {
                 repositories { mavenCentral() }
                 dependencies { classpath("org.ow2.asm:asm:9.7.1") }
             }
-        """.trimIndent() + "\n" + kotlinBuild + "\n" + """
+        """.trimIndent() + "\n" + forkedKotlinBuild + "\n" + """
             tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
                 val out = destinationDirectory
                 doLast {
@@ -213,7 +213,7 @@ class KotlinInlineAttempts : BreakAttempt() {
     // the scan reads stays, so the scan answers and the inliner is selected by its own rule.
     @Test
     fun `the no-source-debug-extension flag alone leaves the SMAP the scan reads`(@TempDir dir: File) {
-        val flagBuild = kotlinBuild + "\n" + """
+        val flagBuild = forkedKotlinBuild + "\n" + """
             tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
                 compilerOptions.freeCompilerArgs.add("-Xno-source-debug-extension")
             }
