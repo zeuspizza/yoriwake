@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -125,5 +126,34 @@ class InitScriptFunctionalTest : FunctionalTestSupport() {
 
         assertContains(output, "jacocoTestReport")
         assertContains(output, "yoriwakeAuditTest")
+    }
+
+    @Test
+    fun `the init script scopes and selects a multiplatform module as the plugin does`(
+        @TempDir dir: File,
+        @TempDir scripts: File,
+    ) {
+        // Every init-script adopter reaches a multiplatform module through the script's own gate,
+        // not the plugin's, so the two must agree on what the module is. The script lives outside
+        // the project: inside it, even ignored, it would count as a changed file.
+        multiplatform(dir, yoriwake = "")
+        val init = initScriptUnderTest(scripts).absolutePath
+
+        runner(dir, "jvmTest", "-I", init).build()
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val scope = File(mapDir, "effective-scope").readLines()
+        assertTrue("include\tdev.common.*" in scope && "include\tdev.jvm.*" in scope, "scope: $scope")
+
+        File(dir, "src/jvmMain/kotlin/dev/jvm/JvmOnly.kt").apply {
+            writeText(readText().replace("name() = \"jvm\"", "name() = \"j\" + \"vm\""))
+        }
+        File(dir, "build/test-results").deleteRecursively()
+        val output = runner(dir, "jvmTest", "-I", init, "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        // The plugin path's answer to the same change.
+        val ran = File(dir, "build/test-results/jvmTest").list().orEmpty()
+            .filter { it.endsWith(".xml") }.map { it.removeSuffix(".xml").substringAfterLast('.') }.toSet()
+        assertEquals(setOf("B2JvmOnlyTest", "B3QuadTest", "B4LimitTest", "B5PlatformTest", "B6PlainTest"), ran, output)
     }
 }

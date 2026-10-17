@@ -484,7 +484,8 @@ everything as `environment-changed` ([The environment fingerprint](#the-environm
 - **Daemon JDK.** The plugin's classes are compiled for Java 21, so 21 is the floor.
 - **Test JVM JDK.** The agent is compiled with `release = 11`, so 11 is the floor. A test JVM on 25
   is tested with Gradle 9.8.0 only: Gradle runs Java 25 toolchains from 9.1.
-- **Not in the table, so not tested on a release:** Android and Kotlin Multiplatform hosts (below); Kotest, plain JUnit 4 and TestNG, which the
+- **Not in the table, so not tested on a release:** Android hosts (below), and Kotlin Multiplatform
+  until a release's matrix run has run its functional test; Kotest, plain JUnit 4 and TestNG, which the
   suite runs in every cell but which are captured and always run in full rather than narrowed
   ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
 
@@ -528,9 +529,29 @@ The plugin attaches to a project that applies one of these:
 - `org.jetbrains.kotlin.multiplatform`, for a module with a JVM target: a `src/jvmMain` or
   `src/jvmTest` directory beside at least one `<target>Main` source directory.
 
-Kotlin Multiplatform is unverified. The plugin attaches by that directory layout, and no
-functional test applies the Kotlin Multiplatform plugin yet. Selection is
-as safe there as anywhere, but which module shapes it reads correctly has not been proven.
+Kotlin Multiplatform is tested with the Kotlin Gradle plugin 2.1.20 on Gradle 8.14 and 9.8.0
+(`MultiplatformFunctionalTest`), with the plugin applied and through the init script. The plugin
+reads a multiplatform module by that directory layout, not through the Kotlin plugin's model:
+
+- **Narrowed:** a module with `jvm()`. A change in `commonMain` or `jvmMain` runs the JVM tests that
+  ran it; an edited `commonTest` class in a package the module's main code uses runs (one in a
+  package of its own is a change no class answers to, and runs everything); a module, multiplatform
+  or `java`, that depends on it runs its own tests that ran the change. A changed `expect` default
+  runs its callers through the `actual`'s class, whose bytes changed.
+- **Runs everything:** a changed `const val`; a changed `inline` function whose file declares
+  nothing a test runs, since its callers are found ([Kotlin](#kotlin)) but its own class has no
+  coverage; a platform-suffixed file such as `Platform.jvm.kt`, which compiles to `Platform_jvmKt`
+  rather than the class its path names; a change in a non-JVM source set (`jsMain`, `nativeMain`),
+  in a module with no JVM target, or in a module the plugin declines.
+- **Declined** (`kotlin-multiplatform`): a JVM target with its own name, such as `jvm("desktop")`,
+  whose sources are not under a `jvm*` directory.
+- **Not covered:** `withJava()` on a Kotlin Gradle plugin before 2.1.20, where the module also
+  applies `java`, its own packages leave the scope, and every change runs everything; source
+  directories moved out of `src/<set>/kotlin`, or JVM sources in an intermediate source set, which
+  are not in the functional test; `androidTarget()` beside `jvm()`, where `jvmTest` narrows with the
+  plugin applied and the Android unit tests always run in full, but through the init script with
+  the configuration cache on the build currently fails. Native, JS and Wasm test tasks are not
+  `Test` tasks and always run in full.
 
 On any other project with test tasks it declines by name. Nothing is captured or selected there,
 every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blocker:

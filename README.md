@@ -129,7 +129,8 @@ helps, at several times the recording cost. Every case:
 
 The Gradle versions, JDKs, operating systems and test engines each release is tested on are in the
 [supported matrix](docs/reference.md#supported-matrix). It also needs `git` on `PATH` and a project
-applying `java`, an Android plugin, or Kotlin Multiplatform with a JVM target (unverified).
+applying `java`, an Android plugin, or Kotlin Multiplatform with a JVM target
+([the shapes tested](docs/reference.md#supported-hosts)).
 
 ## CI
 
