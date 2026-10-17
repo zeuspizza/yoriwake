@@ -33,8 +33,10 @@ class CaptureCharacterizationTest {
     private fun capture(engine: Engine, scenario: String, vararg properties: String): String {
         val raw = File(dir, "raw")
         val loaded = File(dir, "loaded")
-        val command = listOf(
-            File(System.getProperty("java.home"), "bin/java").path,
+        // The build's coverage agent, when it passes one. Its jar joins the class path after -cp,
+        // so the scripts' stand-in JaCoCo runtime still resolves first.
+        val coverage = listOfNotNull(System.getProperty("yoriwake.script.coverageAgent"))
+        val command = listOf(File(System.getProperty("java.home"), "bin/java").path) + coverage + listOf(
             "-cp", System.getProperty(engine.classpath),
             "-D${AgentContract.RECORDS_DIR_PROPERTY}=$raw",
             "-D${AgentContract.LOADED_DIR_PROPERTY}=$loaded",

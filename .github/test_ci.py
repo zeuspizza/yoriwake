@@ -843,7 +843,71 @@ def case_a_code_file_moved_into_docs_still_needs_the_checks():
     return 0 if ci.needs_checks(paths) else fail("a code file moved into docs/ passed as a docs-only change")
 
 
+REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BADGE = os.path.join(".github", "badges", "coverage.json")
+GATED_MODULES = ("plugin", "agent")
+
+
+def gate_minimums(root):
+    """Each module's LINE minimum, as the whole percent its build file's gate enforces."""
+    minimums = {}
+    for module in GATED_MODULES:
+        with open(os.path.join(root, module, "build.gradle.kts"), encoding="utf-8") as handle:
+            found = re.findall(r'minimum = "0\.(\d\d)"\.toBigDecimal\(\)', handle.read())
+        if len(found) != 1:
+            raise ValueError(f"{module}/build.gradle.kts: expected one gate minimum, found {found}")
+        minimums[module] = int(found[0])
+    return minimums
+
+
+def badge_problems(root):
+    """The README's coverage badge claims the gates' minimums: what every commit on main meets."""
+    import json
+
+    minimums = gate_minimums(root)
+    with open(os.path.join(root, BADGE), encoding="utf-8") as handle:
+        badge = json.load(handle)
+    expected = " · ".join(f"{module} ≥ {minimums[module]}%" for module in GATED_MODULES)
+    if badge.get("message") != expected:
+        return fail(f"{BADGE} says {badge.get('message')!r}, the build files' gates say {expected!r}")
+    return 0
+
+
+def case_the_coverage_badge_states_the_gates_minimums():
+    """A ratchet that moves updates the badge in the same change, or this fails."""
+    return badge_problems(REPOSITORY)
+
+
+def case_a_badge_one_point_off_either_gate_is_reported():
+    import io
+    import json
+    from contextlib import redirect_stdout
+
+    problems = 0
+    minimums = gate_minimums(REPOSITORY)
+    for module in GATED_MODULES:
+        off = dict(minimums, **{module: minimums[module] - 1})
+        with tempfile.TemporaryDirectory() as root:
+            for gated in GATED_MODULES:
+                os.makedirs(os.path.join(root, gated))
+                with open(os.path.join(root, gated, "build.gradle.kts"), "w", encoding="utf-8") as handle:
+                    handle.write(f'minimum = "0.{minimums[gated]}".toBigDecimal()\n')
+            os.makedirs(os.path.dirname(os.path.join(root, BADGE)))
+            message = " · ".join(f"{gated} ≥ {off[gated]}%" for gated in GATED_MODULES)
+            with open(os.path.join(root, BADGE), "w", encoding="utf-8") as handle:
+                json.dump({"schemaVersion": 1, "message": message}, handle)
+            printed = io.StringIO()
+            with redirect_stdout(printed):
+                reported = badge_problems(root)
+        said = printed.getvalue()
+        if reported != 1 or f"{module} ≥ {off[module]}%" not in said or f"{module} ≥ {minimums[module]}%" not in said:
+            problems += fail(f"a badge off by one on {module} was not reported with both values: {said!r}")
+    return problems
+
+
 CASES = (
+    case_the_coverage_badge_states_the_gates_minimums,
+    case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
     case_only_a_docs_change_skips_the_checks,
     case_a_change_to_product_sources_runs_every_guard,

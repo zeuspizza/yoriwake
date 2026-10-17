@@ -69,8 +69,24 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      - run: ./gradlew build -x functionalTest -x functionalTestGradle9 --console=plain
+      # The plugin's coverage gate needs the functional suites, which run in the shards below; the
+      # coverage job gates on this job's unit-test data and theirs.
+      - run: ./gradlew build :agent:jacocoTestReport -x functionalTest -x functionalTestGradle9 -Pyoriwake.functional.coverage=false --console=plain
       - run: python3 .github/test_ci.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-linux-unit
+          path: plugin/build/jacoco/test.exec
+          if-no-files-found: error
+          retention-days: 7
+      # The agent's measured coverage, so a ratchet is set from this run without another.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage-report-agent
+          path: agent/build/reports/jacoco/test/jacocoTestReport.xml
+          if-no-files-found: warn
+          retention-days: 7
 
   functional-shard:
     name: functional on Gradle 8.14 (shard ${{ matrix.shard }}/2)
@@ -96,6 +112,14 @@ jobs:
         with:
           name: functional-linux-functionalTest-${{ matrix.shard }}-of-2
           path: plugin/build/test-results/functionalTest/*.xml
+          if-no-files-found: error
+          retention-days: 7
+      # The daemons' coverage and the test JVM's own, for the coverage job.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage-linux-functionalTest-${{ matrix.shard }}-of-2
+          path: plugin/build/jacoco/
           if-no-files-found: error
           retention-days: 7
 
@@ -146,6 +170,14 @@ jobs:
           path: plugin/build/test-results/functionalTestGradle9/*.xml
           if-no-files-found: error
           retention-days: 7
+      # The daemons' coverage and the test JVM's own, for the coverage job.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage-linux-functionalTestGradle9-${{ matrix.shard }}-of-2
+          path: plugin/build/jacoco/
+          if-no-files-found: error
+          retention-days: 7
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
@@ -167,6 +199,54 @@ jobs:
           path: shards
       - name: every test class ran in exactly one shard
         run: python3 .github/functional_shards.py check shards --count 2
+
+  # The plugin's coverage gate over the unit tests and every Linux shard of both functional suites,
+  # as `./gradlew build` gates locally. The report goes up whatever the outcome, so a ratchet is set
+  # and a red gate read from this run without another.
+  coverage:
+    name: coverage gate
+    needs: [changes, build, functional-shard, functional-gradle9-shard]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-linux-*
+          path: coverage-data
+      - run: ./gradlew :plugin:jacocoTestReport :plugin:jacocoTestCoverageVerification -Pyoriwake.coverage.data=coverage-data --continue --console=plain
+      # The gate must refuse rather than pass on the unit tests alone: given only their data, it
+      # fails and names both functional suites.
+      - name: the gate refuses missing functional data
+        run: |
+          mkdir unit-only
+          cp coverage-data/coverage-linux-unit/test.exec unit-only/
+          if ./gradlew :plugin:jacocoTestCoverageVerification -Pyoriwake.coverage.data=unit-only --console=plain > refusal.log 2>&1; then
+            cat refusal.log
+            echo "the coverage gate passed with no functional data"
+            exit 1
+          fi
+          grep -q "no daemon coverage from functionalTest and functionalTestGradle9" refusal.log || { cat refusal.log; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage-report-plugin
+          path: |
+            plugin/build/reports/jacoco/test/jacocoTestReport.xml
+            coverage-data/**/summary.txt
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: coverage-report-plugin-html
+          path: plugin/build/reports/jacoco/test/html/
+          retention-days: 7
 
   capture:
     name: build a map
@@ -442,6 +522,8 @@ jobs:
   # The build on Windows, split as on Linux so the slowest suite sets the time. The checkout keeps
   # the runner's CRLF line endings, as a Windows developer's does; .gitattributes pins the files
   # that cannot take them.
+  # Windows runs every suite without the functional coverage: the gate is Linux's, and these jobs
+  # prove on every pull request that the suites pass with no coverage runtime in the daemons.
   build-windows:
     name: unit and agent suites on windows
     needs: changes
@@ -457,7 +539,7 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - shell: bash
-        run: ./gradlew build -x functionalTest -x functionalTestGradle9 --continue --console=plain
+        run: ./gradlew build -x functionalTest -x functionalTestGradle9 -Pyoriwake.functional.coverage=false --continue --console=plain
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -486,7 +568,7 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - shell: bash
-        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 --continue --console=plain
+        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 -Pyoriwake.functional.coverage=false --continue --console=plain
       # Always, and an error when empty: the check below reads every shard's results.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -536,7 +618,7 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - shell: bash
-        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 --continue --console=plain
+        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 -Pyoriwake.functional.coverage=false --continue --console=plain
       # Always, and an error when empty: the check below reads every shard's results.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

@@ -246,9 +246,55 @@ val functionalShard = providers.gradleProperty("yoriwake.functional.shard").orNu
     }
     index to count
 }
+// Coverage of the plugin's code in the TestKit daemons, where its wiring and tasks run. On by
+// default, so `./gradlew build` measures it; a matrix cell runs one version and proves the plugin as
+// users run it, so it never carries coverage. `-Pyoriwake.functional.coverage=false` turns it off.
+val functionalCoverage = functionalCellTask == null &&
+    (providers.gradleProperty("yoriwake.functional.coverage").orNull?.toBooleanStrict() ?: true)
 // The JDKs a fixture's toolchain may use. TestKit builds have their own Gradle home and cannot see
 // the JDKs this build was told about, so the same paths are handed to them.
 val toolchainPaths = providers.gradleProperty("org.gradle.java.installations.paths").orNull.orEmpty()
+
+// A Java agent in a TestKit daemon turns the configuration cache off for every build it runs, so
+// the daemons load a copy of the plugin's classes instrumented ahead of time, with JaCoCo's runtime
+// on their boot classpath. The functional-test JVM itself keeps the compiled classes.
+val coverageRuntime: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+val coverageInstrumenter: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
+dependencies {
+    coverageRuntime("org.jacoco:org.jacoco.agent:$jacocoVersion:runtime") { isTransitive = false }
+    coverageInstrumenter("org.jacoco:org.jacoco.cli:$jacocoVersion:nodeps") { isTransitive = false }
+}
+
+val instrumentedPluginClasses = layout.buildDirectory.dir("coverage/instrumented-classes")
+
+val instrumentPluginClasses by tasks.registering(JavaExec::class) {
+    description = "Instruments the plugin's classes for coverage in the functional suite's TestKit daemons."
+    val compiled = tasks.compileKotlin.flatMap { it.destinationDirectory }
+    val instrumented = instrumentedPluginClasses
+    inputs.dir(compiled)
+    outputs.dir(instrumented)
+    classpath(coverageInstrumenter)
+    mainClass = "org.jacoco.cli.internal.Main"
+    argumentProviders += CommandLineArgumentProvider {
+        listOf("instrument", compiled.get().asFile.path, "--dest", instrumented.get().asFile.path, "--quiet")
+    }
+    // A class whose source was deleted must not linger in the copy.
+    doFirst { instrumented.get().asFile.deleteRecursively() }
+}
+
+if (functionalCoverage) {
+    tasks.pluginUnderTestMetadata {
+        val compiled = tasks.compileKotlin.get().destinationDirectory.get().asFile
+        pluginClasspath.setFrom(instrumentPluginClasses, sourceSets.main.get().runtimeClasspath.filter { it != compiled })
+    }
+}
 
 // Attempts to make selection skip a test that should run, each kept once it fails to, live in one
 // package of the functional sources and run as their own task on both versions: the functional
@@ -263,6 +309,9 @@ testing {
                 // Shares property names and record ids with the plugin, as in the unit tests.
                 implementation(project(":agent"))
                 implementation("org.jetbrains.kotlin:kotlin-test")
+                // Receives the daemons' coverage and writes it out after each test class.
+                implementation("org.jacoco:org.jacoco.core:$jacocoVersion")
+                implementation("org.junit.platform:junit-platform-launcher")
             }
             targets {
                 register("functionalTestGradle9")
@@ -287,6 +336,19 @@ testing {
                         }
                         providers.gradleProperty("yoriwake.functional.earlyAccessJdk").orNull?.let {
                             systemProperty("yoriwake.functional.earlyAccessJdk", it)
+                        }
+                        systemProperty("yoriwake.functional.coverage", functionalCoverage.toString())
+                        if (functionalCoverage) {
+                            // One file per test class, from this task's run only: a rerun never mixes in an older one.
+                            val daemonCoverage = layout.buildDirectory.dir("jacoco/daemon-$name")
+                            systemProperty("yoriwake.functional.coverageDir", daemonCoverage.get().asFile.absolutePath)
+                            val runtime: FileCollection = coverageRuntime
+                            inputs.files(runtime).withPropertyName("coverageRuntime")
+                            jvmArgumentProviders += CommandLineArgumentProvider {
+                                listOf("-Dyoriwake.functional.coverageRuntime=" + runtime.singleFile.absolutePath)
+                            }
+                            outputs.dir(daemonCoverage).withPropertyName("daemonCoverage")
+                            doFirst { daemonCoverage.get().asFile.deleteRecursively() }
                         }
                         functionalCellJdk?.let { jdk ->
                             javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(jdk) }
@@ -334,43 +396,84 @@ gradlePlugin {
     testSourceSets(sourceSets["functionalTest"])
 }
 
-// XML so the gate below and any script can read it.
+// One report and one gate over the unit tests and both functional suites, measured over this
+// module's own compiled Kotlin: the bundled agent and relocated ASM would swamp the number.
+// Coverage finds code no test executes; the guards, not coverage, prove the safety rules.
+val gatedFunctionalTasks = listOf("functionalTest", "functionalTestGradle9")
+// CI runs each functional suite in shards, in jobs of their own, and gates in a later job on the
+// data they uploaded: this names that directory, and the gate then runs no test task itself.
+val coverageData = providers.gradleProperty("yoriwake.coverage.data").orNull?.let { rootProject.file(it) }
+
+listOf(tasks.jacocoTestReport, tasks.jacocoTestCoverageVerification).forEach { coverageTask ->
+    coverageTask.configure {
+        classDirectories.setFrom(tasks.compileKotlin.flatMap { it.destinationDirectory })
+        executionData.setFrom()
+        if (coverageData != null) {
+            executionData.from(fileTree(coverageData) { include("**/*.exec") })
+        } else if (functionalCoverage) {
+            // With coverage off nothing is wired in: the gate refuses at once rather than after the suites.
+            (listOf("test") + gatedFunctionalTasks).forEach { name ->
+                dependsOn(name)
+                executionData.from(tasks.named<Test>(name).map { it.extensions.getByType<JacocoTaskExtension>().destinationFile!! })
+            }
+            executionData.from(fileTree(layout.buildDirectory.dir("jacoco")) {
+                gatedFunctionalTasks.forEach { include("daemon-$it/*.exec") }
+            })
+        } else if (name == "jacocoTestReport") {
+            // A quick loop without functional coverage still gets a report of the unit tests.
+            dependsOn(tasks.test)
+            executionData.from(tasks.test.map { it.extensions.getByType<JacocoTaskExtension>().destinationFile!! })
+        }
+    }
+}
+
 tasks.jacocoTestReport {
-    dependsOn(tasks.test)
     reports {
         xml.required = true
         html.required = true
     }
 }
 
-// Measured over this module's own compiled Kotlin only: the bundled agent and relocated ASM would
-// swamp the number. YoriwakePlugin and the wiring and tasks it registers are Gradle code that only
-// the functional test exercises, in a separate JVM no coverage agent here sees.
-val coveredCode = fileTree(layout.buildDirectory.dir("classes/kotlin/main")) {
-    exclude("io/github/zeuspizza/yoriwake/gradle/YoriwakePlugin*")
-    exclude("io/github/zeuspizza/yoriwake/gradle/wiring/TestTaskWiring*")
-    exclude("io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring*")
-    exclude("io/github/zeuspizza/yoriwake/gradle/tasks/*")
-    exclude("io/github/zeuspizza/yoriwake/gradle/wiring/JacocoScoping*")
+// A ratchet: the measured LINE ratio floored to a whole percent, the lower of a local run and the
+// pull request's CI run. It catches code no test executes, not unsafe selection. Raise it in the
+// change whose tests raise the measurement; lowering it needs a reason in that change.
+// With nothing to read the gate would pass as having no source; asked for anyway, it says why.
+val functionalCoverageOff by tasks.registering {
+    doLast {
+        throw GradleException(
+            "the coverage gate needs both functional suites run with coverage, and " +
+                "-Pyoriwake.functional.coverage=false or -Pyoriwake.functional.gradle turned it off",
+        )
+    }
 }
 
-tasks.jacocoTestReport { classDirectories.setFrom(coveredCode) }
-
-// A ratchet set just under current coverage: it catches code no test executes, not unsafe
-// selection. Raise it deliberately when coverage rises.
 tasks.jacocoTestCoverageVerification {
-    dependsOn(tasks.test)
-    classDirectories.setFrom(coveredCode)
+    if (!functionalCoverage && coverageData == null) dependsOn(functionalCoverageOff)
+    val summaries = coverageData ?: layout.buildDirectory.dir("jacoco").get().asFile
+    val pluginClass = "hit io/github/zeuspizza/yoriwake/gradle/YoriwakePlugin"
+    // Plain values only in the action, for the configuration cache.
+    val suites = gatedFunctionalTasks
+    // Without a suite's data the measurement drops for a reason that is not the code's; say which.
+    doFirst {
+        val missing = suites.filter { task ->
+            summaries.walk().none { file ->
+                file.name == "summary.txt" && file.parentFile.name == "daemon-$task" && pluginClass in file.readLines()
+            }
+        }
+        if (missing.isNotEmpty()) {
+            throw GradleException("no daemon coverage from ${missing.joinToString(" and ")} under $summaries: run it with coverage on")
+        }
+    }
     violationRules {
         rule {
             limit {
                 counter = "LINE"
-                // What stays uncovered needs a real Gradle Project to run. Making `establish` take
-                // TaskArtifacts instead of ClasspathFacts would let unit tests reach it.
-                minimum = "0.75".toBigDecimal()
+                minimum = "0.94".toBigDecimal()
             }
         }
     }
 }
 
-tasks.check { dependsOn(tasks.jacocoTestCoverageVerification) }
+// A matrix cell or a run with coverage off proves the tests without the gate; `build` with
+// coverage on is the gate.
+if (functionalCoverage) tasks.check { dependsOn(tasks.jacocoTestCoverageVerification) }

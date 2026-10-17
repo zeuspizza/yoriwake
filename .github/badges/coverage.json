@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "label": "line coverage (gated)",
+  "message": "plugin ≥ 94% · agent ≥ 81%",
+  "color": "brightgreen"
+}
