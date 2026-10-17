@@ -4766,6 +4766,32 @@ def case_a_shard_measures_its_slice_and_counts_from_its_start():
     return failures
 
 
+def case_a_sharded_pool_run_refuses_a_timing_cap():
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    failures = 0
+    for job in (["--accepted-out", "accepted.json"],
+                ["--accepted", "accepted.json", "--shard", "1/2"]):
+        saved = sys.argv
+        sys.argv = ["run.py", "bench/projects/none.toml", "--shapes", run.POOL_SHAPES,
+                    "--timing-cap", "8", *job]
+        err = io.StringIO()
+        said = ""
+        try:
+            with contextlib.redirect_stderr(err):
+                run.main()
+        except SystemExit:
+            said = err.getvalue()
+        except Exception:  # noqa: BLE001 -- past the flags, so not refused
+            pass
+        finally:
+            sys.argv = saved
+        if "--timing-cap times rows by draw position" not in said:
+            failures += fail(f"{' '.join(job)} under {run.POOL_SHAPES} with --timing-cap was not "
+                             f"refused: {said[-200:]!r}")
+    return failures
+
+
 def case_a_shard_refuses_a_list_drawn_under_other_stamps():
     accepted = {"selector_digest": "s1", "grammar_digest": "g1", "plugin_commit": "p1",
                 "commit": "c1"}
@@ -4858,6 +4884,9 @@ def case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_a
     root = tempfile.mkdtemp(prefix="yoriwake-grammar-")
     try:
         for name in run.GRAMMAR_SOURCE_FILES + run.SET_GRAMMAR_FILES[run.POOL_SHAPES]:
+            # The learned order's model exists only once a replay adopted it.
+            if not os.path.isfile(os.path.join(run.ROOT, name)):
+                continue
             os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
             shutil.copyfile(os.path.join(run.ROOT, name), os.path.join(root, name))
         default = run.grammar_digest(root)
@@ -4875,6 +4904,18 @@ def case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_a
             print("  FAIL: a change to the pool's generators left the pool's grammar digest alone")
             failures += 1
         pool = run.grammar_digest(root, run.POOL_SHAPES)
+        # The pool's draw order and stops, and the learned order's model once one is adopted.
+        for name in ("family_order.py", os.path.join("order", "learned-v1.json")):
+            os.makedirs(os.path.join(root, "bench", "order"), exist_ok=True)
+            with open(os.path.join(root, "bench", name), "a", encoding="utf-8") as handle:
+                handle.write("changed = True\n")
+            if run.grammar_digest(root) != default:
+                print(f"  FAIL: a change to {name} moved the default set's grammar digest")
+                failures += 1
+            if run.grammar_digest(root, run.POOL_SHAPES) == pool:
+                print(f"  FAIL: a change to {name} left the pool's grammar digest alone")
+                failures += 1
+            pool = run.grammar_digest(root, run.POOL_SHAPES)
         with open(os.path.join(root, "bench", "mutations.py"), "a", encoding="utf-8") as handle:
             handle.write("changed = True\n")
         if run.grammar_digest(root) == default or run.grammar_digest(root, run.POOL_SHAPES) == pool:
@@ -4893,6 +4934,8 @@ def case_the_forcing_set_digests_its_own_generators_and_leaves_the_others_alone(
         names = set(run.GRAMMAR_SOURCE_FILES + run.SET_GRAMMAR_FILES[run.POOL_SHAPES]
                     + run.SET_GRAMMAR_FILES.get(run.FORCING_SET, ()))
         for name in names:
+            if not os.path.isfile(os.path.join(run.ROOT, name)):
+                continue
             os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
             shutil.copyfile(os.path.join(run.ROOT, name), os.path.join(root, name))
         default, pool = run.grammar_digest(root), run.grammar_digest(root, run.POOL_SHAPES)
@@ -4977,6 +5020,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_row_measured_on_ci_names_the_runner_and_the_job,
          case_a_shard_of_a_fixture_keeps_the_map_the_recording_job_left,
          case_a_shard_measures_its_slice_and_counts_from_its_start,
+         case_a_sharded_pool_run_refuses_a_timing_cap,
          case_a_shard_refuses_a_list_drawn_under_other_stamps,
          case_a_selecting_arm_runs_with_other_ci_run_values_than_a_recording_arm,
          case_a_run_launched_without_a_mode_takes_full_arm_truth,
