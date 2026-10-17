@@ -1115,24 +1115,6 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
     }
 
-    private val kotlinBuild = """
-        plugins {
-            kotlin("jvm") version "2.1.20"
-            jacoco
-            id("io.github.zeuspizza.yoriwake")
-        }
-        repositories { mavenCentral() }
-        dependencies {
-            testImplementation(platform("org.junit:junit-bom:5.11.4"))
-            testImplementation("org.junit.jupiter:junit-jupiter")
-            testImplementation(kotlin("test"))
-            testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-        }
-        // Kotlin 2.1.20 targets at most Java 23, so the fixture keeps to 21 on any daemon JDK.
-        kotlin { jvmToolchain(21) }
-        tasks.test { useJUnitPlatform() }
-    """.trimIndent()
-
     // `belowTen` is deliberately not inline: it gives the map real coverage records for InlinedKt,
     // from BelowTenTest, so a change to Inlined.kt can narrow. Without it the map has never seen
     // InlinedKt, the selector forces a full run, and this test would pass for the wrong reason.
