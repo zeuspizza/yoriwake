@@ -73,7 +73,12 @@ abstract class BreakAttempt : FunctionalTestSupport() {
         change: (File) -> Unit,
     ): Result {
         build(dir, "build.gradle.kts" to buildScript, *sources.toTypedArray())
-        committed(dir)
+        // The Kotlin plugin keeps its session state in `.kotlin/` beside the build, as Gradle does in
+        // `.gradle/`; left untracked, it is a changed file of its own that forces the run.
+        ignoreBuildOutputs(dir)
+        File(dir, ".gitignore").appendText(System.lineSeparator() + ".kotlin/")
+        git(dir, "init")
+        commit(dir, "base")
         runner(dir, "test").build()
         val captured = ranTests(dir)
         check(passed(dir, target) == true) { "$target did not pass when the map was recorded; ran $captured" }
@@ -201,10 +206,25 @@ abstract class BreakAttempt : FunctionalTestSupport() {
             }
             rows += lines.filter { it.isNotBlank() && !it.startsWith("#") }
                 .map { it.split("\t") }
-                .filter { it.size >= 3 && it[0].contains("[class:$target]") && it[0].contains("[method:") }
+                .filter { it.size >= 3 && isTargetRow(it[0], target) }
                 .map { it[2] to rules[it[0]].orEmpty() }
         }
         return notes to rows.distinct()
+    }
+
+    /**
+     * Whether a decision row is one of [target]'s: a method of the class, or a Kotest spec, which
+     * discovery yields whole and whose tests appear only as it runs. A static nested class
+     * (`Outer$Inner`) Jupiter discovers on its own is named whole; a `@Nested` one is the segment
+     * naming its simple name under its enclosing class's.
+     */
+    private fun isTargetRow(id: String, target: String): Boolean {
+        val classes = target.split('$')
+        val nested = (listOf("[class:${classes.first()}]") + classes.drop(1).map { "[nested-class:$it]" })
+            .joinToString("/")
+        return (id.contains("[class:$target]") && id.contains("[method:")) ||
+            (classes.size > 1 && id.contains("$nested/[method:")) ||
+            id.endsWith("[spec:$target]")
     }
 
     private fun gitStatus(dir: File): String =
