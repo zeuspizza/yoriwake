@@ -68,6 +68,54 @@ class PublishedPluginTest {
     }
 
     @Test
+    fun `nothing is signed unless the release asks for it`() {
+        // Signing needs the release key, which only the publish job holds; every other build,
+        // pull requests and the tested release build included, publishes unsigned.
+        val signatures = repository.walkTopDown().filter { it.name.endsWith(".asc") }.toList()
+        assertTrue(signatures.isEmpty(), "an unsigned build signed ${signatures.map(File::getName)}")
+    }
+
+    /** What the build declares it bundles, as the build passed it. */
+    private fun declared(name: String) = requireNotNull(System.getProperty("yoriwake.$name")) {
+        "the build did not pass yoriwake.$name; run this through Gradle"
+    }
+
+    @Test
+    fun `the SBOM lists what each jar bundles, at the declared versions, and where it is relocated`() {
+        val sbom = groovy.json.JsonSlurper().parse(File(declared("sbom"))) as Map<*, *>
+        val plugin = (sbom["metadata"] as Map<*, *>)["component"] as Map<*, *>
+        assertEquals("pkg:maven/io.github.zeuspizza/yoriwake-gradle-plugin@$version?type=jar", plugin["purl"])
+
+        fun bundled(component: Map<*, *>): Map<String, String?> =
+            (component["components"] as List<*>? ?: emptyList<Any>()).associate { c ->
+                c as Map<*, *>
+                val relocated = (c["properties"] as List<*>? ?: emptyList<Any>())
+                    .map { it as Map<*, *> }
+                    .singleOrNull { it["name"] == "yoriwake:relocated-to" }?.get("value") as String?
+                c["purl"] as String to relocated
+            }
+
+        val asm = declared("asmVersion")
+        assertEquals(
+            mapOf(
+                "pkg:maven/org.jacoco/org.jacoco.core@${declared("jacocoVersion")}?type=jar" to
+                    "io.github.zeuspizza.yoriwake.shaded.plugin.jacoco.core",
+                "pkg:maven/org.ow2.asm/asm@$asm?type=jar" to "io.github.zeuspizza.yoriwake.shaded.plugin.asm",
+                "pkg:maven/org.ow2.asm/asm-commons@$asm?type=jar" to "io.github.zeuspizza.yoriwake.shaded.plugin.asm",
+                "pkg:maven/org.ow2.asm/asm-tree@$asm?type=jar" to "io.github.zeuspizza.yoriwake.shaded.plugin.asm",
+                "pkg:maven/io.github.zeuspizza/yoriwake-agent@$version?type=jar" to null,
+            ),
+            bundled(sbom),
+        )
+        val agent = (sbom["components"] as List<*>).map { it as Map<*, *> }
+            .single { (it["purl"] as String).contains("/yoriwake-agent@") }
+        assertEquals(
+            mapOf("pkg:maven/org.ow2.asm/asm@$asm?type=jar" to "io.github.zeuspizza.yoriwake.shaded.asm"),
+            bundled(agent),
+        )
+    }
+
+    @Test
     fun `the plugin marker points at the renamed artifact`() {
         val marker = File(
             repository,

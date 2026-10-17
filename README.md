@@ -159,7 +159,7 @@ learns from build history. It is local and free, and it would rather run everyth
 - [Benchmarks](docs/benchmarks.md): the projects, the method, and every published figure
 - [Contributing](CONTRIBUTING.md): building, testing, what a change to selection must prove
 - [Changelog](CHANGELOG.md): each release, and what it does to an existing map
-- [Security](SECURITY.md): reporting a vulnerability
+- [Security](SECURITY.md): reporting a vulnerability, and [verifying a release](SECURITY.md#verifying-a-release)
 
 ## Licence
 

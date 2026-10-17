@@ -25,6 +25,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Kotlin Multiplatform with a JVM target is tested; the reference lists which shapes narrow, run everything or are declined. Map: left alone.
 - A test that fails just before its JVM is stopped (`--fail-fast`, or a killed worker) stays failing in the map, so it keeps running. Map: left alone.
 - A class newer than the plugin or JaCoCo reads, or a test JVM newer than the agent reads, runs every test and names why (`class-file-unsupported`, `test-jvm-unsupported`). Map: left alone.
+- Releases ship the files their tested build produced, signed, with provenance and an SBOM of what the jars bundle; SECURITY.md says how to check them. Map: left alone.
 
 ### Changed
 
