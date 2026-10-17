@@ -17,9 +17,12 @@ object FunctionalGradle {
      * daemon of the other version holds the journal cache lock, and a reusing build must get it
      * released to load its entry: under load that handoff once timed out after 60s and failed the
      * reuse guard.
+     *
+     * Every runner takes its home from here, so this is also where the daemons learn whether to
+     * report coverage.
      */
     fun testKitDir(gradleVersion: String = version): File = File(
         System.getProperty("org.gradle.internal.worker.tmpdir") ?: System.getProperty("java.io.tmpdir"),
         ".gradle-test-kit-$gradleVersion",
-    )
+    ).also(FunctionalCoverage::configure)
 }

@@ -8,6 +8,7 @@
   <a href="https://plugins.gradle.org/plugin/io.github.zeuspizza.yoriwake"><img alt="Gradle Plugin Portal" src="https://img.shields.io/gradle-plugin-portal/v/io.github.zeuspizza.yoriwake"></a>
   <a href="LICENSE"><img alt="Licence: Apache-2.0" src="https://img.shields.io/badge/licence-Apache--2.0-blue"></a>
   <a href="https://github.com/zeuspizza/yoriwake/actions/workflows/verify.yml"><img alt="CI" src="https://github.com/zeuspizza/yoriwake/actions/workflows/verify.yml/badge.svg"></a>
+  <a href="CONTRIBUTING.md#coverage"><img alt="Line coverage, as the build gates it" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zeuspizza/yoriwake/main/.github/badges/coverage.json"></a>
 </p>
 
 <p align="center">

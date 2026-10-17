@@ -161,9 +161,34 @@ val jdkNestTest by tasks.registering(Test::class) {
 
 tasks.check { dependsOn(jdkIdentityTest, jdkNestTest) }
 
+// The JUnit 4 hook, TestNG listener, loaded-class recorder and test-boundary code run only in the
+// scripted capture JVMs, so those JVMs report their coverage too: to a file of their own, read by
+// the gate beside the tests' own.
+val captureCoverageAgent: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+dependencies {
+    captureCoverageAgent("org.jacoco:org.jacoco.agent:$jacocoVersion:runtime") { isTransitive = false }
+}
+val captureScriptCoverage = layout.buildDirectory.file("jacoco/captureScript.exec")
+
 tasks.test {
     useJUnitPlatform()
     withBootFixture()
+    // JaCoCo appends to its file, so a rerun starts from none.
+    val captureCoverage = captureScriptCoverage
+    val coverageAgent: FileCollection = captureCoverageAgent
+    inputs.files(coverageAgent).withPropertyName("captureCoverageAgent")
+    outputs.file(captureCoverage).withPropertyName("captureScriptCoverage")
+    doFirst { captureCoverage.get().asFile.delete() }
+    jvmArgumentProviders += CommandLineArgumentProvider {
+        listOf(
+            "-Dyoriwake.script.coverageAgent=-javaagent:" + coverageAgent.singleFile.absolutePath +
+                "=destfile=" + captureCoverage.get().asFile.absolutePath +
+                ",includes=io.github.zeuspizza.yoriwake.agent.*,jmx=false",
+        )
+    }
     // AgentContractTest checks this page, so an edit to it alone must rerun the tests.
     inputs.file(rootProject.file("docs/contract.md"))
         .withPropertyName("contractDoc")
@@ -239,22 +264,24 @@ configurations.configureEach {
 // evidence of safety.
 tasks.jacocoTestReport {
     dependsOn(tasks.test)
+    executionData.from(captureScriptCoverage)
     reports {
         xml.required = true
         html.required = true
     }
 }
 
-// Lower than the plugin's floor: the JUnit 4 hook, TestNG listener, loaded-class recorder and
-// test-boundary code run only in a host's test JVM, which no coverage agent here observes.
+// A ratchet, set as the plugin's is: the measured LINE ratio floored to a whole percent, raised in
+// the change whose tests raise it. It flags unexecuted code; the guards prove the capture rules.
 tasks.jacocoTestCoverageVerification {
     dependsOn(tasks.test)
+    executionData.from(captureScriptCoverage)
     violationRules {
         rule {
             element = "BUNDLE"
             limit {
                 counter = "LINE"
-                minimum = "0.68".toBigDecimal()
+                minimum = "0.81".toBigDecimal()
             }
         }
     }

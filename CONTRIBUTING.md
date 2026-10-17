@@ -28,6 +28,25 @@ body included.
 `./gradlew build` is the gate a pull request must pass. It includes the coverage gates; a change
 that lowers coverage below them fails the build.
 
+### Coverage
+
+The plugin's gate counts the unit tests and both functional suites. The plugin's wiring and tasks
+run only in the Gradle daemons TestKit starts, so the functional tasks give those daemons a copy of
+the plugin's classes instrumented by JaCoCo, which report to the test JVM after every test class
+(`plugin/build/jacoco/daemon-<task>/`). The agent's gate counts its unit tests and the scripted
+capture JVMs of `CaptureCharacterizationTest`. Each minimum is the measured LINE ratio floored to a
+whole percent, raised by the change whose tests raise it; the README badge states both, and
+`.github/test_ci.py` fails when it disagrees with the build files.
+
+`-Pyoriwake.functional.coverage=false` runs the functional suites without it, and without the gate,
+for a quicker loop, though it saves little: on three functional classes run three times each way,
+coverage on and off took the same time within the runs' spread (255-257 s and 256-259 s on an
+Apple M1 Max). The guard harness, the matrix cells and CI's Windows jobs always run
+without it, so the suites are also proved with nothing added to the daemons.
+
+Coverage finds code no test executes. It proves no safety rule: each rule keeps its guard,
+whatever its lines' coverage.
+
 `samples/` holds small projects the functional tests and CI exercise; `fixtures/` holds test data.
 
 `bench/` is the benchmark harness ([its README](bench/README.md)): each `bench/test_*.py` runs on its

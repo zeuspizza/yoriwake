@@ -62,9 +62,14 @@ def source(path):
     return os.path.join(yoriwake_checkout.root(), path)
 
 
+# Guards prove test outcomes, and the functional suite's coverage would only add time; the same
+# arguments everywhere, so the warm-up's configuration cache entry is the one the runs reuse.
+GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false"]
+
+
 def gradle(args):
     """`./gradlew` in the tree under test."""
-    return subprocess.run(["./gradlew"] + args, capture_output=True, text=True,
+    return subprocess.run(["./gradlew"] + GRADLE_ARGS + args, capture_output=True, text=True,
                           cwd=yoriwake_checkout.root())
 
 
@@ -3701,7 +3706,7 @@ def warm_up_tasks(selected):
 def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal line, or None."""
     for tree in trees:
-        done = subprocess.run(["./gradlew", "-q", *tasks], capture_output=True, text=True, cwd=tree)
+        done = subprocess.run(["./gradlew", "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True, cwd=tree)
         if done.returncode != 0:
             tail = (done.stderr or done.stdout).strip().splitlines()
             return f"{tree} does not compile unmutated: {tail[-1] if tail else '?'}"
