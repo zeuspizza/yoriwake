@@ -3703,13 +3703,30 @@ def warm_up_tasks(selected):
     return sorted({WARM_UP[SUITE_NAMES[m[4]]] for m in selected if SUITE_NAMES[m[4]] in WARM_UP})
 
 
+def compile_errors(output, limit=10):
+    """The compiler's own error lines in a failed Gradle build's output, else what Gradle says went
+    wrong. Gradle's last line alone ("BUILD FAILED in 1m 3s") once left a red nightly unexplained."""
+    lines = output.splitlines()
+    errors = [line.strip() for line in lines
+              if line.startswith("e: ") or ": error: " in line]
+    if not errors:
+        for i, line in enumerate(lines):
+            if line.strip() == "* What went wrong:":
+                errors = [l.strip() for l in lines[i + 1:i + 4] if l.strip()]
+                break
+    return errors[:limit]
+
+
 def _warm_up(trees, tasks):
-    """Compiles `tasks` in each tree, one tree at a time. Returns a refusal line, or None."""
+    """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
+    error lines below it, or None."""
     for tree in trees:
         done = subprocess.run(["./gradlew", "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True, cwd=tree)
         if done.returncode != 0:
+            output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
-            return f"{tree} does not compile unmutated: {tail[-1] if tail else '?'}"
+            refusal = f"{tree} does not compile unmutated: {tail[-1] if tail else '?'}"
+            return "\n".join([refusal] + ["    " + line for line in compile_errors(output)])
     return None
 
 
