@@ -292,6 +292,14 @@ def examine(name, results_dir, qualified, project=None, root=None, shape_set="de
                 "reason": f"measured against selector {digest}, and the selector is now {current}; "
                           f"this file records {entry['missed']} missed failure(s) against the "
                           f"older one"}
+    # AND ON WHAT THE FIXTURE IS. A fixture is measured at `commit = "local"`, so a test added to
+    # it moves no other stamp; its rows describe the tree `fixture_digest` names, and a file
+    # without one cannot say which tree that was.
+    fixture = run.fixture_digest(project or {}, root)
+    if fixture is not None and data.get("fixture_digest") != fixture:
+        return {**entry, "verdict": STALE_STAMP,
+                "reason": f"measured on fixture tree {data.get('fixture_digest')}, and the tree is "
+                          f"now {fixture}; its suite and its ordering were another tree's"}
 
     # A ROW NOBODY CAN ATTRIBUTE IS NOT A ROW THAT ANSWERED. `decision_outcome` is the selector's
     # own account of what it did; a row without one ran its two arms and recorded no reason, so it
@@ -362,8 +370,20 @@ def examine(name, results_dir, qualified, project=None, root=None, shape_set="de
                           "about recall"}
     # THE SAME CEILING `assert_recall` REFUSES ON. Clean means `assert_recall` passes, and above
     # the ceiling it does not: the sample was shaped by the generator rather than by the project.
+    # `pool/v1`'s ceiling is per family, as `assert_recall` reads it; a refused family's rows are
+    # set aside there, so the project is not clean here.
     rejected = data.get("mutations_rejected")
+    if data.get("target_shapes") == run.POOL_SHAPES:
+        refused = run.refused_families(data.get("rejected_mutations"), rows)
+        if refused:
+            named = ", ".join(f"{family} ({count} of {offered})"
+                              for family, (count, offered) in refused.items())
+            return {**entry, "verdict": DIRTY,
+                    "reason": f"rejected by the compile gate above the "
+                              f"{100.0 * run.MUTATION_REJECTION_CEILING:.0f}% ceiling: {named}; "
+                              f"those families' samples were shaped by the generator"}
     if rejected and data.get("target_shapes") != run.REVERT_SET \
+            and data.get("target_shapes") != run.POOL_SHAPES \
             and run.rejection_rate_refuses(rejected, len(rows)):
         return {**entry, "verdict": DIRTY,
                 "reason": f"{rejected} of {rejected + len(rows)} mutations were rejected by the "
@@ -436,7 +456,7 @@ def grammar_line(counted, current):
     return line
 
 
-def render(entries):
+def render(entries, shape_set="default"):
     corpus = [e for e in entries if not e["fixture"]]
     fixtures = [e for e in entries if e["fixture"]]
     width = max((len(e["project"]) for e in entries), default=10)
@@ -493,7 +513,7 @@ def render(entries):
         print(assert_recall.ground_truth_line(mix))
     print(f"  selector now: digest {run.selector_digest()} at commit {selector_stamp()} "
           f"-- freshness is decided on the digest")
-    print(grammar_line(counted, run.grammar_digest()))
+    print(grammar_line(counted, run.grammar_digest(shapes=shape_set)))
 
 
 def main():
@@ -527,7 +547,7 @@ def main():
     if args.json:
         print(json.dumps(entries, indent=1))
         return 1 if failed else 0
-    render(entries)
+    render(entries, args.set)
     return 1 if failed else 0
 
 

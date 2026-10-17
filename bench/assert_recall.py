@@ -285,7 +285,14 @@ def main(path, summary_path=None):
         print(f"FAIL: {results.get('project')}: the file mixes history-replay rows with mutation "
               f"rows, and a replay's rows count toward no recall figure")
         return 1
+    # `pool/v1`'s ceiling is per family, and a family above it is refused on its own: its rows count
+    # toward no figure and toward no gate that a figure stands on. A MISSED among them still fails
+    # below, because a test that should have run and did not is a defect whatever shaped the sample.
+    refused = (run.refused_families(results.get("rejected_mutations"), findings)
+               if results.get("target_shapes") == run.POOL_SHAPES else {})
+    counted = [f for f in findings if f.get("kind") not in refused]
     checked = [f for f in findings if f.get("status") == "checked"]
+    counted_checked = [f for f in counted if f.get("status") == "checked"]
     # Required, not defaulted. `f.get("missed")` answers None for an entry that never carried the
     # key, which reads as "nothing was missed" -- a schema drift in the harness would turn this gate
     # green while telling it nothing. A checked mutation without the key is a broken result file.
@@ -315,7 +322,7 @@ def main(path, summary_path=None):
     # may stand for a test other than the one that failed. Not folded into `undetermined`, whose
     # printed cause is the identity hash.
     shared_key = [(f["target"], f["shared_key"]) for f in checked if f.get("shared_key")]
-    failures = sum(f.get("full_failures", 0) for f in checked)
+    failures = sum(f.get("full_failures", 0) for f in counted_checked)
 
     print(f"{results.get('project')}: {len(checked)} mutations asked a recall question, "
           f"{failures} genuine failures, {len(missed)} missed, "
@@ -324,7 +331,10 @@ def main(path, summary_path=None):
           f"{sum(len(t) for _, t in shared_key)} on a shared key")
     print(ground_truth_line(ground_truth_mix(findings)))
 
-    narrowing = report_narrowing(findings)
+    if refused:
+        print(f"  {len(findings) - len(counted)} row(s) of refused families "
+              f"({', '.join(refused)}) are set aside from the counts and the narrowing figure")
+    narrowing = report_narrowing(counted)
 
     for target, tests in passed_anyway:
         print(f"  ran but did not fail: {target}")
@@ -381,11 +391,11 @@ def main(path, summary_path=None):
     # induced failures, and nothing was established about any of them. Both kinds of "neither" count
     # here -- a gate that fired on unmatched names and not on unrepeatable ones would go green on a
     # sweep whose whole finding was that its tests cannot repeat themselves.
-    if checked and all(established_nothing(f) for f in checked):
-        print(f"FAIL: all {len(checked)} answered mutations were UNDETERMINED, NONDETERMINISTIC, "
-              f"or failed only in tests set aside as containers or as failing unmutated. No usable "
-              f"comparison between the two runs was available, so this sweep establishes nothing "
-              f"about recall.")
+    if counted_checked and all(established_nothing(f) for f in counted_checked):
+        print(f"FAIL: all {len(counted_checked)} answered mutations were UNDETERMINED, "
+              f"NONDETERMINISTIC, or failed only in tests set aside as containers or as failing "
+              f"unmutated. No usable comparison between the two runs was available, so this "
+              f"sweep establishes nothing about recall.")
         return 1
 
     if malformed:
@@ -420,8 +430,15 @@ def main(path, summary_path=None):
               f"({100.0 * rejected / offered:.1f}%) and consumed no row")
         for target in results.get("rejected_targets") or []:
             print(f"      {target}")
-        # Reverts have no shared ceiling: a real commit the gate rejects is counted by reason.
-        if results.get("target_shapes") != run.REVERT_SET \
+        # `pool/v1`'s ceiling is per family: a family above it is refused on its own, and the
+        # other families' rows still stand. See `run.refused_families`. Reverts have no shared
+        # ceiling: a real commit the gate rejects is counted by reason.
+        if results.get("target_shapes") == run.POOL_SHAPES:
+            for family, (count, offered) in refused.items():
+                print(f"  REFUSED family {family}: {count} of {offered} rejected, above the "
+                      f"{100.0 * run.MUTATION_REJECTION_CEILING:.0f}% ceiling. Its sample was shaped "
+                      f"by the grammar: fix the generator before this family's rows are read.")
+        elif results.get("target_shapes") != run.REVERT_SET \
                 and run.rejection_rate_refuses(rejected, len(findings)):
             print(f"FAIL: the generator wrote source this project would not compile on "
                   f"{100.0 * rejected / offered:.1f}% of its targets, above the "

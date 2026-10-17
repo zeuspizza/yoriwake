@@ -907,6 +907,68 @@ def case_a_changed_grammar_starts_a_fresh_results_file():
     return failures
 
 
+def case_a_fixture_edit_moves_the_fixture_digest_and_a_resume_starts_fresh():
+    """A fixture runs at `commit = "local"`, so its tree is the only stamp that moves when a test is
+    added to it. Tracked files only; a project that is not a fixture carries null."""
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        def git(*args):
+            subprocess.run(["git", "-C", root, *args], check=True, capture_output=True)
+        git("init", "-q")
+        os.makedirs(os.path.join(root, "samples", "fx", "src"))
+        os.makedirs(os.path.join(root, "samples", "other"))
+        for name, text in (("samples/fx/src/A.java", "class A {}\n"),
+                           ("samples/fx/src/ATest.java", "class ATest {}\n"),
+                           ("samples/other/B.java", "class B {}\n")):
+            with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+                handle.write(text)
+        git("add", "-A")
+        project = {"name": "fx", "commit": "local", "copy_of": "samples/fx"}
+        before = run.fixture_digest(project, root)
+
+        with open(os.path.join(root, "samples", "fx", "notes.txt"), "w", encoding="utf-8") as h:
+            h.write("untracked\n")
+        with open(os.path.join(root, "samples", "other", "B.java"), "a", encoding="utf-8") as h:
+            h.write("// elsewhere\n")
+        git("add", "samples/other/B.java")
+        if run.fixture_digest(project, root) != before:
+            failures += fail("an untracked file, or a tracked one outside the sample, moved the "
+                             "fixture digest")
+
+        with open(os.path.join(root, "samples", "fx", "src", "ATest.java"), "a",
+                  encoding="utf-8") as handle:
+            handle.write("// a test added\n")
+        after = run.fixture_digest(project, root)
+        if after == before:
+            failures += fail("editing a tracked fixture file left the fixture digest where it was")
+
+        out = os.path.join(root, "fx.json")
+        run.RUN_STAMPS["fixture_digest"] = before
+        try:
+            run.write_results(out, project, "", None, None, [{"target": "t"}], 1)
+        finally:
+            run.RUN_STAMPS.pop("fixture_digest", None)
+        with open(out, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        if stored.get("fixture_digest") != before:
+            failures += fail(f"the results file stamped {stored.get('fixture_digest')!r}, "
+                             f"expected {before!r}")
+        if not run.fixture_changed(stored, after):
+            failures += fail("a results file measured on the old fixture tree would be resumed")
+        if run.fixture_changed(stored, before):
+            failures += fail("a results file measured on this fixture tree would start fresh")
+        if not run.fixture_changed({}, after):
+            failures += fail("a fixture's file with no stamp would be resumed, though it cannot say "
+                             "which tree it ran on")
+
+    corpus = {"name": "p", "commit": "c" * 40, "url": "u"}
+    if run.fixture_digest(corpus) is not None:
+        failures += fail("a project that is not a fixture carried a fixture digest")
+    if run.fixture_changed({"fixture_digest": None}, None) or run.fixture_changed({}, None):
+        failures += fail("a project that is not a fixture started fresh on a fixture stamp")
+    return failures
+
+
 def case_a_capture_that_was_never_merged_is_not_a_missing_map():
     """iceberg: 17,573 raw records, no coverage.tsv, and the verdict said there was no map.
 
@@ -4790,7 +4852,85 @@ def case_editing_the_shape_composition_moves_the_grammar_digest():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_alone():
+    """A sweep resumes only rows drawn under the digest it would stamp now, so adding `pool/v1`
+    must not move the default set's digest: it would start every default results file fresh."""
+    root = tempfile.mkdtemp(prefix="yoriwake-grammar-")
+    try:
+        for name in run.GRAMMAR_SOURCE_FILES + run.SET_GRAMMAR_FILES[run.POOL_SHAPES]:
+            os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
+            shutil.copyfile(os.path.join(run.ROOT, name), os.path.join(root, name))
+        default = run.grammar_digest(root)
+        pool = run.grammar_digest(root, run.POOL_SHAPES)
+        failures = 0
+        if pool == default:
+            print("  FAIL: the pool set is stamped with the default set's grammar digest")
+            failures += 1
+        with open(os.path.join(root, "bench", "pool_mutations.py"), "a", encoding="utf-8") as handle:
+            handle.write("changed = True\n")
+        if run.grammar_digest(root) != default:
+            print("  FAIL: a change to the pool's generators moved the default set's grammar digest")
+            failures += 1
+        if run.grammar_digest(root, run.POOL_SHAPES) == pool:
+            print("  FAIL: a change to the pool's generators left the pool's grammar digest alone")
+            failures += 1
+        pool = run.grammar_digest(root, run.POOL_SHAPES)
+        with open(os.path.join(root, "bench", "mutations.py"), "a", encoding="utf-8") as handle:
+            handle.write("changed = True\n")
+        if run.grammar_digest(root) == default or run.grammar_digest(root, run.POOL_SHAPES) == pool:
+            print("  FAIL: a change to the shared generators left a set's grammar digest alone")
+            failures += 1
+        return failures
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_the_pool_ceiling_refuses_a_family_and_not_the_others():
+    """`pool/v1`'s rejection ceiling is per family: one family a guest rejects is refused on its
+    own, and a family with a rejection or two under the ceiling is not."""
+    findings = ([{"kind": "throw-entry"}] * 9 + [{"kind": "void-return"}] * 2
+                + [{"kind": "body"}] * 20)
+    rejected = ([["a::void-return::f", "void-return", 0]] * 3
+                + [["b::throw-entry::g", "throw-entry", 0]])
+    refused = run.refused_families(rejected, findings)
+    failures = 0
+    if refused != {"void-return": (3, 5)}:
+        print(f"  FAIL: the per-family ceiling refused {refused}, not void-return's 3 of 5 alone")
+        failures += 1
+    # Over the whole project, 4 of 35 is under the ceiling: the per-family reading is what sees
+    # a family rejected wholesale.
+    if run.rejection_rate_refuses(4, len(findings)):
+        print("  FAIL: the fixture is meant to sit under the project-wide ceiling")
+        failures += 1
+    if run.refused_families(None, findings):
+        print("  FAIL: a file with no rejections refused a family")
+        failures += 1
+    return failures
+
+
+def case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows():
+    """A family a guest rejects wholesale stops being redrawn once no row the limit still allows
+    could bring it under the ceiling, and not one draw sooner: stopping earlier would refuse a
+    family that might have ended under it."""
+    failures = 0
+    for rejected, accepted, remaining, expected in (
+            (30, 0, 100, True),     # 30 of 130 at best: refused whatever follows
+            (25, 0, 100, False),    # 25 of 125 at best is the ceiling itself, not above it
+            (3, 0, 100, False),     # three rejections in a row, and 100 rows still to come
+            (5, 2, 0, True),        # nothing left to draw: the rate is the rate
+            (5, 2, -3, True)):      # a resumed file already past its limit
+        got = run.refused_whatever_follows(rejected, accepted, remaining)
+        if got != expected:
+            print(f"  FAIL: {rejected} rejected, {accepted} accepted, {remaining} to come read "
+                  f"{got}, expected {expected}")
+            failures += 1
+    return failures
+
+
 CASES = (case_every_case_in_this_file_is_registered,
+         case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_alone,
+         case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows,
+         case_the_pool_ceiling_refuses_a_family_and_not_the_others,
          case_editing_the_shape_composition_moves_the_grammar_digest,
          case_a_mutation_row_counts_the_files_and_modules_it_changed,
          case_a_named_shape_set_writes_its_own_results_and_scratch,
@@ -4836,6 +4976,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_only_the_selector_source_moves_the_digest,
          case_only_the_grammar_source_moves_the_grammar_digest,
          case_a_changed_grammar_starts_a_fresh_results_file,
+         case_a_fixture_edit_moves_the_fixture_digest_and_a_resume_starts_fresh,
          case_every_test_jvm_s_part_reaches_the_row,
          case_a_cached_baseline_is_reused_only_for_the_same_tree,
          case_a_replay_snapshot_is_the_map_as_read_and_is_kept_once,

@@ -18,4 +18,22 @@ class GammaTest {
     void hasALabel() {
         assertEquals("Gamma", new Gamma().label());
     }
+
+    @Test
+    void shiftsItsOffset() {
+        Gamma gamma = new Gamma();
+        gamma.shift(3);
+        assertEquals(3, gamma.offset());
+    }
+
+    @Test
+    void printsItsLabel() {
+        assertEquals("Gamma", new Gamma().toString());
+    }
+
+    @Test
+    void hashesByIdentity() {
+        Gamma gamma = new Gamma();
+        assertEquals(System.identityHashCode(gamma), gamma.hashCode());
+    }
 }

@@ -18,4 +18,9 @@ class BetaTest {
     void hasALabel() {
         assertEquals("Beta", new Beta().label());
     }
+
+    @Test
+    void hashesToItsFixedValue() {
+        assertEquals(7, new Beta().hashCode());
+    }
 }

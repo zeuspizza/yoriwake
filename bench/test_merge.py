@@ -106,6 +106,14 @@ def case_a_shard_measured_under_another_stamp_is_refused():
     return 0 if why and "selector_digest" in why else fail(f"a mixed selector: {why}")
 
 
+def case_a_shard_measured_on_another_fixture_tree_is_refused():
+    rows = [_row(i) for i in range(2)]
+    other = {**_shard(rows[1:], 2, 2), "fixture_digest": "f2"}
+    why = _refused(lambda: merge.merge_project(_recording(), _accepted(2, [[0, 1], [1, 2]]),
+                                               [_shard(rows[:1], 1, 2), other]))
+    return 0 if why and "fixture_digest" in why else fail(f"a mixed fixture tree: {why}")
+
+
 def case_a_row_with_no_kind_or_index_is_refused_by_name_not_crashed_on():
     rows = [_row(0), {"target": "src/A1.java::body::1", "status": "stalled"}]
     why = _refused(lambda: merge.merge_project(_recording(), _accepted(2, [[0, 2]]),

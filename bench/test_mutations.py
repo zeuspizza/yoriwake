@@ -14,6 +14,7 @@ The single test_* entry point below is the one pytest sees, and it asserts.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -493,6 +494,467 @@ def case_the_recall_arm_shapes_bump_every_notation_and_only_nested_java_members(
     )
 
 
+# ---------------------------------------------------------------------------------- pool/v1
+
+def _pool():
+    import pool_mutations  # noqa: PLC0415
+    return pool_mutations
+
+
+def _read(path):
+    return open(path, encoding="utf-8").read()
+
+
+def case_void_return_inserts_one_return_at_entry(root):
+    pm = _pool()
+    java = write(root, "Ledger.java",
+                 "package p;\n"
+                 "public class Ledger {\n"
+                 "    private int n;\n"
+                 "\n"
+                 "    public final synchronized void add(int by) {\n"
+                 "        n += by;\n"
+                 "    }\n"
+                 "}\n")
+    name = pm.void_return(java)
+    text = _read(java)
+    kotlin = write(root, "Ledger.kt",
+                   "class Ledger {\n"
+                   "    private var n = 0\n"
+                   "\n"
+                   "    fun log() = println(n)\n"
+                   "\n"
+                   "    fun add(by: Int) {\n"
+                   "        n += by\n"
+                   "    }\n"
+                   "}\n")
+    counted = pm.void_returns_in(kotlin)
+    kotlin_name = pm.void_return(kotlin)
+    kotlin_text = _read(kotlin)
+    return (
+        check("a final synchronized void method is drawn", name == "add", str(name)) +
+        check("one return at its entry, braced on its own lines",
+              "void add(int by) {\n        if (true) {\n            return;\n        }\n"
+              "        n += by;" in text, text) +
+        check("exactly one return is added", text.count("return;") == 1, text) +
+        check("an expression-bodied Unit function is skipped, the block-bodied one counted",
+              counted == 1, str(counted)) +
+        check("the Kotlin Unit function is the one named", kotlin_name == "add", str(kotlin_name)) +
+        check("one return at the Kotlin function's entry",
+              "fun add(by: Int) {\n        if (true) {\n            return\n        }\n"
+              "        n += by" in kotlin_text, kotlin_text) +
+        check("the expression-bodied function is untouched", "fun log() = println(n)\n" in kotlin_text,
+              kotlin_text)
+    )
+
+
+def case_throw_entry_throws_at_entry_whatever_the_return_type(root):
+    pm = _pool()
+    java = write(root, "Boxes.java",
+                 "package p;\n"
+                 "import java.util.List;\n"
+                 "public class Boxes {\n"
+                 "    public <T extends Comparable<T>> List<T> wrap(T item) {\n"
+                 "        return List.of(item);\n"
+                 "    }\n"
+                 "}\n")
+    name = pm.throw_entry(java)
+    text = _read(java)
+    kotlin = write(root, "Names.kt",
+                   "class Names {\n"
+                   "    fun names(): List<String> = listOf(\"a\", \"b\")\n"
+                   "}\n")
+    kotlin_name = pm.throw_entry(kotlin)
+    kotlin_text = _read(kotlin)
+    return (
+        check("a generic Java method is drawn", name == "wrap", str(name)) +
+        check("it throws at entry, braced on its own lines",
+              "List<T> wrap(T item) {\n        if (true) {\n"
+              "            throw new IllegalStateException(\"yoriwake-mutated\");\n        }\n"
+              "        return List.of(item);" in text, text) +
+        check("an expression-bodied Kotlin function is drawn", kotlin_name == "names",
+              str(kotlin_name)) +
+        check("it throws at entry and keeps its expression as the other branch",
+              "fun names(): List<String> = if (true) {\n"
+              "        throw IllegalStateException(\"yoriwake-mutated\")\n"
+              "    } else {\n        listOf(\"a\", \"b\")\n    }\n" in kotlin_text, kotlin_text)
+    )
+
+
+def case_constructors_initialisers_and_bodiless_methods_yield_no_target(root):
+    pm = _pool()
+    java = write(root, "Shapes.java",
+                 "package p;\n"
+                 "public abstract class Shapes {\n"
+                 "    private int n;\n"
+                 "\n"
+                 "    public Shapes(int n) {\n"
+                 "        this.n = n;\n"
+                 "    }\n"
+                 "\n"
+                 "    static {\n"
+                 "        System.out.println();\n"
+                 "    }\n"
+                 "\n"
+                 "    {\n"
+                 "        n = 1;\n"
+                 "    }\n"
+                 "\n"
+                 "    public abstract void draw();\n"
+                 "\n"
+                 "    interface Area {\n"
+                 "        double area();\n"
+                 "    }\n"
+                 "}\n")
+    kotlin = write(root, "Shapes.kt",
+                   "abstract class Shapes(private val n: Int) {\n"
+                   "    constructor() : this(0) {\n"
+                   "        println()\n"
+                   "    }\n"
+                   "\n"
+                   "    init {\n"
+                   "        println(n)\n"
+                   "    }\n"
+                   "\n"
+                   "    abstract fun draw()\n"
+                   "}\n"
+                   "\n"
+                   "interface Area {\n"
+                   "    fun area(): Double\n"
+                   "}\n")
+    return sum(
+        check(f"{os.path.basename(path)} yields no {what} target", count(path) == 0,
+              str(count(path)))
+        for path in (java, kotlin)
+        for what, count in (("void-return", pm.void_returns_in), ("throw-entry", pm.entries_in),
+                            ("member-delete", pm.overrides_in)))
+
+
+def case_records_comments_and_strings_yield_no_target(root):
+    """A record's header is not a method, and a declaration in a comment, a text block or a raw
+    string is not code: an edit to the first never compiles, and one to the others changes
+    nothing while passing the gate as a row of its family."""
+    pm = _pool()
+    java = write(root, "Outer.java",
+                 "package p;\n"
+                 "public class Outer {\n"
+                 "    public record Point(int a, int b) {\n"
+                 "    }\n"
+                 "\n"
+                 "    /*\n"
+                 "    public void old() {\n"
+                 "    }\n"
+                 "    */\n"
+                 "\n"
+                 "    private static final String TEMPLATE = \"\"\"\n"
+                 "        public void inText() {\n"
+                 "        }\n"
+                 "        \"\"\";\n"
+                 "\n"
+                 "    public void record(int n) {\n"
+                 "        System.out.println(n);\n"
+                 "    }\n"
+                 "}\n")
+    kotlin = write(root, "Gen.kt",
+                   "class Gen {\n"
+                   "    val source = \"\"\"\n"
+                   "    fun gen() {\n"
+                   "    }\n"
+                   "    \"\"\"\n"
+                   "\n"
+                   "    fun real() {\n"
+                   "        println(source)\n"
+                   "    }\n"
+                   "}\n")
+    java_entries = pm.entries_in(java)
+    java_name = pm.throw_entry(java)
+    kotlin_name = pm.void_return(kotlin)
+    return (
+        check("only the method named `record` is a Java target", java_entries == 1
+              and java_name == "record", f"{java_entries} entries, {java_name}: {_read(java)}") +
+        check("the Kotlin function in a raw string is not drawn",
+              kotlin_name == "real" and "fun gen() {\n    }" in _read(kotlin), _read(kotlin))
+    )
+
+
+def case_override_add_adds_one_override_to_a_class_that_lacks_it(root):
+    pm = _pool()
+    java = write(root, "Plain.java",
+                 "package p;\n"
+                 "public class Plain {\n"
+                 "    private int n;\n"
+                 "}\n")
+    name = pm.override_add(java)
+    text = _read(java)
+    kotlin = write(root, "Plain.kt",
+                   "class Plain(\n"
+                   "    private val n: Int,\n"
+                   ") : Any() {\n"
+                   "    fun n(): Int = n\n"
+                   "}\n")
+    kotlin_name = pm.override_add(kotlin)
+    kotlin_text = _read(kotlin)
+    complete = write(root, "Complete.java",
+                     "package p;\n"
+                     "public class Complete {\n"
+                     "    @Override\n    public String toString() {\n        return \"c\";\n    }\n"
+                     "\n"
+                     "    @Override\n    public int hashCode() {\n        return 1;\n    }\n"
+                     "\n"
+                     "    @Override\n    public boolean equals(Object other) {\n"
+                     "        return other == this;\n    }\n"
+                     "}\n")
+    annotated = write(root, "Annotated.java",
+                      "package p;\n"
+                      "public class Annotated {\n"
+                      "    @Override\n    public String toString() {\n"
+                      "        return \"a\";\n    }\n"
+                      "\n"
+                      "    @Override\n    public int hashCode() {\n        return 1;\n    }\n"
+                      "\n"
+                      "    @Override\n    public boolean equals(@Nullable Object other) {\n"
+                      "        return other == this;\n    }\n"
+                      "}\n")
+    data = write(root, "Point.kt", "data class Point(val x: Int) {\n    fun twice() = x * 2\n}\n")
+    # An equals added to a class with no hashCode is an Error Prone error, so hashCode comes first.
+    only_to_string = write(root, "Named.java",
+                           "package p;\n"
+                           "public class Named {\n"
+                           "    @Override\n    public String toString() {\n        return \"n\";\n    }\n"
+                           "}\n")
+    return (
+        check("a Java class without toString gains one", name == "toString", str(name)) +
+        check("the added toString returns a fixed value",
+              "    @Override\n    public String toString() {\n"
+              "        return \"yoriwake-mutated\";\n    }\n" in text, text) +
+        check("exactly one override is added", text.count("@Override") == 1, text) +
+        check("a Kotlin class whose header runs over lines gains one toString",
+              kotlin_name == "toString" and kotlin_text.count("override fun toString") == 1
+              and ") : Any() {\n    override fun toString(): String = \"yoriwake-mutated\"\n\n"
+                  "    fun n()" in kotlin_text, kotlin_text) +
+        check("a class that overrides all three yields no target", not pm.can_override_add(complete),
+              "it was drawn") +
+        check("an equals whose parameter is annotated counts as declared",
+              not pm.can_override_add(annotated), "a second equals was drawn") +
+        check("a data class, whose overrides the compiler writes, yields no target",
+              not pm.can_override_add(data), "it was drawn") +
+        check("hashCode is added before equals", pm.override_add(only_to_string) == "hashCode",
+              _read(only_to_string))
+    )
+
+
+def case_member_delete_removes_exactly_one_override(root):
+    pm = _pool()
+    java = write(root, "Labelled.java",
+                 "package p;\n"
+                 "public class Labelled {\n"
+                 "    public int size() {\n        return 1;\n    }\n"
+                 "\n"
+                 "    /** The label. */\n"
+                 "    @Override\n    public String toString() {\n        return \"l\";\n    }\n"
+                 "\n"
+                 "    @Override\n    public int hashCode() {\n        return 1;\n    }\n"
+                 "}\n")
+    counted = pm.overrides_in(java)
+    name = pm.member_delete(java, 0)
+    text = _read(java)
+    kotlin = write(root, "Labelled.kt",
+                   "class Labelled {\n"
+                   "    fun size(): Int = 1\n"
+                   "\n"
+                   "    override fun toString(): String = \"l\"\n"
+                   "}\n")
+    kotlin_name = pm.member_delete(kotlin, 0)
+    kotlin_text = _read(kotlin)
+    plain = write(root, "Plain.kt", "class Plain {\n    fun size(): Int = 1\n}\n")
+    trailing = write(root, "Trailing.java",
+                     "package p;\n"
+                     "public class Trailing {\n"
+                     "    private int x = 1; /* a counter */\n"
+                     "    @Override\n    public String toString() {\n        return \"t\";\n    }\n"
+                     "}\n")
+    pm.member_delete(trailing, 0)
+    trailing_text = _read(trailing)
+    return (
+        check("a code line ending in a block comment is not taken as the override's comment",
+              trailing_text == "package p;\npublic class Trailing {\n"
+                               "    private int x = 1; /* a counter */\n}\n", trailing_text) +
+        check("both overrides are counted, the plain method is not", counted == 2, str(counted)) +
+        check("the first override is the one deleted", name == "toString", str(name)) +
+        check("it is gone whole, with its Javadoc",
+              "toString" not in text and "The label" not in text, text) +
+        check("the other override and the plain method stay",
+              "public int hashCode()" in text and "public int size()" in text, text) +
+        check("one blank line is left between the members that remain",
+              "    }\n\n    @Override\n    public int hashCode()" in text, text) +
+        check("a Kotlin expression-bodied override is deleted",
+              kotlin_name == "toString" and "toString" not in kotlin_text
+              and kotlin_text == "class Labelled {\n    fun size(): Int = 1\n}\n", kotlin_text) +
+        check("a file without an override yields no target", pm.overrides_in(plain) == 0,
+              str(pm.overrides_in(plain)))
+    )
+
+
+def case_the_pool_edits_carry_braces_and_no_typed_literal(root):
+    """The two defect classes the default generators paid for, asked of the new ones.
+
+    Braces: a braceless `if` cost opentelemetry-java three rows to Error Prone's MissingBraces, and
+    one-line braces cost kafka eight to Checkstyle's LeftCurly. A sentinel literal that is valid at
+    one width only cost mockito and rxjava five rows apiece. And an edit after a `{` that shares its
+    line with code would leave a statement where the formatter forbids one, so such a declaration is
+    not drawn at all.
+    """
+    pm = _pool()
+    java = write(root, "Sizes.java",
+                 "package p;\n"
+                 "public class Sizes {\n"
+                 "    public long size() {\n        return 1L;\n    }\n"
+                 "\n"
+                 "    public void reset() { size(); }\n"
+                 "}\n")
+    kotlin = write(root, "Sizes.kt",
+                   "class Sizes {\n"
+                   "    fun size(): Long {\n        return 1L\n    }\n"
+                   "\n"
+                   "    fun reset() { size() }\n"
+                   "\n"
+                   "    fun chained(): List<Int> = listOf(1)\n"
+                   "        .map { it }\n"
+                   "}\n")
+    failures = (
+        check("a Java method whose `{` shares its line with code is not drawn",
+              pm.entries_in(java) == 1 and pm.void_returns_in(java) == 0,
+              f"{pm.entries_in(java)} entries, {pm.void_returns_in(java)} void") +
+        check("nor a Kotlin one, nor an expression that runs over lines",
+              pm.entries_in(kotlin) == 1 and pm.void_returns_in(kotlin) == 0,
+              f"{pm.entries_in(kotlin)} entries, {pm.void_returns_in(kotlin)} void")
+    )
+    pm.throw_entry(java)
+    pm.throw_entry(kotlin)
+    for path in (java, kotlin):
+        text = _read(path)
+        failures += (
+            check(f"{os.path.basename(path)}: no braceless if", "if (true) throw" not in text
+                  and "if (true) return" not in text, text) +
+            check(f"{os.path.basename(path)}: no one-line braces", "if (true) { " not in text, text) +
+            check(f"{os.path.basename(path)}: the long method throws rather than returning a literal",
+                  text.count("1L") == 1 and "IllegalStateException" in text, text)
+        )
+    return failures
+
+
+def case_the_default_set_is_unchanged_by_the_pool(root):
+    """The default set's members, order and targets on the demo fixtures, as they were before
+    `pool/v1` existed. The fixtures gained a void method, overrides and a non-Boolean Kotlin
+    function for the pool; none of them is a default target."""
+    import target_ordering  # noqa: PLC0415
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import run  # noqa: PLC0415
+    pm = _pool()
+    samples = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "samples")
+    demo = [(f"src/main/java/dev/demo/{name}.java", kind, index)
+            for name in ("Alpha", "Beta", "Delta", "Epsilon", "Gamma")
+            for kind, index in (("body", 0), ("body", 1), ("schema", 0))]
+    kotlin = [(f"src/main/kotlin/dev/demokt/{name}.kt", kind, index) for name, kind, index in (
+        ("Alpha", "body", 0), ("Alpha", "renamed", 0), ("Beta", "body", 0), ("Beta", "renamed", 0),
+        ("Constants", "body", 0), ("Constants", "constant", 0), ("Constants", "renamed", 0),
+        ("Inlined", "body", 0), ("Inlined", "body", 1), ("Inlined", "renamed", 0))]
+    failures = (
+        check("the shape sets the grammar defines are default and recall-arm, in that order",
+              target_ordering.SHAPE_SETS == ("default", "recall-arm"),
+              str(target_ordering.SHAPE_SETS)) +
+        check("the sweep offers pool/v1 after them",
+              run.SHAPE_SETS[:2] == ("default", "recall-arm") and "pool/v1" in run.SHAPE_SETS[2:],
+              str(run.SHAPE_SETS))
+    )
+    for fixture, source, expected in (("demo", "src/main/java", demo),
+                                      ("demo-kotlin", "src/main/kotlin", kotlin)):
+        project = {"name": fixture, "sources": [source]}
+        found = target_ordering.mutation_targets(os.path.join(samples, fixture), project)
+        failures += check(f"{fixture}'s default targets are unchanged", found == expected,
+                          str(found))
+        pool = pm.mutation_targets(os.path.join(samples, fixture), project)
+        kinds = {kind for _, kind, _ in pool}
+        failures += (
+            check(f"{fixture}'s pool keeps every default target but the capped schema ones",
+                  [t for t in expected if t[1] != "schema"] == [t for t in pool if t in expected
+                                                                and t[1] != "schema"],
+                  str(pool)) +
+            check(f"{fixture}'s pool draws schema at most once",
+                  sum(1 for t in pool if t[1] == "schema") <= 1, str(pool)) +
+            check(f"{fixture} carries every pool family", set(pm.FAMILIES) <= kinds, str(kinds))
+        )
+    return failures
+
+
+def case_a_rejected_draw_is_redrawn_from_its_own_family(root):
+    """A Kotlin build with `allWarningsAsErrors` rejects a `void-return` edit: `if (true)` leaves
+    the rest of the body unreachable, which kotlinc warns about. The gate must discard it, and the
+    next draw must come from the same family, or that family is sampled less than the others."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import run  # noqa: PLC0415
+    pm = _pool()
+    write(root, "build.gradle.kts",
+          "kotlin { compilerOptions { allWarningsAsErrors.set(true) } }\n")
+    write(root, "src/main/kotlin/p/Counter.kt",
+          "package p\n\nclass Counter {\n    private var n = 0\n\n"
+          "    fun add(by: Int) {\n        n += by\n    }\n\n"
+          "    fun reset() {\n        n = 0\n    }\n\n"
+          "    fun total(): Int = n\n}\n")
+
+    def compile_with(checkout, _project, _args, log_path):
+        # A fake kotlinc under allWarningsAsErrors: code after `if (true) { return }` is
+        # unreachable, a warning, and so an error.
+        source = _read(os.path.join(checkout, "src/main/kotlin/p/Counter.kt"))
+        unreachable = re.search(r"if \(true\) \{\n\s+return\n\s+\}\n\s+\S", source)
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write("e: Counter.kt: Unreachable code\nCompilation error. See log for more "
+                         "details\n" if unreachable else "BUILD SUCCESSFUL\n")
+        return (1 if unreachable else 0), 0.0
+
+    items = [("src/main/kotlin/p/Counter.kt", "void-return", 0),
+             ("src/main/kotlin/p/Counter.kt", "throw-entry", 0),
+             ("src/main/kotlin/p/Counter.kt", "void-return", 1)]
+    log = os.path.join(root, "compile.log")
+    drawn = []
+    for position, (relative, kind, index) in enumerate(items):
+        before = _read(os.path.join(root, relative))
+        pm.apply(root, relative, kind, index)
+        _, rejected = run.compile_or_reject(root, {}, [], log, compile_with)
+        drawn.append((kind, index, rejected))
+        with open(os.path.join(root, relative), "w", encoding="utf-8") as handle:
+            handle.write(before)
+        if rejected:
+            pm.redraw(items, position, kind)
+    return (
+        check("the gate rejects the void-return edit", drawn[0] == ("void-return", 0, True),
+              str(drawn)) +
+        check("the next draw is the same family's next target", drawn[1][:2] == ("void-return", 1),
+              str(drawn)) +
+        check("and the other family still follows", drawn[2][:2] == ("throw-entry", 0), str(drawn))
+    )
+
+
+def case_the_pool_composes_the_default_shapes_too(root):
+    """`pool/v1` applies every default shape through `mutations.apply`, renaming included."""
+    pm = _pool()
+    subprocess.run(["git", "init", "--quiet", root], check=True)
+    write(root, "src/main/kotlin/p/Gate.kt", "package p\n\nfun open(): Boolean = true\n")
+    subprocess.run(["git", "-C", root, "add", "."], check=True)
+    subprocess.run(["git", "-C", root, "-c", "user.email=t@e.com", "-c", "user.name=t",
+                    "commit", "--quiet", "-m", "base"], check=True)
+    label = pm.apply(root, "src/main/kotlin/p/Gate.kt", "renamed", 0)
+    family = pm.apply(root, "src/main/kotlin/p/GateMoved.kt", "throw-entry", 0)
+    return (
+        check("a default shape is applied as the default set applies it",
+              label == "src/main/kotlin/p/Gate.kt::renamed::Gate->GateMoved", str(label)) +
+        check("a family is labelled with its kind",
+              family == "src/main/kotlin/p/GateMoved.kt::throw-entry::open", str(family)) +
+        check("an unknown kind applies nothing", pm.apply(root, "src/main/kotlin/p/GateMoved.kt",
+                                                          "made-up", 0) is None, "it applied")
+    )
+
+
 CASES = (case_java_constant, case_kotlin_constant, case_string_constant,
          case_aliased_detection, case_rename, case_corpus_contains_all_four_shapes,
          case_inline_fun_is_reachable, case_block_bodied_inline_fun_is_mutated_by_index,
@@ -501,7 +963,17 @@ CASES = (case_java_constant, case_kotlin_constant, case_string_constant,
          case_the_injected_statement_carries_braces,
          case_the_recall_arm_shapes_are_never_in_the_default_grammar,
          case_each_recall_arm_shape_changes_what_it_names,
-         case_the_recall_arm_shapes_bump_every_notation_and_only_nested_java_members)
+         case_the_recall_arm_shapes_bump_every_notation_and_only_nested_java_members,
+         case_void_return_inserts_one_return_at_entry,
+         case_throw_entry_throws_at_entry_whatever_the_return_type,
+         case_constructors_initialisers_and_bodiless_methods_yield_no_target,
+         case_records_comments_and_strings_yield_no_target,
+         case_override_add_adds_one_override_to_a_class_that_lacks_it,
+         case_member_delete_removes_exactly_one_override,
+         case_the_pool_edits_carry_braces_and_no_typed_literal,
+         case_the_default_set_is_unchanged_by_the_pool,
+         case_a_rejected_draw_is_redrawn_from_its_own_family,
+         case_the_pool_composes_the_default_shapes_too)
 
 
 def test_every_mutation_shape_behaves():
