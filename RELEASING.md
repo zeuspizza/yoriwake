@@ -82,6 +82,10 @@ release waits for every one.
 2. `release.yml` builds and tests the tag, then waits for a maintainer to approve the `release`
    environment, which holds the Portal key and accepts only `v*` tags. Approve it.
 3. While the Portal reviews the new version, merge only documentation changes.
+4. Once the Portal lists the version, publish its GitHub release from the tag, with the
+   `CHANGELOG.md` section as the notes: `gh release create v<version> --verify-tag --title
+   "yoriwake <version>" --notes-file <notes>`. It is what the repository page shows as the latest
+   release; a patch to an older line passes `--latest=false`.
 
 ## After the release
 
