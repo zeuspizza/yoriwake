@@ -724,6 +724,65 @@ def case_the_cost_projection_moves_no_cap():
     return failures
 
 
+def case_a_forcing_row_that_narrowed_with_the_flags_off_fails_the_recall_gate():
+    """`forcing/v1` has no recall denominator; what fails it is a row that narrowed while no
+    narrowing flag was on, and the gate names that row."""
+    import assert_recall  # noqa: PLC0415
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+    row = {"target": "src/main/resources/a.properties::resource-value::greeting",
+           "kind": "resource-value", "status": "checked", "full_distinct": 9,
+           "selected_distinct": 3, "full_failures": 1, "missed": [], "ran_but_passed": [],
+           "decision_outcome": "narrowed"}
+    failures = 0
+    for flags, want in (([], 1), (["-Pyoriwake.narrowResources"], 0)):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "results.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"project": "p", "target_shapes": "forcing/v1", "flags": flags,
+                           "mutations": [row]}, handle)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = assert_recall.main(path)
+        if code != want:
+            failures += fail(f"a narrowed forcing row with flags {flags} exited {code}, not {want}")
+        if want and row["target"] not in out.getvalue():
+            failures += fail(f"the failing gate did not name the row: {out.getvalue()[-200:]!r}")
+    return failures
+
+
+def case_the_forcing_set_runs_on_the_reduced_arm_and_the_groovy_project_only():
+    """Each forcing row costs a suite run for an answer the change's path fixes."""
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = sweep_corpus.main(["--set", "forcing/v1", "--print-commands"])
+    try:
+        plan = {entry["project"]: entry["args"] for entry in json.loads(out.getvalue())}
+    except ValueError:
+        return fail(f"--print-commands printed more than JSON: {out.getvalue()[:200]!r}")
+    want = sorted(sweep_corpus.REDUCED_ARM + ("grails-core",))
+    failures = 0
+    if code != 0 or sorted(plan) != want:
+        failures += fail(f"forcing/v1 planned {sorted(plan)}, not {want}, exit {code}")
+    if any("forcing/v1" not in args for args in plan.values()):
+        failures += fail(f"a planned command does not name forcing/v1: {plan}")
+    return failures
+
+
+def case_the_forcing_set_refuses_the_reduced_arm():
+    """The reduced arm's gates are recall gates, and it would drop the Groovy project."""
+    try:
+        sweep_corpus.main(["--set", "forcing/v1", "--arm", "reduced", "--print-commands"])
+    except SystemExit as refusal:
+        if "full arm" in str(refusal):
+            return 0
+        return fail(f"forcing/v1 on the reduced arm refused for another reason: {refusal}")
+    return fail("forcing/v1 ran on the reduced arm")
+
+
 def case_the_workflow_reads_each_project_s_flags_from_the_sweep_itself():
     import contextlib  # noqa: PLC0415
     import io  # noqa: PLC0415

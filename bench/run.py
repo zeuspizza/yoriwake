@@ -108,6 +108,10 @@ SHAPE_SETS = SHAPE_SETS + (REVERT_SET,)
 import pool_mutations  # noqa: E402
 from pool_mutations import POOL_SHAPES  # noqa: E402
 SHAPE_SETS = SHAPE_SETS + (POOL_SHAPES,)
+# `forcing/v1` likewise: see `forcing_mutations`.
+import forcing_mutations  # noqa: E402
+from forcing_mutations import FORCING_SET  # noqa: E402
+SHAPE_SETS = SHAPE_SETS + (FORCING_SET,)
 
 
 
@@ -1839,8 +1843,10 @@ def compiler_rejected_the_source(log_path):
     """Whether the compile log carries a COMPILER diagnostic, as opposed to any other failure.
 
     `javac` and `kotlinc` both prefix a diagnostic with `error:`; Gradle additionally prints a
-    `Compilation error` task banner. Anything non-zero without one of those is the build failing
-    for a reason the generator did not cause, and the caller keeps it as `build-failed`.
+    `Compilation error` task banner. `groovyc` prints neither: its diagnostics follow `startup
+    failed:`, and Gradle's banner for a Groovy compile task reads `Compilation failed`. Anything
+    non-zero without one of those is the build failing for a reason the generator did not cause, and
+    the caller keeps it as `build-failed`.
     """
     try:
         with open(log_path, encoding="utf-8", errors="replace") as handle:
@@ -1849,7 +1855,13 @@ def compiler_rejected_the_source(log_path):
         # A log we cannot read cannot be shown to be the generator's fault, and the safe reading of
         # "cannot tell" is the one that keeps the row rather than discarding it.
         return False
-    return "error:" in log or "Compilation error" in log
+    return ("error:" in log or "Compilation error" in log or "startup failed:" in log
+            or ("Compilation failed" in log and GROOVY_COMPILE_TASK.search(log) is not None))
+
+
+# `compileGroovy`, `compileTestGroovy`, `compileIntegrationTestGroovy`: the tasks whose failure
+# banner is a Groovy compiler's.
+GROOVY_COMPILE_TASK = re.compile(r"compile\w*Groovy\b")
 
 
 def task_is_missing(log_path):
@@ -1996,7 +2008,11 @@ REVERT_GRAMMAR_FILES = ("bench/revert.py", "bench/census.py")
 
 # A named set's own generators, digested with that set only, so adding a set leaves the default
 # set's digest, and every default results file's resume, where they were.
-SET_GRAMMAR_FILES = {POOL_SHAPES: ("bench/pool_mutations.py",)}
+SET_GRAMMAR_FILES = {POOL_SHAPES: ("bench/pool_mutations.py",),
+                     # With the files its families reuse: `throw-entry`'s grammar, the revert
+                     # set's patches, and the measured module the census names.
+                     FORCING_SET: ("bench/forcing_mutations.py", "bench/pool_mutations.py",
+                                   "bench/revert.py", "bench/census.py")}
 
 
 def shape_folder(shapes):
@@ -4339,6 +4355,9 @@ def main():
     rejected_mutations = []
     revert_set = args.shapes == REVERT_SET
     pool = args.shapes == POOL_SHAPES
+    forcing = args.shapes == FORCING_SET
+    # `[target, reason]` per dependency revert the gate rejected, carried across resumes likewise.
+    forcing_rejections = []
     # `[target, reason, variant, census labels]` per revert the gate rejected, carried across
     # resumes as `rejected` is: the counts by reason and label are published with the figure.
     revert_rejections = []
@@ -4420,6 +4439,7 @@ def main():
             rejected = list(stored.get("rejected_targets") or [])
             rejected_mutations = [list(key) for key in stored.get("rejected_mutations") or []]
             revert_rejections = list((stored.get("revert") or {}).get("rejections") or [])
+            forcing_rejections = list((stored.get("forcing") or {}).get("rejections") or [])
             grammar = resumed_grammar(stored, findings, grammar)
     # Per mutation, not per label: see `row_key`.
     done = {row_key(finding) for finding in findings}
@@ -4912,7 +4932,30 @@ def main():
 
     reach = covered = None
     revert_by_sha, stratum_of = {}, {}
-    if revert_set:
+    dependency_by_sha = {}
+    if forcing:
+        # THE GENERATOR FAMILIES' TARGETS AND THE VERSION-ONLY COMMITS, families taken in turn. No
+        # reach or coverage order: the change's paths decide the outcome, not which class it is.
+        dependency_order, dependency_not_eligible = forcing_mutations.dependency_candidates(
+            checkout, project, args.target_seed)
+        dependency_by_sha = {c["sha"]: c for c in dependency_order}
+        all_targets = (forcing_mutations.mutation_targets(checkout, project)
+                       + [(c["sha"], "dependency-revert", 0) for c in dependency_order])
+        targets_available = len(all_targets)
+        ordered = forcing_mutations.draw_order(pending_targets(all_targets, findings),
+                                               args.target_seed)
+        provenance = {}
+        RUN_STAMPS["forcing"] = {
+            "population": forcing_mutations.population(project.get("flags")),
+            "rows_per_family": forcing_mutations.ROWS_PER_FAMILY,
+            "dependency_reverts": {"window": revert.SWEEP_WINDOW,
+                                   "eligible": len(dependency_order),
+                                   "not_eligible": dependency_not_eligible},
+            "rejections": forcing_rejections}
+        print(f"  {FORCING_SET} ({RUN_STAMPS['forcing']['population']}): "
+              f"{dict(Counter(kind for _, kind, _ in all_targets))}; up to "
+              f"{forcing_mutations.ROWS_PER_FAMILY} row(s) a family", flush=True)
+    elif revert_set:
         # THE ELIGIBLE COMMITS OF THE CENSUS WINDOW, in their draw order, each checked to revert
         # cleanly at the pin. Not eligible is counted by reason and takes no slot.
         revert_order, not_eligible = revert.candidates(checkout, project, args.target_seed)
@@ -4984,10 +5027,10 @@ def main():
     if not args.only_target and paired_rows is None and not shard:
         # The whole population in the sweep's own order, not what a resume left: the same file
         # every leg.
-        # A revert row edits no declaration of its own, so its preflight file comes from the
-        # default grammar's bodies, as a mutation set's does.
-        population = (distinct_targets(mutation_targets(checkout, project))[0] if revert_set
-                      else all_targets)
+        # A revert or forcing row edits no method body of its own, so its preflight file comes from
+        # the default grammar's bodies, as a mutation set's does.
+        population = (distinct_targets(mutation_targets(checkout, project))[0]
+                      if revert_set or forcing else all_targets)
         if reach is None:
             reach, covered = reach_counts(map_dir), covered_classes(map_dir)
         candidates = [path for path, kind, _ in
@@ -5095,6 +5138,11 @@ def main():
                     continue
             elif not rerunning and not shard and accepted >= args.limit:
                 break
+            # A FORCING FAMILY STOPS AT ITS ROWS A PROJECT, whatever they showed: the path decides
+            # the outcome. No narrowed target: the set has no recall denominator.
+            elif forcing and not rerunning and not shard:
+                if forcing_mutations.family_full(kind, findings, recorded):
+                    continue
             elif not rerunning and not shard and narrowed_target_reached(findings,
                                                                          args.narrowed_target):
                 print(f"  narrowed target reached: {args.narrowed_target} rows narrowed and induced a "
@@ -5115,13 +5163,20 @@ def main():
                 print(f"    removed {len(reset)} file(s) earlier runs wrote: {', '.join(reset[:3])}"
                       f"{' ...' if len(reset) > 3 else ''}", flush=True)
             candidate = revert_by_sha.get(rel_path) if kind == "revert" else None
-            if kind == "revert":
+            dependency = dependency_by_sha.get(rel_path) if kind == "dependency-revert" else None
+            if kind == "dependency-revert":
+                label = f"{rel_path}::{kind}::{rel_path[:12]}" if dependency else None
+                if label and not revert.apply(checkout, dependency):
+                    label = None
+            elif kind == "revert":
                 label = revert.label(candidate) if candidate else None
                 if label and (keyed_in(done, label, kind, index)
                               or keyed_in(rejected_seen, label, kind, index)):
                     continue
                 if label and not revert.apply(checkout, candidate):
                     label = None
+            elif forcing:
+                label = forcing_mutations.apply(checkout, rel_path, kind, index)
             else:
                 label = (pool_mutations.apply if pool else mutations.apply)(checkout, rel_path,
                                                                            kind, index)
@@ -5187,6 +5242,18 @@ def main():
                     revert_rejections.append([label, revert_reason, revert_variant,
                                               candidate["labels"]])
                 change_files, change_modules = mutation_change_counts(checkout)
+            elif dependency is not None:
+                # AN OLD VERSION THAT DOES NOT RESOLVE is this revert's doing, unlike the revert
+                # set's: it edits the dependency declarations. Counted by reason, as a compile
+                # failure with a compiler diagnostic is; any other failure stays `build-failed`.
+                compile_log = os.path.join(scratch, f"compile-{stem}.log")
+                code = gradle(checkout, project, classes_args, compile_log)[0]
+                dependency_reason = (None if code in (0, STALLED) else
+                                     forcing_mutations.dependency_rejection(
+                                         revert._read(compile_log)))
+                mutation_rejected = dependency_reason is not None
+                if mutation_rejected:
+                    forcing_rejections.append([label, dependency_reason])
             else:
                 code, mutation_rejected = compile_or_reject(
                     checkout, project, classes_args, os.path.join(scratch, f"compile-{stem}.log"),
@@ -5209,6 +5276,10 @@ def main():
                     print(f"    REJECTED: the revert failed the gate ({revert_reason}, "
                           f"{revert_variant} variant); counted, and taking the next commit",
                           flush=True)
+                elif dependency is not None:
+                    print(f"    REJECTED: the dependency revert failed the gate "
+                          f"({dependency_reason}); counted, and taking the family's next commit",
+                          flush=True)
                 else:
                     print("    REJECTED: the mutated tree did not compile, so this is a generator "
                           "defect and not a row; taking the next target", flush=True)
@@ -5225,7 +5296,7 @@ def main():
                     abandoned[kind] += len(later)
                     print(f"    {kind} is above the ceiling whatever the rest of this sweep draws; "
                           f"its {len(later)} remaining target(s) are not drawn", flush=True)
-                elif pool:
+                elif pool or forcing:
                     pool_mutations.redraw(items, position, kind)
                 continue
             # PAST THE GATE, so this target is one of the N the limit promises.
@@ -5613,6 +5684,8 @@ def main():
                 **sweep_row_fields(decisions, selected_ran, induced, write_failures, replay_map,
                                    change_files=change_files, change_modules=change_modules),
                 **(revert_fields(candidate, revert_variant) if candidate is not None else {}),
+                **({"revert_commit": dependency["sha"], "census_labels": dependency["labels"]}
+                   if dependency is not None else {}),
                 "missed": [f"{c}::{n}" for c, n in missed],
                 "order_dependent": [f"{c}::{n}" for c, n in order_dependent_tests],
                 # NEVER CLEAN AND NEVER MISSED. A test whose display name carries an identity hash has a
@@ -5766,13 +5839,18 @@ def main():
               flush=True)
         if stamp["not_reached"]:
             print(f"not reached by {REVERT_SET}: {', '.join(stamp['not_reached'])}", flush=True)
+    if forcing and forcing_rejections:
+        print(f"dependency reverts rejected: "
+              f"{dict(Counter(reason for _, reason in forcing_rejections))}", flush=True)
     for family, count in abandoned.items():
         print(f"{count} {family} target(s) were NOT DRAWN: the family was above the ceiling "
               f"whatever the rest of the sweep drew", flush=True)
     if rejected:
         # No shared ceiling for reverts: a real commit the gate rejects is counted, not a defect.
         # `pool/v1`'s ceiling is per family.
-        refused = not revert_set and not pool and rejection_rate_refuses(len(rejected), len(findings))
+        # `forcing/v1` has no recall sample for a rejection to shape: counted, not a ceiling.
+        refused = (not revert_set and not pool and not forcing
+                   and rejection_rate_refuses(len(rejected), len(findings)))
         print(f"{len(rejected)} mutation(s) were REJECTED by the compile gate and consumed no row"
               f"{' -- ABOVE the ceiling, so this is a refusal rather than a statistic'
                  if refused else ''}", flush=True)

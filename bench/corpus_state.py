@@ -384,12 +384,28 @@ def examine(name, results_dir, qualified, project=None, root=None, shape_set="de
                               f"those families' samples were shaped by the generator"}
     if rejected and data.get("target_shapes") != run.REVERT_SET \
             and data.get("target_shapes") != run.POOL_SHAPES \
+            and data.get("target_shapes") != run.FORCING_SET \
             and run.rejection_rate_refuses(rejected, len(rows)):
         return {**entry, "verdict": DIRTY,
                 "reason": f"{rejected} of {rejected + len(rows)} mutations were rejected by the "
                           f"compile gate, above the "
                           f"{100.0 * run.MUTATION_REJECTION_CEILING:.0f}% ceiling, so the sample "
                           f"was shaped by the generator rather than by the project"}
+
+    # `forcing/v1` HAS NO RECALL DENOMINATOR, as `assert_recall` reads it: with no narrowing flag
+    # in `flags`, a row that escaped its forcing rule is a finding; any other forcing file is in
+    # no recall figure, whatever its rows narrowed.
+    if data.get("target_shapes") == run.FORCING_SET:
+        population = run.forcing_mutations.population(data.get("flags"))
+        escaped = [row for row in rows if assert_recall.forcing_row_narrowed(row)]
+        if escaped and population == "flag-off":
+            return {**entry, "verdict": DIRTY,
+                    "reason": f"{len(escaped)} {run.FORCING_SET} row(s) narrowed with no narrowing "
+                              f"flag in `flags`; a change of this kind forces today"}
+        forced = sum(1 for row in rows if assert_recall.declined_to_narrow(row))
+        return {**entry, "verdict": NO_QUESTION_ASKED,
+                "reason": f"{run.FORCING_SET} has no recall denominator ({population}): {forced} "
+                          f"of {len(rows)} row(s) forced and ran everything"}
 
     if not entry["miss_possible"]:
         if excusing:
@@ -484,7 +500,10 @@ def render(entries, shape_set="default"):
 
     # THE COMPOSITION RULE 3c ASKS FOR, printed with the figure and never after it. A recall
     # percentage without its sample is the shape of every claim this project has had to withdraw.
-    counted = [e for e in corpus if e["verdict"] in (CLEAN, DIRTY)]
+    # NO COMPOSITION LINE FOR `forcing/v1`: it has no recall denominator, and a DIRTY forcing
+    # file's rows would read as recall rows in one.
+    counted = [e for e in corpus if e["verdict"] in (CLEAN, DIRTY)
+               and shape_set != run.FORCING_SET]
     rows = sum(e["rows"] for e in counted)
     possible = sum(e["miss_possible"] for e in counted)
     missed = sum(e["missed"] for e in counted)
@@ -493,12 +512,16 @@ def render(entries, shape_set="default"):
     # reader cannot tell them apart unless the second number is printed next to the first.
     containers = sum(e.get("container_failed") or 0 for e in counted)
     discarded = sum(e.get("mutations_rejected") or 0 for e in counted)
-    print(f"\nCOMPOSITION: {len(counted)} project(s) in the denominator, {rows} row(s), "
-          f"{possible} row(s) where a miss was possible, {missed} missed"
-          f"{f', and {containers} container(s) that never started, which this harness cannot decide'
-             if containers else ''}."
-          f"{f' {discarded} mutation(s) were discarded by the compile gate and are in no row above.'
-             if discarded else ''}")
+    if shape_set == run.FORCING_SET:
+        print(f"\nCOMPOSITION: none -- {run.FORCING_SET} has no recall denominator; "
+              f"`assert_recall.py` reports each file's forced rows per family")
+    else:
+        print(f"\nCOMPOSITION: {len(counted)} project(s) in the denominator, {rows} row(s), "
+              f"{possible} row(s) where a miss was possible, {missed} missed"
+              f"{f', and {containers} container(s) that never started, which this harness cannot decide'
+                 if containers else ''}."
+              f"{f' {discarded} mutation(s) were discarded by the compile gate and are in no row above.'
+                 if discarded else ''}")
     for verdict in (CLEAN, DIRTY, SETUP_FORCED, CANNOT_ANSWER, NO_QUESTION_ASKED, UNSTABLE_SUITE,
                     UNSTATED_DEPTH, NEVER_SWEPT, STALE_STAMP):
         named = [e["project"] for e in corpus if e["verdict"] == verdict]

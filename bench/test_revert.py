@@ -578,6 +578,84 @@ def case_the_set_has_its_own_results_path_and_grammar():
     return failures
 
 
+def case_a_version_only_commit_is_a_dependency_revert_and_one_with_code_is_not():
+    """`forcing/v1`'s `dependency-revert` reverts commits that change only a version catalog or
+    the version lines of a build script, through this file's patches."""
+    import forcing_mutations  # noqa: PLC0415
+    failures = 0
+    tmp = tempfile.mkdtemp(prefix="yoriwake-dependency-")
+    try:
+        repo = Repo(os.path.join(tmp, "repo"))
+        repo.commit("base", {
+            "gradle/libs.versions.toml": '[versions]\njunit = "5.10.0"\n',
+            "gradle/tools.versions.toml": '[versions]\nlint = "1.0"\n',
+            "gradle/more.versions.toml": '[versions]\nmock = "4.0"\n',
+            "settings.gradle.kts": 'rootProject.name = "sample"\n',
+            "build.gradle.kts": 'plugins { java }\n\ndependencies {\n'
+                                '    implementation("org.sample:lib:1.0")\n}\n',
+            f"{MAIN}/Alpha.java": java("Alpha")})
+        repo.commit("catalog", {"gradle/libs.versions.toml": '[versions]\njunit = "5.11.0"\n'})
+        repo.commit("catalog and code", {
+            "gradle/more.versions.toml": '[versions]\nmock = "4.1"\n',
+            f"{MAIN}/Alpha.java": java("Alpha", method("int one()", "return 1;"))})
+        repo.commit("version line", {
+            "build.gradle.kts": 'plugins { java }\n\ndependencies {\n'
+                                '    implementation("org.sample:lib:1.1")\n}\n'})
+        repo.commit("not a version line", {
+            "build.gradle.kts": 'plugins { java }\n\ndependencies {\n'
+                                '    implementation("org.sample:lib:1.1")\n}\n\n'
+                                'tasks.test { useJUnitPlatform() }\n'})
+        repo.commit("added dependency", {
+            "build.gradle.kts": 'plugins { java }\n\ndependencies {\n'
+                                '    implementation("org.sample:lib:1.1")\n}\n\n'
+                                'tasks.test { useJUnitPlatform() }\n\n\n\n'
+                                'dependencies { implementation("org.sample:extra:1.0") }\n'})
+        repo.commit("not a version line, in place",
+                    {"settings.gradle.kts": 'rootProject.name = "renamed"\n'})
+        repo.commit("overwritten", {"gradle/tools.versions.toml": '[versions]\nlint = "1.1"\n'})
+        repo.commit("overwriting", {"gradle/tools.versions.toml": '[versions]\nlint = "1.2"\n'})
+        project = {"name": "p", "commit": repo.shas["overwriting"], "module": "core",
+                   "sources": ["core/src/main/java"]}
+        ordered, not_eligible = forcing_mutations.dependency_candidates(repo.root, project, 7)
+        drawn = {sha for sha in (c["sha"] for c in ordered)}
+        want = {repo.shas[name] for name in ("catalog", "version line", "overwriting")}
+        if drawn != want:
+            names = sorted(n for n, sha in repo.shas.items() if sha in drawn)
+            failures += fail(f"the version-only commits drawn were {names}")
+        if not_eligible != {"does-not-apply": 1}:
+            failures += fail(f"not eligible read {not_eligible}, not one that does not apply")
+        again, _ = forcing_mutations.dependency_candidates(repo.root, project, 7)
+        if [c["sha"] for c in again] != [c["sha"] for c in ordered]:
+            failures += fail("the dependency-revert order is not the seed's")
+        catalog = next(c for c in ordered if c["sha"] == repo.shas["catalog"])
+        if catalog["labels"] != ["version-catalog"]:
+            failures += fail(f"a catalog commit is labelled {catalog['labels']}")
+        if not revert.apply(repo.root, catalog) \
+                or '"5.10.0"' not in repo.read("gradle/libs.versions.toml"):
+            failures += fail("the catalog commit did not revert to the old version")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return failures
+
+
+def case_an_unresolved_artifact_is_a_dependency_revert_rejection():
+    """Unlike a revert of source roots, a dependency revert puts an old version back, so an
+    artifact that no longer resolves is its doing and is counted, not `build-failed`."""
+    import forcing_mutations  # noqa: PLC0415
+    failures = 0
+    for log, want in (
+            ("Could not resolve all files for configuration ':core:compileClasspath'.\n"
+             "> Could not find org.sample:lib:0.9.", "dependency-resolution"),
+            ("Could not resolve org.sample:lib:0.9.\n> Connection reset", "dependency-resolution"),
+            ("> Task :core:compileJava FAILED\nerror: cannot find symbol", "main-compile"),
+            ("> Task :core:compileJava FAILED\n> java.lang.OutOfMemoryError: Java heap space",
+             None)):
+        got = forcing_mutations.dependency_rejection(log)
+        if got != want:
+            failures += fail(f"{log!r} read as {got}, not {want}")
+    return failures
+
+
 def test_revert():
     failures = 0
     try:
