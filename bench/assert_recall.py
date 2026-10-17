@@ -93,6 +93,28 @@ def narrowed_at_all(finding):
             and finding["selected_distinct"] < finding["full_distinct"])
 
 
+def forcing_row_narrowed(finding):
+    """Whether a `forcing/v1` row escaped the rule that forces it: selection ran less than
+    everything, or the selector recorded that it narrowed even where its pick was every test."""
+    return narrowed_at_all(finding) or finding.get("decision_outcome") == "narrowed"
+
+
+def forcing_summary(findings):
+    """`forcing/v1`'s figure, per family: the rows, the forced rows that ran everything, and the
+    kinds they forced on (`full_run_kind`, with the refusal kind where the daemon refused)."""
+    families = {}
+    for row in findings:
+        entry = families.setdefault(row.get("kind"), {"rows": 0, "forced": 0, "kinds": {}})
+        entry["rows"] += 1
+        if declined_to_narrow(row):
+            entry["forced"] += 1
+            kind = row.get("full_run_kind") or "unknown"
+            if row.get("refusal_kind"):
+                kind = f"{kind}/{row['refusal_kind']}"
+            entry["kinds"][kind] = entry["kinds"].get(kind, 0) + 1
+    return dict(sorted(families.items(), key=lambda item: str(item[0])))
+
+
 def established_nothing(finding):
     """Whether a checked row answered no recall question at all.
 
@@ -291,6 +313,7 @@ def main(path, summary_path=None):
     refused = (run.refused_families(results.get("rejected_mutations"), findings)
                if results.get("target_shapes") == run.POOL_SHAPES else {})
     counted = [f for f in findings if f.get("kind") not in refused]
+    forcing = results.get("target_shapes") == run.FORCING_SET
     checked = [f for f in findings if f.get("status") == "checked"]
     counted_checked = [f for f in counted if f.get("status") == "checked"]
     # Required, not defaulted. `f.get("missed")` answers None for an entry that never carried the
@@ -438,7 +461,7 @@ def main(path, summary_path=None):
                 print(f"  REFUSED family {family}: {count} of {offered} rejected, above the "
                       f"{100.0 * run.MUTATION_REJECTION_CEILING:.0f}% ceiling. Its sample was shaped "
                       f"by the grammar: fix the generator before this family's rows are read.")
-        elif results.get("target_shapes") != run.REVERT_SET \
+        elif results.get("target_shapes") not in (run.REVERT_SET, run.FORCING_SET) \
                 and run.rejection_rate_refuses(rejected, len(findings)):
             print(f"FAIL: the generator wrote source this project would not compile on "
                   f"{100.0 * rejected / offered:.1f}% of its targets, above the "
@@ -454,6 +477,37 @@ def main(path, summary_path=None):
                 print(f"      {test}")
         print(f"FAIL: {sum(len(t) for _, t in missed)} failing tests were never selected.")
         return 1
+
+    # `forcing/v1` HAS NO RECALL DENOMINATOR: each row asks whether a change whose path forces
+    # still runs everything, so the nothing-broke gate below does not apply. With the narrowing
+    # flags off, a row that ran less than everything is the finding this set exists for. With one
+    # on, narrowing is what the flag is for, and the rows are a population of their own.
+    if forcing:
+        population = run.forcing_mutations.population(results.get("flags"))
+        summary = forcing_summary(findings)
+        print(f"  {run.FORCING_SET}, {population}:")
+        for family, entry in summary.items():
+            print(f"    {family}: {entry['rows']} row(s), {entry['forced']} forced and ran "
+                  f"everything ({', '.join(f'{k} {v}' for k, v in entry['kinds'].items()) or '-'})")
+        narrowed = [f for f in findings if forcing_row_narrowed(f)]
+        if narrowed and population == "flag-off":
+            for f in narrowed:
+                print(f"  NARROWED with the narrowing flags off: {f['target']} ({f.get('kind')}): "
+                      f"ran {f.get('selected_distinct')} of {f.get('full_distinct')} tests")
+            print(f"FAIL: {len(narrowed)} forcing row(s) narrowed with no narrowing flag in "
+                  f"`flags`. A change of this kind forces today; one that narrowed is a selector "
+                  f"finding, not a figure.")
+            return 1
+        if population == "flag-on":
+            print(f"  flag-on: a narrowing flag is in `flags` ({', '.join(results.get('flags'))}), "
+                  f"so these rows are their own population and are never pooled with flag-off "
+                  f"rows")
+        print("OK")
+        if summary_path:
+            with open(summary_path, "w", encoding="utf-8") as handle:
+                json.dump({"project": results.get("project"), "population": population,
+                           "forcing": summary}, handle, indent=1)
+        return 0
 
     # Keyed on genuine failures rather than on the count of "checked" mutations, because the two
     # have disagreed: older result files label every mutation checked, including the ones that broke

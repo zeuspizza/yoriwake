@@ -4885,6 +4885,43 @@ def case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_a
         shutil.rmtree(root, ignore_errors=True)
 
 
+def case_the_forcing_set_digests_its_own_generators_and_leaves_the_others_alone():
+    """`forcing/v1` is stamped with its own generators and the files they reuse; a change to
+    its generators moves neither the default set's digest nor the pool's."""
+    root = tempfile.mkdtemp(prefix="yoriwake-grammar-")
+    try:
+        names = set(run.GRAMMAR_SOURCE_FILES + run.SET_GRAMMAR_FILES[run.POOL_SHAPES]
+                    + run.SET_GRAMMAR_FILES.get(run.FORCING_SET, ()))
+        for name in names:
+            os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
+            shutil.copyfile(os.path.join(run.ROOT, name), os.path.join(root, name))
+        default, pool = run.grammar_digest(root), run.grammar_digest(root, run.POOL_SHAPES)
+        forcing = run.grammar_digest(root, run.FORCING_SET)
+        failures = 0
+        if forcing in (default, pool):
+            print("  FAIL: the forcing set is stamped with another set's grammar digest")
+            failures += 1
+        with open(os.path.join(root, "bench", "forcing_mutations.py"), "a",
+                  encoding="utf-8") as handle:
+            handle.write("changed = True\n")
+        if (run.grammar_digest(root), run.grammar_digest(root, run.POOL_SHAPES)) != (default, pool):
+            print("  FAIL: a change to the forcing generators moved another set's grammar digest")
+            failures += 1
+        if run.grammar_digest(root, run.FORCING_SET) == forcing:
+            print("  FAIL: a change to the forcing generators left the forcing digest alone")
+            failures += 1
+        forcing = run.grammar_digest(root, run.FORCING_SET)
+        with open(os.path.join(root, "bench", "revert.py"), "a", encoding="utf-8") as handle:
+            handle.write("changed = True\n")
+        if run.grammar_digest(root, run.FORCING_SET) == forcing:
+            print("  FAIL: a change to the revert patches dependency-revert reuses left the forcing "
+                  "digest alone")
+            failures += 1
+        return failures
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def case_the_pool_ceiling_refuses_a_family_and_not_the_others():
     """`pool/v1`'s rejection ceiling is per family: one family a guest rejects is refused on its
     own, and a family with a rejection or two under the ceiling is not."""
@@ -4931,6 +4968,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_alone,
          case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows,
          case_the_pool_ceiling_refuses_a_family_and_not_the_others,
+         case_the_forcing_set_digests_its_own_generators_and_leaves_the_others_alone,
          case_editing_the_shape_composition_moves_the_grammar_digest,
          case_a_mutation_row_counts_the_files_and_modules_it_changed,
          case_a_named_shape_set_writes_its_own_results_and_scratch,

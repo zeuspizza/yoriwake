@@ -1,0 +1,3 @@
+# Loaded by ServicesTest, so a removed line fails it.
+dev.demo.FirstTask
+dev.demo.SecondTask

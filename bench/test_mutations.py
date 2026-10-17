@@ -955,6 +955,221 @@ def case_the_pool_composes_the_default_shapes_too(root):
     )
 
 
+def _forcing():
+    import forcing_mutations  # noqa: PLC0415
+    return forcing_mutations
+
+
+def case_resource_value_changes_one_value_and_leaves_it_parseable(root):
+    """One value a file declares, edited in its own syntax: the file still parses, and only that
+    value moved."""
+    import configparser  # noqa: PLC0415
+    import json  # noqa: PLC0415
+    import xml.etree.ElementTree as ElementTree  # noqa: PLC0415
+    fm = _forcing()
+
+    def properties(text):
+        parser = configparser.ConfigParser(interpolation=None, comment_prefixes=("#", "!"))
+        parser.optionxform = str
+        parser.read_string("[s]\n" + text)
+        return dict(parser["s"])
+
+    original = "# settings\n! old style comment\nlong.line = first \\\n    second=part\ngreeting=hello\nport: 8080\n"
+    props = write(root, "app.properties", original)
+    before = properties(original)
+    name = fm.resource_value(props)
+    after = properties(_read(props))
+    changed = {k for k in before if before[k] != after.get(k)}
+    failures = (
+        check("a properties file stays parseable with every key", set(after) == set(before),
+              str(after)) +
+        check("exactly one properties value changed", len(changed) == 1, str(changed)) +
+        check("a value continued over two lines is left alone; the next one is edited",
+              name == "greeting" and after["greeting"] == f"hello-{fm.SENTINEL}", _read(props))
+    )
+    data = write(root, "app.json", '{\n  "name": "demo",\n  "size": 3,\n  "tag": "x"\n}\n')
+    before = json.loads(_read(data))
+    fm.resource_value(data)
+    after = json.loads(_read(data))
+    failures += check("a json file stays parseable with one string value changed",
+                      [k for k in before if before[k] != after[k]] == ["name"], str(after))
+    markup = write(root, "app.xml", '<?xml version="1.0"?>\n<config>\n  <mode>fast</mode>\n'
+                                    '  <size>3</size>\n</config>\n')
+    fm.resource_value(markup)
+    tree = ElementTree.fromstring(_read(markup))
+    failures += check("an xml file stays parseable with one element's text changed",
+                      tree.find("mode").text == f"fast-{fm.SENTINEL}"
+                      and tree.find("size").text == "3", _read(markup))
+    yaml = write(root, "app.yml", "# config\nserver:\n  host: \"localhost\"\n  port: 8080\n")
+    fm.resource_value(yaml)
+    failures += check("a quoted yaml value keeps its quotes",
+                      f'host: "localhost-{fm.SENTINEL}"' in _read(yaml)
+                      and "port: 8080" in _read(yaml), _read(yaml))
+    empty = write(root, "empty.properties", "# nothing set\n")
+    failures += (
+        check("a file with no value yields no target", not fm.can_resource_value(empty)) +
+        check("a second edit of one file is not offered", fm.resource_value(props, 1) is None)
+    )
+    return failures
+
+
+def case_services_removes_one_provider_and_never_empties_the_file(root):
+    fm = _forcing()
+    path = write(root, "META-INF/services/java.lang.Runnable",
+                 "# providers\np.First\n\np.Second  # the other one\n")
+    offered = fm.services_in(path)
+    removed = fm.services(path, 1)
+    text = _read(path)
+    lone = write(root, "META-INF/services/java.lang.AutoCloseable", "# one\np.Only\n")
+    return (
+        check("two providers offer two targets", offered == 2, str(offered)) +
+        check("the second is the one named", removed == "p.Second", str(removed)) +
+        check("the second provider's line is removed", "p.Second" not in text and "p.First" in text,
+              text) +
+        check("the comment stays", text.startswith("# providers\n"), text) +
+        check("a file naming one provider offers nothing", fm.services_in(lone) == 0) +
+        check("and is never emptied", fm.services(lone, 0) is None and "p.Only" in _read(lone))
+    )
+
+
+def case_build_script_adds_one_system_property_to_the_test_tasks(root):
+    fm = _forcing()
+    project = {"sources": ["core/src/main/java"]}
+    kotlin = write(root, "core/build.gradle.kts", "plugins { java }\n\ntasks.test { useJUnitPlatform() }\n")
+    groovy = write(root, "app/build.gradle", "apply plugin: 'java'\n")
+    found = fm.build_script_of(root, project)
+    fm.build_script(kotlin)
+    fm.build_script(groovy)
+    kotlin_text, groovy_text = _read(kotlin), _read(groovy)
+    return (
+        check("the property is outside the plugin's own, which its fingerprint leaves out",
+              not fm.PROPERTY[0].startswith("yoriwake."), fm.PROPERTY[0]) +
+        check("the measured module's script is the one drawn", found == "core/build.gradle.kts",
+              str(found)) +
+        check("a module with no script of its own offers none",
+              fm.build_script_of(root, {"sources": ["lib/src/main/java"]}) is None) +
+        check("Kotlin DSL: one system property on the test tasks",
+              kotlin_text.count("systemProperty(") == 1
+              and 'tasks.withType<Test>().configureEach {\n    systemProperty("mutation.marker", '
+                  '"true")\n}\n' in kotlin_text, kotlin_text) +
+        check("Kotlin DSL: the script's own lines are kept",
+              kotlin_text.startswith("plugins { java }\n\ntasks.test { useJUnitPlatform() }\n\n"),
+              kotlin_text) +
+        check("Groovy DSL: one system property on the test tasks",
+              groovy_text.count("systemProperty ") == 1
+              and "tasks.withType(Test).configureEach {\n    systemProperty 'mutation.marker', "
+                  "'true'\n}\n" in groovy_text, groovy_text)
+    )
+
+
+def case_groovy_body_throws_at_entry(root):
+    fm = _forcing()
+    path = write(root, "src/main/groovy/p/Greeter.groovy",
+                 "package p\n\nclass Greeter {\n    String name\n\n"
+                 "    Greeter(String name) {\n        this.name = name\n    }\n\n"
+                 "    def greet(String other) {\n        \"hi $other\"\n    }\n\n"
+                 "    static int twice(int n) {\n        n * 2\n    }\n}\n")
+    count = fm.groovy_methods_in(path)
+    name = fm.groovy_body(path, 1)
+    text = _read(path)
+    targets = fm.mutation_targets(root, {"sources": ["src/main/groovy"]})
+    return (
+        check("the constructor is no target; the two methods are", count == 2, str(count)) +
+        check("the second method throws at its entry", name == "twice" and
+              "    static int twice(int n) {\n        if (true) {\n            throw new "
+              "IllegalStateException(\"yoriwake-mutated\")\n        }\n        n * 2" in text, text) +
+        check("a .groovy source under the roots is globbed",
+              [t for t in targets if t[1] == "groovy-body"] ==
+              [("src/main/groovy/p/Greeter.groovy", "groovy-body", 0),
+               ("src/main/groovy/p/Greeter.groovy", "groovy-body", 1)], str(targets))
+    )
+
+
+def case_the_gate_rejects_a_bad_groovy_edit_rather_than_failing_the_build(root):
+    """groovyc writes neither `error:` nor `Compilation error`. Without its own diagnostics a bad
+    Groovy edit reads as the guest's build breaking, `build-failed`, which fails the project."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import run  # noqa: PLC0415
+
+    def compile_writing(text):
+        def compile_with(_checkout, _project, _args, log_path):
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            return 1, 0.0
+        return compile_with
+
+    log = os.path.join(root, "compile.log")
+    # The two halves of a failed Groovy compile's log, each on its own: what groovyc prints, and
+    # the banner Gradle prints after it.
+    groovyc = ("startup failed:\n/src/p/Greeter.groovy: 12: Unexpected input: '}' "
+               "@ line 12, column 1.\n1 error\n")
+    banner = ("> Task :core:compileTestGroovy FAILED\nFAILURE: Build failed with an exception.\n"
+              "Execution failed for task ':core:compileTestGroovy'.\n"
+              "> Compilation failed; see the compiler error output for details.\n")
+    starved = ("> Task :compileJava FAILED\nExecution failed for task ':compileJava'.\n"
+               "> Compilation failed; see the compiler error output for details.\n"
+               "java.lang.OutOfMemoryError: Java heap space\n")
+    return (
+        check("groovyc's startup failed: is a rejection",
+              run.compile_or_reject(root, {}, [], log, compile_writing(groovyc)) == (1, True)) +
+        check("Gradle's Groovy Compilation failed banner is a rejection",
+              run.compile_or_reject(root, {}, [], log, compile_writing(banner)) == (1, True)) +
+        check("a Java compile that failed with no diagnostic stays build-failed",
+              run.compile_or_reject(root, {}, [], log, compile_writing(starved)) == (1, False))
+    )
+
+
+def case_a_forcing_family_draws_its_rows_and_no_more(root):
+    """The path decides a forcing row's outcome, so a family stops after its rows a project,
+    whatever they showed: one now, two once each force kind has its own cap."""
+    fm = _forcing()
+    one = [{"kind": "services", "status": "checked"}]
+    two = one + [{"kind": "services", "status": "checked"}]
+    targets = ([("r.properties", "resource-value", 0)] +
+               [("s", "services", i) for i in range(3)] + [("b.gradle", "build-script", 0)])
+    order = fm.draw_order(targets, 7)
+    first = [t[1] for t in order[:3]]
+    return (
+        check("one row a family a project", fm.ROWS_PER_FAMILY == 1, str(fm.ROWS_PER_FAMILY)) +
+        check("a second row of a family is not drawn", fm.family_full("services", one)) +
+        check("a family with no row still draws", not fm.family_full("build-script", one)) +
+        check("a narrowing flag makes the rows a flag-on population",
+              fm.population(["-Pyoriwake.narrowResources"]) == "flag-on"
+              and fm.population(["-I", "x.gradle", "-Pyoriwake.narrowDependencies=true"]) == "flag-on",
+              "flag-off") +
+        check("no narrowing flag, or one set to false, is flag-off",
+              fm.population(["-Pother"]) == fm.population(["-Pyoriwake.narrowResources=false"])
+              == fm.population(None) == "flag-off", "flag-on") +
+        check("a row recorded for a shard counts", fm.family_full(
+            "services", [], [["s", "services", 0, "s::services::p.A"]])) +
+        check("at two a family, a second is drawn and a third is not",
+              not fm.family_full("services", one, limit=2) and fm.family_full("services", two, limit=2)) +
+        check("every family's first draw comes before any second",
+              sorted(first) == ["build-script", "resource-value", "services"], str(order)) +
+        check("the order is the seed's", order == fm.draw_order(list(reversed(targets)), 7),
+              str(order))
+    )
+
+
+def case_demo_carries_every_forcing_family_it_can(root):
+    """`demo` carries a resource and a service file each read by a test, and a build script; it
+    has one commit and no Groovy, so `dependency-revert` and `groovy-body` draw nothing there."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import run  # noqa: PLC0415
+    fm = _forcing()
+    samples = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "samples")
+    found = fm.mutation_targets(os.path.join(samples, "demo"),
+                                {"name": "demo", "sources": ["src/main/java"]})
+    services = "src/main/resources/META-INF/services/java.lang.Runnable"
+    return (
+        check("the sweep offers forcing/v1", fm.FORCING_SET in run.SHAPE_SETS, str(run.SHAPE_SETS)) +
+        check("demo's forcing targets", found == [
+            ("src/main/resources/demo.properties", "resource-value", 0),
+            (services, "services", 0), (services, "services", 1),
+            ("build.gradle.kts", "build-script", 0)], str(found))
+    )
+
+
 CASES = (case_java_constant, case_kotlin_constant, case_string_constant,
          case_aliased_detection, case_rename, case_corpus_contains_all_four_shapes,
          case_inline_fun_is_reachable, case_block_bodied_inline_fun_is_mutated_by_index,
@@ -973,7 +1188,14 @@ CASES = (case_java_constant, case_kotlin_constant, case_string_constant,
          case_the_pool_edits_carry_braces_and_no_typed_literal,
          case_the_default_set_is_unchanged_by_the_pool,
          case_a_rejected_draw_is_redrawn_from_its_own_family,
-         case_the_pool_composes_the_default_shapes_too)
+         case_the_pool_composes_the_default_shapes_too,
+         case_resource_value_changes_one_value_and_leaves_it_parseable,
+         case_services_removes_one_provider_and_never_empties_the_file,
+         case_build_script_adds_one_system_property_to_the_test_tasks,
+         case_groovy_body_throws_at_entry,
+         case_the_gate_rejects_a_bad_groovy_edit_rather_than_failing_the_build,
+         case_a_forcing_family_draws_its_rows_and_no_more,
+         case_demo_carries_every_forcing_family_it_can)
 
 
 def test_every_mutation_shape_behaves():

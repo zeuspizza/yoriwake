@@ -124,6 +124,22 @@ failures are the ground truth.
   generators are digested with this set only, so the default set's `grammar_digest` does not move.
   The demo fixtures carry each shape with a test that fails when it breaks: Java on `demo`, Kotlin
   on `demo-kotlin`.
+- **`forcing/v1`.** Changes yoriwake runs every test for today, because their paths alone decide
+  it: `resource-value` (one value edited in a `.properties`, `.yml`, `.json` or `.xml` file under
+  the measured module's `src/main/resources`), `services` (one provider line removed from a
+  `META-INF/services` file that names two or more), `build-script` (one system property added to
+  the measured module's test tasks), `dependency-revert` (the revert of a recent commit that changed
+  only a version catalog or version lines, through the revert set's patches; an artifact that no
+  longer resolves is a counted rejection) and `groovy-body` (an exception thrown at the entry of a
+  Groovy method). Each row checks that the forcing holds, so a family stops after one row a project
+  whatever it showed, and the set runs on the reduced arm's projects and grails-core only. It has
+  no recall denominator: its figure is, per family, the rows and the forced rows that ran
+  everything, with the kind they forced on. With no narrowing flag in a project's `flags`, a row
+  that ran less than everything fails the project; with `-Pyoriwake.narrowResources` or
+  `-Pyoriwake.narrowDependencies` there, the file is a `flag-on` population of its own. Rejections
+  are counted, under no ceiling, and an edit the gate rejects is replaced by the same family's next
+  one; the gate reads groovyc's `startup failed:` and Gradle's Groovy `Compilation failed` banner
+  as rejections. `demo` carries a main resource and a service file, each read by a test.
 
 The harness that measured this is in [`bench/`](../bench/README.md): how to run one project, what
 counts as a result, and how to add a project. Its results files are described field by field in

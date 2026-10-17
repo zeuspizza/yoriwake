@@ -9,6 +9,8 @@ answer is known is the only way to say that without a sweep.
 Run: `python bench/test_corpus_state.py`
 """
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -626,7 +628,8 @@ def case_a_file_assert_recall_refuses_is_never_clean():
 def case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it():
     """Reverts publish their rejections instead of a ceiling; every other set keeps the ceiling."""
     failed = 0
-    for shape_set, refused in ((run.REVERT_SET, False), ("recall-arm", True)):
+    for shape_set, refused in ((run.REVERT_SET, False), (run.FORCING_SET, False),
+                               ("recall-arm", True)):
         with tempfile.TemporaryDirectory() as root:
             entry, _, _ = verdict_of(root, "p", [narrowed_row() for _ in range(16)],
                                      mutations_rejected=5, shape_set=shape_set,
@@ -635,6 +638,35 @@ def case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it():
                 print(f"  FAIL: 5 rejected of 21 offered in {shape_set} read {entry['verdict']}: "
                       f"{entry['reason']}")
                 failed += 1
+    return failed
+
+
+def case_a_forcing_file_is_in_no_recall_figure_and_a_narrowed_row_is_dirty():
+    """`forcing/v1` has no recall denominator: with the flags off a narrowed row is a finding, and
+    no forcing file is clean or printed in a composition line."""
+    failed = 0
+    forcing = {"target_shapes": run.FORCING_SET}
+    for flags, rows, want in (
+            ([], [narrowed_row(kind="resource-value")], cs.DIRTY),
+            ([], [narrowed_row(kind="resource-value", selected_distinct=100)], cs.DIRTY),
+            (["-Pyoriwake.narrowResources"], [narrowed_row(kind="resource-value")],
+             cs.NO_QUESTION_ASKED),
+            ([], [forced_row(kind="services")], cs.NO_QUESTION_ASKED)):
+        with tempfile.TemporaryDirectory() as root:
+            entry, _, _ = verdict_of(root, "p", rows, shape_set=run.FORCING_SET,
+                                     header={**forcing, "flags": flags})
+        if entry["verdict"] != want:
+            print(f"  FAIL: a forcing file with flags {flags} read {entry['verdict']}, not {want}: "
+                  f"{entry['reason']}")
+            failed += 1
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cs.render([{"project": "p", "verdict": cs.DIRTY, "rows": 3, "miss_possible": 1,
+                    "missed": 0, "depth": [16], "targets_available": 4, "fixture": False,
+                    "reason": "r"}], run.FORCING_SET)
+    if "where a miss was possible" in out.getvalue():
+        print(f"  FAIL: a forcing survey printed a recall composition: {out.getvalue()!r}")
+        failed += 1
     return failed
 
 
@@ -744,7 +776,8 @@ CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
          case_an_unstable_guest_leaves_the_denominator_and_says_why,
          case_the_composition_counts_only_rows_where_a_miss_was_possible,
          case_a_blocked_project_is_cannot_answer_rather_than_absent,
-         case_a_file_from_before_the_grammar_stamp_is_reported_unstamped_not_matching)
+         case_a_file_from_before_the_grammar_stamp_is_reported_unstamped_not_matching,
+         case_a_forcing_file_is_in_no_recall_figure_and_a_narrowed_row_is_dirty)
 
 
 def test_corpus_state():

@@ -650,6 +650,12 @@ def main(argv=None):
     names = qualified(args.qualification)
     if not names:
         raise SystemExit(f"no QUALIFIED rows in {args.qualification}; refusing to sweep nothing")
+    # THE REDUCED ARM'S OWN GATES ARE RECALL GATES: it would drop grails-core and refuse a sweep
+    # whose every row forced, which is what this set expects of its rows.
+    if args.set == run.FORCING_SET and args.arm == "reduced":
+        raise SystemExit(f"{run.FORCING_SET} runs on the full arm, which it limits to the reduced "
+                         f"arm's projects and grails-core; the reduced arm reads its rows as recall "
+                         f"rows")
     if args.arm == "reduced":
         if args.only or args.skip:
             # BOTH, and the omission of --skip was the bug: it is applied AFTER the completeness
@@ -668,6 +674,12 @@ def main(argv=None):
     if args.only:
         names = [n for n in names if n in set(args.only)]
     names = [n for n in names if n not in set(args.skip)]
+    # `forcing/v1` RUNS ON THE REDUCED ARM'S PROJECTS ONLY, and on the one whose measured root is
+    # Groovy: each row costs a suite run for an answer the change's path fixes, so the rest of the
+    # corpus would add hundreds of runs and no information.
+    if args.set == run.FORCING_SET:
+        names = [n for n in names
+                 if n in set(REDUCED_ARM + run.forcing_mutations.GROOVY_PROJECTS)]
     # A SELECTION THAT MATCHED NOTHING IS NOT AN EMPTY CORPUS. Run once with `--only "$KEEP"` under
     # zsh, which does not word-split an unquoted variable: the whole 18-name string arrived as one
     # argument, nothing matched, and this printed "0 qualified projects" and exited 0. Six hours

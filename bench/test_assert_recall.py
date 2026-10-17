@@ -627,5 +627,68 @@ class GroundTruthMix(unittest.TestCase):
             {"full": 2, "complement": 0, "complement+full": 0}))
 
 
+class ForcingRows(unittest.TestCase):
+    """`forcing/v1` asks whether a change whose path forces still runs everything. It has no
+    recall denominator; a row that narrowed with the narrowing flags off is the finding."""
+
+    def forced(self, kind, **overrides):
+        return mutation(**{"target": f"src/main/resources/a.properties::{kind}::greeting",
+                           "kind": kind, "selected_distinct": 9, "decision_outcome": "full-run",
+                           "full_run_kind": "unmappable-paths", **overrides})
+
+    def file(self, rows, flags=()):
+        return {"project": "p", "target_shapes": "forcing/v1", "flags": list(flags),
+                "mutations": rows}
+
+    def test_forced_rows_pass_and_are_counted_per_family_with_their_kind(self):
+        code, out = run_gate(self.file([
+            self.forced("resource-value"), self.forced("services", full_failures=0),
+            self.forced("build-script", full_run_kind="daemon-refused",
+                        refusal_kind="environment-changed")]))
+        self.assertEqual(0, code, out)
+        self.assertIn("forcing/v1, flag-off", out)
+        self.assertIn("resource-value: 1 row(s), 1 forced and ran everything (unmappable-paths 1)",
+                      out)
+        self.assertIn("(daemon-refused/environment-changed 1)", out)
+
+    def test_a_forcing_row_that_narrowed_with_the_flags_off_fails_naming_it(self):
+        narrowed = mutation(target="src/main/resources/a.properties::resource-value::greeting",
+                            kind="resource-value", decision_outcome="narrowed")
+        code, out = run_gate(self.file([self.forced("services"), narrowed]))
+        self.assertEqual(1, code, out)
+        self.assertIn("NARROWED with the narrowing flags off: "
+                      "src/main/resources/a.properties::resource-value::greeting", out)
+
+    def test_a_forcing_row_the_selector_narrowed_onto_every_test_fails_too(self):
+        narrowed = self.forced("resource-value", decision_outcome="narrowed", full_run_kind=None)
+        code, out = run_gate(self.file([narrowed]))
+        self.assertEqual(1, code, out)
+        self.assertIn("NARROWED with the narrowing flags off", out)
+
+    def test_with_a_narrowing_flag_on_a_narrowed_row_passes_and_the_file_is_flag_on(self):
+        narrowed = mutation(target="src/main/resources/a.properties::resource-value::greeting",
+                            kind="resource-value", decision_outcome="narrowed")
+        for flag in ("-Pyoriwake.narrowResources", "-Pyoriwake.narrowDependencies=true"):
+            code, out = run_gate(self.file([narrowed], flags=[flag]))
+            self.assertEqual(0, code, out)
+            self.assertIn("forcing/v1, flag-on", out)
+        code, out = run_gate(self.file([narrowed], flags=["-Pyoriwake.narrowResources=false"]))
+        self.assertEqual(1, code, out)
+
+    def test_a_dependency_revert_rejection_is_counted_under_no_ceiling(self):
+        results = self.file([self.forced("services")])
+        results.update(mutations_rejected=3, rejected_targets=["a", "b", "c"])
+        code, out = run_gate(results)
+        self.assertEqual(0, code, out)
+        self.assertIn("3 of 4 mutations were rejected", out)
+
+    def test_a_miss_and_a_broken_build_still_fail(self):
+        code, out = run_gate(self.file([self.forced("services", missed=["k.ATest::a"])]))
+        self.assertEqual(1, code, out)
+        self.assertIn("MISSED", out)
+        code, out = run_gate(self.file([self.forced("services", status="build-failed")]))
+        self.assertEqual(1, code, out)
+
+
 if __name__ == "__main__":
     unittest.main()
