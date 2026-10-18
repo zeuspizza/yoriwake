@@ -362,7 +362,7 @@ internal abstract class ExplainTask : DefaultTask() {
             map,
             changeSet(
                 widening.prefixes.ifEmpty { scoped.change.classPrefixes.sorted() },
-                paths, scoped, established, widening.changedBytes,
+                paths, scoped, established, widening.changedBytes, widening.movedFiles,
             ).withDaemonRefusal(widening.refusal),
             emptyList(),
         )

@@ -25,6 +25,7 @@ internal object MapProvenance {
         AgentContract.POSITIONS_FILE,
         AgentContract.FIRST_TOUCH_FILE,
         AgentContract.NAMED_TOUCH_FILE,
+        AgentContract.RESOURCE_TOUCH_FILE,
         AgentContract.JVM_MODE_FILE,
         AgentContract.ENVIRONMENT_FILE,
         AgentContract.ENVIRONMENT_FINGERPRINTS_FILE,

@@ -224,6 +224,7 @@ class TestTaskWiringCharacterizationTest {
         val expected = """
             configured
               prop yoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
+              prop yoriwake.internal.capture.root=<project>
               prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
               jvmArgs []
             #0 Execute doFirst {} action
@@ -265,6 +266,7 @@ class TestTaskWiringCharacterizationTest {
             configured
               prop yoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
               prop yoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
+              prop yoriwake.internal.capture.root=<project>
               prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
               prop yoriwake.select=true
               prop yoriwake.select.classGranularity=false
@@ -331,8 +333,10 @@ class TestTaskWiringCharacterizationTest {
         val expected = """
             prop yoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
             prop yoriwake.internal.capture.owner=io.github.zeuspizza.yoriwake.agent.engines.PlatformEvents@<id>
+            prop yoriwake.internal.capture.root=<project>
             prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             arg -Dyoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
+            arg -Dyoriwake.internal.capture.root=<project>
             arg -Dyoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             arg -javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar
             arg -javaagent:<project>/build/tmp/.cache/expanded/zip_<hash>/jacocoagent.jar=destfile=build/jacoco/test.exec,append=true,includes=dev.sample.*,exclclassloader=sun.reflect.DelegatingClassLoader:jdk.internal.reflect.DelegatingClassLoader,inclnolocationclasses=true,dumponexit=true,output=file,jmx=false
@@ -347,6 +351,7 @@ class TestTaskWiringCharacterizationTest {
             prop yoriwake.change.accountedFor=false
             prop yoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
             prop yoriwake.internal.capture.outputDir=
+            prop yoriwake.internal.capture.root=<project>
             prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             prop yoriwake.run.token=<token>
             prop yoriwake.select=true
@@ -354,6 +359,7 @@ class TestTaskWiringCharacterizationTest {
             arg -Dyoriwake.change.accountedFor=false
             arg -Dyoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
             arg -Dyoriwake.internal.capture.outputDir
+            arg -Dyoriwake.internal.capture.root=<project>
             arg -Dyoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             arg -Dyoriwake.run.token=<token>
             arg -Dyoriwake.select=true
@@ -369,6 +375,7 @@ class TestTaskWiringCharacterizationTest {
             yoriwake.change.bytes=
             yoriwake.change.classes=dev.sample.Alpha
             yoriwake.change.exemptTestClasses=
+            yoriwake.change.movedFiles=
             yoriwake.change.ownTestClasses=
             yoriwake.change.unmappable=
             """.trimIndent(),

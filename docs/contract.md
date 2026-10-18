@@ -24,6 +24,7 @@ the run as `change-set-unreadable`.
 |---|---|---|---|
 | `MAP_DIR_PROPERTY` | `yoriwake.map.dir` | plugin → agent | The map directory to read |
 | `RECORDS_DIR_PROPERTY` | `yoriwake.internal.capture.outputDir` | plugin → agent | Where to write raw records. Capture is off when unset or empty |
+| `CAPTURE_ROOT_PROPERTY` | `yoriwake.internal.capture.root` | plugin → agent | The root project's directory. A capturing JVM records the non-class files it reads beneath it |
 | `LOADED_DIR_PROPERTY` | `yoriwake.loaded.out` | plugin → agent | Where to write loaded-class lists. Set only with `-Pyoriwake.internal.loaded` |
 | `JUNIT4_HOOK_PROPERTY` | `yoriwake.junit4.hook` | plugin → agent | `true` on a task not on the JUnit Platform: capture through JUnit 4's `RunNotifier` |
 | `SELECT_PROPERTY` | `yoriwake.select` | plugin → agent | `true` to narrow; anything else runs everything |
@@ -36,6 +37,7 @@ the run as `change-set-unreadable`.
 | `OWN_TEST_CLASSES_PROPERTY` | `yoriwake.change.ownTestClasses` | plugin → agent | Changed classes that are this task's own tests |
 | `EXEMPT_TEST_CLASSES_PROPERTY` | `yoriwake.change.exemptTestClasses` | plugin → agent | Of those, the ones that declare a test and that no other compiled class or resource names. Their loading at discovery opens no window; see [First touches](#first-touches) |
 | `CHANGED_BYTES_PROPERTY` | `yoriwake.change.bytes` | plugin → agent | Classes whose compiled bytes changed with no changed source behind them. Tests that recorded one run; one no test recorded forces |
+| `MOVED_FILES_PROPERTY` | `yoriwake.change.movedFiles` | plugin → agent | Build-produced non-class files on the classpath whose content differs from the capture's, by their `resource-touch.tsv` path. Each runs the tests from its first read on in every JVM that read it; a JVM whose reads were not recorded runs whole |
 | `CHANGE_SET_FILE_PROPERTY` | `yoriwake.change.file` | plugin → agent | The file holding the list-valued change-set properties. Set means that file alone answers for them |
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
@@ -73,6 +75,7 @@ One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usuall
 | `POSITIONS_FILE` | `positions.tsv` | plugin | agent | `jvm \t sequence \t test-id`: where each test record ran. A test can appear more than once |
 | `FIRST_TOUCH_FILE` | `first-touch.tsv` | plugin | agent | `jvm \t sequence \t class`: the first record at or before which that JVM loaded the class, executed it, or read its class or source file |
 | `NAMED_TOUCH_FILE` | `named-touch.tsv` | plugin | agent | The same, counting only a lookup by name or a read after the plan started, and an execution in another class's window. What an exempt test class is dated by |
+| `RESOURCE_TOUCH_FILE` | `resource-touch.tsv` | plugin | agent | `jvm \t sequence \t kind \t path`: the first record at or before which that JVM read the non-class file at `path`, relative to the root project as the classpath-file digests name it (a jar entry as `<jar>!/<entry>`, a whole archive by its own path). Kind `read` is a read by anything but the JDK's class loader, `loader` one by it; `*` as the path is every file. A JVM whose reads were recorded has a `recorded` row with sequence `0` and no path; one without reads every file from its first record |
 | `JVM_MODE_FILE` | `jvm-mode.tsv` | plugin | plugin, people, tools | `jvm \t mode`: how that JVM was recorded, `isolated` or `shared` (see [Recording modes](#recording-modes)) |
 | `ENVIRONMENT_FILE` | `environment.tsv` | plugin | plugin, people, tools | `jvm \t fingerprint-id`: the environment that JVM was recorded in. A JVM that ran a test and has no row makes a selecting run run everything, as `environment-unrecorded` |
 | `ENVIRONMENT_FINGERPRINTS_FILE` | `environment-fingerprints.tsv` | plugin | plugin, people, tools | `fingerprint-id \t component \t value`, one block per environment: `jdk.version`, `jdk.vendor` (or `jdk.executable`), `os.name` and `os.arch` in plain text; `sys:<name>` and `env:<name>` as salted SHA-256 digests of their values, never the values. See [the environment fingerprint](reference.md#the-environment-fingerprint) |
@@ -135,10 +138,21 @@ number in `index.tsv`. A touch between two records counts toward the later one.
 | `TOUCH_LOOKUP` | `lookup` | A class was looked up by name: `Class.forName`, `ClassLoader.loadClass` or `findLoadedClass`, `Lookup.findClass`. The value is the name, or `*` for something that can reach any class: `Instrumentation.getAllLoadedClasses`, a reviewed native library loaded by its own class, a native agent, or lookup hooks that are not all installed |
 | `TOUCH_PLAN_STARTED` | `plan-started` | No value. Everything before it happened during discovery |
 | `TOUCH_JAR` | `jar` | A jar was opened by code other than the JDK's own zip classes. Every class in it counts as read |
+| `TOUCH_RESOURCE` | `resource` | A file that is not a class, source or archive was opened beneath the root, or an archive was read whole. The value is its absolute path, or `<jar>!/<entry>` |
+| `TOUCH_LOADER_MANIFEST` | `loader-manifest` | As `resource`, for a jar's manifest read by the JDK's application or platform class loader to open the jar or define a package from it |
+| `TOUCH_RESOURCES_RECORDED` | `resources-recorded` | The JVM records `resource` and `loader-manifest` touches beneath the root it names. Without it, which files the JVM read is unknown |
 | `TOUCH_ALL` | `all` | From this record on, loads and reads were not all observed: a hook missing, a child process started, a native library not on the reviewed list loaded from outside the JDK, the foreign-function linker or a library lookup called from outside the JDK, or a class defined from bytes whose name could not be read. The value says why |
 | `TOUCHES_COMPLETE` | `#complete` | The last line of a complete `touches.tsv` |
 | `FIRST_TOUCH_ANY` | `*` | As a first-touch class: every class. Written for a JVM whose touches are missing, incomplete or unreadable, and never read as "none" |
 | `ENV_READ_WHOLE` | `*` | As a line of `env-reads.tsv`: a test read the whole environment |
+
+The kinds of `resource-touch.tsv`:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `RESOURCE_READ` | `read` | Read by anything but the JDK's class loader. A moved file it names runs the tests from that record on |
+| `RESOURCE_LOADER` | `loader` | A manifest read by the JDK's class loader. Selection does not read it: the plugin compares what that loader takes from a manifest on its own, and forces when it moved |
+| `RESOURCE_RECORDED` | `recorded` | The JVM's reads were recorded. Sequence `0`, no path |
 
 ### Recording modes
 
@@ -251,6 +265,7 @@ row whose line names a rule outside the `shares-jvm-*` family and `class-granula
 | `RULE_CLASS_SETUP` | `class-setup` | A class-scoped record of its class reaches the change |
 | `RULE_SHARES_JVM_CHANGED_CLASS` | `shares-jvm-changed-class` | It ran at or after its JVM first touched a changed class or its file |
 | `RULE_SHARES_JVM_CHANGED_BYTES` | `shares-jvm-changed-bytes` | It ran at or after its JVM first touched a class whose bytes changed |
+| `RULE_SHARES_JVM_MOVED_CLASSPATH_FILE` | `shares-jvm-moved-classpath-file` | It ran at or after its JVM first read a build-produced classpath file that moved since the capture, or in a JVM whose reads of such files were not recorded |
 | `RULE_SHARES_JVM_UNOBSERVED` | `shares-jvm-unobserved` | It ran at or after its JVM's touches stopped being all observed (`*`): a child process, a native library off the reviewed list, a hook missing. The map does not say which; the worker's raw `touches.tsv` does |
 | `RULE_SHARES_JVM_UNPOSITIONED` | `shares-jvm-unpositioned` | The map holds no position for it, so nothing says it ran before the change arrived |
 | `RULE_NOT_KNOWN_TO_PASS` | `not-known-to-pass` | The map does not record it as having passed |

@@ -130,6 +130,7 @@ row-rule	own-class-changed
 row-rule	reaches-change
 row-rule	shares-jvm-changed-bytes
 row-rule	shares-jvm-changed-class
+row-rule	shares-jvm-moved-classpath-file
 row-rule	shares-jvm-unobserved
 row-rule	shares-jvm-unpositioned
 row-rule	unknown

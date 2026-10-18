@@ -395,6 +395,14 @@ public final class Selector {
                 }
             }
         }
+        if (!change.movedFiles().isEmpty()) {
+            Map<String, Integer> opens = movedFileWindows(map, tests, change.movedFiles());
+            for (MapReader.Entry test : tests) {
+                if (ranInWindow(map, test, opens) && selected.add(test.testId())) {
+                    sharedJvmOnly.add(test.testId());
+                }
+            }
+        }
 
         return Decision.selecting(selected, knownTestIds, notKnownToPass(tests), sharedJvmOnly);
     }
@@ -499,16 +507,16 @@ public final class Selector {
                 }
             }
         }
-        if (!changed.isEmpty() || !bytes.isEmpty()) {
+        if (!changed.isEmpty() || !bytes.isEmpty() || !change.movedFiles().isEmpty()) {
             Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), changed, knownTestIds);
-            sharesJvm(map, tests, changed, bytes, exempt, byTest);
+            sharesJvm(map, tests, changed, bytes, change.movedFiles(), exempt, byTest);
         }
         return new Rules(basis, forcing, byTest, knownTestIds);
     }
 
     /** {@link #ranAfterFirstTouch}, with each window kept apart by what opened it. */
     private static void sharesJvm(MapReader.Result map, List<MapReader.Entry> tests,
-            Collection<String> changed, Set<String> bytes, Set<String> exempt,
+            Collection<String> changed, Set<String> bytes, Collection<String> moved, Set<String> exempt,
             Map<String, EnumSet<Rule>> byTest) {
         List<String> dated = new ArrayList<>();
         for (String prefix : changed) {
@@ -543,6 +551,9 @@ public final class Selector {
                 opened.computeIfAbsent(Rule.SHARES_JVM_CHANGED_CLASS, key -> new HashMap<>())
                         .merge(first.getKey(), first.getValue(), Math::min);
             }
+        }
+        if (!moved.isEmpty()) {
+            opened.put(Rule.SHARES_JVM_MOVED_CLASSPATH_FILE, movedFileWindows(map, tests, moved));
         }
         for (MapReader.Entry test : tests) {
             List<MapReader.Position> positions = map.positionsOf(test.testId());
@@ -622,6 +633,61 @@ public final class Selector {
             }
         }
         return after;
+    }
+
+    /**
+     * Where each JVM's window for the moved classpath files opens: at its first read of one of them,
+     * of an archive holding one, or of every file; at its first record when its reads were not
+     * recorded, or the map records no reads at all. A file that moved no JVM read opens none.
+     */
+    private static Map<String, Integer> movedFileWindows(MapReader.Result map, List<MapReader.Entry> tests,
+            Collection<String> moved) {
+        Map<String, Integer> opens = new HashMap<>();
+        MapReader.ResourceReads reads = map.resourceReads();
+        for (MapReader.Entry test : tests) {
+            for (MapReader.Position position : map.positionsOf(test.testId())) {
+                if (reads == null || !reads.recorded(position.jvm())) {
+                    opens.put(position.jvm(), 0);
+                }
+            }
+        }
+        if (reads == null) {
+            return opens;
+        }
+        for (MapReader.FirstTouch read : reads.reads()) {
+            if (readsMoved(read.className(), moved)) {
+                opens.merge(read.jvm(), read.sequence(), Math::min);
+            }
+        }
+        return opens;
+    }
+
+    /** Whether reading {@code path} reads a moved file: the file itself, an archive holding it, or every file. */
+    private static boolean readsMoved(String path, Collection<String> moved) {
+        if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {
+            return true;
+        }
+        for (String file : moved) {
+            if (file.equals(path) || file.startsWith(path + "!/")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the test ran at or after its JVM's window opened; one with no position always did. */
+    private static boolean ranInWindow(MapReader.Result map, MapReader.Entry test, Map<String, Integer> opens) {
+        List<MapReader.Position> positions = map.positionsOf(test.testId());
+        if (positions.isEmpty()) {
+            return true;
+        }
+        for (MapReader.Position position : positions) {
+            Integer opensAt = opens.get(position.jvm());
+            if (opensAt != null && position.sequence() >= opensAt) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

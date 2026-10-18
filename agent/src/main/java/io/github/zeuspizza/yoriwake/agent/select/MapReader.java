@@ -13,6 +13,7 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.POSITION
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RAW_DIR;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SCOPE_FILE;
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv;
 import java.io.BufferedReader;
 import java.io.File;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.List;
@@ -117,6 +119,31 @@ public final class MapReader {
         }
     }
 
+    /**
+     * The non-class files beneath the root each JVM read, from {@link
+     * AgentContract#RESOURCE_TOUCH_FILE}: the first sequence at or before which each was read by
+     * anything but the JDK's class loader, and which JVMs recorded their reads at all.
+     */
+    public static final class ResourceReads {
+        private final Set<String> recorded;
+        private final List<FirstTouch> reads;
+
+        ResourceReads(Set<String> recorded, List<FirstTouch> reads) {
+            this.recorded = recorded;
+            this.reads = reads;
+        }
+
+        /** Whether this JVM's reads were recorded; one that was not read everything. */
+        public boolean recorded(String jvm) {
+            return recorded.contains(jvm);
+        }
+
+        /** Each read by its path relative to the root, or {@code *} for every file, as a touch's class. */
+        public List<FirstTouch> reads() {
+            return reads;
+        }
+    }
+
     /** Whether a map records the instrumentation scope its records were captured under. */
     public enum ScopeProvenance {
         /**
@@ -158,6 +185,7 @@ public final class MapReader {
         private Map<String, List<Position>> positions = Collections.emptyMap();
         private List<FirstTouch> firstTouches = Collections.emptyList();
         private List<FirstTouch> namedTouches = Collections.emptyList();
+        private ResourceReads resourceReads;
         private final String unusableReason;
         private final Reason reason;
 
@@ -243,6 +271,11 @@ public final class MapReader {
         /** Every JVM's first lookups and reads after discovery, and executions by another class. */
         public List<FirstTouch> namedTouches() {
             return namedTouches;
+        }
+
+        /** The map's resource reads, or null when it records none or they cannot be read. */
+        public ResourceReads resourceReads() {
+            return resourceReads;
         }
 
         /** Whether the map records the scope its records were captured under. */
@@ -358,11 +391,48 @@ public final class MapReader {
         result.positions = positions;
         result.firstTouches = firstTouches;
         result.namedTouches = namedTouches;
+        result.resourceReads = readResourceReads(new File(mapDir, AgentContract.RESOURCE_TOUCH_FILE));
         result.instrumentationScope = scope;
         result.loadedClasses = loaded;
         result.loadedScope = loadedScope;
         result.effectiveScope = readEffectiveScope(mapDir);
         return result;
+    }
+
+    /**
+     * {@link AgentContract#RESOURCE_TOUCH_FILE}, keeping reads by anything but the JDK's class
+     * loader: what that loader takes from a manifest the daemon compares on its own. Null when the
+     * file is missing or malformed, so no JVM's reads are known.
+     */
+    private static ResourceReads readResourceReads(File file) {
+        if (!file.isFile()) {
+            return null;
+        }
+        Set<String> recorded = new HashSet<>();
+        List<FirstTouch> reads = new ArrayList<>();
+        try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] parts = Tsv.split(line);
+                Integer sequence = parts.length == 4 ? parseSequence(parts[1]) : null;
+                if (sequence == null) {
+                    return null;
+                }
+                if (AgentContract.RESOURCE_RECORDED.equals(parts[2])) {
+                    recorded.add(parts[0]);
+                } else if (AgentContract.RESOURCE_READ.equals(parts[2])) {
+                    reads.add(new FirstTouch(parts[0], sequence, parts[3]));
+                } else if (!AgentContract.RESOURCE_LOADER.equals(parts[2])) {
+                    return null;
+                }
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return new ResourceReads(recorded, reads);
     }
 
     /** The recorded instrumentation scope, or empty (unknown) on any failure. */

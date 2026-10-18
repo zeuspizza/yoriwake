@@ -29,6 +29,10 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.POSITIONS_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RAW_DIR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RAW_SCHEMA_VERSION
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RAW_SCHEMA_VERSION_FILE
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_LOADER
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_READ
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_RECORDED
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_TOUCH_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SCOPE_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCHES_COMPLETE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCHES_FILE
@@ -37,11 +41,15 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_DEFINED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_JAR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_LOADED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_LOOKUP
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_LOADER_MANIFEST
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_PLAN_STARTED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_READ
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_RESOURCE
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_RESOURCES_RECORDED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNATTRIBUTED_RECORD_ID
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WORKER_DIR_PREFIX
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import org.jacoco.core.data.ExecutionData
 import org.jacoco.core.data.ExecutionDataReader
@@ -173,6 +181,11 @@ internal object CoverageDecoder {
         isolated: Boolean = false,
         /** This capture's environment; see [EnvironmentFingerprint]. Null leaves its JVMs without one. */
         environment: Map<String, String>? = null,
+        /**
+         * The root project's directory, which [RESOURCE_TOUCH_FILE] paths are relative to. Null
+         * leaves every decoded JVM's reads unknown.
+         */
+        rootDir: File? = null,
     ): Outcome? {
         val workers = recordsDir(mapDir)
             .listFiles { f: File -> f.isDirectory && f.name.startsWith(WORKER_DIR_PREFIX) }
@@ -184,7 +197,9 @@ internal object CoverageDecoder {
 
         // One id per worker of this capture, so positions from two captures never mix in a merge.
         val run = UUID.randomUUID().toString().substring(0, 8)
-        val decoded = workers.map { worker -> decodeWorker(worker, includePackages, "$run/${worker.name}", isolated) }
+        val decoded = workers.map { worker ->
+            decodeWorker(worker, includePackages, "$run/${worker.name}", isolated, rootDir)
+        }
         val captured = markFlaky(decoded.flatMap(WorkerRecords::lines))
         if (captured.isEmpty()) return null
 
@@ -209,7 +224,8 @@ internal object CoverageDecoder {
         }
         val retained = existingLines(mapDir).filterNot(superseded).filter { !datesTheMap || keptByDatingRun(it) }
         val merged = (retained + captured).distinct()
-        val (positions, firstTouches, namedTouches, modes) = mergeOrder(mapDir, recaptured, decoded, datesTheMap)
+        val (positions, firstTouches, namedTouches, modes, resourceTouches) =
+            mergeOrder(mapDir, recaptured, decoded, datesTheMap)
 
         mapDir.mkdirs()
         // Version marker off first, back on last: each write is atomic but the set is not, and
@@ -220,6 +236,7 @@ internal object CoverageDecoder {
         writeAtomically(File(mapDir, FIRST_TOUCH_FILE), firstTouches.joinToString("") { "$it\n" })
         writeAtomically(File(mapDir, NAMED_TOUCH_FILE), namedTouches.joinToString("") { "$it\n" })
         writeAtomically(File(mapDir, JVM_MODE_FILE), modes.joinToString("") { "$it\n" })
+        writeAtomically(File(mapDir, RESOURCE_TOUCH_FILE), resourceTouches.joinToString("") { "$it\n" })
         val decodedJvms = workers.map { "$run/${it.name}" }
         val retainedJvms = positions.map { Tsv.split(it).first() }.filterNot { it in decodedJvms }.distinct()
         EnvironmentFingerprint.write(mapDir, retainedJvms, decodedJvms, environment)
@@ -396,6 +413,9 @@ internal object CoverageDecoder {
      */
     fun readClassDigests(mapDir: File): Map<String, String>? =
         readDigestTable(File(mapDir, CLASS_DIGESTS_FILE))
+
+    /** Whether the map records which JVMs read which classpath files; see [RESOURCE_TOUCH_FILE]. */
+    fun recordsResourceReads(mapDir: File): Boolean = File(mapDir, RESOURCE_TOUCH_FILE).isFile
 
     /** Reads [RESOURCE_DIGESTS_FILE] as strictly as [readClassDigests]; null forces. */
     fun readClasspathFiles(mapDir: File): Map<String, String>? =
@@ -627,6 +647,8 @@ internal object CoverageDecoder {
         val mode: String,
         /** The ids of windows no test owns whose blob could not be read. */
         val unreadUnowned: Set<String> = emptySet(),
+        /** `jvm \t sequence \t kind \t path` rows; see [RESOURCE_TOUCH_FILE]. */
+        val resourceTouches: List<String> = emptyList(),
     )
 
     /**
@@ -651,7 +673,13 @@ internal object CoverageDecoder {
     private fun ownedBy(className: String, owner: String) =
         className == owner || className == owner + "Kt" || className.startsWith("$owner$")
 
-    private fun decodeWorker(worker: File, includePackages: List<String>, jvm: String, isolated: Boolean): WorkerRecords {
+    private fun decodeWorker(
+        worker: File,
+        includePackages: List<String>,
+        jvm: String,
+        isolated: Boolean,
+        rootDir: File?,
+    ): WorkerRecords {
         val index = File(worker, INDEX_FILE)
         if (!index.isFile) return WorkerRecords(emptyList(), emptyList(), emptyList(), emptyList(), Tsv.join(jvm, MODE_SHARED))
         val inScope = { name: String -> includePackages.isEmpty() || includePackages.any { name.startsWith(it) } }
@@ -704,7 +732,9 @@ internal object CoverageDecoder {
             val outcome = if (inScopeClasses.isEmpty() && attributable) OUTCOME_UNKNOWN else parts[3]
             Tsv.join(outcome, parts[1], inScopeClasses.sorted().joinToString(","), testId)
         }
-        val discovery = readTouches(worker, inScope, touch, touchNamed)
+        val read = HashMap<Pair<String, String>, Int>()
+        val resource = { kind: String, path: String, sequence: Int -> read.merge(kind to path, sequence, ::minOf); Unit }
+        val discovery = readTouches(worker, inScope, touch, touchNamed, resourceReads(rootDir, resource))
         // Project code that ran during discovery (a class orderer, a filter, a listener) was handed
         // every test class without a lookup by name, and may have kept what it read for later tests.
         if (discovery != null && firstRanProjectCode < discovery.planStartedAt) {
@@ -716,7 +746,10 @@ internal object CoverageDecoder {
         }
         // Checked, not assumed from the flag: a host that forks differently still gets the truth.
         val mode = if (isolated && testClasses.size <= 1 && null !in testClasses) MODE_ISOLATED else MODE_SHARED
-        return WorkerRecords(lines, positions, rows(first), rows(named), Tsv.join(jvm, mode), unreadUnowned)
+        val resourceRows = read.entries.sortedWith(compareBy({ it.key.first }, { it.key.second })).map { (key, sequence) ->
+            Tsv.join(jvm, sequence.toString(), key.first, key.second)
+        }
+        return WorkerRecords(lines, positions, rows(first), rows(named), Tsv.join(jvm, mode), unreadUnowned, resourceRows)
     }
 
     /** Where discovery ended, as the sequence of the first record after it, and what it touched. */
@@ -734,6 +767,7 @@ internal object CoverageDecoder {
         inScope: (String) -> Boolean,
         firstTouch: (String, Int) -> Unit,
         touchNamed: (String, Int) -> Unit,
+        resources: ResourceReads,
     ): Discovery? {
         // Discovery loads and inspects every test class; what it did stays out of the named touches.
         var planStarted = false
@@ -743,7 +777,12 @@ internal object CoverageDecoder {
             firstTouch(name, sequence)
             if (!planStarted) discovered += name
         }
-        val both = { name: String, sequence: Int -> touch(name, sequence); touchNamed(name, sequence) }
+        // Whatever widens to every class widens to every file too.
+        val both = { name: String, sequence: Int ->
+            touch(name, sequence)
+            touchNamed(name, sequence)
+            if (name == FIRST_TOUCH_ANY) resources.all(sequence)
+        }
         val file = File(worker, TOUCHES_FILE)
         val lines = runCatching { if (file.isFile) file.readLines() else null }.getOrNull()
         if (lines == null || lines.lastOrNull { it.isNotBlank() } != TOUCHES_COMPLETE) {
@@ -766,7 +805,12 @@ internal object CoverageDecoder {
                 TOUCH_LOOKUP -> if (parts[2] == FIRST_TOUCH_ANY) touchNamed(FIRST_TOUCH_ANY, if (planStarted) sequence else 0)
                     else named(binaryName(parts[2]))
                 TOUCH_READ -> namesForPath(parts[2]).forEach(named)
+                TOUCH_RESOURCES_RECORDED -> resources.recorded()
+                TOUCH_RESOURCE -> resources.read(RESOURCE_READ, parts[2], sequence)
+                TOUCH_LOADER_MANIFEST -> resources.read(RESOURCE_LOADER, parts[2], sequence)
                 TOUCH_JAR -> {
+                    // Read whole by its own zip code: every entry of it.
+                    resources.read(RESOURCE_READ, parts[2], sequence)
                     val entries = runCatching { archiveEntries(parts[2]) }.getOrNull()
                     if (entries == null) {
                         both(FIRST_TOUCH_ANY, sequence)
@@ -780,6 +824,35 @@ internal object CoverageDecoder {
         }
         if (!planStarted) touchNamed(FIRST_TOUCH_ANY, 0)
         return if (planStarted) Discovery(planStartedAt, discovered) else null
+    }
+
+    /** Where [readTouches] reports the non-class files a JVM read. */
+    private class ResourceReads(
+        val recorded: () -> Unit,
+        val read: (kind: String, path: String, sequence: Int) -> Unit,
+        val all: (sequence: Int) -> Unit,
+    )
+
+    /**
+     * Feeds [resource] the rows of [RESOURCE_TOUCH_FILE]: the [RESOURCE_RECORDED] row once the JVM
+     * says it recorded its reads, each read by its path relative to [rootDir], and
+     * [FIRST_TOUCH_ANY] for everything it could not observe or key. Without [rootDir] no read is
+     * known: every file counts as read from the first record.
+     */
+    private fun resourceReads(rootDir: File?, resource: (String, String, Int) -> Unit): ResourceReads {
+        if (rootDir == null) {
+            resource(RESOURCE_READ, FIRST_TOUCH_ANY, 0)
+            return ResourceReads({}, { _, _, _ -> }, {})
+        }
+        return ResourceReads(
+            recorded = { resource(RESOURCE_RECORDED, "", 0) },
+            read = { kind, path, sequence ->
+                // The agent kept it as beneath the root; one this cannot key could be any file.
+                val key = ClasspathFiles.keyOf(rootDir, path)
+                if (key == null) resource(RESOURCE_READ, FIRST_TOUCH_ANY, sequence) else resource(kind, key, sequence)
+            },
+            all = { sequence -> resource(RESOURCE_READ, FIRST_TOUCH_ANY, sequence) },
+        )
     }
 
     private const val MAX_ARCHIVE_DEPTH = 8
@@ -850,9 +923,10 @@ internal object CoverageDecoder {
     }
 
     /**
-     * The merged map's positions, first touches, named touches and JVM modes: this capture's, plus
-     * those of every retained test and of the JVMs they ran in. A capture that dates the map
-     * retains no test, so it keeps only its own. Sorted, so an unchanged map writes the same bytes.
+     * The merged map's positions, first touches, named touches, JVM modes and resource reads: this
+     * capture's, plus those of every retained test and of the JVMs they ran in. A capture that dates
+     * the map retains no test, so it keeps only its own. Sorted, so an unchanged map writes the same
+     * bytes.
      */
     private fun mergeOrder(
         mapDir: File,
@@ -878,6 +952,7 @@ internal object CoverageDecoder {
             (retained(FIRST_TOUCH_FILE) + decoded.flatMap(WorkerRecords::firstTouches)).distinct().sorted(),
             (retained(NAMED_TOUCH_FILE) + decoded.flatMap(WorkerRecords::namedTouches)).distinct().sorted(),
             (retained(JVM_MODE_FILE) + decoded.map(WorkerRecords::mode)).distinct().sorted(),
+            (retained(RESOURCE_TOUCH_FILE) + decoded.flatMap(WorkerRecords::resourceTouches)).distinct().sorted(),
         )
     }
 

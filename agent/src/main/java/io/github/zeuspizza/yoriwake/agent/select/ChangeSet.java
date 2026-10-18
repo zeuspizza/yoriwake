@@ -19,6 +19,7 @@ public final class ChangeSet {
     private final Collection<String> ownTestClasses;
     private final Collection<String> exemptTestClasses;
     private final Collection<String> changedBytes;
+    private final Collection<String> movedFiles;
     private final String daemonRefusal;
     private final String testJvmUnsupported;
 
@@ -30,6 +31,7 @@ public final class ChangeSet {
             Collection<String> ownTestClasses,
             Collection<String> exemptTestClasses,
             Collection<String> changedBytes,
+            Collection<String> movedFiles,
             String daemonRefusal,
             String testJvmUnsupported) {
         this.changedClasses = changedClasses;
@@ -39,6 +41,7 @@ public final class ChangeSet {
         this.ownTestClasses = ownTestClasses;
         this.exemptTestClasses = exemptTestClasses;
         this.changedBytes = changedBytes;
+        this.movedFiles = movedFiles;
         this.daemonRefusal = daemonRefusal;
         this.testJvmUnsupported = testJvmUnsupported;
     }
@@ -50,7 +53,7 @@ public final class ChangeSet {
     public static ChangeSet of(Collection<String> changedClasses, Collection<String> unmappablePaths) {
         return new ChangeSet(changedClasses, unmappablePaths, false, Collections.<String>emptySet(),
                 Collections.<String>emptySet(), Collections.<String>emptySet(), Collections.<String>emptySet(),
-                null, null);
+                Collections.<String>emptySet(), null, null);
     }
 
     /**
@@ -60,13 +63,13 @@ public final class ChangeSet {
      */
     public ChangeSet withAccountedFor(boolean accountedFor) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal, testJvmUnsupported);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
     }
 
     /** Prefixes for which the daemon's AbsenceEvidence holds; see {@code Selector.untested}. */
     public ChangeSet withAbsenceProvable(Collection<String> absenceProvable) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal, testJvmUnsupported);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
     }
 
     /**
@@ -76,7 +79,7 @@ public final class ChangeSet {
      */
     public ChangeSet withOwnTestClasses(Collection<String> ownTestClasses) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal, testJvmUnsupported);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
     }
 
     /**
@@ -86,7 +89,7 @@ public final class ChangeSet {
      */
     public ChangeSet withExemptTestClasses(Collection<String> exemptTestClasses) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal, testJvmUnsupported);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
     }
 
     /**
@@ -97,7 +100,17 @@ public final class ChangeSet {
      */
     public ChangeSet withChangedBytes(Collection<String> changedBytes) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal, testJvmUnsupported);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
+    }
+
+    /**
+     * Build-produced classpath files whose content differs from the capture's, by the map's paths.
+     * Each runs the tests from its first read on in every JVM that read it; a JVM whose reads were
+     * not recorded runs whole.
+     */
+    public ChangeSet withMovedFiles(Collection<String> movedFiles) {
+        return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
     }
 
     /**
@@ -106,7 +119,7 @@ public final class ChangeSet {
      */
     public ChangeSet withDaemonRefusal(String daemonRefusal) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal, testJvmUnsupported);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
     }
 
     public Collection<String> changedClasses() {
@@ -137,6 +150,10 @@ public final class ChangeSet {
         return changedBytes;
     }
 
+    public Collection<String> movedFiles() {
+        return movedFiles;
+    }
+
     public String daemonRefusal() {
         return daemonRefusal;
     }
@@ -147,7 +164,7 @@ public final class ChangeSet {
      */
     public ChangeSet withTestJvmUnsupported(String testJvmUnsupported) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, daemonRefusal, testJvmUnsupported);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, daemonRefusal, testJvmUnsupported);
     }
 
     public String testJvmUnsupported() {

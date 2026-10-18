@@ -38,6 +38,7 @@ class MapFilesReadTest {
     private val digestedByName = mapOf(
         "COVERAGE_FILE" to "coverage.tsv", "POSITIONS_FILE" to "positions.tsv",
         "FIRST_TOUCH_FILE" to "first-touch.tsv", "NAMED_TOUCH_FILE" to "named-touch.tsv",
+        "RESOURCE_TOUCH_FILE" to "resource-touch.tsv",
         "JVM_MODE_FILE" to "jvm-mode.tsv", "SCOPE_FILE" to "scope",
         "EFFECTIVE_SCOPE_FILE" to "effective-scope", "LOADED_FILE" to "loaded.txt",
         "LOADED_PROVENANCE_FILE" to "loaded-provenance", "LOADED_SCOPE_FILE" to "loaded-scope",

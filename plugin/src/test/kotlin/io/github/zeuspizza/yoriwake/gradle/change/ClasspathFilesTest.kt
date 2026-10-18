@@ -28,6 +28,9 @@ class ClasspathFilesTest {
 
     private fun found(walk: ClasspathFiles.Walk) = assertIs<ClasspathFiles.Walk.Found>(walk).digests
 
+    /** [found] without each jar manifest's loaded-attribute row, for tests about which files are walked. */
+    private fun files(walk: ClasspathFiles.Walk) = found(walk).filterKeys { !it.endsWith(ClasspathFiles.EXPOSED_SUFFIX) }
+
     @Test
     fun `a resource directory and an own jar give a row per non-class file, the jar per entry`(@TempDir root: File) {
         val resources = File(root, "app/build/resources/test")
@@ -47,9 +50,62 @@ class ClasspathFilesTest {
                 "app/build/resources/test/info.properties",
                 "app/build/resources/test/nested/data.json",
                 "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF",
+                "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}",
             ),
             digests.keys,
         )
+    }
+
+    private fun manifestRows(root: File, manifest: String): Map<String, String> {
+        val lib = jar(File(root, "lib.jar"), 0L, "META-INF/MANIFEST.MF" to manifest)
+        return found(ClasspathFiles.walk(listOf(lib), listOf(), root))
+    }
+
+    @Test
+    fun `a stamp the class loader does not take moves the manifest and not its loaded attributes`(@TempDir root: File) {
+        val before = manifestRows(root, "Manifest-Version: 1.0\nImplementation-Version: 1\nBuild-Time: t1\n")
+        val after = manifestRows(root, "Manifest-Version: 1.0\nImplementation-Version: 1\nBuild-Time: t2\n")
+
+        assertEquals(mapOf("lib.jar!/META-INF/MANIFEST.MF" to "changed"), ClasspathFiles.compare(before, after).files)
+    }
+
+    @Test
+    fun `an attribute the class loader takes moves the manifest's loaded attributes too`(@TempDir root: File) {
+        for (name in listOf("Class-Path", "Multi-Release", "Automatic-Module-Name", "Implementation-Version", "Sealed")) {
+            val before = manifestRows(root, "Manifest-Version: 1.0\n$name: a\n")
+            val after = manifestRows(root, "Manifest-Version: 1.0\n$name: b\n")
+
+            assertEquals(
+                setOf("lib.jar!/META-INF/MANIFEST.MF", "lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}"),
+                ClasspathFiles.compare(before, after).files.keys,
+                name,
+            )
+        }
+    }
+
+    @Test
+    fun `a package's section counts as the main section does`(@TempDir root: File) {
+        val before = manifestRows(root, "Manifest-Version: 1.0\n\nName: dev/lib/\nSpecification-Version: 1\n")
+        val after = manifestRows(root, "Manifest-Version: 1.0\n\nName: dev/lib/\nSpecification-Version: 2\n")
+
+        assertTrue(
+            "lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" in ClasspathFiles.compare(before, after).files,
+        )
+    }
+
+    @Test
+    fun `a manifest that does not parse cannot vouch for its loaded attributes`(@TempDir root: File) {
+        val rows = manifestRows(root, "not a manifest line without a colon\n")
+
+        assertEquals(ClasspathFiles.UNREADABLE, rows["lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}"])
+    }
+
+    @Test
+    fun `a directory's manifest is a plain file`(@TempDir root: File) {
+        val resources = File(root, "res")
+        file(resources, "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nImplementation-Version: 1\n")
+
+        assertEquals(setOf("res/META-INF/MANIFEST.MF"), found(ClasspathFiles.walk(listOf(resources), listOf(), root)).keys)
     }
 
     @Test
@@ -116,7 +172,7 @@ class ClasspathFilesTest {
         file(extra, "lib/x.txt", "x")
         file(extra, "lib/dev/Y.class", "bytes")
 
-        val digests = found(ClasspathFiles.walk(listOf(path), listOf(), root))
+        val digests = files(ClasspathFiles.walk(listOf(path), listOf(), root))
 
         assertEquals(
             setOf(
@@ -138,7 +194,7 @@ class ClasspathFilesTest {
 
         assertEquals(
             setOf("build/libs/a.jar!/META-INF/MANIFEST.MF", "build/libs/b.jar!/META-INF/MANIFEST.MF"),
-            found(ClasspathFiles.walk(listOf(a), listOf(), root)).keys,
+            files(ClasspathFiles.walk(listOf(a), listOf(), root)).keys,
         )
     }
 
@@ -156,7 +212,7 @@ class ClasspathFilesTest {
             "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: https://example.com/x.jar missing.jar\n",
         )
 
-        val digests = found(ClasspathFiles.walk(listOf(path), listOf(), root))
+        val digests = files(ClasspathFiles.walk(listOf(path), listOf(), root))
 
         assertEquals(setOf("build/libs/path.jar!/META-INF/MANIFEST.MF"), digests.keys)
         assertTrue(ClasspathFiles.UNREADABLE !in digests.values)
@@ -173,7 +229,7 @@ class ClasspathFilesTest {
 
         assertEquals(
             setOf("build/libs/path.jar!/META-INF/MANIFEST.MF"),
-            found(ClasspathFiles.walk(listOf(path), listOf(), root)).keys,
+            files(ClasspathFiles.walk(listOf(path), listOf(), root)).keys,
         )
     }
 
@@ -202,6 +258,57 @@ class ClasspathFilesTest {
     @Test
     fun `nothing moved when every digest matches`() {
         assertTrue(ClasspathFiles.compare(mapOf("a" to "1"), mapOf("a" to "1")).isEmpty)
+    }
+
+    @Test
+    fun `changed non-class files beneath the root are handed to the selector`() {
+        val moved = ClasspathFiles.compare(
+            recorded = mapOf("app/info.properties" to "1", "lib.jar!/META-INF/MANIFEST.MF" to "1", "lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e"),
+            current = mapOf("app/info.properties" to "2", "lib.jar!/META-INF/MANIFEST.MF" to "2", "lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e"),
+        )
+
+        assertEquals(listOf("app/info.properties", "lib.jar!/META-INF/MANIFEST.MF"), moved.traceable())
+    }
+
+    @Test
+    fun `any move whose readers are not recorded is not handed over`() {
+        val cases = mapOf(
+            "appeared" to (emptyMap<String, String>() to mapOf("a.properties" to "1")),
+            "gone" to (mapOf("a.properties" to "1") to emptyMap()),
+            "unreadable" to (mapOf("a.properties" to "1") to mapOf("a.properties" to ClasspathFiles.UNREADABLE)),
+            "a class file" to (mapOf("x.jar!/A.class" to "1") to mapOf("x.jar!/A.class" to "2")),
+            "outside the root" to (mapOf("../elsewhere/a.properties" to "1") to mapOf("../elsewhere/a.properties" to "2")),
+            "a comma" to (mapOf("a,b.properties" to "1") to mapOf("a,b.properties" to "2")),
+            "loaded attributes" to (
+                mapOf("x.jar!/META-INF/MANIFEST.MF" to "1", "x.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e") to
+                    mapOf("x.jar!/META-INF/MANIFEST.MF" to "2", "x.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "f")
+                ),
+        )
+        for ((case, tables) in cases) {
+            assertEquals(null, ClasspathFiles.compare(tables.first, tables.second).traceable(), case)
+        }
+    }
+
+    @Test
+    fun `a manifest's loaded attributes are named on the manifest`() {
+        val moved = ClasspathFiles.compare(
+            recorded = mapOf("x.jar!/META-INF/MANIFEST.MF" to "1"),
+            current = mapOf("x.jar!/META-INF/MANIFEST.MF" to "1", "x.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e"),
+        )
+
+        assertEquals("x.jar!/META-INF/MANIFEST.MF (its loaded attributes appeared)", moved.named())
+    }
+
+    @Test
+    fun `a read is keyed as the walk keys the file it read`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val link = java.nio.file.Files.createSymbolicLink(File(dir, "link").toPath(), root.toPath()).toFile()
+        File(root, "app/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+
+        assertEquals("app/info.properties", ClasspathFiles.keyOf(root, File(root, "app/info.properties").absolutePath))
+        assertEquals("app/info.properties", ClasspathFiles.keyOf(root, File(link, "app/info.properties").absolutePath))
+        assertEquals("lib.jar!/x.properties", ClasspathFiles.keyOf(root, File(root, "lib.jar").absolutePath + "!/x.properties"))
+        assertEquals(null, ClasspathFiles.keyOf(root, File(dir, "elsewhere.txt").absolutePath))
     }
 
     @Test

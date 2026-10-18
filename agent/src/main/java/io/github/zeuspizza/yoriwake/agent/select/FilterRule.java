@@ -41,6 +41,7 @@ public final class FilterRule {
             AgentContract.OWN_TEST_CLASSES_PROPERTY,
             AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
             AgentContract.CHANGED_BYTES_PROPERTY,
+            AgentContract.MOVED_FILES_PROPERTY,
             AgentContract.REFUSED_PROPERTY,
             AgentContract.REFUSED_KIND_PROPERTY,
             AgentContract.CLASS_GRANULARITY_PROPERTY,
@@ -58,7 +59,8 @@ public final class FilterRule {
                     AgentContract.ABSENCE_PROVABLE_PROPERTY,
                     AgentContract.OWN_TEST_CLASSES_PROPERTY,
                     AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
-                    AgentContract.CHANGED_BYTES_PROPERTY)));
+                    AgentContract.CHANGED_BYTES_PROPERTY,
+                    AgentContract.MOVED_FILES_PROPERTY)));
 
     /**
      * The decision's inputs as the daemon meant them: {@code system}, with every name in {@link
@@ -137,6 +139,7 @@ public final class FilterRule {
                 .withOwnTestClasses(splitProperty(property, AgentContract.OWN_TEST_CLASSES_PROPERTY))
                 .withExemptTestClasses(splitProperty(property, AgentContract.EXEMPT_TEST_CLASSES_PROPERTY))
                 .withChangedBytes(splitProperty(property, AgentContract.CHANGED_BYTES_PROPERTY))
+                .withMovedFiles(splitProperty(property, AgentContract.MOVED_FILES_PROPERTY))
                 // Answers before the map or change set is consulted, so a refused run cannot be
                 // narrowed by a later rule.
                 .withDaemonRefusal(refusalFrom(property))

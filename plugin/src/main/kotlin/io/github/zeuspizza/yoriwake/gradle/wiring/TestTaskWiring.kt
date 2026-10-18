@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle.wiring
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ALWAYS_RUN_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CAPTURE_ROOT_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.JUNIT4_HOOK_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LOADED_DIR_PROPERTY
@@ -259,6 +260,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val fromBuildScript = TestPatterns.of(test.filter)
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         test.systemProperty(RECORDS_DIR_PROPERTY, recordsDir.absolutePath)
+        test.systemProperty(CAPTURE_ROOT_PROPERTY, project.rootDir.absolutePath)
         // First, so its action runs last: after the selecting action has decided whether this run
         // captures, and with nothing between it and the test JVM.
         recordClasspathFiles(project, test, mapDir, selecting, buildMemo)

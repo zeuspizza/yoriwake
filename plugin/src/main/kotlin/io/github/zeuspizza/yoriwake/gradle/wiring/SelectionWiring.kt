@@ -9,6 +9,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEMPT_TEST_CLASSES_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MOVED_FILES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
@@ -312,6 +313,7 @@ internal fun TestTaskWiring.configureSelection(
                 // Its own property: the change set is also the selector's anchor set for nested
                 // classes.
                 CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,
+                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles,
                 UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,
                 ABSENCE_PROVABLE_PROPERTY to established.provable,
                 // Separate property: a test class that has ever run is in the loaded-class union by

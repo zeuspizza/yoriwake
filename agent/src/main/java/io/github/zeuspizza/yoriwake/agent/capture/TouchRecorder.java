@@ -54,8 +54,20 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private final Set<String> environmentReads = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile String environmentIncomplete = "the yoriwake agent was not attached to this JVM";
     private final ThreadLocal<Boolean> inside = new ThreadLocal<>();
+    /**
+     * The root project's directory, as given and as resolved, each ending in a separator; empty
+     * when it was not given, and then no non-class file is recorded.
+     */
+    private volatile List<String> roots = new ArrayList<>();
+    /** Whether each path read so far lies beneath the root, so each is resolved at most once. */
+    private final Map<String, Boolean> rootChecked = new java.util.concurrent.ConcurrentHashMap<>();
 
     TouchRecorder() {}
+
+    /** A recorder that records the non-class files read beneath {@code root}, as an attached one does. */
+    TouchRecorder(String root) {
+        roots = rootsOf(root);
+    }
 
     /** Starts observing. Called once from premain, and only when this JVM captures. */
     public static void install(Instrumentation instrumentation) {
@@ -68,6 +80,10 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 return;
             }
             installed = true;
+        }
+        roots = rootsOf(System.getProperty(AgentContract.CAPTURE_ROOT_PROPERTY));
+        if (!roots.isEmpty()) {
+            touch(AgentContract.TOUCH_RESOURCES_RECORDED, roots.get(0));
         }
         try {
             instrumentation.addTransformer(new LoadObserver(this));
@@ -392,20 +408,42 @@ public final class TouchRecorder implements CaptureSession.Touches {
                     if (!definingAClass()) {
                         touchNamed(AgentContract.TOUCH_READ, entry.getName());
                     }
-                } else if (entryHoldsAZip(zip, entry)) {
-                    // An archive inside an archive: what reads it scans its entries with its own code.
-                    touchNamed(AgentContract.TOUCH_JAR, new File(zip.getName()).getAbsolutePath());
+                } else {
+                    if (entryHoldsAZip(zip, entry)) {
+                        // An archive inside an archive: what reads it scans its entries with its own code.
+                        touchNamed(AgentContract.TOUCH_JAR, new File(zip.getName()).getAbsolutePath());
+                    }
+                    String jar = new File(zip.getName()).getAbsolutePath();
+                    if (underRoot(jar)) {
+                        touchNamed(MANIFEST.equals(entry.getName()) && loaderReadingManifest()
+                                ? AgentContract.TOUCH_LOADER_MANIFEST : AgentContract.TOUCH_RESOURCE,
+                                jar + "!/" + entry.getName());
+                    }
                 }
                 return;
             }
             String path = opened instanceof File ? ((File) opened).getPath() : String.valueOf(opened);
-            if (isClassOrSource(path) && !definingAClass()) {
-                touchNamed(AgentContract.TOUCH_READ, path);
-            } else if (path.endsWith(".jar") ? !openedByJdkZip()
-                    : holdsAZip(new File(path)) && !openedByJdkZip() && mayHoldClasses(new File(path))) {
+            if (isClassOrSource(path)) {
+                if (!definingAClass()) {
+                    touchNamed(AgentContract.TOUCH_READ, path);
+                }
+                return;
+            }
+            File file = new File(path);
+            boolean archive = path.endsWith(".jar") || holdsAZip(file);
+            // The JDK's zip code opening an archive reads its entries through the entry hook.
+            if (archive && openedByJdkZip()) {
+                return;
+            }
+            if (archive && (path.endsWith(".jar") || mayHoldClasses(file))) {
                 // A scanner reading an archive with its own zip code: every class in it may be read.
                 // Known by content, not name: a war, an aar, or a zip of the classes is one too.
-                touchNamed(AgentContract.TOUCH_JAR, new File(path).getAbsolutePath());
+                touchNamed(AgentContract.TOUCH_JAR, file.getAbsolutePath());
+            }
+            // An archive read whole is a read of every entry in it.
+            String absolute = file.getAbsolutePath();
+            if (underRoot(absolute)) {
+                touchNamed(AgentContract.TOUCH_RESOURCE, absolute);
             }
         } catch (Throwable t) {
             incomplete = "a read could not be recorded: " + t;
@@ -463,6 +501,106 @@ public final class TouchRecorder implements CaptureSession.Touches {
                                     || frame.getClassName().equals("java.net.URLClassLoader")
                                     || frame.getClassName().equals("java.security.SecureClassLoader")
                                     || frame.getClassName().equals("java.lang.ClassLoader"))) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static final String MANIFEST = "META-INF/MANIFEST.MF";
+
+    /** {@link #roots} for a root directory as the plugin gives it. */
+    static List<String> rootsOf(String root) {
+        List<String> found = new ArrayList<>();
+        if (root == null || root.isEmpty()) {
+            return found;
+        }
+        File dir = new File(root).getAbsoluteFile();
+        found.add(dir.getPath() + File.separator);
+        try {
+            String resolved = dir.getCanonicalPath() + File.separator;
+            if (!found.contains(resolved)) {
+                found.add(resolved);
+            }
+        } catch (IOException e) {
+            // The path as given still matches what is opened by it.
+        }
+        return found;
+    }
+
+    /**
+     * Whether an absolute path lies beneath the root, as given or resolved; the resolved form is
+     * looked up only when the given one does not match, so a read through a link to the root
+     * still counts.
+     */
+    private boolean underRoot(String absolute) {
+        List<String> prefixes = roots;
+        if (prefixes.isEmpty()) {
+            return false;
+        }
+        return rootChecked.computeIfAbsent(absolute, path -> beneath(path, prefixes));
+    }
+
+    private static boolean beneath(String absolute, List<String> prefixes) {
+        for (String prefix : prefixes) {
+            if (absolute.startsWith(prefix)) {
+                return true;
+            }
+        }
+        try {
+            String resolved = new File(absolute).getCanonicalPath();
+            for (String prefix : prefixes) {
+                if (resolved.startsWith(prefix)) {
+                    return true;
+                }
+            }
+        } catch (IOException e) {
+            // Not resolvable, so not known to be beneath the root.
+        }
+        return false;
+    }
+
+    /**
+     * Whether this manifest read is the JDK's application or platform class loader opening a jar
+     * (the scan for {@code Class-Path} and {@code Multi-Release}) or defining a package from it.
+     * Only the JDK's own frames may stand between the read and that point. A
+     * {@code URLClassLoader} does not count: a subclass may override {@code definePackage} and be
+     * handed every attribute. Anything that cannot tell says no, the side that counts the read.
+     */
+    static boolean loaderReadingManifest() {
+        try {
+            StackWalker walker = StackWalker.getInstance(java.util.EnumSet.of(
+                    StackWalker.Option.RETAIN_CLASS_REFERENCE, StackWalker.Option.SHOW_HIDDEN_FRAMES));
+            return walker.walk(frames -> {
+                boolean pastAgent = false;
+                for (java.util.Iterator<StackWalker.StackFrame> it = frames.limit(32).iterator(); it.hasNext(); ) {
+                    StackWalker.StackFrame step = it.next();
+                    if (!pastAgent && step.getClassName().startsWith(AGENT_PACKAGE)) {
+                        continue;
+                    }
+                    pastAgent = true;
+                    if (!JdkCode.isJdk(step.getDeclaringClass())) {
+                        return false;
+                    }
+                    String owner = step.getClassName();
+                    if (owner.equals("java.net.URLClassLoader")) {
+                        return false;
+                    }
+                    if (owner.equals("java.util.jar.JarFile") && step.getMethodName().equals("checkForSpecialAttributes")) {
+                        return true;
+                    }
+                    // Reads the manifest for its Class-Path alone, whichever loader the class path is for.
+                    if (owner.equals("jdk.internal.loader.URLClassPath$JarLoader")
+                            && step.getMethodName().equals("getClassPath")) {
+                        return true;
+                    }
+                    if (owner.equals("jdk.internal.loader.BuiltinClassLoader")
+                            && (step.getMethodName().equals("defineClass")
+                                    || step.getMethodName().equals("defineOrCheckPackage"))) {
                         return true;
                     }
                 }

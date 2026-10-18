@@ -65,7 +65,7 @@ Reasons, one per test:
 | Reason | Meaning |
 |---|---|
 | `reaches-change` | its recorded coverage touches a changed class, or its own test class changed |
-| `shares-jvm-with-change` | it ran at or after the point its test JVM first loaded or executed a changed class, or read its class or source file; see [what coverage does not record](#what-coverage-does-not-record) |
+| `shares-jvm-with-change` | it ran at or after the point its test JVM first loaded or executed a changed class, or read its class or source file, or read a build-produced classpath file that changed; see [what coverage does not record](#what-coverage-does-not-record) and [generated files on the test classpath](#generated-files-on-the-test-classpath) |
 | `not-known-to-pass` | the map does not record it as having passed, so it runs whatever changed; this includes a test recorded `FLAKY`, see [retrying failed tests](#retrying-failed-tests) |
 | `not-in-map` | the map has never seen it, so no change could be shown not to reach it |
 | `engine-runs-everything` | its engine runs every test it discovered or none, so it is never left out; see [Kotlin](#kotlin) |
@@ -117,12 +117,12 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - compiled bytes that changed with no source change, in a class no test executed
   (`no-coverage-for-changed-bytes`), or a map holding no digest of the compiled classes to compare
   against (`bytes-unrecorded`);
-- a non-class file the build produced on the test runtime classpath whose content differs from
-  the capture's, with no tracked change behind it (`classpath-files-changed`), or a map that
-  records no such digests (`classpath-files-unrecorded`, once: the forced run records them, unless
-  the classpath holds over 200,000 such files, which are then never recorded). The
-  run names up to five files; see [Generated files on the test
-  classpath](#generated-files-on-the-test-classpath);
+- a non-class file the build produced on the test runtime classpath that appeared or is gone
+  since the capture, or changed where the map cannot say which tests read it
+  (`classpath-files-changed`), or a map that records no such digests (`classpath-files-unrecorded`,
+  once: the forced run records them, unless the classpath holds over 200,000 such files, which are
+  then never recorded). One whose readers the map records runs only them. The run names up to five
+  files; see [Generated files on the test classpath](#generated-files-on-the-test-classpath);
 - a change touching startup coverage, which no single test owns;
 - an empty change set, which cannot be told apart from not having one;
 - git could not report a change set, or no base could be resolved;
@@ -214,11 +214,27 @@ A file HEAD tracks gets no line: the run cannot tell a test's write from your ed
 Every non-class file the build produced on a test task's runtime classpath counts by content: each
 file of a resource or output directory under the root or a build directory, and each entry of one
 of your own jars (never the jar whole, so a rebuild that only moves entry timestamps changes
-nothing). The capture records them just before its tests start, and a selecting run compares them
-at the same point and runs everything when one changed, appeared or is gone, naming it
-(`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path` names is on
-the test JVM's class path too, so it counts the same way, its class files included, wherever it
-lies but in Gradle's module cache. Dependency jars are the classpath rule's. A file a test writes
+nothing). The capture records them just before its tests start, and which test JVM read each one
+and when; a selecting run compares them at the same point. A file whose content changed runs the
+tests that read it, from the first test in each test JVM that read it on, since a value read once
+can be kept for later tests (`shares-jvm-with-change`); a read through `getResource`, a file
+stream, or a jar read whole counts. One no test read runs nothing more. The run names them. A file
+that appeared or is gone, one outside the root project, a class file, and one the map records no
+reads for (a map recorded by 0.2.0, a test JVM whose reads were not all observed) run everything,
+naming it (`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path`
+names is on the test JVM's class path too, so it counts the same way, its class files included,
+wherever it lies but in Gradle's module cache. Dependency jars are the classpath rule's.
+
+The JDK's class loader reads each of your jars' manifests itself, to open the jar and to define a
+package from it, and keeps only what it acts on: `Class-Path`, `Multi-Release`,
+`Automatic-Module-Name`, and the `Specification-*`, `Implementation-*` and `Sealed` attributes a
+package reports. A change to one of those runs everything. Any other attribute, such as a
+`Build-Time` or a bundle header, reaches a test only through a read of the manifest by code other
+than that loader, and runs only the tests from such a read on.
+
+Two ways of depending on such a file are not seen, and each ran everything before 0.3.0: a test
+that only checks a changed file's size, and a process the test hands the file's path to over a
+socket, such as a container or a server, that reads it there. A file a test writes
 into such a directory is not there when a fresh checkout's tests start; where the build directory
 survives between runs, one a test rewrites with new content each run forces every selecting run,
 so have the test write elsewhere in the build directory.
@@ -230,12 +246,13 @@ onto the classpath runs everything, named, as `classpath-files-changed`. The map
 as they were before those actions, so a build whose action changes a file runs everything on every
 selecting run; write the file in a task the test task depends on instead.
 
-A build that writes the commit, a tag or the time into such a file therefore runs everything on
-every selecting run where that value moved: a `git.properties` from `gradle-git-properties`, or a
-`Build-Date`, `Build-Revision` or `Implementation-Version` with a commit in your own jar's
-manifest that another module's tests load. That is the point of the rule: a test may read the
-value, and nothing records whether it does. To keep such builds narrowing, write those values only
-in release builds, for example behind a property:
+A build that writes the commit, a tag or the time into such a file therefore runs the tests that
+read it on every selecting run where that value moved, a `git.properties` from
+`gradle-git-properties` or a `Build-Revision` in your own jar's manifest, and everything when the
+value sits in an attribute the class loader keeps, such as an `Implementation-Version` with a
+commit. A test that reads the value early, or code that reads it for every test, makes that most
+of the suite. To keep such builds narrowing, write those values only in release builds, for example
+behind a property:
 
 ```kotlin
 val release = providers.gradleProperty("release").isPresent
@@ -247,7 +264,8 @@ tasks.jar {
 and apply `gradle-git-properties`, or its task, the same way. A test that asserts on such a value
 then needs the release build to see it.
 
-How often this costs a narrowed run, measured at the 0.2.0 release on 31 open-source test tasks: in
+How often this cost a narrowed run before reads were recorded, measured at the 0.2.0 release on 31
+open-source test tasks: in
 three, JUnit 5, Resilience4j and OpenTelemetry Java, a jar manifest on the test classpath takes a
 new `Build-Time` or new OSGi bundle headers on every build, so no selecting run narrowed even at
 the commit the map was recorded at. A day of commits later, Kafka, Gradle, Iceberg, Micrometer and

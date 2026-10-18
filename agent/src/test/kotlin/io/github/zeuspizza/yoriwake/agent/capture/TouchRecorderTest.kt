@@ -39,6 +39,88 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `a file read beneath the root is kept once by its absolute path, and one elsewhere is not`(
+        @TempDir root: File,
+        @TempDir elsewhere: File,
+    ) {
+        val stamp = File(root, "build/resources/test/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val outside = File(elsewhere, "scratch.txt").apply { writeText("b") }
+        val recorder = TouchRecorder(root.path)
+        recorder.read(stamp)
+        recorder.read(Paths.get(stamp.path))
+        recorder.read(outside)
+        recorder.read(File(root, "build/classes/java/main/com/acme/Codec.class"))
+
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_RESOURCE to stamp.absolutePath,
+                AgentContract.TOUCH_READ to File(root, "build/classes/java/main/com/acme/Codec.class").path,
+            ),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a file read through a link to the root is kept`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val link = java.nio.file.Files.createSymbolicLink(File(dir, "link").toPath(), root.toPath()).toFile()
+        File(root, "info.properties").writeText("a")
+        val recorder = TouchRecorder(root.path)
+        recorder.read(File(link, "info.properties"))
+
+        assertEquals(listOf(AgentContract.TOUCH_RESOURCE to File(link, "info.properties").absolutePath), drained(recorder))
+    }
+
+    @Test
+    fun `a jar entry read beneath the root is kept by the jar's path and the entry's name`(@TempDir root: File) {
+        val jar = File(root, "lib/build/libs/lib.jar").apply { parentFile.mkdirs() }
+        ZipOutputStream(jar.outputStream()).use {
+            it.putNextEntry(ZipEntry("META-INF/MANIFEST.MF")); it.closeEntry()
+            it.putNextEntry(ZipEntry("build-info.properties")); it.closeEntry()
+        }
+        val recorder = TouchRecorder(root.path)
+        ZipFile(jar).use { zip ->
+            recorder.read(arrayOf<Any>(zip, zip.getEntry("build-info.properties")))
+            // Read by a test, not by the JDK's class loader.
+            recorder.read(arrayOf<Any>(zip, zip.getEntry("META-INF/MANIFEST.MF")))
+        }
+
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_RESOURCE to "${jar.absolutePath}!/build-info.properties",
+                AgentContract.TOUCH_RESOURCE to "${jar.absolutePath}!/META-INF/MANIFEST.MF",
+            ),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a jar read whole beneath the root is a jar touch and a read of the jar`(@TempDir root: File) {
+        val jar = File(root, "lib.jar")
+        ZipOutputStream(jar.outputStream()).use { it.putNextEntry(ZipEntry("x.properties")); it.closeEntry() }
+        val recorder = TouchRecorder(root.path)
+        recorder.read(jar)
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_JAR to jar.absolutePath, AgentContract.TOUCH_RESOURCE to jar.absolutePath),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a manifest read from project code is not the class loader's`() {
+        assertFalse(TouchRecorder.loaderReadingManifest())
+    }
+
+    @Test
+    fun `without a root no file but a class or source file is kept`(@TempDir root: File) {
+        val recorder = TouchRecorder()
+        recorder.read(File(root, "info.properties").apply { writeText("a") })
+
+        assertEquals(emptyList(), drained(recorder))
+    }
+
+    @Test
     fun `a jar entry read is kept by its entry name`(@TempDir dir: File) {
         val jar = File(dir, "lib.jar")
         ZipOutputStream(jar.outputStream()).use { it.putNextEntry(ZipEntry("com/acme/A.class")); it.closeEntry() }
