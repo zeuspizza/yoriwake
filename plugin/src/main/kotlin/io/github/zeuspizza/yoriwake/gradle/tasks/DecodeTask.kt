@@ -382,6 +382,8 @@ internal abstract class DecodeTask : DefaultTask() {
                 },
                 isolated = isolated.getOrElse(false),
                 environment = environment,
+                // Which classpath files each JVM read, by the paths the classpath digests name.
+                rootDir = rootDir,
             )
         }
         // A map we cannot write leaves the previous one alone; it never fails someone

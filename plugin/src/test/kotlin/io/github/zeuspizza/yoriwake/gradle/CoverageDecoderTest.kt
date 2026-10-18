@@ -1099,6 +1099,181 @@ class CoverageDecoderTest {
         assertNull(touched["org.elsewhere.OutOfScope"])
     }
 
+    private fun resourceRows(dir: File): List<List<String>> =
+        File(dir, AgentContract.RESOURCE_TOUCH_FILE).readLines().filter(String::isNotBlank)
+            .map { line -> Tsv.split(line).drop(1) }
+
+    @Test
+    fun `reads beneath the root are kept by the path the classpath digests name`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val jar = File(root, "lib/build/libs/lib.jar")
+        val mapDir = File(root, ".gradle/yoriwake/test")
+        records(mapDir, "1", a, b)
+        touches(
+            mapDir, "1",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("1", AgentContract.TOUCH_LOADER_MANIFEST, "${jar.absolutePath}!/META-INF/MANIFEST.MF"),
+            Tsv.join("2", AgentContract.TOUCH_RESOURCE, File(root, "app/build/resources/test/info.properties").absolutePath),
+            Tsv.join("2", AgentContract.TOUCH_RESOURCE, "${jar.absolutePath}!/build-info.properties"),
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertEquals(
+            listOf(
+                listOf("0", AgentContract.RESOURCE_RECORDED, ""),
+                listOf("1", AgentContract.RESOURCE_LOADER, "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF"),
+                listOf("2", AgentContract.RESOURCE_READ, "app/build/resources/test/info.properties"),
+                listOf("2", AgentContract.RESOURCE_READ, "lib/build/libs/lib.jar!/build-info.properties"),
+            ),
+            resourceRows(mapDir),
+        )
+    }
+
+    @Test
+    fun `a read through a link or a parent step is kept by the root's own path`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        File(root, "app/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val link = java.nio.file.Files.createSymbolicLink(File(dir, "link").toPath(), root.toPath()).toFile()
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a)
+        touches(
+            mapDir, "1",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("1", AgentContract.TOUCH_RESOURCE, File(link, "app/info.properties").absolutePath),
+            Tsv.join("1", AgentContract.TOUCH_RESOURCE, "${root.absolutePath}/app/../app/info.properties"),
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertEquals(
+            listOf(
+                listOf("0", AgentContract.RESOURCE_RECORDED, ""),
+                listOf("1", AgentContract.RESOURCE_READ, "app/info.properties"),
+            ),
+            resourceRows(mapDir),
+        )
+    }
+
+    @Test
+    fun `a read the decode cannot place beneath the root reads every file from there`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a, b)
+        touches(
+            mapDir, "1",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("2", AgentContract.TOUCH_RESOURCE, File(dir, "elsewhere.txt").absolutePath),
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertTrue(listOf("2", AgentContract.RESOURCE_READ, AgentContract.FIRST_TOUCH_ANY) in resourceRows(mapDir))
+    }
+
+    @Test
+    fun `a jar read whole is a read of the jar`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val jar = File(root, "lib.jar")
+        jar.writeBytes(zip(listOf("x.properties" to "x".toByteArray())))
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a, b)
+        touches(
+            mapDir, "1",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("2", AgentContract.TOUCH_JAR, "${jar.absolutePath}"),
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertTrue(listOf("2", AgentContract.RESOURCE_READ, "lib.jar") in resourceRows(mapDir), resourceRows(mapDir).toString())
+    }
+
+    @Test
+    fun `a jar read whole outside the root reads no file`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val jar = File(dir, "cache/dependency.jar").apply { parentFile.mkdirs() }
+        jar.writeBytes(zip(listOf("x.properties" to "x".toByteArray())))
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a, b)
+        touches(
+            mapDir, "1",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("2", AgentContract.TOUCH_JAR, "${jar.absolutePath}"),
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertEquals(listOf(listOf("0", AgentContract.RESOURCE_RECORDED, "")), resourceRows(mapDir))
+    }
+
+    @Test
+    fun `a recapture of one test keeps the reads of the JVMs it does not replace`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a)
+        touches(
+            mapDir, "1",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("1", AgentContract.TOUCH_RESOURCE, File(root, "info.properties").absolutePath),
+            AgentContract.TOUCHES_COMPLETE,
+        )
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+        File(CoverageDecoder.recordsDir(mapDir), "worker-1").deleteRecursively()
+        records(mapDir, "2", b)
+        touches(mapDir, "2", Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"), AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        val rows = resourceRows(mapDir)
+        assertTrue(listOf("1", AgentContract.RESOURCE_READ, "info.properties") in rows, rows.toString())
+        assertEquals(2, rows.count { it[1] == AgentContract.RESOURCE_RECORDED }, rows.toString())
+    }
+
+    @Test
+    fun `what widens to every class reads every file from there`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a, b)
+        touches(
+            mapDir, "1",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            "2\t${AgentContract.TOUCH_ALL}\ta child process started",
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertTrue(listOf("2", AgentContract.RESOURCE_READ, AgentContract.FIRST_TOUCH_ANY) in resourceRows(mapDir))
+    }
+
+    @Test
+    fun `a JVM that did not say it recorded its reads has no recorded row`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a)
+        touches(mapDir, "1", AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertEquals(emptyList(), resourceRows(mapDir))
+    }
+
+    @Test
+    fun `without the root no read is known`(@TempDir dir: File) {
+        records(dir, "1", a)
+        touches(dir, "1", "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t/work", AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        assertEquals(listOf(listOf("0", AgentContract.RESOURCE_READ, AgentContract.FIRST_TOUCH_ANY)), resourceRows(dir))
+    }
+
     @Test
     fun `touches without their end marker touch every class from the first record`(@TempDir dir: File) {
         records(dir, "1", a, b)
@@ -1151,7 +1326,7 @@ class CoverageDecoderTest {
         val middle = zip(listOf("lib/inner.jar" to inner))
         val outer = File(dir, "bundle").apply { writeBytes(zip(listOf("readme.txt" to ByteArray(1), "nested" to middle))) }
         records(dir, "1", a, b)
-        touches(dir, "1", "2\t${AgentContract.TOUCH_JAR}\t${outer.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+        touches(dir, "1", Tsv.join("2", AgentContract.TOUCH_JAR, "${outer.absolutePath}"), AgentContract.TOUCHES_COMPLETE)
 
         CoverageDecoder.decode(dir, listOf("com.acme"))
 
@@ -1164,7 +1339,7 @@ class CoverageDecoderTest {
         val deep = (1..9).fold(zip(listOf("com/acme/Point.class" to ByteArray(1)))) { inner, _ -> zip(listOf("x.jar" to inner)) }
         val outer = File(dir, "deep.zip").apply { writeBytes(deep) }
         records(dir, "1", a, b)
-        touches(dir, "1", "2\t${AgentContract.TOUCH_JAR}\t${outer.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+        touches(dir, "1", Tsv.join("2", AgentContract.TOUCH_JAR, "${outer.absolutePath}"), AgentContract.TOUCHES_COMPLETE)
 
         CoverageDecoder.decode(dir, listOf("com.acme"))
 

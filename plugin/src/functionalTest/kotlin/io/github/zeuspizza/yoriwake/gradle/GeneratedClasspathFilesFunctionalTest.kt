@@ -9,8 +9,8 @@ import kotlin.test.assertTrue
 
 /**
  * A file the build produces onto the test classpath from something other than tracked sources (a
- * property standing in for the commit, a tag or the clock) runs the tests whenever it changed since
- * the map was captured, though no tracked path changed with it.
+ * property standing in for the commit, a tag or the clock) runs the tests that read it whenever it
+ * changed since the map was captured, though no tracked path changed with it.
  */
 class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
 
@@ -30,15 +30,37 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         tasks.processTestResources { dependsOn(generateInfo) }
     """.trimIndent()
 
-    /** A jar whose manifest carries the `rev` property, rebuilt byte for byte when it does not move. */
+    /**
+     * A jar whose manifest carries the `rev`, `time` and `impl` properties, and which holds
+     * `extra.txt` when `extra` is set; rebuilt byte for byte when none of them moves.
+     */
     private val libBuild = """
         plugins { `java-library` }
+        val extraFiles by tasks.registering {
+            val extra = providers.gradleProperty("extra").orElse("")
+            val out = layout.buildDirectory.dir("generated/extra")
+            inputs.property("extra", extra)
+            outputs.dir(out)
+            doLast {
+                val root = out.get().asFile
+                root.deleteRecursively()
+                root.mkdirs()
+                if (extra.get().isNotEmpty()) root.resolve("extra.txt").writeText(extra.get())
+            }
+        }
         tasks.jar {
             val rev = providers.gradleProperty("rev").orElse("r1")
+            val time = providers.gradleProperty("time").orElse("t1")
+            val impl = providers.gradleProperty("impl").orElse("1")
             inputs.property("rev", rev)
+            inputs.property("time", time)
+            inputs.property("impl", impl)
+            from(extraFiles)
             isPreserveFileTimestamps = false
             isReproducibleFileOrder = true
-            manifest { attributes("Build-Revision" to rev.get()) }
+            manifest {
+                attributes("Build-Revision" to rev.get(), "Build-Time" to time.get(), "Implementation-Version" to impl.get())
+            }
         }
     """.trimIndent()
 
@@ -97,8 +119,37 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
 
     private val staticResource = "src/test/resources/static.txt" to "one\n"
 
-    /** `lib` builds a jar `app`'s tests use at runtime; `app` generates a test resource. Committed. */
-    private fun fixture(dir: File, appExtra: String = "", vararg appSources: Pair<String, String>, rootBuild: String = "") {
+    /** Loads a class from `lib`'s jar, so the class loader reads that jar's manifest, and reads nothing else of it. */
+    private val libTest = "src/test/java/dev/sample/AdLibTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class AdLibTest {
+            @Test void loads() { assertNotNull(new dev.lib.Lib()); }
+        }
+    """.trimIndent()
+
+    /** Reads `lib`'s `Implementation-Version` through its package, which reads no file. */
+    private val versionTest = "src/test/java/dev/sample/AeVersionTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class AeVersionTest {
+            @Test void reads() { assertNotNull(dev.lib.Lib.class.getPackage().getImplementationVersion()); }
+        }
+    """.trimIndent()
+
+    /**
+     * `lib` builds a jar `app`'s tests use at runtime; `app` generates a test resource. Committed.
+     * Without [readsManifests], no test reads a manifest's content.
+     */
+    private fun fixture(
+        dir: File,
+        appExtra: String = "",
+        vararg appSources: Pair<String, String>,
+        rootBuild: String = "",
+        readsManifests: Boolean = true,
+    ) {
         build(
             dir,
             "build.gradle.kts" to rootBuild,
@@ -107,7 +158,8 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
             "app/build.gradle.kts" to minimalBuild + "\n" + appBuild + "\n" + appExtra,
             *arrayOf(
                 oneClass, oneTest, secondClass, secondTest, classOrderByName,
-                legacy, legacyTest, infoTest, revisionTest, staticResource, *appSources,
+                legacy, legacyTest, infoTest, staticResource, *appSources,
+                *(if (readsManifests) arrayOf(revisionTest) else emptyArray()),
             ).map { (path, content) -> "app/$path" to content }.toTypedArray(),
         )
         File(dir, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\ninclude(\"app\", \"lib\")\n")
@@ -141,7 +193,8 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         val output = select(dir, "-Pinfo=x")
 
         assertTrue("dev.sample.AaInfoTest" in ranTests(app(dir)), output)
-        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
         assertTrue(
             output.lines().any { it.startsWith("[yoriwake] :app:test: ") && "app/build/resources/test/info.properties" in it },
             output,
@@ -247,7 +300,7 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         val output = select(dir, "-Pflavor=x")
 
         assertTrue("dev.sample.AcFlavorTest" in ranTests(app(dir)), output)
-        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertTrue(output.contains("app/build/extra/flavor.jar!/flavor.properties"), output)
     }
 
@@ -265,15 +318,16 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a revision stamped into a sibling jar's manifest runs everything`(@TempDir dir: File) {
+    fun `a revision stamped into a sibling jar's manifest runs the test that reads it`(@TempDir dir: File) {
         fixture(dir)
         capture(dir, "-Prev=r1")
         changeBeta(app(dir))
 
         val output = select(dir, "-Prev=r2")
 
-        assertTrue("dev.sample.AbRevisionTest" in ranTests(app(dir)), output)
-        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        val ran = ranTests(app(dir))
+        assertTrue("dev.sample.AbRevisionTest" in ran && "dev.sample.AaInfoTest" !in ran, output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertTrue(output.contains("lib/build/libs/lib.jar!/META-INF/MANIFEST.MF"), output)
     }
 
@@ -291,6 +345,128 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
             output.lines().any { it.startsWith("[yoriwake] :app:test: ") && "app/build/resources/test/static.txt" in it },
             output,
         )
+    }
+
+    @Test
+    fun `a build time stamped into a sibling jar's manifest that no test reads runs nothing more`(@TempDir dir: File) {
+        fixture(dir, "", libTest, readsManifests = false)
+        capture(dir, "-Ptime=t1")
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Ptime=t2")
+
+        val ran = ranTests(app(dir))
+        assertTrue("dev.sample.BetaTest" in ran && "dev.sample.AdLibTest" !in ran, output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.contains("lib/build/libs/lib.jar!/META-INF/MANIFEST.MF"), output)
+    }
+
+    @Test
+    fun `an implementation version a test reads through its package runs everything`(@TempDir dir: File) {
+        fixture(dir, "", versionTest, readsManifests = false)
+        capture(dir, "-Pimpl=1")
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Pimpl=2")
+
+        assertTrue("dev.sample.AeVersionTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    @Test
+    fun `a file that appeared in a sibling jar runs everything`(@TempDir dir: File) {
+        fixture(dir, "", libTest, readsManifests = false)
+        capture(dir)
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Pextra=new")
+
+        assertTrue("dev.sample.AdLibTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.contains("lib/build/libs/lib.jar!/extra.txt"), output)
+    }
+
+    /** Reads `lib`'s jar whole, with its own zip code, and nothing else of it. */
+    private val wholeJarTest = "src/test/java/dev/sample/AfWholeJarTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import java.io.FileInputStream;
+        import java.util.jar.JarInputStream;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class AfWholeJarTest {
+            @Test void reads() throws Exception {
+                try (JarInputStream jar = new JarInputStream(new FileInputStream("../lib/build/libs/lib.jar"))) {
+                    assertNotNull(jar.getManifest().getMainAttributes().getValue("Build-Time"));
+                }
+            }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `a build time a test reads from the whole jar runs that test`(@TempDir dir: File) {
+        fixture(dir, "", wholeJarTest, libTest, readsManifests = false)
+        capture(dir, "-Ptime=t1")
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Ptime=t2")
+
+        assertTrue("dev.sample.AfWholeJarTest" in ranTests(app(dir)), output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    @Test
+    fun `a file gone from a sibling jar runs everything`(@TempDir dir: File) {
+        fixture(dir, "", libTest, readsManifests = false)
+        capture(dir, "-Pextra=old")
+        changeBeta(app(dir))
+
+        val output = select(dir)
+
+        assertTrue("dev.sample.AdLibTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.contains("lib/build/libs/lib.jar!/extra.txt (gone)"), output)
+    }
+
+    @Test
+    fun `a map that records no reads runs everything on a moved stamp`(@TempDir dir: File) {
+        fixture(dir, "", libTest, readsManifests = false)
+        capture(dir, "-Ptime=t1")
+        assertTrue(File(table(dir).parentFile, AgentContract.RESOURCE_TOUCH_FILE).delete())
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Ptime=t2")
+
+        assertTrue("dev.sample.AdLibTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    /** A manifest in a test resource directory, as a bundle plugin extracts one; the class loader never reads it. */
+    private val directoryManifest = """
+        val generateBundle by tasks.registering {
+            val bundle = providers.gradleProperty("bundle").orElse("a")
+            val out = layout.buildDirectory.dir("generated/bundle")
+            inputs.property("bundle", bundle)
+            outputs.dir(out)
+            doLast {
+                out.get().file("META-INF/MANIFEST.MF").asFile.apply { parentFile.mkdirs() }
+                    .writeText("Manifest-Version: 1.0\nBundle-Version: " + bundle.get() + "\n")
+            }
+        }
+        sourceSets.test { resources.srcDir(generateBundle) }
+    """.trimIndent()
+
+    @Test
+    fun `a header of a manifest in a classpath directory that no test reads runs nothing more`(@TempDir dir: File) {
+        fixture(dir, directoryManifest, readsManifests = false)
+        capture(dir, "-Pbundle=a")
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Pbundle=b")
+
+        val ran = ranTests(app(dir))
+        assertTrue("dev.sample.BetaTest" in ran && "dev.sample.AaInfoTest" !in ran, output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.contains("META-INF/MANIFEST.MF"), output)
     }
 
     private fun table(dir: File) =
@@ -343,7 +519,7 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
 
         val forced = select(dir, "-Pinfo=x")
 
-        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], forced)
+        assertEquals("empty-change-set", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], forced)
         assertTrue(!before.contentEquals(table(dir).readBytes()), forced)
         // A change to narrow on: with none at all, the run is full anyway.
         changeBeta(app(dir))
@@ -361,16 +537,28 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `yoriwakeExplain forces on a generated file that changed, as the run does`(@TempDir dir: File) {
+    fun `yoriwakeExplain runs the readers of a generated file that changed, as the run does`(@TempDir dir: File) {
         fixture(dir)
         capture(dir, "-Pinfo=a")
         editLegacy(dir)
 
         val json = explainJson(dir, "-Pinfo=x")
 
+        assertTrue("\"fullRun\": false" in json, json)
+        assertTrue("\"refusalKind\": null" in json, json)
+    }
+
+    @Test
+    fun `yoriwakeExplain forces on a file that appeared, as the run does`(@TempDir dir: File) {
+        fixture(dir, "", libTest, readsManifests = false)
+        capture(dir)
+        changeBeta(app(dir))
+
+        val json = explainJson(dir, "-Pextra=new")
+
         assertTrue("\"fullRun\": true" in json, json)
         assertTrue("\"refusalKind\": \"classpath-files-changed\"" in json, json)
-        assertTrue("app/build/resources/test/info.properties" in json, json)
+        assertTrue("lib/build/libs/lib.jar!/extra.txt" in json, json)
     }
 
     @Test
@@ -423,7 +611,8 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         capture(dir, "-Pinfo=x", "--tests", "dev.sample.AlphaTest")
 
         assertTrue(before.contentEquals(table(dir).readBytes()))
+        changeBeta(app(dir))
         val output = select(dir, "-Pinfo=x")
-        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.contains("app/build/resources/test/info.properties (changed)"), output)
     }
 }

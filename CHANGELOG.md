@@ -30,6 +30,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Changed
 
 - The CI reference leads with yoriwake-action; the contract lists `capture-commit`. Map: left alone.
+- A build-produced classpath file that changed runs only the tests that read it, not every test. Map: repaired
+  on the next build, which runs every test once where your own jars are on the test classpath.
 
 ## [0.2.0] - 2026-10-13
 

@@ -1922,12 +1922,12 @@ MUTATIONS = [
     # A scanner's own zip code reads entries no hook sees; an archive is known by its content, not
     # its name, and a jar nested in one counts too.
     ("an archive the test opens itself counts only when its name ends in .jar", TOUCH_RECORDER,
-     "                    : holdsAZip(new File(path)) && !openedByJdkZip() && mayHoldClasses(new File(path))) {",
-     "                    : false) {",
+     '            boolean archive = path.endsWith(".jar") || holdsAZip(file);',
+     '            boolean archive = path.endsWith(".jar");',
      functional_suite, "a test that reads a class out of a zip with its own zip code is selected when the class changes"),
     ("an archive a JDK zip entry holds is taken for a plain entry", TOUCH_RECORDER,
-     "                } else if (entryHoldsAZip(zip, entry)) {",
-     "                } else if (false) {",
+     "                    if (entryHoldsAZip(zip, entry)) {",
+     "                    if (false) {",
      agent_suite, "an archive entry that is an archive itself counts as every class in the outer archive"),
     ("a jar nested in an archive a scanner opened is not listed", COVERAGE_DECODER,
      "        if (depth > MAX_ARCHIVE_DEPTH) return null",
@@ -2182,13 +2182,45 @@ MUTATIONS = [
      "                path in moves -> Origin.WRITTEN_DURING_CAPTURE",
      "                true -> Origin.WRITTEN_DURING_CAPTURE",
      functional_suite, "an untracked fixture added after the capture forces the selecting run"),
-    # A build-produced file on the test classpath that moved since the capture forces, named, and a
-    # map that records no such files forces once and captures them: a file generated from
-    # git state or the clock reaches a test through no tracked path.
+    # A build-produced file on the test classpath that moved since the capture forces, named, unless
+    # the map records which tests read it, and a map that records no such files forces once and
+    # captures them: a file generated from git state or the clock reaches a test through no tracked
+    # path.
     ("a moved classpath file is ignored", SELECTION,
      "    if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this",
      "    if (verdict is ClasspathFilesVerdict.Moved || verdict == ClasspathFilesVerdict.Unchanged || forces) return this",
+     functional_suite, "a file that appeared in a sibling jar runs everything"),
+    # A moved file the map records the readers of runs them, from each JVM's first read on; what
+    # the class loader takes from a manifest, a file that appeared or is gone, and a JVM whose reads
+    # are unknown still force.
+    ("a moved file's readers are not selected", SELECTOR,
+     "        if (!change.movedFiles().isEmpty()) {",
+     "        if (false) {",
      functional_suite, "a generated resource that changed runs the test that reads it"),
+    ("a JVM whose reads were not recorded is taken to have read nothing", SELECTOR,
+     "                if (reads == null || !reads.recorded(position.jvm())) {",
+     "                if (false) {",
+     agent_suite, "a JVM whose reads were not recorded runs whole on a moved file"),
+    ("a whole-jar read is not a read of its entries", SELECTOR,
+     '            if (file.equals(path) || file.startsWith(path + "!/")) {',
+     "            if (file.equals(path)) {",
+     functional_suite, "a build time a test reads from the whole jar runs that test"),
+    ("every manifest read is taken for the class loader's", TOUCH_RECORDER,
+     "                        touchNamed(MANIFEST.equals(entry.getName()) && loaderReadingManifest()",
+     "                        touchNamed(MANIFEST.equals(entry.getName())",
+     functional_suite, "a revision stamped into a sibling jar's manifest runs the test that reads it"),
+    ("a manifest attribute the class loader keeps is handed over as a plain file", CLASSPATH_FILES,
+     '                if (how != "changed" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
+     '                if (how != "changed" || path.endsWith(".class")) return null',
+     functional_suite, "an implementation version a test reads through its package runs everything"),
+    ("a file gone from the classpath is handed over", CLASSPATH_FILES,
+     '                if (how != "changed" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
+     '                if (how == "appeared" || how == "unreadable" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
+     functional_suite, "a file gone from a sibling jar runs everything"),
+    ("the decode writes reads without the root", DECODE_TASK,
+     "                rootDir = rootDir,",
+     "                rootDir = null,",
+     functional_suite, "a build time stamped into a sibling jar's manifest that no test reads runs nothing more"),
     ("a map without classpath digests is trusted", SELECTION,
      '        ?: return ClasspathFilesVerdict.Unrecorded("the map records no digests of this task\'s classpath files")',
      "        ?: return ClasspathFilesVerdict.Unchanged",

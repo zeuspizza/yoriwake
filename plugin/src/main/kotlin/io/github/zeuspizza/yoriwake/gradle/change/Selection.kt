@@ -103,6 +103,8 @@ internal class InlineWidening private constructor(
     val refusalDetail: String? = null,
     /** What comparing the compiled bytes against the map found, or null when nothing compared. */
     val digest: DigestWidening? = null,
+    /** Build-produced classpath files that moved, for the selector to run their readers. */
+    val movedFiles: List<String> = emptyList(),
 ) {
     val forces: Boolean get() = refusal != null
 
@@ -118,7 +120,10 @@ internal class InlineWidening private constructor(
 
     fun withDigest(digest: DigestWidening?): InlineWidening =
         if (digest == null) this
-        else InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest)
+        else InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles)
+
+    fun withMovedFiles(movedFiles: List<String>): InlineWidening =
+        InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles)
 
     companion object {
         fun widened(
@@ -174,6 +179,11 @@ internal fun digestRule(mapDir: File, bytesAreFresh: Boolean): DigestRule =
 internal sealed interface ClasspathFilesVerdict {
     data object Unchanged : ClasspathFilesVerdict
     data class Moved(val moved: ClasspathFiles.Moved) : ClasspathFilesVerdict
+    /**
+     * Every moved file is one whose readers the map records: [files] go to the selector, which
+     * runs the tests from each file's first read on in every JVM that read it.
+     */
+    data class Handed(val moved: ClasspathFiles.Moved, val files: List<String>) : ClasspathFilesVerdict
     /** No table to compare against, or no walk to compare with. */
     data class Unrecorded(val why: String) : ClasspathFilesVerdict
 }
@@ -195,15 +205,23 @@ internal fun classpathFilesRule(
     return when (walk) {
         is ClasspathFiles.Walk.Refused ->
             ClasspathFilesVerdict.Unrecorded("this task's classpath files could not be digested (${walk.reason})")
-        is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked))
-            .let { if (it.isEmpty) ClasspathFilesVerdict.Unchanged else ClasspathFilesVerdict.Moved(it) }
+        is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked)).let { moved ->
+            val handed = moved.traceable(facts.rootDir)
+            when {
+                moved.isEmpty -> ClasspathFilesVerdict.Unchanged
+                handed != null && CoverageDecoder.recordsResourceReads(mapDir) ->
+                    ClasspathFilesVerdict.Handed(moved, handed)
+                else -> ClasspathFilesVerdict.Moved(moved)
+            }
+        }
     }
 }
 
 /**
  * [this] refused on what the classpath-files comparison found, unless it already refuses (its own
  * token stays) or [forcedByPaths], the changed paths the map cannot see, already run everything:
- * then the moved files are only logged, so the reason stays the source path's.
+ * then the moved files are only logged, so the reason stays the source path's. Files whose readers
+ * the map records are handed to the selector instead.
  */
 internal fun InlineWidening.withClasspathFiles(
     verdict: ClasspathFilesVerdict,
@@ -212,10 +230,18 @@ internal fun InlineWidening.withClasspathFiles(
 ): InlineWidening {
     if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this
     if (forcedByPaths) {
-        if (verdict is ClasspathFilesVerdict.Moved) {
-            log("build output on this task's classpath also changed since the map was captured: ${verdict.moved.named()}")
+        val moved = (verdict as? ClasspathFilesVerdict.Moved)?.moved ?: (verdict as? ClasspathFilesVerdict.Handed)?.moved
+        if (moved != null) {
+            log("build output on this task's classpath also changed since the map was captured: ${moved.named()}")
         }
         return this
+    }
+    if (verdict is ClasspathFilesVerdict.Handed) {
+        log(
+            "build output on this task's classpath changed since the map was captured: " +
+                "${verdict.moved.named()}; the tests that read it run"
+        )
+        return withMovedFiles(verdict.files)
     }
     val refusal = when (verdict) {
         is ClasspathFilesVerdict.Moved -> InlineWidening.refuse(
@@ -233,7 +259,7 @@ internal fun InlineWidening.withClasspathFiles(
             kind = RefusalKind.CLASSPATH_FILES_UNRECORDED,
             detail = verdict.why,
         )
-        ClasspathFilesVerdict.Unchanged -> return this
+        ClasspathFilesVerdict.Unchanged, is ClasspathFilesVerdict.Handed -> return this
     }
     return refusal.withDigest(digest)
 }
@@ -589,6 +615,8 @@ internal fun changeSet(
     established: Established,
     /** [InlineWidening.changedBytes]: kept apart from [changed], which the selector anchors on. */
     changedBytes: Collection<String>,
+    /** [InlineWidening.movedFiles]. */
+    movedFiles: Collection<String>,
 ): io.github.zeuspizza.yoriwake.agent.select.ChangeSet =
     io.github.zeuspizza.yoriwake.agent.select.ChangeSet.of(changed, scoped.change.unmappablePaths.sorted())
         .withAccountedFor(accountedFor(paths, scoped))
@@ -596,6 +624,7 @@ internal fun changeSet(
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
         .withChangedBytes(changedBytes.sorted())
+        .withMovedFiles(movedFiles.sorted())
 
 /** What the daemon can say about the run the test JVM is about to perform. */
 internal data class FullRunOutlook(
@@ -622,7 +651,7 @@ internal fun wouldRunEverything(
     FullRunOutlook(
         fullRun = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(
             map,
-            changeSet(changed.sorted(), paths, scoped, established, widening.changedBytes)
+            changeSet(changed.sorted(), paths, scoped, established, widening.changedBytes, widening.movedFiles)
                 .withDaemonRefusal(widening.refusal),
             emptyList(),
         ).isFullRun,

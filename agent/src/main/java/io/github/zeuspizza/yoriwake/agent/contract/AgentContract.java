@@ -19,6 +19,12 @@ public final class AgentContract {
     /** Where the agent writes per-test records. Capture is off unless it is set. */
     public static final String RECORDS_DIR_PROPERTY = "yoriwake.internal.capture.outputDir";
 
+    /**
+     * The root project's directory. A capturing JVM records the non-class files it reads beneath it,
+     * and only those: the build-produced files a selecting run compares lie there.
+     */
+    public static final String CAPTURE_ROOT_PROPERTY = "yoriwake.internal.capture.root";
+
     /** Where the loaded-class recorder writes its per-worker lists. Set only when it is attached. */
     public static final String LOADED_DIR_PROPERTY = "yoriwake.loaded.out";
 
@@ -76,6 +82,13 @@ public final class AgentContract {
      * recorded one; one no test recorded forces.
      */
     public static final String CHANGED_BYTES_PROPERTY = "yoriwake.change.bytes";
+
+    /**
+     * Build-produced non-class files on the classpath whose content differs from the capture's,
+     * by their {@link #RESOURCE_TOUCH_FILE} path, comma-separated. Each selects the tests from its
+     * first read on in every JVM that read it; a JVM whose reads were not recorded runs whole.
+     */
+    public static final String MOVED_FILES_PROPERTY = "yoriwake.change.movedFiles";
 
     /**
      * The file holding every list-valued change-set property, {@link #CHANGE_SET_FILE} in the map
@@ -270,6 +283,25 @@ public final class AgentContract {
      */
     public static final String NAMED_TOUCH_FILE = "named-touch.tsv";
 
+    /**
+     * {@code jvm \t sequence \t kind \t path}: the first record sequence at or before which each
+     * JVM read each non-class file beneath the root, the path relative to the root project as the
+     * classpath-file digests name it. Kind {@link #RESOURCE_READ} is a read by anything but the
+     * JDK's class loader, {@link #RESOURCE_LOADER} one by it; {@link #FIRST_TOUCH_ANY} as the path
+     * stands for every file. Every JVM whose reads were recorded has a {@link #RESOURCE_RECORDED}
+     * row; one without reads everything from its first record.
+     */
+    public static final String RESOURCE_TOUCH_FILE = "resource-touch.tsv";
+
+    /** A {@link #RESOURCE_TOUCH_FILE} kind: read by anything but the JDK's class loader. */
+    public static final String RESOURCE_READ = "read";
+
+    /** A {@link #RESOURCE_TOUCH_FILE} kind: a manifest read by the JDK's class loader. */
+    public static final String RESOURCE_LOADER = "loader";
+
+    /** A {@link #RESOURCE_TOUCH_FILE} kind, with sequence 0 and an empty path: the JVM's reads were recorded. */
+    public static final String RESOURCE_RECORDED = "recorded";
+
     /** A first-touch class meaning "every class": the JVM's loads and reads were not all observed. */
     public static final String FIRST_TOUCH_ANY = "*";
 
@@ -343,6 +375,26 @@ public final class AgentContract {
 
     /** A touch kind with no value: the test plan started, so what follows is not discovery. */
     public static final String TOUCH_PLAN_STARTED = "plan-started";
+
+    /**
+     * A touch kind: a file that is not a class or source file was opened beneath the {@link
+     * #CAPTURE_ROOT_PROPERTY}, an archive read whole included; its absolute path, or a jar entry
+     * as {@code <jar>!/<entry>}.
+     */
+    public static final String TOUCH_RESOURCE = "resource";
+
+    /**
+     * A touch kind: the JDK's own class loader read a jar's manifest, to open the jar or to define a
+     * package from it; the value as {@link #TOUCH_RESOURCE}'s. What such a read takes from the
+     * manifest is fixed, so it reaches a test only through the attributes the loader exposes.
+     */
+    public static final String TOUCH_LOADER_MANIFEST = "loader-manifest";
+
+    /**
+     * A touch kind: this JVM records {@link #TOUCH_RESOURCE} and {@link #TOUCH_LOADER_MANIFEST}
+     * reads beneath the root it names. Without it, which files the JVM read is unknown.
+     */
+    public static final String TOUCH_RESOURCES_RECORDED = "resources-recorded";
 
     /** A touch kind: a jar was opened by something other than the JDK's own zip code; its path. */
     public static final String TOUCH_JAR = "jar";
@@ -590,6 +642,12 @@ public final class AgentContract {
 
     /** The test ran at or after its JVM first touched a class whose bytes changed. */
     public static final String RULE_SHARES_JVM_CHANGED_BYTES = "shares-jvm-changed-bytes";
+
+    /**
+     * The test ran at or after its JVM first read a build-produced classpath file that moved since
+     * the capture, or in a JVM whose reads of such files were not recorded.
+     */
+    public static final String RULE_SHARES_JVM_MOVED_CLASSPATH_FILE = "shares-jvm-moved-classpath-file";
 
     /**
      * The test ran at or after the point from which its JVM's touches were not all observed

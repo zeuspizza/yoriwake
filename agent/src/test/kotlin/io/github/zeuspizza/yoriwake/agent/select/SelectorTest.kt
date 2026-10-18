@@ -30,6 +30,8 @@ class SelectorTest {
         firstTouches: List<String> = emptyList(),
         /** As [firstTouches], for the named-touch table. */
         namedTouches: List<String> = emptyList(),
+        /** `jvm\tsequence\tkind\tpath` rows of the resource-read table; null writes none. */
+        resourceTouches: List<String>? = null,
     ): MapReader.Result {
         dir.mkdirs()
         scope?.let { File(dir, "scope").writeText(it.joinToString("\n", postfix = "\n")) }
@@ -51,6 +53,9 @@ class SelectorTest {
             File(dir, AgentContract.FIRST_TOUCH_FILE).writeText(firstTouches.joinToString("") { row -> "$row\n" })
             File(dir, AgentContract.NAMED_TOUCH_FILE).writeText(namedTouches.joinToString("") { row -> "$row\n" })
         }
+        resourceTouches?.let {
+            File(dir, AgentContract.RESOURCE_TOUCH_FILE).writeText(it.joinToString("") { row -> "$row\n" })
+        }
         version?.let { File(dir, "schema-version").writeText("$it\n") }
         return MapReader.read(dir)
     }
@@ -68,11 +73,12 @@ class SelectorTest {
         provable: List<String> = emptyList(),
         bytes: List<String> = emptyList(),
         accounted: Boolean = false,
+        moved: List<String> = emptyList(),
     ) = Selector.decide(
         map,
         ChangeSet.of(changed, unmappable).withAbsenceProvable(provable)
             .withChangedBytes(bytes).withAccountedFor(accounted).withExemptTestClasses(exempt)
-            .withOwnTestClasses(own),
+            .withOwnTestClasses(own).withMovedFiles(moved),
         discovered,
     )
 
@@ -926,6 +932,148 @@ class SelectorTest {
         assertTrue(decision.includes(placed("com.acme.LaterTest")))
         assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.LaterTest")))
         assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(placed("com.acme.FirstTest")))
+    }
+
+    // A build-produced classpath file that moved since the capture reaches the tests from its
+    // first read on in each JVM that read it.
+
+    private fun recorded(jvm: String) = "$jvm\t0\t${AgentContract.RESOURCE_RECORDED}\t"
+
+    private fun read(jvm: String, sequence: Int, path: String, kind: String = AgentContract.RESOURCE_READ) =
+        "$jvm\t$sequence\t$kind\t$path"
+
+    private fun stampMap(dir: File, resourceTouches: List<String>?) = map(
+        dir,
+        test("com.acme.EarlierTest", "com.acme.Other"),
+        test("com.acme.ReaderTest", "com.acme.Other"),
+        test("com.acme.LaterTest", "com.acme.Other"),
+        test("com.acme.ChangedTest", "com.acme.Rates"),
+        positions = listOf(
+            "j\t2\t${placed("com.acme.EarlierTest")}", "j\t4\t${placed("com.acme.ReaderTest")}",
+            "j\t6\t${placed("com.acme.LaterTest")}", "k\t2\t${placed("com.acme.ChangedTest")}",
+        ),
+        firstTouches = listOf("k\t2\tcom.acme.Rates"),
+        resourceTouches = resourceTouches,
+    )
+
+    @Test
+    fun `a moved file runs the tests from its first read on in the JVM that read it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "build/info.properties"))),
+            changed = listOf("com.acme.Rates"),
+            moved = listOf("build/info.properties"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+        assertTrue(decision.includes(placed("com.acme.LaterTest")))
+        assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.ReaderTest")))
+    }
+
+    @Test
+    fun `a test the map holds no position for runs on a moved file`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.PlacedTest", "com.acme.Other"),
+                test("com.acme.UnplacedTest", "com.acme.Other"),
+                positions = listOf("j\t2\t${placed("com.acme.PlacedTest")}"),
+                resourceTouches = listOf(recorded("j")),
+            ),
+            // The moved file alone: no changed class whose window would place the test too.
+            accounted = true,
+            moved = listOf("build/info.properties"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.PlacedTest")))
+        assertTrue(decision.includes(placed("com.acme.UnplacedTest")))
+    }
+
+    @Test
+    fun `a moved file no JVM read runs nothing more`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(
+                dir,
+                listOf(
+                    recorded("j"), recorded("k"),
+                    read("j", 2, "lib.jar!/META-INF/MANIFEST.MF", AgentContract.RESOURCE_LOADER),
+                    read("j", 2, "other.properties"),
+                ),
+            ),
+            changed = listOf("com.acme.Rates"),
+            moved = listOf("lib.jar!/META-INF/MANIFEST.MF"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertFalse(decision.includes(placed("com.acme.LaterTest")))
+        assertTrue(decision.includes(placed("com.acme.ChangedTest")))
+    }
+
+    @Test
+    fun `a read of the archive holding a moved file reads it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "lib.jar"))),
+            changed = listOf("com.acme.Rates"),
+            moved = listOf("lib.jar!/META-INF/MANIFEST.MF"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+    }
+
+    @Test
+    fun `a JVM that read every file from a point runs from there`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 6, AgentContract.FIRST_TOUCH_ANY))),
+            changed = listOf("com.acme.Rates"),
+            moved = listOf("build/info.properties"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.ReaderTest")))
+        assertTrue(decision.includes(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `a JVM whose reads were not recorded runs whole on a moved file`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("k"))),
+            changed = listOf("com.acme.Rates"),
+            moved = listOf("build/info.properties"),
+        )
+
+        assertTrue(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `a map without the read table runs every test on a moved file`(@TempDir dir: File) {
+        val decision = decide(stampMap(dir, null), changed = listOf("com.acme.Rates"), moved = listOf("build/info.properties"))
+
+        assertTrue(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `a malformed read table runs every test on a moved file`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), "j\tnot-a-number\tread\tbuild/info.properties")),
+            changed = listOf("com.acme.Rates"),
+            moved = listOf("build/info.properties"),
+        )
+
+        assertTrue(decision.includes(placed("com.acme.EarlierTest")))
+    }
+
+    @Test
+    fun `the moved file's window is named as its own rule`(@TempDir dir: File) {
+        val rules = Selector.rules(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "build/info.properties"))),
+            ChangeSet.of(listOf("com.acme.Rates"), emptyList()).withMovedFiles(listOf("build/info.properties")),
+            true,
+        )
+
+        assertTrue(Rule.SHARES_JVM_MOVED_CLASSPATH_FILE in rules.rulesFor(placed("com.acme.ReaderTest"), Verdict.SHARES_JVM_WITH_CHANGE))
+        assertFalse(Rule.SHARES_JVM_MOVED_CLASSPATH_FILE in rules.rulesFor(placed("com.acme.EarlierTest"), Verdict.SKIPPED))
     }
 
     @Test
