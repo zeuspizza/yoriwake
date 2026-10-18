@@ -355,6 +355,21 @@ def jdk_identity_suite():
     return named
 
 
+def sbom_suite():
+    """The release SBOM's check against the jars it describes. Gradle exits non-zero when it fires."""
+    done = gradle([":plugin:checkSbom", "--rerun"])
+    if done.returncode == 0:
+        return []
+    lines = (done.stdout + done.stderr).splitlines()
+    if any("Execution failed for task ':plugin:checkSbom'" in l for l in lines):
+        # The check's own message, which follows Gradle's "What went wrong" line; not a task line.
+        return [next((l.strip() for l in lines if l.startswith("> ") and not l.startswith("> Task ")),
+                     "checkSbom failed")]
+    compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
+    return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
+        if compile_errors else ["the SBOM suite failed somewhere other than checkSbom"]
+
+
 def qualify_suite():
     """The qualification harness's checks, including the one that keeps a verdict in one place."""
     return _python_checks("bench/test_qualify.py")
@@ -570,6 +585,9 @@ SUITES = [
     ("unit", unit_suite, 11),
     ("qualify", qualify_suite, 12),
     ("config cost", config_cost_suite, 1),
+    # The shaded jars and both direct SBOMs, then the merge and its check; an estimate until a
+    # guard run measures it.
+    ("sbom", sbom_suite, 10),
     ("configuration guards", guard_suite, 17),
     ("python", python_suite, 33),
     ("functional", functional_suite, 68),
@@ -1455,6 +1473,19 @@ MUTATIONS = [
      "                if (recorded[name] != value) added += name",
      "                if (false) added += name",
      functional_suite, "a changed expect default runs its caller"),
+    # ------------------------------------------------ the release SBOM: it lists what the jars carry
+    #
+    # An SBOM that drifts from the jar it describes is worse than none, and nothing a user runs would
+    # notice: the check on every build is what notices, so each way of drifting must trip it.
+    ("the SBOM drops a library the plugin jar bundles", PLUGIN_BUILD,
+     '"components" to components(pluginBom.get().asFile).map { library(it, pluginRelocations) } + agent,',
+     '"components" to components(pluginBom.get().asFile).filter { it["name"] != "asm-tree" }'
+     '.map { library(it, pluginRelocations) } + agent,',
+     sbom_suite, "the SBOM lists"),
+    ("the SBOM stops naming where ASM was relocated", PLUGIN_BUILD,
+     'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core", "org.ow2.asm" to "org.objectweb.asm")',
+     'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core")',
+     sbom_suite, "the plugin jar carries"),
     ("the selector stops selecting on changed bytes", SELECTOR,
      "        Set<String> changedBytes = bytesOnly(change.changedBytes(), changedClassPrefixes);",
      "        Set<String> changedBytes = new HashSet<>();",
@@ -3492,6 +3523,7 @@ SUITE_TESTS = {
     "unit": ("plugin/src/test/",),
     "qualify": ("bench/test_qualify.py",),
     "config cost": ("bench/test_config_cost.py",),
+    "sbom": ("plugin/build.gradle.kts", "agent/build.gradle.kts"),
     "configuration guards": ("plugin/src/functionalTest/",),
     "python": ("bench/test_run.py",),
     "functional": ("plugin/src/functionalTest/",),
@@ -3499,7 +3531,7 @@ SUITE_TESTS = {
 }
 # A change to how the Gradle suites are BUILT can break any of them, so it selects all of them.
 GRADLE_SUITES = {"decoder", "agent", "jdk identity", "unit", "configuration guards", "functional",
-                 "replay", "break"}
+                 "replay", "break", "sbom"}
 # Run with NOTHING beside them. The functional suite has failed unmutated in a worker while only
 # Python suites ran next to it, and passed alone in the same tree: its TestKit builds compare
 # file timestamps, and load moves them. Its guards run after the parallel phase, one at a time. The

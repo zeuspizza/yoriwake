@@ -1,8 +1,12 @@
 name: release
 
-# Publishes to the Gradle Plugin Portal from a version tag, and only from one. The Portal key lives in
-# the `release` environment, which requires a maintainer's approval and accepts only `v*` tags, so a
-# workflow on any other ref cannot reach it.
+# Publishes to the Gradle Plugin Portal from a version tag, and only from one. The Portal key and the
+# signing key live in the `release` environment, which requires a maintainer's approval and accepts
+# only `v*` tags, so a workflow on any other ref cannot reach them.
+#
+# What ships is what was tested: `verify` builds and tests once and hands its files on; no later job
+# builds anything. `attest` vouches for those files, `publish` signs and uploads them, and `github
+# release` attaches them to the GitHub release.
 on:
   push:
     tags: ['v*']
@@ -11,8 +15,8 @@ permissions:
   contents: read
 
 jobs:
-  # The full build first, on a runner that never sees the key: the tests run code the key must not
-  # share a machine with. A release is the one publish that cannot be taken back.
+  # The full build, on a runner that never sees a key or a token that can attest: the tests run code
+  # neither may share a machine with.
   verify:
     name: build and test
     runs-on: ubuntu-latest
@@ -22,21 +26,78 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      # Read-only, so the tests' code cannot write a cache the publish job restores.
+      # Read-only, so the tests' code cannot write a cache the later jobs restore.
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
+      # Before anything is attested or published: the release notes are this section, and the last
+      # job would otherwise find it missing only after the Portal has the version.
+      - name: the CHANGELOG has this version's section
+        run: grep -q "^## \[${GITHUB_REF_NAME#v}\]" CHANGELOG.md || { echo "CHANGELOG.md has no section for ${GITHUB_REF_NAME#v}"; exit 1; }
       - name: build and test
         run: ./gradlew build -PreleaseVersion="${GITHUB_REF_NAME#v}" --console=plain
+      # The local repository the published-plugin test resolved the plugin from, the SBOM, and the
+      # agent jar as it sits inside the plugin jar, each listed with its SHA-256.
+      - name: collect the release files
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir release
+          cp -R plugin/build/local-repository release/repository
+          cp "plugin/build/sbom/yoriwake-gradle-plugin-$version.cdx.json" release/
+          cp plugin/build/bundled-agent/yoriwake-agent.jar release/
+          cd release
+          find repository -type f ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' \
+            ! -name 'maven-metadata.xml*' | sort > files
+          echo "yoriwake-agent.jar" >> files
+          echo "yoriwake-gradle-plugin-$version.cdx.json" >> files
+          xargs sha256sum < files > SHA256SUMS
+          rm files
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: release/
+          if-no-files-found: error
+
+  # Vouches for the tested files, on a runner that builds and runs nothing.
+  attest:
+    name: attest
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
+      - name: check the files against their checksums
+        id: files
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          (cd release && sha256sum -c SHA256SUMS)
+          echo "jar=release/repository/io/github/zeuspizza/yoriwake-gradle-plugin/$version/yoriwake-gradle-plugin-$version.jar" >> "$GITHUB_OUTPUT"
+          echo "sbom=release/yoriwake-gradle-plugin-$version.cdx.json" >> "$GITHUB_OUTPUT"
+      # Build provenance for every listed file, in one attestation.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+      # The SBOM, attested against the plugin jar it describes.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.files.outputs.jar }}
+          sbom-path: ${{ steps.files.outputs.sbom }}
 
   publish:
     name: publish to the Gradle Plugin Portal
-    needs: verify
+    needs: attest
     runs-on: ubuntu-latest
     environment: release
     steps:
-      # Pinned to commit SHAs rather than tags, because this job holds a secret. No token is left
-      # in .git/config beside the key while Gradle runs.
+      # Pinned to commit SHAs rather than tags, because this job holds secrets. No token is left
+      # in .git/config beside the keys while Gradle runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -44,14 +105,73 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      # Read-only, so nothing this job produced is restored into a later workflow.
+      # No cache at all: this job holds the keys, and any cache could have been written by a build
+      # that ran other code.
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
-          cache-read-only: true
-      # The plugin-publish plugin reads these variables before any Gradle property, so the key
-      # never appears on a command line.
+          cache-disabled: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
+      - name: check the files against their checksums
+        run: cd release && sha256sum -c SHA256SUMS
+      # Signs the downloaded files; nothing is built here. The plugin reads the key from these
+      # variables, so no key appears on a command line.
+      - name: sign
+        env:
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: >-
+          ./gradlew :plugin:signReleaseRepository -PreleaseVersion="${GITHUB_REF_NAME#v}"
+          -Pyoriwake.sign -Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository" --console=plain
+      # Kept before the upload, which cannot be taken back: if a later step fails, the signatures
+      # for the release that is already public are not lost.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-signatures
+          path: release/repository/**/*.asc
+          if-no-files-found: error
       - name: publish
         env:
           GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}
           GRADLE_PUBLISH_SECRET: ${{ secrets.GRADLE_PUBLISH_SECRET }}
-        run: ./gradlew :plugin:publishPlugins -PreleaseVersion="${GITHUB_REF_NAME#v}" --console=plain
+        run: >-
+          ./gradlew :plugin:publishReleaseRepository -x :plugin:signReleaseRepository
+          -PreleaseVersion="${GITHUB_REF_NAME#v}" -Pyoriwake.sign
+          -Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository" --console=plain
+
+  # Made after the Portal has the version, so it never advertises a release that does not exist, and
+  # on a runner that holds neither key.
+  github-release:
+    name: github release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-signatures
+          path: release/repository
+      - name: create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          jar="release/repository/io/github/zeuspizza/yoriwake-gradle-plugin/$version/yoriwake-gradle-plugin-$version.jar"
+          # Latest only if no newer version exists: a patch to an older line must not take its place.
+          newest=$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||' | sort -V | tail -1)
+          latest=$([ "$newest" = "$GITHUB_REF_NAME" ] && echo true || echo false)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --latest="$latest" --title "yoriwake $version" --notes-file notes.md \
+            "$jar" "$jar.asc" release/yoriwake-agent.jar "release/yoriwake-gradle-plugin-$version.cdx.json" \
+            release/SHA256SUMS

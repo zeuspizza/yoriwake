@@ -78,19 +78,24 @@ release waits for every one.
 
 1. Tag the final candidate and push the tag:
    `git tag -a v<version> <final candidate> -m v<version> && git push origin v<version>`. For a
-   patch, also push the release branch: `git push origin release/<major>.<minor>`.
-2. `release.yml` builds and tests the tag, then waits for a maintainer to approve the `release`
-   environment, which holds the Portal key and accepts only `v*` tags. Approve it.
+   patch, also push the release branch: `git push origin release/<major>.<minor>`. A repository
+   ruleset lets only the maintainer create `v*` tags, since a tag is what starts a release.
+2. `release.yml` builds and tests the tag once, then attests the files that build produced, then
+   waits for a maintainer to approve the `release` environment, which holds the Portal key and the
+   signing key and accepts only `v*` tags. Approve it. The approved job signs those same files and
+   uploads them; nothing after the tested build builds anything.
 3. While the Portal reviews the new version, merge only documentation changes.
-4. Once the Portal lists the version, publish its GitHub release from the tag, with the
-   `CHANGELOG.md` section as the notes: `gh release create v<version> --verify-tag --title
-   "yoriwake <version>" --notes-file <notes>`. It is what the repository page shows as the latest
-   release; a patch to an older line passes `--latest=false`.
+4. The last job creates the GitHub release from the tag, with the `CHANGELOG.md` section as the
+   notes and the plugin jar, its signature, the agent jar, the SBOM and `SHA256SUMS` attached. It is
+   marked latest unless a newer version exists. Check it lists those files.
 
 ## After the release
 
 - A clean project outside this repository resolves `<version>` from the Portal and runs once with
   `-Pyoriwake.observe` and once with `-Pyoriwake.select`.
+- The jar the Portal serves for `<version>` matches the release's `SHA256SUMS` and passes
+  `gh attestation verify` as [SECURITY.md](SECURITY.md#verifying-a-release) describes. Run by the
+  maintainer, locally; no Actions minutes.
 - The GitHub Action ([zeuspizza/yoriwake-action](https://github.com/zeuspizza/yoriwake-action)) is
   tagged at the matching version.
 - The release is recorded with its final candidate SHA and each gate's result.

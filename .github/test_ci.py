@@ -17,6 +17,7 @@ a function that asserted would be collected by pytest and pass however many chec
 
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -905,6 +906,153 @@ def case_a_badge_one_point_off_either_gate_is_reported():
     return problems
 
 
+
+RELEASE = os.path.join(WORKFLOWS, "release.yml")
+JOB = re.compile(r"^  ([a-z][a-z-]*):$", re.MULTILINE)
+
+
+def release_jobs(text):
+    """Each job of a workflow's text, by name: the lines from its key to the next job's."""
+    body = text.split("\njobs:\n", 1)[1]
+    starts = list(JOB.finditer(body))
+    return {m.group(1): body[m.start():(starts[i + 1].start() if i + 1 < len(starts) else len(body))]
+            for i, m in enumerate(starts)}
+
+
+def gradle_tasks(job):
+    """The tasks each `./gradlew` call in a job's text asks for, one list per call; `-x` exclusions
+    and options left out. A call ends where its `run:` value does."""
+    calls = []
+    for match in re.finditer(r"\./gradlew\b", job):
+        rest = job[match.end():]
+        end = re.search(r"\n\s*(?:- |#|[a-z-]+:\s|$)", rest, re.MULTILINE)
+        tokens = (rest[:end.start()] if end else rest).split()
+        tasks, skip = [], False
+        for token in tokens:
+            if token in ("&&", "||", ";", "|", ">", ">>"):
+                break
+            if skip:
+                skip = False
+            elif token == "-x":
+                skip = True
+            elif not token.startswith("-"):
+                tasks.append(token)
+        calls.append(tasks)
+    return calls
+
+
+def release_problems(text):
+    """What makes a release ship bytes other than the tested ones, or hand a key or an attesting
+    token to a runner that does not need it."""
+    found = []
+    header = text.split("\njobs:\n", 1)[0]
+    if re.search(r"id-token:|attestations:|contents:\s*write|write-all|secrets\.", header):
+        found.append("the workflow-level permissions grant more than `contents: read`, which every job inherits")
+    jobs = release_jobs(text)
+    for name in ("verify", "attest", "publish", "github-release"):
+        if name not in jobs:
+            found.append(f"no `{name}` job")
+    if found:
+        return found
+    allowed = {
+        "verify": [["build"]],
+        "publish": [[":plugin:signReleaseRepository"], [":plugin:publishReleaseRepository"]],
+        "attest": [],
+        "github-release": [],
+    }
+    for name, job in jobs.items():
+        if gradle_tasks(job) != allowed.get(name, []):
+            found.append(f"`{name}` runs Gradle tasks {gradle_tasks(job)}; expected {allowed.get(name, [])}")
+        if name != "publish" and re.search(r"secrets\.(?!GITHUB_TOKEN)", job):
+            found.append(f"`{name}` reads a secret; only `publish` holds keys")
+        if name != "attest" and re.search(r"id-token:\s*write|attestations:\s*write", job):
+            found.append(f"`{name}` can attest; only `attest` may")
+        if name != "github-release" and re.search(r"contents:\s*write", job):
+            found.append(f"`{name}` can write the repository; only `github-release` may")
+        if name not in ("verify", "publish") and "setup-gradle" in job:
+            found.append(f"`{name}` sets up Gradle, and with it a cache; it runs no build")
+    for name, needs in (("attest", "verify"), ("publish", "attest"), ("github-release", "publish")):
+        if not re.search(rf"^    needs: {needs}$", jobs[name], re.MULTILINE):
+            found.append(f"`{name}` does not wait for `{needs}`")
+    publish = jobs["publish"]
+    if "environment: release" not in publish:
+        found.append("`publish` is not bound to the `release` environment")
+    if "cache-disabled: true" not in publish:
+        found.append("`publish` restores a Gradle cache beside the keys")
+    if publish.count('-Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository"') != 2:
+        found.append("`publish` does not sign and upload the downloaded repository")
+    for needed in ("-Pyoriwake.sign", "ORG_GRADLE_PROJECT_signingKey", "sha256sum -c SHA256SUMS"):
+        if needed not in publish:
+            found.append(f"`publish` lacks `{needed}`")
+    if publish.find("name: release-signatures") > publish.find(":plugin:publishReleaseRepository"):
+        found.append("`publish` saves the signatures only after the upload that cannot be taken back")
+    if "sha256sum -c SHA256SUMS" not in jobs["attest"] or "subject-checksums: release/SHA256SUMS" not in jobs["attest"]:
+        found.append("`attest` does not check and attest the files `verify` listed")
+    if "CHANGELOG.md" not in jobs["verify"]:
+        found.append("`verify` does not check the CHANGELOG section the release notes need")
+    if "contents: write" not in jobs["github-release"]:
+        found.append("`github-release` cannot create the release")
+    return found
+
+
+def case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job():
+    problems = 0
+    with open(RELEASE, encoding="utf-8") as handle:
+        for problem in release_problems(handle.read()):
+            problems += fail(f"release.yml: {problem}")
+    return problems
+
+
+def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
+    problems = 0
+    with open(RELEASE, encoding="utf-8") as handle:
+        text = handle.read()
+    mutants = {
+        "publish rebuilds": text.replace(
+            "./gradlew :plugin:publishReleaseRepository", "./gradlew :plugin:shadowJar :plugin:publishReleaseRepository"),
+        "verify holds a key": text.replace(
+            "      - name: build and test\n",
+            "      - name: build and test\n        env:\n          K: ${{ secrets.SIGNING_KEY }}\n", 1),
+        "publish can attest": text.replace(
+            "    environment: release\n",
+            "    environment: release\n    permissions:\n      id-token: write\n", 1),
+        "every job can attest": text.replace(
+            "permissions:\n  contents: read\n", "permissions:\n  contents: read\n  id-token: write\n", 1),
+        "publish unsigned": text.replace("-Pyoriwake.sign\n", "\n").replace("-Pyoriwake.sign ", ""),
+        "publish uploads its own build": (lambda at: text[:at] + text[at:].replace(
+            "$GITHUB_WORKSPACE/release/repository", "$GITHUB_WORKSPACE/plugin/build/local-repository", 1))(
+            text.rfind('-Pyoriwake.repository="')),
+        "publish skips the attestation": text.replace("    needs: attest\n", "    needs: verify\n", 1),
+        "publish restores a cache": text.replace("cache-disabled: true", "cache-read-only: true", 1),
+    }
+    for what, mutant in mutants.items():
+        if mutant == text:
+            problems += fail(f"the mutant `{what}` changed nothing; its anchor moved")
+        elif not release_problems(mutant):
+            problems += fail(f"`{what}` passed the release check")
+    return problems
+
+
+def case_security_names_the_release_key():
+    """The verify steps name the key releases are signed with; a placeholder there tells a user to
+    trust nothing in particular."""
+    path = os.path.join(os.path.dirname(WORKFLOWS), "..", "SECURITY.md")
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    if "RELEASE_KEY_FINGERPRINT" in text:
+        return fail("SECURITY.md still has the release key's fingerprint as a placeholder")
+    named = set(re.findall(r"`([0-9A-F]{40})`", text))
+    if not named:
+        return fail("SECURITY.md names no 40-hex-digit release key fingerprint")
+    key = os.path.join(os.path.dirname(path), "RELEASE-KEY.asc")
+    shown = subprocess.run(["gpg", "--show-keys", "--with-colons", key], capture_output=True, text=True)
+    published = {line.split(":")[9] for line in shown.stdout.splitlines() if line.startswith("fpr:")}
+    if not published:
+        return fail(f"gpg read no key from RELEASE-KEY.asc: {shown.stderr.strip()}")
+    if not named <= published:
+        return fail(f"SECURITY.md names {sorted(named)}, RELEASE-KEY.asc holds {sorted(published)}")
+    return 0
+
 CASES = (
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
@@ -950,6 +1098,9 @@ CASES = (
     case_a_job_that_ran_another_commit_fails,
     case_a_cell_with_two_tasks_results_fails,
     case_the_early_access_job_runs_weekly_bounded_and_read_only,
+    case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job,
+    case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
+    case_security_names_the_release_key,
 )
 
 

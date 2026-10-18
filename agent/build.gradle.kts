@@ -7,6 +7,8 @@ plugins {
     kotlin("jvm") version "2.1.20"
     // Shades ASM into the agent jar under a renamed package.
     id("com.gradleup.shadow") version "8.3.6"
+    // The SBOM of what the shaded jar carries; the plugin merges it into the release's.
+    id("org.cyclonedx.bom") version "3.5.1"
 }
 
 repositories {
@@ -237,10 +239,13 @@ tasks.check {
 
 // ASM is relocated into our own package: a -javaagent jar joins the system classpath, so an
 // unrelocated copy would conflict with the host's.
+// Read by the plugin's SBOM, which names where each bundled library now lives.
+val relocations by extra(mapOf("org.objectweb.asm" to "io.github.zeuspizza.yoriwake.shaded.asm"))
+
 tasks.shadowJar {
     configurations = listOf(bundled)
     archiveClassifier = ""
-    relocate("org.objectweb.asm", "io.github.zeuspizza.yoriwake.shaded.asm")
+    relocations.forEach { (from, to) -> relocate(from, to) }
     minimize()
     // The jar is redistributed on its own, so it carries the notices itself. ASM's BSD text comes
     // from src/main/resources.
@@ -288,3 +293,6 @@ tasks.jacocoTestCoverageVerification {
 }
 
 tasks.check { dependsOn(tasks.jacocoTestCoverageVerification) }
+
+// Only what the shaded jar carries; every other configuration is the build's own tooling.
+tasks.cyclonedxDirectBom { includeConfigs = listOf(bundled.name) }

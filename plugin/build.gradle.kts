@@ -1,6 +1,8 @@
 import org.gradle.plugin.compatibility.compatibility
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import java.util.zip.CRC32
+import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 
 plugins {
     `java-gradle-plugin`
@@ -11,6 +13,9 @@ plugins {
     // Relocates the plugin's own dependencies so it adds nothing unshaded to a host's buildscript
     // classpath. 9.2.x is the newest line that still runs on this build's Gradle 8.14.
     id("com.gradleup.shadow") version "9.2.2"
+    // The SBOM of what the published jar bundles: CycloneDX, merged with the agent's below.
+    id("org.cyclonedx.bom") version "3.5.1"
+    signing
 }
 
 group = "io.github.zeuspizza"
@@ -175,16 +180,180 @@ publishing {
     }
 }
 
+// A release ships the bytes `verify` built and tested: the publish job downloads that build's local
+// repository, signs every file in it and uploads them, building nothing. `-Pyoriwake.repository`
+// names the directory; this build's own local repository otherwise.
+val releaseRepository = providers.gradleProperty("yoriwake.repository").map { file(it) }
+    .orElse(localRepository.map { it.asFile })
+// Signing needs the release key, which only the publish job holds. With `yoriwake.sign` and no key
+// the signing task fails, so a release can never go out unsigned by accident.
+val signRelease = providers.gradleProperty("yoriwake.sign").isPresent
+
+signing {
+    isRequired = signRelease
+    providers.gradleProperty("signingKey").orNull?.let { key ->
+        useInMemoryPgpKeys(key, providers.gradleProperty("signingPassword").orNull)
+    }
+}
+// plugin-publish signs both publications whenever `signing` is applied; only the release asks.
+tasks.withType<Sign>().configureEach {
+    onlyIf("yoriwake.sign is set") { signRelease }
+}
+
+val signReleaseRepository by tasks.registering(Sign::class) {
+    description = "Signs every file of the release repository, for the Portal upload."
+    sign(*fileTree(releaseRepository) {
+        exclude("**/*.asc", "**/*.md5", "**/*.sha1", "**/*.sha256", "**/*.sha512", "**/maven-metadata.xml*")
+    }.files.sorted().toTypedArray())
+}
+
+val publishReleaseRepository by tasks.registering(com.gradle.publish.PublishExistingTask::class) {
+    description = "Uploads the signed release repository to the Plugin Portal, building nothing."
+    dependsOn(signReleaseRepository)
+    // Without it the signing above is skipped, and an unsigned upload cannot be taken back.
+    val signed = signRelease
+    doFirst { check(signed) { "a release is uploaded signed: pass -Pyoriwake.sign and the release key" } }
+    val plugin = gradlePlugin.plugins.getByName("yoriwake")
+    fileRepositoryRoot = layout.dir(releaseRepository)
+    pluginId = plugin.id
+    displayName = plugin.displayName
+    pluginDescription = plugin.description
+    tags = plugin.tags.map { it.toList() }
+    website = gradlePlugin.website
+    vcsUrl = gradlePlugin.vcsUrl
+    pluginVersion = version.toString()
+    pluginCoordinates = "io.github.zeuspizza:yoriwake-gradle-plugin:$version"
+}
+
 // The published jar, with JaCoCo core and ASM relocated. Only `org.jacoco.core` is relocated: the
 // agent classes name the host's `org.jacoco.agent.rt.RT` by string, which must stay the host's.
+val relocations = mapOf(
+    "org.jacoco.core" to "io.github.zeuspizza.yoriwake.shaded.plugin.jacoco.core",
+    "org.objectweb.asm" to "io.github.zeuspizza.yoriwake.shaded.plugin.asm",
+)
+
 tasks.shadowJar {
     archiveClassifier = ""
-    relocate("org.jacoco.core", "io.github.zeuspizza.yoriwake.shaded.plugin.jacoco.core")
-    relocate("org.objectweb.asm", "io.github.zeuspizza.yoriwake.shaded.plugin.asm")
+    relocations.forEach { (from, to) -> relocate(from, to) }
     // Upstream metadata would name unshaded coordinates this jar does not actually carry.
     exclude("module-info.class", "META-INF/versions/*/module-info.class", "META-INF/maven/**", "about.html")
     from(files(rootProject.file("LICENSE"), rootProject.file("NOTICE"))) { into("META-INF") }
 }
+
+// The release's SBOM: the libraries the plugin jar bundles, the agent nested with its own, and for
+// each the package it was relocated to. The direct BOMs see only the configurations the shadow
+// jars are built from; the merge adds what CycloneDX does not know, the nesting and relocation.
+// Which package each bundled library's classes live in, so its relocation can be named.
+val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core", "org.ow2.asm" to "org.objectweb.asm")
+val sbomFile = layout.buildDirectory.file("sbom/yoriwake-gradle-plugin-$version.cdx.json")
+
+tasks.cyclonedxDirectBom { includeConfigs = listOf("runtimeClasspath") }
+
+val mergeSbom by tasks.registering {
+    description = "Writes the release's SBOM: what the plugin jar bundles, with the agent nested."
+    dependsOn(tasks.cyclonedxDirectBom, ":agent:cyclonedxDirectBom")
+    val pluginBom = layout.buildDirectory.file("reports/cyclonedx-direct/bom.json")
+    val agentBom = project(":agent").layout.buildDirectory.file("reports/cyclonedx-direct/bom.json")
+    @Suppress("UNCHECKED_CAST")
+    val agentRelocations = project(":agent").extra["relocations"] as Map<String, String>
+    val pluginRelocations = relocations
+    val packages = packageOf
+    val v = version.toString()
+    val out = sbomFile
+    inputs.files(pluginBom, agentBom)
+    inputs.property("version", v)
+    inputs.property("relocations", pluginRelocations + agentRelocations.mapKeys { "agent:" + it.key })
+    outputs.file(out)
+    doLast {
+        fun components(bom: File) = ((groovy.json.JsonSlurper().parse(bom) as Map<*, *>)["components"] as List<*>?)
+            .orEmpty().map { it as Map<*, *> }
+        fun library(c: Map<*, *>, moved: Map<String, String>): Map<String, Any?> {
+            val pkg = packages["${c["group"]}:${c["name"]}"] ?: packages[c["group"]]
+            val to = pkg?.let(moved::get)
+            return linkedMapOf(
+                "type" to "library", "bom-ref" to c["purl"], "group" to c["group"], "name" to c["name"],
+                "version" to c["version"], "purl" to c["purl"], "hashes" to c["hashes"], "licenses" to c["licenses"],
+                "properties" to to?.let { listOf(mapOf("name" to "yoriwake:relocated-to", "value" to it)) },
+            ).filterValues { it != null }
+        }
+        fun purl(name: String) = "pkg:maven/io.github.zeuspizza/$name@$v?type=jar"
+        val agent = linkedMapOf(
+            "type" to "library", "bom-ref" to purl("yoriwake-agent"), "group" to "io.github.zeuspizza",
+            "name" to "yoriwake-agent", "version" to v, "purl" to purl("yoriwake-agent"),
+            "description" to "The test JVM's agent: nested in the plugin jar as yoriwake-agent.jar, and its classes unpacked into it",
+            "components" to components(agentBom.get().asFile).map { library(it, agentRelocations) },
+        )
+        val bom = linkedMapOf(
+            "bomFormat" to "CycloneDX", "specVersion" to "1.6", "version" to 1,
+            "metadata" to mapOf(
+                "component" to mapOf(
+                    "type" to "library", "bom-ref" to purl("yoriwake-gradle-plugin"), "group" to "io.github.zeuspizza",
+                    "name" to "yoriwake-gradle-plugin", "version" to v, "purl" to purl("yoriwake-gradle-plugin"),
+                ),
+            ),
+            "components" to components(pluginBom.get().asFile).map { library(it, pluginRelocations) } + agent,
+        )
+        out.get().asFile.apply { parentFile.mkdirs() }
+            .writeText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(bom)) + "\n")
+    }
+}
+
+// An SBOM that drifts from the jar is worse than none: the libraries it lists are the ones the
+// plugin jar resolves to bundle, and every relocated package it names is one the jars carry.
+val checkSbom by tasks.registering {
+    description = "Fails if the SBOM and the jars disagree on what they bundle."
+    val sbom = sbomFile
+    dependsOn(mergeSbom)
+    val jar = tasks.shadowJar.flatMap { it.archiveFile }
+    val resolved = configurations.runtimeClasspath.get().incoming.artifacts.resolvedArtifacts.map { artifacts ->
+        artifacts.mapNotNull { it.id.componentIdentifier as? org.gradle.api.artifacts.component.ModuleComponentIdentifier }
+            .map { "pkg:maven/${it.group}/${it.module}@${it.version}?type=jar" }.toSet()
+    }
+    // Every package the build relocates anything into, the agent's included.
+    @Suppress("UNCHECKED_CAST")
+    val targets = (relocations.values + (project(":agent").extra["relocations"] as Map<String, String>).values)
+        .map { it.replace('.', '/') + "/" }.toSet()
+    inputs.file(sbom)
+    inputs.file(jar)
+    inputs.property("resolved", resolved)
+    inputs.property("targets", targets)
+    doLast {
+        val bom = groovy.json.JsonSlurper().parse(sbom.get().asFile) as Map<*, *>
+        val listed = (bom["components"] as List<*>).map { it as Map<*, *> }
+        val agent = listed.single { (it["name"] as String) == "yoriwake-agent" }
+        val libraries = listed.filter { it !== agent }.map { it["purl"] as String }.toSet()
+        check(libraries == resolved.get()) {
+            "the SBOM lists $libraries, but the plugin jar bundles ${resolved.get()}"
+        }
+        fun relocatedTo(components: List<*>) = components.flatMap { c ->
+            ((c as Map<*, *>)["properties"] as List<*>?).orEmpty().map { (it as Map<*, *>)["value"] as String }
+        }.map { it.replace('.', '/') + "/" }.toSet()
+        // The relocation targets a jar has classes under; a shaded class under none of them is a
+        // library the build bundles without a relocation the SBOM could name.
+        fun shadedRoots(entries: List<String>): Set<String> {
+            val classes = entries.filter { it.startsWith("io/github/zeuspizza/yoriwake/shaded/") && it.endsWith(".class") }
+            val unnamed = classes.filter { c -> targets.none(c::startsWith) }
+            check(unnamed.isEmpty()) { "shaded classes outside every relocation: ${unnamed.take(5)}" }
+            return targets.filter { t -> classes.any { it.startsWith(t) } }.toSet()
+        }
+        ZipFile(jar.get().asFile).use { zip ->
+            val entries = zip.entries().toList().map { it.name }
+            // The agent's classes are unpacked into the plugin jar as well, so its relocations are there too.
+            val named = relocatedTo(listed - agent) + relocatedTo(agent["components"] as List<*>)
+            check(shadedRoots(entries) == named) {
+                "the plugin jar carries ${shadedRoots(entries)}, the SBOM names $named"
+            }
+            val nested = ZipInputStream(zip.getInputStream(zip.getEntry("yoriwake-agent.jar"))).use { s ->
+                generateSequence { s.nextEntry }.map { it.name }.toList()
+            }
+            val agentComponents = agent["components"] as List<*>
+            check(shadedRoots(nested) == relocatedTo(agentComponents)) {
+                "the agent jar carries ${shadedRoots(nested)}, the SBOM names ${relocatedTo(agentComponents)}"
+            }
+        }
+    }
+}
+tasks.check { dependsOn(checkSbom) }
 
 tasks.processResources {
     val version = jacocoVersion
@@ -328,6 +497,10 @@ testing {
                         systemProperty("yoriwake.localRepository", localRepository.get().asFile.absolutePath)
                         // The version this build publishes, release or snapshot, for the published-plugin test.
                         systemProperty("yoriwake.pluginVersion", project.version.toString())
+                        dependsOn(mergeSbom)
+                        systemProperty("yoriwake.sbom", sbomFile.get().asFile.absolutePath)
+                        systemProperty("yoriwake.jacocoVersion", jacocoVersion)
+                        systemProperty("yoriwake.asmVersion", asmVersion)
                         // What the identity test compares the TestKit daemon's JDK with.
                         systemProperty("yoriwake.functional.expectedJdk", (functionalCellJdk ?: buildJdk).toString())
                         systemProperty("yoriwake.functional.toolchainPaths", toolchainPaths)

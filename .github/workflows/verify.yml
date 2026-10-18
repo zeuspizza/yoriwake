@@ -73,6 +73,8 @@ jobs:
       # coverage job gates on this job's unit-test data and theirs.
       - run: ./gradlew build :agent:jacocoTestReport -x functionalTest -x functionalTestGradle9 -Pyoriwake.functional.coverage=false --console=plain
       - run: python3 .github/test_ci.py
+      - name: the release's signing and upload refusal work
+        run: .github/check_release_signing.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-linux-unit
