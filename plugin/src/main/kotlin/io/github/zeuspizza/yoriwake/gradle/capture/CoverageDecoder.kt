@@ -809,8 +809,9 @@ internal object CoverageDecoder {
                 TOUCH_RESOURCE -> resources.read(RESOURCE_READ, parts[2], sequence)
                 TOUCH_LOADER_MANIFEST -> resources.read(RESOURCE_LOADER, parts[2], sequence)
                 TOUCH_JAR -> {
-                    // Read whole by its own zip code: every entry of it.
-                    resources.read(RESOURCE_READ, parts[2], sequence)
+                    // Read whole by its own zip code: every entry of it. A jar outside the root holds
+                    // no file the comparison hands over, so it reads none.
+                    resources.archive(parts[2], sequence)
                     val entries = runCatching { archiveEntries(parts[2]) }.getOrNull()
                     if (entries == null) {
                         both(FIRST_TOUCH_ANY, sequence)
@@ -830,6 +831,7 @@ internal object CoverageDecoder {
     private class ResourceSink(
         val recorded: () -> Unit,
         val read: (kind: String, path: String, sequence: Int) -> Unit,
+        val archive: (path: String, sequence: Int) -> Unit,
         val all: (sequence: Int) -> Unit,
     )
 
@@ -842,7 +844,7 @@ internal object CoverageDecoder {
     private fun resourceSink(rootDir: File?, resource: (String, String, Int) -> Unit): ResourceSink {
         if (rootDir == null) {
             resource(RESOURCE_READ, FIRST_TOUCH_ANY, 0)
-            return ResourceSink({}, { _, _, _ -> }, {})
+            return ResourceSink({}, { _, _, _ -> }, { _, _ -> }, {})
         }
         return ResourceSink(
             recorded = { resource(RESOURCE_RECORDED, "", 0) },
@@ -850,6 +852,9 @@ internal object CoverageDecoder {
                 // The agent kept it as beneath the root; one this cannot key could be any file.
                 val key = ClasspathFiles.keyOf(rootDir, path)
                 if (key == null) resource(RESOURCE_READ, FIRST_TOUCH_ANY, sequence) else resource(kind, key, sequence)
+            },
+            archive = { path, sequence ->
+                ClasspathFiles.keyOf(rootDir, path)?.let { resource(RESOURCE_READ, it, sequence) }
             },
             all = { sequence -> resource(RESOURCE_READ, FIRST_TOUCH_ANY, sequence) },
         )

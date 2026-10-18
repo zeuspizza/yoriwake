@@ -154,15 +154,18 @@ internal object ClasspathFiles {
          * loader takes from it. Null when any move is not:
          * - a file that appeared or is gone, which is seen without a read;
          * - one that cannot be read;
-         * - a class file, read as a class rather than a file;
+         * - a class or source file, read as a class rather than a file;
+         * - an archive inside a directory, compared whole but read by its entries;
          * - one outside the root, whose reads are not recorded;
          * - one whose path holds a comma, which the selector's list cannot carry;
          * - a manifest whose loaded attributes moved or cannot be told.
          */
-        fun traceable(): List<String>? {
+        fun traceable(rootDir: File): List<String>? {
             val handed = mutableListOf<String>()
             for ((path, how) in files) {
                 if (how != "changed" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null
+                if (SOURCE_SUFFIXES.any(path::endsWith)) return null
+                if ("!/" !in path && isArchive(File(rootDir, path))) return null
                 if (path.startsWith("../") || File(path).isAbsolute) return null
                 // The selector is handed a comma-separated list.
                 if (',' in path) return null
@@ -243,6 +246,23 @@ internal object ClasspathFiles {
         }.getOrNull()?.takeUnless { it.startsWith("..") }
         return relative?.replace(File.separatorChar, '/')
     }
+
+    /** What the agent records a read of as a class's, never as a file's. */
+    private val SOURCE_SUFFIXES = listOf(".java", ".kt", ".groovy", ".scala")
+
+    /** An archive by its name or by its first bytes; one that cannot be read counts as one. */
+    private fun isArchive(file: File): Boolean {
+        val name = file.name
+        if (ARCHIVE_SUFFIXES.any(name::endsWith)) return true
+        return runCatching {
+            file.inputStream().use { input ->
+                val head = input.readNBytes(2)
+                head.size == 2 && head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte()
+            }
+        }.getOrDefault(true)
+    }
+
+    private val ARCHIVE_SUFFIXES = listOf(".jar", ".zip", ".war", ".ear", ".aar", ".jmod")
 
     /** Gradle's module cache, whose paths name their content. */
     private fun inModuleCache(file: File) = "/caches/modules-2/" in file.invariantSeparatorsPath

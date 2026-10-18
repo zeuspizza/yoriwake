@@ -261,17 +261,19 @@ class ClasspathFilesTest {
     }
 
     @Test
-    fun `changed non-class files beneath the root are handed to the selector`() {
+    fun `changed non-class files beneath the root are handed to the selector`(@TempDir root: File) {
+        file(root, "app/info.properties", "info=b\n")
         val moved = ClasspathFiles.compare(
             recorded = mapOf("app/info.properties" to "1", "lib.jar!/META-INF/MANIFEST.MF" to "1", "lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e"),
             current = mapOf("app/info.properties" to "2", "lib.jar!/META-INF/MANIFEST.MF" to "2", "lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e"),
         )
 
-        assertEquals(listOf("app/info.properties", "lib.jar!/META-INF/MANIFEST.MF"), moved.traceable())
+        assertEquals(listOf("app/info.properties", "lib.jar!/META-INF/MANIFEST.MF"), moved.traceable(root))
     }
 
     @Test
-    fun `any move whose readers are not recorded is not handed over`() {
+    fun `any move whose readers are not recorded is not handed over`(@TempDir root: File) {
+        file(root, "res/fixture.bin", "PK\u0003\u0004 an archive by its content")
         val cases = mapOf(
             "appeared" to (emptyMap<String, String>() to mapOf("a.properties" to "1")),
             "gone" to (mapOf("a.properties" to "1") to emptyMap()),
@@ -279,13 +281,16 @@ class ClasspathFilesTest {
             "a class file" to (mapOf("x.jar!/A.class" to "1") to mapOf("x.jar!/A.class" to "2")),
             "outside the root" to (mapOf("../elsewhere/a.properties" to "1") to mapOf("../elsewhere/a.properties" to "2")),
             "a comma" to (mapOf("a,b.properties" to "1") to mapOf("a,b.properties" to "2")),
+            "a source file" to (mapOf("res/config.groovy" to "1") to mapOf("res/config.groovy" to "2")),
+            "an archive by its name" to (mapOf("res/fixture.jar" to "1") to mapOf("res/fixture.jar" to "2")),
+            "an archive by its content" to (mapOf("res/fixture.bin" to "1") to mapOf("res/fixture.bin" to "2")),
             "loaded attributes" to (
                 mapOf("x.jar!/META-INF/MANIFEST.MF" to "1", "x.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e") to
                     mapOf("x.jar!/META-INF/MANIFEST.MF" to "2", "x.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "f")
                 ),
         )
         for ((case, tables) in cases) {
-            assertEquals(null, ClasspathFiles.compare(tables.first, tables.second).traceable(), case)
+            assertEquals(null, ClasspathFiles.compare(tables.first, tables.second).traceable(root), case)
         }
     }
 

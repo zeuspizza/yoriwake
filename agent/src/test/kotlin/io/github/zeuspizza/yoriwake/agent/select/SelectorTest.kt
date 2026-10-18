@@ -971,6 +971,25 @@ class SelectorTest {
     }
 
     @Test
+    fun `a test the map holds no position for runs on a moved file`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.PlacedTest", "com.acme.Other"),
+                test("com.acme.UnplacedTest", "com.acme.Other"),
+                positions = listOf("j\t2\t${placed("com.acme.PlacedTest")}"),
+                resourceTouches = listOf(recorded("j")),
+            ),
+            // The moved file alone: no changed class whose window would place the test too.
+            accounted = true,
+            moved = listOf("build/info.properties"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.PlacedTest")))
+        assertTrue(decision.includes(placed("com.acme.UnplacedTest")))
+    }
+
+    @Test
     fun `a moved file no JVM read runs nothing more`(@TempDir dir: File) {
         val decision = decide(
             stampMap(

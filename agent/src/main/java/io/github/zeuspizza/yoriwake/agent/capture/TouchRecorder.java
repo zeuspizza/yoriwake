@@ -585,7 +585,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
                     StackWalker.Option.RETAIN_CLASS_REFERENCE, StackWalker.Option.SHOW_HIDDEN_FRAMES));
             return walker.walk(frames -> {
                 boolean pastAgent = false;
-                for (java.util.Iterator<StackWalker.StackFrame> it = frames.limit(32).iterator(); it.hasNext(); ) {
+                boolean classPath = false;
+                for (java.util.Iterator<StackWalker.StackFrame> it = frames.limit(48).iterator(); it.hasNext(); ) {
                     StackWalker.StackFrame step = it.next();
                     if (!pastAgent && step.getClassName().startsWith(AGENT_PACKAGE)) {
                         continue;
@@ -601,13 +602,15 @@ public final class TouchRecorder implements CaptureSession.Touches {
                     if (owner.equals("java.util.jar.JarFile") && step.getMethodName().equals("checkForSpecialAttributes")) {
                         return true;
                     }
-                    // Reads the manifest for its Class-Path alone, whichever loader the class path is for.
+                    // Reads the manifest for its Class-Path, but caches it in the jar for a later
+                    // definePackage: it counts only on the way to the JDK's own loader, below.
                     if (owner.equals("jdk.internal.loader.URLClassPath$JarLoader")
                             && step.getMethodName().equals("getClassPath")) {
-                        return true;
+                        classPath = true;
+                        continue;
                     }
                     if (owner.equals("jdk.internal.loader.BuiltinClassLoader")
-                            && (step.getMethodName().equals("defineClass")
+                            && (classPath || step.getMethodName().equals("defineClass")
                                     || step.getMethodName().equals("defineOrCheckPackage"))) {
                         return true;
                     }

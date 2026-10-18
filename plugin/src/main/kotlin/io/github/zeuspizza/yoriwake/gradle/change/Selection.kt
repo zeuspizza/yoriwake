@@ -206,7 +206,7 @@ internal fun classpathFilesRule(
         is ClasspathFiles.Walk.Refused ->
             ClasspathFilesVerdict.Unrecorded("this task's classpath files could not be digested (${walk.reason})")
         is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked)).let { moved ->
-            val handed = moved.traceable()
+            val handed = moved.traceable(facts.rootDir)
             when {
                 moved.isEmpty -> ClasspathFilesVerdict.Unchanged
                 handed != null && CoverageDecoder.recordsResourceReads(mapDir) ->

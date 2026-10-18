@@ -1194,6 +1194,48 @@ class CoverageDecoderTest {
     }
 
     @Test
+    fun `a jar read whole outside the root reads no file`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val jar = File(dir, "cache/dependency.jar").apply { parentFile.mkdirs() }
+        jar.writeBytes(zip(listOf("x.properties" to "x".toByteArray())))
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a, b)
+        touches(
+            mapDir, "1",
+            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
+            "2\t${AgentContract.TOUCH_JAR}\t${jar.absolutePath}",
+            AgentContract.TOUCHES_COMPLETE,
+        )
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        assertEquals(listOf(listOf("0", AgentContract.RESOURCE_RECORDED, "")), resourceRows(mapDir))
+    }
+
+    @Test
+    fun `a recapture of one test keeps the reads of the JVMs it does not replace`(@TempDir dir: File) {
+        val root = File(dir, "root").apply { mkdirs() }
+        val mapDir = File(dir, "map")
+        records(mapDir, "1", a)
+        touches(
+            mapDir, "1",
+            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
+            "1\t${AgentContract.TOUCH_RESOURCE}\t${File(root, "info.properties").absolutePath}",
+            AgentContract.TOUCHES_COMPLETE,
+        )
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+        File(CoverageDecoder.recordsDir(mapDir), "worker-1").deleteRecursively()
+        records(mapDir, "2", b)
+        touches(mapDir, "2", "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
+
+        val rows = resourceRows(mapDir)
+        assertTrue(listOf("1", AgentContract.RESOURCE_READ, "info.properties") in rows, rows.toString())
+        assertEquals(2, rows.count { it[1] == AgentContract.RESOURCE_RECORDED }, rows.toString())
+    }
+
+    @Test
     fun `what widens to every class reads every file from there`(@TempDir dir: File) {
         val root = File(dir, "root").apply { mkdirs() }
         val mapDir = File(dir, "map")
