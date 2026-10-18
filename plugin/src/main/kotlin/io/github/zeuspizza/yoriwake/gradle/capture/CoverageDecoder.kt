@@ -734,7 +734,7 @@ internal object CoverageDecoder {
         }
         val read = HashMap<Pair<String, String>, Int>()
         val resource = { kind: String, path: String, sequence: Int -> read.merge(kind to path, sequence, ::minOf); Unit }
-        val discovery = readTouches(worker, inScope, touch, touchNamed, resourceReads(rootDir, resource))
+        val discovery = readTouches(worker, inScope, touch, touchNamed, resourceSink(rootDir, resource))
         // Project code that ran during discovery (a class orderer, a filter, a listener) was handed
         // every test class without a lookup by name, and may have kept what it read for later tests.
         if (discovery != null && firstRanProjectCode < discovery.planStartedAt) {
@@ -767,7 +767,7 @@ internal object CoverageDecoder {
         inScope: (String) -> Boolean,
         firstTouch: (String, Int) -> Unit,
         touchNamed: (String, Int) -> Unit,
-        resources: ResourceReads,
+        resources: ResourceSink,
     ): Discovery? {
         // Discovery loads and inspects every test class; what it did stays out of the named touches.
         var planStarted = false
@@ -827,7 +827,7 @@ internal object CoverageDecoder {
     }
 
     /** Where [readTouches] reports the non-class files a JVM read. */
-    private class ResourceReads(
+    private class ResourceSink(
         val recorded: () -> Unit,
         val read: (kind: String, path: String, sequence: Int) -> Unit,
         val all: (sequence: Int) -> Unit,
@@ -839,12 +839,12 @@ internal object CoverageDecoder {
      * [FIRST_TOUCH_ANY] for everything it could not observe or key. Without [rootDir] no read is
      * known: every file counts as read from the first record.
      */
-    private fun resourceReads(rootDir: File?, resource: (String, String, Int) -> Unit): ResourceReads {
+    private fun resourceSink(rootDir: File?, resource: (String, String, Int) -> Unit): ResourceSink {
         if (rootDir == null) {
             resource(RESOURCE_READ, FIRST_TOUCH_ANY, 0)
-            return ResourceReads({}, { _, _, _ -> }, {})
+            return ResourceSink({}, { _, _, _ -> }, {})
         }
-        return ResourceReads(
+        return ResourceSink(
             recorded = { resource(RESOURCE_RECORDED, "", 0) },
             read = { kind, path, sequence ->
                 // The agent kept it as beneath the root; one this cannot key could be any file.

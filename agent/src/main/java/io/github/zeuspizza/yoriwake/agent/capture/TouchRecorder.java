@@ -409,11 +409,11 @@ public final class TouchRecorder implements CaptureSession.Touches {
                         touchNamed(AgentContract.TOUCH_READ, entry.getName());
                     }
                 } else {
+                    String jar = new File(zip.getName()).getAbsolutePath();
                     if (entryHoldsAZip(zip, entry)) {
                         // An archive inside an archive: what reads it scans its entries with its own code.
-                        touchNamed(AgentContract.TOUCH_JAR, new File(zip.getName()).getAbsolutePath());
+                        touchNamed(AgentContract.TOUCH_JAR, jar);
                     }
-                    String jar = new File(zip.getName()).getAbsolutePath();
                     if (underRoot(jar)) {
                         touchNamed(MANIFEST.equals(entry.getName()) && loaderReadingManifest()
                                 ? AgentContract.TOUCH_LOADER_MANIFEST : AgentContract.TOUCH_RESOURCE,
@@ -430,6 +430,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 return;
             }
             File file = new File(path);
+            String absolute = file.getAbsolutePath();
             boolean archive = path.endsWith(".jar") || holdsAZip(file);
             // The JDK's zip code opening an archive reads its entries through the entry hook.
             if (archive && openedByJdkZip()) {
@@ -438,10 +439,9 @@ public final class TouchRecorder implements CaptureSession.Touches {
             if (archive && (path.endsWith(".jar") || mayHoldClasses(file))) {
                 // A scanner reading an archive with its own zip code: every class in it may be read.
                 // Known by content, not name: a war, an aar, or a zip of the classes is one too.
-                touchNamed(AgentContract.TOUCH_JAR, file.getAbsolutePath());
+                touchNamed(AgentContract.TOUCH_JAR, absolute);
             }
             // An archive read whole is a read of every entry in it.
-            String absolute = file.getAbsolutePath();
             if (underRoot(absolute)) {
                 touchNamed(AgentContract.TOUCH_RESOURCE, absolute);
             }
@@ -542,24 +542,32 @@ public final class TouchRecorder implements CaptureSession.Touches {
         if (prefixes.isEmpty()) {
             return false;
         }
-        return rootChecked.computeIfAbsent(absolute, path -> beneath(path, prefixes));
+        // Resolved outside the map's lock: the answer is the same whichever thread computes it.
+        Boolean known = rootChecked.get(absolute);
+        if (known == null) {
+            known = beneath(absolute, prefixes);
+            rootChecked.putIfAbsent(absolute, known);
+        }
+        return known;
     }
 
     private static boolean beneath(String absolute, List<String> prefixes) {
-        for (String prefix : prefixes) {
-            if (absolute.startsWith(prefix)) {
-                return true;
-            }
+        if (startsWithAny(absolute, prefixes)) {
+            return true;
         }
         try {
-            String resolved = new File(absolute).getCanonicalPath();
-            for (String prefix : prefixes) {
-                if (resolved.startsWith(prefix)) {
-                    return true;
-                }
-            }
+            return startsWithAny(new File(absolute).getCanonicalPath(), prefixes);
         } catch (IOException e) {
             // Not resolvable, so not known to be beneath the root.
+            return false;
+        }
+    }
+
+    private static boolean startsWithAny(String path, List<String> prefixes) {
+        for (String prefix : prefixes) {
+            if (path.startsWith(prefix)) {
+                return true;
+            }
         }
         return false;
     }

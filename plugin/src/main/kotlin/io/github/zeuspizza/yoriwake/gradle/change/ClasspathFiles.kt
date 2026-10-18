@@ -150,11 +150,14 @@ internal object ClasspathFiles {
 
         /**
          * The moved files whose readers a capture records, when every move is one: a non-class file
-         * beneath the root whose content changed, and, for a jar's manifest, nothing the class
-         * loader takes from it. Null when any move is not: a file that appeared or is gone (seen
-         * without a read), one that cannot be read, a class file (read as a class, not a file),
-         * one outside the root (whose reads are not recorded), one whose path holds a comma, or a manifest whose loaded
-         * attributes moved or cannot be told.
+         * beneath the root whose content changed and, for a jar's manifest, nothing the class
+         * loader takes from it. Null when any move is not:
+         * - a file that appeared or is gone, which is seen without a read;
+         * - one that cannot be read;
+         * - a class file, read as a class rather than a file;
+         * - one outside the root, whose reads are not recorded;
+         * - one whose path holds a comma, which the selector's list cannot carry;
+         * - a manifest whose loaded attributes moved or cannot be told.
          */
         fun traceable(): List<String>? {
             val handed = mutableListOf<String>()

@@ -377,8 +377,9 @@ public final class AgentContract {
     public static final String TOUCH_PLAN_STARTED = "plan-started";
 
     /**
-     * A touch kind: a file that is not a class, source or archive was opened beneath the
-     * {@link #CAPTURE_ROOT_PROPERTY}; its absolute path, or a jar entry as {@code <jar>!/<entry>}.
+     * A touch kind: a file that is not a class or source file was opened beneath the {@link
+     * #CAPTURE_ROOT_PROPERTY}, an archive read whole included; its absolute path, or a jar entry
+     * as {@code <jar>!/<entry>}.
      */
     public static final String TOUCH_RESOURCE = "resource";
 
