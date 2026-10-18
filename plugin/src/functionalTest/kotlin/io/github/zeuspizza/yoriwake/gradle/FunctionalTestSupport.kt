@@ -178,6 +178,114 @@ abstract class FunctionalTestSupport {
         public class Beta { public int thrice(int n) { return n * 3; } }
     """.trimIndent()
 
+    /**
+     * A committed Kotlin Multiplatform module with a `jvm()` and a `js()` target, at the root of
+     * [dir]. `js()` needs no toolchain download for a JVM test build, so the module has a non-JVM
+     * target without Node.js or Kotlin/Native on the machine.
+     *
+     * `commonMain` declares package `dev.common` and `jvmMain` package `dev.jvm`, so a scope that
+     * leaves out either directory visibly lacks its package. `JvmOnly.usesQuad` inlines a
+     * `commonMain` function, so the build's classes carry the `SourceDebugExtension` real Kotlin
+     * code always has; without one, any Kotlin change forces a full run. Test classes run in name
+     * order, and `A0BystanderTest` runs first and only a class no change touches, so a narrowed run
+     * leaves it out. (A test that ran no class at all would run on every build.) Tests share their
+     * code's package: an edited Kotlin test outside every scoped package is a change no class answers
+     * to, and runs everything.
+     */
+    protected fun multiplatform(dir: File, yoriwake: String = "id(\"io.github.zeuspizza.yoriwake\")"): File {
+        fun test(name: String, assertion: String, sourceSet: String = "jvmTest") =
+            "src/$sourceSet/kotlin/dev/common/$name.kt" to """
+                package dev.common
+                import dev.jvm.*
+                import kotlin.test.Test
+                import kotlin.test.assertEquals
+                class $name { @Test fun passes() { $assertion } }
+            """.trimIndent()
+        build(
+            dir,
+            "build.gradle.kts" to """
+                plugins {
+                    kotlin("multiplatform") version "2.1.20"
+                    jacoco
+                    $yoriwake
+                }
+                repositories { mavenCentral() }
+                kotlin {
+                    // Kotlin 2.1.20 targets at most Java 23, so the fixture keeps to 21 on any daemon JDK.
+                    jvmToolchain(21)
+                    jvm { testRuns["test"].executionTask.configure { useJUnitPlatform() } }
+                    js { nodejs() }
+                    sourceSets { commonTest.dependencies { implementation(kotlin("test")) } }
+                }
+            """.trimIndent(),
+            "src/commonMain/kotlin/dev/common/Shared.kt" to """
+                package dev.common
+                fun twice(n: Int) = n * 2
+                fun thrice(n: Int) = n * 3
+            """.trimIndent(),
+            "src/commonMain/kotlin/dev/common/Api.kt" to """
+                package dev.common
+                expect fun f(x: Int = 1): Int
+                fun plain() = 7
+            """.trimIndent(),
+            "src/jvmMain/kotlin/dev/common/Api.jvm.kt" to """
+                package dev.common
+                actual fun f(x: Int): Int = x + 100
+            """.trimIndent(),
+            "src/jsMain/kotlin/dev/common/Api.js.kt" to """
+                package dev.common
+                actual fun f(x: Int): Int = x + 100
+            """.trimIndent(),
+            "src/jsMain/kotlin/dev/common/JsOnly.kt" to """
+                package dev.common
+                fun jsName() = "js"
+            """.trimIndent(),
+            "src/commonMain/kotlin/dev/common/Inlines.kt" to """
+                package dev.common
+                inline fun quad(n: Int) = n * 4
+            """.trimIndent(),
+            "src/commonMain/kotlin/dev/common/Bystander.kt" to """
+                package dev.common
+                fun bystander() = 0
+            """.trimIndent(),
+            "src/commonMain/kotlin/dev/common/Limits.kt" to """
+                package dev.common
+                const val LIMIT = 5
+            """.trimIndent(),
+            "src/jvmMain/kotlin/dev/jvm/JvmOnly.kt" to """
+                package dev.jvm
+                import dev.common.quad
+                class JvmOnly {
+                    fun name() = "jvm"
+                    fun usesQuad(n: Int) = quad(n)
+                }
+            """.trimIndent(),
+            "src/jvmMain/kotlin/dev/jvm/Platform.jvm.kt" to """
+                package dev.jvm
+                fun platformName() = "JVM"
+            """.trimIndent(),
+            test("A0BystanderTest", "assertEquals(0, bystander())"),
+            test("A5CommonThriceTest", "assertEquals(6, thrice(2))", sourceSet = "commonTest"),
+            test("B1DefaultTest", "assertEquals(101, f())"),
+            test("B2JvmOnlyTest", "assertEquals(\"jvm\", JvmOnly().name())"),
+            test("B3QuadTest", "assertEquals(8, JvmOnly().usesQuad(2))"),
+            test("B4LimitTest", "assertEquals(5, LIMIT)"),
+            test("B5PlatformTest", "assertEquals(\"JVM\", platformName())"),
+            test("B6PlainTest", "assertEquals(7, plain())"),
+            "src/jvmTest/resources/junit-platform.properties" to classOrderByName.second,
+        )
+        File(dir, "settings.gradle.kts").writeText(
+            "pluginManagement { repositories { mavenCentral(); gradlePluginPortal() } }\n" +
+                """rootProject.name = "sample""""
+        )
+        ignoreBuildOutputs(dir)
+        // Where Kotlin's compiler keeps its session state; a Kotlin project ignores it.
+        File(dir, ".gitignore").appendText(System.lineSeparator() + ".kotlin/")
+        git(dir, "init")
+        commit(dir, "base")
+        return dir
+    }
+
     /** The notes a decision record carries about the run as a whole, as `key` to `value`. */
     protected fun decisionNotes(dir: File): Map<String, String> {
         val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)

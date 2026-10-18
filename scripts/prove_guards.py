@@ -799,6 +799,13 @@ MUTATIONS = [
      "                    YoriwakePlugin.multiplatformSourceDirs(candidate.projectDir)",
      "                    .filter { it.isDirectory }",
      unit_suite, "a multiplatform module contributes its own packages"),
+    # The same rule, through a real multiplatform build: its capture must scope the packages of
+    # both commonMain and jvmMain.
+    ("the multiplatform layout drops out of a real build's scope", PROJECT_FACTS,
+     "                    .filter { it.isDirectory } +\n"
+     "                    YoriwakePlugin.multiplatformSourceDirs(candidate.projectDir)",
+     "                    .filter { it.isDirectory }",
+     functional_suite, "a capture scopes the module's commonMain and jvmMain packages"),
     ("a module with no JVM target is attached to anyway", YORIWAKE_PLUGIN,
      "            MULTIPLATFORM_JVM_MARKERS\n"
      "                .any { File(project.projectDir, it).isDirectory }",
@@ -1442,6 +1449,12 @@ MUTATIONS = [
      unit_suite,
      "a class whose bytecode moved since the capture is handed to the selector apart from the "
      "change set"),
+    # An `expect` default's bytes live in the `actual`'s class, which no changed path names: in a
+    # real multiplatform build only this comparison runs the default's caller.
+    ("the digest comparison stops noticing an expect default", SELECTION,
+     "                if (recorded[name] != value) added += name",
+     "                if (false) added += name",
+     functional_suite, "a changed expect default runs its caller"),
     ("the selector stops selecting on changed bytes", SELECTOR,
      "        Set<String> changedBytes = bytesOnly(change.changedBytes(), changedClassPrefixes);",
      "        Set<String> changedBytes = new HashSet<>();",
