@@ -1111,10 +1111,10 @@ class CoverageDecoderTest {
         records(mapDir, "1", a, b)
         touches(
             mapDir, "1",
-            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
-            "1\t${AgentContract.TOUCH_LOADER_MANIFEST}\t${jar.absolutePath}!/META-INF/MANIFEST.MF",
-            "2\t${AgentContract.TOUCH_RESOURCE}\t${File(root, "app/build/resources/test/info.properties").absolutePath}",
-            "2\t${AgentContract.TOUCH_RESOURCE}\t${jar.absolutePath}!/build-info.properties",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("1", AgentContract.TOUCH_LOADER_MANIFEST, "${jar.absolutePath}!/META-INF/MANIFEST.MF"),
+            Tsv.join("2", AgentContract.TOUCH_RESOURCE, File(root, "app/build/resources/test/info.properties").absolutePath),
+            Tsv.join("2", AgentContract.TOUCH_RESOURCE, "${jar.absolutePath}!/build-info.properties"),
             AgentContract.TOUCHES_COMPLETE,
         )
 
@@ -1140,9 +1140,9 @@ class CoverageDecoderTest {
         records(mapDir, "1", a)
         touches(
             mapDir, "1",
-            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
-            "1\t${AgentContract.TOUCH_RESOURCE}\t${File(link, "app/info.properties").absolutePath}",
-            "1\t${AgentContract.TOUCH_RESOURCE}\t${root.absolutePath}/app/../app/info.properties",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("1", AgentContract.TOUCH_RESOURCE, File(link, "app/info.properties").absolutePath),
+            Tsv.join("1", AgentContract.TOUCH_RESOURCE, "${root.absolutePath}/app/../app/info.properties"),
             AgentContract.TOUCHES_COMPLETE,
         )
 
@@ -1164,8 +1164,8 @@ class CoverageDecoderTest {
         records(mapDir, "1", a, b)
         touches(
             mapDir, "1",
-            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
-            "2\t${AgentContract.TOUCH_RESOURCE}\t${File(dir, "elsewhere.txt").absolutePath}",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("2", AgentContract.TOUCH_RESOURCE, File(dir, "elsewhere.txt").absolutePath),
             AgentContract.TOUCHES_COMPLETE,
         )
 
@@ -1183,8 +1183,8 @@ class CoverageDecoderTest {
         records(mapDir, "1", a, b)
         touches(
             mapDir, "1",
-            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
-            "2\t${AgentContract.TOUCH_JAR}\t${jar.absolutePath}",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("2", AgentContract.TOUCH_JAR, "${jar.absolutePath}"),
             AgentContract.TOUCHES_COMPLETE,
         )
 
@@ -1202,8 +1202,8 @@ class CoverageDecoderTest {
         records(mapDir, "1", a, b)
         touches(
             mapDir, "1",
-            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
-            "2\t${AgentContract.TOUCH_JAR}\t${jar.absolutePath}",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("2", AgentContract.TOUCH_JAR, "${jar.absolutePath}"),
             AgentContract.TOUCHES_COMPLETE,
         )
 
@@ -1219,14 +1219,14 @@ class CoverageDecoderTest {
         records(mapDir, "1", a)
         touches(
             mapDir, "1",
-            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
-            "1\t${AgentContract.TOUCH_RESOURCE}\t${File(root, "info.properties").absolutePath}",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
+            Tsv.join("1", AgentContract.TOUCH_RESOURCE, File(root, "info.properties").absolutePath),
             AgentContract.TOUCHES_COMPLETE,
         )
         CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
         File(CoverageDecoder.recordsDir(mapDir), "worker-1").deleteRecursively()
         records(mapDir, "2", b)
-        touches(mapDir, "2", "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+        touches(mapDir, "2", Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"), AgentContract.TOUCHES_COMPLETE)
 
         CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
 
@@ -1242,7 +1242,7 @@ class CoverageDecoderTest {
         records(mapDir, "1", a, b)
         touches(
             mapDir, "1",
-            "1\t${AgentContract.TOUCH_RESOURCES_RECORDED}\t${root.absolutePath}",
+            Tsv.join("1", AgentContract.TOUCH_RESOURCES_RECORDED, "${root.absolutePath}"),
             "2\t${AgentContract.TOUCH_ALL}\ta child process started",
             AgentContract.TOUCHES_COMPLETE,
         )
@@ -1326,7 +1326,7 @@ class CoverageDecoderTest {
         val middle = zip(listOf("lib/inner.jar" to inner))
         val outer = File(dir, "bundle").apply { writeBytes(zip(listOf("readme.txt" to ByteArray(1), "nested" to middle))) }
         records(dir, "1", a, b)
-        touches(dir, "1", "2\t${AgentContract.TOUCH_JAR}\t${outer.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+        touches(dir, "1", Tsv.join("2", AgentContract.TOUCH_JAR, "${outer.absolutePath}"), AgentContract.TOUCHES_COMPLETE)
 
         CoverageDecoder.decode(dir, listOf("com.acme"))
 
@@ -1339,7 +1339,7 @@ class CoverageDecoderTest {
         val deep = (1..9).fold(zip(listOf("com/acme/Point.class" to ByteArray(1)))) { inner, _ -> zip(listOf("x.jar" to inner)) }
         val outer = File(dir, "deep.zip").apply { writeBytes(deep) }
         records(dir, "1", a, b)
-        touches(dir, "1", "2\t${AgentContract.TOUCH_JAR}\t${outer.absolutePath}", AgentContract.TOUCHES_COMPLETE)
+        touches(dir, "1", Tsv.join("2", AgentContract.TOUCH_JAR, "${outer.absolutePath}"), AgentContract.TOUCHES_COMPLETE)
 
         CoverageDecoder.decode(dir, listOf("com.acme"))
 

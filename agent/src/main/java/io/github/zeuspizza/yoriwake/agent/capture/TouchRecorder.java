@@ -522,11 +522,12 @@ public final class TouchRecorder implements CaptureSession.Touches {
         File dir = new File(root).getAbsoluteFile();
         found.add(dir.getPath() + File.separator);
         try {
-            String resolved = dir.getCanonicalPath() + File.separator;
+            // Resolves links on every platform, which a canonical path does not on Windows.
+            String resolved = dir.toPath().toRealPath().toString() + File.separator;
             if (!found.contains(resolved)) {
                 found.add(resolved);
             }
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             // The path as given still matches what is opened by it.
         }
         return found;
@@ -556,8 +557,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
             return true;
         }
         try {
-            return startsWithAny(new File(absolute).getCanonicalPath(), prefixes);
-        } catch (IOException e) {
+            return startsWithAny(new File(absolute).toPath().toRealPath().toString(), prefixes);
+        } catch (IOException | RuntimeException e) {
             // Not resolvable, so not known to be beneath the root.
             return false;
         }
