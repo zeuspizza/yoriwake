@@ -839,23 +839,20 @@ jobs:
 
       - uses: actions/cache/restore@v4
         with:
-          path: |
-            .gradle/yoriwake
-            !.gradle/yoriwake/*/raw
-            !.gradle/yoriwake/*/selection.tsv
+          path: .gradle/yoriwake
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
           restore-keys: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-
 
       # Records: this workflow passes no trusted-map list, so it does not select.
       - run: ./gradlew test
 
+      # Not cached: an excluding `!` path under a cached directory keeps nothing out.
+      - if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: rm -rf .gradle/yoriwake/*/raw .gradle/yoriwake/*/selection.tsv
       - if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: actions/cache/save@v4
         with:
-          path: |
-            .gradle/yoriwake
-            !.gradle/yoriwake/*/raw
-            !.gradle/yoriwake/*/selection.tsv
+          path: .gradle/yoriwake
           key: yoriwake-${{ runner.os }}-${{ github.job }}-${{ env.YORIWAKE_VERSION }}-${{ github.sha }}
 ```
 
@@ -877,9 +874,11 @@ requests to the action, which passes the trusted-map list.
   leg's JDK to the key, such as `${{ matrix.java }}`.
 - **Commit, with a prefix fallback.** An exact hit almost never happens. A map from an older commit
   is still useful and still safe.
-- **Not `raw/`.** The undecoded records are cleared by the next capture before it writes anything.
-- **Not `selection.tsv`.** A complement run leaves out the tests it lists, and no map digest covers
-  it, so it comes only from the selecting job of the same workflow run, never from a cache.
+- **Not `raw/`,** deleted before the save. The undecoded records are cleared by the next capture
+  before it writes anything.
+- **Not `selection.tsv`,** deleted before the save. A complement run leaves out the tests it lists,
+  and no map digest covers it, so it comes only from the selecting job of the same workflow run,
+  never from a cache.
 
 ### When to refresh
 
@@ -1336,8 +1335,8 @@ format versioning.
   through [yoriwake-action](https://github.com/zeuspizza/yoriwake-action), which passes the
   trusted-map list. A 0.1.0 pull-request step that still passes `-Pyoriwake.select` keeps working,
   but narrows from whatever entry it restores, a pull request's own included. Before using
-  `-Pyoriwake.complement`, add `!.gradle/yoriwake/*/selection.tsv` to a cache path that stores the
-  whole map directory.
+  `-Pyoriwake.complement`, delete `.gradle/yoriwake/*/selection.tsv` in a step before the cache
+  save, as the recipe above does; an excluding `!` path does not keep it out.
 - **What runs changes without a new flag:** a Develocity Test Distribution or Predictive Test
   Selection task is declined; a JUnit Platform test filter set in the build script selects and
   dates the map; tests named with `--tests` or by an IDE run as named.
