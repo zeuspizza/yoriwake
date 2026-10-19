@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -149,6 +150,7 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         vararg appSources: Pair<String, String>,
         rootBuild: String = "",
         readsManifests: Boolean = true,
+        infoReader: Pair<String, String> = infoTest,
     ) {
         build(
             dir,
@@ -158,7 +160,7 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
             "app/build.gradle.kts" to minimalBuild + "\n" + appBuild + "\n" + appExtra,
             *arrayOf(
                 oneClass, oneTest, secondClass, secondTest, classOrderByName,
-                legacy, legacyTest, infoTest, staticResource, *appSources,
+                legacy, legacyTest, infoReader, staticResource, *appSources,
                 *(if (readsManifests) arrayOf(revisionTest) else emptyArray()),
             ).map { (path, content) -> "app/$path" to content }.toTypedArray(),
         )
@@ -199,6 +201,63 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
             output.lines().any { it.startsWith("[yoriwake] :app:test: ") && "app/build/resources/test/info.properties" in it },
             output,
         )
+    }
+
+    /** [infoTest], opening the generated file by a path it builds: [path] names it from the project directory. */
+    private fun infoReadThrough(path: String, before: String = "", after: String = "") =
+        "src/test/java/dev/sample/AaInfoTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import java.io.File;
+            import java.io.FileInputStream;
+            import java.io.InputStream;
+            import java.nio.file.*;
+            import java.util.Properties;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class AaInfoTest {
+                @Test void reads() throws Exception {
+                    $before
+                    Properties info = new Properties();
+                    try (InputStream in = new FileInputStream(new File("$path"))) { info.load(in); }
+                    $after
+                    if ("x".equals(info.getProperty("info"))) assertEquals(1, new Legacy().value());
+                }
+            }
+        """.trimIndent()
+
+    private fun assertReaderRanAlone(dir: File, output: String) {
+        assertTrue("dev.sample.AaInfoTest" in ranTests(app(dir)), output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+    }
+
+    @Test
+    fun `a generated resource read through a link the test removes runs the test that reads it`(@TempDir dir: File) {
+        fixture(
+            dir,
+            infoReader = infoReadThrough(
+                "build/alias/info.properties",
+                before = "Path alias = Paths.get(\"build/alias\"); Files.deleteIfExists(alias); " +
+                    "Files.createSymbolicLink(alias, Paths.get(\"resources/test\"));",
+                after = "Files.delete(alias);",
+            ),
+        )
+        capture(dir, "-Pinfo=a")
+        editLegacy(dir)
+
+        assertReaderRanAlone(dir, select(dir, "-Pinfo=x"))
+    }
+
+    @Test
+    fun `a generated resource read in another letter case runs the test that reads it`(@TempDir dir: File) {
+        val probe = File(dir, "case-probe").apply { writeText("") }
+        assumeTrue(File(dir, "CASE-PROBE").exists(), "the file system tells letter cases apart")
+        probe.delete()
+        fixture(dir, infoReader = infoReadThrough("BUILD/resources/test/info.properties"))
+        capture(dir, "-Pinfo=a")
+        editLegacy(dir)
+
+        assertReaderRanAlone(dir, select(dir, "-Pinfo=x"))
     }
 
     @Test

@@ -6,6 +6,7 @@ import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -314,6 +315,18 @@ class ClasspathFilesTest {
         assertEquals("app/info.properties", ClasspathFiles.keyOf(root, File(link, "app/info.properties").absolutePath))
         assertEquals("lib.jar!/x.properties", ClasspathFiles.keyOf(root, File(root, "lib.jar").absolutePath + "!/x.properties"))
         assertEquals(null, ClasspathFiles.keyOf(root, File(dir, "elsewhere.txt").absolutePath))
+    }
+
+    @Test
+    fun `the resolved name a read is also recorded under keys as the walk keys the file`(@TempDir root: File) {
+        val file = File(root, "app/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val link = java.nio.file.Files.createSymbolicLink(File(root, "alias").toPath(), File(root, "app").toPath())
+        val resolved = file.toPath().toRealPath().toString()
+        java.nio.file.Files.delete(link)
+
+        assertEquals("app/info.properties", ClasspathFiles.keyOf(root, resolved))
+        // The path as given no longer leads to the file once the link is gone.
+        assertNotEquals("app/info.properties", ClasspathFiles.keyOf(root, File(link.toFile(), "info.properties").absolutePath))
     }
 
     @Test

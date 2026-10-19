@@ -379,7 +379,8 @@ public final class AgentContract {
     /**
      * A touch kind: a file that is not a class or source file was opened beneath the {@link
      * #CAPTURE_ROOT_PROPERTY}, an archive read whole included; its absolute path, or a jar entry
-     * as {@code <jar>!/<entry>}.
+     * as {@code <jar>!/<entry>}. One read may give several rows, one per name it went by, or, for a
+     * read the agent could not place, its path as given.
      */
     public static final String TOUCH_RESOURCE = "resource";
 

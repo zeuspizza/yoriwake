@@ -32,6 +32,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - The CI reference leads with yoriwake-action; the contract lists `capture-commit`. Map: left alone.
 - A build-produced classpath file that changed runs only the tests that read it, not every test. Map: repaired
   on the next build, which runs every test once where your own jars are on the test classpath.
+- A read of a build-produced classpath file counts through a link, another letter case, a short name, or a mount
+  or drive alias of the project. Map: left alone.
 - The reference's CI recipe deletes `raw/` and `selection.tsv` before the save; its `!` paths kept nothing out. Map: left alone.
 - Reference: what upgrading from 0.2.0 asks of you, in "Upgrading and your map". Map: left alone.
 
