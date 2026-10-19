@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.agent.capture
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -68,7 +69,200 @@ class TouchRecorderTest {
         val recorder = TouchRecorder(root.path)
         recorder.read(File(link, "info.properties"))
 
-        assertEquals(listOf(AgentContract.TOUCH_RESOURCE to File(link, "info.properties").absolutePath), drained(recorder))
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_RESOURCE to File(link, "info.properties").absolutePath,
+                AgentContract.TOUCH_RESOURCE to File(root, "info.properties").toPath().toRealPath().toString(),
+            ),
+            drained(recorder),
+        )
+    }
+
+    /** Whether [dir]'s file system finds a name in another letter case, as macOS and Windows do. */
+    private fun caseInsensitive(dir: File): Boolean {
+        val probe = File(dir, "case-probe").apply { writeText("") }
+        return File(dir, "CASE-PROBE").exists().also { probe.delete() }
+    }
+
+    @Test
+    fun `a file read in another letter case below the root is kept under its case on disk too`(@TempDir root: File) {
+        assumeTrue(caseInsensitive(root), "the file system tells letter cases apart")
+        val file = File(root, "app/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val recorder = TouchRecorder(root.path)
+        recorder.read(File(root, "APP/info.properties"))
+
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_RESOURCE to File(root, "APP/info.properties").absolutePath,
+                AgentContract.TOUCH_RESOURCE to file.toPath().toRealPath().toString(),
+            ),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a file read through a link inside the root is kept under the file it reached, after the link is gone`(
+        @TempDir root: File,
+    ) {
+        val file = File(root, "app/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val link = java.nio.file.Files.createSymbolicLink(File(root, "alias").toPath(), File(root, "app").toPath())
+        val recorder = TouchRecorder(root.path)
+        recorder.read(File(link.toFile(), "info.properties"))
+        java.nio.file.Files.delete(link)
+
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_RESOURCE to File(link.toFile(), "info.properties").absolutePath,
+                AgentContract.TOUCH_RESOURCE to file.toPath().toRealPath().toString(),
+            ),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a jar entry read through another letter case of the jar's path is kept under its case on disk too`(
+        @TempDir root: File,
+    ) {
+        assumeTrue(caseInsensitive(root), "the file system tells letter cases apart")
+        val jar = File(root, "lib.jar")
+        ZipOutputStream(jar.outputStream()).use { it.putNextEntry(ZipEntry("x.properties")); it.closeEntry() }
+        val recorder = TouchRecorder(root.path)
+        ZipFile(File(root, "LIB.jar")).use { zip -> recorder.read(arrayOf<Any>(zip, zip.getEntry("x.properties"))) }
+
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_RESOURCE to "${File(root, "LIB.jar").absolutePath}!/x.properties",
+                AgentContract.TOUCH_RESOURCE to "${jar.toPath().toRealPath()}!/x.properties",
+            ),
+            drained(recorder),
+        )
+    }
+
+    /** A same-file check that takes [alias] for the root, standing in for a bind mount or a drive alias. */
+    private fun aliasOf(root: File, alias: File) = TouchRecorder.SameFile { a, b ->
+        (a == alias.toPath().toRealPath() && b == java.nio.file.Paths.get(root.absolutePath + File.separator)) ||
+            java.nio.file.Files.isSameFile(a, b)
+    }
+
+    @Test
+    fun `a file read through another name for the root is kept beneath the root`(
+        @TempDir root: File,
+        @TempDir mount: File,
+    ) {
+        File(mount, "build/x.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val recorder = TouchRecorder(root.path, aliasOf(root, mount))
+        recorder.read(File(mount, "build/x.properties"))
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_RESOURCE to File(root, "build/x.properties").absolutePath),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a file read through a link outside the root into another name for the root is kept beneath the root`(
+        @TempDir root: File,
+        @TempDir mount: File,
+        @TempDir elsewhere: File,
+    ) {
+        val file = File(mount, "build/x.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val link = java.nio.file.Files.createSymbolicLink(File(elsewhere, "x.properties").toPath(), file.toPath())
+        val recorder = TouchRecorder(root.path, aliasOf(root, mount))
+        recorder.read(link.toFile())
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_RESOURCE to File(root, "build/x.properties").absolutePath),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a link inside the root pointed elsewhere between two reads is followed both times`(@TempDir root: File) {
+        File(root, "a/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+        File(root, "b/info.properties").apply { parentFile.mkdirs(); writeText("b") }
+        val link = File(root, "alias").toPath()
+        val recorder = TouchRecorder(root.path)
+        java.nio.file.Files.createSymbolicLink(link, File(root, "a").toPath())
+        recorder.read(File(link.toFile(), "info.properties"))
+        java.nio.file.Files.delete(link)
+        java.nio.file.Files.createSymbolicLink(link, File(root, "b").toPath())
+        recorder.read(File(link.toFile(), "info.properties"))
+
+        assertTrue(File(root, "b/info.properties").toPath().toRealPath().toString() in drained(recorder).map { it.second })
+    }
+
+    @Test
+    fun `a jar entry read through another name for the root is kept beneath the root`(
+        @TempDir root: File,
+        @TempDir mount: File,
+    ) {
+        val jar = File(mount, "lib.jar")
+        ZipOutputStream(jar.outputStream()).use { it.putNextEntry(ZipEntry("x.properties")); it.closeEntry() }
+        val recorder = TouchRecorder(root.path, aliasOf(root, mount))
+        ZipFile(jar).use { zip -> recorder.read(arrayOf<Any>(zip, zip.getEntry("x.properties"))) }
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_RESOURCE to "${File(root, "lib.jar").absolutePath}!/x.properties"),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a read whose place cannot be told is kept as given, which counts as a read of every file`(
+        @TempDir root: File,
+        @TempDir elsewhere: File,
+    ) {
+        val file = File(elsewhere, "x.properties").apply { writeText("a") }
+        val recorder = TouchRecorder(root.path) { _, _ -> throw java.io.IOException("cannot tell") }
+        recorder.read(file)
+
+        assertEquals(listOf(AgentContract.TOUCH_RESOURCE to file.absolutePath), drained(recorder))
+    }
+
+    @Test
+    fun `a read of a file that is not there, outside the root, is not kept`(@TempDir root: File, @TempDir elsewhere: File) {
+        val recorder = TouchRecorder(root.path) { _, _ -> throw java.io.IOException("cannot tell") }
+        recorder.read(File(elsewhere, "missing.properties"))
+
+        assertEquals(emptyList(), drained(recorder))
+    }
+
+    private val windows = System.getProperty("os.name").startsWith("Windows")
+
+    @Test
+    fun `a file read through a short name below the root is kept under its long name too`(@TempDir root: File) {
+        assumeTrue(windows, "short names are Windows'")
+        val file = File(root, "longdirectoryname/info.properties").apply { parentFile.mkdirs(); writeText("a") }
+        val short = ProcessBuilder("cmd", "/c", "for %I in (\"${file.parentFile.absolutePath}\") do @echo %~sI")
+            .redirectErrorStream(true).start().inputStream.bufferedReader().readText().trim()
+        assumeTrue(short.isNotEmpty() && !short.endsWith("longdirectoryname", ignoreCase = true),
+            "this volume keeps no short names: $short")
+        val recorder = TouchRecorder(root.path)
+        recorder.read(File(short, "info.properties"))
+
+        val recorded = drained(recorder).map { it.second }
+        val long = file.canonicalPath
+        assertTrue(long in recorded, "read as $short\\info.properties, recorded $recorded, not $long")
+    }
+
+    @Test
+    fun `a file read through a drive letter given to a directory above the root is kept`(@TempDir dir: File) {
+        assumeTrue(windows, "drive letters are Windows'")
+        val root = File(dir, "root").apply { mkdirs() }
+        File(root, "info.properties").writeText("a")
+        val letter = ('P'..'Z').firstOrNull { !File("$it:\\").exists() }
+        assumeTrue(letter != null, "no free drive letter")
+        assertEquals(0, ProcessBuilder("subst", "$letter:", dir.absolutePath).start().waitFor())
+        try {
+            val recorder = TouchRecorder(root.path)
+            recorder.read(File("$letter:\\root\\info.properties"))
+
+            // Kept beneath the root, or as given when the drive resolves to it: never widened.
+            val given = File("$letter:\\root\\info.properties").absolutePath
+            assertTrue(drained(recorder).map { it.second } in setOf(listOf(given), listOf(File(root, "info.properties").absolutePath)))
+        } finally {
+            ProcessBuilder("subst", "$letter:", "/d").start().waitFor()
+        }
     }
 
     @Test

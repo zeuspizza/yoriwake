@@ -218,8 +218,10 @@ nothing). The capture records them just before its tests start, and which test J
 and when; a selecting run compares them at the same point. A file whose content changed runs the
 tests that read it, from the first test in each test JVM that read it on, since a value read once
 can be kept for later tests (`shares-jvm-with-change`); a read through `getResource`, a file
-stream, or a jar read whole counts. One no test read runs nothing more. The run names them. A file
-that appeared or is gone, one outside the root project, a class file, and one the map records no
+stream, or a jar read whole counts, by whatever name opened the file: a link, another letter
+case, a short name, or a mount or drive alias of the project or of a directory above it. A read
+the run cannot place counts as a read of every file. One no test read runs nothing more. The run
+names them. A file that appeared or is gone, one outside the root project, a class file, and one the map records no
 reads for (a map recorded by 0.2.0, a test JVM whose reads were not all observed) run everything,
 naming it (`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path`
 names is on the test JVM's class path too, so it counts the same way, its class files included,
@@ -232,9 +234,10 @@ package reports. A change to one of those runs everything. Any other attribute, 
 `Build-Time` or a bundle header, reaches a test only through a read of the manifest by code other
 than that loader, and runs only the tests from such a read on.
 
-Two ways of depending on such a file are not seen, and each ran everything before 0.3.0: a test
-that only checks a changed file's size, and a process the test hands the file's path to over a
-socket, such as a container or a server, that reads it there. A file a test writes
+Three ways of depending on such a file are not seen, and each ran everything before 0.3.0: a test
+that only checks a changed file's size, a process the test hands the file's path to over a
+socket, such as a container or a server, that reads it there, and a read through a mount or drive
+alias of a directory inside the project rather than of the project itself. A file a test writes
 into such a directory is not there when a fresh checkout's tests start; where the build directory
 survives between runs, one a test rewrites with new content each run forces every selecting run,
 so have the test write elsewhere in the build directory.
