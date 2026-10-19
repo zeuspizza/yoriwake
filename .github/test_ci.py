@@ -16,6 +16,7 @@ a function that asserted would be collected by pytest and pass however many chec
 """
 
 import fnmatch
+import json
 import os
 import re
 import subprocess
@@ -27,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import assert_selection  # noqa: E402
 import ci  # noqa: E402
 import functional_shards  # noqa: E402
+import guard_shards  # noqa: E402
 import matrix_check  # noqa: E402
 
 
@@ -716,6 +718,142 @@ def case_no_downloaded_shard_is_every_shard_missing():
     return 0 if expected <= set(found) else fail(f"a missing shards directory gave {found}")
 
 
+GUARD_SELECTION = {"mode": "full", "changed": "base", "guard": []}
+
+
+def _guard_selection(root, labels):
+    """What `prove_guards.py --list-selection` writes for `labels`."""
+    path = os.path.join(root, "selection.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({**GUARD_SELECTION, "shard": None, "selected": len(labels),
+                   "guards": [{"label": label, "suite": "unit"} for label in labels]}, handle)
+    return path
+
+
+def _guard_shard(root, index, count, guards, selected, header=None):
+    """One shard's `--results` file: `guards` maps a label to its outcome, `header` overrides its
+    selection fields."""
+    path = os.path.join(root, "shards", f"guards-pr-{index}-of-{count}")
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, "changed.json"), "w", encoding="utf-8") as handle:
+        json.dump({**GUARD_SELECTION, "shard": f"{index}/{count}", "selected": selected,
+                   "refused": None, **(header or {}),
+                   "guards": [{"label": label, "suite": "unit", "outcome": outcome, "detail": None}
+                              for label, outcome in guards.items()]}, handle)
+
+
+def _guard_check(root, selection, count=2):
+    return guard_shards.check(selection, os.path.join(root, "shards"), count, "changed.json")
+
+
+def case_guard_shards_that_partition_the_selection_and_fire_pass():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        selection = _guard_selection(root, ["a", "b", "c"])
+        _guard_shard(root, 1, 2, {"a": "fired", "c": "fired"}, 3)
+        _guard_shard(root, 2, 2, {"b": "fired"}, 3)
+        found = _guard_check(root, selection)
+        if found:
+            problems += fail(f"a complete partition was rejected: {found}")
+    # An empty selection is what --changed gives a change no guard can see; every shard ran empty.
+    with tempfile.TemporaryDirectory() as root:
+        selection = _guard_selection(root, [])
+        _guard_shard(root, 1, 2, {}, 0)
+        _guard_shard(root, 2, 2, {}, 0)
+        found = _guard_check(root, selection)
+        if found:
+            problems += fail(f"an empty selection that every shard ran was rejected: {found}")
+    return problems
+
+
+def case_every_way_a_selected_guard_can_go_unproved_fails():
+    """Each check must be able to fail: green shards that left a guard unproved are the defect."""
+    problems = 0
+    scenarios = {
+        "a guard in no shard": ([{"a": "fired"}, {}], {}, "b ran in no shard"),
+        "a guard in two shards": ([{"a": "fired", "b": "fired"}, {"b": "fired"}], {}, "b ran in shards [1, 2]"),
+        "a missing shard": ([{"a": "fired", "b": "fired"}, None], {}, "shard 2 of 2 left no result"),
+        "a guard that did not fire": ([{"a": "fired"}, {"b": "nothing caught"}], {}, "b did not fire in shard 2: nothing caught"),
+        "a guard not in the selection": ([{"a": "fired", "z": "fired"}, {"b": "fired"}], {}, "z ran but is not in the selection"),
+        "a shard on another base": ([{"a": "fired"}, {"b": "fired"}], {"changed": "other"}, "selected by changed='other'"),
+        "a refused shard": ([{"a": "fired"}, {"b": "not proved"}], {"refused": "anchors moved"}, "shard 2 of 2 refused: anchors moved"),
+        "a shard in another mode": ([{"a": "fired"}, {"b": "fired"}], {"mode": "fast"}, "selected by mode='fast'"),
+        "a shard with other --guard labels": ([{"a": "fired"}, {"b": "fired"}], {"guard": ["b"]}, "selected by guard=['b']"),
+        "a shard that selected another count": ([{"a": "fired"}, {"b": "fired"}], {"selected": 5}, "selected by selected=5"),
+        "a result from another shard": ([{"a": "fired"}, {"b": "fired"}], {"shard": "1/2"}, "shard 2 of 2 says it is shard 1/2"),
+    }
+    for label, (shards, header, expected) in scenarios.items():
+        with tempfile.TemporaryDirectory() as root:
+            selection = _guard_selection(root, ["a", "b"])
+            os.makedirs(os.path.join(root, "shards"))
+            for index, guards in enumerate(shards, start=1):
+                if guards is not None:
+                    _guard_shard(root, index, 2, guards, 2, header if index == 2 else None)
+            found = _guard_check(root, selection)
+        if not any(expected in problem for problem in found):
+            problems += fail(f"{label} passed the check: {found}")
+    with tempfile.TemporaryDirectory() as root:
+        found = _guard_check(root, _guard_selection(root, ["a"]))
+    if not {"shard 1 of 2 left no result", "shard 2 of 2 left no result"} <= set(found):
+        problems += fail(f"no downloaded shard at all gave {found}")
+    with tempfile.TemporaryDirectory() as root:
+        selection = _guard_selection(root, ["a"])
+        _guard_shard(root, 1, 4, {"a": "fired"}, 1)
+        found = _guard_check(root, selection)
+    if not any("guards-pr-1-of-4 is a shard of 4, not of 2" in problem for problem in found):
+        problems += fail(f"a shard of another count passed the check: {found}")
+    return problems
+
+
+def case_every_guard_job_runs_all_its_shards_under_its_required_name():
+    """Each guard job's shards are 1..N, its check expects N, runs when a shard fails and fails
+    then, and reads its own shards' results; the required names sit on the check jobs alone."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    jobs = re.split(r"\n  (?=[\w-]+:\n)", text)
+    for check_name, shard_job in (("fast", "fast-shard"), ("full", "full-shard")):
+        job = next((j for j in jobs if j.startswith(f"{shard_job}:\n")), None)
+        check = next((j for j in jobs if j.startswith(f"{check_name}:\n")), None)
+        if job is None or check is None:
+            problems += fail(f"guards.yml has no {shard_job} job and {check_name} check")
+            continue
+        listed = re.search(r"shard: \[([\d, ]+)\]", job)
+        counts = set(re.findall(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", job))
+        if not listed or len(counts) != 1:
+            problems += fail(f"{shard_job}: no shard list, or not one shard count: {sorted(counts)}")
+            continue
+        n = int(counts.pop())
+        if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
+            problems += fail(f"{shard_job}: shards {listed.group(1)} are not 1..{n}")
+        checks = re.findall(r"guard_shards\.py check \S+ shards --count (\d+) --file (\S+)", check)
+        results = re.findall(r"--results results/(\S+)", job)
+        if not checks or any(int(count) != n for count, _file in checks):
+            problems += fail(f"{check_name}: its checks do not each expect {n} shards: {checks}")
+        if sorted(f for _count, f in checks) != sorted(results):
+            problems += fail(f"{check_name}: checks {checks} are not one per results file {results}")
+        # Without these a failed shard skips its check, and GitHub counts a skipped required check
+        # as passing.
+        if f"    needs: [changes, {shard_job}]\n" not in check:
+            problems += fail(f"{check_name}: it does not wait for {shard_job}")
+        if not re.search(r"\n    if: always\(\)( &&[^\n]*)?\n", check):
+            problems += fail(f"{check_name}: it does not run when a shard fails (if: always())")
+        if f"if: needs.{shard_job}.result != 'success'" not in check or "exit 1" not in check:
+            problems += fail(f"{check_name}: it does not fail when a shard did not succeed")
+        upload = re.search(r"name: (guards-\w+-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
+        if not upload or upload.group(2) != str(n):
+            problems += fail(f"{shard_job}: its artifact name does not carry its shard count")
+        elif f"pattern: {upload.group(1)}*\n" not in check:
+            problems += fail(f"{check_name}: it does not download its own shards ({upload.group(1)}*)")
+    for name in ("guards, fast and the change's own", "guards, every one"):
+        holders = [j.split(":", 1)[0] for j in jobs if f"    name: {name}\n" in j]
+        if len(holders) != 1 or holders[0] not in ("fast", "full"):
+            problems += fail(f"the required check `{name}` is on {holders}, not on one check job")
+    if "needs: [changes, full-shard, full]" not in text:
+        problems += fail("a nightly failure in a shard or the check opens no issue")
+    return problems
+
+
 def case_only_a_docs_change_skips_the_checks():
     """A wrong "docs only" skips every check, which GitHub counts as passing: each way in is tested."""
     problems = 0
@@ -1079,6 +1217,9 @@ CASES = (
     case_every_way_a_test_class_can_go_untested_fails,
     case_every_sharded_suite_runs_all_its_shards,
     case_no_downloaded_shard_is_every_shard_missing,
+    case_guard_shards_that_partition_the_selection_and_fire_pass,
+    case_every_way_a_selected_guard_can_go_unproved_fails,
+    case_every_guard_job_runs_all_its_shards_under_its_required_name,
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
     case_no_map_is_reported_rather_than_returned_as_success,

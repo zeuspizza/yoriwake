@@ -8,8 +8,13 @@ this run selected fired", which is true and says nothing about the one it left o
 Run: `python scripts/test_prove_guards.py`
 """
 
+import contextlib
+import io
+import json
 import os
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -395,6 +400,196 @@ def case_guard_names_its_own_guards_and_refuses_an_unknown_one():
         return fail(f"an unknown --guard label did not refuse: {code} {out.getvalue()!r}")
     return 0
 
+
+def _run(argv):
+    """`main(argv)`'s exit code and what it printed."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = pg.main(argv)
+    return code, out.getvalue()
+
+
+def _results(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one():
+    """A guard in no shard is proved nowhere while every shard is green."""
+    failures = 0
+    shards = [pg.in_shard(pg.MUTATIONS, (index, 8)) for index in range(1, 9)]
+    labels = [m[0] for shard in shards for m in shard]
+    if sorted(labels) != sorted(m[0] for m in pg.MUTATIONS):
+        failures += fail("the 8 shards are not a partition of the table")
+    if [pg.in_shard(pg.MUTATIONS, (index, 8)) for index in range(1, 9)] != shards:
+        failures += fail("the same table split twice gave different shards")
+    # CRC32 of the label, as the functional suites shard by class name; `hash()` would move every
+    # guard between Python processes.
+    if pg.shard_of("abc", 8) != 3:
+        failures += fail(f"`abc` is in shard {pg.shard_of('abc', 8)} of 8, not 3")
+    return failures
+
+
+def case_a_shard_that_is_not_one_of_n_refuses():
+    failures = 0
+    for shard in ("0/8", "9/8", "x/8", "8"):
+        code, out = _run(["--shard", shard])
+        if code != 1 or "--shard" not in out:
+            failures += fail(f"--shard {shard} did not refuse naming the flag: {code} {out!r}")
+    return failures
+
+
+@contextlib.contextmanager
+def _synthetic(guards):
+    """A git tree holding one file per guard, and the harness pointed at it with `guards` as its
+    table, each run by a suite that fires when its file holds the mutation, or never."""
+    saved = (pg.MUTATIONS[:], pg.SUITES[:], dict(pg.SUITE_NAMES))
+    previous = os.environ.get(pg.yoriwake_checkout.SETTING)
+
+    def fires(path):
+        def suite():
+            with open(pg.source(path)) as f:
+                return ["FAIL: synthetic > it fired"] if "mutated" in f.read() else []
+        return suite
+
+    def silent():
+        return []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["git", "init", "-q", tmp], check=True)
+        table = []
+        for label, caught in guards:
+            path = f"{label}.txt"
+            with open(os.path.join(tmp, path), "w") as f:
+                f.write("anchor\n")
+            suite = fires(path) if caught else silent
+            name = f"synthetic {len(table)}"
+            pg.SUITES.append((name, suite, 0))
+            pg.SUITE_NAMES[suite] = name
+            table.append((label, path, "anchor", "mutated", suite, "synthetic"))
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t",
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "base"], check=True)
+        pg.MUTATIONS[:] = table
+        os.environ[pg.yoriwake_checkout.SETTING] = tmp
+        try:
+            yield tmp
+        finally:
+            pg.MUTATIONS[:], pg.SUITES[:] = saved[0], saved[1]
+            pg.SUITE_NAMES.clear()
+            pg.SUITE_NAMES.update(saved[2])
+            if previous is None:
+                os.environ.pop(pg.yoriwake_checkout.SETTING, None)
+            else:
+                os.environ[pg.yoriwake_checkout.SETTING] = previous
+
+
+def case_an_empty_shard_succeeds_and_says_whose_guards_it_left():
+    """Empty is not never-ran: the check needs a result from every shard."""
+    failures = 0
+    with _synthetic([("alpha", True)]) as tmp:
+        result = os.path.join(tmp, "result.json")
+        home = pg.shard_of("alpha", 8)
+        other = home % 8 + 1
+        # A guard the base does not have is selected by --changed even when nothing else moved.
+        for argv in (["--guard", "alpha"], ["--mode", "full", "--changed", "HEAD"]):
+            code, out = _run(argv + ["--shard", f"{other}/8", "--results", result, "--jobs", "1"])
+            if code != 0:
+                failures += fail(f"{argv} on an empty shard exited {code}: {out!r}")
+            got = _results(result)
+            if got["guards"] != [] or got["selected"] != 1 or got["shard"] != f"{other}/8":
+                failures += fail(f"{argv} on an empty shard wrote {got}")
+            if f"alpha is shard {home}'s" not in out:
+                failures += fail(f"{argv} on an empty shard did not say whose alpha is: {out!r}")
+    return failures
+
+
+def case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it():
+    failures = 0
+    with _synthetic([("caught", True), ("missed", False)]) as tmp:
+        result = os.path.join(tmp, "result.json")
+        code, out = _run(["--guard", "caught", "--shard", f"{pg.shard_of('caught', 8)}/8",
+                          "--results", result, "--jobs", "1"])
+        got = _results(result)["guards"]
+        if code != 0 or [(g["label"], g["outcome"]) for g in got] != [("caught", "fired")]:
+            failures += fail(f"a guard that fired in its shard: {code} {got} {out!r}")
+        code, out = _run(["--guard", "missed", "--results", result, "--jobs", "1"])
+        got = _results(result)["guards"]
+        if code != 1 or [(g["label"], g["outcome"]) for g in got] != [("missed", "nothing caught")]:
+            failures += fail(f"a guard that did not fire: {code} {got} {out!r}")
+    return failures
+
+
+def case_the_parallel_run_ci_uses_writes_outcomes_and_refusals():
+    """CI runs the default worker trees, so `--results` is proved there too: a guard's outcome, and
+    a warm-up refusal written against every guard it stopped."""
+    failures = 0
+    saved = (pg.prepare_workers, pg.warm_up_tasks, pg._warm_up, set(pg.EXCLUSIVE_SUITES))
+    with _synthetic([("caught", True)]) as tmp:
+        result = os.path.join(tmp, "result.json")
+        # One tree, and the synthetic suite in the phase that runs in this process, so no worker
+        # process has to import a suite defined here.
+        pg.prepare_workers = lambda count: [tmp]
+        pg.EXCLUSIVE_SUITES.update(name for name, _fn, _cost in pg.SUITES if name.startswith("synthetic"))
+        try:
+            code, out = _run(["--guard", "caught", "--results", result])
+            got = _results(result)["guards"]
+            if code != 0 or [(g["label"], g["outcome"]) for g in got] != [("caught", "fired")]:
+                failures += fail(f"a parallel run that fired wrote {code} {got} {out!r}")
+            pg.warm_up_tasks = lambda selected: [":compile"]
+            pg._warm_up = lambda trees, tasks: f"{trees[0]} does not compile unmutated: e: boom"
+            code, out = _run(["--guard", "caught", "--results", result])
+            got = _results(result)
+            if code != 1 or [(g["label"], g["outcome"]) for g in got["guards"]] != [("caught", "not proved")] \
+                    or "does not compile unmutated" not in (got["refused"] or ""):
+                failures += fail(f"a parallel run refused at warm-up wrote {code} {got}")
+        finally:
+            pg.prepare_workers, pg.warm_up_tasks, pg._warm_up = saved[:3]
+            pg.EXCLUSIVE_SUITES.clear()
+            pg.EXCLUSIVE_SUITES.update(saved[3])
+    return failures
+
+
+def case_a_refused_run_writes_every_guard_it_held_as_not_proved():
+    """A shard that stops before its guards still says which it did not prove, and why."""
+    failures = 0
+    with _synthetic([("moved", True)]) as tmp:
+        with open(os.path.join(tmp, "moved.txt"), "w") as f:
+            f.write("the text is gone\n")
+        result = os.path.join(tmp, "result.json")
+        code, _out = _run(["--guard", "moved", "--results", result, "--jobs", "1"])
+        got = _results(result)
+        if code != 1 or [(g["label"], g["outcome"]) for g in got["guards"]] != [("moved", "not proved")] \
+                or "anchor" not in (got["refused"] or ""):
+            failures += fail(f"a refused run wrote {code} {got}")
+    return failures
+
+
+def case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing():
+    failures = 0
+    changed = {"bench/run.py"}
+    before = pg._table(pg.MUTATIONS)
+    expected = [m[0] for m in pg.MUTATIONS if pg.why_affected(m, changed, before)]
+    saved = (pg.changed_files, pg.guards_at, pg.prepare_workers)
+
+    def no_workers(count):
+        raise AssertionError("listing the selection started a worker")
+    pg.changed_files, pg.guards_at, pg.prepare_workers = (lambda base: changed), (lambda base: before), no_workers
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            listed = os.path.join(tmp, "selection.json")
+            code, out = _run(["--mode", "full", "--changed", "base", "--list-selection", listed])
+            got = _results(listed)
+            if code != 0 or not expected or [g["label"] for g in got["guards"]] != expected:
+                failures += fail(f"--list-selection wrote {len(got['guards'])} guards, not the "
+                                 f"{len(expected)} the run selects: {code} {out!r}")
+            if (got["mode"], got["changed"]) != ("full", "base"):
+                failures += fail(f"--list-selection did not record what it selected by: {got}")
+    finally:
+        pg.changed_files, pg.guards_at, pg.prepare_workers = saved
+    return failures
+
+
 CASES = (case_every_case_in_this_file_is_registered,
          case_a_guard_whose_target_changed_is_selected,
          case_a_change_to_the_tests_that_prove_a_guard_selects_it,
@@ -416,7 +611,14 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_guard_names_its_own_guards_and_refuses_an_unknown_one,
          case_a_removed_or_weakened_guard_is_named_against_the_base,
          case_cold_worker_trees_compile_one_at_a_time_before_the_guards,
-         case_a_tree_that_does_not_compile_names_the_compiler_errors)
+         case_a_tree_that_does_not_compile_names_the_compiler_errors,
+         case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one,
+         case_a_shard_that_is_not_one_of_n_refuses,
+         case_an_empty_shard_succeeds_and_says_whose_guards_it_left,
+         case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it,
+         case_a_refused_run_writes_every_guard_it_held_as_not_proved,
+         case_the_parallel_run_ci_uses_writes_outcomes_and_refusals,
+         case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing)
 
 
 def test_prove_guards():

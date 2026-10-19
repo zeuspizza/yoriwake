@@ -5,6 +5,10 @@ name: guards
 # changes the plugin's or agent's shipped sources runs every guard instead. Every guard also runs
 # nightly, and on dispatch before a release. A guard that does not fire fails the job and names it.
 #
+# Each guard job runs in 8 shards, each the selected guards whose label hashes to it
+# (`--shard I/N`), and a check job under the job's required name: every shard succeeded, and every
+# guard the check selects itself fired in exactly one shard (.github/guard_shards.py).
+#
 # A scheduled workflow that sees no repository activity for 60 days is disabled by GitHub; the
 # release checklist checks it is on.
 on:
@@ -26,13 +30,15 @@ permissions:
 
 jobs:
   # Whether the change needs guards at all, and whether it reaches the shipped sources. Either
-  # answer missing runs more, never less: a skipped job satisfies a required check.
+  # answer missing runs more, never less: a skipped job satisfies a required check. Also the base
+  # every shard and check selects the change's guards from, so all of them select the same ones.
   changes:
     name: what changed
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.decide.outputs.code }}
       product: ${{ steps.decide.outputs.product }}
+      base: ${{ steps.decide.outputs.base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,20 +51,27 @@ jobs:
         run: |
           set -eu
           if [ "$EVENT" = pull_request ]; then
-            echo "code=$(python3 .github/ci.py needs-checks "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
-            echo "product=$(python3 .github/ci.py touches-product "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
+            {
+              echo "code=$(python3 .github/ci.py needs-checks "$BASE" "$HEAD")"
+              echo "product=$(python3 .github/ci.py touches-product "$BASE" "$HEAD")"
+              echo "base=$(git merge-base "$BASE" HEAD)"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "product=true" >> "$GITHUB_OUTPUT"
           fi
 
-  fast:
-    name: guards, fast and the change's own
+  fast-shard:
+    name: guards, fast and the change's own (shard ${{ matrix.shard }}/8)
     needs: changes
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true' }}
     runs-on: ubuntu-latest
-    # As long as every guard: `--changed` selects every guard when a change edits all of them.
-    timeout-minutes: 330
+    # As long as a shard of every guard: `--changed` selects every guard when a change edits all of them.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,20 +81,66 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      - run: python3 scripts/prove_guards.py --mode fast
+      - run: |
+          mkdir -p results
+          python3 scripts/prove_guards.py --mode fast --shard ${{ matrix.shard }}/8 --results results/fast.json
       # Every suite, narrowed to the guards whose target, tests or build files the change touched,
       # or whose entry it edits: a change to a suite fast mode leaves out is proved here.
       - name: the guards the change can affect
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/prove_guards.py --mode full --changed "$(git merge-base "$BASE" HEAD)"
+          BASE: ${{ needs.changes.outputs.base }}
+        run: python3 scripts/prove_guards.py --mode full --changed "${BASE:?no merge base}" --shard ${{ matrix.shard }}/8 --results results/changed.json
+      # Always, and an error when empty: the check reads every shard's results.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: guards-pr-${{ matrix.shard }}-of-8
+          path: results/
+          if-no-files-found: error
+          retention-days: 7
 
-  full:
-    name: guards, every one
+  # Named as the unsharded job was, and the check that is required: every shard succeeded and
+  # every guard the check selects itself, the shards' flags but no shard, fired in exactly one.
+  fast:
+    name: guards, fast and the change's own
+    needs: [changes, fast-shard]
+    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: every shard succeeded
+        if: needs.fast-shard.result != 'success'
+        run: |
+          echo "a shard of the pull request's guards did not succeed: ${{ needs.fast-shard.result }}"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: guards-pr-*
+          path: shards
+      - name: every selected guard fired in exactly one shard
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: |
+          set -u
+          python3 scripts/prove_guards.py --mode fast --list-selection fast.json
+          python3 scripts/prove_guards.py --mode full --changed "${BASE:?no merge base}" --list-selection changed.json
+          status=0
+          python3 .github/guard_shards.py check fast.json shards --count 8 --file fast.json || status=1
+          python3 .github/guard_shards.py check changed.json shards --count 8 --file changed.json || status=1
+          exit $status
+
+  full-shard:
+    name: guards, every one (shard ${{ matrix.shard }}/8)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -89,10 +148,40 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      - run: python3 scripts/prove_guards.py --mode full
+      - run: |
+          mkdir -p results
+          python3 scripts/prove_guards.py --mode full --shard ${{ matrix.shard }}/8 --results results/full.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: guards-every-${{ matrix.shard }}-of-8
+          path: results/
+          if-no-files-found: error
+          retention-days: 7
+
+  full:
+    name: guards, every one
+    needs: [changes, full-shard]
+    if: always() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false')
+    runs-on: ubuntu-latest
+    steps:
+      - name: every shard succeeded
+        if: needs.full-shard.result != 'success'
+        run: |
+          echo "a shard of every guard did not succeed: ${{ needs.full-shard.result }}"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: guards-every-*
+          path: shards
+      - name: every guard fired in exactly one shard
+        run: |
+          python3 scripts/prove_guards.py --mode full --list-selection full.json
+          python3 .github/guard_shards.py check full.json shards --count 8 --file full.json
 
   report-failure:
-    needs: [changes, full]
+    needs: [changes, full-shard, full]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
