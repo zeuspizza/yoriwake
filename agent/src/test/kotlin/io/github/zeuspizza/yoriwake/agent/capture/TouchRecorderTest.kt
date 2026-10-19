@@ -234,7 +234,9 @@ class TouchRecorderTest {
         val recorder = TouchRecorder(root.path)
         recorder.read(File(short, "info.properties"))
 
-        assertTrue(file.toPath().toRealPath().toString() in drained(recorder).map { it.second })
+        val recorded = drained(recorder).map { it.second }
+        val long = file.canonicalPath
+        assertTrue(long in recorded, "read as $short\\info.properties, recorded $recorded, not $long")
     }
 
     @Test

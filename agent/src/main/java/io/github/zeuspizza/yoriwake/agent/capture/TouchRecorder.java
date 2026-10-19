@@ -547,6 +547,11 @@ public final class TouchRecorder implements CaptureSession.Touches {
             if (!found.contains(resolved)) {
                 found.add(resolved);
             }
+            // Spells out a short (8.3) name the real path keeps on Windows.
+            String canonical = dir.getCanonicalPath() + File.separator;
+            if (!found.contains(canonical)) {
+                found.add(canonical);
+            }
         } catch (IOException | RuntimeException e) {
             // The path as given still matches what is opened by it.
         }
@@ -596,6 +601,14 @@ public final class TouchRecorder implements CaptureSession.Touches {
             resolved = new File(absolute).toPath().toRealPath().toString();
         } catch (IOException | RuntimeException e) {
             resolved = null;
+        }
+        if (resolved != null && File.separatorChar == '\\' && resolved.indexOf('~') >= 0) {
+            // Windows keeps a short (8.3) name in the real path; the canonical path spells it out.
+            try {
+                resolved = new File(resolved).getCanonicalPath();
+            } catch (IOException | RuntimeException e) {
+                // The real path still names the file.
+            }
         }
         String below = below(absolute, prefixes);
         if (below != null) {
