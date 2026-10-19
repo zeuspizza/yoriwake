@@ -2155,6 +2155,16 @@ MUTATIONS = [
      "            val failures = runCatching { CoverageDecoder.carryFailures(mapDir, reported) }.getOrElse { problem ->",
      "            val failures = runCatching { 0 }.getOrElse { problem ->",
      functional_suite, "a class whose teardown fails after its tests passed still runs on the next unrelated change"),
+    # The other half of what a discarded capture keeps: a failure only Gradle's report holds, from a
+    # test JVM stopped before its records were written.
+    ("a discarded capture forgets the failures only Gradle's report saw", DECODE_TASK,
+     "                JUnitXmlFailures.classes(junitXml) { report, problem ->",
+     "                JUnitXmlFailures.classes(null) { report, problem ->",
+     functional_suite, "a failure only Gradle's report kept still runs on the next unrelated change"),
+    ("the decode is never told where Gradle's report is", DECODE_TASK,
+     "                task.junitXml = test.reports.junitXml.outputLocation.asFile.orNull",
+     "                task.junitXml = (null as File?)",
+     functional_suite, "a failure only Gradle's report kept still runs on the next unrelated change"),
     # A path touched during a dating capture stays in the change set until the next one.
     # Anchored on the decode handing the whole re-observation through.
     ("a tree that moved during a capture is trusted", DECODE_TASK,

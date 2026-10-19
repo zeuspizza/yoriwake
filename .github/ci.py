@@ -110,9 +110,10 @@ def discard_results(project_dir, drop_map=False):
     return removed
 
 
-# Docs the checks read: the agent's tests compare their constants with the contract, and test_ci.py
-# compares the reference's supported matrix with matrix.yml.
-CHECKED_DOCS = {"docs/contract.md", "docs/reference.md"}
+# Docs the checks read: the agent's tests compare their constants with the contract, test_ci.py
+# compares the reference's supported matrix with matrix.yml and SECURITY.md's key fingerprint with
+# RELEASE-KEY.asc.
+CHECKED_DOCS = {"docs/contract.md", "docs/reference.md", "SECURITY.md"}
 
 
 def needs_checks(paths):

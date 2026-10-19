@@ -33,6 +33,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A build-produced classpath file that changed runs only the tests that read it, not every test. Map: repaired
   on the next build, which runs every test once where your own jars are on the test classpath.
 - The reference's CI recipe deletes `raw/` and `selection.tsv` before the save; its `!` paths kept nothing out. Map: left alone.
+- Reference: what upgrading from 0.2.0 asks of you, in "Upgrading and your map". Map: left alone.
 
 ## [0.2.0] - 2026-10-13
 

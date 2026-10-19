@@ -15,6 +15,7 @@ a function that asserted would be collected by pytest and pass however many chec
     python .github/test_ci.py
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -861,6 +862,7 @@ def case_only_a_docs_change_skips_the_checks():
         ("docs/ci.md", "CHANGELOG.md"): False,
         ("docs/contract.md",): True,
         ("docs/reference.md", "README.md"): True,
+        ("SECURITY.md",): True,
         ("README.md", "plugin/build.gradle.kts"): True,
         ("docs/images/chart.svg",): False,
         (".github/workflows/verify.yml",): True,
@@ -870,6 +872,17 @@ def case_only_a_docs_change_skips_the_checks():
     for paths, expected in cases.items():
         if ci.needs_checks(list(paths)) != expected:
             problems += fail(f"needs_checks({list(paths)}) should be {expected}")
+    # A push to main has no `changes` job: its path filter must let the same docs through. GitHub
+    # applies the patterns in order, so the last one matching a doc decides.
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        listed = re.search(r"^  push:\n.*?^    paths: \[(.*?)\]$", handle.read(), re.M | re.S).group(1)
+    patterns = [item.strip().strip("'") for item in listed.split(",")]
+    for doc in sorted(ci.CHECKED_DOCS):
+        # GitHub's leading `**/` also matches no directory at all.
+        matching = [pattern for pattern in patterns if any(
+            fnmatch.fnmatchcase(doc, glob) for glob in {pattern.lstrip("!"), pattern.lstrip("!").removeprefix("**/")})]
+        if not matching or matching[-1].startswith("!"):
+            problems += fail(f"verify.yml's push paths skip {doc}, which the checks read")
     return problems
 
 
