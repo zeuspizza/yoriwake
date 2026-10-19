@@ -12,7 +12,9 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -398,6 +400,20 @@ def case_guard_names_its_own_guards_and_refuses_an_unknown_one():
         return fail(f"an unknown --guard label did not refuse: {code} {out.getvalue()!r}")
     return 0
 
+
+def _run(argv):
+    """`main(argv)`'s exit code and what it printed."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = pg.main(argv)
+    return code, out.getvalue()
+
+
+def _results(path):
+    with open(path) as f:
+        return json.load(f)
+
+
 def case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one():
     """A guard in no shard is proved nowhere while every shard is green."""
     failures = 0
@@ -427,8 +443,6 @@ def case_a_shard_that_is_not_one_of_n_refuses():
 def _synthetic(guards):
     """A git tree holding one file per guard, and the harness pointed at it with `guards` as its
     table, each run by a suite that fires when its file holds the mutation, or never."""
-    import subprocess
-    import tempfile
     saved = (pg.MUTATIONS[:], pg.SUITES[:], dict(pg.SUITE_NAMES))
     previous = os.environ.get(pg.yoriwake_checkout.SETTING)
 
@@ -468,19 +482,6 @@ def _synthetic(guards):
                 os.environ.pop(pg.yoriwake_checkout.SETTING, None)
             else:
                 os.environ[pg.yoriwake_checkout.SETTING] = previous
-
-
-def _run(argv):
-    """`main(argv)`'s exit code and what it printed."""
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        code = pg.main(argv)
-    return code, out.getvalue()
-
-
-def _results(path):
-    with open(path) as f:
-        return json.load(f)
 
 
 def case_an_empty_shard_succeeds_and_says_whose_guards_it_left():
@@ -535,7 +536,6 @@ def case_a_refused_run_writes_every_guard_it_held_as_not_proved():
 
 
 def case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing():
-    import tempfile
     failures = 0
     changed = {"bench/run.py"}
     before = pg._table(pg.MUTATIONS)

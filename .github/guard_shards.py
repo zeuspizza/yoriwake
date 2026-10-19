@@ -95,9 +95,11 @@ def main(argv=None):
         print(f"FAIL: {problem}", file=sys.stderr)
     if not problems:
         selected = len(_read(args.selection)["guards"])
-        print(f"OK: every one of the {selected} selected guard(s) fired, each in exactly one of "
-              f"{args.count} shards" if selected else
-              f"OK: nothing selected, and every one of {args.count} shards ran and proved nothing")
+        if selected:
+            print(f"OK: every one of the {selected} selected guard(s) fired, each in exactly one of "
+                  f"{args.count} shards")
+        else:
+            print(f"OK: nothing selected, and every one of {args.count} shards ran and proved nothing")
     return 1 if problems else 0
 
 
