@@ -103,6 +103,9 @@ release waits for every one.
   removes its fixes' lines from `## [Unreleased]`.
 - If the release fixes a silent skip, the advisory is updated with the fixed version, and adopters
   who reported it are told.
+- The maintainer re-checks the private sharing gate against this release. Nothing about yoriwake is
+  shared in public channels while a known defect that can skip a test that should have run is
+  open on this release.
 
 ## A new JDK
 
