@@ -793,6 +793,55 @@ def case_every_way_a_selected_guard_can_go_unproved_fails():
     return problems
 
 
+def case_every_guard_job_runs_all_its_shards_under_its_required_name():
+    """Each guard job's shards are 1..N, its check expects N, runs when a shard fails and fails
+    then, and reads its own shards' results; the required names sit on the check jobs alone."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    jobs = re.split(r"\n  (?=[\w-]+:\n)", text)
+    for check_name, shard_job in (("fast", "fast-shard"), ("full", "full-shard")):
+        job = next((j for j in jobs if j.startswith(f"{shard_job}:\n")), None)
+        check = next((j for j in jobs if j.startswith(f"{check_name}:\n")), None)
+        if job is None or check is None:
+            problems += fail(f"guards.yml has no {shard_job} job and {check_name} check")
+            continue
+        listed = re.search(r"shard: \[([\d, ]+)\]", job)
+        counts = set(re.findall(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", job))
+        if not listed or len(counts) != 1:
+            problems += fail(f"{shard_job}: no shard list, or not one shard count: {sorted(counts)}")
+            continue
+        n = int(counts.pop())
+        if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
+            problems += fail(f"{shard_job}: shards {listed.group(1)} are not 1..{n}")
+        checks = re.findall(r"guard_shards\.py check \S+ shards --count (\d+) --file (\S+)", check)
+        results = re.findall(r"--results results/(\S+)", job)
+        if not checks or any(int(count) != n for count, _file in checks):
+            problems += fail(f"{check_name}: its checks do not each expect {n} shards: {checks}")
+        if sorted(f for _count, f in checks) != sorted(results):
+            problems += fail(f"{check_name}: checks {checks} are not one per results file {results}")
+        # Without these a failed shard skips its check, and GitHub counts a skipped required check
+        # as passing.
+        if f"    needs: [changes, {shard_job}]\n" not in check:
+            problems += fail(f"{check_name}: it does not wait for {shard_job}")
+        if not re.search(r"\n    if: always\(\)( &&[^\n]*)?\n", check):
+            problems += fail(f"{check_name}: it does not run when a shard fails (if: always())")
+        if f"if: needs.{shard_job}.result != 'success'" not in check or "exit 1" not in check:
+            problems += fail(f"{check_name}: it does not fail when a shard did not succeed")
+        upload = re.search(r"name: (guards-\w+-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
+        if not upload or upload.group(2) != str(n):
+            problems += fail(f"{shard_job}: its artifact name does not carry its shard count")
+        elif f"pattern: {upload.group(1)}*\n" not in check:
+            problems += fail(f"{check_name}: it does not download its own shards ({upload.group(1)}*)")
+    for name in ("guards, fast and the change's own", "guards, every one"):
+        holders = [j.split(":", 1)[0] for j in jobs if f"    name: {name}\n" in j]
+        if len(holders) != 1 or holders[0] not in ("fast", "full"):
+            problems += fail(f"the required check `{name}` is on {holders}, not on one check job")
+    if "needs: [changes, full-shard, full]" not in text:
+        problems += fail("a nightly failure in a shard or the check opens no issue")
+    return problems
+
+
 def case_only_a_docs_change_skips_the_checks():
     """A wrong "docs only" skips every check, which GitHub counts as passing: each way in is tested."""
     problems = 0
@@ -1146,6 +1195,7 @@ CASES = (
     case_no_downloaded_shard_is_every_shard_missing,
     case_guard_shards_that_partition_the_selection_and_fire_pass,
     case_every_way_a_selected_guard_can_go_unproved_fails,
+    case_every_guard_job_runs_all_its_shards_under_its_required_name,
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
     case_no_map_is_reported_rather_than_returned_as_success,
