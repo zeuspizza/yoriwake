@@ -13,6 +13,7 @@ an in-memory copy and checked byte for byte afterwards.
     python3 scripts/prove_guards.py --guard LABEL         # one guard, by its label
     python3 scripts/prove_guards.py --changed origin/main # the guards a change can affect
     python3 scripts/prove_guards.py --against origin/main # name guards a change removes or re-aims
+    python3 scripts/prove_guards.py --shard 3/8           # the guards CI's shard 3 of 8 runs
 
 Run from the repository root. Paths in MUTATIONS are relative to it. By default the guards run in
 worker worktrees under `sandbox/prove-guards/`, and this tree is never written.
@@ -31,7 +32,7 @@ third of them must not read like a run that proved all of them. The split is by 
 by guess; see SUITES. Count what a run will attempt from its first line, not from a duration
 written anywhere: the table grows, and every written duration has gone stale.
 """
-import argparse, atexit, contextlib, glob, os, re, shutil, signal, subprocess, sys, hashlib, time
+import argparse, atexit, contextlib, glob, json, os, re, shutil, signal, subprocess, sys, hashlib, time, zlib
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "bench"))
@@ -3868,7 +3869,7 @@ def _run_parallel(args, selected, skipped, reasons):
         print(f"compiling {' '.join(tasks)} in each worker tree, one at a time", flush=True)
         refusal = _warm_up(paths, tasks)
         if refusal:
-            print(f"REFUSING: {refusal}")
+            _refuse(refusal)
             return 1
     context = multiprocessing.get_context("spawn")
     manager = context.Manager()
@@ -3953,25 +3954,95 @@ def _not_proof(line):
     return line.startswith("NOT THE GUARD") or line.endswith("failed without naming a test")
 
 
+# What this run decided, for `--results`: each guard's outcome by label, and the first refusal that
+# stopped it, so a guard the run never reached is written as not proved, with the reason.
+_RUN = {"outcomes": {}, "refused": None, "selection": 0}
+
+
+def _refuse(message):
+    """Prints a refusal that stops the run, and keeps its first line for `--results`."""
+    print(f"REFUSING: {message}")
+    _RUN["refused"] = _RUN["refused"] or message.splitlines()[0]
+
+
 def _report(index, fired, refusal):
     """Prints one guard's verdict. Returns 1 when it does not count as proved."""
     label, _path, _old, _new, _suite, expect = MUTATIONS[index]
+    outcomes = _RUN["outcomes"]
     if refusal:
         print(f"{label:62} -> NOT PROVED: {refusal}", flush=True)
+        outcomes[label] = ("not proved", refusal)
         return 1
     # A CRASH IS NOT A GUARD FIRING, with or without an `expect`. Only the expect check used to see
     # this, so a guard with none was proved by a mutation that merely stopped its suite running.
     if fired and all(_not_proof(line) for line in fired):
         print(f"{label:62} -> NOT PROVED: {fired[0][:64]}", flush=True)
+        outcomes[label] = ("not proved", fired[0])
         return 1
     if fired:
         print(f"{label:62} -> {len(fired)} fired: {fired[0][:64]}", flush=True)
         if expect and not any(expect in line for line in fired):
             print(f"{'':62}    *** but not `{expect}` -- this proves a different test ***")
+            outcomes[label] = ("wrong test", fired[0])
             return 1
+        outcomes[label] = ("fired", fired[0])
         return 0
     print(f"{label:62} -> *** NOTHING CAUGHT IT ***", flush=True)
+    outcomes[label] = ("nothing caught", None)
     return 1
+
+
+def shard_of(label, count):
+    """The shard, 1 to `count`, a guard belongs to: CRC32 of its label, as the functional suites
+    shard by class name. Stable across runs and Python versions, which `hash()` is not."""
+    return zlib.crc32(label.encode(ENCODING)) % count + 1
+
+
+def in_shard(mutations, shard):
+    """The guards of `mutations` that `shard`, an (index, count) pair, runs, in their order."""
+    index, count = shard
+    return [m for m in mutations if shard_of(m[0], count) == index]
+
+
+def parse_shard(text):
+    """`I/N` as (I, N), or None unless 1 <= I <= N."""
+    match = re.fullmatch(r"(\d+)/(\d+)", text)
+    if not match:
+        return None
+    index, count = int(match.group(1)), int(match.group(2))
+    return (index, count) if 1 <= index <= count else None
+
+
+def _write_json(path, payload):
+    with open(path, "w", encoding=ENCODING) as handle:
+        json.dump(payload, handle, indent=1)
+        handle.write("\n")
+
+
+def _selection_header(args, selection):
+    """What a selection was made by, so a check can tell a shard that selected otherwise."""
+    return {"shard": args.shard, "mode": args.mode, "changed": args.changed, "guard": args.guard,
+            "selected": len(selection)}
+
+
+def write_results(path, args, selection, ran):
+    """`--results`: each guard this run held, with its outcome. A guard the run stopped before is
+    not proved, with the refusal that stopped it."""
+    stopped = _RUN["refused"] or "the run ended before it was proved"
+    guards = []
+    for mutation in ran:
+        outcome, detail = _RUN["outcomes"].get(mutation[0], ("not proved", stopped))
+        guards.append({"label": mutation[0], "suite": SUITE_NAMES.get(mutation[4]),
+                       "outcome": outcome, "detail": detail})
+    _write_json(path, {**_selection_header(args, selection), "refused": _RUN["refused"],
+                       "guards": guards})
+
+
+def _shard_line(args, selected):
+    """A shard's closing line: the rest of its run's selection is the other shards' to prove."""
+    if args.shard:
+        print(f"shard {args.shard}: the other {_RUN['selection'] - len(selected)} guard(s) this "
+              f"run selected are the other shards' to prove.")
 
 
 def _closing(args, selected, skipped):
@@ -3990,6 +4061,7 @@ def _closing(args, selected, skipped):
             named = ", ".join(f"{name} {count}" for name, count in sorted(unproved.items()))
             print(f"{len(skipped)} guard(s) NOT attempted ({named}). Run --mode full before "
                   f"committing to plugin/ or agent/.")
+    _shard_line(args, selected)
     return 0
 
 
@@ -4012,7 +4084,33 @@ def main(argv=None):
     parser.add_argument("--against", metavar="BASE",
                         help="run nothing; name each guard removed or re-aimed since BASE, and each "
                              "suite taken out of the fast set, and exit 1 if there is any")
+    parser.add_argument("--shard", metavar="I/N",
+                        help="only the selected guards whose label hashes to shard I of N, as CI "
+                             "runs them; with the same flags, reproduces one CI shard")
+    parser.add_argument("--results", metavar="FILE",
+                        help="write each guard this run held and its outcome to FILE as JSON, on "
+                             "every exit")
+    parser.add_argument("--list-selection", metavar="FILE",
+                        help="run nothing; write the guards these flags select, before any shard, "
+                             "to FILE as JSON")
     args = parser.parse_args(argv)
+    _RUN.update(outcomes={}, refused=None, selection=0)
+    held = {"selection": [], "ran": []}
+    try:
+        return _main(args, held)
+    finally:
+        if args.results and not args.against:
+            write_results(args.results, args, held["selection"], held["ran"])
+
+
+def _main(args, held):
+    """`main` after its flags: fills `held` with the selection and the guards this run proves."""
+    shard = None
+    if args.shard is not None:
+        shard = parse_shard(args.shard)
+        if shard is None:
+            _refuse(f"--shard takes I/N with 1 <= I <= N, not {args.shard!r}.")
+            return 1
 
     if args.against:
         namespace = _harness_at(args.against)
@@ -4035,14 +4133,14 @@ def main(argv=None):
     # first version of this split had exactly that hole.
     unregistered = sorted({m[0] for m in MUTATIONS if m[4] not in SUITE_NAMES})
     if unregistered:
-        print(f"REFUSING: {len(unregistered)} mutation(s) name a suite that is in no registry entry, "
-              f"so their cost is unknown and nothing baselines them: {unregistered[0]}")
+        _refuse(f"{len(unregistered)} mutation(s) name a suite that is in no registry entry, "
+                f"so their cost is unknown and nothing baselines them: {unregistered[0]}")
         return 1
 
     registered = {name for name, _fn, _cost in SUITES}
     if FAST_SUITES - registered:
-        print(f"REFUSING: the fast set names {sorted(FAST_SUITES - registered)}, which no registry "
-              f"entry defines, so that suite would be silently absent from fast mode.")
+        _refuse(f"the fast set names {sorted(FAST_SUITES - registered)}, which no registry "
+                f"entry defines, so that suite would be silently absent from fast mode.")
         return 1
 
     active = {name for name in registered if args.mode == "full" or name in FAST_SUITES}
@@ -4051,22 +4149,41 @@ def main(argv=None):
     if args.guard:
         unknown = sorted(set(args.guard) - {m[0] for m in MUTATIONS})
         if unknown:
-            print(f"REFUSING: no guard is labelled {unknown[0]!r}.")
+            _refuse(f"no guard is labelled {unknown[0]!r}.")
             return 1
         selected = [m for m in MUTATIONS if m[0] in args.guard]
     if args.changed:
         changed, before = changed_files(args.changed), guards_at(args.changed)
         reasons = {m[0]: why_affected(m, changed, before) for m in selected}
         selected = [m for m in selected if reasons[m[0]]]
-        if not selected:
-            print(f"nothing since {args.changed} can affect any guard ({len(changed)} changed "
-                  f"file(s)); no guard was run, and none is claimed.")
-            return 0
+    held["selection"] = selected
+    _RUN["selection"] = len(selected)
+    if args.list_selection:
+        _write_json(args.list_selection, {**_selection_header(args, selected), "guards": [
+            {"label": m[0], "suite": SUITE_NAMES[m[4]]} for m in selected]})
+        print(f"{len(selected)} of {len(MUTATIONS)} guards selected, written to "
+              f"{args.list_selection}; none was run.")
+        return 0
+    if args.changed and not selected:
+        print(f"nothing since {args.changed} can affect any guard ({len(changed)} changed "
+              f"file(s)); no guard was run, and none is claimed.")
+        return 0
     skipped = [m for m in MUTATIONS if m not in selected]
     if not selected:
         # A run that proves nothing must not print the sentence a run that proved everything prints.
-        print(f"REFUSING: {args.mode} mode selected 0 of {len(MUTATIONS)} mutations.")
+        _refuse(f"{args.mode} mode selected 0 of {len(MUTATIONS)} mutations.")
         return 1
+    # AFTER SELECTION, so a shard is a slice of exactly what the unsharded run would prove, and
+    # every step below sees only the shard's guards.
+    if shard:
+        whole, selected = selected, in_shard(selected, shard)
+        if not selected:
+            print(f"shard {args.shard} holds none of the {len(whole)} guard(s) this run selected; "
+                  f"no guard was run here, and none is claimed.")
+            for m in whole:
+                print(f"  {m[0]} is shard {shard_of(m[0], shard[1])}'s")
+            return 0
+    held["ran"] = selected
 
     # STRUCTURALLY. The baseline set is DERIVED from the mutations about to run rather than
     # declared beside them, so a mode cannot run a suite it did not verify unmutated. A declared
@@ -4089,18 +4206,16 @@ def main(argv=None):
     absent = [(label, source(path)) for label, path, _old, _new, _suite, _expect in selected
               if not os.path.isfile(source(path))]
     if absent:
-        print(f"REFUSING: {len(absent)} mutation target(s) do not exist, so the guard cannot apply:")
-        for label, path in absent:
-            print(f"  {label}  ({path})")
+        _refuse(f"{len(absent)} mutation target(s) do not exist, so the guard cannot apply:\n"
+                + "\n".join(f"  {label}  ({path})" for label, path in absent))
         return 1
 
     moved = [(label, path) for label, path, old, _new, _suite, _expect in selected
              if old not in read_source(source(path))]
     if moved:
-        print(f"REFUSING: {len(moved)} anchor(s) no longer appear in their source. The mutation "
-              f"cannot apply, so the guard it aims at would be reported unproved after a full run:")
-        for label, path in moved:
-            print(f"  {label}  ({path})")
+        _refuse(f"{len(moved)} anchor(s) no longer appear in their source. The mutation "
+                f"cannot apply, so the guard it aims at would be reported unproved after a full run:\n"
+                + "\n".join(f"  {label}  ({path})" for label, path in moved))
         return 1
 
     # AND AN ANCHOR THAT APPEARS MORE THAN ONCE IS NOT AN ANCHOR. `replace(old, new, 1)` takes the
@@ -4116,16 +4231,16 @@ def main(argv=None):
                  for label, path, old, _new, _suite, _expect in selected
                  if read_source(source(path)).count(old) > 1]
     if ambiguous:
-        print(f"REFUSING: {len(ambiguous)} anchor(s) appear more than once in their source, so the "
-              f"mutation lands on whichever match sorts first and the guard proves a line it does "
-              f"not name:")
-        for label, path, count in ambiguous:
-            print(f"  {label}  ({path}, {count} matches)")
+        _refuse(f"{len(ambiguous)} anchor(s) appear more than once in their source, so the "
+                f"mutation lands on whichever match sorts first and the guard proves a line it does "
+                f"not name:\n"
+                + "\n".join(f"  {label}  ({path}, {count} matches)" for label, path, count in ambiguous))
         return 1
 
     print(f"mode={args.mode}{f' changed since {args.changed}' if args.changed else ''}: "
           f"{len(selected)} of {len(MUTATIONS)} guards, {len(needed)} of {len(SUITES)} suites"
-          f"{f', {args.jobs} workers' if args.jobs > 1 else ''}")
+          f"{f', {args.jobs} workers' if args.jobs > 1 else ''}"
+          f"{f', shard {args.shard} of the {len(whole)} selected' if shard else ''}")
     if args.jobs > 1:
         return _run_parallel(args, selected, skipped, reasons)
     # THE BASELINE, FIRST. Every line below reads "the guard fired" from a failing suite, so a suite
@@ -4142,12 +4257,14 @@ def main(argv=None):
               + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
         if standing:
             print("\nThe suite fails before any mutation, so nothing below can be believed.")
+            _RUN["refused"] = f"the {name} suite fails unmutated: {standing[0]}"
             return 1
     print()
 
     failures = 0
     baselined = set()
-    for label, relative, old, new, suite, expect in selected:
+    for mutation in selected:
+        label, relative, old, new, suite, expect = mutation
         test_class = _class_of(suite, expect)
         if test_class and test_class not in baselined:
             standing = suite(test_class)
@@ -4155,6 +4272,7 @@ def main(argv=None):
                   + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
             if standing:
                 print("\nThe class fails before any mutation, so its guards cannot be believed.")
+                _RUN["refused"] = f"{test_class} fails unmutated: {standing[0]}"
                 return 1
             baselined.add(test_class)
         path = source(relative)
@@ -4166,6 +4284,7 @@ def main(argv=None):
             # is how a mutation once survived into a working tree. It says so rather than being
             # counted among the guards this script has shown to fail.
             print(f"{label:62} -> MUTATION DID NOT APPLY; the source changed mid-run")
+            _RUN["outcomes"][label] = ("not proved", "the source changed mid-run")
             failures += 1
             continue
         # ARMED BEFORE THE WRITE, because a `finally` is exactly what a kill skips. An
@@ -4182,20 +4301,7 @@ def main(argv=None):
             undo()
             assert hashlib.sha256(read_source(path).encode(ENCODING)).hexdigest() == digest, \
                 f"restore failed: {path}"
-        # A crash is not a guard firing; see `_report`.
-        if fired and all(_not_proof(line) for line in fired):
-            print(f"{label:62} -> NOT PROVED: {fired[0][:64]}")
-            failures += 1
-        elif fired:
-            print(f"{label:62} -> {len(fired)} fired: {fired[0][:64]}")
-            # Named, because "some test failed" is not "this guard fired". A mutation that broke an
-            # unrelated test would otherwise be reported as proof of the guard it was aimed at.
-            if expect and not any(expect in line for line in fired):
-                print(f"{'':62}    *** but not `{expect}` -- this proves a different test ***")
-                failures += 1
-        else:
-            print(f"{label:62} -> *** NOTHING CAUGHT IT ***")
-            failures += 1
+        failures += _report(MUTATIONS.index(mutation), fired, None)
 
     print()
     if failures:
@@ -4213,6 +4319,7 @@ def main(argv=None):
         named = ", ".join(f"{name} {count}" for name, count in sorted(unproved.items()))
         print(f"{len(skipped)} guard(s) NOT attempted ({named}). Run --mode full before committing "
               f"to plugin/ or agent/.")
+    _shard_line(args, selected)
     return 0
 
 
