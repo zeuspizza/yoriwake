@@ -729,13 +729,14 @@ def _guard_selection(root, labels):
     return path
 
 
-def _guard_shard(root, index, count, guards, selected, **header):
-    """One shard's `--results` file: `guards` maps a label to its outcome."""
+def _guard_shard(root, index, count, guards, selected, header=None):
+    """One shard's `--results` file: `guards` maps a label to its outcome, `header` overrides its
+    selection fields."""
     path = os.path.join(root, "shards", f"guards-pr-{index}-of-{count}")
     os.makedirs(path, exist_ok=True)
     with open(os.path.join(path, "changed.json"), "w", encoding="utf-8") as handle:
         json.dump({**GUARD_SELECTION, "shard": f"{index}/{count}", "selected": selected,
-                   "refused": None, **header,
+                   "refused": None, **(header or {}),
                    "guards": [{"label": label, "suite": "unit", "outcome": outcome, "detail": None}
                               for label, outcome in guards.items()]}, handle)
 
@@ -775,6 +776,10 @@ def case_every_way_a_selected_guard_can_go_unproved_fails():
         "a guard not in the selection": ([{"a": "fired", "z": "fired"}, {"b": "fired"}], {}, "z ran but is not in the selection"),
         "a shard on another base": ([{"a": "fired"}, {"b": "fired"}], {"changed": "other"}, "selected by changed='other'"),
         "a refused shard": ([{"a": "fired"}, {"b": "not proved"}], {"refused": "anchors moved"}, "shard 2 of 2 refused: anchors moved"),
+        "a shard in another mode": ([{"a": "fired"}, {"b": "fired"}], {"mode": "fast"}, "selected by mode='fast'"),
+        "a shard with other --guard labels": ([{"a": "fired"}, {"b": "fired"}], {"guard": ["b"]}, "selected by guard=['b']"),
+        "a shard that selected another count": ([{"a": "fired"}, {"b": "fired"}], {"selected": 5}, "selected by selected=5"),
+        "a result from another shard": ([{"a": "fired"}, {"b": "fired"}], {"shard": "1/2"}, "shard 2 of 2 says it is shard 1/2"),
     }
     for label, (shards, header, expected) in scenarios.items():
         with tempfile.TemporaryDirectory() as root:
@@ -782,7 +787,7 @@ def case_every_way_a_selected_guard_can_go_unproved_fails():
             os.makedirs(os.path.join(root, "shards"))
             for index, guards in enumerate(shards, start=1):
                 if guards is not None:
-                    _guard_shard(root, index, 2, guards, 2, **(header if index == 2 else {}))
+                    _guard_shard(root, index, 2, guards, 2, header if index == 2 else None)
             found = _guard_check(root, selection)
         if not any(expected in problem for problem in found):
             problems += fail(f"{label} passed the check: {found}")
@@ -790,6 +795,12 @@ def case_every_way_a_selected_guard_can_go_unproved_fails():
         found = _guard_check(root, _guard_selection(root, ["a"]))
     if not {"shard 1 of 2 left no result", "shard 2 of 2 left no result"} <= set(found):
         problems += fail(f"no downloaded shard at all gave {found}")
+    with tempfile.TemporaryDirectory() as root:
+        selection = _guard_selection(root, ["a"])
+        _guard_shard(root, 1, 4, {"a": "fired"}, 1)
+        found = _guard_check(root, selection)
+    if not any("guards-pr-1-of-4 is a shard of 4, not of 2" in problem for problem in found):
+        problems += fail(f"a shard of another count passed the check: {found}")
     return problems
 
 

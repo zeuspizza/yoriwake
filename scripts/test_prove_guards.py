@@ -520,6 +520,36 @@ def case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it():
     return failures
 
 
+def case_the_parallel_run_ci_uses_writes_outcomes_and_refusals():
+    """CI runs the default worker trees, so `--results` is proved there too: a guard's outcome, and
+    a warm-up refusal written against every guard it stopped."""
+    failures = 0
+    saved = (pg.prepare_workers, pg.warm_up_tasks, pg._warm_up, set(pg.EXCLUSIVE_SUITES))
+    with _synthetic([("caught", True)]) as tmp:
+        result = os.path.join(tmp, "result.json")
+        # One tree, and the synthetic suite in the phase that runs in this process, so no worker
+        # process has to import a suite defined here.
+        pg.prepare_workers = lambda count: [tmp]
+        pg.EXCLUSIVE_SUITES.update(name for name, _fn, _cost in pg.SUITES if name.startswith("synthetic"))
+        try:
+            code, out = _run(["--guard", "caught", "--results", result])
+            got = _results(result)["guards"]
+            if code != 0 or [(g["label"], g["outcome"]) for g in got] != [("caught", "fired")]:
+                failures += fail(f"a parallel run that fired wrote {code} {got} {out!r}")
+            pg.warm_up_tasks = lambda selected: [":compile"]
+            pg._warm_up = lambda trees, tasks: f"{trees[0]} does not compile unmutated: e: boom"
+            code, out = _run(["--guard", "caught", "--results", result])
+            got = _results(result)
+            if code != 1 or [(g["label"], g["outcome"]) for g in got["guards"]] != [("caught", "not proved")] \
+                    or "does not compile unmutated" not in (got["refused"] or ""):
+                failures += fail(f"a parallel run refused at warm-up wrote {code} {got}")
+        finally:
+            pg.prepare_workers, pg.warm_up_tasks, pg._warm_up = saved[:3]
+            pg.EXCLUSIVE_SUITES.clear()
+            pg.EXCLUSIVE_SUITES.update(saved[3])
+    return failures
+
+
 def case_a_refused_run_writes_every_guard_it_held_as_not_proved():
     """A shard that stops before its guards still says which it did not prove, and why."""
     failures = 0
@@ -587,6 +617,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_an_empty_shard_succeeds_and_says_whose_guards_it_left,
          case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it,
          case_a_refused_run_writes_every_guard_it_held_as_not_proved,
+         case_the_parallel_run_ci_uses_writes_outcomes_and_refusals,
          case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing)
 
 
