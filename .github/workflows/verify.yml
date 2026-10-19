@@ -4,12 +4,13 @@ name: verify
 # on one machine selects correctly on another, from a cold checkout.
 # A pull request that changes only Markdown or docs runs nothing but the `changes` job, and every
 # other job reports skipped, which satisfies the required checks; docs/contract.md (the agent's
-# tests check its constants against it) and docs/reference.md (test_ci.py checks its supported
-# matrix against matrix.yml) count as code. A push to main keeps the path filter.
+# tests check its constants against it), docs/reference.md (test_ci.py checks its supported matrix
+# against matrix.yml) and SECURITY.md (test_ci.py checks its key fingerprint against
+# RELEASE-KEY.asc) count as code. A push to main keeps the path filter.
 on:
   push:
     branches: [main]
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md', 'docs/reference.md']
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/contract.md', 'docs/reference.md', 'SECURITY.md']
   # Only pull requests into main: a docs-only pull request into another branch, retargeted to main,
   # must not bring its skipped checks along. Retargeted, its required checks are missing until a push.
   pull_request:

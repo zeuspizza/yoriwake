@@ -1342,6 +1342,19 @@ format versioning.
   Selection task is declined; a JUnit Platform test filter set in the build script selects and
   dates the map; tests named with `--tests` or by an IDE run as named.
 
+### From 0.2.0 to 0.3.0
+
+- **Your map is repaired on the next build.** The format stays at 7, but a 0.2.0 map records no
+  [environment](#the-environment-fingerprint), so the first 0.3.0 selecting run of each task runs
+  everything and records it. Where pull requests only restore the default branch's map, each runs
+  everything until a default-branch build on 0.3.0 has saved one. A trusted-map list built from
+  0.2.0's `map-digest` values refuses that map as `map-untrusted` until then, with the same effect.
+- **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.3.0`, one ordinary cache miss.
+- **What runs changes without a new flag:** a test task's JDK, OS, system properties, time zone or
+  locale differing from the map's runs everything. A system property that changes on every build
+  (a build number, a timestamp) does so on every run until it is left out with
+  `systemPropertyIgnore`, and test legs on different JDKs need a cache key each.
+
 ## Prior art
 
 - **[Develocity Predictive Test Selection](https://docs.develocity.ai/predictive-test-selection/)**

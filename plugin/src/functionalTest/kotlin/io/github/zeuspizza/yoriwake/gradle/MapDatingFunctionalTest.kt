@@ -359,7 +359,7 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
      * `--tests` (which does not date the map), and then under selection after a change it does not
      * reach. What it failed with must make it run again.
      */
-    private fun failsAloneThenAnUnrelatedChange(dir: File, alphaTest: String) {
+    private fun failsAloneThenAnUnrelatedChange(dir: File, alphaTest: String, buildExtra: String = "") {
         build(
             dir,
             // The switch is left out of the environment fingerprint: compared, it would make the
@@ -368,7 +368,7 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
                 "tasks.test { useJUnitPlatform() }",
                 "tasks.test { useJUnitPlatform(); " +
                     "systemProperty(\"sample.broken\", project.hasProperty(\"broken\").toString()) }\n" +
-                    "yoriwake { systemPropertyIgnore.add(\"sample.broken\") }",
+                    "yoriwake { systemPropertyIgnore.add(\"sample.broken\") }\n" + buildExtra,
             ),
             oneClass, secondClass, secondTest, classOrderByName,
             "src/test/java/dev/sample/AlphaTest.java" to alphaTest,
@@ -427,6 +427,42 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
                 }
                 @Test void passes() { assertEquals(2, 1 + 1); }
             }
+            """.trimIndent(),
+        )
+    }
+
+    @Test
+    fun `a failure only Gradle's report kept still runs on the next unrelated change`(@TempDir dir: File) {
+        // A test JVM stopped before its records were written: here every record after the run says
+        // passed, so the failure reaches the map only through Gradle's JUnit XML report.
+        failsAloneThenAnUnrelatedChange(
+            dir,
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.*;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class AlphaTest {
+                @Test void passes() { assertEquals(2, Boolean.getBoolean("sample.broken") ? 3 : 1 + 1); }
+            }
+            """.trimIndent(),
+            // A finalizer, so it runs after a failed test task too, and before the decode reads.
+            buildExtra = """
+                abstract class LoseRecords : DefaultTask() {
+                    @get:Internal abstract val records: DirectoryProperty
+                    @TaskAction fun lose() {
+                        records.get().asFile.walkTopDown().filter { it.name == "index.tsv" }.forEach { index ->
+                            index.writeText(index.readLines().joinToString("") { line ->
+                                val parts = line.split("\t")
+                                (if (parts.size == 5) (parts.take(3) + "SUCCESSFUL" + parts[4]).joinToString("\t") else line) + "\n"
+                            })
+                        }
+                    }
+                }
+                val loseRecords = tasks.register<LoseRecords>("loseRecords") {
+                    records.set(layout.projectDirectory.dir(".gradle/yoriwake"))
+                }
+                tasks.test { finalizedBy(loseRecords) }
+                tasks.matching { it.name == "yoriwakeDecodeTest" }.configureEach { mustRunAfter(loseRecords) }
             """.trimIndent(),
         )
     }
