@@ -69,7 +69,13 @@ class TouchRecorderTest {
         val recorder = TouchRecorder(root.path)
         recorder.read(File(link, "info.properties"))
 
-        assertEquals(listOf(AgentContract.TOUCH_RESOURCE to File(link, "info.properties").absolutePath), drained(recorder))
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_RESOURCE to File(link, "info.properties").absolutePath,
+                AgentContract.TOUCH_RESOURCE to File(root, "info.properties").toPath().toRealPath().toString(),
+            ),
+            drained(recorder),
+        )
     }
 
     /** Whether [dir]'s file system finds a name in another letter case, as macOS and Windows do. */

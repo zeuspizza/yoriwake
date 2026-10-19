@@ -618,8 +618,9 @@ public final class TouchRecorder implements CaptureSession.Touches {
                     : java.util.Arrays.asList(absolute, resolved);
         }
         if (resolved != null && below(resolved, prefixes) != null) {
-            // The decoder resolves it again, as a read through a link to the root always was.
-            return java.util.Collections.singletonList(absolute);
+            // Through a link to the root, or a short name above it: the resolved path is the one
+            // the decoder can key, even once the link is gone.
+            return java.util.Arrays.asList(absolute, resolved);
         }
         if (resolved == null) {
             // Nothing was read, and a file that is gone forces anyway.
