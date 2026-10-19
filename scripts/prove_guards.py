@@ -13,6 +13,7 @@ an in-memory copy and checked byte for byte afterwards.
     python3 scripts/prove_guards.py --guard LABEL         # one guard, by its label
     python3 scripts/prove_guards.py --changed origin/main # the guards a change can affect
     python3 scripts/prove_guards.py --against origin/main # name guards a change removes or re-aims
+    python3 scripts/prove_guards.py --shard 3/8           # the guards CI's shard 3 of 8 runs
 
 Run from the repository root. Paths in MUTATIONS are relative to it. By default the guards run in
 worker worktrees under `sandbox/prove-guards/`, and this tree is never written.
