@@ -34,7 +34,12 @@ url = "https://github.com/open-telemetry/opentelemetry-java.git"
 # the repository's default branch.
 commit = "77b1ac4141b85759e5eee73bd06cc7091036b8af"
 module = "sdk:trace"
-flags = []
+# NO BUILD SCAN. With `CI` set, as on GitHub's runners, `settings.gradle.kts` agrees to the terms of
+# service, publishes a scan of every build and writes its URL to `build-scan.txt` in the checkout.
+# Written during the capture, that file is recorded as unknown and every later run forces on it:
+# the first CI sweep stopped the project as setup-forced at its preflight. A local sweep never set
+# `CI`, so it never saw the file.
+flags = ["--no-scan"]
 # The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
 # every commit, which is the opposite of what this key is for, and the replay refuses it.
 sources = ["sdk/trace/src/main/java"]

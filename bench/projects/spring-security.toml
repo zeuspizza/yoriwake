@@ -41,7 +41,12 @@ module = "spring-security-config"
 # CORRECTED. The blocker recorded here was a first guess at the module
 # name, not a property of the build.
 module_dir = "config"
-flags = []
+# `rncToXsd` LEFT OUT. It regenerates the tracked `spring-security-*.xsd` under
+# `config/src/main/resources` from their `.rnc` sources, in place, whenever it runs; rewritten during
+# the capture, every one is recorded as unknown and every later run forces on them (the first CI
+# sweep stopped the project as setup-forced at its preflight on that list). Without the task,
+# `processResources` copies the committed schemas, which is what the commit ships.
+flags = ["-x", "rncToXsd"]
 # The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
 # every commit, which is the opposite of what this key is for, and the replay refuses it.
 sources = ["config/src/main/java"]

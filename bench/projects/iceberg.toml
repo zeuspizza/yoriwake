@@ -173,7 +173,12 @@ module_dir = "core"
 # out of it because it re-invoked `os.open` without flags. Then, with that fixed, the same function
 # hit a race: `restore_map` empties a map directory while the build's decode finalizer is still
 # writing `task-facts` into it. Both are guarded now.
-flags = ["--no-configure-on-demand"]
+# DERBY'S LOG GOES TO STDERR, NOT INTO THE CHECKOUT. Embedded Derby in core's tests writes
+# `core/derby.log` (ignored by iceberg's .gitignore). Written during the capture, it is recorded as
+# unknown and every later run forces on it: the first CI sweep stopped the project as setup-forced
+# at its preflight on exactly that path. The property moves Derby's own log only; no test reads it.
+flags = ["--no-configure-on-demand", "-I", "{yoriwake}/bench/guest-tests.init.gradle",
+         "-Dyoriwake.harness.testSystemProperties=derby.stream.error.field=java.lang.System.err"]
 # The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
 # every commit, which is the opposite of what this key is for, and the replay refuses it.
 sources = ["core/src/main/java"]

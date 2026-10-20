@@ -3822,6 +3822,38 @@ def case_a_project_flag_names_an_init_script_in_the_checkout_that_exists():
     return failures
 
 
+def case_a_harness_property_in_a_project_s_flags_is_read_by_a_script_they_pass():
+    """A `-Dyoriwake.harness.*` setting no passed init script reads changes nothing, silently: the
+    project would go on writing into its checkout and stop as setup-forced again."""
+    import re  # noqa: PLC0415
+    import tomllib  # noqa: PLC0415
+    failures = 0
+    projects = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects")
+    seen = 0
+    for name in sorted(os.listdir(projects)):
+        with open(os.path.join(projects, name), "rb") as handle:
+            flags = run.guest_flags(tomllib.load(handle))
+        scripts = ""
+        for flag, value in zip(flags, flags[1:]):
+            if flag == "-I" and os.path.isfile(value):
+                with open(value, encoding="utf-8") as handle:
+                    scripts += handle.read()
+        for flag in flags:
+            setting = re.match(r"-D(yoriwake\.harness\.\w+)=(.*)", flag)
+            if not setting:
+                continue
+            seen += 1
+            if f"'{setting.group(1)}'" not in scripts:
+                failures += fail(f"{name}: no init script it passes reads {setting.group(1)}")
+            entries = [e.strip() for e in setting.group(2).split(",")]
+            if not all(entries) or (setting.group(1).endswith("SystemProperties")
+                                    and not all("=" in e for e in entries)):
+                failures += fail(f"{name}: {flag} has an entry the script cannot read")
+    if not seen:
+        failures += fail("no project passes a harness setting, so this case checks nothing")
+    return failures
+
+
 # The sweep's readers for the isolated arm, the rule fields, the lost-write signal and the
 # cost fields. Every one answers None for "could not be asked", which is the property tested.
 def _map(directory, schema="6", modes=(), facts=None, first=(), positions=()):
@@ -5164,6 +5196,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_an_arm_s_cost_is_read_from_its_own_instruments,
          case_the_raw_evidence_is_kept_and_archived_without_the_harness_copies,
          case_a_project_flag_names_an_init_script_in_the_checkout_that_exists,
+         case_a_harness_property_in_a_project_s_flags_is_read_by_a_script_they_pass,
          case_every_harness_build_turns_off_the_guests_own_test_selection,
          case_staging_and_flags_treat_a_stored_null_oppositely,
          case_a_row_records_the_tree_and_the_flags_it_was_measured_under,

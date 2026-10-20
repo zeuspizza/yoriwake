@@ -1,0 +1,29 @@
+/*
+ * Harness only: keeps a guest's tests from writing into its own checkout.
+ *
+ * A file the tests write into the tree while the map is captured is recorded as unknown, and every
+ * later selecting run forces on it: the project's preflight stops it as setup-forced and it answers
+ * no recall question. Named, with its settings, in the project file's `flags`, so a results file
+ * records what its project was measured under:
+ *
+ *   -Dyoriwake.harness.testExcludes=<pattern>,...       tests left out of every run, ground truth too
+ *   -Dyoriwake.harness.testSystemProperties=<k>=<v>,...  system properties of every test JVM
+ *
+ * Set when the task graph is ready, after every build script's own `configureEach`, for the same
+ * reason as guest-selection-off.init.gradle.
+ */
+def excludes = (System.getProperty('yoriwake.harness.testExcludes') ?: '')
+        .split(',')*.trim().findAll { it }
+def testProperties = (System.getProperty('yoriwake.harness.testSystemProperties') ?: '')
+        .split(',')*.trim().findAll { it }
+if (excludes || testProperties) {
+    gradle.taskGraph.whenReady { graph ->
+        graph.allTasks.findAll { it instanceof Test }.each { task ->
+            excludes.each { task.filter.excludeTestsMatching(it) }
+            testProperties.each { entry ->
+                def (key, value) = entry.split('=', 2) as List
+                task.systemProperty(key, value)
+            }
+        }
+    }
+}
