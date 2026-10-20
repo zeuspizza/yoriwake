@@ -8,6 +8,7 @@ them.
 """
 
 import os
+import shutil
 import subprocess
 import time
 
@@ -112,6 +113,7 @@ def run(command, cwd, log_path=None, timeout=3600, stall_seconds=STALL_SECONDS,
             if size != last_size or mark != last_mark:
                 last_size, last_mark, last_change = size, mark, now
             elif now - last_change > stall_seconds:
+                dumped = dump_threads(log_path)
                 process.kill()
                 process.wait()
                 handle.flush()
@@ -120,12 +122,50 @@ def run(command, cwd, log_path=None, timeout=3600, stall_seconds=STALL_SECONDS,
                 quiet = (f"{int(stall_seconds / 60)} minutes" if stall_seconds >= 60
                          else f"{int(stall_seconds)}s")
                 watched = " and nothing written under the paths it watches" if progress_paths else ""
+                threads = (f"thread dumps of {dumped} JVMs beside it" if dumped
+                           else "no JVM thread dump could be taken")
                 print(f"  STALLED: no output for {quiet}{watched}; killed. "
-                      f"jstack the test worker before assuming it is slow. Log: {log_path}",
-                      flush=True)
+                      f"Read the test worker's threads before assuming it is slow. Log: {log_path}; "
+                      f"{threads}", flush=True)
                 return STALLED, round(time.time() - started, 1)
     finally:
         handle.close()
+
+
+def dump_threads(log_path):
+    """Each running JVM's threads, beside the log, taken before a stalled build is killed.
+
+    On a CI runner the build is gone by the time anyone reads the log, so whether the test worker
+    was parked on a lock or working slowly can only be read from a dump taken here. Named
+    `<log>.stall-<pid>.log` so a job that uploads its logs uploads them. Returns how many it wrote;
+    never raises, since the kill must happen whatever this finds.
+    """
+    home = os.environ.get("JAVA_HOME")
+    tools = [os.path.join(home, "bin", name) if home else shutil.which(name) for name in ("jps", "jstack")]
+    if not all(tool and os.path.isfile(tool) for tool in tools):
+        tools = [shutil.which("jps"), shutil.which("jstack")]
+    jps, jstack = tools
+    if not jps or not jstack:
+        return 0
+    try:
+        listed = subprocess.run([jps, "-q"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    written = 0
+    # Bounded as a whole: the kill waits on this, and a wedged JVM can take jstack to its timeout.
+    deadline = time.time() + 120
+    for pid in listed.split():
+        if time.time() > deadline:
+            break
+        try:
+            dump = subprocess.run([jstack, pid], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if dump.returncode == 0 and dump.stdout:
+            with open(f"{log_path}.stall-{pid}.log", "w", encoding="utf-8") as handle:
+                handle.write(dump.stdout)
+            written += 1
+    return written
 
 
 def stalled(code, label, findings, phase):

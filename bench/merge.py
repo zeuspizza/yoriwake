@@ -7,8 +7,12 @@ from the shards, in draw order, and gives the file a single job would have writt
 
 What it refuses, because each would publish a sweep that is not the one planned: a shard that is
 missing, doubled or stamped with another selector, grammar or commit; a row count off the accepted
-list; a planned project with no output; a reduced arm missing a member; and an arm with no row
-where a miss was possible.
+list; a planned project with no output that is not declared missing; a reduced arm missing a member;
+and an arm with no row where a miss was possible.
+
+A project whose recording or shard job failed is declared with `--missing NAME=REASON` rather than
+holding back every other project's rows: the summary lists it with its reason, so the sweep says
+which projects it lacks, and the workflow still fails the run.
 
 The narrowed target stops a single job once enough of its rows narrowed, which a list fixed before
 measuring cannot know. So shards measure the whole list, and the merge keeps rows in draw order up
@@ -17,6 +21,7 @@ family, so there each family's rows are kept up to the one that reaches that fam
 rows past it are counted in `rows_past_target`.
 
     python3 bench/merge.py --arm full --planned demo okio --out bench/results DIR
+    python3 bench/merge.py --arm full --planned demo okio --missing "okio=its record job failed" ...
 
 `DIR/<project>/` holds `recording.json`, `accepted.json` and `shard-<k>-of-<n>.json`.
 """
@@ -137,9 +142,19 @@ def merge_directory(path):
     return merge_project(load("recording.json"), load("accepted.json"), shards)
 
 
-def check_sweep(planned, merged, arm, isolated):
-    """The sweep-level refusals over the merged files, and the summary that states what ran."""
-    absent = [name for name in planned if name not in merged]
+def check_sweep(planned, merged, arm, isolated, missing=None):
+    """The sweep-level refusals over the merged files, and the summary that states what ran.
+
+    `missing` maps each project declared missing to why; one also merged is a contradiction.
+    """
+    missing = missing or {}
+    unplanned = sorted(name for name in missing if name not in planned)
+    if unplanned:
+        raise Refused(f"declared missing but not planned: {', '.join(unplanned)}")
+    both = sorted(name for name in missing if name in merged)
+    if both:
+        raise Refused(f"declared missing but merged: {', '.join(both)}")
+    absent = [name for name in planned if name not in merged and name not in missing]
     if absent:
         raise Refused(f"no output for planned project(s): {', '.join(absent)}")
     if arm == "reduced":
@@ -152,8 +167,8 @@ def check_sweep(planned, merged, arm, isolated):
     if not possible:
         raise Refused(f"the {arm} arm has no row that could have missed a failure, so its recall "
                       f"figure would be a statement about nothing")
-    return {"arm": arm, "projects": sorted(merged), "miss_possible_rows": possible,
-            "isolated_arm": "ran" if isolated else "not run"}
+    return {"arm": arm, "projects": sorted(merged), "missing": dict(sorted(missing.items())),
+            "miss_possible_rows": possible, "isolated_arm": "ran" if isolated else "not run"}
 
 
 def main(argv=None):
@@ -161,14 +176,23 @@ def main(argv=None):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("artifacts", help="a directory holding one directory per project")
     parser.add_argument("--planned", nargs="+", required=True)
+    parser.add_argument("--missing", action="append", default=[], metavar="NAME=REASON",
+                        help="a planned project whose recording or shard job failed, and why")
     parser.add_argument("--arm", choices=("full", "reduced"), required=True)
     parser.add_argument("--isolated", action="store_true", help="the isolated arm ran")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     try:
+        missing = {}
+        for entry in args.missing:
+            name, _, reason = entry.partition("=")
+            if not name or not reason:
+                raise Refused(f"--missing takes NAME=REASON, not {entry!r}")
+            missing[name] = reason
         merged = {name: merge_directory(os.path.join(args.artifacts, name))
-                  for name in args.planned if os.path.isdir(os.path.join(args.artifacts, name))}
-        summary = check_sweep(args.planned, merged, args.arm, args.isolated)
+                  for name in args.planned
+                  if name not in missing and os.path.isdir(os.path.join(args.artifacts, name))}
+        summary = check_sweep(args.planned, merged, args.arm, args.isolated, missing)
     except Refused as refused:
         print(f"REFUSED: {refused}", file=sys.stderr)
         return 1

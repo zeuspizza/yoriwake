@@ -9,16 +9,22 @@
  *   -Dyoriwake.harness.testClassExcludes=<class-file pattern>,...  test classes left out of every
  *                                                                  run, ground truth too
  *   -Dyoriwake.harness.testSystemProperties=<k>=<v>,...            system properties of every test JVM
+ *   -Dyoriwake.harness.notReadByTests=<glob>,...                   yoriwake's `notReadByTests` in
+ *                                                                  every project that applies it
  *
  * Classes are left out with the task's `exclude` while each Test task is configured, before
  * yoriwake reads the build script's test filters: a filter pattern added later would make every
  * run a filtered one, and a filtered capture keeps no map. The properties are set when the task
  * graph is ready, after every build script's own `configureEach`, as guest-selection-off.init.gradle
- * does; a system property is not a filter.
+ * does; a system property is not a filter. `notReadByTests` is the remedy the reference gives a
+ * user whose build writes a file no test reads (an npm cache, a report a test framework writes into
+ * its working directory), set before yoriwake reads it, as a build script would.
  */
 def classExcludes = (System.getProperty('yoriwake.harness.testClassExcludes') ?: '')
         .split(',')*.trim().findAll { it }
 def testProperties = (System.getProperty('yoriwake.harness.testSystemProperties') ?: '')
+        .split(',')*.trim().findAll { it }
+def notReadByTests = (System.getProperty('yoriwake.harness.notReadByTests') ?: '')
         .split(',')*.trim().findAll { it }
 if (classExcludes) {
     allprojects {
@@ -31,6 +37,20 @@ if (testProperties) {
             testProperties.each { entry ->
                 def (key, value) = entry.split('=', 2) as List
                 task.systemProperty(key, value)
+            }
+        }
+    }
+}
+if (notReadByTests) {
+    allprojects { project ->
+        project.plugins.whenPluginAdded { plugin ->
+            // Not read here: a build yoriwake declines (buildSrc) has no extension, and yoriwake reads
+            // the setting once every project is evaluated, after this.
+            if (plugin.class.name.startsWith('io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin')) {
+                project.afterEvaluate {
+                    // `project.`: a bare `extensions` in an init script is the build's, not the project's.
+                    project.extensions.findByName('yoriwake')?.notReadByTests?.addAll(notReadByTests)
+                }
             }
         }
     }

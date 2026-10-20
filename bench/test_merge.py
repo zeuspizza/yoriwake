@@ -213,6 +213,30 @@ def case_a_sweep_missing_a_project_or_a_reduced_member_is_refused():
     return failures
 
 
+def case_a_project_declared_missing_is_listed_with_why_not_refused():
+    demo = {**_recording(), "mutations": [_row(0, narrowed=True, broke=True)]}
+    failures = 0
+    summary = merge.check_sweep(["demo", "okio"], {"demo": demo}, arm="full", isolated=False,
+                                missing={"okio": "its record job failed"})
+    if summary.get("missing") != {"okio": "its record job failed"} or summary["projects"] != ["demo"]:
+        failures += fail(f"a declared missing project: {summary}")
+    why = _refused(lambda: merge.check_sweep(["demo"], {"demo": demo}, arm="full", isolated=False,
+                                             missing={"demo": "its shard failed"}))
+    if not why or "merged" not in why:
+        failures += fail(f"a project both merged and declared missing: {why}")
+    why = _refused(lambda: merge.check_sweep(["demo"], {"demo": demo}, arm="full", isolated=False,
+                                             missing={"okio": "never planned"}))
+    if not why or "not planned" not in why:
+        failures += fail(f"a missing project that was never planned: {why}")
+    reduced = {name: {**demo, "project": name} for name in merge.REDUCED_ARM[:-1]}
+    why = _refused(lambda: merge.check_sweep(list(merge.REDUCED_ARM), reduced, arm="reduced",
+                                             isolated=False,
+                                             missing={merge.REDUCED_ARM[-1]: "its record job failed"}))
+    if not why or "partial arm" not in why:
+        failures += fail(f"a reduced arm with a member declared missing: {why}")
+    return failures
+
+
 def case_an_arm_with_no_row_where_a_miss_was_possible_is_refused():
     quiet = {**_recording(), "mutations": [_row(0, narrowed=True), _row(1, broke=True)]}
     why = _refused(lambda: merge.check_sweep(["demo"], {"demo": quiet}, arm="full",
