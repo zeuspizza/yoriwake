@@ -137,7 +137,8 @@ applying `java`, an Android plugin, or Kotlin Multiplatform with a JVM target
 On GitHub Actions, use [yoriwake-action](https://github.com/zeuspizza/yoriwake-action): it caches
 the map, fetches the history selection needs, records on the default branch and selects on pull
 requests. Elsewhere, cache `.gradle/yoriwake` and fetch enough history to reach the diff base:
-[the CI recipe](docs/reference.md#ci).
+[the CI recipe](docs/reference.md#ci). Measured entries for one test task were 0.07 to 2.76 MB:
+[how much cache it takes](docs/reference.md#how-much-cache-it-takes).
 
 ## How well it works
 

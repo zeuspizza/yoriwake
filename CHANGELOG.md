@@ -36,6 +36,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   or drive alias of the project. Map: left alone.
 - The reference's CI recipe deletes `raw/` and `selection.tsv` before the save; its `!` paths kept nothing out. Map: left alone.
 - Reference: what upgrading from 0.2.0 asks of you, in "Upgrading and your map". Map: left alone.
+- Reference: how much cache the map takes per entry, and how many entries GitHub's limit holds. Map: left alone.
 
 ### Fixed
 

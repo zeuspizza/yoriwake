@@ -282,6 +282,37 @@ measure your own build, see [the audit's payback question](reference.md#properti
 | spring-test | 93.5 s | 108.0 s | +16% |
 | **median, 32 projects** | | | **+16%** |
 
+## Cache entry size
+
+What the cache holds after one recording build, at
+[`0326e9d`](https://github.com/zeuspizza/yoriwake/commit/0326e9d), 2026-10-20, on an Apple M1 Max
+(10 cores, 64 GiB, macOS 27.0.1): one build per project, one test task each (the module the sweep
+measures, not `./gradlew test` over every module), each map directory empty before it. Sizes in MB
+(10^6 bytes), the directory tarred and compressed with `zstd --long=30` as the cache action does.
+The budget is in [the reference](reference.md#how-much-cache-it-takes).
+
+| project | test task | tests run (skipped) | entry | full tree |
+|---|---|---:|---:|---:|
+| okhttp | `:okhttp-tls:test` | 112 (1) | 0.07 MB | 0.14 MB |
+| grpc-java | `:grpc-core:test` | 1,536 (17) | 0.23 MB | 0.57 MB |
+| iceberg | `:iceberg-core:test` | 8,785 (545) | 0.91 MB | 3.55 MB |
+| rxjava | `test` | 14,221 (864) | 1.29 MB | 4.05 MB |
+| rxjava, isolated | `test` | 14,221 (864) | 2.76 MB | 8.25 MB |
+
+- **entry:** without `raw/` and `selection.tsv`, what yoriwake-action releases after v0.2.1 save
+  and what the reference's own recipe saves. **full tree:** everything under `.gradle/yoriwake`,
+  what yoriwake-action v0.2.1 and earlier saved.
+- **tests run** counts every test invocation in the task's JUnit XML, not distinct names, so it is
+  not the sweep's `tests` column (iceberg 3,937 there, rxjava 13,921).
+- **grpc-java's build failed:** 2 of its tests fail at the measured upstream commit with nothing
+  changed. The map was recorded and measured all the same.
+- **rxjava, isolated** was recorded with `-Pyoriwake.isolatedCapture` and `maxParallelForks=10`,
+  not rxjava's own setting: 1,339 test JVMs.
+- Before compression, the task's map is 0.32 MB for okhttp, 4.9 MB for grpc-java, 111.3 MB for
+  iceberg, 30.3 MB for rxjava and 76.7 MB for rxjava isolated.
+- Single samples, one machine. A job running several test tasks saves one map per task: not
+  measured.
+
 ## The corpus
 
 A codebase is one upstream repository; projects drawn from the same one count once. The pool is

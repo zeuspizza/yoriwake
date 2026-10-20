@@ -275,6 +275,14 @@ new `Build-Time` or new OSGi bundle headers on every build, so no selecting run 
 the commit the map was recorded at. A day of commits later, Kafka, Gradle, Iceberg, Micrometer and
 Grails builds had also moved a commit id, a build date or an SBOM.
 
+Measured again at 0.3.0 (`0326e9d`, 2026-10-20, one run each) on the same tasks, 29 with a result
+at the commit the map was recorded at and 28 a day later, this rule ran everything on none of them.
+At the recorded commit, Resilience4j narrowed, running 176 of its 234 tests. OpenTelemetry Java
+narrowed but still ran all 262: 147 reached by the edit and 115 sharing a test JVM with it, and the
+run cannot tell how many of those 115 the moved manifest added. JUnit 5 ran everything because its
+map had no coverage for the edited file. A day later no task narrowed, and none ran everything for
+this rule.
+
 ### The environment fingerprint
 
 A map says which tests a change reaches in the environment it was recorded in. On another JDK, or
@@ -885,6 +893,34 @@ requests to the action, which passes the trusted-map list.
 - **Not `selection.tsv`,** deleted before the save. A complement run leaves out the tests it lists,
   and no map digest covers it, so it comes only from the selecting job of the same workflow run,
   never from a cache.
+
+### How much cache it takes
+
+The action saves one entry per default-branch commit for each job and matrix leg that uses it; the
+recipe above does the same per job. GitHub keeps 10 GB of caches per repository by default, shared
+with every other cache the repository saves, and administrators can raise it. Over the limit it
+evicts the entries accessed longest ago, and it removes any entry not accessed in 7 days. A miss
+runs every test in that job; it never skips one. Pull requests do not save, so once a job's entries
+are gone each of its pull-request builds runs in full until the default branch saves again.
+
+Entries measured at 0.3.0, one recording build of one test task each, compressed as the cache
+stores them (more in [the benchmarks](benchmarks.md#cache-entry-size)):
+
+| project | test task | tests run | entry |
+|---|---|---:|---:|
+| okhttp | `:okhttp-tls:test` | 112 | 0.07 MB |
+| grpc-java | `:grpc-core:test`, 2 tests failing | 1,536 | 0.23 MB |
+| iceberg | `:iceberg-core:test` | 8,785 | 0.91 MB |
+| rxjava | `test` | 14,221 | 1.29 MB |
+| rxjava, `-Pyoriwake.isolatedCapture` | `test` | 14,221 | 2.76 MB |
+
+The size follows more than the test count: before compression, iceberg's map is nearly four times
+rxjava's on fewer tests. A job that runs several test tasks, as `./gradlew test` does in a
+multi-module build, saves one map per task in its entry, so its entry is larger by theirs; that was
+not measured. For a job running one test task, budget with the largest, 2.76 MB: 10 GB divided by
+it is about 3,600 entries, arithmetic rather than a measurement, before the other caches the
+repository keeps. yoriwake-action v0.2.1 and earlier also saved `raw/`, which made the same entries
+0.14 to 8.25 MB.
 
 ### When to refresh
 
