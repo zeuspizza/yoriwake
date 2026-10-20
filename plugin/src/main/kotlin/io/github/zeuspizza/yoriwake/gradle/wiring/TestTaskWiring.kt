@@ -506,15 +506,17 @@ internal class TestTaskWiring(internal val settings: Settings) {
             startTree(project, mapDir, buildMemo)
         }
         test.doFirst {
-            // One left by an earlier build describes its tree; the undated one only 0.1 wrote.
+            // One left by an earlier build describes its tree; the undated one only 0.1 wrote, the
+            // dated one in the map directory only 0.2.
             head.delete()
             File(mapDir, WorkingTree.SNAPSHOT_FILE + ".undated").delete()
+            File(mapDir, WorkingTree.SNAPSHOT_FILE + ".dated").delete()
             if (declinedUnderDevelocity(test)) return@doFirst
             val reading = startReading?.let(CaptureStart::decode)
             if (reading == null) {
                 // No start reading this build: the decode removes the stamp and the snapshot, and the
-                // next run refuses and captures.
-                dated.delete()
+                // next run refuses and captures. The start file stays: every map's capture shares it,
+                // and without this run's id the decode does not read it.
                 return@doFirst
             }
             val pending = CaptureStart.Pending(reading, WorkingTree.startId(dated), WorkingTree.startId(stats))
@@ -540,14 +542,23 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         // One provider per build, so its stat of every tracked file runs once, not once per task.
         runCatching { (memo?.provider(YoriwakePlugin.CAPTURE_STATS_KEY + rootDir.path, stats) ?: stats()).get() }
-        runCatching {
+        val start = pendingSnapshot(mapDir)
+        val snapshot = {
             project.providers.of(WorkingTree.StartSource::class.java) {
                 it.parameters.rootDir.set(rootDir.absolutePath)
-                it.parameters.mapDir.set(mapDir.absolutePath)
-                it.parameters.file.set(pendingSnapshot(mapDir).absolutePath)
+                it.parameters.file.set(start.absolutePath)
                 listed?.let { joined -> it.parameters.listed.set(joined) }
-            }.get()
+            }
         }
+        // One provider per build as well: hashing the tree once per task took over ten minutes on a
+        // build with a large ignored tree and hundreds of test tasks.
+        val shared = memo?.let { m ->
+            m.provider(YoriwakePlugin.CAPTURE_SNAPSHOT_KEY + rootDir.path + "\u0000" + start.path) {
+                m.count(YoriwakePlugin.WORKTREE_SNAPSHOT_COUNTER)
+                snapshot()
+            }
+        }
+        runCatching { (shared ?: snapshot()).get() }
     }
 
     private fun startReading(project: Project, memo: BuildMemo?): String? {
@@ -1060,8 +1071,8 @@ internal fun pendingStats(mapDir: File) = File(mapDir.parentFile.parentFile, Wor
 /** The classpath files where the capture started; see [ClasspathFiles]. */
 internal fun pendingClasspathFiles(mapDir: File) = File(mapDir, CoverageDecoder.RESOURCE_DIGESTS_FILE + ".pending")
 
-/** The tree where the capture started; see [WorkingTree.startSnapshot]. */
-internal fun pendingSnapshot(mapDir: File) = File(mapDir, WorkingTree.SNAPSHOT_FILE + ".dated")
+/** The tree where the capture started, shared by the build's maps; see [WorkingTree.startSnapshot]. */
+internal fun pendingSnapshot(mapDir: File) = File(mapDir.parentFile.parentFile, WorkingTree.SNAPSHOT_PENDING_FILE)
 
 /**
  * Written when the test task actually executes. A finalizer also runs for UP-TO-DATE,

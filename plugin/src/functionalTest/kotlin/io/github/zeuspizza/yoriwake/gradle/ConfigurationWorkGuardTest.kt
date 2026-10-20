@@ -159,6 +159,17 @@ class ConfigurationWorkGuardTest {
     }
 
     @Test
+    fun `a capture hashes the working tree once, however many Test tasks it has`(@TempDir tmp: File) {
+        // Each task hashing the ignored tree for itself kept a build with hundreds of test tasks and
+        // a large node_modules configuring for over ten minutes.
+        val small = observe(withIgnoredTree(fixture(File(tmp, "hashed-small"), subprojects = 3)), GRADLE_VERSIONS.first())
+        val large = observe(withIgnoredTree(fixture(File(tmp, "hashed-large"), subprojects = 6)), GRADLE_VERSIONS.first())
+
+        assertEquals(1L, small.count(YoriwakePlugin.WORKTREE_SNAPSHOT_COUNTER), "3 subprojects")
+        assertEquals(1L, large.count(YoriwakePlugin.WORKTREE_SNAPSHOT_COUNTER), "6 subprojects")
+    }
+
+    @Test
     fun `a reusing build re-asks git and runs no configuration phase at all`(@TempDir tmp: File) {
         val dir = fixture(File(tmp, "reuse"), subprojects = 3)
         // The second build must reuse. Unpacking the agent at configuration time would invalidate

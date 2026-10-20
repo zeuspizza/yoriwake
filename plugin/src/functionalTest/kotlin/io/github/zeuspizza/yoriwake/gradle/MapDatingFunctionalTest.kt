@@ -792,11 +792,10 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         build(
             dir, "build.gradle.kts" to actingBuild(), oneClass, oneTest,
             actingTest(
-                "for (java.io.File map : new java.io.File(\".gradle/yoriwake\").listFiles()) { " +
-                    "java.io.File start = new java.io.File(map, \"${WorkingTree.SNAPSHOT_FILE}.dated\"); " +
+                "java.io.File start = new java.io.File(\".gradle/${WorkingTree.SNAPSHOT_PENDING_FILE}\"); " +
                     "String text = java.nio.file.Files.readString(start.toPath()); " +
                     "java.nio.file.Files.writeString(start.toPath(), " +
-                    "\"yoriwake-start\\tanother\" + text.substring(text.indexOf('\\n'))); }",
+                    "\"yoriwake-start\\tanother\" + text.substring(text.indexOf('\\n')));",
             ),
         )
         committed(dir)

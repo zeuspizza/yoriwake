@@ -42,6 +42,9 @@ internal object WorkingTree {
      */
     const val STATS_PENDING_FILE = "yoriwake-capture-stats.pending"
 
+    /** The untracked and ignored tree where a capture starts, once per build for every map; as [STATS_PENDING_FILE]. */
+    const val SNAPSHOT_PENDING_FILE = "yoriwake-capture-snapshot.pending"
+
     private const val START_ID = "yoriwake-start"
 
     private const val HEADER = "yoriwake-worktree-snapshot 1"
@@ -387,8 +390,8 @@ internal object WorkingTree {
     }
 
     /**
-     * Writes a capture's start reading of the tree beside the map at configuration time, before the
-     * build compiles anything: [startSnapshot]. A reusing build re-obtains it before any task runs,
+     * Writes a capture's start reading of the tree beside the maps at configuration time, before the
+     * build compiles anything: [startSnapshot]. Once per build for all its maps, as [StatsSource]. A reusing build re-obtains it before any task runs,
      * which is the point; its value is constant, so the files a build writes into the tree never cost
      * it its stored entry. The paths are a parameter, listed once per build by the caller through git
      * answers the configuration cache already re-checks.
@@ -397,7 +400,6 @@ internal object WorkingTree {
 
         interface Parameters : ValueSourceParameters {
             val rootDir: Property<String>
-            val mapDir: Property<String>
             /** Where the snapshot is written. */
             val file: Property<String>
             /** NUL-joined; unset when git could not list the tree. */
@@ -406,13 +408,15 @@ internal object WorkingTree {
 
         override fun obtain(): String {
             val file = File(parameters.file.get())
+            // The last build's reading spares hashing a file whose stat has not moved since. Any
+            // reading [startSnapshot] wrote will do: it trusts a stat only well before its own time.
+            val previous = file.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
+                ?.takeIf { it.startsWith("$START_ID\t") }?.substringAfter('\n')
             // Gone unless written below: a missing file makes the decode drop the snapshot.
             startIds.remove(file.path)
             file.delete()
             val listed = parameters.listed.orNull?.split('\u0000')?.filter(String::isNotEmpty) ?: return WRITTEN
             runCatching {
-                val mapDir = File(parameters.mapDir.get())
-                val previous = File(mapDir, SNAPSHOT_FILE).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
                 writeStart(file, startSnapshot(File(parameters.rootDir.get()), listed, previous))
             }.onFailure { logger.warn("[yoriwake] could not read the working tree where a capture starts ($it); its map will not be dated") }
             return WRITTEN

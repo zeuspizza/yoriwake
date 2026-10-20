@@ -996,6 +996,12 @@ MUTATIONS = [
     ("the cross-project walk goes back to once per classpathFacts call", PROJECT_FACTS,
      "    return if (memo == null) compute() else memo.value(YoriwakePlugin.FACTS_KEY + project.rootDir.path, compute)",
      "    return compute()", guard_suite, "the git command set does not grow"),
+    # Hashed once per `Test` task, the untracked and ignored tree kept a build with a large
+    # node_modules and hundreds of test tasks configuring for over ten minutes.
+    ("the working tree is hashed once per Test task again", TEST_TASK_WIRING,
+     '            m.provider(YoriwakePlugin.CAPTURE_SNAPSHOT_KEY + rootDir.path + "\\u0000" + start.path) {',
+     '            m.provider(YoriwakePlugin.CAPTURE_SNAPSHOT_KEY + rootDir.path + "\\u0000" + mapDir.path) {',
+     guard_suite, "a capture hashes the working tree once"),
     # Named for what each actually breaks. The first was labelled "encoded as not asked again",
     # which is not what removing this branch does -- it reclassifies a refusal as an ordinary forced
     # run, which is a different defect and the one the test catches.
