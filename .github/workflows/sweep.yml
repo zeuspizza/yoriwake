@@ -184,6 +184,14 @@ jobs:
           name: record-${{ matrix.project.project }}
           retention-days: 3
           path: record/
+      # A record job that fails says why in its logs, not in the job's own output: the warm-up's
+      # build error, the stalled capture's last lines. Not named record-*, which the slices read.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failed-record-${{ matrix.project.project }}
+          retention-days: 3
+          path: bench/logs/${{ matrix.project.project }}/*.log
 
   slices:
     needs: [plan, record]
