@@ -10,7 +10,10 @@ name: sweep
 # with the maps and decision records, to a draft release for a maintainer to publish.
 #
 # What runs follows from what changed since `base` (bench/tier.py) unless `tier` names it: nothing,
-# an offline replay of the last published sweep's rows, the reduced arm, or every project.
+# an offline replay of the last published sweep's rows, the reduced arm, or every project. A full
+# sweep covers the projects `only` names: `demo` unless told otherwise, `all` for every project. A
+# dispatch that leaves `only` empty gets its default, `demo`; only a run with no inputs at all (a
+# schedule) sees it empty, and sweeps every project.
 on:
   # No schedule yet; when there is one, a scheduled run that fails opens an issue (last job).
   # schedule:
@@ -31,7 +34,7 @@ on:
         type: boolean
         default: false
       only:
-        description: space-separated projects to restrict a full sweep to (empty is every project)
+        description: space-separated projects to restrict a full sweep to, or all for every project
         type: string
         default: demo
       # Measured on the demo: a runner's selected arm took a median 1.38 times, and its compile gate
@@ -73,7 +76,7 @@ jobs:
           if [ "$TIER" = reduced ] || [ "$TIER" = full ]; then
             only=()
             # The reduced arm names its own projects and refuses --only.
-            [ -n "$ONLY" ] && [ "$TIER" = full ] && only=(--only $ONLY)
+            [ -n "$ONLY" ] && [ "$ONLY" != all ] && [ "$TIER" = full ] && only=(--only $ONLY)
             projects=$(python3 bench/sweep_corpus.py --arm "$TIER" "${only[@]}" --print-commands)
           fi
           echo "projects=$projects" >> "$GITHUB_OUTPUT"
@@ -134,12 +137,19 @@ jobs:
     if: needs.plan.outputs.projects != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # A guest may resolve dependencies from GitHub Packages, which takes a token even for a public
+    # package: bitwarden-android's SDK. Read-only, and handed to that project's build alone below.
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         project: ${{ fromJSON(needs.plan.outputs.projects) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -156,6 +166,9 @@ jobs:
         env:
           NAME: ${{ matrix.project.project }}
           ARGS: ${{ toJSON(matrix.project.args) }}
+          GITHUB_TOKEN: ${{ matrix.project.project == 'bitwarden-android' && github.token || '' }}
+          # Relative to bench/; another project's clone for one measured in it (detekt-junk).
+          CHECKOUT: ${{ matrix.project.checkout }}
           FACTOR: ${{ inputs.factor }}
         run: |
           set -eu
@@ -168,12 +181,20 @@ jobs:
           mkdir -p "record/$NAME"
           cp "bench/logs/$NAME/accepted.json" "record/$NAME/"
           tar -czf "record/$NAME/state.tar.gz" -C bench "logs/$NAME" "results/$NAME.json" \
-            "checkouts/$NAME" logs/evidence
+            "$CHECKOUT" logs/evidence
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: record-${{ matrix.project.project }}
           retention-days: 3
           path: record/
+      # A record job that fails says why in its logs, not in the job's own output: the warm-up's
+      # build error, the stalled capture's last lines. Not named record-*, which the slices read.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failed-record-${{ matrix.project.project }}
+          retention-days: 3
+          path: bench/logs/${{ matrix.project.project }}/*.log
 
   slices:
     needs: [plan, record]
@@ -212,12 +233,17 @@ jobs:
     needs: slices
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         slice: ${{ fromJSON(needs.slices.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -239,6 +265,7 @@ jobs:
         env:
           NAME: ${{ matrix.slice.project }}
           ARGS: ${{ toJSON(matrix.slice.args) }}
+          GITHUB_TOKEN: ${{ matrix.slice.project == 'bitwarden-android' && github.token || '' }}
           SHARD: ${{ matrix.slice.shard }}/${{ matrix.slice.of }}
         run: |
           set -eu

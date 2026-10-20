@@ -3822,6 +3822,38 @@ def case_a_project_flag_names_an_init_script_in_the_checkout_that_exists():
     return failures
 
 
+def case_a_harness_property_in_a_project_s_flags_is_read_by_a_script_they_pass():
+    """A `-Dyoriwake.harness.*` setting no passed init script reads changes nothing, silently: the
+    project would go on writing into its checkout and stop as setup-forced again."""
+    import re  # noqa: PLC0415
+    import tomllib  # noqa: PLC0415
+    failures = 0
+    projects = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects")
+    seen = 0
+    for name in sorted(os.listdir(projects)):
+        with open(os.path.join(projects, name), "rb") as handle:
+            flags = run.guest_flags(tomllib.load(handle))
+        scripts = ""
+        for flag, value in zip(flags, flags[1:]):
+            if flag == "-I" and os.path.isfile(value):
+                with open(value, encoding="utf-8") as handle:
+                    scripts += handle.read()
+        for flag in flags:
+            setting = re.match(r"-D(yoriwake\.harness\.\w+)=(.*)", flag)
+            if not setting:
+                continue
+            seen += 1
+            if f"'{setting.group(1)}'" not in scripts:
+                failures += fail(f"{name}: no init script it passes reads {setting.group(1)}")
+            entries = [e.strip() for e in setting.group(2).split(",")]
+            if not all(entries) or (setting.group(1).endswith("SystemProperties")
+                                    and not all("=" in e for e in entries)):
+                failures += fail(f"{name}: {flag} has an entry the script cannot read")
+    if not seen:
+        failures += fail("no project passes a harness setting, so this case checks nothing")
+    return failures
+
+
 # The sweep's readers for the isolated arm, the rule fields, the lost-write signal and the
 # cost fields. Every one answers None for "could not be asked", which is the property tested.
 def _map(directory, schema="6", modes=(), facts=None, first=(), positions=()):
@@ -4751,6 +4783,86 @@ def case_a_shard_of_a_fixture_keeps_the_map_the_recording_job_left():
     return failures
 
 
+def case_every_project_measured_in_another_s_clone_names_an_owner_at_its_own_pin():
+    """A derived project whose owner file moved, or whose pin drifted from its owner's, would make a
+    single-project job clone nothing or stamp rows with a commit the clone is not at."""
+    import tomllib  # noqa: PLC0415
+    failures = 0
+    projects = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects")
+    derived = 0
+    for name in sorted(os.listdir(projects)):
+        with open(os.path.join(projects, name), "rb") as handle:
+            project = tomllib.load(handle)
+        if not project.get("path") or os.path.dirname(run.checkout_dir(project)) != os.path.abspath(run.CHECKOUTS):
+            continue
+        derived += 1
+        try:
+            owner = run.clone_owner(project)
+        except SystemExit as refusal:
+            failures += fail(f"{name}: {refusal}")
+            continue
+        if owner is None:
+            failures += fail(f"{name}: its path names no owner file the harness can clone from")
+    if not derived:
+        failures += fail("no project measures in another's clone, so this case checks nothing")
+    return failures
+
+
+def case_a_project_measured_in_another_s_clone_clones_it_at_that_project_s_pin():
+    """A job that records detekt-junk alone has no detekt clone; it must not refuse for that."""
+    import shutil  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+    failures = 0
+    # Real, because git reports the top level resolved and macOS keeps temp under a symlink.
+    root = os.path.realpath(tempfile.mkdtemp(prefix="yoriwake-owner-"))
+    saved = run.ROOT, run.CHECKOUTS, run.PROJECTS
+
+    def git(*args, cwd):
+        return subprocess.run(["git", "-c", "user.email=b@e", "-c", "user.name=b", *args], cwd=cwd,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    try:
+        upstream = os.path.join(root, "upstream")
+        os.makedirs(upstream)
+        git("init", "--quiet", cwd=upstream)
+        commits = []
+        for content in ("one\n", "two\n"):
+            with open(os.path.join(upstream, "f.txt"), "w", encoding="utf-8") as handle:
+                handle.write(content)
+            git("add", ".", cwd=upstream)
+            git("commit", "--quiet", "-m", content.strip(), cwd=upstream)
+            commits.append(git("rev-parse", "HEAD", cwd=upstream))
+        run.ROOT = root
+        run.CHECKOUTS = os.path.join(root, "bench", "checkouts")
+        run.PROJECTS = os.path.join(root, "bench", "projects")
+        os.makedirs(run.PROJECTS)
+        with open(os.path.join(run.PROJECTS, "owner.toml"), "w", encoding="utf-8") as handle:
+            handle.write(f'name = "owner"\nurl = "{upstream}"\ncommit = "{commits[0]}"\n')
+        derived = {"name": "derived", "path": "bench/checkouts/owner", "commit": commits[0]}
+        path = run.checkout_project(derived)
+        if path != os.path.join(run.CHECKOUTS, "owner") or not os.path.isdir(path):
+            failures += fail(f"the derived project measures in {path}, which is not its owner's clone")
+        elif git("rev-parse", "HEAD", cwd=path) != commits[0]:
+            failures += fail("the owner's clone is not at the owner's pin")
+        else:
+            run.assert_owns(path)
+            # An existing clone is the caller's, as before: not moved to the pin.
+            git("checkout", "--quiet", commits[1], cwd=path)
+            run.checkout_project(derived)
+            if git("rev-parse", "HEAD", cwd=path) != commits[1]:
+                failures += fail("an existing clone was moved by a project that does not own it")
+        stray = {"name": "stray", "path": "bench/checkouts/nobody"}
+        if run.checkout_project(stray) != os.path.join(run.CHECKOUTS, "nobody") \
+                or os.path.exists(os.path.join(run.CHECKOUTS, "nobody")):
+            failures += fail("a path no project file owns was cloned from somewhere")
+    except SystemExit as refusal:
+        failures += fail(f"the derived project was refused: {refusal}")
+    finally:
+        run.ROOT, run.CHECKOUTS, run.PROJECTS = saved
+        shutil.rmtree(root, ignore_errors=True)
+    return failures
+
+
 def case_a_row_measured_on_ci_names_the_runner_and_the_job():
     failures = 0
     keys = ("GITHUB_ACTIONS", "RUNNER_NAME", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB")
@@ -5075,6 +5187,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_every_row_a_target_appends_carries_its_kind_and_index,
          case_a_row_measured_on_ci_names_the_runner_and_the_job,
          case_a_shard_of_a_fixture_keeps_the_map_the_recording_job_left,
+         case_every_project_measured_in_another_s_clone_names_an_owner_at_its_own_pin,
+         case_a_project_measured_in_another_s_clone_clones_it_at_that_project_s_pin,
          case_a_shard_measures_its_slice_and_counts_from_its_start,
          case_a_sharded_pool_run_refuses_a_timing_cap,
          case_a_shard_refuses_a_list_drawn_under_other_stamps,
@@ -5108,6 +5222,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_an_arm_s_cost_is_read_from_its_own_instruments,
          case_the_raw_evidence_is_kept_and_archived_without_the_harness_copies,
          case_a_project_flag_names_an_init_script_in_the_checkout_that_exists,
+         case_a_harness_property_in_a_project_s_flags_is_read_by_a_script_they_pass,
          case_every_harness_build_turns_off_the_guests_own_test_selection,
          case_staging_and_flags_treat_a_stored_null_oppositely,
          case_a_row_records_the_tree_and_the_flags_it_was_measured_under,

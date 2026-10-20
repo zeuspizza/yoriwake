@@ -44,7 +44,10 @@ or "does not apply", never zero. Figures derived from these fields carry the cav
   rows in a row, force as `unmappable-paths` or `map-unusable` with one reason naming nothing the
   change touched, the project stops: `project_outcome: setup-forced`, `run.py` exits 3, and
   `sweep_corpus.py`, `corpus_state.py` and `readme_charts.py` list it as failed and count none of
-  its rows. A resumed setup-forced file starts fresh.
+  its rows. A resumed setup-forced file starts fresh. A project whose tests or build write into
+  its checkout during the capture is fixed in its project file's `flags`: a task left out, or
+  `bench/guest-tests.init.gradle` with the test classes to leave out (`-Dyoriwake.harness.testClassExcludes`)
+  or the test JVMs' system properties (`-Dyoriwake.harness.testSystemProperties`).
 - **Timing cap** (from 0.2): a `TIMING_SUBSET` project runs `--timing-cap 8`: its first 8
   rows in the draw order run both arms whatever they decide (`timed: true`); later rows run as
   under `--recall-only`. Chart 2 draws timed rows only, states the cap in its title, and refuses

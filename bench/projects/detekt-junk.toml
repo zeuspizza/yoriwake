@@ -34,7 +34,8 @@ fixture = true
 # Reuses the detekt checkout rather than cloning it again: the map captured there is
 # the one the question is about, and a second clone would need its own ten-minute capture to ask the
 # same thing. The harness does not pin a `path` project, which is honest -- the caller owns that
-# checkout, and it is already at 6aa07c06.
+# checkout, and it is already at 6aa07c06. Where there is none yet (a CI job recording this project
+# alone), the harness clones it from detekt's own file, at detekt's pin.
 path = "bench/checkouts/detekt"
 commit = "6aa07c067e181a72700c90f893c02ae91ce56676"
 module = "detekt-rules-style"

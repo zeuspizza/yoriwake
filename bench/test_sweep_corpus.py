@@ -816,6 +816,24 @@ def case_the_workflow_reads_each_project_s_flags_from_the_sweep_itself():
     return failures
 
 
+def case_the_plan_names_the_checkout_each_record_job_hands_to_its_slices():
+    """A project measured in another project's clone hands that clone on, not one of its own name:
+    the record job's archive of `checkouts/detekt-junk` found nothing to archive."""
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sweep_corpus.main(["--print-commands", "--only", "detekt", "detekt-junk", "kafka-core",
+                           "demo"])
+    try:
+        plan = {entry["project"]: entry.get("checkout") for entry in json.loads(out.getvalue())}
+    except ValueError:
+        return fail(f"--print-commands printed more than JSON: {out.getvalue()[:200]!r}")
+    want = {"detekt": "checkouts/detekt", "detekt-junk": "checkouts/detekt",
+            "kafka-core": "checkouts/kafka", "demo": "checkouts/demo"}
+    return 0 if plan == want else fail(f"the plan names the checkouts {plan}, not {want}")
+
+
 def case_the_headline_states_misses_against_the_rows_that_could_miss_and_the_undetermined():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import readme_charts  # noqa: PLC0415

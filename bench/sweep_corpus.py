@@ -33,6 +33,7 @@ import re
 import subprocess
 import sys
 import time
+import tomllib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import assert_recall  # noqa: E402  (narrowed_at_all lives with the gate, not in a second copy)
@@ -604,6 +605,13 @@ def setup_forced_projects(summaries):
             if s.get("project_outcome") == run.SETUP_FORCED]
 
 
+def checkout_relative(name):
+    """The directory a project is measured in, relative to bench/, as its project file names it."""
+    with open(os.path.join(BENCH, "projects", f"{name}.toml"), "rb") as handle:
+        project = tomllib.load(handle)
+    return os.path.relpath(run.checkout_dir(project), BENCH).replace(os.sep, "/")
+
+
 def argument_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=16)
@@ -699,9 +707,11 @@ def main(argv=None):
                              f"{', '.join(timed)} would get one; leave them out with --skip or "
                              f"sweep them unsharded")
         # THE WORKFLOW'S PLAN, from the rules above rather than a copy of them: each project's
-        # `run.py` flags, without this machine's paths.
+        # `run.py` flags, without this machine's paths, and the checkout its record job hands to
+        # its slices, relative to bench/: another project's clone for a `path` project.
         print(json.dumps([
             {"project": name,
+             "checkout": checkout_relative(name),
              "args": shared_arm_command(name, f"bench/projects/{name}.toml",
                                         project_limit(os.path.join(BENCH, "projects",
                                                                    f"{name}.toml"), args.limit),

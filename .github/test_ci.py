@@ -1204,6 +1204,60 @@ def case_security_names_the_release_key():
         return fail(f"SECURITY.md names {sorted(named)}, RELEASE-KEY.asc holds {sorted(published)}")
     return 0
 
+def _sweep_plan(tier, only):
+    """The `--only` arguments sweep.yml's plan step passes for these inputs, from the step itself."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    step = re.search(r"\n      - id: plan\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
+    if not step:
+        return None
+    # Without -u: macOS's bash 3.2 reads an empty array as unbound, the runner's bash does not.
+    script = "\n".join(line[10:] for line in step.group(1).splitlines()).replace("set -eu", "set -e", 1)
+    with tempfile.TemporaryDirectory() as root:
+        stub = os.path.join(root, "python3")
+        calls = os.path.join(root, "calls")
+        with open(stub, "w", encoding="utf-8") as handle:
+            # Records what sweep_corpus.py was asked, and plans nothing.
+            handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{calls}"\necho "[]"\n')
+        os.chmod(stub, 0o755)
+        env = {**os.environ, "PATH": root + os.pathsep + os.environ.get("PATH", ""),
+               "TIER": tier, "BASE": "", "MAJOR": "false", "ONLY": only,
+               "GITHUB_OUTPUT": os.path.join(root, "output")}
+        subprocess.run(["bash", "-c", script], env=env, check=True, capture_output=True)
+        with open(calls, encoding="utf-8") as handle:
+            argv = handle.read().split()
+    return argv[argv.index("--only") + 1:-1] if "--only" in argv else []
+
+
+def case_a_sweep_of_every_project_can_be_asked_for():
+    """`only` defaults to the demo, which a dispatch leaving it empty gets; `all` means every project,
+    and so does an empty value, which only a run without inputs (a schedule) passes."""
+    problems = 0
+    for only, want in (("all", []), ("demo", ["demo"]), ("okio detekt", ["okio", "detekt"]),
+                       ("", [])):
+        got = _sweep_plan("full", only)
+        if got != want:
+            problems += fail(f"only={only!r} swept {got if got else 'every project'}, not "
+                             f"{want if want else 'every project'}")
+    if _sweep_plan("reduced", "demo") != []:
+        problems += fail("the reduced arm was restricted by only")
+    return problems
+
+
+def case_a_record_job_archives_the_checkout_the_plan_names():
+    """A project measured in another's clone has no `checkouts/<its name>`: a record job archiving
+    that path fails, and its slices get nothing to measure."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    record = text[text.index("\n  record:\n"):text.index("\n  slices:\n")]
+    if "CHECKOUT: ${{ matrix.project.checkout }}" not in record:
+        problems += fail("the record job does not take its checkout from the plan")
+    if '"$CHECKOUT"' not in record or "checkouts/$NAME" in record:
+        problems += fail("the record job does not archive the checkout the plan names")
+    return problems
+
+
 CASES = (
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
@@ -1255,6 +1309,8 @@ CASES = (
     case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job,
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
     case_security_names_the_release_key,
+    case_a_sweep_of_every_project_can_be_asked_for,
+    case_a_record_job_archives_the_checkout_the_plan_names,
 )
 
 

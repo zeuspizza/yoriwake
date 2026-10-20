@@ -44,7 +44,16 @@ module = "okio"
 # zero tests. A green build that ran nothing is the shape of the silent miss this
 # project exists to prevent.
 test_task = "jvmTest"
-flags = []
+# ONE TEST CLASS LEFT OUT, because two of its tests rewrite tracked fixtures in place.
+# `ZipFileSystemTest.zipTooShort` truncates and `filesOverlap` rewrites their zip under
+# `okio-testing-support/src/commonMain/resources/okio/zipfilesystem/`, through `OKIO_ROOT`, which
+# the build sets to the checkout. Rewritten during the capture, both are recorded as unknown and
+# every later run forces on them: the first CI sweep stopped the project as setup-forced at its
+# preflight. The whole class is left out of every run, ground truth included, so the suite measured is
+# the module's less `ZipFileSystemTest`: a method filter would make every capture a filtered one, which
+# keeps no map.
+flags = ["-I", "{yoriwake}/bench/guest-tests.init.gradle",
+         "-Dyoriwake.harness.testClassExcludes=okio/ZipFileSystemTest*"]
 # The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
 # every commit, which is the opposite of what this key is for, and the replay refuses it.
 sources = ["okio/src/jvmMain/kotlin"]

@@ -1,0 +1,37 @@
+/*
+ * Harness only: keeps a guest's tests from writing into its own checkout.
+ *
+ * A file the tests write into the tree while the map is captured is recorded as unknown, and every
+ * later selecting run forces on it: the project's preflight stops it as setup-forced and it answers
+ * no recall question. Named, with its settings, in the project file's `flags`, so a results file
+ * records what its project was measured under:
+ *
+ *   -Dyoriwake.harness.testClassExcludes=<class-file pattern>,...  test classes left out of every
+ *                                                                  run, ground truth too
+ *   -Dyoriwake.harness.testSystemProperties=<k>=<v>,...            system properties of every test JVM
+ *
+ * Classes are left out with the task's `exclude` while each Test task is configured, before
+ * yoriwake reads the build script's test filters: a filter pattern added later would make every
+ * run a filtered one, and a filtered capture keeps no map. The properties are set when the task
+ * graph is ready, after every build script's own `configureEach`, as guest-selection-off.init.gradle
+ * does; a system property is not a filter.
+ */
+def classExcludes = (System.getProperty('yoriwake.harness.testClassExcludes') ?: '')
+        .split(',')*.trim().findAll { it }
+def testProperties = (System.getProperty('yoriwake.harness.testSystemProperties') ?: '')
+        .split(',')*.trim().findAll { it }
+if (classExcludes) {
+    allprojects {
+        tasks.withType(Test).configureEach { task -> classExcludes.each { task.exclude(it) } }
+    }
+}
+if (testProperties) {
+    gradle.taskGraph.whenReady { graph ->
+        graph.allTasks.findAll { it instanceof Test }.each { task ->
+            testProperties.each { entry ->
+                def (key, value) = entry.split('=', 2) as List
+                task.systemProperty(key, value)
+            }
+        }
+    }
+}

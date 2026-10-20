@@ -60,6 +60,7 @@ ISOLATED_CAPTURE_FLAG = "-Pyoriwake.isolatedCapture"
 # separate measurement.
 TIMING_ARM_FLAGS = ["--no-configuration-cache"]
 CHECKOUTS = os.path.join(HERE, "checkouts")
+PROJECTS = os.path.join(HERE, "projects")
 RESULTS = os.path.join(HERE, "results")
 # A CONTROL RUN'S FILES: rows measured under a plugin with a miss planted in it, which
 # every reader refuses in a figure.
@@ -240,6 +241,38 @@ def git_over_network(command, check):
                          f"the sweep") from None
 
 
+def checkout_dir(project):
+    """The directory a project is measured in: its `path`, or its own clone under `CHECKOUTS`."""
+    if project.get("path"):
+        return os.path.abspath(os.path.join(ROOT, project["path"]))
+    return os.path.join(CHECKOUTS, project["name"])
+
+
+def clone_owner(project):
+    """The project whose own clone a `path` project points at, as its file reads, or None.
+
+    detekt-junk measures in detekt's clone, kafka-core in kafka's. A machine that swept the owner
+    first has that clone; a job that records one project alone does not.
+    """
+    path = checkout_dir(project)
+    if os.path.dirname(path) != os.path.abspath(CHECKOUTS):
+        return None
+    owner_file = os.path.join(PROJECTS, os.path.basename(path) + ".toml")
+    if not os.path.isfile(owner_file):
+        return None
+    with open(owner_file, "rb") as handle:
+        owner = tomllib.load(handle)
+    if owner.get("path") or owner.get("copy_of") or not (owner.get("url") and owner.get("commit")):
+        return None
+    if checkout_dir(owner) != path:
+        return None
+    # The clone is the owner's, at its pin, while every row of this project is stamped with its own.
+    if owner["commit"] != project.get("commit"):
+        raise SystemExit(f"{project.get('name')} is measured in {owner['name']}'s clone, pinned at "
+                         f"{owner['commit']}, but names {project.get('commit')}: pin both to one commit")
+    return owner
+
+
 def checkout_project(project, keep_state=False):
     """Clones at the pinned commit, once. A pinned commit that has vanished must fail loudly.
 
@@ -248,7 +281,8 @@ def checkout_project(project, keep_state=False):
 
     A `path` entry uses an existing checkout instead, for developing the harness and for projects
     already on the machine. It is deliberately not pinned: the caller owns that checkout, so the
-    results record whatever commit it is on rather than pretending to control it.
+    results record whatever commit it is on rather than pretending to control it. One that points
+    at another project's clone and finds none makes it from that project's file (`clone_owner`).
     """
     if project.get("copy_of"):
         # A fixture of the yoriwake checkout, copied out and made a repository of its own. The
@@ -269,8 +303,12 @@ def checkout_project(project, keep_state=False):
                         "commit", "--quiet", "-m", "fixture"], check=True)
         return path
     if project.get("path"):
-        return os.path.abspath(os.path.join(ROOT, project["path"]))
-    path = os.path.join(CHECKOUTS, project["name"])
+        path = checkout_dir(project)
+        # A `path` into another project's clone that is not there yet -- a CI job measuring this
+        # project alone -- is cloned as that project clones it, at that project's pin.
+        parent = None if os.path.isdir(os.path.join(path, ".git")) else clone_owner(project)
+        return checkout_project(parent) if parent else path
+    path = checkout_dir(project)
     if not os.path.isdir(os.path.join(path, ".git")):
         os.makedirs(CHECKOUTS, exist_ok=True)
         # core.longpaths must be set ON THE CLONE, not after it. Setting it afterwards -- which is
