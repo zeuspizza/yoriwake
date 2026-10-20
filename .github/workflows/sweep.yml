@@ -136,6 +136,11 @@ jobs:
     if: needs.plan.outputs.projects != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # A guest may resolve dependencies from GitHub Packages, which takes a token even for a public
+    # package: bitwarden-android's SDK. Read-only, as the guest builds' GITHUB_TOKEN below.
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -158,6 +163,7 @@ jobs:
         env:
           NAME: ${{ matrix.project.project }}
           ARGS: ${{ toJSON(matrix.project.args) }}
+          GITHUB_TOKEN: ${{ github.token }}
           # Relative to bench/; another project's clone for one measured in it (detekt-junk).
           CHECKOUT: ${{ matrix.project.checkout }}
           FACTOR: ${{ inputs.factor }}
@@ -216,6 +222,9 @@ jobs:
     needs: slices
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -243,6 +252,7 @@ jobs:
         env:
           NAME: ${{ matrix.slice.project }}
           ARGS: ${{ toJSON(matrix.slice.args) }}
+          GITHUB_TOKEN: ${{ github.token }}
           SHARD: ${{ matrix.slice.shard }}/${{ matrix.slice.of }}
         run: |
           set -eu
