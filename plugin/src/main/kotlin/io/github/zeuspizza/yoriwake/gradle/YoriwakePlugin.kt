@@ -282,6 +282,7 @@ public abstract class YoriwakePlugin : Plugin<Project> {
         internal const val WORKTREE_KEY = "worktreeListing:"
         internal const val CAPTURE_START_KEY = "captureStart:"
         internal const val CAPTURE_STATS_KEY = "captureStats:"
+        internal const val CAPTURE_SNAPSHOT_KEY = "captureSnapshot:"
 
         internal const val TEST_TASKS_COUNTER = "testTasksConfigured"
 
@@ -293,6 +294,8 @@ public abstract class YoriwakePlugin : Plugin<Project> {
         internal const val CLASSPATH_FACTS_COUNTER = "classpathFacts"
         /** The working tree listed and filtered at configuration: once per build, however many tasks ask. */
         internal const val WORKTREE_LISTING_COUNTER = "worktreeListing"
+        /** The working tree hashed where a capture starts: once per build, however many tasks capture. */
+        internal const val WORKTREE_SNAPSHOT_COUNTER = "worktreeSnapshot"
 
         /** Where `yoriwakeExplain` writes the decision for a machine to read. */
         internal const val EXPLANATION_FILE = "explain.json"
