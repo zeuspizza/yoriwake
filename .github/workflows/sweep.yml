@@ -11,8 +11,9 @@ name: sweep
 #
 # What runs follows from what changed since `base` (bench/tier.py) unless `tier` names it: nothing,
 # an offline replay of the last published sweep's rows, the reduced arm, or every project. A full
-# sweep covers the projects `only` names: `demo` unless told otherwise, `all` for every project. An
-# empty `only` is not a way to ask for every project: a dispatch that leaves it empty gets `demo`.
+# sweep covers the projects `only` names: `demo` unless told otherwise, `all` for every project. A
+# dispatch that leaves `only` empty gets its default, `demo`; only a run with no inputs at all (a
+# schedule) sees it empty, and sweeps every project.
 on:
   # No schedule yet; when there is one, a scheduled run that fails opens an issue (last job).
   # schedule:
@@ -137,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     # A guest may resolve dependencies from GitHub Packages, which takes a token even for a public
-    # package: bitwarden-android's SDK. Read-only, as the guest builds' GITHUB_TOKEN below.
+    # package: bitwarden-android's SDK. Read-only, and handed to that project's build alone below.
     permissions:
       contents: read
       packages: read
@@ -147,6 +148,8 @@ jobs:
         project: ${{ fromJSON(needs.plan.outputs.projects) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -163,7 +166,7 @@ jobs:
         env:
           NAME: ${{ matrix.project.project }}
           ARGS: ${{ toJSON(matrix.project.args) }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ matrix.project.project == 'bitwarden-android' && github.token || '' }}
           # Relative to bench/; another project's clone for one measured in it (detekt-junk).
           CHECKOUT: ${{ matrix.project.checkout }}
           FACTOR: ${{ inputs.factor }}
@@ -239,6 +242,8 @@ jobs:
         slice: ${{ fromJSON(needs.slices.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -260,7 +265,7 @@ jobs:
         env:
           NAME: ${{ matrix.slice.project }}
           ARGS: ${{ toJSON(matrix.slice.args) }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ matrix.slice.project == 'bitwarden-android' && github.token || '' }}
           SHARD: ${{ matrix.slice.shard }}/${{ matrix.slice.of }}
         run: |
           set -eu

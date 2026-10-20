@@ -264,7 +264,13 @@ def clone_owner(project):
         owner = tomllib.load(handle)
     if owner.get("path") or owner.get("copy_of") or not (owner.get("url") and owner.get("commit")):
         return None
-    return owner if checkout_dir(owner) == path else None
+    if checkout_dir(owner) != path:
+        return None
+    # The clone is the owner's, at its pin, while every row of this project is stamped with its own.
+    if owner["commit"] != project.get("commit"):
+        raise SystemExit(f"{project.get('name')} is measured in {owner['name']}'s clone, pinned at "
+                         f"{owner['commit']}, but names {project.get('commit')}: pin both to one commit")
+    return owner
 
 
 def checkout_project(project, keep_state=False):

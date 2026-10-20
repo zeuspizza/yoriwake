@@ -4783,6 +4783,31 @@ def case_a_shard_of_a_fixture_keeps_the_map_the_recording_job_left():
     return failures
 
 
+def case_every_project_measured_in_another_s_clone_names_an_owner_at_its_own_pin():
+    """A derived project whose owner file moved, or whose pin drifted from its owner's, would make a
+    single-project job clone nothing or stamp rows with a commit the clone is not at."""
+    import tomllib  # noqa: PLC0415
+    failures = 0
+    projects = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects")
+    derived = 0
+    for name in sorted(os.listdir(projects)):
+        with open(os.path.join(projects, name), "rb") as handle:
+            project = tomllib.load(handle)
+        if not project.get("path") or os.path.dirname(run.checkout_dir(project)) != os.path.abspath(run.CHECKOUTS):
+            continue
+        derived += 1
+        try:
+            owner = run.clone_owner(project)
+        except SystemExit as refusal:
+            failures += fail(f"{name}: {refusal}")
+            continue
+        if owner is None:
+            failures += fail(f"{name}: its path names no owner file the harness can clone from")
+    if not derived:
+        failures += fail("no project measures in another's clone, so this case checks nothing")
+    return failures
+
+
 def case_a_project_measured_in_another_s_clone_clones_it_at_that_project_s_pin():
     """A job that records detekt-junk alone has no detekt clone; it must not refuse for that."""
     import shutil  # noqa: PLC0415
@@ -5162,6 +5187,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_every_row_a_target_appends_carries_its_kind_and_index,
          case_a_row_measured_on_ci_names_the_runner_and_the_job,
          case_a_shard_of_a_fixture_keeps_the_map_the_recording_job_left,
+         case_every_project_measured_in_another_s_clone_names_an_owner_at_its_own_pin,
          case_a_project_measured_in_another_s_clone_clones_it_at_that_project_s_pin,
          case_a_shard_measures_its_slice_and_counts_from_its_start,
          case_a_sharded_pool_run_refuses_a_timing_cap,

@@ -1230,7 +1230,8 @@ def _sweep_plan(tier, only):
 
 
 def case_a_sweep_of_every_project_can_be_asked_for():
-    """`only` defaults to the demo, so an empty value cannot mean every project; `all` does."""
+    """`only` defaults to the demo, which a dispatch leaving it empty gets; `all` means every project,
+    and so does an empty value, which only a run without inputs (a schedule) passes."""
     problems = 0
     for only, want in (("all", []), ("demo", ["demo"]), ("okio detekt", ["okio", "detekt"]),
                        ("", [])):
@@ -1240,6 +1241,20 @@ def case_a_sweep_of_every_project_can_be_asked_for():
                              f"{want if want else 'every project'}")
     if _sweep_plan("reduced", "demo") != []:
         problems += fail("the reduced arm was restricted by only")
+    return problems
+
+
+def case_a_record_job_archives_the_checkout_the_plan_names():
+    """A project measured in another's clone has no `checkouts/<its name>`: a record job archiving
+    that path fails, and its slices get nothing to measure."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    record = text[text.index("\n  record:\n"):text.index("\n  slices:\n")]
+    if "CHECKOUT: ${{ matrix.project.checkout }}" not in record:
+        problems += fail("the record job does not take its checkout from the plan")
+    if '"$CHECKOUT"' not in record or "checkouts/$NAME" in record:
+        problems += fail("the record job does not archive the checkout the plan names")
     return problems
 
 
@@ -1295,6 +1310,7 @@ CASES = (
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
     case_security_names_the_release_key,
     case_a_sweep_of_every_project_can_be_asked_for,
+    case_a_record_job_archives_the_checkout_the_plan_names,
 )
 
 

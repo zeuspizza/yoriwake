@@ -6,20 +6,28 @@
  * no recall question. Named, with its settings, in the project file's `flags`, so a results file
  * records what its project was measured under:
  *
- *   -Dyoriwake.harness.testExcludes=<pattern>,...       tests left out of every run, ground truth too
- *   -Dyoriwake.harness.testSystemProperties=<k>=<v>,...  system properties of every test JVM
+ *   -Dyoriwake.harness.testClassExcludes=<class-file pattern>,...  test classes left out of every
+ *                                                                  run, ground truth too
+ *   -Dyoriwake.harness.testSystemProperties=<k>=<v>,...            system properties of every test JVM
  *
- * Set when the task graph is ready, after every build script's own `configureEach`, for the same
- * reason as guest-selection-off.init.gradle.
+ * Classes are left out with the task's `exclude` while each Test task is configured, before
+ * yoriwake reads the build script's test filters: a filter pattern added later would make every
+ * run a filtered one, and a filtered capture keeps no map. The properties are set when the task
+ * graph is ready, after every build script's own `configureEach`, as guest-selection-off.init.gradle
+ * does; a system property is not a filter.
  */
-def excludes = (System.getProperty('yoriwake.harness.testExcludes') ?: '')
+def classExcludes = (System.getProperty('yoriwake.harness.testClassExcludes') ?: '')
         .split(',')*.trim().findAll { it }
 def testProperties = (System.getProperty('yoriwake.harness.testSystemProperties') ?: '')
         .split(',')*.trim().findAll { it }
-if (excludes || testProperties) {
+if (classExcludes) {
+    allprojects {
+        tasks.withType(Test).configureEach { task -> classExcludes.each { task.exclude(it) } }
+    }
+}
+if (testProperties) {
     gradle.taskGraph.whenReady { graph ->
         graph.allTasks.findAll { it instanceof Test }.each { task ->
-            excludes.each { task.filter.excludeTestsMatching(it) }
             testProperties.each { entry ->
                 def (key, value) = entry.split('=', 2) as List
                 task.systemProperty(key, value)
