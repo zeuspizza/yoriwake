@@ -46,7 +46,13 @@ module_dir = "config"
 # the capture, every one is recorded as unknown and every later run forces on them (the first CI
 # sweep stopped the project as setup-forced at its preflight on that list). Without the task,
 # `processResources` copies the committed schemas, which is what the commit ships.
-flags = ["-x", "rncToXsd"]
+# `javascript/node_modules/` and `javascript/package-lock.json` LISTED in `notReadByTests`.
+# `npmInstall` (web packs the module's `spring-security.js`, which the config tests serve) rewrites
+# both on every run, the tracked lock file with the same content; the second CI sweep stopped the
+# project as setup-forced at its preflight on them. No test reads either, and no row edits anything
+# under `javascript/`, so the listing changes no row's answer, only stops the forcing.
+flags = ["-x", "rncToXsd", "-I", "{yoriwake}/bench/guest-tests.init.gradle",
+         "-Dyoriwake.harness.notReadByTests=javascript/node_modules/*,javascript/package-lock.json"]
 # The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
 # every commit, which is the opposite of what this key is for, and the replay refuses it.
 sources = ["config/src/main/java"]

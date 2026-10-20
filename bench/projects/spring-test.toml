@@ -17,6 +17,11 @@ url = "https://github.com/spring-projects/spring-framework.git"
 commit = "60e5abff7f65b1cceb006e9ed35561b15b6e14e7"
 path = "bench/checkouts/spring-framework"
 module = "spring-test"
-flags = []
+# `spring-test/test-output/` LISTED in `notReadByTests`. Five TestNG test classes start TestNG
+# themselves, which writes its HTML and XML reports into `test-output/` under the test's working
+# directory, with no setting to move it; the second CI sweep stopped the project as setup-forced at
+# its preflight on 39 of those files. No test reads them back.
+flags = ["-I", "{yoriwake}/bench/guest-tests.init.gradle",
+         "-Dyoriwake.harness.notReadByTests=spring-test/test-output/*"]
 sources = ["spring-test/src/main/java/org/springframework/test"]
 daemon_jvmargs = "-Xmx4g"

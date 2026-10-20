@@ -198,9 +198,13 @@ jobs:
 
   slices:
     needs: [plan, record]
+    # Also when some record jobs failed: one failed project must not cost every other one its rows.
+    # Each failed one is declared missing, and the merge fails the run after publishing the rest.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.projects != '[]' }}
     runs-on: ubuntu-latest
     outputs:
       shards: ${{ steps.slices.outputs.shards }}
+      missing: ${{ steps.slices.outputs.missing }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -209,28 +213,51 @@ jobs:
       - id: slices
         env:
           PLAN: ${{ needs.plan.outputs.projects }}
+          ARM: ${{ needs.plan.outputs.tier }}
         run: |
           set -eu
           # No pipeline: a failure inside one would not fail the step, and an empty list of
           # shards skips every job after it while the run reads as passed.
           mapfile -t plans < <(jq -c '.[]' <<< "$PLAN")
           : > shards.jsonl
+          : > missing.jsonl
           for plan in "${plans[@]}"; do
             name=$(jq -r .project <<< "$plan")
-            list=$(find records -path "*/$name/accepted.json" -print -quit)
-            [ -n "$list" ] || { echo "no accepted list for $name"; exit 1; }
+            list=""
+            if [ -d records ]; then
+              list=$(find records -path "*/$name/accepted.json" -print -quit)
+            fi
+            if [ -z "$list" ]; then
+              echo "::warning::$name: no accepted list; its record job failed"
+              jq -nc --arg name "$name" '{project: $name, reason: "its record job failed"}' \
+                >> missing.jsonl
+              continue
+            fi
             of=$(jq '.slices | length' "$list")
-            [ "$of" -ge 1 ] || { echo "$name was cut into no slices"; exit 1; }
+            if [ "$of" -lt 1 ]; then
+              echo "::warning::$name was cut into no slices"
+              jq -nc --arg name "$name" '{project: $name, reason: "it was cut into no slices"}' \
+                >> missing.jsonl
+              continue
+            fi
             for k in $(seq 1 "$of"); do
               jq -c --argjson k "$k" --argjson of "$of" '. + {shard: $k, of: $of}' <<< "$plan" \
                 >> shards.jsonl
             done
           done
+          # The merge refuses a reduced arm short of a member, so its shards would measure for nothing.
+          if [ "$ARM" = reduced ] && [ -s missing.jsonl ]; then
+            echo "the reduced arm lacks a member: $(jq -sc . missing.jsonl)"; exit 1
+          fi
           shards=$(jq -sc . shards.jsonl)
+          [ "$shards" != "[]" ] || { echo "no project recorded, so there is nothing to measure"; exit 1; }
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
+          echo "missing=$(jq -sc . missing.jsonl)" >> "$GITHUB_OUTPUT"
 
   shard:
     needs: slices
+    # Without its own condition a failed record job, two jobs up, would skip every shard.
+    if: ${{ !cancelled() && needs.slices.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
@@ -280,9 +307,12 @@ jobs:
           path: |
             bench/logs/${{ matrix.slice.project }}/shard-${{ matrix.slice.shard }}-of-${{ matrix.slice.of }}.json
             bench/logs/evidence/
+            bench/logs/${{ matrix.slice.project }}/**/*.stall-*.log
 
   merge:
-    needs: [plan, shard]
+    needs: [plan, slices, shard]
+    # Also when a shard failed: its project is declared missing, as a failed record is.
+    if: ${{ !cancelled() && needs.slices.result == 'success' }}
     runs-on: ubuntu-latest
     # The only job that can write, and it runs no guest code.
     permissions:
@@ -296,21 +326,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PLAN: ${{ needs.plan.outputs.projects }}
+          MISSING: ${{ needs.slices.outputs.missing }}
           ARM: ${{ needs.plan.outputs.tier }}
           RUN: ${{ github.run_id }}
         run: |
           set -eu
           names=$(jq -r '.[].project' <<< "$PLAN")
+          declared=()
+          while IFS=$'\t' read -r name reason; do
+            [ -n "$name" ] && declared+=("$name=$reason")
+          done < <(jq -r '.[] | [.project, .reason] | @tsv' <<< "$MISSING")
           mkdir -p evidence
           for name in $names; do
-            mkdir -p "art/$name" "unpacked/$name"
+            if printf '%s\n' "${declared[@]+"${declared[@]}"}" | grep -q "^$name="; then
+              continue
+            fi
             record=$(dirname "$(find downloaded/record-"$name" -path "*/$name/accepted.json" -print -quit)")
+            of=$(jq '.slices | length' "$record/accepted.json")
+            # Every shard or none: a project with a shard missing is declared, not merged short.
+            lost=""
+            for k in $(seq 1 "$of"); do
+              [ -f "downloaded/shard-$name-$k-of-$of/$name/shard-$k-of-$of.json" ] || lost="$lost $k"
+            done
+            if [ -n "$lost" ]; then
+              echo "::warning::$name: shard(s)$lost of $of failed"
+              declared+=("$name=shard(s)$lost of $of failed")
+              continue
+            fi
+            mkdir -p "art/$name" "unpacked/$name"
             tar -xzf "$record/state.tar.gz" -C "unpacked/$name"
             cp "unpacked/$name/results/$name.json" "art/$name/recording.json"
             cp "$record/accepted.json" "art/$name/accepted.json"
             cp unpacked/"$name"/logs/evidence/*.tar.gz evidence/ 2>/dev/null || true
             # By number, not by pattern: one project's name can begin another's (kafka, kafka-core).
-            of=$(jq '.slices | length' "art/$name/accepted.json")
             for k in $(seq 1 "$of"); do
               shard="downloaded/shard-$name-$k-of-$of"
               cp "$shard/$name/shard-$k-of-$of.json" "art/$name/"
@@ -319,13 +367,27 @@ jobs:
               done
             done
           done
-          python3 bench/merge.py art --planned $names --arm "$ARM" --out merged
+          missing_args=()
+          for entry in "${declared[@]+"${declared[@]}"}"; do missing_args+=(--missing "$entry"); done
+          python3 bench/merge.py art --planned $names "${missing_args[@]+"${missing_args[@]}"}" \
+            --arm "$ARM" --out merged
           # The merged results and each job's evidence (its maps and decision records), not the
           # guests' checkouts.
           tar -czf "sweep-$RUN.tar.gz" merged art evidence
-          gh release create "sweep-$RUN" --draft --title "Benchmark sweep $RUN ($ARM arm)" \
-            --notes "Merged results of sweep run $RUN, with the maps and decision records." \
-            "sweep-$RUN.tar.gz"
+          title="Benchmark sweep $RUN ($ARM arm)"
+          notes="Merged results of sweep run $RUN, with the maps and decision records."
+          if [ "${#declared[@]}" -gt 0 ]; then
+            title="Benchmark sweep $RUN ($ARM arm, PARTIAL)"
+            notes="$notes
+
+          Missing, so this is not the planned sweep: $(printf '%s; ' "${declared[@]}")"
+          fi
+          gh release create "sweep-$RUN" --draft --title "$title" \
+            --notes "$notes" "sweep-$RUN.tar.gz"
+          if [ "${#declared[@]}" -gt 0 ]; then
+            echo "::error::missing from this sweep: $(printf '%s; ' "${declared[@]}")"
+            exit 1
+          fi
 
   # Only a scheduled run has nobody watching it; a dispatched one is read by whoever started it.
   report-failure:

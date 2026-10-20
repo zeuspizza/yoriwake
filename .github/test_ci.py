@@ -19,6 +19,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1244,6 +1245,92 @@ def case_a_sweep_of_every_project_can_be_asked_for():
     return problems
 
 
+def _sweep_step(text, opener):
+    """A step's `run:` script from sweep.yml, runnable by macOS's bash 3.2 as by the runner's."""
+    step = re.search(re.escape(opener)
+                     + r"\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
+    script = "\n".join(line[10:] for line in step.group(1).splitlines()).replace("set -eu", "set -e", 1)
+    # bash 3.2 has no mapfile; the runner's bash does.
+    return ('mapfile(){ local __a=$2 __l; eval "$__a=()"; '
+            'while IFS= read -r __l; do eval "$__a+=(\\"\\$__l\\")"; done; }\n' + script)
+
+
+def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
+    """One failed project must not cost the others their rows, and a sweep short of one must say so
+    and fail: kafka's record failed and kafka-core lost a shard, so only okio is merged, the release
+    notes name both, and the run ends red. A shard job without its own condition would be skipped by
+    the failed record two jobs up, so every job after the records carries one."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for job in ("slices", "shard", "merge"):
+        block = text[text.index(f"\n  {job}:\n"):]
+        block = block[:block.index("\n    runs-on:")]
+        if "!cancelled()" not in block:
+            problems += fail(f"the {job} job does not run after a failed record job")
+    slices = _sweep_step(text, "\n      - id: slices")
+    merge = _sweep_step(text, "\n      - name: merge, and attach to a draft release")
+    with tempfile.TemporaryDirectory() as root:
+        bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
+        os.makedirs(bin_dir)
+        os.makedirs(bench)
+        with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
+            handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{root}/gh-args"\n')
+        os.chmod(os.path.join(bin_dir, "gh"), 0o755)
+        with open(os.path.join(bench, "merge.py"), "w", encoding="utf-8") as handle:
+            handle.write(f"import json, os, sys\njson.dump(sys.argv[1:], open({root!r} + '/merge-args', 'w'))\n"
+                         "os.makedirs('merged', exist_ok=True)\n")
+        for name, shards in (("okio", (1, 2)), ("kafka-core", (1,))):
+            record = os.path.join(root, "downloaded", f"record-{name}", name)
+            state = os.path.join(root, "state", name)
+            os.makedirs(record)
+            os.makedirs(os.path.join(state, "results"))
+            os.makedirs(os.path.join(state, "logs", "evidence"))
+            with open(os.path.join(record, "accepted.json"), "w", encoding="utf-8") as handle:
+                json.dump({"slices": [[], []]}, handle)
+            with open(os.path.join(state, "results", f"{name}.json"), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            subprocess.run(["tar", "-czf", os.path.join(record, "state.tar.gz"), "-C", state,
+                            "results", "logs"], check=True)
+            for k in shards:
+                shard = os.path.join(root, "downloaded", f"shard-{name}-{k}-of-2")
+                os.makedirs(os.path.join(shard, name))
+                os.makedirs(os.path.join(shard, "evidence"))
+                open(os.path.join(shard, name, f"shard-{k}-of-2.json"), "w").close()
+                open(os.path.join(shard, "evidence", "e.tar.gz"), "w").close()
+        shutil.copytree(os.path.join(root, "downloaded"), os.path.join(root, "records"))
+        plan = json.dumps([{"project": n} for n in ("kafka", "kafka-core", "okio")])
+        env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+               "PLAN": plan, "ARM": "full", "RUN": "7", "GITHUB_OUTPUT": os.path.join(root, "output")}
+        done = subprocess.run(["bash", "-c", slices], cwd=root, env=env, capture_output=True, text=True)
+        if not os.path.exists(env["GITHUB_OUTPUT"]):
+            return problems + fail(f"slices wrote no outputs: {done.stdout.strip()} {done.stderr.strip()}")
+        outputs = dict(line.split("=", 1) for line in open(env["GITHUB_OUTPUT"]).read().splitlines())
+        missing = json.loads(outputs.get("missing", "[]"))
+        shards = json.loads(outputs.get("shards", "[]"))
+        if done.returncode or [m["project"] for m in missing] != ["kafka"] or \
+                sorted({s["project"] for s in shards}) != ["kafka-core", "okio"]:
+            problems += fail(f"slices: exit {done.returncode}, missing {missing}, shards {shards}")
+        env["MISSING"] = outputs.get("missing", "[]")
+        done = subprocess.run(["bash", "-c", merge], cwd=root, env=env, capture_output=True, text=True)
+        merged = json.load(open(os.path.join(root, "merge-args")))
+        notes = open(os.path.join(root, "gh-args")).read()
+        if done.returncode == 0:
+            problems += fail("a sweep short of two projects ended green")
+        if "PARTIAL" not in notes:
+            problems += fail("a partial sweep's draft release is titled as a complete one")
+        if sorted(os.listdir(os.path.join(root, "art"))) != ["okio"]:
+            problems += fail(f"merged {os.listdir(os.path.join(root, 'art'))}, not okio alone")
+        for name in ("kafka=its record job failed", "kafka-core=shard(s) 2 of 2 failed"):
+            if name not in merged or name not in notes:
+                problems += fail(f"{name!r} is not declared to the merge and in the notes: {merged}")
+        reduced = {**env, "ARM": "reduced", "GITHUB_OUTPUT": os.path.join(root, "output-reduced")}
+        if subprocess.run(["bash", "-c", slices], cwd=root, env=reduced,
+                          capture_output=True).returncode == 0:
+            problems += fail("a reduced arm short of a member still went on to measure")
+    return problems
+
+
 def case_a_record_job_archives_the_checkout_the_plan_names():
     """A project measured in another's clone has no `checkouts/<its name>`: a record job archiving
     that path fails, and its slices get nothing to measure."""
@@ -1311,6 +1398,7 @@ CASES = (
     case_security_names_the_release_key,
     case_a_sweep_of_every_project_can_be_asked_for,
     case_a_record_job_archives_the_checkout_the_plan_names,
+    case_a_failed_project_is_declared_missing_and_the_rest_still_merge,
 )
 
 
