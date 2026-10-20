@@ -134,13 +134,15 @@ internal object EnvironmentFingerprint {
         components[OS_NAME] = view.osName ?: "unknown"
         components[OS_ARCH] = view.osArch ?: "unknown"
         val ignored = sortedSetOf<String>()
-        // The JVM keeps the last value given for a name.
-        val properties = LinkedHashMap<String, String>()
+        // A name given more than once is compared by every value it is given. Which one a test sees
+        // cannot be told from the order: Gradle lists the properties it sets first, ahead of
+        // `jvmArgs` and their argument files, and sets them in the test JVM after it starts.
+        val properties = LinkedHashMap<String, MutableList<String>>()
         view.jvmArgs.filter { it.startsWith("-D") }.map { it.removePrefix("-D") }.forEach { body ->
             val name = body.substringBefore('=')
-            properties[name] = if ('=' in body) body.substringAfter('=') else ""
+            properties.getOrPut(name) { mutableListOf() } += if ('=' in body) body.substringAfter('=') else ""
         }
-        properties.forEach { (name, value) ->
+        properties.mapValues { it.value.joinToString("\u0000") }.forEach { (name, value) ->
             when {
                 name.isEmpty() || name.startsWith("yoriwake.") -> Unit
                 rules.ignoresProperty(name) -> ignored += name

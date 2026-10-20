@@ -524,6 +524,49 @@ class ChangeDetectionTest {
         assertContains(change.classPrefixes, "com.acme.Wrapped")
         assertContains(change.classPrefixes, "com.acme.Legacy")
     }
+
+    @Test
+    fun `an edit in a submodule nested in one whose gitmodules ignores it reports the outer submodule`(@TempDir dir: File) {
+        val outer = File(dir, "outer")
+        val lib = File(outer, "lib")
+        // A name and a path with a space, as `git submodule add <url> "third party"` gives.
+        val inner = File(lib, "third party").apply { mkdirs() }
+        fun commit(repo: File) {
+            git(repo, "add", ".")
+            git(repo, "-c", "user.email=t@e.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-m", "c")
+        }
+        File(inner, "mode.txt").writeText("strict")
+        git(inner, "init")
+        commit(inner)
+        File(lib, ".gitmodules").writeText("[submodule \"third party\"]\n\tpath = third party\n\turl = ./third\n\tignore = all\n")
+        git(lib, "init")
+        commit(lib)
+        File(outer, ".gitmodules").writeText("[submodule \"lib\"]\n\tpath = lib\n\turl = ./lib\n")
+        git(outer, "init")
+        commit(outer)
+
+        File(inner, "mode.txt").writeText("lenient")
+        val git = ChangeDetection.directRunner(outer)
+
+        assertEquals(listOf("lib"), ChangeDetection.trackedPaths(git, outer, "HEAD"))
+        assertEquals(listOf(" M lib"), ChangeDetection.status(git))
+
+        // A gitlink `.gitmodules` does not name must not cost the answer.
+        val stray = File(outer, "stray").apply { mkdirs() }
+        File(stray, "f.txt").writeText("x")
+        git(stray, "init")
+        commit(stray)
+        commit(outer)
+        File(inner, "mode.txt").writeText("strict again")
+
+        assertEquals(listOf("lib"), ChangeDetection.trackedPaths(git, outer, "HEAD"))
+    }
+
+    private fun git(dir: File, vararg args: String) {
+        val exit = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
+        assertEquals(0, exit, "git ${args.joinToString(" ")}")
+    }
 }
 
 /**

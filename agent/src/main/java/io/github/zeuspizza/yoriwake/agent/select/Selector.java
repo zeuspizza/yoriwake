@@ -662,13 +662,17 @@ public final class Selector {
         return opens;
     }
 
-    /** Whether reading {@code path} reads a moved file: the file itself, an archive holding it, or every file. */
+    /**
+     * Whether reading {@code path} reads a moved file: the file itself, an archive holding it, an
+     * entry of it, or every file. An entry counts because a file read as a zip when it was recorded
+     * can have stopped being one, and a changed file changes what each of its entries reads.
+     */
     private static boolean readsMoved(String path, Collection<String> moved) {
         if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {
             return true;
         }
         for (String file : moved) {
-            if (file.equals(path) || file.startsWith(path + "!/")) {
+            if (file.equals(path) || file.startsWith(path + "!/") || path.startsWith(file + "!/")) {
                 return true;
             }
         }

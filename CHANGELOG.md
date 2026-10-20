@@ -37,6 +37,11 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - The reference's CI recipe deletes `raw/` and `selection.tsv` before the save; its `!` paths kept nothing out. Map: left alone.
 - Reference: what upgrading from 0.2.0 asks of you, in "Upgrading and your map". Map: left alone.
 
+### Fixed
+
+- A changed zip behind a launch script, an edit in a nested submodule and a `-D` in a JVM argument
+  file run the tests they reach. Map: left alone; a task given a `-D` that way runs everything once.
+
 ## [0.2.0] - 2026-10-13
 
 **Your map:** discarded; the first full run of each task rebuilds it.

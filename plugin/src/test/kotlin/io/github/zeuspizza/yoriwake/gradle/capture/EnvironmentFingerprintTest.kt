@@ -93,9 +93,15 @@ class EnvironmentFingerprintTest {
     }
 
     @Test
-    fun `the last of two arguments for one property is the value the JVM sees`() {
-        recordedUnder(view(jvmArgs = listOf("-Da=1", "-Da=2")))
-        assertEquals(Verdict.Matches, EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-Da=2")), rules()).verdict)
+    fun `a property given twice is compared by both values`() {
+        // Gradle lists the properties it sets ahead of an argument file and sets them after the JVM
+        // starts, so either value can be the one a test sees.
+        recordedUnder(view(jvmArgs = listOf("-Da=1", "@args", "-Da=2")))
+        assertEquals(Verdict.Matches, EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-Da=1", "-Da=2")), rules()).verdict)
+        val firstMoved = EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-Da=3", "-Da=2")), rules()).verdict
+        assertEquals("sys:a", (firstMoved as Verdict.Changed).component)
+        val lastMoved = EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-Da=1", "-Da=3")), rules()).verdict
+        assertEquals("sys:a", (lastMoved as Verdict.Changed).component)
     }
 
     @Test

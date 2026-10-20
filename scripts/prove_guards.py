@@ -162,6 +162,7 @@ SELECTION_RECORD = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/c
 CAPTURE_DECISION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CaptureDecision.kt"
 EXPLAIN_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/ExplainTask.kt"
 ENVIRONMENT_FINGERPRINT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
+JVM_ARG_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
 CLASS_FILE_CEILING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
 SCHEDULE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/Schedule.kt"
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
@@ -409,6 +410,8 @@ def unit_suite():
          # The working-tree listing, which decides what enters a change set beyond `git diff`: a
          # Kotlin session marker in it once forced every row of a project.
          "--tests", "*WorkingTreeTest*",
+         # The JVM argument files a test JVM is started with, and the fingerprint they feed.
+         "--tests", "*JvmArgFilesTest*", "--tests", "*EnvironmentFingerprintTest*",
          # Map provenance: the digest a trusted-map list is compared with, and the list of files it
          # covers.
          "--tests", "*MapProvenanceTest*", "--tests", "*MapFilesReadTest*",
@@ -1928,8 +1931,9 @@ MUTATIONS = [
      agent_suite, "a native library that is not on the reviewed list touches every class from its load"),
     # A scanner's own zip code reads entries no hook sees; an archive is known by its content, not
     # its name, and a jar nested in one counts too.
+    # Re-anchored: the content test moved to a class the plugin shares.
     ("an archive the test opens itself counts only when its name ends in .jar", TOUCH_RECORDER,
-     '            boolean archive = path.endsWith(".jar") || holdsAZip(file);',
+     '            boolean archive = path.endsWith(".jar") || ZipContent.holdsAZip(file);',
      '            boolean archive = path.endsWith(".jar");',
      functional_suite, "a test that reads a class out of a zip with its own zip code is selected when the class changes"),
     ("an archive a JDK zip entry holds is taken for a plain entry", TOUCH_RECORDER,
@@ -2218,9 +2222,10 @@ MUTATIONS = [
      "                if (reads == null || !reads.recorded(position.jvm())) {",
      "                if (false) {",
      agent_suite, "a JVM whose reads were not recorded runs whole on a moved file"),
+    # Re-anchored: a read of an entry counts as a read of the moved file holding it too.
     ("a whole-jar read is not a read of its entries", SELECTOR,
-     '            if (file.equals(path) || file.startsWith(path + "!/")) {',
-     "            if (file.equals(path)) {",
+     '            if (file.equals(path) || file.startsWith(path + "!/") || path.startsWith(file + "!/")) {',
+     '            if (file.equals(path) || path.startsWith(file + "!/")) {',
      functional_suite, "a build time a test reads from the whole jar runs that test"),
     # Re-anchored: a jar entry read is recorded under every name its jar went by.
     ("every manifest read is taken for the class loader's", TOUCH_RECORDER,
@@ -2249,6 +2254,14 @@ MUTATIONS = [
      '                if (how != "changed" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
      '                if (how == "appeared" || how == "unreadable" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
      functional_suite, "a file gone from a sibling jar runs everything"),
+    # The agent records a zip it knows by its content, one behind a launch script among them, by its
+    # entries: handed over as a plain file, it matches no read.
+    ("a zip behind a launch script is handed over as a plain file again", CLASSPATH_FILES,
+     "        if (ZipContent.holdsAZip(file)) return true\n", "",
+     functional_suite, "a zip behind a launch script in a resource directory runs everything when it changed"),
+    ("a read of an entry stops counting as a read of the moved file holding it", SELECTOR,
+     'file.startsWith(path + "!/") || path.startsWith(file + "!/")', 'file.startsWith(path + "!/")',
+     agent_suite, "a read of an entry of a moved file reads it"),
     ("the decode writes reads without the root", DECODE_TASK,
      "                rootDir = rootDir,",
      "                rootDir = null,",
@@ -2660,6 +2673,12 @@ MUTATIONS = [
      '"diff", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative"',
      '"diff", "--name-only", "--no-renames", "--relative"',
      functional_suite, "a submodule edit a capture saw and then reverted runs the test that reads it"),
+    # The flag does not reach a submodule's own `.gitmodules`, which git reads when it asks that
+    # submodule whether it is dirty.
+    ("a submodule nested in one that ignores it hides its edits again", CHANGE_DETECTION,
+     "        return spawn(workingDir, overrides + arguments)",
+     "        return spawn(workingDir, arguments)",
+     functional_suite, "a data file edited inside a submodule nested in one whose gitmodules ignores it runs the test that reads it"),
     ("an always-run pattern stops matching the name a test's source gives", SELECTION_FILTER,
      "            String sourced = sourcedNameOf(descriptor);",
      "            String sourced = null;",
@@ -3288,6 +3307,19 @@ MUTATIONS = [
      "        environment?.let { rules ->",
      "        environment?.takeIf { false }?.let { rules ->",
      functional_suite, "a map recorded on another JDK runs everything, names both, and records this one"),
+    # The java launcher expands an `@file` argument into the arguments the file holds.
+    ("a JVM argument file is not read for the fingerprint", TEST_TASK_WIRING,
+     "JvmArgFiles.expand(test.allJvmArgs, test.workingDir)", "test.allJvmArgs",
+     functional_suite, "another value of a system property from a JVM argument file runs everything"),
+    ("an argument file that cannot be read sets nothing", JVM_ARG_FILES,
+     '            ?: return listOf("-D@$path=${UUID.randomUUID()}")', "            ?: return emptyList()",
+     unit_suite, "an argument file that cannot be read matches no other run"),
+    # Gradle lists the properties it sets ahead of an argument file and sets them after the JVM
+    # starts, so the last value on the list is not always the one a test sees.
+    ("a property given twice is compared by its last value only", ENVIRONMENT_FINGERPRINT,
+     '        properties.mapValues { it.value.joinToString("\\u0000") }',
+     "        properties.mapValues { it.value.last() }",
+     unit_suite, "a property given twice is compared by both values"),
     # NEW JDK RELEASES. A class or test JVM newer than a reader of it must be refused by
     # name; without the check the run still forces, but as an unreadable digest or as nothing.
     ("a class above the ceiling is not refused", CLASS_FILE_CEILING,

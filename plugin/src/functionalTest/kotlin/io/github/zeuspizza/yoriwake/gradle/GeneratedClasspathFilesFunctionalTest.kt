@@ -151,13 +151,14 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         rootBuild: String = "",
         readsManifests: Boolean = true,
         infoReader: Pair<String, String> = infoTest,
+        appImports: String = "",
     ) {
         build(
             dir,
             "build.gradle.kts" to rootBuild,
             "lib/build.gradle.kts" to libBuild,
             "lib/src/main/java/dev/lib/Lib.java" to "package dev.lib;\npublic class Lib {}\n",
-            "app/build.gradle.kts" to minimalBuild + "\n" + appBuild + "\n" + appExtra,
+            "app/build.gradle.kts" to appImports + minimalBuild + "\n" + appBuild + "\n" + appExtra,
             *arrayOf(
                 oneClass, oneTest, secondClass, secondTest, classOrderByName,
                 legacy, legacyTest, infoReader, staticResource, *appSources,
@@ -484,6 +485,60 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         assertTrue("dev.sample.AdLibTest" in ranTests(app(dir)), output)
         assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertTrue(output.contains("lib/build/libs/lib.jar!/extra.txt (gone)"), output)
+    }
+
+    /** Opens `/launcher`, a shell script with a zip appended, with the JDK's zip code. */
+    private val launcherTest = "src/test/java/dev/sample/AgLauncherTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import java.io.File;
+        import java.util.zip.ZipFile;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class AgLauncherTest {
+            @Test void reads() throws Exception {
+                try (ZipFile zip = new ZipFile(new File(getClass().getResource("/launcher").toURI()))) {
+                    assertNotNull(zip.getEntry("greeting.txt"));
+                }
+            }
+        }
+    """.trimIndent()
+
+    /** Writes `launcher` from the `launcher` property into a test resource directory under build/. */
+    private val launcherBuild = """
+        val generateLauncher by tasks.registering {
+            val greeting = providers.gradleProperty("launcher").orElse("a")
+            val out = layout.buildDirectory.file("generated/launcher/launcher")
+            inputs.property("greeting", greeting)
+            outputs.file(out)
+            doLast {
+                out.get().asFile.apply { parentFile.mkdirs() }.outputStream().use { stream ->
+                    stream.write("#!/bin/sh\n# runs the archive appended to this script\n".toByteArray())
+                    ZipOutputStream(stream).use { zip ->
+                        zip.putNextEntry(ZipEntry("greeting.txt").apply { time = 0L })
+                        zip.write(greeting.get().toByteArray())
+                        zip.closeEntry()
+                    }
+                }
+            }
+        }
+        sourceSets.test { resources.srcDir(layout.buildDirectory.dir("generated/launcher")) }
+        tasks.processTestResources { dependsOn(generateLauncher) }
+    """.trimIndent()
+
+    @Test
+    fun `a zip behind a launch script in a resource directory runs everything when it changed`(@TempDir dir: File) {
+        fixture(
+            dir, launcherBuild, launcherTest, readsManifests = false,
+            // `java` in a build script names the Java extension, so the zip classes are imported.
+            appImports = "import java.util.zip.ZipEntry\nimport java.util.zip.ZipOutputStream\n",
+        )
+        capture(dir, "-Plauncher=a")
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Plauncher=b")
+
+        assertTrue("dev.sample.AgLauncherTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
     }
 
     @Test

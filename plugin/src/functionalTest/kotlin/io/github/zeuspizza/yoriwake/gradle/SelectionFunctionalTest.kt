@@ -1529,16 +1529,30 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"])
     }
 
+    @Test
+    fun `a data file edited inside a submodule nested in one whose gitmodules ignores it runs the test that reads it`(
+        @TempDir dir: File,
+    ) {
+        val ran = submoduleDataChanged(dir, ignore = "none", nestedIgnoring = true) { lib ->
+            File(lib, "data/mode.txt").writeText("lenient")
+        }
+
+        assertContains(ran, "dev.sample.ASubmoduleDataTest")
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"])
+    }
+
     /**
      * A captured build whose test reads `lib/data/mode.txt` from a submodule `lib` that the
      * committed `.gitmodules` tells git to [ignore]. [beforeCapture] and [afterCapture] change the
      * submodule, Beta changes beside it, and the tests a selecting run against [base] ran come back.
+     * With [nestedIgnoring], `lib/data` is a submodule of `lib` that `lib`'s own `.gitmodules` ignores.
      * The data test sorts before BetaTest, so the Beta change alone never selects it.
      */
     private fun submoduleDataChanged(
         dir: File,
         ignore: String,
         base: String = "HEAD",
+        nestedIgnoring: Boolean = false,
         beforeCapture: (File) -> Unit = {},
         afterCapture: (File) -> Unit,
     ): Set<String> {
@@ -1559,6 +1573,11 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         )
         val lib = File(dir, "lib")
         File(lib, "data/mode.txt").apply { parentFile.mkdirs() }.writeText("strict")
+        if (nestedIgnoring) {
+            git(File(lib, "data"), "init")
+            commit(File(lib, "data"), "data")
+            File(lib, ".gitmodules").writeText("[submodule \"data\"]\n\tpath = data\n\turl = ./data\n\tignore = all\n")
+        }
         git(lib, "init")
         commit(lib, "data")
         committed(dir)
