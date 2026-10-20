@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
+import io.github.zeuspizza.yoriwake.agent.capture.ZipContent
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.security.MessageDigest
@@ -250,10 +251,15 @@ internal object ClasspathFiles {
     /** What the agent records a read of as a class's, never as a file's. */
     private val SOURCE_SUFFIXES = listOf(".java", ".kt", ".groovy", ".scala")
 
-    /** An archive by its name or by its first bytes; one that cannot be read counts as one. */
+    /**
+     * An archive by its name, by its first bytes, or by the content test the agent records reads by;
+     * one that cannot be read counts as one. What the agent takes for an archive it records as entry
+     * reads, which never name the file, so such a file must not be handed over as a plain one.
+     */
     private fun isArchive(file: File): Boolean {
         val name = file.name
         if (ARCHIVE_SUFFIXES.any(name::endsWith)) return true
+        if (ZipContent.holdsAZip(file)) return true
         return runCatching {
             file.inputStream().use { input ->
                 val head = input.readNBytes(2)

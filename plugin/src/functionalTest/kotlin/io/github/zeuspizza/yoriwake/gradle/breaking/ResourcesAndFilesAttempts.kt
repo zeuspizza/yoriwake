@@ -770,4 +770,78 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
     }
+
+    /**
+     * Kotlin for a task action that sets `state` to `clean` when the working tree has no change and
+     * to `dirty` otherwise: a build-produced file that moves with no tracked change behind it.
+     */
+    private val treeState = """
+        val git = ProcessBuilder("git", "status", "--porcelain").directory(root).redirectErrorStream(true).start()
+        val state = if (git.inputStream.bufferedReader().readText().isBlank()) "clean" else "dirty"
+        git.waitFor()
+    """.trimIndent()
+
+    // Track: code reading. Boundary: a changed archive in a classpath directory runs everything,
+    // since it is digested whole but read by its entries; it is told an archive by its name or by
+    // its first two bytes. An archive behind a launch script starts with the script, so it is
+    // handed over as a plain file, and a test that opens it with the JDK's zip code reads only its
+    // entries.
+    @Test
+    fun `a zip behind a launch script in a resource directory runs the test that reads it when it changed`(
+        @TempDir dir: File,
+    ) {
+        val reader = source(
+            "src/test/java/dev/sample/A1LauncherTest.java",
+            """
+            package dev.sample;
+            import java.io.File;
+            import java.io.InputStream;
+            import java.nio.charset.StandardCharsets;
+            import java.util.zip.ZipFile;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1LauncherTest {
+                @Test void builtFromACleanTree() throws Exception {
+                    File launcher = new File(getClass().getResource("/launcher").toURI());
+                    try (ZipFile zip = new ZipFile(launcher);
+                            InputStream in = zip.getInputStream(zip.getEntry("greeting.txt"))) {
+                        assertEquals("clean", new String(in.readAllBytes(), StandardCharsets.UTF_8).trim());
+                    }
+                }
+            }
+            """,
+        )
+        val launcherBuild = "import java.util.zip.ZipEntry\nimport java.util.zip.ZipOutputStream\n" + buildWith(
+            "",
+            after = """
+            val stampLauncher = tasks.register("stampLauncher") {
+                val out = layout.buildDirectory.file("gen/launcher/launcher")
+                val root = rootDir
+                outputs.file(out)
+                outputs.upToDateWhen { false }
+                doLast {
+            """.trimIndent() + "\n" + treeState.prependIndent("        ") + "\n" + """
+                    val file = out.get().asFile
+                    file.parentFile.mkdirs()
+                    file.outputStream().use { stream ->
+                        stream.write("#!/bin/sh\n# runs the archive appended to this script\n".toByteArray())
+                        ZipOutputStream(stream).use { zip ->
+                            zip.putNextEntry(ZipEntry("greeting.txt").apply { time = 0L })
+                            zip.write((state + "\n").toByteArray())
+                            zip.closeEntry()
+                        }
+                    }
+                }
+            }
+            sourceSets.test { resources.srcDir(layout.buildDirectory.dir("gen/launcher")) }
+            tasks.processTestResources { dependsOn(stampLauncher) }
+            """.trimIndent(),
+        )
+        val result = attempt(
+            dir, "dev.sample.A1LauncherTest", Aim.Forced("classpath-files-changed"),
+            listOf(codec, other, first, reader, codecTest, classOrderByName), buildScript = launcherBuild,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
 }

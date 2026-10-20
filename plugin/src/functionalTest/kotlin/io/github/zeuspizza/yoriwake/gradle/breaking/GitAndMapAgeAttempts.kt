@@ -237,6 +237,47 @@ class GitAndMapAgeAttempts : BreakAttempt() {
         )
     }
 
+    // Track: code reading. Boundary: trackedPaths, status and WorkingTree.askGit pass
+    // --ignore-submodules=none, which overrides the `ignore` settings of this repository's own
+    // .gitmodules. Whether `lib` is dirty, git learns by running status inside `lib`, where `lib`'s
+    // own .gitmodules still applies: a submodule nested in it that sets `ignore = all` hides an
+    // edit from every answer, and the snapshot never lists files inside a submodule.
+    @Test
+    fun `a data file edited inside a submodule nested in a submodule that ignores it runs the test that reads it`(@TempDir dir: File) {
+        val inner = File(dir, "lib/inner").apply { mkdirs() }
+        File(inner, "mode.txt").writeText("strict")
+        git(inner, "init")
+        git(inner, "add", ".")
+        gitAs(inner, "commit", "-m", "data")
+        val lib = File(dir, "lib")
+        File(lib, ".gitmodules").writeText("[submodule \"inner\"]\n\tpath = inner\n\turl = ./inner\n\tignore = all\n")
+        git(lib, "init")
+        git(lib, "add", ".")
+        gitAs(lib, "commit", "-m", "inner")
+        val sources = listOf(
+            ".gitmodules" to "[submodule \"lib\"]\n\tpath = lib\n\turl = ./lib\n",
+            source(
+                "src/test/java/dev/sample/A5NestedDataTest.java",
+                """
+                package dev.sample;
+                import java.nio.file.Files;
+                import java.nio.file.Paths;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class A5NestedDataTest {
+                    @Test void strict() throws Exception { assertEquals("strict", Files.readString(Paths.get("lib/inner/mode.txt"))); }
+                }
+                """,
+            ),
+        )
+        val result = attempt(dir, "dev.sample.A5NestedDataTest", Aim.Forced("unmappable-paths"), suite + sources) {
+            File(it, "lib/inner/mode.txt").writeText("lenient")
+            changeCodec(it)
+        }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
     // Track: code reading. Boundary: ChangeDetection.changedPaths and WorkingTree.listing ask git
     // diff and git ls-files, which honour a submodule's `ignore` setting in the committed
     // .gitmodules. With `ignore = dirty`, an uncommitted edit inside the submodule is in neither

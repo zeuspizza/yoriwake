@@ -4,7 +4,6 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.RandomAccessFile;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Path;
@@ -108,6 +107,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             calledFromJdk();
             JdkCode.isJdk(java.util.function.Function.identity().getClass());
             nameIn(new byte[0]);
+            ZipContent.holdsAZip(new File(""));
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
             // JDK classes the agent's ASM cannot read take no hooks; said here, under its own name.
             unsupported = ClassFileSupport.testJvmUnsupported(
@@ -451,7 +451,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             }
             File file = new File(path);
             String absolute = file.getAbsolutePath();
-            boolean archive = path.endsWith(".jar") || holdsAZip(file);
+            boolean archive = path.endsWith(".jar") || ZipContent.holdsAZip(file);
             // The JDK's zip code opening an archive reads its entries through the entry hook.
             if (archive && openedByJdkZip()) {
                 return;
@@ -722,32 +722,6 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     /**
-     * Whether a file is a zip archive by its content: it starts with an entry or an empty archive's
-     * end record, or ends with an end record, as an archive behind a launch script does. Only a
-     * regular file is read, so a pipe or a device is never drained.
-     */
-    static boolean holdsAZip(File file) {
-        try {
-            if (!file.isFile() || file.length() < END_RECORD) {
-                return false;
-            }
-            try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
-                byte[] signature = new byte[4];
-                in.readFully(signature);
-                if (startsAZip(signature)) {
-                    return true;
-                }
-                in.seek(file.length() - END_RECORD);
-                in.readFully(signature);
-                return endsAZip(signature);
-            }
-        } catch (IOException | RuntimeException unreadable) {
-            // What cannot be read here cannot be read by the test either.
-            return false;
-        }
-    }
-
-    /**
      * Whether an archive found by its content can hold a class: a class or source entry, an archive
      * entry, or no listing at all. One that holds none (a spreadsheet, a document, a zip of data)
      * names no class, and is not reported, so one gone by the time the records are read cannot
@@ -784,7 +758,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
      */
     private static boolean entryHoldsAZip(ZipFile hooked, ZipEntry entry) {
         long size = entry.getSize();
-        if (entry.isDirectory() || (size >= 0 && size < END_RECORD)) {
+        if (entry.isDirectory() || (size >= 0 && size < ZipContent.END_RECORD)) {
             return false;
         }
         try (ZipFile own = new ZipFile(hooked.getName())) {
@@ -798,24 +772,12 @@ public final class TouchRecorder implements CaptureSession.Touches {
     /** Whether an entry of a zip this class opened itself holds a zip archive. */
     private static boolean holdsAZip(ZipFile zip, ZipEntry entry) throws IOException {
         long size = entry.getSize();
-        if (entry.isDirectory() || (size >= 0 && size < END_RECORD)) {
+        if (entry.isDirectory() || (size >= 0 && size < ZipContent.END_RECORD)) {
             return false;
         }
         try (InputStream in = zip.getInputStream(entry)) {
-            return in != null && startsAZip(in.readNBytes(4));
+            return in != null && ZipContent.startsAZip(in.readNBytes(4));
         }
-    }
-
-    /** The length of a zip's end record with no comment. */
-    private static final int END_RECORD = 22;
-
-    private static boolean startsAZip(byte[] b) {
-        return b.length == 4 && b[0] == 'P' && b[1] == 'K'
-                && ((b[2] == 3 && b[3] == 4) || (b[2] == 5 && b[3] == 6));
-    }
-
-    private static boolean endsAZip(byte[] b) {
-        return b.length == 4 && b[0] == 'P' && b[1] == 'K' && b[2] == 5 && b[3] == 6;
     }
 
     /** The JDK's own zip code opens every jar it reads entries from; those entries are hooked. */

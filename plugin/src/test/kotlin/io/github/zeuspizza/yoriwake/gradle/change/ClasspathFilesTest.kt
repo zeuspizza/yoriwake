@@ -296,6 +296,25 @@ class ClasspathFilesTest {
     }
 
     @Test
+    fun `a zip behind a launch script is not handed over, a plain text file is`(@TempDir root: File) {
+        File(root, "res/launcher").apply { parentFile.mkdirs() }.outputStream().use { out ->
+            out.write("#!/bin/sh\n# runs the archive appended to this script\n".toByteArray())
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("greeting.txt"))
+                zip.write("clean\n".toByteArray())
+                zip.closeEntry()
+            }
+        }
+        file(root, "res/notes.txt", "a plain text file, longer than a zip's end record")
+
+        val launcher = ClasspathFiles.compare(mapOf("res/launcher" to "1"), mapOf("res/launcher" to "2"))
+        val notes = ClasspathFiles.compare(mapOf("res/notes.txt" to "1"), mapOf("res/notes.txt" to "2"))
+
+        assertEquals(null, launcher.traceable(root))
+        assertEquals(listOf("res/notes.txt"), notes.traceable(root))
+    }
+
+    @Test
     fun `a manifest's loaded attributes are named on the manifest`() {
         val moved = ClasspathFiles.compare(
             recorded = mapOf("x.jar!/META-INF/MANIFEST.MF" to "1"),

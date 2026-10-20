@@ -18,7 +18,8 @@ guess.
   `main`, `master` as fallbacks) and widens that base back to the commit the map was captured at.
   Uncommitted, untracked and gitignored files count too, by content, so an edited ignored fixture
   selects the tests that read it. A changed git submodule counts as its path whatever its `ignore`
-  setting, untracked files in it included, its own build output too. Build state does not: `.gradle/`, `.kotlin/`, the build
+  setting, or that of a submodule nested in it, untracked files in it included, its own build
+  output too. Build state does not: `.gradle/`, `.kotlin/`, the build
   directories of this build's projects, and a `build/` directory beside any other Gradle build
   script (`buildSrc`, an included build, a project a TestKit test wrote). A change reaches a test
   that reads such a file through the tracked sources that produce it. A non-class file the build
@@ -291,9 +292,11 @@ What it compares:
 - the JDK the test task's launcher names, by runtime version and vendor (or, with no launcher
   metadata, the `executable` path), and the OS and architecture. These are stored as they are and
   named with both values: `jdk.version was 17.0.9+9 when the map was recorded and is 21.0.4+7 now`;
-- every system property the task passes to the test JVM, `-D` arguments and argument providers
-  included, Gradle's own (`file.encoding`, `user.language`, `user.country`, `user.variant`)
-  included, yoriwake's excluded, as `sys:<name>`;
+- every system property the task passes to the test JVM, `-D` arguments, argument providers and
+  JVM argument files (`@file`, read as the `java` launcher reads them) included, Gradle's own
+  (`file.encoding`, `user.language`, `user.country`, `user.variant`) included, yoriwake's
+  excluded, as `sys:<name>`. A property given more than once is compared by every value; an
+  argument file that cannot be read when the run starts makes the environment differ;
 - `TZ`, `LANG` and `LC_ALL`, and the environment variables `environmentInclude` lists, as
   `env:<name>`. A listed name is compared whether or not it is set.
 

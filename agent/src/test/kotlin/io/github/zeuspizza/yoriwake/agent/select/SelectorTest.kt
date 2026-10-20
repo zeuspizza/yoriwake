@@ -1022,6 +1022,20 @@ class SelectorTest {
     }
 
     @Test
+    fun `a read of an entry of a moved file reads it`(@TempDir dir: File) {
+        // A zip behind a launch script is recorded by its entries; once it is no longer a zip, it
+        // moves as a plain file.
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "build/launcher!/greeting.txt"))),
+            changed = listOf("com.acme.Rates"),
+            moved = listOf("build/launcher"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+    }
+
+    @Test
     fun `a JVM that read every file from a point runs from there`(@TempDir dir: File) {
         val decision = decide(
             stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 6, AgentContract.FIRST_TOUCH_ANY))),

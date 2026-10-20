@@ -23,6 +23,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.TEST_TASKS_C
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
+import io.github.zeuspizza.yoriwake.gradle.capture.JvmArgFiles
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
@@ -1044,7 +1045,7 @@ internal fun environmentView(test: Test): EnvironmentFingerprint.View {
     return EnvironmentFingerprint.View(
         metadata?.javaRuntimeVersion, metadata?.vendor, test.executable,
         System.getProperty("os.name"), System.getProperty("os.arch"),
-        test.allJvmArgs, test.environment.mapValues { it.value?.toString().orEmpty() },
+        JvmArgFiles.expand(test.allJvmArgs, test.workingDir), test.environment.mapValues { it.value?.toString().orEmpty() },
     )
 }
 

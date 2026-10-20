@@ -497,6 +497,50 @@ internal object ChangeDetection {
 
     /** One git invocation, or a sentinel; shared so configuration and execution ask alike. */
     internal fun exec(workingDir: File, arguments: List<String>): String {
+        if ("--ignore-submodules=none" !in arguments) return spawn(workingDir, arguments)
+        // The flag reaches only this repository's own `.gitmodules`: git learns whether a submodule
+        // is dirty by running status inside it, where that submodule's `.gitmodules` still applies,
+        // so a submodule nested in it with `ignore = all` hides an edit from every answer. Settings
+        // given with -c reach those nested runs too.
+        val overrides = nestedIgnoreOverrides(workingDir) ?: return FAILED
+        return spawn(workingDir, overrides + arguments)
+    }
+
+    /**
+     * `-c submodule.<name>.ignore=none` for every submodule the `.gitmodules` of the repository
+     * holding [workingDir] names, and every one the `.gitmodules` of a checked-out submodule names,
+     * at any depth; empty when there is none, null when git did not answer in time or a name cannot
+     * be passed. Read from the files rather than with `git submodule foreach`, which fails outright
+     * on a gitlink that `.gitmodules` does not name.
+     */
+    private fun nestedIgnoreOverrides(workingDir: File): List<String>? {
+        val top = generateSequence(workingDir.absoluteFile) { it.parentFile }.firstOrNull { File(it, ".git").exists() }
+            ?: return emptyList()
+        val names = mutableListOf<String>()
+        val seen = HashSet<File>()
+        val pending = ArrayDeque(listOf(top))
+        while (pending.isNotEmpty()) {
+            val dir = pending.removeFirst()
+            if (!File(dir, ".gitmodules").isFile || !seen.add(runCatching { dir.canonicalFile }.getOrDefault(dir))) continue
+            val listed = spawn(dir, listOf("config", "-z", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$"))
+            if (listed == TIMED_OUT) return null
+            // One `submodule.<name>.path` NUL `<path>` record each, as a name or a path may hold a space;
+            // nothing, or a file git cannot read, names none.
+            if (listed == FAILED) continue
+            for (record in listed.split('\u0000')) {
+                val key = record.substringBefore('\n')
+                if (!key.startsWith("submodule.") || !key.endsWith(".path") || '\n' !in record) continue
+                names += key.removePrefix("submodule.").removeSuffix(".path")
+                pending.addLast(File(dir, record.substringAfter('\n')))
+            }
+        }
+        // -c splits its argument at the first `=`, so such a name cannot be overridden: answer as git
+        // would when it cannot, which runs everything.
+        if (names.any { '=' in it }) return null
+        return names.distinct().flatMap { listOf("-c", "submodule.$it.ignore=none") }
+    }
+
+    private fun spawn(workingDir: File, arguments: List<String>): String {
         val process = runCatching {
             ProcessBuilder(listOf("git") + arguments)
                 .directory(workingDir)
