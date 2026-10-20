@@ -4751,6 +4751,61 @@ def case_a_shard_of_a_fixture_keeps_the_map_the_recording_job_left():
     return failures
 
 
+def case_a_project_measured_in_another_s_clone_clones_it_at_that_project_s_pin():
+    """A job that records detekt-junk alone has no detekt clone; it must not refuse for that."""
+    import shutil  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+    failures = 0
+    # Real, because git reports the top level resolved and macOS keeps temp under a symlink.
+    root = os.path.realpath(tempfile.mkdtemp(prefix="yoriwake-owner-"))
+    saved = run.ROOT, run.CHECKOUTS, run.PROJECTS
+
+    def git(*args, cwd):
+        return subprocess.run(["git", "-c", "user.email=b@e", "-c", "user.name=b", *args], cwd=cwd,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    try:
+        upstream = os.path.join(root, "upstream")
+        os.makedirs(upstream)
+        git("init", "--quiet", cwd=upstream)
+        commits = []
+        for content in ("one\n", "two\n"):
+            with open(os.path.join(upstream, "f.txt"), "w", encoding="utf-8") as handle:
+                handle.write(content)
+            git("add", ".", cwd=upstream)
+            git("commit", "--quiet", "-m", content.strip(), cwd=upstream)
+            commits.append(git("rev-parse", "HEAD", cwd=upstream))
+        run.ROOT = root
+        run.CHECKOUTS = os.path.join(root, "bench", "checkouts")
+        run.PROJECTS = os.path.join(root, "bench", "projects")
+        os.makedirs(run.PROJECTS)
+        with open(os.path.join(run.PROJECTS, "owner.toml"), "w", encoding="utf-8") as handle:
+            handle.write(f'name = "owner"\nurl = "{upstream}"\ncommit = "{commits[0]}"\n')
+        derived = {"name": "derived", "path": "bench/checkouts/owner", "commit": commits[0]}
+        path = run.checkout_project(derived)
+        if path != os.path.join(run.CHECKOUTS, "owner") or not os.path.isdir(path):
+            failures += fail(f"the derived project measures in {path}, which is not its owner's clone")
+        elif git("rev-parse", "HEAD", cwd=path) != commits[0]:
+            failures += fail("the owner's clone is not at the owner's pin")
+        else:
+            run.assert_owns(path)
+            # An existing clone is the caller's, as before: not moved to the pin.
+            git("checkout", "--quiet", commits[1], cwd=path)
+            run.checkout_project(derived)
+            if git("rev-parse", "HEAD", cwd=path) != commits[1]:
+                failures += fail("an existing clone was moved by a project that does not own it")
+        stray = {"name": "stray", "path": "bench/checkouts/nobody"}
+        if run.checkout_project(stray) != os.path.join(run.CHECKOUTS, "nobody") \
+                or os.path.exists(os.path.join(run.CHECKOUTS, "nobody")):
+            failures += fail("a path no project file owns was cloned from somewhere")
+    except SystemExit as refusal:
+        failures += fail(f"the derived project was refused: {refusal}")
+    finally:
+        run.ROOT, run.CHECKOUTS, run.PROJECTS = saved
+        shutil.rmtree(root, ignore_errors=True)
+    return failures
+
+
 def case_a_row_measured_on_ci_names_the_runner_and_the_job():
     failures = 0
     keys = ("GITHUB_ACTIONS", "RUNNER_NAME", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB")
@@ -5075,6 +5130,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_every_row_a_target_appends_carries_its_kind_and_index,
          case_a_row_measured_on_ci_names_the_runner_and_the_job,
          case_a_shard_of_a_fixture_keeps_the_map_the_recording_job_left,
+         case_a_project_measured_in_another_s_clone_clones_it_at_that_project_s_pin,
          case_a_shard_measures_its_slice_and_counts_from_its_start,
          case_a_sharded_pool_run_refuses_a_timing_cap,
          case_a_shard_refuses_a_list_drawn_under_other_stamps,
