@@ -300,4 +300,128 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: applyJacocoIncludes adopts a host's own jacoco includes as the
+    // scope rather than deriving one. A host that scopes coverage to one package of the build's
+    // sources leaves a class its tests reach out of every record: its change must not read as a
+    // change no test reaches.
+    @Test
+    fun `a host whose own jacoco includes leave out a package the tests reach runs every test`(@TempDir dir: File) {
+        val util = source(
+            "src/main/java/dev/sample/util/Alpha.java",
+            """
+            package dev.sample.util;
+            public class Alpha {
+                public int twice(int n) { return n * 2; }
+                public String name() { return "alpha"; }
+            }
+            """,
+        )
+        fun usesUtil(source: Pair<String, String>) =
+            source.first to source.second.replace("package dev.sample;", "package dev.sample;\nimport dev.sample.util.Alpha;")
+        val result = attempt(
+            dir, "dev.sample.A2AlphaTest", Aim.Forced("no-coverage-for-changed"),
+            listOf(other, first, util, usesUtil(alphaTest), usesUtil(alphaNameTest), classOrderByName),
+            buildScript = minimalBuild + "\n" + """
+                tasks.test { extensions.getByType<JacocoTaskExtension>().includes = listOf("dev.sample.Other*") }
+            """.trimIndent(),
+        ) { breakAlpha(it, util.first) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    /**
+     * A single-project multiplatform build with one JVM target, [jvmTarget], and [extra] in its
+     * `kotlin` block. Its test task writes its results where [attempt] reads them, and `test` runs
+     * it, so the attempt runs as on a plain JVM module.
+     */
+    private fun multiplatformBuild(jvmTarget: String, extra: String = "") = """
+        plugins {
+            kotlin("multiplatform") version "2.1.20"
+            jacoco
+            id("io.github.zeuspizza.yoriwake")
+        }
+        repositories { mavenCentral() }
+        kotlin {
+            $jvmTarget { testRuns["test"].executionTask.configure { useJUnitPlatform() } }
+            sourceSets {
+                commonTest.dependencies { implementation(kotlin("test")) }
+                $extra
+            }
+        }
+        val targetTest = tasks.withType<Test>().single()
+        targetTest.reports.junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/test"))
+        tasks.register("test") { dependsOn(targetTest) }
+    """.trimIndent()
+
+    private fun kotlinTest(path: String, name: String, assertion: String) = source(
+        "$path/dev/sample/$name.kt",
+        """
+        package dev.sample
+        import kotlin.test.Test
+        import kotlin.test.assertEquals
+        class $name { @Test fun passes() { $assertion } }
+        """,
+    )
+
+    private val kotlinAlpha = """
+        class Alpha {
+            fun twice(n: Int) = n * 2
+            fun name() = "alpha"
+        }
+    """.trimIndent()
+
+    // Track: code reading. Boundary: multiplatformSourceDirs reads the module's own sources by
+    // layout, every `src/<set>Main/kotlin` and `java`, never through the Kotlin plugin's model. A
+    // JVM source set given a directory of its own outside that layout attaches all the same, and its
+    // classes are in no package of the scope: their change must force, not narrow past their tests.
+    @Test
+    fun `a multiplatform JVM source set with a directory outside the layout runs every test when its class changes`(
+        @TempDir dir: File,
+    ) {
+        val extraDir = "gen/src/extra/kotlin"
+        val result = attempt(
+            dir, "dev.sample.A2AlphaTest", Aim.Forced("no-coverage-for-changed"),
+            listOf(
+                source("src/commonMain/kotlin/dev/sample/Other.kt", "package dev.sample\nclass Other { fun one() = 1 }"),
+                source("src/jvmMain/kotlin/dev/sample/Platform.kt", "package dev.sample\nfun platform() = \"jvm\""),
+                source("$extraDir/dev/extra/Alpha.kt", "package dev.extra\n$kotlinAlpha"),
+                kotlinTest("src/jvmTest/kotlin", "A0UnrelatedTest", "assertEquals(1, Other().one())"),
+                kotlinTest("src/jvmTest/kotlin", "A2AlphaTest", "assertEquals(6, dev.extra.Alpha().twice(3))"),
+                kotlinTest("src/jvmTest/kotlin", "A3PlatformTest", "assertEquals(\"jvm\", platform())"),
+                "src/jvmTest/resources/junit-platform.properties" to classOrderByName.second,
+            ),
+            buildScript = multiplatformBuild("jvm()", "jvmMain { kotlin.srcDir(\"$extraDir\") }"),
+        ) { breakAlpha(it, "$extraDir/dev/extra/Alpha.kt") }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: hasJvmTarget takes a `src/jvmMain` or `src/jvmTest` directory
+    // as the JVM target. A JVM target given its own name beside a leftover `src/jvmTest` directory
+    // passes that check, so the module is attached rather than declined: its own sources must still
+    // be in the scope, and its tests selected by what they reach. An inline call gives the inline
+    // scan the SMAP it needs to narrow.
+    @Test
+    fun `a multiplatform JVM target with its own name beside a leftover jvmTest directory selects the test that reaches the change`(
+        @TempDir dir: File,
+    ) {
+        val result = attempt(
+            dir, "dev.sample.A2AlphaTest", Aim.Row("reaches-change"),
+            listOf(
+                source(
+                    "src/desktopMain/kotlin/dev/sample/Other.kt",
+                    "package dev.sample\nclass Other { fun one() = listOf(1).map { it }.single() }",
+                ),
+                source("src/desktopMain/kotlin/dev/sample/Alpha.kt", "package dev.sample\n$kotlinAlpha"),
+                source("src/jvmTest/README.txt", "Tests moved to desktopTest."),
+                kotlinTest("src/desktopTest/kotlin", "A0UnrelatedTest", "assertEquals(1, Other().one())"),
+                kotlinTest("src/desktopTest/kotlin", "A2AlphaTest", "assertEquals(6, Alpha().twice(3))"),
+                "src/desktopTest/resources/junit-platform.properties" to classOrderByName.second,
+            ),
+            buildScript = multiplatformBuild("jvm(\"desktop\")"),
+        ) { breakAlpha(it, "src/desktopMain/kotlin/dev/sample/Alpha.kt") }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
 }

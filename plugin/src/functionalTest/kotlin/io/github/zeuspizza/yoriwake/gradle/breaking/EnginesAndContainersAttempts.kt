@@ -325,4 +325,159 @@ class EnginesAndContainersAttempts : BreakAttempt() {
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
     }
+
+    // Track: code reading. Boundary: the filter judges a test by its own record and a container by
+    // the records beneath it. A test factory is a container at discovery with nothing beneath it;
+    // its dynamic tests, and the containers they sit in, exist only once it runs, so their records
+    // are the only ones that reach the change and none of them is discovered.
+    @Test
+    fun `a dynamic test nested in a dynamic container is selected through its factory`(@TempDir dir: File) {
+        val target = source(
+            "src/test/java/dev/sample/A1FactoryTest.java",
+            """
+            package dev.sample;
+            import java.util.stream.Stream;
+            import org.junit.jupiter.api.DynamicNode;
+            import org.junit.jupiter.api.TestFactory;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            import static org.junit.jupiter.api.DynamicContainer.dynamicContainer;
+            import static org.junit.jupiter.api.DynamicTest.dynamicTest;
+            class A1FactoryTest {
+                @TestFactory Stream<DynamicNode> codecs() {
+                    return Stream.of(dynamicContainer("codec", Stream.of(
+                        dynamicTest("reverses", () -> assertEquals("cba", new Codec().encode("abc"))))));
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1FactoryTest", Aim.Row("reaches-change"),
+            listOf(codec, other, first, target, codecTest, classOrderByName),
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: Spock runs setupSpec before any feature starts, so no feature's
+    // own record holds what it runs. A feature that only reads a @Shared field setupSpec filled
+    // depends on the change through it. In a JVM of its own, the spec's setup is the JVM's startup.
+    @Test
+    fun `a Spock feature that reads what setupSpec computed in its own JVM runs every test as startup coverage`(@TempDir dir: File) {
+        val build = """
+            plugins {
+                groovy
+                jacoco
+                id("io.github.zeuspizza.yoriwake")
+            }
+            repositories { mavenCentral() }
+            dependencies {
+                testImplementation("org.spockframework:spock-core:2.3-groovy-4.0")
+                testImplementation("org.apache.groovy:groovy:4.0.22")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            }
+            // Groovy 4.0.22 cannot read Java 25 class files.
+            java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+            tasks.test { useJUnitPlatform(); forkEvery = 1 }
+        """.trimIndent()
+        fun spec(name: String, body: String) = source(
+            "src/test/groovy/dev/sample/$name.groovy",
+            """
+            package dev.sample
+            import spock.lang.Shared
+            import spock.lang.Specification
+            class $name extends Specification {
+            $body
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1SetupSpec", Aim.Forced("startup-coverage"),
+            listOf(
+                codec, other,
+                spec("A0UnrelatedSpec", "def \"runs first\"() { expect: new Other().one() == 1 }"),
+                spec(
+                    "A1SetupSpec",
+                    """
+                    @Shared String encoded
+                    def setupSpec() { encoded = new Codec().encode("abc") }
+                    def "reverses"() { expect: encoded == "cba" }
+                    """.trimIndent(),
+                ),
+                spec("A9CodecSpec", "def \"reverses\"() { expect: new Codec().encode(\"abc\") == \"cba\" }"),
+            ),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: engineRunsEverything finds Kotest by its engine segment at any
+    // depth of the id. Run through the Platform Suite engine, a spec's id opens with the suite's
+    // engine and holds Kotest's only further in: a spec the change cannot reach must still be kept.
+    @Test
+    fun `a Kotest spec a suite runs is held because its engine runs everything`(@TempDir dir: File) {
+        val build = """
+            plugins {
+                kotlin("jvm") version "2.1.20"
+                jacoco
+                id("io.github.zeuspizza.yoriwake")
+            }
+            repositories { mavenCentral() }
+            dependencies {
+                testImplementation("io.kotest:kotest-runner-junit5:5.9.1")
+                testImplementation(platform("org.junit:junit-bom:5.11.4"))
+                testImplementation("org.junit.jupiter:junit-jupiter")
+                testImplementation("org.junit.platform:junit-platform-suite")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            }
+            kotlin { jvmToolchain(21) }
+        """.trimIndent() + "\n" + copyCodec + "\n" + """
+            tasks.test {
+                useJUnitPlatform { includeEngines("junit-platform-suite") }
+                forkEvery = 1
+                systemProperty("kotest.framework.classpath.scanning.config.disable", "true")
+                systemProperty("kotest.framework.classpath.scanning.autoscan.disable", "true")
+            """.trimIndent() + "\n" + readsCopy + "\n}\n"
+        val same = source("src/main/kotlin/dev/sample/Same.kt", "package dev.sample\n\ninline fun same(n: Int) = n\n")
+        val twice = source("src/main/kotlin/dev/sample/Twice.kt", "package dev.sample\n\nclass Twice { fun of(n: Int) = same(n) * 2 }\n")
+        val spec = source(
+            "src/test/kotlin/dev/sample/A1KotestSpec.kt",
+            """
+            package dev.sample
+
+            import io.kotest.core.spec.style.StringSpec
+            import io.kotest.matchers.string.shouldContain
+            import java.io.File
+
+            class A1KotestSpec : StringSpec({
+                "reads the copy" { File(System.getProperty("codec.copy")).readText() shouldContain "reverse().toString()" }
+            })
+            """,
+        )
+        fun suite(name: String, engine: String, selected: String) = source(
+            "src/test/kotlin/dev/sample/$name.kt",
+            """
+            package dev.sample
+            import org.junit.platform.suite.api.IncludeEngines
+            import org.junit.platform.suite.api.SelectClasses
+            import org.junit.platform.suite.api.Suite
+            @Suite
+            @IncludeEngines("$engine")
+            @SelectClasses($selected::class)
+            class $name
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1KotestSpec", Aim.Row("engine-runs-everything"),
+            listOf(
+                codec, other, same, twice, first, spec, codecTest,
+                suite("FirstSuite", "junit-jupiter", "A0UnrelatedTest"),
+                suite("KotestSuite", "kotest", "A1KotestSpec"),
+                suite("CodecSuite", "junit-jupiter", "A9CodecTest"),
+            ),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
 }

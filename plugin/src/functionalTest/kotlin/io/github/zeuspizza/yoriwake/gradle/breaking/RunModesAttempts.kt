@@ -150,4 +150,74 @@ class RunModesAttempts : BreakAttempt() {
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
     }
+
+    /** As [minimalBuild], with Codec's source copied to a file no rule dates, and [extra] after it. */
+    private fun copyingBuild(extra: String) = minimalBuild.replace(
+        "tasks.test { useJUnitPlatform() }",
+        """
+        val copyCodec = tasks.register<Copy>("copyCodec") {
+            from("src/main/java/dev/sample/Codec.java")
+            rename { "codec.txt" }
+            into(layout.buildDirectory.dir("copies"))
+        }
+        tasks.test {
+            useJUnitPlatform()
+            dependsOn(copyCodec)
+            systemProperty("codec.copy", layout.buildDirectory.file("copies/codec.txt").get().asFile.absolutePath)
+        }
+        """.trimIndent(),
+    ) + "\n" + extra + "\n"
+
+    /** A test that reads Codec's copy, which only a full run keeps selected once Codec changes. */
+    private val copyReader = source(
+        "src/test/java/dev/sample/A1CopyTest.java",
+        """
+        package dev.sample;
+        import java.nio.file.Files;
+        import java.nio.file.Paths;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertTrue;
+        class A1CopyTest {
+            @Test void readsTheCopy() throws Exception {
+                assertTrue(Files.readString(Paths.get(System.getProperty("codec.copy"))).contains("reverse().toString()"));
+            }
+        }
+        """,
+    )
+
+    // Track: fixtures. Row: RM10. The capture starts the count; one narrowed run later the limit of
+    // two is reached, and that run reuses the configuration-cache entry the narrowed run stored,
+    // which was stored while no full run was due.
+    @Test
+    fun `the build that reaches fullRunEveryBuilds runs everything though it reuses a stored configuration`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1CopyTest", Aim.Forced("full-run-scheduled"), sample + copyReader,
+            buildScript = copyingBuild("yoriwake { fullRunEveryBuilds = 2 }"),
+        ) { dir ->
+            changeCodec(dir)
+            runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").buildAndFail()
+            File(dir, "build/test-results").deleteRecursively()
+        }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the count and the time are written only while a limit is set,
+    // and a map that holds neither is due. Here the map was recorded with no limit, and the limit
+    // appears afterwards from a file under the build directory, which is no change.
+    @Test
+    fun `a map recorded before a limit was set falls due on its first selecting run`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1CopyTest", Aim.Forced("full-run-scheduled"), sample + copyReader,
+            buildScript = copyingBuild(
+                "yoriwake { layout.buildDirectory.file(\"limit.txt\").get().asFile.takeIf { it.isFile }" +
+                    "?.let { fullRunEveryDays = it.readText().trim().toInt() } }",
+            ),
+        ) { dir ->
+            changeCodec(dir)
+            File(dir, "build/limit.txt").writeText("30\n")
+        }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
 }
