@@ -191,4 +191,117 @@ class OutcomesAttempts : BreakAttempt() {
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
     }
+
+    /** Runs after a target and before Codec's test, long enough for --fail-fast to stop its JVM. */
+    private val slowTest = source(
+        "src/test/java/dev/sample/A5SlowTest.java",
+        """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        class A5SlowTest { @Test void waits() throws Exception { Thread.sleep(Boolean.getBoolean("sample.slow") ? 20000 : 0); } }
+        """,
+    )
+
+    // Track: fixtures. Row: a test that fails just before --fail-fast stops its JVM. The run cannot
+    // date the map, so what it keeps is the failure: a test that failed runs until a capture sees
+    // it pass. A slow test after the target keeps the JVM busy until Gradle stops it.
+    @Test
+    fun `a test that failed before --fail-fast stopped its JVM is held as not known to pass`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1FailFastTest", Aim.Row("not-known-to-pass"),
+            listOf(codec, other, first(), copyReader("dev.sample", "A1FailFastTest"), slowTest, codecTest(), classOrderByName),
+            buildScript = copyingBuild("if (project.hasProperty(\"slow\")) systemProperty(\"sample.slow\", \"true\")"),
+        ) {
+            changeCodec(it)
+            runner(it, "test", "--fail-fast", "-Pslow").buildAndFail()
+            File(it, "build/test-results").deleteRecursively()
+        }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: the agent writes a test's outcome in its own listener, after
+    // JUnit has told the listeners before it, and a failure goes to disk at once rather than with
+    // the batch the shutdown hook flushes. Here a listener of the suite's own halts the JVM as soon
+    // as a test fails, so no shutdown hook runs and nothing after the failure is written; Gradle's
+    // JUnit XML report is off for that run, so the agent's own record is the only account of it.
+    @Test
+    fun `a test that failed just before a listener halted its JVM is held as not known to pass`(@TempDir dir: File) {
+        val listener = source(
+            "src/test/java/dev/sample/HaltOnFailure.java",
+            """
+            package dev.sample;
+            import org.junit.platform.engine.TestExecutionResult;
+            import org.junit.platform.launcher.TestExecutionListener;
+            import org.junit.platform.launcher.TestIdentifier;
+            public class HaltOnFailure implements TestExecutionListener {
+                @Override
+                public void executionFinished(TestIdentifier id, TestExecutionResult result) {
+                    if (Boolean.getBoolean("sample.halt") && result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {
+                        Runtime.getRuntime().halt(3);
+                    }
+                }
+            }
+            """,
+        )
+        val registration = "src/test/resources/META-INF/services/org.junit.platform.launcher.TestExecutionListener" to
+            "dev.sample.HaltOnFailure\n"
+        val result = attempt(
+            dir, "dev.sample.A1HaltedTest", Aim.Row("not-known-to-pass"),
+            listOf(codec, other, first(), copyReader("dev.sample", "A1HaltedTest"), codecTest(), listener, registration,
+                classOrderByName),
+            buildScript = copyingBuild(
+                "if (project.hasProperty(\"halt\")) { systemProperty(\"sample.halt\", \"true\"); reports.junitXml.required = false }",
+            )
+                .replace("testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+                    "testImplementation(\"org.junit.platform:junit-platform-launcher\")"),
+        ) {
+            changeCodec(it)
+            runner(it, "test", "-Phalt").buildAndFail()
+            File(it, "build/test-results").deleteRecursively()
+        }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: a tag pins by the descriptor's tags, read only on a leaf after
+    // the container check. Jupiter gathers a test's tags from its method and every descriptor above
+    // it; here the tag is carried by a composed annotation on the enclosing class of a @Nested class.
+    @Test
+    fun `a tag a composed annotation puts on the enclosing class keeps the tests of its nested class`(@TempDir dir: File) {
+        val annotation = source(
+            "src/test/java/dev/sample/Pinned.java",
+            """
+            package dev.sample;
+            import java.lang.annotation.*;
+            import org.junit.jupiter.api.Tag;
+            @Target(ElementType.TYPE) @Retention(RetentionPolicy.RUNTIME) @Tag("yoriwake-always-run")
+            @interface Pinned {}
+            """,
+        )
+        val target = source(
+            "src/test/java/dev/sample/A1PinnedTest.java",
+            """
+            package dev.sample;
+            import java.nio.file.Files;
+            import java.nio.file.Paths;
+            import org.junit.jupiter.api.Nested;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            @Pinned
+            class A1PinnedTest {
+                @Nested class Inner {
+                    @Test void readsTheCopy() throws Exception { $readsCopy }
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1PinnedTest\$Inner", Aim.Row("always-run"),
+            listOf(codec, other, first(), annotation, target, codecTest(), classOrderByName),
+            buildScript = copyingBuild(),
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
 }

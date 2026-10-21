@@ -103,4 +103,122 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: the fingerprint reads the task's JVM arguments as Gradle hands
+    // them to the test JVM, argument providers included, which are asked for their arguments only
+    // when the task runs.
+    @Test
+    fun `a system property an argument provider passes runs everything when it changed`(@TempDir dir: File) {
+        val build = buildWith(
+            "jvmArgumentProviders.add(TreeStateArgument(treeState))",
+            before = """
+            class TreeStateArgument(@get:Input val state: Provider<String>) : CommandLineArgumentProvider {
+                override fun asArguments() = listOf("-Dtree.state=" + state.get())
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1TreeStateTest", Aim.Forced("environment-changed"),
+            listOf(codec, other, first, propertyTest, codecTest, classOrderByName), buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a capture writes the fingerprint it starts with to a pending
+    // file the decode folds into the map; a capture whose pending file is gone by then writes no
+    // row for its test JVMs, and the next selecting run must refuse as unrecorded rather than
+    // compare against nothing. A build's own doFirst runs after yoriwake's and removes it.
+    @Test
+    fun `a capture whose pending fingerprint a doFirst removes runs everything as unrecorded`(@TempDir dir: File) {
+        val codecRunner = source(
+            "src/test/java/dev/sample/A1CodecTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1CodecTest { @Test void reverses() { assertEquals("cba", new Codec().encode("abc")); } }
+            """,
+        )
+        val build = buildWith(
+            """
+            val state = File(rootDir, ".gradle/yoriwake")
+            doFirst { state.walkTopDown().filter { it.name == "environment.pending" }.forEach { it.delete() } }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1CodecTest", Aim.Forced("environment-unrecorded"),
+            listOf(codec, other, first, codecRunner, classOrderByName), buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: fixtures. Row: EV1.
+    @Test
+    fun `a test that needs Java 21 selecting on a Java 17 test JVM runs everything`(@TempDir dir: File) {
+        val featureTest = source(
+            "src/test/java/dev/sample/A1FeatureTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class A1FeatureTest { @Test void recent() { assertTrue(Runtime.version().feature() >= 21, Runtime.version().toString()); } }
+            """,
+        )
+        val build = buildWith(
+            """
+            javaLauncher.set(javaToolchains.launcherFor {
+                languageVersion.set(treeState.map { JavaLanguageVersion.of(if (it == "clean") 21 else 17) })
+            })
+            """,
+            after = "tasks.withType<JavaCompile>().configureEach { options.release.set(11) }",
+        )
+        val result = attempt(
+            dir, "dev.sample.A1FeatureTest", Aim.Forced("environment-changed"),
+            listOf(
+                codec, other, first, featureTest, codecTest, classOrderByName,
+                "gradle.properties" to "org.gradle.java.installations.auto-download=false\n",
+            ),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: fixtures. Row: EV2.
+    @Test
+    fun `a system property of the test task with another value runs everything`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1TreeStateTest", Aim.Forced("environment-changed"),
+            listOf(codec, other, first, propertyTest, codecTest, classOrderByName),
+            buildScript = buildWith("systemProperty(\"tree.state\", treeState.get())"),
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: fixtures. Row: EV3.
+    @Test
+    fun `a listed environment variable with another value runs everything`(@TempDir dir: File) {
+        val variableTest = source(
+            "src/test/java/dev/sample/A1TreeVariableTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1TreeVariableTest { @Test void clean() { assertEquals("clean", System.getenv("TREE_STATE")); } }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1TreeVariableTest", Aim.Forced("environment-changed"),
+            listOf(codec, other, first, variableTest, codecTest, classOrderByName),
+            buildScript = buildWith(
+                "environment(\"TREE_STATE\", treeState.get())",
+                after = "yoriwake { environmentInclude.add(\"TREE_STATE\") }",
+            ),
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
 }

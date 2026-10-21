@@ -98,4 +98,33 @@ class WhoWroteTheMapAttempts : BreakAttempt() {
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: MapProvenance.DIGESTED again, for the files this release added
+    // beside the map: which classpath files each test JVM read, and the environment it ran in. Each
+    // decides what runs, so a restored map that drops one must not pass for the map the list
+    // vouches for. Here the record of classpath-file reads is removed, or emptied where it held any.
+    @Test
+    fun `a map whose record of classpath-file reads was removed is not the map the list vouches for`(@TempDir dir: File) {
+        val result = attempt(dir, "dev.sample.A9CodecTest", Aim.Forced("map-untrusted"), suite) {
+            val map = mapDir(it)
+            File(it, "build/trusted.tsv").writeText("${map.name}\t${recordedDigest(map)}\n")
+            val reads = File(map, AgentContract.RESOURCE_TOUCH_FILE)
+            check(reads.isFile) { "the capture wrote no ${reads.name}" }
+            if (reads.length() > 0) reads.writeText("") else reads.delete()
+            changeCodec(it)
+        }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: fixtures. Row: MP2. An empty list is valid, and names no map.
+    @Test
+    fun `an empty trusted list vouches for no map`(@TempDir dir: File) {
+        val result = attempt(dir, "dev.sample.A9CodecTest", Aim.Forced("map-unverified"), suite) {
+            File(it, "build/trusted.tsv").writeText("")
+            changeCodec(it)
+        }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
 }

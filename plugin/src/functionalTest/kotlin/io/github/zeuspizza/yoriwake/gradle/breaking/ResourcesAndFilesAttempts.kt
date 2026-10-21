@@ -781,6 +781,79 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
         git.waitFor()
     """.trimIndent()
 
+    /** A test resource directory `info.properties` is generated into, holding `state=` [treeState]. */
+    private val infoBuild = buildWith(
+        "",
+        after = """
+        val stampInfo = tasks.register("stampInfo") {
+            val out = layout.buildDirectory.file("gen/info/info.properties")
+            val root = rootDir
+            outputs.file(out)
+            outputs.upToDateWhen { false }
+            doLast {
+        """.trimIndent() + "\n" + treeState.prependIndent("        ") + "\n" + """
+                out.get().asFile.apply { parentFile.mkdirs() }.writeText("state=" + state + "\n")
+            }
+        }
+        """.trimIndent(),
+    )
+
+    // Track: code reading. Boundary: a jar entry read is recorded under the name the JDK's zip code
+    // hands out. A multi-release jar's versioned entry answers to its base name, while the classpath
+    // walk digests it under its versioned path, so the read and the moved file never meet.
+    @Test
+    fun `a versioned resource of a multi-release jar runs the test that reads it when it changed`(@TempDir dir: File) {
+        val reader = source(
+            "src/test/java/dev/sample/A1VersionedResourceTest.java",
+            """
+            package dev.sample;
+            import java.io.InputStream;
+            import java.nio.charset.StandardCharsets;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1VersionedResourceTest {
+                @Test void builtFromACleanTree() throws Exception {
+                    try (InputStream in = getClass().getResourceAsStream("/greeting.txt")) {
+                        assertEquals("clean", new String(in.readAllBytes(), StandardCharsets.UTF_8).trim());
+                    }
+                }
+            }
+            """,
+        )
+        val versionedBuild = buildWith(
+            "",
+            after = """
+            val stampVersioned = tasks.register("stampVersioned") {
+                val out = layout.buildDirectory.dir("gen/versioned")
+                val root = rootDir
+                outputs.dir(out)
+                outputs.upToDateWhen { false }
+                doLast {
+            """.trimIndent() + "\n" + treeState.prependIndent("        ") + "\n" + """
+                    val base = out.get().asFile
+                    base.resolve("greeting.txt").apply { parentFile.mkdirs() }.writeText("base\n")
+                    base.resolve("META-INF/versions/9/greeting.txt").apply { parentFile.mkdirs() }.writeText(state + "\n")
+                }
+            }
+            val versionedJar = tasks.register<Jar>("versionedJar") {
+                from(stampVersioned)
+                archiveFileName.set("versioned.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("gen/jar"))
+                manifest { attributes("Multi-Release" to "true") }
+                isPreserveFileTimestamps = false
+                isReproducibleFileOrder = true
+            }
+            dependencies { testRuntimeOnly(files(versionedJar)) }
+            """.trimIndent(),
+        )
+        val result = attempt(
+            dir, "dev.sample.A1VersionedResourceTest", Aim.Row("shares-jvm-moved-classpath-file"),
+            listOf(codec, other, first, reader, codecTest, classOrderByName), buildScript = versionedBuild,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
+
     // Track: code reading. Boundary: a changed archive in a classpath directory runs everything,
     // since it is digested whole but read by its entries; it is told an archive by its name or by
     // its first two bytes. An archive behind a launch script starts with the script, so it is
@@ -843,5 +916,109 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
         ) { changeCodec(it) }
 
         assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a moved file selects from its first read in each JVM on, not
+    // only the test that read it. A later test that uses the value an earlier test read and cached
+    // reads no file itself, and runs at or after that read.
+    @Test
+    fun `a generated value an earlier test cached runs the later test that uses it`(@TempDir dir: File) {
+        val info = source(
+            "src/test/java/dev/sample/Info.java",
+            """
+            package dev.sample;
+            import java.io.IOException;
+            import java.io.InputStream;
+            import java.util.Properties;
+            final class Info {
+                private static String state;
+                static synchronized String state() throws IOException {
+                    if (state == null) {
+                        Properties properties = new Properties();
+                        try (InputStream in = Info.class.getResourceAsStream("/info.properties")) { properties.load(in); }
+                        state = properties.getProperty("state");
+                    }
+                    return state;
+                }
+            }
+            """,
+        )
+        val warmup = source(
+            "src/test/java/dev/sample/A1InfoWarmupTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+            class A1InfoWarmupTest { @Test void reads() throws Exception { assertNotNull(Info.state()); } }
+            """,
+        )
+        val cached = source(
+            "src/test/java/dev/sample/A2CachedInfoTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A2CachedInfoTest { @Test void builtFromACleanTree() throws Exception { assertEquals("clean", Info.state()); } }
+            """,
+        )
+        val build = infoBuild + "\n" + """
+            sourceSets.test { resources.srcDir(layout.buildDirectory.dir("gen/info")) }
+            tasks.processTestResources { dependsOn(stampInfo) }
+        """.trimIndent()
+        val result = attempt(
+            dir, "dev.sample.A2CachedInfoTest", Aim.Row("shares-jvm-moved-classpath-file"),
+            listOf(codec, other, first, info, warmup, cached, codecTest, classOrderByName), buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: an archive the JDK's zip code opens is skipped as a whole read,
+    // since its entries are hooked; the zip file system reads the jar through its own code over a
+    // channel, so the jar counts as read whole, and every entry of it with it.
+    @Test
+    fun `a generated jar a test reads through the zip file system runs that test when an entry changed`(
+        @TempDir dir: File,
+    ) {
+        val reader = source(
+            "src/test/java/dev/sample/A1ZipFileSystemTest.java",
+            """
+            package dev.sample;
+            import java.nio.file.FileSystem;
+            import java.nio.file.FileSystems;
+            import java.nio.file.Files;
+            import java.nio.file.Paths;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class A1ZipFileSystemTest {
+                @Test void builtFromACleanTree() throws Exception {
+                    try (FileSystem jar = FileSystems.newFileSystem(Paths.get(System.getProperty("info.jar")), (ClassLoader) null)) {
+                        String text = new String(Files.readAllBytes(jar.getPath("/info.properties")), "UTF-8");
+                        assertTrue(text.contains("state=clean"), text);
+                    }
+                }
+            }
+            """,
+        )
+        val build = infoBuild.replace(
+            "tasks.test {\n    useJUnitPlatform()\n",
+            "tasks.test {\n    useJUnitPlatform()\n    dependsOn(\"infoJar\")\n" +
+                "    systemProperty(\"info.jar\", layout.buildDirectory.file(\"gen/jar/info.jar\").get().asFile.absolutePath)\n",
+        ) + "\n" + """
+            val infoJar = tasks.register<Jar>("infoJar") {
+                from(stampInfo)
+                archiveFileName.set("info.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("gen/jar"))
+                isPreserveFileTimestamps = false
+                isReproducibleFileOrder = true
+            }
+            dependencies { testRuntimeOnly(files(infoJar)) }
+        """.trimIndent()
+        val result = attempt(
+            dir, "dev.sample.A1ZipFileSystemTest", Aim.Row("shares-jvm-moved-classpath-file"),
+            listOf(codec, other, first, reader, codecTest, classOrderByName), buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
     }
 }

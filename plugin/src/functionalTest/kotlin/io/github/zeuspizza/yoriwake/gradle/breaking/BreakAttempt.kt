@@ -222,9 +222,9 @@ abstract class BreakAttempt : FunctionalTestSupport() {
         val classes = target.split('$')
         val nested = (listOf("[class:${classes.first()}]") + classes.drop(1).map { "[nested-class:$it]" })
             .joinToString("/")
-        return (id.contains("[class:$target]") && id.contains("[method:")) ||
+        return (id.contains("[class:$target]") && METHOD_SEGMENTS.any { id.contains(it) }) ||
             (classes.size > 1 && id.contains("$nested/[method:")) ||
-            id.endsWith("[spec:$target]")
+            id.endsWith("[spec:$target]") || id.contains("[spec:$target]/[feature:")
     }
 
     private fun gitStatus(dir: File): String =
@@ -232,6 +232,10 @@ abstract class BreakAttempt : FunctionalTestSupport() {
             .let { process -> process.inputStream.bufferedReader().readText().also { process.waitFor() } }
 
     private companion object {
+        /** The segments under which Jupiter names a test method: plain, a template, a factory. */
+        val METHOD_SEGMENTS = listOf("[method:", "[test-template:", "[test-factory:")
+
+
         /** The row reason each row rule decides a test under. */
         val REASON_OF_RULE = mapOf(
             "reaches-change" to "REACHES_CHANGE",
@@ -240,6 +244,7 @@ abstract class BreakAttempt : FunctionalTestSupport() {
             "class-setup" to "REACHES_CHANGE",
             "shares-jvm-changed-class" to "SHARES_JVM_WITH_CHANGE",
             "shares-jvm-changed-bytes" to "SHARES_JVM_WITH_CHANGE",
+            "shares-jvm-moved-classpath-file" to "SHARES_JVM_WITH_CHANGE",
             "shares-jvm-unobserved" to "SHARES_JVM_WITH_CHANGE",
             "shares-jvm-unpositioned" to "SHARES_JVM_WITH_CHANGE",
             "not-known-to-pass" to "NOT_KNOWN_TO_PASS",
