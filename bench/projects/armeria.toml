@@ -34,7 +34,13 @@ url = "https://github.com/line/armeria.git"
 # was written into eleven of these files and into a commit message before anyone checked it.
 commit = "f3c55ee0d346c1430ee08b806fe16ac4af3af854"
 module = "grpc"
-flags = ["-PnoLint"]
+# `*/gen-src/*` and `docs-client/node_modules/*` LISTED in `notReadByTests`. Every build regenerates
+# the git-ignored `gen-src/` trees (version properties carry the build's time) and installs the docs
+# client's node modules; the third CI sweep stopped the project as setup-forced at its preflight on
+# them. Tests read `gen-src` only as compiled classes and processed resources, which the map compares
+# on the classpath, and no row edits either tree, so the listing changes no row's answer.
+flags = ["-PnoLint", "-I", "{yoriwake}/bench/guest-tests.init.gradle",
+         "-Dyoriwake.harness.notReadByTests=*/gen-src/*,docs-client/node_modules/*"]
 sources = ["grpc/src/main/java/com/linecorp/armeria"]
 
 # `sources` WAS EMPTY, and an empty one is not "mutate everything" -- the mutation grammar
