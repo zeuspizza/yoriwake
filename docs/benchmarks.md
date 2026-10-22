@@ -282,6 +282,35 @@ measure your own build, see [the audit's payback question](reference.md#properti
 | spring-test | 93.5 s | 108.0 s | +16% |
 | **median, 32 projects** | | | **+16%** |
 
+## The 0.3.0 sweep
+
+The full arm on GitHub's runners (`.github/workflows/sweep.yml`, `ubuntu-latest`), 2026-10-21, the
+plugin at [`b08feb2`](https://github.com/zeuspizza/yoriwake/commit/b08feb2) for 34 projects and at
+[`ea234d1`](https://github.com/zeuspizza/yoriwake/commit/ea234d1) for grails-core and armeria (a
+re-run; the commits differ only in break attempts and armeria's project file, same selector digest).
+Targets drawn as in 0.1.0's sweep: reach-stratified, until 4 narrowed rows or the project's cap,
+forced rows run once.
+
+- **Recall:** 0 missed of 361 failures the edits induced, across the 32 changes where a miss was
+  possible, in 13 projects from 12 codebases (34 projects at `b08feb2`; the two re-run projects had
+  no such change). 88 rows were undetermined and count as neither missed nor caught.
+- **Narrowing:** 53 of 465 changes (11%) ran under 100% of the suite; the median of those ran 82% of
+  it. 16 of the 36 projects (29 codebases) narrowed at least once; in 30 of them, and corpus-wide,
+  the median change ran 100%.
+- **Not in it:** 6 of the 42 planned projects. kotest (a test worker never finished, so its capture
+  was discarded), bitwarden-android (its capture stalled on the runner), anki-android (the runner
+  shut down, twice), kestra and kotlinx-serialization (the shard found no map from its record job),
+  iceberg (a shard failed twice backing up its map). All are harness or runner faults, tracked for
+  0.4; none is a miss.
+- **Not comparable row for row with 0.1.0's table above:** other machines, a different set of
+  projects, and 0.3's rules that force a run (a changed environment, a class newer than a reader).
+  Recall is the figure that carries over: 0 missed at both.
+
+The merged results files are attached to the draft release `sweep-39621843299`
+(`sweep-0.3.0-combined.tar.gz`); recall is recomputed from them per commit with
+`bench/readme_charts.py --headline`, narrowing from each row's `selected_distinct` and
+`full_distinct`.
+
 ## Cache entry size
 
 What the cache holds after one recording build, at
