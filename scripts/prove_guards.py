@@ -363,10 +363,11 @@ def sbom_suite():
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
-    if any("Execution failed for task ':plugin:checkSbom'" in l for l in lines):
-        # The check's own message, which follows Gradle's "What went wrong" line; not a task line.
-        return [next((l.strip() for l in lines if l.startswith("> ") and not l.startswith("> Task ")),
-                     "checkSbom failed")]
+    failed = next((i for i, l in enumerate(lines) if "Execution failed for task ':plugin:checkSbom'" in l), None)
+    if failed is not None:
+        # The check's own message is the first "> " line after Gradle's "Execution failed" line: a
+        # line before it can be a task or a "> Configure project" header over a compile warning.
+        return [next((l.strip() for l in lines[failed + 1:] if l.startswith("> ")), "checkSbom failed")]
     compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
     return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
         if compile_errors else ["the SBOM suite failed somewhere other than checkSbom"]
@@ -1496,6 +1497,10 @@ MUTATIONS = [
      'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core", "org.ow2.asm" to "org.objectweb.asm")',
      'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core")',
      sbom_suite, "the plugin jar carries"),
+    ("the SBOM goes out without the serial number GitHub's attestation requires", PLUGIN_BUILD,
+     '            "serialNumber" to serial) + bom',
+     '            "serialNumber" to null) + bom',
+     sbom_suite, "the SBOM lacks bomFormat, specVersion or serialNumber"),
     ("the selector stops selecting on changed bytes", SELECTOR,
      "        Set<String> changedBytes = bytesOnly(change.changedBytes(), changedClassPrefixes);",
      "        Set<String> changedBytes = new HashSet<>();",
