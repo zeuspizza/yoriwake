@@ -1,5 +1,6 @@
 import org.gradle.plugin.compatibility.compatibility
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import java.util.Properties
 import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.ZipFile
@@ -208,8 +209,54 @@ val signReleaseRepository by tasks.registering(Sign::class) {
     }.files.sorted().toTypedArray())
 }
 
+// plugin-publish's PublishExistingTask (2.2.1) sends no feature compatibility, and the Portal refuses
+// a version that drops a declaration an earlier one made: 0.2.0 declared the configuration cache.
+// This is that task's own upload, with the declarations of the descriptor inside the jar it uploads
+// added as `publishPlugins` adds them. Its parts are private to plugin-publish, hence reflection.
+fun uploadWithDeclaredFeatures(task: com.gradle.publish.PublishExistingTask) {
+    val type = com.gradle.publish.PublishExistingTask::class.java
+    fun method(name: String, vararg params: Class<*>) = type.getDeclaredMethod(name, *params).apply { isAccessible = true }
+    @Suppress("UNCHECKED_CAST")
+    val requests = method("buildPublishRequests").invoke(task) as List<com.gradle.publish.protocols.v1.models.publish.NewVersionRequest>
+    val id = org.gradle.api.internal.notations.ComponentIdentifierParserFactory().create()!!
+        .parseNotation(task.pluginCoordinates.get()) as org.gradle.api.artifacts.component.ModuleComponentIdentifier
+    val dir = task.fileRepositoryRoot.dir("${id.group.replace('.', '/')}/${id.module}/${id.version}")
+    val artifacts = method("collectArtifacts", org.gradle.api.artifacts.component.ModuleComponentIdentifier::class.java,
+        org.gradle.api.file.Directory::class.java).invoke(task, id, dir.get()) as Map<*, *>
+    method("validateArtifacts", Map::class.java, Provider::class.java).invoke(task, artifacts, dir)
+    val jar = dir.get().file("${id.module}-${id.version}.jar").asFile
+    val descriptor = Properties().apply {
+        ZipFile(jar).use { zip ->
+            val entry = zip.getEntry("META-INF/gradle-plugins/${task.pluginId.get()}.properties")
+                ?: error("$jar has no descriptor for ${task.pluginId.get()}")
+            zip.getInputStream(entry).use { load(it) }
+        }
+    }
+    val prefix = "compatibility.feature."
+    val features = descriptor.stringPropertyNames().filter { it.startsWith(prefix) }.sorted()
+        .associate { it.removePrefix(prefix) to descriptor.getProperty(it) }
+    // A descriptor without declarations would upload a version that withdraws them, which the
+    // Portal refuses only after the signed files have been sent.
+    check(features.isNotEmpty()) { "$jar declares no feature compatibility; the Portal refuses a version that drops one" }
+    requests.forEach { request -> features.forEach { (feature, state) -> request.addFeatureCompatibility(feature, state) } }
+    logger.lifecycle("Portal feature compatibility: " + features.entries.joinToString { "${it.key}=${it.value}" })
+    val publisher = type.getDeclaredField("portalPublisher").apply { isAccessible = true }.get(task)
+    val publish = publisher.javaClass.getDeclaredMethod("publishToPortal", List::class.java,
+        com.gradle.publish.protocols.v1.models.publish.PublishMavenCoordinates::class.java, Map::class.java)
+        .apply { isAccessible = true }
+    // The Portal's own refusal, not reflection's wrapper around it.
+    try {
+        publish.invoke(publisher, requests,
+            com.gradle.publish.protocols.v1.models.publish.PublishMavenCoordinates(id.group, id.module, id.version), artifacts)
+    } catch (e: java.lang.reflect.InvocationTargetException) {
+        throw e.targetException
+    }
+}
+
 val publishReleaseRepository by tasks.registering(com.gradle.publish.PublishExistingTask::class) {
     description = "Uploads the signed release repository to the Plugin Portal, building nothing."
+    // The task's own upload is replaced by the same upload with the declared features (above).
+    actions.clear()
     dependsOn(signReleaseRepository)
     // Without it the signing above is skipped, and an unsigned upload cannot be taken back.
     val signed = signRelease
@@ -224,6 +271,7 @@ val publishReleaseRepository by tasks.registering(com.gradle.publish.PublishExis
     vcsUrl = gradlePlugin.vcsUrl
     pluginVersion = version.toString()
     pluginCoordinates = "io.github.zeuspizza:yoriwake-gradle-plugin:$version"
+    doLast { uploadWithDeclaredFeatures(this as com.gradle.publish.PublishExistingTask) }
 }
 
 // The published jar, with JaCoCo core and ASM relocated. Only `org.jacoco.core` is relocated: the
