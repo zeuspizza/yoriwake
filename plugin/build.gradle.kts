@@ -1,5 +1,6 @@
 import org.gradle.plugin.compatibility.compatibility
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -293,8 +294,14 @@ val mergeSbom by tasks.registering {
             ),
             "components" to components(pluginBom.get().asFile).map { library(it, pluginRelocations) } + agent,
         )
+        // GitHub's attestation refuses a CycloneDX document without a serial number. A random one
+        // would make two builds of one commit differ, so it is derived from the document itself.
+        val content = groovy.json.JsonOutput.toJson(bom)
+        val serial = "urn:uuid:" + UUID.nameUUIDFromBytes(content.toByteArray(Charsets.UTF_8))
+        val withSerial = linkedMapOf<String, Any?>("bomFormat" to bom["bomFormat"], "specVersion" to bom["specVersion"],
+            "serialNumber" to serial) + bom
         out.get().asFile.apply { parentFile.mkdirs() }
-            .writeText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(bom)) + "\n")
+            .writeText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(withSerial)) + "\n")
     }
 }
 
@@ -319,6 +326,11 @@ val checkSbom by tasks.registering {
     inputs.property("targets", targets)
     doLast {
         val bom = groovy.json.JsonSlurper().parse(sbom.get().asFile) as Map<*, *>
+        // What GitHub's attestation reads a document as CycloneDX by; without any of them the
+        // release's attest job refuses the SBOM after the tag is pushed.
+        check(listOf("bomFormat", "specVersion", "serialNumber").all { !(bom[it] as String?).isNullOrEmpty() }) {
+            "the SBOM lacks bomFormat, specVersion or serialNumber, which GitHub's attestation requires"
+        }
         val listed = (bom["components"] as List<*>).map { it as Map<*, *> }
         val agent = listed.single { (it["name"] as String) == "yoriwake-agent" }
         val libraries = listed.filter { it !== agent }.map { it["purl"] as String }.toSet()
