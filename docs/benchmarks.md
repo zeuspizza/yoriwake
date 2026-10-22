@@ -282,6 +282,66 @@ measure your own build, see [the audit's payback question](reference.md#properti
 | spring-test | 93.5 s | 108.0 s | +16% |
 | **median, 32 projects** | | | **+16%** |
 
+## The 0.3.0 sweep
+
+The full arm on GitHub's runners (`.github/workflows/sweep.yml`, `ubuntu-latest`), 2026-10-21, the
+plugin at [`b08feb2`](https://github.com/zeuspizza/yoriwake/commit/b08feb2) for 34 projects and at
+[`ea234d1`](https://github.com/zeuspizza/yoriwake/commit/ea234d1) for grails-core and armeria (a
+re-run; the commits differ only in break attempts and armeria's project file, same selector digest).
+Targets drawn as in 0.1.0's sweep: reach-stratified, until 4 narrowed rows or the project's cap,
+forced rows run once.
+
+- **Recall:** 0 missed of 361 failures the edits induced, across the 32 changes where a miss was
+  possible, in 13 projects from 12 codebases (34 projects at `b08feb2`; the two re-run projects had
+  no such change). 88 rows were undetermined and count as neither missed nor caught.
+- **Narrowing:** 53 of 465 changes (11%) ran under 100% of the suite; the median of those ran 82% of
+  it. 16 of the 36 projects (29 codebases) narrowed at least once; in 30 of them, and corpus-wide,
+  the median change ran 100%.
+- **Not in it:** 6 of the 42 planned projects. kotest (a test worker never finished, so its capture
+  was discarded), bitwarden-android (its capture stalled on the runner), anki-android (the runner
+  shut down, twice), kestra and kotlinx-serialization (the shard found no map from its record job),
+  iceberg (a shard failed twice backing up its map). All are harness or runner faults, tracked for
+  0.4; none is a miss.
+- **Not comparable row for row with 0.1.0's table above:** other machines, a different set of
+  projects, and 0.3's rules that force a run (a changed environment, a class newer than a reader).
+  Recall is the figure that carries over: 0 missed at both.
+
+The merged results files are attached to the draft release `sweep-39621843299`
+(`sweep-0.3.0-combined.tar.gz`); recall is recomputed from them per commit with
+`bench/readme_charts.py --headline`, narrowing from each row's `selected_distinct` and
+`full_distinct`.
+
+## Cache entry size
+
+What the cache holds after one recording build, at
+[`0326e9d`](https://github.com/zeuspizza/yoriwake/commit/0326e9d), 2026-10-20, on an Apple M1 Max
+(10 cores, 64 GiB, macOS 27.0.1): one build per project, one test task each (the module the sweep
+measures, not `./gradlew test` over every module), each map directory empty before it. Sizes in MB
+(10^6 bytes), the directory tarred and compressed with `zstd --long=30` as the cache action does.
+The budget is in [the reference](reference.md#how-much-cache-it-takes).
+
+| project | test task | tests run (skipped) | entry | full tree |
+|---|---|---:|---:|---:|
+| okhttp | `:okhttp-tls:test` | 112 (1) | 0.07 MB | 0.14 MB |
+| grpc-java | `:grpc-core:test` | 1,536 (17) | 0.23 MB | 0.57 MB |
+| iceberg | `:iceberg-core:test` | 8,785 (545) | 0.91 MB | 3.55 MB |
+| rxjava | `test` | 14,221 (864) | 1.29 MB | 4.05 MB |
+| rxjava, isolated | `test` | 14,221 (864) | 2.76 MB | 8.25 MB |
+
+- **entry:** without `raw/` and `selection.tsv`, what yoriwake-action releases after v0.2.1 save
+  and what the reference's own recipe saves. **full tree:** everything under `.gradle/yoriwake`,
+  what yoriwake-action v0.2.1 and earlier saved.
+- **tests run** counts every test invocation in the task's JUnit XML, not distinct names, so it is
+  not the sweep's `tests` column (iceberg 3,937 there, rxjava 13,921).
+- **grpc-java's build failed:** 2 of its tests fail at the measured upstream commit with nothing
+  changed. The map was recorded and measured all the same.
+- **rxjava, isolated** was recorded with `-Pyoriwake.isolatedCapture` and `maxParallelForks=10`,
+  not rxjava's own setting: 1,339 test JVMs.
+- Before compression, the task's map is 0.32 MB for okhttp, 4.9 MB for grpc-java, 111.3 MB for
+  iceberg, 30.3 MB for rxjava and 76.7 MB for rxjava isolated.
+- Single samples, one machine. A job running several test tasks saves one map per task: not
+  measured.
+
 ## The corpus
 
 A codebase is one upstream repository; projects drawn from the same one count once. The pool is

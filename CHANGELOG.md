@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-22
+
+**Your map:** repaired on the next build, which runs every test once and records the environment.
+
 ### Added
 
 - `fullRunEveryBuilds` and `fullRunEveryDays` run every test once a task has gone that long without a full run. Map: left alone; enabling a limit costs each task one full run.
@@ -36,9 +40,12 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
   or drive alias of the project. Map: left alone.
 - The reference's CI recipe deletes `raw/` and `selection.tsv` before the save; its `!` paths kept nothing out. Map: left alone.
 - Reference: what upgrading from 0.2.0 asks of you, in "Upgrading and your map". Map: left alone.
+- Reference: how much cache the map takes per entry, and how many entries GitHub's limit holds. Map: left alone.
+- Benchmarks: the 0.3.0 sweep, 0 missed of 361 induced failures. Map: left alone.
 
 ### Fixed
 
+- A recording build hashes untracked and ignored files once, not once per test task. Map: left alone.
 - A changed zip behind a launch script, an edit in a nested submodule and a `-D` in a JVM argument
   file run the tests they reach. Map: left alone; a task given a `-D` that way runs everything once.
 
@@ -72,7 +79,6 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
-- A recording build hashes untracked and ignored files once, not once per test task. Map: left alone.
 - A changed git submodule is in the change set even when its `ignore` setting hides it. Map: left alone.
 - The audit's remedy for Kotlin classes with no SMAP no longer suggests dropping
   `-Xno-source-debug-extension`, which does not remove it. Map: left alone.
