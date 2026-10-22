@@ -373,6 +373,19 @@ def sbom_suite():
         if compile_errors else ["the SBOM suite failed somewhere other than checkSbom"]
 
 
+def portal_suite():
+    """The release's Portal upload, against a stand-in Portal: it must send the features the jar
+    declares. `check_portal_upload.py` exits non-zero when it fires."""
+    built = gradle([":plugin:publishAllPublicationsToBuildLocalRepository", "-PreleaseVersion=0.0.0-guard"])
+    if built.returncode != 0:
+        return ["the portal suite failed building the release repository"]
+    done = subprocess.run([sys.executable, os.path.join("scripts", "check_portal_upload.py"), "0.0.0-guard"],
+                          capture_output=True, text=True, cwd=yoriwake_checkout.root())
+    if done.returncode == 0:
+        return []
+    return [next((l.strip() for l in done.stdout.splitlines() if l.startswith("FAIL")), "the portal check failed")]
+
+
 def qualify_suite():
     """The qualification harness's checks, including the one that keeps a verdict in one place."""
     return _python_checks("bench/test_qualify.py")
@@ -593,6 +606,8 @@ SUITES = [
     # The shaded jars and both direct SBOMs, then the merge and its check; an estimate until a
     # guard run measures it.
     ("sbom", sbom_suite, 10),
+    # The release repository built at a throwaway version, then one upload to a stand-in Portal.
+    ("portal", portal_suite, 3),
     ("configuration guards", guard_suite, 17),
     ("python", python_suite, 33),
     ("functional", functional_suite, 68),
@@ -1497,6 +1512,12 @@ MUTATIONS = [
      'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core", "org.ow2.asm" to "org.objectweb.asm")',
      'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core")',
      sbom_suite, "the plugin jar carries"),
+    # The Portal refuses a version that drops a feature declaration an earlier one made, after the
+    # signed files are sent; the upload must carry what the jar's descriptor declares.
+    ("the release upload stops sending the jar's declared features", PLUGIN_BUILD,
+     "    requests.forEach { request -> features.forEach { (feature, state) -> request.addFeatureCompatibility(feature, state) } }",
+     "    requests.forEach { request -> features.size }",
+     portal_suite, "FAIL: the request does not declare the configuration cache"),
     ("the SBOM goes out without the serial number GitHub's attestation requires", PLUGIN_BUILD,
      '            "serialNumber" to serial) + bom',
      '            "serialNumber" to null) + bom',
@@ -3625,6 +3646,7 @@ SUITE_TESTS = {
     "qualify": ("bench/test_qualify.py",),
     "config cost": ("bench/test_config_cost.py",),
     "sbom": ("plugin/build.gradle.kts", "agent/build.gradle.kts"),
+    "portal": ("plugin/build.gradle.kts", "scripts/check_portal_upload.py"),
     "configuration guards": ("plugin/src/functionalTest/",),
     "python": ("bench/test_run.py",),
     "functional": ("plugin/src/functionalTest/",),
@@ -3632,7 +3654,7 @@ SUITE_TESTS = {
 }
 # A change to how the Gradle suites are BUILT can break any of them, so it selects all of them.
 GRADLE_SUITES = {"decoder", "agent", "jdk identity", "unit", "configuration guards", "functional",
-                 "replay", "break", "sbom"}
+                 "replay", "break", "sbom", "portal"}
 # Run with NOTHING beside them. The functional suite has failed unmutated in a worker while only
 # Python suites ran next to it, and passed alone in the same tree: its TestKit builds compare
 # file timestamps, and load moves them. Its guards run after the parallel phase, one at a time. The
