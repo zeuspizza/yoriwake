@@ -1,7 +1,7 @@
 name: sweep
 
-# A benchmark sweep, on dispatch only: never on a pull request, whose code would run with this
-# workflow's time and, in the merge job, its write access.
+# A benchmark sweep, on dispatch and weekly on `main`: never on a pull request, whose code would run
+# with this workflow's time and, in the merge job, its write access.
 #
 # Each project records in one job (capture, baseline, preflight, the compile gate over its draw
 # order), which fixes its accepted target list and cuts it into slices. Each slice is one job that
@@ -14,10 +14,17 @@ name: sweep
 # sweep covers the projects `only` names: `demo` unless told otherwise, `all` for every project. A
 # dispatch that leaves `only` empty gets its default, `demo`; only a run with no inputs at all (a
 # schedule) sees it empty, and sweeps every project.
+#
+# Weekly, the full arm of every project on `main`'s head, so a harness defect or a cost regression
+# shows up within a week of the change rather than on release night; a scheduled run that fails
+# opens an issue (last job). It takes about 7.5 to 10 hours, an estimate from the first full run on
+# these runners until a scheduled one measures it. A scheduled workflow that sees no repository activity for 60
+# days is disabled by GitHub; the release check checks it is on.
 on:
-  # No schedule yet; when there is one, a scheduled run that fails opens an issue (last job).
-  # schedule:
-  #   - cron: '0 3 * * 1'
+  # Friday evening in Europe, off the hour, which GitHub delays and drops scheduled runs at most; it
+  # ends on Saturday.
+  schedule:
+    - cron: '17 20 * * 5'
   workflow_dispatch:
     inputs:
       tier:
@@ -65,6 +72,8 @@ jobs:
           ONLY: ${{ inputs.only }}
         run: |
           set -eu
+          # A scheduled run has no inputs; it sweeps the full arm. A dispatch always carries a tier.
+          TIER=${TIER:-full}
           if [ "$TIER" = auto ]; then
             base=${BASE:-$(git describe --tags --abbrev=0 --match 'v*')}
             major=()
@@ -174,7 +183,8 @@ jobs:
           set -eu
           mapfile -t args < <(jq -r '.[]' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted-out "bench/logs/$NAME/accepted.json"
-          python3 bench/shard.py "bench/logs/$NAME/accepted.json" --factor "$FACTOR"
+          # The dispatch input's default, for a scheduled run, which has none.
+          python3 bench/shard.py "bench/logs/$NAME/accepted.json" --factor "${FACTOR:-1.5}"
           # A tar, not the artifact's own zip, which drops the checkout's executable bits. Under the
           # project's name, because one artifact downloads without its own directory and several
           # with: readers find `<project>/accepted.json` either way.
@@ -402,4 +412,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: gh issue create -R "$REPO" --title "Scheduled benchmark sweep failed" --body "$URL"
+          TITLE: Scheduled benchmark sweep failed
+        run: |
+          set -u
+          echo "$URL" > body.md
+          # One issue per failure rather than per night: while one with this title is open, a failed
+          # night comments on it. A listing that fails opens a new one.
+          open=$(gh issue list -R "$REPO" --state open --author app/github-actions --search "in:title $TITLE" \
+            --json number,title --jq '.[] | select(.title == env.TITLE) | .number' | head -1) || open=""
+          if [ -n "$open" ]; then
+            gh issue comment "$open" -R "$REPO" --body-file body.md
+          else
+            gh issue create -R "$REPO" --title "$TITLE" --body-file body.md
+          fi

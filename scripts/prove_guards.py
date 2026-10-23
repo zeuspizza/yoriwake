@@ -256,6 +256,11 @@ def python_suite():
     return _python_checks("bench/test_run.py")
 
 
+def process_suite():
+    """How the harness runs a build: what it files as killed, and what it leaves behind."""
+    return _python_checks("bench/test_process.py")
+
+
 def preflight_suite():
     """The sweep pre-flight's checks, and which Gradle processes the harness may call its own."""
     return _python_checks("bench/test_sweep_preflight.py")
@@ -602,6 +607,8 @@ SUITES = [
     ("controls", controls_suite, 0.3),
     # Pure Python; one `git init` in a temporary directory.
     ("preflight", preflight_suite, 0.3),
+    # Real child processes that stall or run past a short limit; 5.6s for one unmutated run.
+    ("process", process_suite, 5.6),
     ("corpus", corpus_suite, 0.6),
     # Pure Python plus one JVM for Replay.java against the jar the build already made.
     ("replay", replay_suite, 3),
@@ -3408,6 +3415,14 @@ MUTATIONS = [
     ("a recording run without a map passes on to its shards", "bench/run.py",
      "    if not recording or capture_map:", "    if True:", python_suite,
      "a recording run without a map was not refused"),
+    ("a build killed at the timeout passes as one that ran", "bench/process.py",
+     "                return STALLED, round(time.time() - started, 1)\n            size = ",
+     "                return -1, round(time.time() - started, 1)\n            size = ", process_suite,
+     "a build killed at the timeout was not dumped and filed as stalled"),
+    ("the harness goes on while a killed build's daemon still writes", "bench/run.py",
+     "    if result[0] == STALLED:\n        stop_daemons(checkout)",
+     "    if result[0] == STALLED:\n        pass", python_suite,
+     "a build that returned"),
     ("a shard measures a list drawn under another grammar", "bench/run.py",
      "        if accepted.get(key) != stamps.get(key):", "        if False:", python_suite,
      "a list drawn under another grammar was accepted"),
@@ -3664,6 +3679,7 @@ SUITE_TESTS = {
     "sharding": ("bench/test_merge.py", "bench/test_shard.py", "bench/test_tier.py"),
     "controls": ("bench/test_controls.py", "bench/test_cost.py"),
     "preflight": ("bench/test_sweep_preflight.py",),
+    "process": ("bench/test_process.py",),
     "corpus": ("bench/test_corpus_state.py",),
     "replay": ("bench/test_replay_decisions.py", "bench/Replay.java"),
     "mutations": ("bench/test_mutations.py",),

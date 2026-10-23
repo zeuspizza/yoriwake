@@ -157,6 +157,33 @@ def case_a_stalled_build_is_dumped_before_it_is_killed():
     return failures
 
 
+def case_a_build_killed_at_the_timeout_is_filed_as_stalled():
+    """A build that never goes quiet and runs past the limit was killed, and measured nothing."""
+    failures = 0
+    scratch = tempfile.mkdtemp(prefix="yoriwake-process-tests-")
+    calls = []
+    original = process.dump_threads
+    process.dump_threads = lambda log_path: calls.append(log_path) or 1
+    try:
+        log = os.path.join(scratch, "run.log")
+        busy = "import time\nwhile True:\n    print('.', flush=True)\n    time.sleep(0.05)"
+        code, _ = process.run([sys.executable, "-c", busy], scratch, log, timeout=1,
+                              stall_seconds=60, poll_seconds=0.1)
+        if code != process.STALLED or calls != [log]:
+            print(f"  FAIL: a build killed at the timeout was not dumped and filed as stalled "
+                  f"(exit {code}, {calls})")
+            failures += 1
+        code, _ = process.run([sys.executable, "-c", "print('ok')"], scratch, log, timeout=30,
+                              poll_seconds=0.1)
+        if code != 0:
+            print(f"  FAIL: a build that finished inside the timeout returned {code}")
+            failures += 1
+    finally:
+        process.dump_threads = original
+        shutil.rmtree(scratch, ignore_errors=True)
+    return failures
+
+
 def case_a_watched_path_that_does_not_exist_is_survivable():
     """A test task that has not created its results directory yet is the normal starting state."""
     failures = 0
@@ -179,6 +206,7 @@ CASES = (case_a_log_directory_that_does_not_exist_yet_is_created,
          case_a_silent_command_that_writes_progress_is_not_stalled,
          case_a_silent_command_that_writes_nothing_is_still_stalled,
          case_a_stalled_build_is_dumped_before_it_is_killed,
+         case_a_build_killed_at_the_timeout_is_filed_as_stalled,
          case_a_watched_path_that_does_not_exist_is_survivable)
 
 

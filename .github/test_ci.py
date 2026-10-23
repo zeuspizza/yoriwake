@@ -369,6 +369,63 @@ def case_the_early_access_job_runs_weekly_bounded_and_read_only():
     return problems
 
 
+
+def matrix_schedule_problems(text):
+    """What would let a cell break on main unnoticed, or let a dispatch test something unchecked."""
+    problems = []
+    if not re.search(r"^  schedule:\n    - cron: ", text, re.M):
+        problems.append("it is not scheduled")
+    if not re.search(r"^  workflow_dispatch:\n    inputs:\n      candidate:\n", text, re.M):
+        problems.append("it cannot be dispatched on a named candidate")
+    if text.count("inputs.candidate") != 1 or \
+            "${{ github.event_name == 'schedule' && github.sha || inputs.candidate }}" not in text:
+        problems.append("a job reads the input itself, or a dispatch can fall back to the branch head")
+    # Every checkout but the candidate job's own, which checks out the branch to test ancestry on.
+    if text.count("ref: ${{ needs.candidate.outputs.sha }}") != text.count("uses: actions/checkout@") - 1 or \
+            '--candidate "$CANDIDATE"' not in text:
+        problems.append("the jobs do not all test the candidate the first job checked")
+    report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", text, re.M)
+    if not report or "    if: failure() && github.event_name == 'schedule'\n" not in report.group(1) \
+            or "issues: write" not in report.group(1) or "gh issue create" not in report.group(1):
+        problems.append("a failed scheduled run opens no issue")
+    elif not re.search(r"^    needs: \[candidate, cell, capture, select, summary\]\n", report.group(1), re.M):
+        problems.append("a job the report does not wait for can fail without an issue")
+    return problems
+
+
+def case_the_matrix_runs_nightly_and_reports_a_failed_night():
+    with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = sum(fail(f"matrix.yml: {problem}") for problem in matrix_schedule_problems(text))
+    for edited, expected in (
+        (text.replace("  schedule:\n    - cron: '41 23 * * *'\n", ""), "not scheduled"),
+        (text.replace("github.event_name == 'schedule' && github.sha || inputs.candidate", "inputs.candidate || github.sha"),
+         "fall back"),
+        (text.replace("ref: ${{ needs.candidate.outputs.sha }}", "ref: ${{ inputs.candidate }}", 1), "reads the input"),
+        (text.replace("    if: failure() && github.event_name == 'schedule'\n", "    if: failure()\n"), "opens no issue"),
+        (text.replace("ref: ${{ needs.candidate.outputs.sha }}\n", "", 1), "do not all test the candidate"),
+        (text.replace("select, summary]\n    if: failure()", "select]\n    if: failure()"), "does not wait for"),
+    ):
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to matrix.yml")
+        elif not any(expected in problem for problem in matrix_schedule_problems(edited)):
+            problems += fail(f"an edited matrix.yml was not reported for {expected!r}")
+    return problems
+
+
+def case_a_failure_that_lasts_is_one_issue_not_one_a_night():
+    """A scheduled run that fails until someone fixes it would otherwise open an issue each night."""
+    problems = 0
+    for name in ("guards.yml", "sweep.yml", "matrix.yml"):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", handle.read(), re.M)
+        block = report.group(1) if report else ""
+        for needle in ("gh issue list", "select(.title == env.TITLE)", 'gh issue comment "$open"',
+                       'gh issue create -R "$REPO" --title "$TITLE"'):
+            if needle not in block:
+                problems += fail(f"{name}: a failed scheduled run does not reuse the open issue ({needle!r} is missing)")
+    return problems
+
 LABELS = ["linux/8.14/21", "linux/9.8.0/21"]
 ROWS = [
     ("Gradle", "8.14", ["*/8.14/*"], ["MatrixCellIdentityTest"]),
@@ -938,9 +995,14 @@ def case_the_guard_workflows_are_read_only_and_cover_every_pull_request():
         ("test_prove_guards.py", "it does not check every anchor"),
         ("labeled", "a maintainer's approval does not re-run it"),
         ("weakens-guards", "no label approves a weakened guard"),
+        ("""          elif gh api "repos/$REPO/pulls/$PR" --jq '.labels[].name' | grep -qx weakens-guards; then\n"""
+         """            echo "::notice::""", "a weakened guard passes without asking for the label when it runs"),
     ):
         if needle not in table:
             problems += fail(f"guard-table.yml: {why}")
+    if "github.event.pull_request.labels" in table:
+        problems += fail("guard-table.yml: it reads the labels the starting event carried, which a re-run "
+                         "after the label changes still sees")
     return problems
 
 
@@ -1523,6 +1585,15 @@ def release_problems(text):
     header = text.split("\njobs:\n", 1)[0]
     if re.search(r"id-token:|attestations:|contents:\s*write|write-all|secrets\.", header):
         found.append("the workflow-level permissions grant more than `contents: read`, which every job inherits")
+    # A tag push releases and a dispatch rehearses; any other trigger would run this file's attesting
+    # job on code no maintainer chose, a pull request's above all.
+    triggers = re.search(r"^on:\n((?:  [^\n]*\n|\n)*)", text, re.MULTILINE)
+    named = re.findall(r"^  ([a-z_]+):", triggers.group(1), re.MULTILINE) if triggers else []
+    if sorted(named) != ["push", "workflow_dispatch"]:
+        found.append(f"it runs on {named}; only a `v*` tag push and a dispatch may start it "
+                     "(never pull_request, pull_request_target, workflow_call or schedule)")
+    elif not re.search(r"^  push:\n    tags: \['v\*'\]\n(?!    )", triggers.group(1), re.MULTILINE):
+        found.append("a push other than of a `v*` tag starts it")
     jobs = release_jobs(text)
     for name in ("verify", "attest", "publish", "github-release"):
         if name not in jobs:
@@ -1549,6 +1620,18 @@ def release_problems(text):
     for name, needs in (("attest", "verify"), ("publish", "attest"), ("github-release", "publish")):
         if not re.search(rf"^    needs: {needs}$", jobs[name], re.MULTILINE):
             found.append(f"`{name}` does not wait for `{needs}`")
+    for name in ("publish", "github-release"):
+        if not re.search(r"^    if: github\.event_name == 'push'$", jobs[name], re.MULTILINE):
+            found.append(f"`{name}` is not limited to a tag push, so a rehearsal can reach it")
+    verify = jobs["verify"]
+    if not re.search(r"- name: a rehearsal runs on a release line's candidate\n"
+                     r"        if: github\.event_name == 'workflow_dispatch'\n", verify):
+        found.append("`verify`'s check of a dispatch's branch and candidate does not run on a dispatch")
+    check = verify.find("main|release/*) ;;")
+    if check < 0 or check > verify.find("./gradlew build"):
+        found.append("`verify` builds a dispatch without first refusing one off `main` or `release/*`")
+    if '[ "$CANDIDATE" = "$GITHUB_SHA" ]' not in verify:
+        found.append("`verify` does not check a dispatch runs the candidate it names")
     publish = jobs["publish"]
     if "environment: release" not in publish:
         found.append("`publish` is not bound to the `release` environment")
@@ -1599,12 +1682,94 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
             text.rfind('-Pyoriwake.repository="')),
         "publish skips the attestation": text.replace("    needs: attest\n", "    needs: verify\n", 1),
         "publish restores a cache": text.replace("cache-disabled: true", "cache-read-only: true", 1),
+        "a pull request starts it": text.replace("on:\n", "on:\n  pull_request:\n", 1),
+        "a fork's pull request starts it": text.replace("on:\n", "on:\n  pull_request_target:\n", 1),
+        "a branch push starts it": text.replace("    tags: ['v*']\n", "    branches: [main]\n", 1),
+        "a branch push beside the tag starts it": text.replace(
+            "    tags: ['v*']\n", "    tags: ['v*']\n    branches: [main]\n", 1),
+        "a rehearsal skips its own check": text.replace(
+            "        if: github.event_name == 'workflow_dispatch'\n", "        if: false\n", 1),
+        "a rehearsal publishes": text.replace(
+            "    needs: attest\n    if: github.event_name == 'push'\n", "    needs: attest\n", 1),
+        "a rehearsal on a tag ref publishes": text.replace(
+            "    needs: attest\n    if: github.event_name == 'push'\n",
+            "    needs: attest\n    if: startsWith(github.ref, 'refs/tags/v')\n", 1),
+        "a rehearsal makes a GitHub release": text.replace(
+            "    needs: publish\n    if: github.event_name == 'push'\n", "    needs: publish\n", 1),
+        "a rehearsal runs anywhere": text.replace("            main|release/*) ;;\n", "", 1),
+        "a rehearsal runs any commit": text.replace('[ "$CANDIDATE" = "$GITHUB_SHA" ] ||', "true ||", 1),
     }
     for what, mutant in mutants.items():
         if mutant == text:
             problems += fail(f"the mutant `{what}` changed nothing; its anchor moved")
         elif not release_problems(mutant):
             problems += fail(f"`{what}` passed the release check")
+    return problems
+
+
+def verify_step(text, name):
+    """The script of the `verify` step with this name, or None."""
+    step = re.search(rf"- name: {re.escape(name)}\n(?:        (?!run:).*\n)*        run: \|\n((?:          .*\n)+)",
+                     release_jobs(text)["verify"])
+    return "\n".join(line[10:] for line in step.group(1).splitlines()) + "\n" if step else None
+
+
+def _run_step(script, cwd=None, **env):
+    return subprocess.run(["bash", "-eu", "-c", script], cwd=cwd, capture_output=True, text=True,
+                          env={**os.environ, **env}).returncode
+
+
+def case_a_tag_releases_its_version_and_a_dispatch_rehearses():
+    """The tag branch runs only on a release, so a pull request is where it can still be seen."""
+    with open(RELEASE, encoding="utf-8") as handle:
+        script = verify_step(handle.read(), "the version and its CHANGELOG section")
+    if script is None:
+        return fail("release.yml: `verify` has no step naming the version and its CHANGELOG section")
+    problems = 0
+    for event, ref, version, section in (("push", "v9.8.7", "9.8.7", "## [9.8.7]"),
+                                         ("workflow_dispatch", "main", "0.0.0-rehearsal", "## [Unreleased]")):
+        with tempfile.TemporaryDirectory() as tmp:
+            output, env = os.path.join(tmp, "output"), os.path.join(tmp, "env")
+            if _run_step(script, GITHUB_EVENT_NAME=event, GITHUB_REF_NAME=ref, GITHUB_OUTPUT=output, GITHUB_ENV=env):
+                problems += fail(f"the version step failed on a {event} of {ref}")
+                continue
+            with open(output, encoding="utf-8") as handle:
+                got_output = handle.read()
+            with open(env, encoding="utf-8") as handle:
+                got_env = handle.read()
+        if got_output != f"version={version}\n" or got_env != f"VERSION={version}\nSECTION={section}\n":
+            problems += fail(f"a {event} of {ref} named {got_output!r} {got_env!r}; expected {version} and {section!r}")
+    return problems
+
+
+def case_a_rehearsal_runs_only_on_a_release_lines_candidate():
+    with open(RELEASE, encoding="utf-8") as handle:
+        script = verify_step(handle.read(), "a rehearsal runs on a release line's candidate")
+    if script is None:
+        return fail("release.yml: `verify` has no step checking a dispatch's branch and candidate")
+    head = "a" * 40
+    problems = 0
+    for ref, candidate, accepted in (("main", head, True), ("release/0.4", head, True), ("feature/x", head, False),
+                                     ("v0.3.0", head, False), ("main", "b" * 40, False), ("main", "", False)):
+        if (_run_step(script, GITHUB_REF_NAME=ref, GITHUB_SHA=head, CANDIDATE=candidate) == 0) != accepted:
+            problems += fail(f"a dispatch from {ref} naming {candidate or 'nothing'!r} was "
+                             f"{'refused' if accepted else 'let through'}")
+    return problems
+
+
+def case_the_changelog_check_finds_exactly_the_section_it_is_given():
+    with open(RELEASE, encoding="utf-8") as handle:
+        script = verify_step(handle.read(), "the CHANGELOG has this version's section")
+    if script is None:
+        return fail("release.yml: `verify` has no step checking the CHANGELOG section")
+    problems = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "CHANGELOG.md"), "w", encoding="utf-8") as handle:
+            handle.write("# Changelog\n\n## [Unreleased]\n\n- moved from ## [9.8.7]\n\n## [9.8.10] - 1999-01-01\n")
+        for section, found in (("## [Unreleased]", True), ("## [9.8.10]", True), ("## [9.8.1]", False),
+                               ("## [9.8.7]", False)):
+            if (_run_step(script, cwd=tmp, SECTION=section) == 0) != found:
+                problems += fail(f"the CHANGELOG check {'missed' if found else 'found'} {section!r}")
     return problems
 
 
@@ -1628,8 +1793,9 @@ def case_security_names_the_release_key():
         return fail(f"SECURITY.md names {sorted(named)}, RELEASE-KEY.asc holds {sorted(published)}")
     return 0
 
-def _sweep_plan(tier, only):
-    """The `--only` arguments sweep.yml's plan step passes for these inputs, from the step itself."""
+def _sweep_plan(tier, only, arm=None):
+    """The `--only` arguments sweep.yml's plan step passes for these inputs, from the step itself.
+    With a list for `arm`, the `--arm` it asked `sweep_corpus.py` for is appended to it."""
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         text = handle.read()
     step = re.search(r"\n      - id: plan\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
@@ -1650,7 +1816,35 @@ def _sweep_plan(tier, only):
         subprocess.run(["bash", "-c", script], env=env, check=True, capture_output=True)
         with open(calls, encoding="utf-8") as handle:
             argv = handle.read().split()
+    if arm is not None and "--arm" in argv:
+        arm.append(argv[argv.index("--arm") + 1])
     return argv[argv.index("--only") + 1:-1] if "--only" in argv else []
+
+
+def case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly():
+    """A run with no inputs once planned nothing and ended green; a dispatch keeps its defaults."""
+    problems = 0
+    arm = []
+    if _sweep_plan("", "", arm) != [] or arm != ["full"]:
+        problems += fail(f"a run with no inputs asked for the {arm or 'no'} arm, not every project's full arm")
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", text, re.M)
+    for needle, why in (
+        ("  schedule:\n    - cron: ", "it is not scheduled"),
+        ("  workflow_dispatch:\n", "it cannot be dispatched"),
+        ('--factor "${FACTOR:-1.5}"', "a run with no inputs passes no factor to the slicer"),
+        ("        default: auto\n", "a dispatch's tier no longer defaults to auto"),
+        ("        default: demo\n", "a dispatch's only no longer defaults to demo"),
+        ("        default: '1.5'\n", "a dispatch's factor no longer defaults to 1.5"),
+    ):
+        if needle not in text:
+            problems += fail(f"sweep.yml: {why}")
+    if not report or "    if: failure() && github.event_name == 'schedule'\n" not in report.group(1) \
+            or "merge" not in report.group(1).split("\n", 1)[0]:
+        problems += fail("sweep.yml: a failed scheduled run, or one whose merge declared a project "
+                         "missing, opens no issue")
+    return problems
 
 
 def case_a_sweep_of_every_project_can_be_asked_for():
@@ -1779,6 +1973,8 @@ CASES = (
     case_on_windows_the_wrapper_script_runs_as_its_batch_file,
     case_output_the_console_cannot_encode_passes_through_untouched,
     case_the_matrix_cell_builds_through_the_download_rerun,
+    case_the_matrix_runs_nightly_and_reports_a_failed_night,
+    case_a_failure_that_lasts_is_one_issue_not_one_a_night,
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
@@ -1840,8 +2036,12 @@ CASES = (
     case_the_early_access_job_runs_weekly_bounded_and_read_only,
     case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job,
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
+    case_a_tag_releases_its_version_and_a_dispatch_rehearses,
+    case_a_rehearsal_runs_only_on_a_release_lines_candidate,
+    case_the_changelog_check_finds_exactly_the_section_it_is_given,
     case_security_names_the_release_key,
     case_a_sweep_of_every_project_can_be_asked_for,
+    case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly,
     case_a_record_job_archives_the_checkout_the_plan_names,
     case_a_failed_project_is_declared_missing_and_the_rest_still_merge,
 )

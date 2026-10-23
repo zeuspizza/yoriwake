@@ -7,9 +7,20 @@ name: release
 # What ships is what was tested: `verify` builds and tests once and hands its files on; no later job
 # builds anything. `attest` vouches for those files, `publish` signs and uploads them, and `github
 # release` attaches them to the GitHub release.
+#
+# Dispatched from `main` or `release/<major>.<minor>` on the candidate, it is a rehearsal: `verify` and
+# `attest` run as a tag runs them, on version `0.0.0-rehearsal`, so a step that would break the
+# release breaks before the tag exists. Only a tag push publishes; on a dispatch the two jobs after
+# `attest` are skipped. The rehearsal's attestations name a branch, never a `v*` tag, so the
+# verification in SECURITY.md rejects them.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: The full commit SHA of the release candidate, the head of the branch dispatched from
+        required: true
 
 permissions:
   contents: read
@@ -20,7 +31,39 @@ jobs:
   verify:
     name: build and test
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
+      # Through the environment, never spliced into the script: the input is free text. The ref check
+      # stops a rehearsal dispatched by mistake from elsewhere; what keeps a rehearsal's attestations
+      # from passing for a release's is that they never name a tag.
+      - name: a rehearsal runs on a release line's candidate
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          set -eu
+          case "$GITHUB_REF_NAME" in
+            main|release/*) ;;
+            *) echo "dispatch from main or a release/<major>.<minor> branch, not $GITHUB_REF_NAME"; exit 1 ;;
+          esac
+          [ "$CANDIDATE" = "$GITHUB_SHA" ] || {
+            echo "candidate $CANDIDATE is not the head of $GITHUB_REF_NAME, $GITHUB_SHA"; exit 1
+          }
+      # A version no release can carry on a rehearsal, so its files are never taken for a release's.
+      - name: the version and its CHANGELOG section
+        id: version
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            version="${GITHUB_REF_NAME#v}"
+            section="## [$version]"
+          else
+            version=0.0.0-rehearsal
+            section="## [Unreleased]"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "SECTION=$section" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
@@ -33,14 +76,16 @@ jobs:
       # Before anything is attested or published: the release notes are this section, and the last
       # job would otherwise find it missing only after the Portal has the version.
       - name: the CHANGELOG has this version's section
-        run: grep -q "^## \[${GITHUB_REF_NAME#v}\]" CHANGELOG.md || { echo "CHANGELOG.md has no section for ${GITHUB_REF_NAME#v}"; exit 1; }
+        run: |
+          awk -v s="$SECTION" 'index($0, s) == 1 {found = 1} END {exit !found}' CHANGELOG.md ||
+            { echo "CHANGELOG.md has no section $SECTION"; exit 1; }
       - name: build and test
-        run: ./gradlew build -PreleaseVersion="${GITHUB_REF_NAME#v}" --console=plain
+        run: ./gradlew build -PreleaseVersion="$VERSION" --console=plain
       # The local repository the published-plugin test resolved the plugin from, the SBOM, and the
       # agent jar as it sits inside the plugin jar, each listed with its SHA-256.
       - name: collect the release files
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="$VERSION"
           mkdir release
           cp -R plugin/build/local-repository release/repository
           cp "plugin/build/sbom/yoriwake-gradle-plugin-$version.cdx.json" release/
@@ -75,8 +120,10 @@ jobs:
           path: release
       - name: check the files against their checksums
         id: files
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="$VERSION"
           (cd release && sha256sum -c SHA256SUMS)
           echo "jar=release/repository/io/github/zeuspizza/yoriwake-gradle-plugin/$version/yoriwake-gradle-plugin-$version.jar" >> "$GITHUB_OUTPUT"
           echo "sbom=release/yoriwake-gradle-plugin-$version.cdx.json" >> "$GITHUB_OUTPUT"
@@ -93,6 +140,7 @@ jobs:
   publish:
     name: publish to the Gradle Plugin Portal
     needs: attest
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -146,6 +194,7 @@ jobs:
   github-release:
     name: github release
     needs: publish
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
