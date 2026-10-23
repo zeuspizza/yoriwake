@@ -118,6 +118,87 @@ def case_a_suite_that_merely_crashed_proves_no_guard():
     return failures
 
 
+# What `checkout.require_clean` prints when a suite asks a dirty tree for its commit: the closing
+# advice is the last line, so a cut last line never named the files.
+DIRTY_REFUSAL = ("REFUSING: the yoriwake checkout at /w has uncommitted changes, so no commit describes "
+                 "what would be built and stamped:\n  ?? docs/stray.md\n   M plugin/build.gradle.kts\n"
+                 "Commit, stash or remove them there, or point YORIWAKE_CHECKOUT at a clean checkout.")
+
+
+def _crashed(directory, message):
+    """`_python_checks` over a stand-in suite that exits with `message`, as `require_clean` does."""
+    script = os.path.join(directory, "test_standin.py")
+    with open(script, "w", encoding="utf-8") as handle:
+        handle.write(f"import sys\nsys.exit({message!r})\n")
+    return pg._python_checks(script)
+
+
+def case_a_suite_stopped_by_a_dirty_tree_names_the_files():
+    """The refusal's paths are the only evidence of what dirtied a worker tree mid-run."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        result = _crashed(directory, DIRTY_REFUSAL)
+    if len(result) != 1:
+        return fail(f"a crash should be one entry, got {result}")
+    detail = result[0]
+    missing = [part for part in ("NOT THE GUARD", "uncommitted changes", "docs/stray.md",
+                                 "plugin/build.gradle.kts") if part not in detail]
+    if missing or "\n" in detail:
+        return fail(f"the crash detail is not one line naming the refusal and its files: {detail!r}")
+    return 0
+
+
+def case_only_the_refusal_block_is_read_as_dirty_files():
+    """Indented lines after the refusal, such as a traceback printed at exit, are not files."""
+    import tempfile
+    trailing = DIRTY_REFUSAL + "\nException ignored in atexit callback:\n  File \"/w/bench/run.py\", line 9"
+    with tempfile.TemporaryDirectory() as directory:
+        detail = _crashed(directory, trailing)[0]
+    if "atexit" in detail or "line 9" in detail or "docs/stray.md" not in detail:
+        return fail(f"the detail read past the refusal's own paths: {detail!r}")
+    return 0
+
+
+def case_a_dirty_tree_crash_is_not_proved_and_its_files_reach_the_results():
+    import argparse
+    import contextlib
+    import io
+    import json
+    import tempfile
+    failures = 0
+    pg.MUTATIONS.append(guard(label="dirty"))
+    index = len(pg.MUTATIONS) - 1
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            fired = _crashed(directory, DIRTY_REFUSAL)
+            with contextlib.redirect_stdout(io.StringIO()):
+                counted = pg._report(index, fired, None)
+            if counted != 1:
+                failures += fail("a guard whose suite stopped on a dirty tree was proved")
+            out = os.path.join(directory, "results.json")
+            args = argparse.Namespace(shard=None, mode="full", changed=None, guard=["dirty"])
+            pg.write_results(out, args, [pg.MUTATIONS[index]], [pg.MUTATIONS[index]])
+            with open(out, encoding="utf-8") as handle:
+                stored = json.load(handle)["guards"][0]
+        if stored["outcome"] != "not proved" or "docs/stray.md" not in stored["detail"]:
+            failures += fail(f"the results do not carry an unproved guard naming the files: {stored}")
+    finally:
+        pg.MUTATIONS.pop()
+        pg._RUN["outcomes"].pop("dirty", None)
+    return failures
+
+
+def case_any_other_crash_keeps_its_short_last_line():
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        result = _crashed(directory, "Traceback (most recent call last):\n  ...\nTypeError: " + "x" * 200)
+    if len(result) != 1 or not result[0].startswith("NOT THE GUARD") or "TypeError" not in result[0]:
+        return fail(f"a traceback crash lost its prefix or its error: {result}")
+    if len(result[0].split("did not run: ", 1)[1]) > 70:
+        return fail(f"a traceback crash was not cut to 70 characters: {result[0]!r}")
+    return 0
+
+
 def case_each_mutation_path_resolves_into_the_tree_under_test():
     """Product sources and the harness's own sit in one tree, so every path is relative to it."""
     failures = 0
@@ -591,6 +672,10 @@ def case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing():
 
 
 CASES = (case_every_case_in_this_file_is_registered,
+         case_a_suite_stopped_by_a_dirty_tree_names_the_files,
+         case_only_the_refusal_block_is_read_as_dirty_files,
+         case_a_dirty_tree_crash_is_not_proved_and_its_files_reach_the_results,
+         case_any_other_crash_keeps_its_short_last_line,
          case_a_guard_whose_target_changed_is_selected,
          case_a_change_to_the_tests_that_prove_a_guard_selects_it,
          case_a_build_file_selects_every_gradle_suite_guard_and_no_python_one,

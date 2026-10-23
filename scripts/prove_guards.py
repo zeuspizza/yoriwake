@@ -32,7 +32,7 @@ third of them must not read like a run that proved all of them. The split is by 
 by guess; see SUITES. Count what a run will attempt from its first line, not from a duration
 written anywhere: the table grows, and every written duration has gone stale.
 """
-import argparse, atexit, contextlib, glob, json, os, re, shutil, signal, subprocess, sys, hashlib, time, zlib
+import argparse, atexit, contextlib, glob, itertools, json, os, re, shutil, signal, subprocess, sys, hashlib, time, zlib
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "bench"))
@@ -238,8 +238,16 @@ def _python_checks(script):
     if failures:
         return failures
     if done.returncode != 0:
-        tail = (done.stderr or done.stdout).strip().splitlines()
-        return [f"NOT THE GUARD -- {script} did not run: {tail[-1][:70] if tail else '?'}"]
+        lines = (done.stderr or done.stdout).strip().splitlines()
+        # A suite that asked a dirty tree for its commit names the files that dirtied it, and they
+        # are the only evidence of what wrote into a worker tree mid-run: kept whole, on one line,
+        # because a guard's result keeps only its first entry and a report takes one line each.
+        refusal = next((i for i, line in enumerate(lines) if line.startswith("REFUSING:")), None)
+        if refusal is not None:
+            paths = [line.strip() for line in
+                     itertools.takewhile(lambda line: line.startswith("  "), lines[refusal + 1:])]
+            return [f"NOT THE GUARD -- {script} did not run: {lines[refusal]} {'; '.join(paths)}"]
+        return [f"NOT THE GUARD -- {script} did not run: {lines[-1][:70] if lines else '?'}"]
     return []
 
 
