@@ -308,6 +308,7 @@ jobs:
             bench/logs/${{ matrix.slice.project }}/shard-${{ matrix.slice.shard }}-of-${{ matrix.slice.of }}.json
             bench/logs/evidence/
             bench/logs/${{ matrix.slice.project }}/**/*.stall-*.log
+            bench/logs/${{ matrix.slice.project }}/**/*.network-*.log
 
   merge:
     needs: [plan, slices, shard]

@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Changed
+
+- The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.
+
 ## [0.3.0] - 2026-10-22
 
 **Your map:** repaired on the next build, which runs every test once and records the environment.

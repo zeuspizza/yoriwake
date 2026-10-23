@@ -94,7 +94,9 @@ jobs:
         run: |
           set -eu
           homes=$(printenv | grep -Ei '^JAVA_HOME_[0-9]+_(x64|arm64)=' | cut -d= -f2- | paste -sd, -)
-          ./gradlew build --console=plain \
+          py=python3; if [ "$RUNNER_OS" = Windows ]; then py=python; fi
+          # A dependency download that fails in transit costs a rerun, not the cell.
+          "$py" .github/ci.py rerun-on-download-failure -- ./gradlew build --console=plain \
             -Pyoriwake.functional.gradle="$TASK" -Pyoriwake.functional.jdk="$JDK" \
             -Porg.gradle.java.installations.auto-detect=false \
             -Porg.gradle.java.installations.paths="$homes"

@@ -225,6 +225,7 @@ Written by `run.gradle` for every build, keyed by its log path.
 | `tasks.test_task_seconds`, `tasks.decode_seconds`, `tasks.before_first_task_seconds`, `tasks.after_last_task_seconds`, `tasks.tasks_executed` | `task-times.init.gradle` build-event listener | **fixed overhead**: before-first-task is handshake plus configuration |
 | `plugin.configure_millis`, `plugin.git_millis`, `plugin.git_calls` | `-Pyoriwake.internal.counters` on init-script arms | the plugin's own configuration and git cost; git None on a run that asked git nothing |
 | `decision_write_failures` | log line count | |
+| `network_retries` | 1 when the build failed on a dependency download alone and ran once more after a pause, else 0; the first attempt's log is kept as `<name>.network-1.log` | the record and its timings describe the rerun; a rerun usually falls in a module's first build, before the timed arms |
 
 ## Project summary (`sweep-summary.jsonl`, `sweep_corpus.summarise`)
 

@@ -1149,7 +1149,65 @@ def gradle(checkout, project, task_args, log_path):
     What the cache means for a real user is a separate question, already answered separately and
     more usefully: a comparison with Develocity measured a warm-cache run at 25 seconds and no
     tests, which is the honest statement that where the cache hits, no selector matters.
+
+    A build that failed on a dependency download alone runs once more after a pause; the first
+    attempt's log and its sidecar files are kept as `<name>.network-1.<ext>`, and the record
+    describes the rerun, with `network_retries` saying it was one.
     """
+    result, record = _build_once(checkout, project, task_args, log_path)
+    retries = 0
+    if result[0] not in (0, STALLED):
+        why = download_failure(log_path)
+        if why is not None:
+            root, ext = os.path.splitext(log_path)
+            kept = f"{root}.network-1{ext}"
+            for suffix in ("", ".tasks.tsv", ".counters.tsv", ".outcomes.tsv"):
+                if os.path.exists(log_path + suffix):
+                    os.replace(log_path + suffix, kept + suffix)
+            print(f"    rerunning in {NETWORK_RETRY_PAUSE}s, once: a dependency download failed: {why}",
+                  flush=True)
+            time.sleep(NETWORK_RETRY_PAUSE)
+            result, record = _build_once(checkout, project, task_args, log_path)
+            retries = 1
+    ARM_STATS[log_path] = {**record, "network_retries": retries}
+    return result
+
+
+# Gradle's repository retry, raised for every guest build: its default, three attempts a second and
+# two apart, did not outlast a guest repository's rate limit. Five attempts from two seconds wait 30s
+# in all. Internal properties: a Gradle that drops them falls back to its defaults.
+REPOSITORY_RETRY_FLAGS = ["-Dorg.gradle.internal.repository.max.tentatives=5",
+                          "-Dorg.gradle.internal.repository.initial.backoff=2000"]
+# Seconds before a build that failed on a dependency download runs once more.
+NETWORK_RETRY_PAUSE = 60
+# A download that failed in transit, in Gradle's words; reworded, nothing matches and the build fails
+# as it did before. `.github/ci.py` holds the same rule for the matrix.
+DOWNLOAD_FAILED = ("Could not GET '", "Could not HEAD '", "Could not download")
+NOT_TRANSIENT = re.compile(r"status code (?:401|403|404)\b|Could not find ")
+FAILURE_BLOCK = re.compile(r"^\* What went wrong:\n(.*?)(?=^\* What went wrong:|^\* Try:|\Z)", re.M | re.S)
+
+
+def download_failure(log_path):
+    """The line naming the download a failed build could not make, or None when the build failed for
+    any other reason too, or the log cannot be read. Only the build's own failure blocks count: a
+    test whose build failed to resolve reports as failing tests."""
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as handle:
+            blocks = FAILURE_BLOCK.findall(handle.read())
+    except OSError:
+        return None
+    found = None
+    for block in blocks:
+        lines = [line.strip().lstrip("> ") for line in block.splitlines()
+                 if any(marker in line for marker in DOWNLOAD_FAILED)]
+        if not lines or NOT_TRANSIENT.search(block):
+            return None
+        found = found or lines[-1]
+    return found
+
+
+def _build_once(checkout, project, task_args, log_path):
+    """One build and its record; see `gradle`."""
     # WHAT THE ARM COST BESIDE ITS WALL CLOCK, kept per log path so no caller's signature moves:
     # task durations from a build-event listener, the plugin's own timers, and the test JVMs'
     # memory sampled from outside. See sweep_data and docs/sweep-data-dictionary.md.
@@ -1172,7 +1230,7 @@ def gradle(checkout, project, task_args, log_path):
     launched = time.time()
     with sweep_data.TestJvmSampler() as sampler:
         result = run([wrapper(checkout), "-I", GUEST_SELECTION_OFF] + daemon_jvm_flags(project) +
-                     guest_flags(project) + task_args + instruments +
+                     REPOSITORY_RETRY_FLAGS + guest_flags(project) + task_args + instruments +
                      ["--no-build-cache", "--console=plain"],
                      checkout, log_path,
                      progress_paths=test_progress_paths(checkout, project),
@@ -1192,8 +1250,7 @@ def gradle(checkout, project, task_args, log_path):
             except OSError:
                 pass
             time.sleep(0.2)
-    ARM_STATS[log_path] = arm_record(log_path, project, sampler, launched, ended)
-    return result
+    return result, arm_record(log_path, project, sampler, launched, ended)
 
 
 # One entry per build this process ran, keyed by its log path. See `gradle`.

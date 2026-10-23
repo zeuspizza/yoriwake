@@ -3741,6 +3741,124 @@ def case_every_harness_build_turns_off_the_guests_own_test_selection():
     return failures
 
 
+def case_every_harness_build_retries_a_failed_download_longer():
+    """Gradle's default, three attempts a second apart, did not outlast a guest repository's rate
+    limit."""
+    seen = []
+    original = run.run, run.test_progress_paths
+    run.run = lambda argv, *args, **kwargs: seen.append(argv) or (0, 0.0)
+    run.test_progress_paths = lambda checkout, project: []
+    try:
+        run.gradle(run.ROOT, {}, [":m:test"], os.devnull)
+    finally:
+        run.run, run.test_progress_paths = original
+    argv = seen[0] if seen else []
+    missing = [flag for flag in ("-Dorg.gradle.internal.repository.max.tentatives=5",
+                                 "-Dorg.gradle.internal.repository.initial.backoff=2000") if flag not in argv]
+    return fail(f"a harness build does not carry {missing}") if missing else 0
+
+
+FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".github", "fixtures")
+
+
+def _fixture(name):
+    with open(os.path.join(FIXTURES, name), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _scripted_builds(outcomes):
+    """A stand-in for `run.run` that writes each build's log and one task-times line, then exits as
+    `outcomes` says, one (log text, exit code) per build; and the list of argvs it saw."""
+    seen = []
+
+    def fake(argv, cwd, log_path, **kwargs):
+        text, code = outcomes[len(seen)]
+        seen.append(argv)
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        times = next(arg.split("=", 1)[1] for arg in argv if arg.startswith("-Dyoriwake.harness.taskTimes="))
+        now = int(time.time() * 1000)
+        with open(times, "a", encoding="utf-8") as handle:
+            handle.write(f":m:compileJava\t{now}\t{now + 5}\texecuted\n")
+        return code, 0.0
+
+    return fake, seen
+
+
+def _rerun(outcomes):
+    """(result, builds run, the record, files beside the log) of one harness build over `outcomes`."""
+    with tempfile.TemporaryDirectory() as directory:
+        log = os.path.join(directory, "build.log")
+        fake, seen = _scripted_builds(outcomes)
+        original = run.run, run.test_progress_paths, run.NETWORK_RETRY_PAUSE
+        run.run, run.test_progress_paths, run.NETWORK_RETRY_PAUSE = fake, (lambda checkout, project: []), 0
+        try:
+            result = run.gradle(run.ROOT, {}, [":m:test"], log)
+        finally:
+            run.run, run.test_progress_paths, run.NETWORK_RETRY_PAUSE = original
+        files = {}
+        for name in sorted(os.listdir(directory)):
+            with open(os.path.join(directory, name), encoding="utf-8") as handle:
+                files[name] = handle.read()
+        return result, len(seen), run.arm_stats(log), files
+
+
+def case_a_guest_build_that_failed_on_a_download_runs_once_more():
+    failures = 0
+    rate_limited = _fixture("download-failure-429.txt")
+    result, builds, record, files = _rerun([(rate_limited, 1), ("BUILD SUCCESSFUL\n", 0)])
+    if result[0] != 0 or builds != 2:
+        failures += fail(f"a download failure then a pass should succeed after 2 builds, got {result}, {builds}")
+    if "status code 429" not in files.get("build.network-1.log", ""):
+        failures += fail(f"the first attempt's log was not kept as build.network-1.log: {sorted(files)}")
+    if (record or {}).get("network_retries") != 1:
+        failures += fail(f"the record does not say the build was rerun: {record}")
+    tasks = (record or {}).get("tasks") or {}
+    if tasks.get("tasks_executed") != 1 or (tasks.get("before_first_task_seconds") or 0) < 0:
+        failures += fail(f"the record's task times are not the rerun's alone: {tasks}")
+    if files.get("build.network-1.log.tasks.tsv", "").count("\n") != 1:
+        failures += fail("the first attempt's task times were not kept beside its log")
+    return failures
+
+
+def case_a_guest_build_that_failed_for_another_reason_runs_once():
+    failures = 0
+    compile_error = "FAILURE: Build failed with an exception.\n\n* What went wrong:\n" \
+                    "Execution failed for task ':m:compileJava'.\n> Compilation failed; see the compiler error output.\n"
+    result, builds, record, files = _rerun([(compile_error, 1)])
+    if result[0] != 1 or builds != 1 or any("network" in name for name in files):
+        failures += fail(f"a compile error should fail after one build with no kept attempt, got {result}, "
+                         f"{builds}, {sorted(files)}")
+    if (record or {}).get("network_retries") != 0:
+        failures += fail(f"a build that was not rerun should record network_retries 0: {record}")
+    handshake = _fixture("download-failure-handshake.txt")
+    result, builds, record, _ = _rerun([(handshake, 1), (handshake, 1)])
+    if result[0] != 1 or builds != 2:
+        failures += fail(f"two download failures should return the second failure after 2 builds, "
+                         f"got {result}, {builds}")
+    return failures
+
+
+def case_the_harness_reads_a_download_failure_as_the_ci_script_does():
+    failures = 0
+    with tempfile.TemporaryDirectory() as directory:
+        for name, expected in (("download-failure-handshake.txt", True), ("download-failure-429.txt", True)):
+            path = os.path.join(directory, name)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(_fixture(name))
+            if bool(run.download_failure(path)) != expected:
+                failures += fail(f"{name} was not read as a download failure")
+        for what, text in (("a missing artifact", "> Could not find org.junit:junit-bom:5.11.4."),
+                           ("a 401", "> Could not GET 'https://r/a.pom'. Received status code 401 from server"),
+                           ("failing tests", "> There were failing tests. See the report.")):
+            path = os.path.join(directory, "other.log")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(f"FAILURE: Build failed.\n\n* What went wrong:\n{text}\n\n* Try:\n")
+            if run.download_failure(path):
+                failures += fail(f"{what} was read as a download failure")
+    return failures
+
+
 # EVERY case_* in this file, checked by the guard below rather than by whoever edits this tuple.
 # Six were defined and never registered, so they had never run.
 def case_the_checkpoint_survives_what_used_to_destroy_it():
@@ -5224,6 +5342,10 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_project_flag_names_an_init_script_in_the_checkout_that_exists,
          case_a_harness_property_in_a_project_s_flags_is_read_by_a_script_they_pass,
          case_every_harness_build_turns_off_the_guests_own_test_selection,
+         case_every_harness_build_retries_a_failed_download_longer,
+         case_a_guest_build_that_failed_on_a_download_runs_once_more,
+         case_a_guest_build_that_failed_for_another_reason_runs_once,
+         case_the_harness_reads_a_download_failure_as_the_ci_script_does,
          case_staging_and_flags_treat_a_stored_null_oppositely,
          case_a_row_records_the_tree_and_the_flags_it_was_measured_under,
          case_only_the_selector_source_moves_the_digest,
