@@ -71,8 +71,9 @@ def run(command, cwd, log_path=None, timeout=3600, stall_seconds=STALL_SECONDS,
     """Runs a command, returning (exit code, seconds). Output goes to log_path when given.
 
     Returns STALLED when the log stops growing for `stall_seconds` AND nothing under
-    `progress_paths` changed in that time. Only possible when a log path is given -- with no log
-    there is nothing to watch, and the plain timeout is the only guard.
+    `progress_paths` changed in that time, and when a build with a log runs past `timeout`: either
+    way it was killed, and establishes nothing. With no log there is nothing to watch, the plain
+    timeout is the only guard, and it returns -1.
 
     `progress_paths` exists because silence on stdout is not evidence of a stuck build: Gradle says
     nothing at all for the duration of a long test task. Pass the files that build writes while it
@@ -104,10 +105,19 @@ def run(command, cwd, log_path=None, timeout=3600, stall_seconds=STALL_SECONDS,
             except subprocess.TimeoutExpired:
                 pass
             now = time.time()
+            # KILLED AT THE TIMEOUT IS KILLED, as a stall is. Returning -1 here let a selected arm
+            # that ran past the hour pass as a build that ran, and the harness went on to back up its
+            # map: iceberg's shard lost two attempts to files vanishing under `copytree` there.
             if now - started > timeout:
+                dumped = dump_threads(log_path)
                 process.kill()
                 process.wait()
-                return -1, round(time.time() - started, 1)
+                handle.flush()
+                threads = (f"thread dumps of {dumped} JVMs beside it" if dumped
+                           else "no JVM thread dump could be taken")
+                print(f"  TIMED OUT: still running after {int(timeout)}s; killed. Log: {log_path}; "
+                      f"{threads}", flush=True)
+                return STALLED, round(time.time() - started, 1)
             size = os.path.getsize(log_path) if os.path.isfile(log_path) else 0
             mark = progress_mark(progress_paths)
             if size != last_size or mark != last_mark:

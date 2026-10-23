@@ -3741,6 +3741,56 @@ def case_every_harness_build_turns_off_the_guests_own_test_selection():
     return failures
 
 
+def case_a_killed_build_stops_its_daemons_before_the_harness_goes_on():
+    """A killed client leaves its daemon finishing the build and decoding into the map; the next
+    thing the harness does is copy that map."""
+    failures = 0
+    original = run.run, run.test_progress_paths, run.stop_daemons
+    run.test_progress_paths = lambda checkout, project: []
+    try:
+        for code, expected in ((run.STALLED, [run.ROOT]), (0, []), (1, [])):
+            stopped = []
+            run.stop_daemons = stopped.append
+            run.run = lambda argv, *args, code=code, **kwargs: (code, 0.0)
+            result = run.gradle(run.ROOT, {}, [":m:test"], os.devnull)
+            if stopped != expected or result[0] != code:
+                failures += fail(f"a build that returned {code} stopped {stopped}, returned {result}")
+        # A download failure reruns the build once; a rerun that is killed stops its daemons too.
+        stopped, codes = [], iter((1, run.STALLED))
+        run.stop_daemons = stopped.append
+        run.run = lambda argv, *args, **kwargs: (next(codes), 0.0)
+        original_download, original_sleep = run.download_failure, run.time.sleep
+        run.download_failure, run.time.sleep = (lambda log_path: "Could not GET 'x'"), (lambda seconds: None)
+        scratch = tempfile.mkdtemp(prefix="yoriwake-run-")
+        try:
+            result = run.gradle(run.ROOT, {}, [":m:test"], os.path.join(scratch, "build.log"))
+        finally:
+            run.download_failure, run.time.sleep = original_download, original_sleep
+            shutil.rmtree(scratch, ignore_errors=True)
+        if stopped != [run.ROOT] or result[0] != run.STALLED:
+            failures += fail(f"a rerun killed after a download failure stopped {stopped}, returned {result}")
+    finally:
+        run.run, run.test_progress_paths, run.stop_daemons = original
+    return failures
+
+
+def case_a_stop_that_fails_is_said_and_does_not_raise():
+    """The killed build is filed as stalled whatever `--stop` does; a failing stop is a line."""
+    failures = 0
+    original = run.wrapper
+    try:
+        # A Python that rejects `-p <dir> --stop` exits non-zero; a missing wrapper cannot start.
+        for wrapper in (sys.executable, "/nonexistent/gradlew"):
+            run.wrapper = lambda checkout, wrapper=wrapper: wrapper
+            try:
+                run.stop_daemons(run.ROOT)
+            except Exception as error:  # noqa: BLE001
+                failures += fail(f"a failing --stop through {wrapper} raised {error!r}")
+    finally:
+        run.wrapper = original
+    return failures
+
+
 def case_every_harness_build_retries_a_failed_download_longer():
     """Gradle's default, three attempts a second apart, did not outlast a guest repository's rate
     limit."""
@@ -5342,6 +5392,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_project_flag_names_an_init_script_in_the_checkout_that_exists,
          case_a_harness_property_in_a_project_s_flags_is_read_by_a_script_they_pass,
          case_every_harness_build_turns_off_the_guests_own_test_selection,
+         case_a_killed_build_stops_its_daemons_before_the_harness_goes_on,
+         case_a_stop_that_fails_is_said_and_does_not_raise,
          case_every_harness_build_retries_a_failed_download_longer,
          case_a_guest_build_that_failed_on_a_download_runs_once_more,
          case_a_guest_build_that_failed_for_another_reason_runs_once,

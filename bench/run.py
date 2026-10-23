@@ -1169,8 +1169,36 @@ def gradle(checkout, project, task_args, log_path):
             time.sleep(NETWORK_RETRY_PAUSE)
             result, record = _build_once(checkout, project, task_args, log_path)
             retries = 1
+    if result[0] == STALLED:
+        stop_daemons(checkout)
     ARM_STATS[log_path] = {**record, "network_retries": retries}
     return result
+
+
+# How long `stop_daemons` waits for `--stop`. A daemon finishing a cancelled build answers in
+# seconds; one that does not answer in this long is reported, and the harness goes on.
+STOP_DAEMONS_SECONDS = 120
+
+
+def stop_daemons(checkout):
+    """Stops the daemons of this checkout's Gradle, after the harness killed one of its builds.
+
+    A bound, not an observed cause: on a plain build, killing the client cancelled the build and its
+    finalizers did not run. But iceberg's map lost run files while the harness copied it right after
+    a killed arm, and only a build of that daemon writes them, so nothing of the killed build may
+    still be running when the harness goes on. `--stop` rather than a machine-wide kill, as in
+    `config_cost._reap`: a shard runs alone, and the measurement floor keeps a local run alone too.
+    Never raises; the killed build is filed as stalled whatever this finds.
+    """
+    try:
+        stopped = subprocess.run([wrapper(checkout), "-p", checkout, "--stop"], cwd=checkout,
+                                 capture_output=True, text=True, timeout=STOP_DAEMONS_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"    could not stop the killed build's daemon: {error}", flush=True)
+        return
+    if stopped.returncode != 0:
+        print(f"    --stop exited {stopped.returncode}; the killed build's daemon may still be "
+              f"running", flush=True)
 
 
 # Gradle's repository retry, raised for every guest build: its default, three attempts a second and
