@@ -385,11 +385,16 @@ class RefusalFunctionalTest : FunctionalTestSupport() {
         @TempDir dir: File,
     ) {
         // The objects are gone once the build is configured, so `git diff` fails at execution: no
-        // second answer is no proof that the tree is still the configured one.
+        // second answer is no proof that the tree is still the configured one. Git writes objects
+        // read-only, and on Windows JDK 25 no longer deletes a read-only file, so each is made
+        // writable first, and an object directory left behind fails the fixture, not the selection.
         capturedWithAFixtureEditedLater(
             dir,
-            edit = """File(root, ".git/objects").listFiles()!!.filter { it.name.length == 2 }""" +
-                """.forEach { it.deleteRecursively() }""",
+            edit = """val objects = File(root, ".git/objects"); """ +
+                """objects.listFiles()!!.filter { it.name.length == 2 }.forEach { directory -> """ +
+                """directory.walkBottomUp().forEach { it.setWritable(true); it.delete() } }; """ +
+                """val left = objects.listFiles()!!.filter { it.name.length == 2 }.map { it.name }; """ +
+                """check(left.isEmpty()) { "the fixture could not delete the git object directories " + left }""",
         )
 
         val output = runner(dir, "editFixture", "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD")
