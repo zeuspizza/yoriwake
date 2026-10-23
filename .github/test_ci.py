@@ -995,9 +995,14 @@ def case_the_guard_workflows_are_read_only_and_cover_every_pull_request():
         ("test_prove_guards.py", "it does not check every anchor"),
         ("labeled", "a maintainer's approval does not re-run it"),
         ("weakens-guards", "no label approves a weakened guard"),
+        ("""          elif gh api "repos/$REPO/pulls/$PR" --jq '.labels[].name' | grep -qx weakens-guards; then\n"""
+         """            echo "::notice::""", "a weakened guard passes without asking for the label when it runs"),
     ):
         if needle not in table:
             problems += fail(f"guard-table.yml: {why}")
+    if "github.event.pull_request.labels" in table:
+        problems += fail("guard-table.yml: it reads the labels the starting event carried, which a re-run "
+                         "after the label changes still sees")
     return problems
 
 
