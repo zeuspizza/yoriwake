@@ -155,7 +155,8 @@ counts as a result, and how to add a project. Its results files are described fi
 the [sweep data dictionary](sweep-data-dictionary.md). A sweep can also run on GitHub's runners
 (`.github/workflows/sweep.yml`), one job per project to record and one per slice of its changes to
 measure; what a change to the plugin asks of it (nothing, a replay, the reduced arm or every
-project) follows from the paths it touched (`bench/tier.py`).
+project) follows from the paths it touched (`bench/tier.py`). Every project is also swept there
+weekly on `main`.
 
 ### Recall
 
