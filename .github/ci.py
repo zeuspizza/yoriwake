@@ -14,6 +14,7 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py needs-checks <base-sha> <head-sha>
     python .github/ci.py touches-product <base-sha> <head-sha>
     python .github/ci.py changelog <base-sha> <head-sha>
+    python .github/ci.py rerun-on-download-failure -- ./gradlew build --console=plain
 """
 
 import argparse
@@ -22,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 # The mutation the cross-OS check applies: Alpha.twice doubles, so tripling breaks exactly the two
 # tests that assert on it and nothing else. `assert_selection.py` names those two tests, so the two
@@ -217,11 +219,79 @@ def changelog_problems(before, after, added):
             problems.append(f"{CHANGELOG}:{number}: {text!r} is under [{version}], released before this "
                             f"change; it belongs under ## [Unreleased]")
     return problems
+# A download that failed in transit: a dropped connection or a TLS handshake the server ended (which
+# no Gradle setting retries), a timeout, or a 408, 429 or 5xx that outlasted Gradle's own retries.
+# Gradle's wording: when it moves, nothing matches and the build fails as it did before.
+DOWNLOAD_FAILED = ("Could not GET '", "Could not HEAD '", "Could not download")
+# A resolution that would fail the same way again.
+NOT_TRANSIENT = re.compile(r"status code (?:401|403|404)\b|Could not find ")
+FAILURE_BLOCK = re.compile(r"^\* What went wrong:\n(.*?)(?=^\* What went wrong:|^\* Try:|\Z)", re.M | re.S)
+
+
+def download_failure(output):
+    """The line naming the download a failed build could not make, or None when the build failed for
+    any other reason too. Only the build's own failure blocks are read: a test whose build failed to
+    resolve reports as failing tests, not as a download."""
+    blocks = FAILURE_BLOCK.findall(output)
+    found = None
+    for block in blocks:
+        lines = [line.strip().lstrip("> ") for line in block.splitlines()
+                 if any(marker in line for marker in DOWNLOAD_FAILED)]
+        if not lines or NOT_TRANSIENT.search(block):
+            return None
+        found = found or lines[-1]
+    return found
+
+
+def runnable(command, windows=None):
+    """`command`, with a leading `./gradlew` as the batch file on Windows: CreateProcess cannot
+    start the shell script."""
+    if windows is None:
+        windows = os.name == "nt"
+    if windows and command[:1] == ["./gradlew"]:
+        return [os.path.abspath("gradlew.bat")] + command[1:]
+    return command
+
+
+def run_teed(command):
+    """Runs `command`, passing its output through as it comes; (exit code, output).
+
+    The bytes pass through as written: decoded and re-encoded, a character a Windows console cannot
+    encode raised there, losing the rest of the log and the build's exit code."""
+    process = subprocess.Popen(runnable(command), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    console = getattr(sys.stdout, "buffer", None)
+    output = []
+    for line in process.stdout:
+        if console is None:
+            sys.stdout.write(line.decode("utf-8", errors="replace"))
+        else:
+            sys.stdout.flush()
+            console.write(line)
+            console.flush()
+        output.append(line)
+    return process.wait(), b"".join(output).decode("utf-8", errors="replace")
+
+
+def rerun_on_download_failure(command, pause=60, sleep=time.sleep):
+    """Runs `command`, and once more after `pause` seconds when it failed on a dependency download
+    alone; the exit code of the last run. The second run reuses what the first built."""
+    code, output = run_teed(command)
+    why = download_failure(output) if code != 0 else None
+    if why is None:
+        return code
+    print(f"rerunning in {pause}s, once: the build failed on a dependency download: {why}", flush=True)
+    sleep(pause)
+    return run_teed(command)[0]
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
+
+    rerun = sub.add_parser("rerun-on-download-failure",
+                           help="run a build, and once more when it failed on a dependency download")
+    rerun.add_argument("--pause", type=int, default=60, help="seconds before the rerun")
+    rerun.add_argument("build", nargs=argparse.REMAINDER, help="-- then the command")
 
     locate = sub.add_parser("find-map", help="print the newest map directory, and its record count")
     locate.add_argument("project_dir")
@@ -261,6 +331,11 @@ def main(argv=None):
         for problem in problems:
             print(problem)
         return 1 if problems else 0
+    if args.command == "rerun-on-download-failure":
+        build = args.build[1:] if args.build[:1] == ["--"] else args.build
+        if not build:
+            parser.error("rerun-on-download-failure needs a command after --")
+        return rerun_on_download_failure(build, pause=args.pause)
 
     if args.command == "touches-product":
         paths = changed_paths(args.base, args.head)

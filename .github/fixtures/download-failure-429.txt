@@ -1,0 +1,21 @@
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Could not determine the dependencies of task ':buildSrc:compileGroovy'.
+> Could not resolve all dependencies for configuration ':buildSrc:compileClasspath'.
+   > Could not resolve org.codehaus.plexus:plexus-utils:3.6.1.
+     Required by:
+         project ':buildSrc' > project ':build-logic-root:grails-docs-core' > org.apache.maven:maven-model:3.9.16
+      > Repository maven is disabled due to earlier error below:
+         > Could not download js-community-25.2.4.jar (org.graalvm.js:js-community:25.2.4)
+            > Could not get resource 'https://repo.grails.org/grails/restricted/org/graalvm/js/js-community/25.2.4/js-community-25.2.4.jar'.
+               > Could not HEAD 'https://repo.grails.org/grails/restricted/org/graalvm/js/js-community/25.2.4/js-community-25.2.4.jar'. Received status code 429 from server: Too Many Requests
+> There is 1 more failure with an identical cause.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Get more help at https://help.gradle.org.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+

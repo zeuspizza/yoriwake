@@ -1185,8 +1185,141 @@ def case_a_changelog_workflow_that_skips_or_stops_checking_is_reported():
     return problems
 
 
-REPOSITORY =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BADGE =os.path.join(".github", "badges", "coverage.json")
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+
+
+def _fixture(name):
+    with open(os.path.join(FIXTURES, name), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _block(text):
+    """A build's failure output around one "What went wrong" text."""
+    return f"FAILURE: Build failed with an exception.\n\n* What went wrong:\n{text}\n\n* Try:\n> Run with --stacktrace.\n"
+
+
+def case_a_dropped_or_rate_limited_download_is_a_download_failure():
+    """The two failures that each cost a release check a long job: a TLS handshake the server ended,
+    which no Gradle setting retries, and a rate limit that outlasted Gradle's own retries."""
+    problems = 0
+    for name in ("download-failure-handshake.txt", "download-failure-429.txt"):
+        if not ci.download_failure(_fixture(name)):
+            problems += fail(f"{name} was not read as a download failure")
+    return problems
+
+
+def case_a_failure_that_is_not_a_download_is_not_rerun():
+    problems = 0
+    for what, text in (
+        ("a missing artifact", "Execution failed for task ':plugin:functionalTest'.\n> Could not resolve all files "
+                               "for configuration ':plugin:testRuntimeClasspath'.\n   > Could not find "
+                               "org.junit:junit-bom:5.11.4."),
+        ("a 401", "Could not resolve all files for configuration ':compileClasspath'.\n> Could not GET "
+                  "'https://repo.example.org/a.pom'. Received status code 401 from server: Unauthorized"),
+        ("failing tests", "Execution failed for task ':plugin:test'.\n> There were failing tests. See the report."),
+        ("a compile error", "Execution failed for task ':plugin:compileKotlin'.\n> Compilation error. See log."),
+    ):
+        if ci.download_failure(_block(text)):
+            problems += fail(f"{what} was read as a download failure")
+    if ci.download_failure("BUILD SUCCESSFUL in 3s\n"):
+        problems += fail("a build with no failure block was read as a download failure")
+    return problems
+
+
+def _scripted(root, outcomes):
+    """A command that prints and exits as `outcomes` says, one entry per run, counting its runs."""
+    script = os.path.join(root, "build.py")
+    with open(script, "w", encoding="utf-8") as handle:
+        handle.write("import json, os, sys\n"
+                     f"count = os.path.join({root!r}, 'runs')\n"
+                     "runs = int(open(count).read()) if os.path.exists(count) else 0\n"
+                     "open(count, 'w').write(str(runs + 1))\n"
+                     f"text, code = json.load(open({os.path.join(root, 'outcomes.json')!r}))[runs]\n"
+                     "sys.stdout.write(text)\nsys.exit(code)\n")
+    with open(os.path.join(root, "outcomes.json"), "w", encoding="utf-8") as handle:
+        json.dump(outcomes, handle)
+    return [sys.executable, script]
+
+
+def _retried(outcomes):
+    """(exit code, runs, pauses, output) of the rerun subcommand over a scripted command."""
+    import contextlib
+    import io
+
+    with tempfile.TemporaryDirectory() as root:
+        pauses = []
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ci.rerun_on_download_failure(_scripted(root, outcomes), pause=0, sleep=pauses.append)
+        with open(os.path.join(root, "runs"), encoding="utf-8") as handle:
+            runs = int(handle.read())
+    return code, runs, pauses, out.getvalue()
+
+
+def case_a_build_that_failed_on_a_download_runs_once_more():
+    handshake = _fixture("download-failure-handshake.txt")
+    problems = 0
+    code, runs, pauses, out = _retried([[handshake, 1], ["BUILD SUCCESSFUL\n", 0]])
+    if (code, runs, pauses) != (0, 2, [0]):
+        problems += fail(f"a download failure then a pass should exit 0 after 2 runs and one pause, "
+                         f"got exit {code}, {runs} runs, pauses {pauses}")
+    if "Remote host terminated the handshake" not in out or "Could not GET" not in out:
+        problems += fail("the first run's output, or the line naming why it reran, is missing")
+    code, runs, _, _ = _retried([[handshake, 1], [handshake, 1]])
+    if code == 0 or runs != 2:
+        problems += fail(f"two download failures should fail after 2 runs, got exit {code}, {runs} runs")
+    code, runs, pauses, _ = _retried([[_block("Compilation error. See log."), 3]])
+    if (code, runs, pauses) != (3, 1, []):
+        problems += fail(f"a compile error should exit 3 after one run and no pause, got exit {code}, "
+                         f"{runs} runs, pauses {pauses}")
+    return problems
+
+
+def case_output_the_console_cannot_encode_passes_through_untouched():
+    """A Windows runner's console is cp1252: a character Gradle wrote in another encoding, decoded
+    and re-encoded on the way through, raised there and lost the build's exit code."""
+    import io
+
+    raw = b"caf\xe9 \xff\x81 done\n"
+    console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    original = sys.stdout
+    sys.stdout = console
+    error = None
+    try:
+        code, _ = ci.run_teed([sys.executable, "-c", f"import sys; sys.stdout.buffer.write({raw!r})"])
+        console.flush()
+        passed = console.buffer.getvalue()
+    except UnicodeError as raised:
+        error = raised
+    finally:
+        sys.stdout = original
+    if error is not None:
+        return fail(f"teeing bytes the console cannot encode raised {error!r}")
+    if code != 0 or passed != raw:
+        return fail(f"the output did not pass through as written: exit {code}, {passed!r}")
+    return 0
+
+
+def case_on_windows_the_wrapper_script_runs_as_its_batch_file():
+    """CreateProcess cannot start the shell script."""
+    command = ci.runnable(["./gradlew", "build", "--console=plain"], windows=True)
+    if command != [os.path.abspath("gradlew.bat"), "build", "--console=plain"]:
+        return fail(f"./gradlew on Windows ran as {command}")
+    if ci.runnable(["./gradlew", "build"], windows=False) != ["./gradlew", "build"]:
+        return fail("./gradlew elsewhere was rewritten")
+    return 0
+
+
+def case_the_matrix_cell_builds_through_the_download_rerun():
+    with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    if not re.search(r"\.github/ci\.py rerun-on-download-failure -- \./gradlew build", text):
+        return fail("matrix.yml: the cell's build does not run through the download rerun")
+    return 0
+
+
+REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BADGE = os.path.join(".github", "badges", "coverage.json")
 GATED_MODULES = ("plugin", "agent")
 
 
@@ -1535,6 +1668,12 @@ def case_a_record_job_archives_the_checkout_the_plan_names():
 
 
 CASES = (
+    case_a_dropped_or_rate_limited_download_is_a_download_failure,
+    case_a_failure_that_is_not_a_download_is_not_rerun,
+    case_a_build_that_failed_on_a_download_runs_once_more,
+    case_on_windows_the_wrapper_script_runs_as_its_batch_file,
+    case_output_the_console_cannot_encode_passes_through_untouched,
+    case_the_matrix_cell_builds_through_the_download_rerun,
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
