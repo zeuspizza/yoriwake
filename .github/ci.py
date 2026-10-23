@@ -15,6 +15,7 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py touches-product <base-sha> <head-sha>
     python .github/ci.py changelog <base-sha> <head-sha>
     python .github/ci.py rerun-on-download-failure -- ./gradlew build --console=plain
+    python .github/ci.py list-test-kit-homes plugin/build/tmp
 """
 
 import argparse
@@ -284,6 +285,38 @@ def rerun_on_download_failure(command, pause=60, sleep=time.sleep):
     return run_teed(command)[0]
 
 
+# Where each functional-test task keeps its TestKit home, and where that home keeps what it
+# downloaded: the plugin's functional tests name the home, Gradle the cache layout.
+TEST_KIT_HOME = ".gradle-test-kit-"
+DOWNLOADED = os.path.join("caches", "modules-2", "files-2.1")
+
+
+def test_kit_listing(build_tmp):
+    """Every file each TestKit home under `build_tmp` downloaded, with its size and modification
+    time, one per line; an entry that cannot be read is listed with the error instead.
+
+    A dependency a build reported missing is either absent here, never downloaded, or present,
+    downloaded and then unreadable to that build: the two need different fixes.
+    """
+    lines = []
+    for dirpath, dirnames, _ in os.walk(build_tmp):
+        for home in sorted(name for name in dirnames if name.startswith(TEST_KIT_HOME)):
+            root = os.path.join(dirpath, home)
+            lines.append(root)
+            unreadable = lambda error: lines.append(f"  {os.path.relpath(error.filename, root)}\tERROR {error}")
+            for files_dir, _, names in sorted(os.walk(os.path.join(root, DOWNLOADED), onerror=unreadable)):
+                for name in sorted(names):
+                    path = os.path.join(files_dir, name)
+                    try:
+                        found = os.stat(path)
+                    except OSError as error:
+                        lines.append(f"  {os.path.relpath(path, root)}\tERROR {error}")
+                        continue
+                    modified = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(found.st_mtime))
+                    lines.append(f"  {os.path.relpath(path, root)}\t{found.st_size}\t{modified}")
+    return lines
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -320,7 +353,16 @@ def main(argv=None):
     changelog.add_argument("base")
     changelog.add_argument("head")
 
+    homes = sub.add_parser("list-test-kit-homes",
+                           help="list what each TestKit home under a build directory downloaded")
+    homes.add_argument("build_tmp")
+
     args = parser.parse_args(argv)
+
+    if args.command == "list-test-kit-homes":
+        lines = test_kit_listing(args.build_tmp)
+        print("\n".join(lines) if lines else f"no TestKit home under {args.build_tmp}")
+        return 0
 
     if args.command == "changelog":
         change = changelog_change(args.base, args.head)
