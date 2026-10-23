@@ -996,8 +996,197 @@ def case_a_code_file_moved_into_docs_still_needs_the_checks():
     return 0 if ci.needs_checks(paths) else fail("a code file moved into docs/ passed as a docs-only change")
 
 
-REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BADGE = os.path.join(".github", "badges", "coverage.json")
+CHANGELOG_PREAMBLE = "# Changelog\n\nEvery release entry states what it does to a coverage map.\n\n"
+CHANGELOG_LINKS = ("[Unreleased]: https://example.org/compare/v0.2.0...HEAD\n"
+                   "[0.2.0]: https://example.org/compare/v0.1.0...v0.2.0\n")
+# The changelog before 0.3.0's entry: Unreleased had no Fixed of its own, so a hunk appended to the
+# next Fixed down landed in 0.2.0's.
+CHANGELOG_BEFORE_ENTRY = (CHANGELOG_PREAMBLE
+                          + "## [Unreleased]\n\n### Added\n\n- A new option. Map: left alone.\n\n"
+                          + "### Changed\n\n- A changed default. Map: left alone.\n\n"
+                          + "## [0.2.0] - 1999-10-13\n\n### Fixed\n\n- An older fix. Map: left alone.\n\n"
+                          + CHANGELOG_LINKS)
+MISPLACED = "- A recording build hashes ignored files once. Map: left alone."
+
+
+def _changelog_problems(before, after, subdirectory=""):
+    """The rule's verdict on a change of CHANGELOG.md from `before` to `after`, read through git
+    from `subdirectory` of the repository."""
+    with tempfile.TemporaryDirectory() as root:
+        def git(*args):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=root,
+                           check=True, capture_output=True)
+
+        git("init", "-q")
+        os.makedirs(os.path.join(root, subdirectory), exist_ok=True)
+        for text, message in ((before, "base"), (after, "head")):
+            with open(os.path.join(root, "CHANGELOG.md"), "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+            git("add", ".")
+            git("commit", "-q", "--allow-empty", "-m", message)
+        change = ci.changelog_change("HEAD~1", "HEAD", cwd=os.path.join(root, subdirectory))
+    if change is None:
+        return None
+    return ci.changelog_problems(*change)
+
+
+def case_a_line_added_under_a_released_version_fails_naming_it():
+    """A line that lands under a version already released ships as a change to that version."""
+    after = CHANGELOG_BEFORE_ENTRY.replace("- An older fix. Map: left alone.\n",
+                                           f"- An older fix. Map: left alone.\n{MISPLACED}\n")
+    problems = _changelog_problems(CHANGELOG_BEFORE_ENTRY, after)
+    if problems is None:
+        return fail("git could not read a two-commit change")
+    if len(problems) != 1:
+        return fail(f"a line added under 0.2.0 should be one problem, got {problems}")
+    missing = [part for part in (MISPLACED, "[0.2.0]", "## [Unreleased]", ":20:") if part not in problems[0]]
+    return fail(f"the problem does not name {missing}: {problems[0]}") if missing else 0
+
+
+def case_a_release_entry_passes():
+    """A minor's entry renames Unreleased to its version, adds lines to it and repairs older ones."""
+    after = (CHANGELOG_PREAMBLE
+             + "## [Unreleased]\n\n## [0.3.0] - 1999-10-22\n\n**Your map:** left alone.\n\n"
+             + "### Added\n\n- A new option. Map: left alone.\n\n"
+             + "### Changed\n\n- A changed default. Map: left alone.\n- Benchmarks: a new figure.\n\n"
+             + "## [0.2.0] - 1999-10-13\n\n### Fixed\n\n\n"
+             + CHANGELOG_LINKS + "[0.3.0]: https://example.org/compare/v0.2.0...v0.3.0\n")
+    before = CHANGELOG_BEFORE_ENTRY.replace("- An older fix. Map: left alone.\n", f"{MISPLACED}\n")
+    problems = _changelog_problems(before, after)
+    return fail(f"a release entry was refused: {problems}") if problems else 0
+
+
+def case_a_fixed_section_added_under_unreleased_passes():
+    after = CHANGELOG_BEFORE_ENTRY.replace("## [0.2.0]", f"### Fixed\n\n{MISPLACED}\n\n## [0.2.0]")
+    problems = _changelog_problems(CHANGELOG_BEFORE_ENTRY, after)
+    return fail(f"a line under Unreleased was refused: {problems}") if problems else 0
+
+
+def case_a_patch_section_passes():
+    """A patch adds its own section below Unreleased and takes its fixes out of Unreleased."""
+    after = CHANGELOG_BEFORE_ENTRY.replace(
+        "### Changed\n\n- A changed default. Map: left alone.\n\n",
+        "## [0.2.1] - 1999-10-20\n\n### Fixed\n\n- A changed default. Map: left alone.\n\n")
+    problems = _changelog_problems(CHANGELOG_BEFORE_ENTRY, after)
+    return fail(f"a patch section was refused: {problems}") if problems else 0
+
+
+def case_a_redated_release_fails():
+    after = CHANGELOG_BEFORE_ENTRY.replace("## [0.2.0] - 1999-10-13", "## [0.2.0] - 1999-10-14")
+    problems = _changelog_problems(CHANGELOG_BEFORE_ENTRY, after)
+    if problems is None or len(problems) != 1 or "[0.2.0]" not in problems[0]:
+        return fail(f"a redated release heading should be one problem naming 0.2.0, got {problems}")
+    return 0
+
+
+def case_a_release_renamed_to_a_new_version_fails():
+    """The renamed heading opens a section of its own, so only the lost version can name it."""
+    after = CHANGELOG_BEFORE_ENTRY.replace("## [0.2.0] - 1999-10-13", "## [0.2.1] - 1999-10-13")
+    problems = _changelog_problems(CHANGELOG_BEFORE_ENTRY, after)
+    if problems is None or len(problems) != 1 or "[0.2.0]" not in problems[0]:
+        return fail(f"a released heading renamed to a new version should be one problem naming 0.2.0, "
+                    f"got {problems}")
+    return 0
+
+
+def case_a_line_under_a_released_version_fails_whatever_breaks_lines_above_it():
+    """Git breaks lines at a newline only; a separator or carriage return above must not shift
+    which line the check reads."""
+    problems = 0
+    for separator in (" ", "\x0c", "\r"):
+        before = CHANGELOG_BEFORE_ENTRY.replace("- An older fix.", f"- An{separator}older fix.")
+        after = before.replace(f"- An{separator}older fix. Map: left alone.\n",
+                               f"- An{separator}older fix. Map: left alone.\n{MISPLACED}\n")
+        found = _changelog_problems(before, after)
+        if found is None or len(found) != 1 or MISPLACED not in found[0]:
+            problems += fail(f"a line under 0.2.0 below a {separator!r} should be one problem, got {found}")
+    return problems
+
+
+def case_the_changelog_check_reads_the_root_changelog_from_a_subdirectory():
+    after = CHANGELOG_BEFORE_ENTRY.replace("- An older fix. Map: left alone.\n",
+                                           f"- An older fix. Map: left alone.\n{MISPLACED}\n")
+    problems = _changelog_problems(CHANGELOG_BEFORE_ENTRY, after, subdirectory=".github")
+    if problems is None or len(problems) != 1:
+        return fail(f"run from .github/, a line under 0.2.0 should be one problem, got {problems}")
+    return 0
+
+
+def case_preamble_link_and_blank_lines_pass():
+    after = (CHANGELOG_BEFORE_ENTRY.replace("Every release entry", "Every release entry, patches too,")
+             .replace("- An older fix. Map: left alone.\n", "- An older fix. Map: left alone.\n\n")
+             + "[0.1.0]: https://example.org/releases/tag/v0.1.0\n")
+    problems = _changelog_problems(CHANGELOG_BEFORE_ENTRY, after)
+    return fail(f"a preamble edit, a link or a blank line was refused: {problems}") if problems else 0
+
+
+def case_a_changelog_git_cannot_read_fails_the_check():
+    """Silence would pass the check; a revision git cannot resolve must fail it, saying so."""
+    import contextlib
+    import io
+
+    with tempfile.TemporaryDirectory() as root:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+        out = io.StringIO()
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                code = ci.main(["changelog", "HEAD~1", "HEAD"])
+        finally:
+            os.chdir(cwd)
+    if code == 0:
+        return fail("an unreadable change passed the changelog check")
+    return 0 if "git" in out.getvalue() else fail(f"the failure does not say git failed: {out.getvalue()!r}")
+
+
+def changelog_workflow_problems(text):
+    """What would let a misplaced changelog line merge unchecked, or let the check do harm."""
+    problems = []
+    pull_request = re.search(r"^  pull_request:\n((?:    [^\n]*\n)*)", text, re.M)
+    if not pull_request or "branches: [main]" not in pull_request.group(1):
+        problems.append("it does not run on pull requests into main")
+    elif "paths" in pull_request.group(1):
+        problems.append("a path filter leaves the required check waiting on pull requests it skips")
+    if not re.search(r"^  push:\n    branches: \[main\]\n", text, re.M):
+        problems.append("it does not judge what lands on main")
+    if "permissions:\n  contents: read" not in text:
+        problems.append("its token is not read-only")
+    if "secrets." in text:
+        problems.append("it uses a secret")
+    if "fetch-depth: 0" not in text:
+        problems.append("a shallow checkout has no merge base to compare with")
+    if "    timeout-minutes: " not in text:
+        problems.append("the job has no time bound")
+    if "ci.py changelog" not in text:
+        problems.append("no step runs the changelog check")
+    return problems
+
+
+def case_the_changelog_check_runs_on_every_pull_request_and_push_to_main():
+    with open(os.path.join(WORKFLOWS, "changelog.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    return sum(fail(f"changelog.yml: {problem}") for problem in changelog_workflow_problems(text))
+
+
+def case_a_changelog_workflow_that_skips_or_stops_checking_is_reported():
+    with open(os.path.join(WORKFLOWS, "changelog.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = 0
+    for edited, expected in (
+        (text.replace("    branches: [main]\n  push:", "    branches: [main]\n    paths: ['CHANGELOG.md']\n  push:"),
+         "a path filter"),
+        (text.replace("ci.py changelog", "ci.py needs-checks"), "no step runs the changelog check"),
+    ):
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to changelog.yml")
+        elif not any(expected in problem for problem in changelog_workflow_problems(edited)):
+            problems += fail(f"an edited changelog.yml was not reported for {expected!r}")
+    return problems
+
+
+REPOSITORY =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BADGE =os.path.join(".github", "badges", "coverage.json")
 GATED_MODULES = ("plugin", "agent")
 
 
@@ -1349,6 +1538,18 @@ CASES = (
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
+    case_a_line_added_under_a_released_version_fails_naming_it,
+    case_a_release_entry_passes,
+    case_a_fixed_section_added_under_unreleased_passes,
+    case_a_patch_section_passes,
+    case_a_redated_release_fails,
+    case_a_release_renamed_to_a_new_version_fails,
+    case_a_line_under_a_released_version_fails_whatever_breaks_lines_above_it,
+    case_the_changelog_check_reads_the_root_changelog_from_a_subdirectory,
+    case_preamble_link_and_blank_lines_pass,
+    case_a_changelog_git_cannot_read_fails_the_check,
+    case_the_changelog_check_runs_on_every_pull_request_and_push_to_main,
+    case_a_changelog_workflow_that_skips_or_stops_checking_is_reported,
     case_only_a_docs_change_skips_the_checks,
     case_a_change_to_product_sources_runs_every_guard,
     case_the_guard_workflows_are_read_only_and_cover_every_pull_request,

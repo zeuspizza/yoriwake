@@ -1,0 +1,30 @@
+name: changelog
+
+# A changelog line added under a version already released ships as a change to that version, and the
+# GitHub release built from the next version's section leaves it out. Its own workflow, because the
+# verify jobs skip a change that touches only Markdown, which is exactly when this must run. No path
+# filter: a required check that a filter skips waits forever on the pull request. The push run
+# judges what actually landed on main: a squash can place a hunk under another heading than the pull
+# request's own diff did.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: changelog lines under Unreleased
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: python3 .github/ci.py changelog "$BASE" "$HEAD"

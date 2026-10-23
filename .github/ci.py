@@ -13,10 +13,12 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py discard samples/demo --map
     python .github/ci.py needs-checks <base-sha> <head-sha>
     python .github/ci.py touches-product <base-sha> <head-sha>
+    python .github/ci.py changelog <base-sha> <head-sha>
 """
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -149,6 +151,74 @@ def changed_paths(base, head, cwd=None):
     return done.stdout.split("\0")
 
 
+CHANGELOG = "CHANGELOG.md"
+VERSION_HEADING = re.compile(r"^## \[([^\]]+)\]")
+LINK_REFERENCE = re.compile(r"^\[[^\]]+\]:\s")
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def _git(args, cwd):
+    # Bytes, decoded without newline translation: git numbers lines by "\n" alone, and a carriage
+    # return or line separator read as a break would shift every later line off git's numbering.
+    done = subprocess.run(["git", *args], capture_output=True, check=True, cwd=cwd)
+    return done.stdout.decode("utf-8")
+
+
+def changelog_change(base, head, cwd=None):
+    """The changelog at the merge base, at `head`, and the numbers of the lines `head` added; None
+    when git cannot say. A changelog absent on either side reads as empty."""
+    # From the repository's top, wherever the command runs: a relative pathspec in a subdirectory
+    # names no file, and an absent changelog passes.
+    path = f":(top){CHANGELOG}"
+    try:
+        merge_base = _git(["merge-base", base, head], cwd).strip()
+
+        def text_at(rev):
+            if not _git(["ls-tree", "--name-only", rev, "--", path], cwd).strip():
+                return ""
+            return _git(["show", f"{rev}:{CHANGELOG}"], cwd)
+
+        before, after = text_at(merge_base), text_at(head)
+        diff = _git(["diff", "--unified=0", "--no-renames", f"{merge_base}..{head}", "--", path], cwd)
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):
+        return None
+    added = []
+    line = None
+    for row in diff.split("\n"):
+        hunk = HUNK.match(row)
+        if hunk:
+            line = int(hunk.group(1))
+        elif line is not None and row.startswith("+"):
+            added.append(line)
+            line += 1
+    return before, after, added
+
+
+def changelog_problems(before, after, added):
+    """Each added line that sits under a version already released before the change.
+
+    A line belongs to the nearest `## ` heading above it, the heading to its own section. A version
+    the change itself adds is a release entry and passes; so do the preamble, link references and
+    blank lines, which carry no entry. A released version whose heading is gone was renamed, which
+    no added line can show: the renamed heading opens a section of its own."""
+    released = {match.group(1) for match in map(VERSION_HEADING.match, before.split("\n")) if match}
+    released.discard("Unreleased")
+    lines = after.split("\n")
+    headed = {match.group(1) for match in map(VERSION_HEADING.match, lines) if match}
+    problems = [f"{CHANGELOG}: the heading of [{version}], released before this change, is gone"
+                for version in sorted(released - headed)] if after else []
+    for number in added:
+        text = lines[number - 1]
+        if not text.strip() or LINK_REFERENCE.match(text):
+            continue
+        version = next((match.group(1) for match in map(VERSION_HEADING.match, reversed(lines[:number]))
+                        if match), None)
+        if version in released:
+            problems.append(f"{CHANGELOG}:{number}: {text!r} is under [{version}], released before this "
+                            f"change; it belongs under ## [Unreleased]")
+    return problems
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -175,7 +245,22 @@ def main(argv=None):
     product.add_argument("base")
     product.add_argument("head")
 
+    changelog = sub.add_parser("changelog",
+                               help="fail when a change adds a changelog line under a released version")
+    changelog.add_argument("base")
+    changelog.add_argument("head")
+
     args = parser.parse_args(argv)
+
+    if args.command == "changelog":
+        change = changelog_change(args.base, args.head)
+        if change is None:
+            print(f"git could not read {CHANGELOG} between {args.base} and {args.head}", file=sys.stderr)
+            return 1
+        problems = changelog_problems(*change)
+        for problem in problems:
+            print(problem)
+        return 1 if problems else 0
 
     if args.command == "touches-product":
         paths = changed_paths(args.base, args.head)
