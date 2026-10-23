@@ -1318,6 +1318,107 @@ def case_the_matrix_cell_builds_through_the_download_rerun():
     return 0
 
 
+FUNCTIONAL_SHARD_JOBS = ("functional-shard", "functional-gradle9-shard", "functional-windows-shard",
+                         "functional-gradle9-windows-shard")
+
+
+def _job_block(text, job):
+    """A job's lines in a workflow, from its `  <job>:` line to the next job's."""
+    found = re.search(rf"^  {re.escape(job)}:\n((?:(?:    .*)?\n)*)", text, re.M)
+    return found.group(1) if found else None
+
+
+def functional_evidence_problems(text):
+    """Each functional shard job that would leave nothing behind when a flake fails it."""
+    problems = []
+    for job in FUNCTIONAL_SHARD_JOBS:
+        block = _job_block(text, job)
+        if block is None:
+            problems.append(f"{job}: the job is gone")
+            continue
+        uploads = [step for step in block.split("\n      - ") if "upload-artifact@" in step]
+        evidence = [step for step in uploads if ".gradle-test-kit-" in step]
+        listing = [step for step in block.split("\n      - ") if "ci.py list-test-kit-homes" in step]
+        if not listing or "if: failure()" not in listing[0]:
+            problems.append(f"{job}: no step lists what the TestKit homes' caches hold when it fails")
+        if not evidence:
+            problems.append(f"{job}: a flake leaves nothing to diagnose: no upload of the TestKit homes")
+        elif not all("if: failure()" in step and "include-hidden-files: true" in step for step in evidence):
+            problems.append(f"{job}: the TestKit homes' upload is not on failure, or skips the hidden "
+                            f"`.gradle-test-kit-*` directories")
+        elif not any("plugin/build/test-kit-homes.txt" in step for step in evidence):
+            problems.append(f"{job}: the upload leaves out the listing of what the homes downloaded")
+    return problems
+
+
+def case_every_functional_shard_keeps_its_evidence_when_it_fails():
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    return sum(fail(f"verify.yml: {problem}") for problem in functional_evidence_problems(text))
+
+
+def case_a_shard_that_drops_its_evidence_is_reported():
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = 0
+    block = _job_block(text, "functional-gradle9-windows-shard") or ""
+    for edited, expected in (
+        (text.replace(block, block.replace("include-hidden-files: true", "include-hidden-files: false")),
+         "skips the hidden"),
+        (text.replace(block, block.replace(".gradle-test-kit-", ".gradle-elsewhere-")),
+         "leaves nothing to diagnose"),
+        (text.replace(block, block.replace("        if: failure()\n        shell: bash\n        run: python .github/ci.py list",
+                                           "        shell: bash\n        run: python .github/ci.py list", 1)),
+         "when it fails"),
+        (text.replace(block, block.replace("            plugin/build/test-kit-homes.txt\n", "", 1)),
+         "leaves out the listing"),
+    ):
+        found = [p for p in functional_evidence_problems(edited) if p.startswith("functional-gradle9-windows-shard")]
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to verify.yml")
+        elif not any(expected in problem for problem in found):
+            problems += fail(f"an edited verify.yml was not reported for {expected!r}: {found}")
+    return problems
+
+
+def case_the_test_kit_listing_names_each_cached_file_and_its_size():
+    """What separates a jar that never arrived from one that arrived and could not be read."""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as root:
+        home = os.path.join(root, "functionalTestGradle9", "work", ".gradle-test-kit-9.8.0")
+        files = os.path.join(home, "caches", "modules-2", "files-2.1", "org.junit", "junit-bom", "5.11.4", "ab12")
+        os.makedirs(files)
+        with open(os.path.join(files, "junit-bom-5.11.4.pom"), "w", encoding="utf-8") as handle:
+            handle.write("x" * 7)
+        open(os.path.join(files, "empty.jar"), "w").close()
+        if hasattr(os, "symlink") and sys.platform != "win32":
+            os.symlink(os.path.join(files, "gone"), os.path.join(files, "dangling.jar"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ci.main(["list-test-kit-homes", root])
+    listing = out.getvalue()
+    problems = 0
+    if code != 0:
+        problems += fail(f"listing a home exited {code}")
+    for needle in (".gradle-test-kit-9.8.0", "junit-bom-5.11.4.pom\t7\t", "empty.jar\t0\t", "dangling.jar\tERROR"):
+        if needle not in listing:
+            problems += fail(f"the listing does not show {needle!r}: {listing!r}")
+    return problems
+
+
+def case_no_test_kit_home_is_said_rather_than_silent():
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as root:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ci.main(["list-test-kit-homes", root])
+    if code != 0 or "no TestKit home" not in out.getvalue():
+        return fail(f"an empty build directory was not reported as having no home: {code}, {out.getvalue()!r}")
+    return 0
+
+
 REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BADGE = os.path.join(".github", "badges", "coverage.json")
 GATED_MODULES = ("plugin", "agent")
@@ -1668,6 +1769,10 @@ def case_a_record_job_archives_the_checkout_the_plan_names():
 
 
 CASES = (
+    case_every_functional_shard_keeps_its_evidence_when_it_fails,
+    case_a_shard_that_drops_its_evidence_is_reported,
+    case_the_test_kit_listing_names_each_cached_file_and_its_size,
+    case_no_test_kit_home_is_said_rather_than_silent,
     case_a_dropped_or_rate_limited_download_is_a_download_failure,
     case_a_failure_that_is_not_a_download_is_not_rerun,
     case_a_build_that_failed_on_a_download_runs_once_more,
