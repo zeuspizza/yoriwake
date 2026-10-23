@@ -5,10 +5,17 @@ name: supported matrix
 # of this workflow on the commit the release is tagged from; `.github/test_ci.py` keeps the table
 # and the cell list below in step.
 #
-# Manual only, and dispatched from the candidate's own branch (`main` for a minor,
-# `release/<major>.<minor>` for a patch), so the workflow, the build and the table come from one line
-# of history. It costs hours of runner time, which is why no push or pull request starts it.
+# Nightly on `main`, testing its head, so a cell a change breaks is an open issue the next morning
+# rather than news on release night; a failed scheduled run opens that issue. A scheduled workflow
+# that sees no repository activity for 60 days is disabled by GitHub; the release checklist checks it
+# is on. Dispatched from the candidate's own branch (`main` for a minor, `release/<major>.<minor>`
+# for a patch), so the workflow, the build and the table come from one line of history. It costs
+# hours of runner time, which is why no push or pull request starts it.
 on:
+  # 23:41 UTC: the run and its issue land overnight in Europe, and a run of usual length ends before
+  # guards.yml's nightly run starts, so the two do not compete for the plan's concurrent jobs.
+  schedule:
+    - cron: '41 23 * * *'
   workflow_dispatch:
     inputs:
       candidate:
@@ -22,14 +29,18 @@ jobs:
   candidate:
     name: the candidate is on this branch
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # Through the environment, never spliced into the script: the input is free text.
+      # Through the environment, never spliced into the script: the input is free text. A
+      # scheduled run has no input and tests the head it runs on; a dispatch must still name one.
       - name: check the candidate
+        id: check
         env:
-          CANDIDATE: ${{ inputs.candidate }}
+          CANDIDATE: ${{ github.event_name == 'schedule' && github.sha || inputs.candidate }}
         run: |
           set -eu
           # The gate's own steps come from this branch, not from the candidate, so only a release
@@ -44,6 +55,7 @@ jobs:
           git merge-base --is-ancestor "$CANDIDATE" HEAD || {
             echo "$CANDIDATE is not reachable from $GITHUB_REF_NAME"; exit 1
           }
+          echo "sha=$CANDIDATE" >> "$GITHUB_OUTPUT"
 
   # One job per cell, written out rather than generated, so the table check can read them. The
   # yoriwake build itself runs on JDK 21 and Gradle's wrapper; the cell's JDK is the daemon its
@@ -70,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate }}
+          ref: ${{ needs.candidate.outputs.sha }}
       # Every JDK the test-JVM range test asks a toolchain for; the last is the build's own.
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
@@ -133,7 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate }}
+          ref: ${{ needs.candidate.outputs.sha }}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -174,7 +186,7 @@ jobs:
 
   select:
     name: select on ${{ matrix.os }}, against a map captured on ${{ matrix.from }}
-    needs: capture
+    needs: [candidate, capture]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -187,7 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate }}
+          ref: ${{ needs.candidate.outputs.sha }}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -235,7 +247,7 @@ jobs:
   # cells the row names, and every job ran the candidate.
   summary:
     name: every cell ran what its label says
-    needs: [cell, select]
+    needs: [candidate, cell, select]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -244,11 +256,36 @@ jobs:
         run: exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate }}
+          ref: ${{ needs.candidate.outputs.sha }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: results
       - name: check every cell
         env:
-          CANDIDATE: ${{ inputs.candidate }}
+          CANDIDATE: ${{ needs.candidate.outputs.sha }}
         run: python3 .github/matrix_check.py results results --candidate "$CANDIDATE"
+
+  # Only a scheduled run has nobody watching it; a dispatched one is read by whoever started it. The
+  # issue names the jobs that did not succeed, so the red cell is readable without opening the run;
+  # a failure only the summary finds names the summary, whose log names the cell.
+  report-failure:
+    needs: [candidate, cell, capture, select, summary]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+          # A listing that fails still leaves the run's link in the issue.
+          failed=$(gh run view "$RUN" -R "$REPO" --json jobs --jq '.jobs[]
+            | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")
+            | "- \(.name): \(.conclusion)"') || failed=""
+          { echo "$URL"; [ -z "$failed" ] || printf '\nJobs that did not succeed:\n%s\n' "$failed"; } > body.md
+          gh issue create -R "$REPO" --title "Scheduled supported-matrix run failed" --body-file body.md

@@ -369,6 +369,49 @@ def case_the_early_access_job_runs_weekly_bounded_and_read_only():
     return problems
 
 
+
+def matrix_schedule_problems(text):
+    """What would let a cell break on main unnoticed, or let a dispatch test something unchecked."""
+    problems = []
+    if not re.search(r"^  schedule:\n    - cron: ", text, re.M):
+        problems.append("it is not scheduled")
+    if not re.search(r"^  workflow_dispatch:\n    inputs:\n      candidate:\n", text, re.M):
+        problems.append("it cannot be dispatched on a named candidate")
+    if text.count("inputs.candidate") != 1 or \
+            "${{ github.event_name == 'schedule' && github.sha || inputs.candidate }}" not in text:
+        problems.append("a job reads the input itself, or a dispatch can fall back to the branch head")
+    # Every checkout but the candidate job's own, which checks out the branch to test ancestry on.
+    if text.count("ref: ${{ needs.candidate.outputs.sha }}") != text.count("uses: actions/checkout@") - 1 or \
+            '--candidate "$CANDIDATE"' not in text:
+        problems.append("the jobs do not all test the candidate the first job checked")
+    report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", text, re.M)
+    if not report or "    if: failure() && github.event_name == 'schedule'\n" not in report.group(1) \
+            or "issues: write" not in report.group(1) or "gh issue create" not in report.group(1):
+        problems.append("a failed scheduled run opens no issue")
+    elif not re.search(r"^    needs: \[candidate, cell, capture, select, summary\]\n", report.group(1), re.M):
+        problems.append("a job the report does not wait for can fail without an issue")
+    return problems
+
+
+def case_the_matrix_runs_nightly_and_reports_a_failed_night():
+    with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = sum(fail(f"matrix.yml: {problem}") for problem in matrix_schedule_problems(text))
+    for edited, expected in (
+        (text.replace("  schedule:\n    - cron: '41 23 * * *'\n", ""), "not scheduled"),
+        (text.replace("github.event_name == 'schedule' && github.sha || inputs.candidate", "inputs.candidate || github.sha"),
+         "fall back"),
+        (text.replace("ref: ${{ needs.candidate.outputs.sha }}", "ref: ${{ inputs.candidate }}", 1), "reads the input"),
+        (text.replace("    if: failure() && github.event_name == 'schedule'\n", "    if: failure()\n"), "opens no issue"),
+        (text.replace("ref: ${{ needs.candidate.outputs.sha }}\n", "", 1), "do not all test the candidate"),
+        (text.replace("select, summary]\n    if: failure()", "select]\n    if: failure()"), "does not wait for"),
+    ):
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to matrix.yml")
+        elif not any(expected in problem for problem in matrix_schedule_problems(edited)):
+            problems += fail(f"an edited matrix.yml was not reported for {expected!r}")
+    return problems
+
 LABELS = ["linux/8.14/21", "linux/9.8.0/21"]
 ROWS = [
     ("Gradle", "8.14", ["*/8.14/*"], ["MatrixCellIdentityTest"]),
@@ -1674,6 +1717,7 @@ CASES = (
     case_on_windows_the_wrapper_script_runs_as_its_batch_file,
     case_output_the_console_cannot_encode_passes_through_untouched,
     case_the_matrix_cell_builds_through_the_download_rerun,
+    case_the_matrix_runs_nightly_and_reports_a_failed_night,
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
