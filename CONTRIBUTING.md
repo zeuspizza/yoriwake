@@ -122,7 +122,8 @@ Python one). Then run `--guard "<label>"` and watch it fire, before and after th
 - Keep a pull request to one change.
 - Say in the description what the change does to an existing map: left alone, repaired on the next
   build, or discarded (see [Upgrading and your map](docs/reference.md#upgrading-and-your-map)). It
-  goes into [CHANGELOG.md](CHANGELOG.md).
+  goes into [CHANGELOG.md](CHANGELOG.md), under `## [Unreleased]`; CI fails a line added under a
+  version already released.
 - No figures without the conditions that produced them: the project, the commit, what was
   measured against what.
 

@@ -291,6 +291,11 @@ def scan_suite():
     return _python_checks("bench/test_scan_private.py")
 
 
+def ci_suite():
+    """The CI scripts' checks: the workflows' shapes and the rules their steps run."""
+    return _python_checks(".github/test_ci.py")
+
+
 def sweep_suite():
     """The corpus summary's classification gate, which runs without a corpus."""
     return _python_checks("bench/test_sweep_corpus.py")
@@ -583,6 +588,8 @@ SUITES = [
     ("sharding", sharding_suite, 0.5),
     # Pure Python; a few `git init`s in temporary directories.
     ("scan", scan_suite, 1),
+    # Pure Python over the workflow files and a dozen `git init`s; 3.7s for one unmutated run.
+    ("ci", ci_suite, 3.7),
     # Pure Python; two `git init`s and a local clone in a temporary directory.
     ("controls", controls_suite, 0.3),
     # Pure Python; one `git init` in a temporary directory.
@@ -623,7 +630,7 @@ SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
 # `functional` and `agent` are what full mode is for: they are most of the harness's time, and a
 # change to the agent or plugin sources runs full mode anyway. Treat the summary line the script
 # PRINTS as the authority on what a mode covers.
-FAST_SUITES = {"sweep", "sharding", "scan", "controls", "preflight", "corpus", "mutations", "order",
+FAST_SUITES = {"sweep", "sharding", "scan", "ci", "controls", "preflight", "corpus", "mutations", "order",
                "revert",
                "decoder",
                "jdk identity", "unit", "qualify", "config cost", "configuration guards"}
@@ -3441,6 +3448,18 @@ MUTATIONS = [
     ("the scan stops reading a pull request's title and body", "bench/scan_private.py",
      '    return scan_text(label, text or "", MESSAGE_RULES)', "    return []", scan_suite,
      "a plan id in a pull request title passed"),
+    # The changelog check: a line under a released version, the release entry it must let through,
+    # and the workflow that runs it.
+    ("the changelog check stops refusing a released version", ".github/ci.py",
+     "        if version in released:", "        if False:", ci_suite,
+     "a line added under 0.2.0 should be one problem"),
+    ("the changelog check reads released versions after the change", ".github/ci.py",
+     "    released = {match.group(1) for match in map(VERSION_HEADING.match, before.split(\"\\n\")) if match}",
+     "    released = {match.group(1) for match in map(VERSION_HEADING.match, after.split(\"\\n\")) if match}",
+     ci_suite, "a release entry was refused"),
+    ("the changelog workflow stops running the check", ".github/workflows/changelog.yml",
+     '        run: python3 .github/ci.py changelog "$BASE" "$HEAD"', "        run: true", ci_suite,
+     "no step runs the changelog check"),
     # The revert set: which commits it reverts, how, and in what order.
     ("a test-compile failure counts as build-failed again", "bench/revert.py",
      '    if compiles:\n        return "test-compile"', '    if compiles:\n        return None',
@@ -3630,6 +3649,7 @@ MUTATIONS = [
 SUITE_TESTS = {
     "sweep": ("bench/test_sweep_corpus.py",),
     "scan": ("bench/test_scan_private.py",),
+    "ci": (".github/test_ci.py",),
     "sharding": ("bench/test_merge.py", "bench/test_shard.py", "bench/test_tier.py"),
     "controls": ("bench/test_controls.py", "bench/test_cost.py"),
     "preflight": ("bench/test_sweep_preflight.py",),
