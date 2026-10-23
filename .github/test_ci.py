@@ -1628,8 +1628,9 @@ def case_security_names_the_release_key():
         return fail(f"SECURITY.md names {sorted(named)}, RELEASE-KEY.asc holds {sorted(published)}")
     return 0
 
-def _sweep_plan(tier, only):
-    """The `--only` arguments sweep.yml's plan step passes for these inputs, from the step itself."""
+def _sweep_plan(tier, only, arm=None):
+    """The `--only` arguments sweep.yml's plan step passes for these inputs, from the step itself.
+    With a list for `arm`, the `--arm` it asked `sweep_corpus.py` for is appended to it."""
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         text = handle.read()
     step = re.search(r"\n      - id: plan\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
@@ -1650,7 +1651,35 @@ def _sweep_plan(tier, only):
         subprocess.run(["bash", "-c", script], env=env, check=True, capture_output=True)
         with open(calls, encoding="utf-8") as handle:
             argv = handle.read().split()
+    if arm is not None and "--arm" in argv:
+        arm.append(argv[argv.index("--arm") + 1])
     return argv[argv.index("--only") + 1:-1] if "--only" in argv else []
+
+
+def case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly():
+    """A run with no inputs once planned nothing and ended green; a dispatch keeps its defaults."""
+    problems = 0
+    arm = []
+    if _sweep_plan("", "", arm) != [] or arm != ["full"]:
+        problems += fail(f"a run with no inputs asked for the {arm or 'no'} arm, not every project's full arm")
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", text, re.M)
+    for needle, why in (
+        ("  schedule:\n    - cron: ", "it is not scheduled"),
+        ("  workflow_dispatch:\n", "it cannot be dispatched"),
+        ('--factor "${FACTOR:-1.5}"', "a run with no inputs passes no factor to the slicer"),
+        ("        default: auto\n", "a dispatch's tier no longer defaults to auto"),
+        ("        default: demo\n", "a dispatch's only no longer defaults to demo"),
+        ("        default: '1.5'\n", "a dispatch's factor no longer defaults to 1.5"),
+    ):
+        if needle not in text:
+            problems += fail(f"sweep.yml: {why}")
+    if not report or "    if: failure() && github.event_name == 'schedule'\n" not in report.group(1) \
+            or "merge" not in report.group(1).split("\n", 1)[0]:
+        problems += fail("sweep.yml: a failed scheduled run, or one whose merge declared a project "
+                         "missing, opens no issue")
+    return problems
 
 
 def case_a_sweep_of_every_project_can_be_asked_for():
@@ -1842,6 +1871,7 @@ CASES = (
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
     case_security_names_the_release_key,
     case_a_sweep_of_every_project_can_be_asked_for,
+    case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly,
     case_a_record_job_archives_the_checkout_the_plan_names,
     case_a_failed_project_is_declared_missing_and_the_rest_still_merge,
 )
