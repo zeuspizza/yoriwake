@@ -56,7 +56,9 @@ same files are attested, signed and uploaded. You can check, for a version `<ver
    ```
 
    It prints `✓ Verification succeeded!`. Without `--signer-workflow` and `--source-ref` it would
-   accept an attestation from any workflow of this repository, on any ref.
+   accept an attestation from any workflow of this repository, on any ref. The release workflow
+   also attests the rehearsal it runs on each candidate, of version `0.0.0-rehearsal` and from a
+   branch; `--source-ref "refs/tags/v$v"` rejects those.
 
 3. **What it bundles.** The SBOM on the GitHub release lists every library in the jar, the agent
    nested in it, and the package each was relocated to. It is one of the files step 2's attestation
