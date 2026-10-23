@@ -1,8 +1,9 @@
-# MEMORY: build.gradle:212 sets `maxHeapSize = "4048m"`, so the test worker alone claims 4 GB. On a
-# 16 GB machine with ~7 GB free that plus the daemon plus the toolchain does not fit, and every timed
-# run dies with "Gradle build daemon disappeared unexpectedly" at :core:test -- the moment the worker
-# forks. Not an OOM: there is no OutOfMemoryError in the logs, and grepping for one matches Gradle's
-# own -XX:+HeapDumpOnOutOfMemoryError debug line and yields a confident wrong answer.
+# MEMORY: build.gradle's `testHeapSizes` gives :core's test worker 2560m (it was a flat 4048m at the
+# previous pin). On a 16 GB machine with ~7 GB free the worker plus the daemon plus the toolchain may
+# still not fit, and a timed run then dies with "Gradle build daemon disappeared unexpectedly" at
+# :core:test -- the moment the worker forks. Not an OOM: there is no OutOfMemoryError in the logs,
+# and grepping for one matches Gradle's own -XX:+HeapDumpOnOutOfMemoryError debug line and yields a
+# confident wrong answer.
 
 # WINDOWS: core/build cannot be deleted by ordinary means, and Gradle cannot clean it either.
 # Micronaut's generated bean-definition paths reach 300 characters, past the 260-char MAX_PATH, so
@@ -23,9 +24,11 @@ name = "kestra"
 # stamped on that row, so a resumed sweep at a different depth cannot make this a lie.
 sweep_limit = 9
 url = "https://github.com/kestra-io/kestra.git"
-# Full 40 characters. This was a 10-character abbreviation. It resolved because the checkout
-# carries full history, but an abbreviation in a pin is ambiguous by construction; pin the hash.
-commit = "c11fe3466f66cd1fe1eb76f3a0034095411156a9"
+# Full 40 characters: an abbreviation in a pin is ambiguous by construction. Upstream develop on
+# Gradle 9.8.1 and a Java 25 toolchain. The previous pin, c11fe3466f66cd1fe1eb76f3a0034095411156a9,
+# was on Gradle 8.7, below the plugin's 8.14 floor: the plugin declined it, its record job captured
+# no map, and its sweep shards had nothing to measure against.
+commit = "bad4d5b551cd14242564ddac5db9791553871c41"
 module = "core"
 flags = []
 sources = ["core/src/main/java/io/kestra/core/utils"]

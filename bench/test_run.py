@@ -75,6 +75,43 @@ def case_uncovered_targets_do_not_consume_the_limit():
     return failures
 
 
+def case_a_record_without_a_map_stops_and_quotes_the_plugin(tmp):
+    """A recording run whose capture left no map stops, with the plugin's words for the module."""
+    failures = 0
+    log = os.path.join(tmp, "capture.log")
+    with open(log, "w", encoding="utf-8") as handle:
+        handle.write("> Configure project :core-api\n"
+                     "[yoriwake] :core-api: Gradle 8.7 is older than 8.14, the oldest this plugin supports\n"
+                     "[yoriwake] :core: Gradle 8.7 is older than 8.14, the oldest this plugin supports\n"
+                     "BUILD SUCCESSFUL in 4s\n")
+    refusal = run.record_without_map("accepted.json", None, log, "core")
+    if not refusal or "REFUSING" not in refusal or "[yoriwake] :core: Gradle 8.7" not in refusal:
+        print(f"  FAIL: a recording run without a map was not refused with the plugin's line: {refusal!r}")
+        failures += 1
+    elif ":core-api:" in refusal:
+        print(f"  FAIL: the refusal quotes another module whose path starts the same: {refusal!r}")
+        failures += 1
+    silent = run.record_without_map("accepted.json", None, log, "other")
+    if not silent or "said nothing about :other" not in silent:
+        print(f"  FAIL: a module the plugin never named was not said to be unnamed: {silent!r}")
+        failures += 1
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write("[yoriwake] :core:test could not update the map (OutOfMemoryError)\n")
+    decode = run.record_without_map("accepted.json", None, log, "core", ":core:test")
+    if not decode or "could not update the map" not in decode:
+        print(f"  FAIL: the test task's own line was not quoted: {decode!r}")
+        failures += 1
+    unmerged = run.record_without_map("accepted.json", None, log, "core", unfinished="/m/core-test-1")
+    if not unmerged or "never merged" not in unmerged:
+        print(f"  FAIL: a capture that was never merged was not said to be one: {unmerged!r}")
+        failures += 1
+    for recording, capture_map in (("accepted.json", "/m/core-test-1"), (None, None)):
+        if run.record_without_map(recording, capture_map, log, "core") is not None:
+            print(f"  FAIL: recording={recording!r} with map={capture_map!r} was refused")
+            failures += 1
+    return failures
+
+
 def case_no_map_means_unknown_not_uncovered():
     """Empty is not the same as unknown. With no map, nothing may be called uncovered."""
     failures = 0
@@ -5965,7 +6002,8 @@ def case_only_the_measured_task_s_lines_are_read(tmp):
 
 
 # Cases needing a temp directory, which the two entry points below create once and share.
-ROOTED_CASES = (case_the_listener_gives_each_method_its_own_key,
+ROOTED_CASES = (case_a_record_without_a_map_stops_and_quotes_the_plugin,
+                case_the_listener_gives_each_method_its_own_key,
                 case_a_class_template_still_identifies_the_method,
                 case_invocations_straight_under_their_class_are_a_collapse,
                 case_a_plain_method_class_keeps_its_xml_keys,
