@@ -412,6 +412,20 @@ def case_the_matrix_runs_nightly_and_reports_a_failed_night():
             problems += fail(f"an edited matrix.yml was not reported for {expected!r}")
     return problems
 
+
+def case_a_failure_that_lasts_is_one_issue_not_one_a_night():
+    """A scheduled run that fails until someone fixes it would otherwise open an issue each night."""
+    problems = 0
+    for name in ("guards.yml", "sweep.yml", "matrix.yml"):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", handle.read(), re.M)
+        block = report.group(1) if report else ""
+        for needle in ("gh issue list", "select(.title == env.TITLE)", 'gh issue comment "$open"',
+                       'gh issue create -R "$REPO" --title "$TITLE"'):
+            if needle not in block:
+                problems += fail(f"{name}: a failed scheduled run does not reuse the open issue ({needle!r} is missing)")
+    return problems
+
 LABELS = ["linux/8.14/21", "linux/9.8.0/21"]
 ROWS = [
     ("Gradle", "8.14", ["*/8.14/*"], ["MatrixCellIdentityTest"]),
@@ -1718,6 +1732,7 @@ CASES = (
     case_output_the_console_cannot_encode_passes_through_untouched,
     case_the_matrix_cell_builds_through_the_download_rerun,
     case_the_matrix_runs_nightly_and_reports_a_failed_night,
+    case_a_failure_that_lasts_is_one_issue_not_one_a_night,
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
