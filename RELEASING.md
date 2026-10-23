@@ -38,7 +38,11 @@ version cannot be taken back, so no `v*` tag exists until every gate below has p
 - **Minor.** A commit of `main` with every change for the release merged. Before it, a pull request
   moves the functional suite's 9.x version to Gradle's newest release, with the cells of
   `.github/workflows/matrix.yml` and the reference's [supported matrix](docs/reference.md#supported-matrix).
-- **Patch.** A commit on `release/<major>.<minor>`, which is pushed with each patch's tag. If the
+  The candidate is cut only once the newest scheduled `matrix.yml` run on `main` is green and ran a
+  commit at or after that pull request, and the schedule is still enabled (GitHub disables one after
+  60 days without activity). Step 7b still proves the commit that is tagged.
+- **Patch.** A commit on `release/<major>.<minor>`, which is pushed with each patch's tag. No
+  scheduled run tests a release branch, so step 7b is a patch's only matrix run. If the
   branch exists neither locally nor on `origin`, create it from the line's latest tag
   (`git tag -l 'v0.2.*' --sort=-v:refname | head -1`, then `git branch release/0.2 <that tag>`).
   Cherry-pick each fix from `main` (`git cherry-pick -x <sha>`); a conflict in `CHANGELOG.md` is
