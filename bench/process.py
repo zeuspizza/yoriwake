@@ -8,6 +8,7 @@ them.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -34,6 +35,18 @@ STALLED = -2
 # results binary had been written a minute before the kill. Raising the window would only move the
 # suite that trips it; watching what the build WRITES tells a slow build from a stuck one directly.
 STALL_SECONDS = 600
+
+# What a killed JVM spent its CPU on, read from the dumps taken before the kill. bitwarden-android's
+# capture was killed for silence on CI only, and seven thread dumps had to be read by hand to see that
+# its test JVM had spent over half its CPU in garbage collection and a third in the VM thread, with the
+# test thread itself at 3%: not parked, not working, starved. Over the JVM's lifetime, not the silent
+# window; enough to say which question to ask next.
+GC_THREADS = ("GC Thread#", "G1 ", "ParGC", "ZWorker", "ZDriver", "Shenandoah")
+# More than this share of the JVM's CPU in collector threads, or in the VM thread, names the reading.
+MOSTLY = 0.5
+# Less than this many cores over the JVM's life is a JVM waiting, not working: spring-core's latch.
+PARKED_CORES = 0.1
+THREAD_HEADER = re.compile(r'^"(?P<name>[^"]*)".*?\bcpu=(?P<cpu>[0-9.]+)ms elapsed=(?P<elapsed>[0-9.]+)s', re.M)
 
 # How often the guard looks. Long enough to cost nothing on an hour-long build, and a named constant
 # rather than a literal because the tests must be able to drive a real stall in under a second --
@@ -113,8 +126,10 @@ def run(command, cwd, log_path=None, timeout=3600, stall_seconds=STALL_SECONDS,
                 process.kill()
                 process.wait()
                 handle.flush()
-                threads = (f"thread dumps of {dumped} JVMs beside it" if dumped
+                threads = (f"thread dumps of {len(dumped)} JVMs beside it" if dumped
                            else "no JVM thread dump could be taken")
+                readings = describe_dumps(dumped)
+                threads += f". {readings}" if readings else ""
                 print(f"  TIMED OUT: still running after {int(timeout)}s; killed. Log: {log_path}; "
                       f"{threads}", flush=True)
                 return STALLED, round(time.time() - started, 1)
@@ -132,8 +147,10 @@ def run(command, cwd, log_path=None, timeout=3600, stall_seconds=STALL_SECONDS,
                 quiet = (f"{int(stall_seconds / 60)} minutes" if stall_seconds >= 60
                          else f"{int(stall_seconds)}s")
                 watched = " and nothing written under the paths it watches" if progress_paths else ""
-                threads = (f"thread dumps of {dumped} JVMs beside it" if dumped
+                threads = (f"thread dumps of {len(dumped)} JVMs beside it" if dumped
                            else "no JVM thread dump could be taken")
+                readings = describe_dumps(dumped)
+                threads += f". {readings}" if readings else ""
                 print(f"  STALLED: no output for {quiet}{watched}; killed. "
                       f"Read the test worker's threads before assuming it is slow. Log: {log_path}; "
                       f"{threads}", flush=True)
@@ -147,7 +164,7 @@ def dump_threads(log_path):
 
     On a CI runner the build is gone by the time anyone reads the log, so whether the test worker
     was parked on a lock or working slowly can only be read from a dump taken here. Named
-    `<log>.stall-<pid>.log` so a job that uploads its logs uploads them. Returns how many it wrote;
+    `<log>.stall-<pid>.log` so a job that uploads its logs uploads them. Returns the paths it wrote;
     never raises, since the kill must happen whatever this finds.
     """
     home = os.environ.get("JAVA_HOME")
@@ -156,12 +173,12 @@ def dump_threads(log_path):
         tools = [shutil.which("jps"), shutil.which("jstack")]
     jps, jstack = tools
     if not jps or not jstack:
-        return 0
+        return []
     try:
         listed = subprocess.run([jps, "-q"], capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
-        return 0
-    written = 0
+        return []
+    written = []
     # Bounded as a whole: the kill waits on this, and a wedged JVM can take jstack to its timeout.
     deadline = time.time() + 120
     for pid in listed.split():
@@ -172,10 +189,59 @@ def dump_threads(log_path):
         except (OSError, subprocess.SubprocessError):
             continue
         if dump.returncode == 0 and dump.stdout:
-            with open(f"{log_path}.stall-{pid}.log", "w", encoding="utf-8") as handle:
+            path = f"{log_path}.stall-{pid}.log"
+            with open(path, "w", encoding="utf-8") as handle:
                 handle.write(dump.stdout)
-            written += 1
+            written.append(path)
     return written
+
+
+def read_dump(path):
+    """One thread dump's CPU by where it went: (is a test JVM, total, collector, VM thread), in ms,
+    and the JVM's age in seconds; None when its threads carry no `cpu=` (an older JDK)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return None
+    threads = [(m.group("name"), float(m.group("cpu")), float(m.group("elapsed")))
+               for m in THREAD_HEADER.finditer(text)]
+    if not threads:
+        return None
+    return {"test_jvm": any(name == "Test worker" for name, _, _ in threads),
+            "total": sum(cpu for _, cpu, _ in threads),
+            "gc": sum(cpu for name, cpu, _ in threads if name.startswith(GC_THREADS)),
+            "vm": sum(cpu for name, cpu, _ in threads if name == "VM Thread"),
+            "elapsed": max(elapsed for _, _, elapsed in threads)}
+
+
+def reading(dump):
+    """Where a JVM's CPU went, in words a reader of the log acts on."""
+    if dump["total"] / 1000 < PARKED_CORES * dump["elapsed"]:
+        return "parked"
+    gc, vm = dump["gc"] / dump["total"], dump["vm"] / dump["total"]
+    if gc > MOSTLY:
+        return "collecting garbage"
+    if vm > MOSTLY:
+        return "at safepoints"
+    if gc + vm > MOSTLY:
+        return "collecting garbage or at safepoints"
+    return "working"
+
+
+def describe_dumps(paths):
+    """One clause per dumped JVM whose threads carry CPU times, the test JVM first."""
+    clauses = []
+    for path in paths:
+        dump = read_dump(path)
+        if dump is None or dump["total"] <= 0:
+            continue
+        pid = path.rsplit(".stall-", 1)[-1].removesuffix(".log")
+        gc, vm = round(100 * dump["gc"] / dump["total"]), round(100 * dump["vm"] / dump["total"])
+        clauses.append((not dump["test_jvm"],
+                        f"{'test worker' if dump['test_jvm'] else 'JVM'} {pid}: GC {gc}%, VM thread "
+                        f"{vm}%, other {100 - gc - vm}% -- {reading(dump)}"))
+    return "; ".join(clause for _, clause in sorted(clauses, key=lambda c: c[0]))
 
 
 def stalled(code, label, findings, phase):
