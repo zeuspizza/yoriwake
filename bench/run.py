@@ -44,6 +44,8 @@ INIT_SCRIPT_ARGS = ["-I", INIT_SCRIPT, yoriwake_checkout.init_script_version_fla
 # Every harness build carries this, whichever arm: a guest's own Develocity test selection skipped
 # classes in both arms, ground truth included. See the script's own note.
 GUEST_SELECTION_OFF = os.path.join(HERE, "guest-selection-off.init.gradle")
+# Every build of a project with `max_parallel_forks`, whichever arm; see `fork_cap_flags`.
+FORK_CAP_INIT = os.path.join(HERE, "fork-cap.init.gradle")
 # The public flag the isolated arm records with; Settings.ISOLATED_CAPTURE, pinned by
 # test_module_contract.py.
 ISOLATED_CAPTURE_FLAG = "-Pyoriwake.isolatedCapture"
@@ -407,6 +409,17 @@ def flags_changed(stored, project):
     if stored.get("flags") is None:
         return False
     return list(stored.get("flags") or []) != list(project.get("flags") or [])
+
+
+def fork_cap_changed(stored, project):
+    """Do the stored results come from builds under another test-fork cap than this project's?
+
+    A cap changes how long every build takes, so rows and timings from another cap cannot share a
+    file. Null tolerance is `flags`'s: a file written before the stamp existed is not aged by it.
+    """
+    if "max_parallel_forks" not in stored:
+        return False
+    return stored.get("max_parallel_forks") != fork_cap(project)
 
 
 def assert_droppable(checkout, relative_paths):
@@ -1258,7 +1271,7 @@ def _build_once(checkout, project, task_args, log_path):
     launched = time.time()
     with sweep_data.TestJvmSampler() as sampler:
         result = run([wrapper(checkout), "-I", GUEST_SELECTION_OFF] + daemon_jvm_flags(project) +
-                     REPOSITORY_RETRY_FLAGS + guest_flags(project) + task_args + instruments +
+                     fork_cap_flags(project) + REPOSITORY_RETRY_FLAGS + guest_flags(project) + task_args + instruments +
                      ["--no-build-cache", "--console=plain"],
                      checkout, log_path,
                      progress_paths=test_progress_paths(checkout, project),
@@ -1355,6 +1368,42 @@ def daemon_jvm_flags(project):
             f"is this machine's and not the project's."
         )
     return [f"-Dorg.gradle.java.home={home}"] + jvmargs
+
+
+def fork_cap(project):
+    """The project's `max_parallel_forks`, or None when it sets none.
+
+    It exists for a guest whose test forks do not fit a CI runner beside its daemons: the OS kills
+    the runner and leaves nothing in any log. Applied on every machine, not only on CI, so a local
+    reproduction runs what CI runs and no arm can run without it.
+    """
+    cap = project.get("max_parallel_forks")
+    if cap is None:
+        return None
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+        raise SystemExit(f"{project['name']}: max_parallel_forks must be a positive integer, "
+                         f"not {cap!r}")
+    return cap
+
+
+def fork_cap_flags(project):
+    """What every build of `project` carries to cap its test forks; nothing without a cap."""
+    cap = fork_cap(project)
+    return [] if cap is None else ["-I", FORK_CAP_INIT, f"-Dyoriwake.harness.forkCap={cap}"]
+
+
+def isolated_forks(requested, project):
+    """The isolated recording's fork count: `--isolated-forks`, never above the project's cap."""
+    cap = fork_cap(project)
+    return requested if cap is None else min(requested, cap)
+
+
+def fork_stamps(project, args):
+    """What a results file says about its test forks: the isolated recording's count (None on the
+    shared arm), and the project's cap on every build, both arms alike (None: the guest's own)."""
+    return {"capture_max_parallel_forks": (isolated_forks(args.isolated_forks, project)
+                                           if args.isolated_capture else None),
+            "max_parallel_forks": fork_cap(project)}
 
 
 def find_jdk(version):
@@ -4608,6 +4657,9 @@ def main():
         elif flags_changed(stored, project):
             print(f"results were measured under flags {list(stored.get('flags') or [])}, not "
                   f"{list(project.get('flags') or [])}; starting fresh", flush=True)
+        elif fork_cap_changed(stored, project):
+            print(f"results were measured with test forks capped at "
+                  f"{stored.get('max_parallel_forks')}, not {fork_cap(project)}; starting fresh", flush=True)
         # HOW FIRMLY THE ALREADY-FAILING SET WAS ESTABLISHED is a property of the row. Rows taken at
         # two repeat counts in one file describe neither, and no other stamp can witness the change:
         # `selector_digest` hashes the selector rather than `bench/`, and `commit` does not move
@@ -4691,11 +4743,17 @@ def main():
             print("the paired results hold no row with a ground truth to reuse; refusing to "
                   "measure an isolated arm of nothing", flush=True)
             return 1
+        # Its timings are divided by the paired arm's baseline, which a different fork cap changes.
+        if fork_cap_changed(paired, project):
+            print(f"the paired results were measured with test forks capped at "
+                  f"{paired.get('max_parallel_forks')}, not {fork_cap(project)}; refusing to pair "
+                  f"with them", flush=True)
+            return 1
         args.limit = len(paired_rows)
         baseline_seconds_paired = paired.get("baseline_seconds")
     RUN_STAMPS.update({
         "capture_mode": arm_name,
-        "capture_max_parallel_forks": args.isolated_forks if args.isolated_capture else None,
+        **fork_stamps(project, args),
         "paired_with": os.path.relpath(args.pair_with, ROOT) if args.pair_with else None,
         # THIS INVOCATION'S sample rule and arm set; each row carries its own `narrowed_target`,
         # since a resumed file holds rows from several invocations. `recall_only` true means a
@@ -4872,9 +4930,11 @@ def main():
             remove_tree(map_dir)
 
         # The isolated arm records a fresh JVM per test class, with as many at a time as the
-        # machine has cores; see isolated-forks.init.gradle. Stamped as `capture_max_parallel_forks`.
+        # machine has cores, or the project's cap if lower; see isolated-forks.init.gradle. Stamped
+        # as `capture_max_parallel_forks`.
         isolated_args = ([ISOLATED_CAPTURE_FLAG, "-I", sweep_data.ISOLATED_FORKS_INIT,
-                          f"-Dyoriwake.harness.maxParallelForks={args.isolated_forks}"]
+                          "-Dyoriwake.harness.maxParallelForks="
+                          f"{isolated_forks(args.isolated_forks, project)}"]
                          if args.isolated_capture else [])
         capture_log = os.path.join(scratch, "capture.log")
         capture_started = time.time()

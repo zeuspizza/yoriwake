@@ -1,0 +1,19 @@
+/*
+ * Harness only: lowers every test task's maxParallelForks to a project's `max_parallel_forks`.
+ *
+ * A guest whose test forks do not fit the machine beside its daemons gets its runner killed by the
+ * OS, with nothing in any log. The cap only lowers: a task already running fewer forks keeps its
+ * own count. Every build of a capped project carries it, so both timing arms run the same forks;
+ * the results file says so (`max_parallel_forks`).
+ *
+ * Set when the task graph is ready, after every build script's own `configureEach`, for the same
+ * reason as guest-selection-off.init.gradle.
+ */
+def cap = System.getProperty('yoriwake.harness.forkCap')
+if (cap != null) {
+    gradle.taskGraph.whenReady { graph ->
+        graph.allTasks.findAll { it instanceof Test }.each { task ->
+            task.maxParallelForks = Math.min(task.maxParallelForks, cap as int)
+        }
+    }
+}
