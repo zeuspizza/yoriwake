@@ -1298,7 +1298,20 @@ they may change or disappear in any release.
 [`scripts/measure-toll.sh`](../scripts/measure-toll.sh) `<dir> <task>` runs both timed builds and
 then the audit with them. It runs your suite twice.
 
-The extension:
+The extension, `yoriwake { }` in the build script of each project that applies the plugin:
+
+| Property | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | `Boolean` | `true` | `false` leaves the build entirely alone, as `-Pyoriwake.disabled` does. |
+| `alwaysRun` | `List<String>` | empty | Tests that may never be skipped: a class, a method (`Class.method`), or a glob. |
+| `fullRunBranches` | `List<String>` | empty | Branches on which a selecting run runs every test and records the map instead. See [When to refresh](#when-to-refresh). |
+| `fullRunEveryBuilds` | `Int` | unset | Run every test once a task has executed this many times since its last full run. |
+| `fullRunEveryDays` | `Int` | unset | Run every test once this many days have passed since a task's last full run; with both set, whichever comes first. |
+| `notReadByTests` | `List<String>` | empty | Globs of files no test or build reads: a changed one is no change. |
+| `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
+| `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
+
+For example:
 
 ```kotlin
 yoriwake {

@@ -4,9 +4,10 @@ name: verify
 # on one machine selects correctly on another, from a cold checkout.
 # A pull request that changes only Markdown or docs runs nothing but the `changes` job, and every
 # other job reports skipped, which satisfies the required checks; docs/contract.md (the agent's
-# tests check its constants against it), docs/reference.md (test_ci.py checks its supported matrix
-# against matrix.yml) and SECURITY.md (test_ci.py checks its key fingerprint against
-# RELEASE-KEY.asc) count as code. A push to main keeps the path filter.
+# tests check its constants against it, the plugin's its published tokens), docs/reference.md (the
+# plugin's tests check the names, flags and printed lines it quotes against the code, test_ci.py its
+# supported matrix against matrix.yml) and SECURITY.md (test_ci.py checks its key fingerprint
+# against RELEASE-KEY.asc) count as code. A push to main keeps the path filter.
 on:
   push:
     branches: [main]

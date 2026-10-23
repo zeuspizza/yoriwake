@@ -195,6 +195,10 @@ INIT_SCRIPT = "scripts/yoriwake.init.gradle.kts"
 # decides which class files can be read at all, and one corpus guest compiles to a version an older
 # ASM refuses.
 PLUGIN_BUILD = "plugin/build.gradle.kts"
+# The user docs whose names, flags, tokens and printed lines the reference suite checks against the
+# code.
+REFERENCE_DOC = "docs/reference.md"
+CONTRACT_DOC = "docs/contract.md"
 # The two halves of the audit's split between resolving a classpath and scanning it.
 CLASSPATH_REFUSAL = (
     "            InlineScan.Kind.CLASSPATH_UNRESOLVED,\n"
@@ -538,6 +542,22 @@ def decoder_suite():
     return named
 
 
+def reference_suite():
+    """The checks that the reference and the contract name what the code has: flags, the extension,
+    published tokens, quoted names, files, tasks and printed lines."""
+    done = gradle([":plugin:test", "--tests", "*ReferenceTest*", "--tests", "*PublishedTokensTest*",
+                   "--rerun"])
+    if done.returncode == 0:
+        return []
+    lines = (done.stdout + done.stderr).splitlines()
+    named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
+    if not named:
+        compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
+            if compile_errors else ["the reference suite failed without naming a test"]
+    return named
+
+
 def guard_suite():
     """The configuration-work guards. Gradle exits non-zero when one fires."""
     done = gradle(FUNCTIONAL_FLOOR_ONLY + ["--tests", "*ConfigurationWorkGuardTest*", "--rerun"])
@@ -619,6 +639,9 @@ SUITES = [
     # Pure Python over one fixture repository, with javac for the gate's stand-in.
     ("revert", revert_suite, 10.5),
     ("decoder", decoder_suite, 5),
+    # 5.7s for one run with a Settings.kt mutation applied, its Kotlin recompile included; a doc
+    # mutation recompiles nothing.
+    ("reference", reference_suite, 6),
     ("agent", agent_suite, 6),
     # About 1.4s warm with a mutation applied, both tasks.
     ("jdk identity", jdk_identity_suite, 1.5),
@@ -647,7 +670,7 @@ SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
 # PRINTS as the authority on what a mode covers.
 FAST_SUITES = {"sweep", "sharding", "scan", "ci", "controls", "preflight", "corpus", "mutations", "order",
                "revert",
-               "decoder",
+               "decoder", "reference",
                "jdk identity", "unit", "qualify", "config cost", "configuration guards"}
 
 # The two staging fragments the guards below reintroduce defects into. Named constants because
@@ -3666,6 +3689,62 @@ MUTATIONS = [
      '{POOL_SHAPES: ("bench/pool_mutations.py", "bench/family_order.py",',
      '{POOL_SHAPES: ("bench/pool_mutations.py",', python_suite,
      "a change to family_order.py left the pool's grammar digest alone"),
+    # The docs' claims about names. Each starts where the claim does: a doc that names something
+    # the code lacks, or code that gains something the doc does not name.
+    ("the reference's Properties table lists a flag Settings does not read", REFERENCE_DOC,
+     "| `yoriwake.base=<ref>` |", "| `yoriwake.baseRef=<ref>` |", reference_suite,
+     "every property the table lists is read"),
+    ("Settings reads a flag the reference's Properties table does not list", SETTINGS,
+     '        const val BASE = "yoriwake.base"\n',
+     '        const val BASE = "yoriwake.base"\n        const val BASE_REF = "yoriwake.baseRef"\n',
+     reference_suite, "every flag the plugin reads is listed"),
+    ("the reference names a -P flag Settings does not read", REFERENCE_DOC,
+     "**`-Pyoriwake.fullRun`**", "**`-Pyoriwake.fullrun`**", reference_suite,
+     "every -P flag the docs name is read"),
+    ("the plugin reads a Gradle property outside Settings", YORIWAKE_PLUGIN,
+     "public fun isDisabled(project: Project): Boolean = Settings.of(project).disabled",
+     "public fun isDisabled(project: Project): Boolean =\n"
+     "            project.providers.gradleProperty(Settings.DISABLED).isPresent", reference_suite,
+     "only Settings reads Gradle properties"),
+    ("the reference names a -D property the plugin never names", REFERENCE_DOC,
+     "`-Dpts.enabled=true`", "`-Dpts.enable=true`", reference_suite,
+     "every -D flag the reference names is in the code"),
+    ("the plugin reads a system property of the daemon", SETTINGS,
+     "            Settings { project.providers.gradleProperty(it).orNull }",
+     "            Settings { project.providers.gradleProperty(it).orNull ?: project.providers.systemProperty(it).orNull }",
+     reference_suite, "the plugin reads no undocumented -D flag"),
+    ("the extension's enabled defaults to false", YORIWAKE_PLUGIN,
+     "enabled.convention(true)", "enabled.convention(false)", reference_suite,
+     "each extension default is the table's"),
+    ("the reference's extension table gives a property another type", REFERENCE_DOC,
+     "| `fullRunEveryDays` | `Int` |", "| `fullRunEveryDays` | `Long` |", reference_suite,
+     "each extension property has the table's type"),
+    ("the reference's extension table leaves a property out", REFERENCE_DOC,
+     "| `notReadByTests` | `List<String>` |", "| `notReadByTest` | `List<String>` |",
+     reference_suite, "every extension property is listed"),
+    ("an extension example sets a property the table does not list", REFERENCE_DOC,
+     "    fullRunEveryDays = 7   ", "    fullRunEveryWeeks = 1  ", reference_suite,
+     "every extension example names only listed properties"),
+    ("the contract leaves a published token out", CONTRACT_DOC,
+     "`git-unavailable`, ", "", reference_suite, "the contract lists every published token"),
+    ("the contract lists a token the code does not publish", CONTRACT_DOC,
+     "| framework | `junit-platform` |", "| framework | `junit-platform`, `junit-vintage` |",
+     reference_suite, "the contract lists no other token"),
+    ("the reference quotes a reason the code does not have", REFERENCE_DOC,
+     "| `not-in-map` |", "| `not-in-the-map` |",
+     reference_suite, "every quoted name exists in the code"),
+    ("the reference lists a map file the code does not write", REFERENCE_DOC,
+     "- `selection.tsv`:", "- `selections.tsv`:",
+     reference_suite, "every quoted file exists in the code"),
+    ("the reference's Tasks table leaves a registered task out", REFERENCE_DOC,
+     "| `yoriwakeDecode<Task>` |", "| `yoriwakeDecoder<Task>` |",
+     reference_suite, "every registered task is listed"),
+    ("the reference's Tasks table names a task the plugin does not register", REFERENCE_DOC,
+     "| `yoriwakeAudit<Task>` |", "| `yoriwakeAudits<Task>` |", reference_suite,
+     "every task the docs name is registered"),
+    ("the reference quotes a printed line the code does not print", REFERENCE_DOC,
+     "`:test map updated: N records captured, M known`", "`:test map refreshed: N records captured, M known`",
+     reference_suite, "every printed line is printed"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
@@ -3683,6 +3762,7 @@ SUITE_TESTS = {
     "order": ("bench/test_family_order.py", "bench/test_replay_order.py"),
     "revert": ("bench/test_revert.py",),
     "decoder": ("plugin/src/test/",),
+    "reference": ("plugin/src/test/", REFERENCE_DOC, CONTRACT_DOC),
     # The agent `test` task puts the boot fixture on the boot class path, so it proves agent guards.
     "agent": ("agent/src/test/", "agent/src/bootFixture/"),
     "jdk identity": ("agent/src/jdkIdentity/", "agent/src/bootFixture/"),
@@ -3698,7 +3778,7 @@ SUITE_TESTS = {
 }
 # A change to how the Gradle suites are BUILT can break any of them, so it selects all of them.
 GRADLE_SUITES = {"decoder", "agent", "jdk identity", "unit", "configuration guards", "functional",
-                 "replay", "break", "sbom", "portal"}
+                 "replay", "break", "sbom", "portal", "reference"}
 # Run with NOTHING beside them. The functional suite has failed unmutated in a worker while only
 # Python suites ran next to it, and passed alone in the same tree: its TestKit builds compare
 # file timestamps, and load moves them. Its guards run after the parallel phase, one at a time. The
@@ -3708,7 +3788,7 @@ EXCLUSIVE_SUITES = {"functional", "configuration guards", "break"}
 # Gradle suites that start no TestKit build and compare no file timestamps, so they run in parallel
 # across the workers, each in its own worktree. Named rather than the locked ones listed, so a
 # suite added later runs under the lock until shown safe.
-UNLOCKED_SUITES = {"agent", "unit", "decoder"}
+UNLOCKED_SUITES = {"agent", "unit", "decoder", "reference"}
 
 
 # Functional guards run two at a time in the alone phase, each class in one tree only, so its
@@ -3902,7 +3982,7 @@ def prepare_workers(count):
 # baselines then failed unmutated and every guard it held went unproved. So each tree compiles
 # these first, one tree at a time, and the parallel phase only recompiles what a mutation touched.
 WARM_UP = {
-    "unit": ":plugin:testClasses", "decoder": ":plugin:testClasses",
+    "unit": ":plugin:testClasses", "decoder": ":plugin:testClasses", "reference": ":plugin:testClasses",
     "agent": ":agent:testClasses", "jdk identity": ":agent:testClasses",
     "functional": ":plugin:functionalTestClasses",
     "configuration guards": ":plugin:functionalTestClasses",

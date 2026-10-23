@@ -13,7 +13,9 @@ import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.FilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import org.junit.jupiter.api.Test
+import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Every refusal, reason, verdict, decline and origin token that can reach `explain.json`, `audit.json`,
@@ -21,6 +23,7 @@ import kotlin.test.assertEquals
  * these spellings, so a rename is a breaking change even when every other test stays green.
  *
  * One `category<TAB>token` per line: the same spelling can mean different things in two outputs.
+ * docs/contract.md publishes the same list, and is checked against it both ways.
  */
 class PublishedTokensTest {
 
@@ -71,13 +74,42 @@ class PublishedTokensTest {
         )
     }
 
-    @Test
-    fun `every published token is spelled exactly as the golden list`() {
-        val golden = checkNotNull(javaClass.getResourceAsStream("/golden/tokens.txt")) { "no golden tokens" }
+    private fun golden(): List<String> =
+        checkNotNull(javaClass.getResourceAsStream("/golden/tokens.txt")) { "no golden tokens" }
             .use { it.readBytes().toString(Charsets.UTF_8) }
             .lines().filter(String::isNotEmpty)
+
+    private val contract = File("../docs/contract.md").let { if (it.isFile) it else File("docs/contract.md") }
+
+    /** The `category<TAB>token` pairs of the contract's Published tokens table. */
+    private fun documented(): List<String> {
+        assertTrue(contract.isFile, "contract not found at ${contract.absolutePath}")
+        val lines = contract.readLines().dropWhile { it != "## Published tokens" }
+        val rows = lines.dropWhile { !it.startsWith("| Category |") }.drop(2).takeWhile { it.startsWith("|") }
+        assertTrue(rows.isNotEmpty(), "${contract.name} has no Published tokens table")
+        return rows.flatMap { row ->
+            val cells = row.trim().removePrefix("|").split("|").map(String::trim)
+            Regex("`([^`]+)`").findAll(cells[1]).map { "${cells[0]}\t${it.groupValues[1]}" }.toList()
+        }
+    }
+
+    @Test
+    fun `every published token is spelled exactly as the golden list`() {
+        val golden = golden()
         val produced = produced()
         assertEquals(produced.size, produced.toSet().size, "a token is produced twice in one category")
         assertEquals(golden, produced.sorted())
+    }
+
+    @Test
+    fun `the contract lists every published token`() {
+        val missing = golden() - documented().toSet()
+        assertTrue(missing.isEmpty(), "${contract.name} does not list published tokens: $missing")
+    }
+
+    @Test
+    fun `the contract lists no other token`() {
+        val extra = documented() - golden().toSet()
+        assertTrue(extra.isEmpty(), "${contract.name} lists tokens the golden list does not have: $extra")
     }
 }
