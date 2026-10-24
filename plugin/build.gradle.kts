@@ -444,6 +444,14 @@ tasks.test {
     providers.gradleProperty("yoriwake.probe.checkouts").orNull?.let {
         systemProperty("yoriwake.probe.checkouts", rootProject.file(it).absolutePath)
     }
+    // ReferenceTest and PublishedTokensTest check these docs against the sources' text, so an edit
+    // to a doc alone, or a comment-only edit, must rerun the tests.
+    inputs.files(rootProject.file("docs/reference.md"), rootProject.file("docs/contract.md"))
+        .withPropertyName("checkedDocs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(layout.projectDirectory.dir("src/main"), rootProject.file("agent/src/main"))
+        .withPropertyName("mainSources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // Every test that runs a real Gradle build through TestKit, apart from `test` so the unit tests

@@ -115,7 +115,8 @@ def discard_results(project_dir, drop_map=False):
     return removed
 
 
-# Docs the checks read: the agent's tests compare their constants with the contract, test_ci.py
+# Docs the checks read: the agent's tests compare their constants with the contract, the plugin's
+# compare the names, flags, tokens and printed lines both docs quote with the code, test_ci.py
 # compares the reference's supported matrix with matrix.yml and SECURITY.md's key fingerprint with
 # RELEASE-KEY.asc.
 CHECKED_DOCS = {"docs/contract.md", "docs/reference.md", "SECURITY.md"}
