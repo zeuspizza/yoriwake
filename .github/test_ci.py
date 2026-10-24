@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -1872,6 +1873,53 @@ def _sweep_step(text, opener):
             'while IFS= read -r __l; do eval "$__a+=(\\"\\$__l\\")"; done; }\n' + script)
 
 
+SAMPLER = os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "machine_sampler.sh")
+
+
+def case_the_machine_sampler_logs_memory_disk_and_the_largest_processes():
+    """What a runner shut down for want of memory or disk leaves in its job log."""
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        meminfo = os.path.join(root, "meminfo")
+        with open(meminfo, "w", encoding="utf-8") as handle:
+            handle.write("MemTotal: 16384000 kB\nMemAvailable: 4096000 kB\nSwapTotal: 4096000 kB\n"
+                         "SwapFree: 3072000 kB\n")
+        sampler = subprocess.Popen(["sh", SAMPLER, "1"], stdout=subprocess.PIPE, text=True,
+                                   env={**os.environ, "MACHINE_SAMPLER_MEMINFO": meminfo})
+        time.sleep(2.5)
+        sampler.terminate()
+        lines = sampler.communicate()[0].splitlines()
+        if len(lines) < 3 or "memory total 16000M" not in lines[0]:
+            problems += fail(f"the sampler printed no header and two samples: {lines}")
+        for line in lines[1:]:
+            if not (line.startswith("[machine] ") and "memory used 12000M available 4000M, swap used 1000M" in line
+                    and re.search(r"free on / \d+M, on the workspace \d+M; largest: \S", line)):
+                problems += fail(f"a sample lacks memory, swap, disk or the largest processes: {line!r}")
+        tools = os.path.join(root, "bin")
+        os.makedirs(tools)
+        for tool in ("ps", "awk", "sort"):
+            os.symlink(shutil.which(tool), os.path.join(tools, tool))
+        done = subprocess.run([shutil.which("sh"), SAMPLER, "1"], capture_output=True, text=True,
+                              timeout=10, env={**os.environ, "PATH": tools})
+        if done.returncode != 0 or done.stdout.strip() != "[machine] not sampling: df is not on PATH":
+            problems += fail(f"a sampler without df did not say so once and exit 0: {done.returncode}, {done.stdout!r}")
+    return problems
+
+
+def case_every_measuring_step_samples_the_machine_until_it_ends():
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for opener in ("\n      - name: record and cut into slices", "\n      - name: measure this slice"):
+        script = _sweep_step(text, opener)
+        start = script.find("bench/machine_sampler.sh & sampler=$!")
+        if start < 0 or "trap 'kill \"$sampler\" 2>/dev/null || true' EXIT" not in script \
+                or start > script.find("python3 bench/run.py"):
+            problems += fail(f"sweep.yml:{opener.split('name: ')[1]} does not sample the machine from "
+                             f"before the build until the step ends")
+    return problems
+
+
 def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
     """One failed project must not cost the others their rows, and a sweep short of one must say so
     and fail: kafka's record failed and kafka-core lost a shard, so only okio is merged, the release
@@ -1946,6 +1994,187 @@ def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
                           capture_output=True).returncode == 0:
             problems += fail("a reduced arm short of a member still went on to measure")
     return problems
+
+
+def _sweep_completion_plan(tier, only, completes, changed=(), reachable=True, workflow="sweep"):
+    """sweep.yml's plan step for a completion: its exit code, its output, and what it asked
+    `sweep_corpus.py` for (None if nothing). `gh` names the earlier run's head commit, `git` the
+    paths changed since it, and `bench/tier.py` is the real one."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        script = _sweep_step(handle.read(), "\n      - id: plan")
+    with tempfile.TemporaryDirectory() as root:
+        calls = os.path.join(root, "calls")
+        stubs = {
+            "gh": f'#!/bin/sh\necho "$*" >> "{root}/gh-calls"\necho "{workflow} 0ld5ha"\n',
+            "git": "#!/bin/sh\ncase $1 in\n"
+                   f"  cat-file) exit {0 if reachable else 1} ;;\n"
+                   f"  diff) printf '%s\\n' {' '.join(changed)} ;;\nesac\n",
+            "python3": "#!/bin/sh\ncase $* in\n"
+                       f'  *sweep_corpus.py*) printf "%s\\n" "$@" > "{calls}"; echo "[]" ;;\n'
+                       f'  *) exec "{sys.executable}" "$@" ;;\nesac\n',
+        }
+        for name, body in stubs.items():
+            with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+                handle.write(body)
+            os.chmod(os.path.join(root, name), 0o755)
+        env = {**os.environ, "PATH": root + os.pathsep + os.environ.get("PATH", ""),
+               "TIER": tier, "BASE": "", "MAJOR": "false", "ONLY": only, "COMPLETES": completes,
+               "GITHUB_OUTPUT": os.path.join(root, "output")}
+        done = subprocess.run(["bash", "-c", script], cwd=os.path.dirname(os.path.dirname(WORKFLOWS)),
+                              env=env, capture_output=True, text=True)
+        asked = open(calls, encoding="utf-8").read().split() if os.path.exists(calls) else None
+        asked_gh = os.path.exists(os.path.join(root, "gh-calls"))
+    return done.returncode, done.stdout + done.stderr, asked, asked_gh
+
+
+def case_a_completion_that_cannot_complete_is_refused_before_it_measures():
+    """A completion re-runs some of an earlier full sweep's projects on the selector that run
+    measured; anything else would cost hours of runners for a merge that must refuse."""
+    problems = 0
+    selector = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Rule.java"
+    for what, tier, only, completes, changed, reachable, needle in (
+            ("the reduced arm", "reduced", "demo", "5", (), True, "tier reduced"),
+            ("an auto tier", "auto", "demo", "5", (), True, "tier auto"),
+            ("every project", "full", "all", "5", (), True, "only names"),
+            ("no project", "full", "", "5", (), True, "only names"),
+            ("a run id that is not one", "full", "demo", "5;x", (), True, "5;x"),
+            ("a selector source changed", "full", "demo", "5", ("README.md", selector), True,
+             selector),
+            ("a head commit out of reach", "full", "demo", "5", (), False, "0ld5ha"),
+            ("a mutation grammar changed", "full", "demo", "5", ("README.md", "bench/mutations.py"), True,
+             "bench/mutations.py"),
+            ("a revert grammar changed", "full", "demo", "5", ("bench/revert.py",), True,
+             "bench/revert.py")):
+        code, output, asked, asked_gh = _sweep_completion_plan(tier, only, completes, changed,
+                                                               reachable)
+        if code == 0 or asked is not None or needle not in output:
+            problems += fail(f"a completion of {what}: exit {code}, planned {asked}, said {output!r}")
+        if what == "a run id that is not one" and asked_gh:
+            problems += fail("a run id that is not one reached gh")
+    code, output, asked, _ = _sweep_completion_plan("full", "demo", "5", workflow="guards")
+    if code == 0 or asked is not None or "not a sweep" not in output:
+        problems += fail(f"a completion of another workflow's run: exit {code}, planned {asked}, said {output!r}")
+    code, output, asked, _ = _sweep_completion_plan("full", "demo kafka", "5",
+                                                    ("README.md", "bench/merge.py"))
+    if code or asked is None or asked[asked.index("--only") + 1:-1] != ["demo", "kafka"]:
+        problems += fail(f"a completion on the earlier run's selector: exit {code}, planned {asked}, "
+                         f"said {output!r}")
+    return problems
+
+
+def _sweep_completion_merge(root, releases, missing_after):
+    """sweep.yml's merge step for run 7, which completes run 5 by re-running demo. `releases` is what
+    the releases API lists, each asset served from `asset-<id>.tar.gz`; the stubbed `merge.py`
+    reports `missing_after` as missing from the completed sweep."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        script = _sweep_step(handle.read(), "\n      - name: merge, and attach to a draft release")
+    bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
+    os.makedirs(bin_dir)
+    os.makedirs(bench)
+    with open(os.path.join(root, "releases.json"), "w", encoding="utf-8") as handle:
+        json.dump(releases, handle)
+    with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
+        # The listing through the real jq, as gh's --jq would apply it; an asset by its id.
+        handle.write(f"#!{sys.executable}\nimport json, shutil, subprocess, sys\nargs = sys.argv[1:]\n"
+                     f"if '--paginate' in args:\n"
+                     f"    subprocess.run(['jq', '-r', args[args.index('--jq') + 1], {root!r} + '/releases.json'], check=True)\n"
+                     f"elif args[0] == 'api':\n"
+                     f"    shutil.copyfileobj(open({root!r} + '/asset-' + args[-1].rsplit('/', 1)[1] + '.tar.gz', 'rb'), sys.stdout.buffer)\n"
+                     f"else:\n"
+                     f"    json.dump(args, open({root!r} + '/gh-args', 'w'))\n")
+    os.chmod(os.path.join(bin_dir, "gh"), 0o755)
+    with open(os.path.join(bench, "merge.py"), "w", encoding="utf-8") as handle:
+        handle.write(f"import json, os, sys\njson.dump(sys.argv[1:], open({root!r} + '/merge-args', 'w'))\n"
+                     "os.makedirs('merged', exist_ok=True)\n"
+                     f"json.dump({{'missing': {missing_after!r}}}, open('merged/sweep.json', 'w'))\n")
+    record = os.path.join(root, "downloaded", "record-demo", "demo")
+    state = os.path.join(root, "state")
+    os.makedirs(record)
+    os.makedirs(os.path.join(state, "results"))
+    os.makedirs(os.path.join(state, "logs", "evidence"))
+    with open(os.path.join(record, "accepted.json"), "w", encoding="utf-8") as handle:
+        json.dump({"slices": [[]]}, handle)
+    open(os.path.join(state, "results", "demo.json"), "w").close()
+    subprocess.run(["tar", "-czf", os.path.join(record, "state.tar.gz"), "-C", state, "results",
+                    "logs"], check=True)
+    shard = os.path.join(root, "downloaded", "shard-demo-1-of-1")
+    os.makedirs(os.path.join(shard, "demo"))
+    os.makedirs(os.path.join(shard, "evidence"))
+    open(os.path.join(shard, "demo", "shard-1-of-1.json"), "w").close()
+    open(os.path.join(shard, "evidence", "e.tar.gz"), "w").close()
+    env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+           "PLAN": json.dumps([{"project": "demo"}]), "MISSING": "[]", "ARM": "full", "RUN": "7",
+           "COMPLETES": "5", "REPO": "o/r"}
+    return subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+
+
+def _earlier_release(root, asset, project):
+    """An earlier run's release tarball holding one merged project and its evidence."""
+    tree = os.path.join(root, f"tree-{asset}")
+    for directory in (f"art/{project}", "evidence", "merged"):
+        os.makedirs(os.path.join(tree, directory))
+    open(os.path.join(tree, "art", project, "accepted.json"), "w").close()
+    open(os.path.join(tree, "evidence", f"{project}.tar.gz"), "w").close()
+    subprocess.run(["tar", "-czf", os.path.join(root, f"asset-{asset}.tar.gz"), "-C", tree, "art",
+                    "evidence", "merged"], check=True)
+
+
+def _draft(tag, created, asset, draft=True):
+    return {"tag_name": tag, "draft": draft, "created_at": created,
+            "assets": [{"name": "notes.txt", "id": asset + 100}, {"name": f"{tag}.tar.gz", "id": asset}]}
+
+
+def case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft():
+    """Each merge attempt of a run adds a draft under one tag; the newest saw the most artifacts.
+    The completed release holds both runs' projects and evidence, since the replay job reads one
+    tarball alone."""
+    problems = 0
+    # Not listed newest first, so only the dates say which draft is the newest.
+    releases = [_draft("sweep-6", "2026-10-03T00:00:00Z", 6), _draft("sweep-5", "2026-10-01T00:00:00Z", 51),
+                _draft("sweep-5", "2026-10-02T00:00:00Z", 52),
+                _draft("sweep-5", "2026-10-04T00:00:00Z", 53, draft=False)]
+    with tempfile.TemporaryDirectory() as root:
+        for asset, project in ((51, "stale"), (52, "okio"), (53, "published"), (6, "other")):
+            _earlier_release(root, asset, project)
+        done = _sweep_completion_merge(root, releases, {})
+        if done.returncode:
+            return fail(f"a completion's merge failed: {done.stdout} {done.stderr}")
+        merged = json.load(open(os.path.join(root, "merge-args")))
+        if merged[-2:] != ["--completes", "previous"]:
+            problems += fail(f"merge.py was not told what it completes: {merged}")
+        listed = subprocess.run(["tar", "-tzf", os.path.join(root, "sweep-7.tar.gz")], check=True,
+                                capture_output=True, text=True).stdout.split()
+        projects = sorted({path.split("/")[1] for path in listed if path.startswith("art/") and path.count("/") > 1})
+        if projects != ["demo", "okio"]:
+            problems += fail(f"the completed release's art/ holds {projects}, not demo and okio")
+        if "evidence/okio.tar.gz" not in listed:
+            problems += fail("the completed release lacks the earlier run's evidence")
+        created = json.load(open(os.path.join(root, "gh-args")))
+        title = created[created.index("--title") + 1]
+        if title != "Benchmark sweep 7 (full arm, completes 5)":
+            problems += fail(f"a complete completion is titled {title!r}")
+    with tempfile.TemporaryDirectory() as root:
+        _earlier_release(root, 52, "okio")
+        done = _sweep_completion_merge(root, releases[2:3], {"kafka": "its record job failed"})
+        created = json.load(open(os.path.join(root, "gh-args")))
+        title, notes = created[created.index("--title") + 1], created[created.index("--notes") + 1]
+        if title != "Benchmark sweep 7 (full arm, completes 5, PARTIAL)" or \
+                "kafka=its record job failed" not in notes:
+            problems += fail(f"a completion still short of kafka: {title!r} {notes!r}")
+    return problems
+
+
+def case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing():
+    with tempfile.TemporaryDirectory() as root:
+        _earlier_release(root, 6, "other")
+        done = _sweep_completion_merge(root, [_draft("sweep-6", "2026-10-03T00:00:00Z", 6),
+                                              _draft("sweep-5", "2026-10-03T00:00:00Z", 5, draft=False)],
+                                       {})
+        if done.returncode == 0 or "run 5" not in done.stdout + done.stderr:
+            return fail(f"a completion of a run with no draft: exit {done.returncode}, {done.stdout!r}")
+        if os.path.exists(os.path.join(root, "gh-args")) or os.path.exists(os.path.join(root, "merge-args")):
+            return fail("a completion of a run with no draft merged or created a release")
+    return 0
 
 
 def case_a_record_job_archives_the_checkout_the_plan_names():
@@ -2044,6 +2273,11 @@ CASES = (
     case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly,
     case_a_record_job_archives_the_checkout_the_plan_names,
     case_a_failed_project_is_declared_missing_and_the_rest_still_merge,
+    case_a_completion_that_cannot_complete_is_refused_before_it_measures,
+    case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft,
+    case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
+    case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
+    case_every_measuring_step_samples_the_machine_until_it_ends,
 )
 
 

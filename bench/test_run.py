@@ -14,6 +14,7 @@ that returns instead of asserting would be collected by pytest and pass however 
 The single test_* entry point below asserts.
 """
 
+import argparse
 import json
 import os
 import re
@@ -73,6 +74,21 @@ def case_uncovered_targets_do_not_consume_the_limit():
     if len(ordered) != 2:
         print(f"  FAIL: {2 - len(ordered)} target(s) dropped; this orders, it must not filter")
         failures += 1
+    return failures
+
+
+def case_rows_under_another_fork_cap_are_not_resumed_or_paired():
+    failures = 0
+    capped, uncapped = {"max_parallel_forks": 2}, {}
+    for stored, project, changed in (({"max_parallel_forks": 4}, capped, True),
+                                     ({"max_parallel_forks": None}, capped, True),
+                                     ({"max_parallel_forks": 2}, capped, False),
+                                     ({"max_parallel_forks": None}, uncapped, False),
+                                     ({}, capped, False)):
+        if run.fork_cap_changed(stored, project) != changed:
+            print(f"  FAIL: stored {stored} against project {project} read as "
+                  f"{'unchanged' if changed else 'changed'}")
+            failures += 1
     return failures
 
 
@@ -3854,6 +3870,65 @@ def case_every_harness_build_retries_a_failed_download_longer():
     return fail(f"a harness build does not carry {missing}") if missing else 0
 
 
+def case_a_projects_fork_cap_reaches_every_build_of_both_arms():
+    """A guest whose test forks did not fit the CI runner had it killed mid-recording. Its cap must
+    reach every build, or the two timing arms of a row would run different forks."""
+    builds = {
+        "warm-up": [":m:test", "--rerun-tasks"],
+        "capture": [*run.INIT_SCRIPT_ARGS, "-Pyoriwake.internal.loaded", ":m:test", "--rerun-tasks"]
+        + run.TIMING_ARM_FLAGS,
+        "baseline": [":m:test", "--rerun-tasks"] + run.TIMING_ARM_FLAGS,
+        "selected arm": [*run.INIT_SCRIPT_ARGS, ":m:test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD"]
+        + run.TIMING_ARM_FLAGS,
+        "full arm": [*run.INIT_SCRIPT_ARGS, ":m:test"] + run.TIMING_ARM_FLAGS,
+    }
+    capped = ["-I", run.FORK_CAP_INIT, "-Dyoriwake.harness.forkCap=2"]
+    failures = 0
+    original = run.run, run.test_progress_paths
+    run.test_progress_paths = lambda checkout, project: []
+    try:
+        for project, wanted in (({"name": "demo", "max_parallel_forks": 2}, True),
+                                ({"name": "demo"}, False)):
+            for build, task_args in builds.items():
+                seen = []
+                run.run = lambda argv, *args, **kwargs: seen.append(argv) or (0, 0.0)
+                run.gradle(run.ROOT, project, task_args, os.devnull)
+                argv = seen[0] if seen else []
+                carries = any(argv[i:i + 3] == capped for i in range(len(argv)))
+                if wanted and not carries:
+                    failures += fail(f"the {build} of a capped project does not carry {capped}: {argv}")
+                if not wanted and (run.FORK_CAP_INIT in argv
+                                   or any("forkCap" in arg for arg in argv)):
+                    failures += fail(f"the {build} of a project without a cap got one: {argv}")
+    finally:
+        run.run, run.test_progress_paths = original
+    if not os.path.isfile(run.FORK_CAP_INIT):
+        failures += fail(f"the fork-cap init script is missing: {run.FORK_CAP_INIT}")
+    return failures
+
+
+def case_a_projects_fork_cap_bounds_the_isolated_recording_and_is_stamped():
+    failures = 0
+    args = argparse.Namespace(isolated_capture=True, isolated_forks=4)
+    stamps = run.fork_stamps({"name": "demo", "max_parallel_forks": 1}, args)
+    if stamps != {"capture_max_parallel_forks": 1, "max_parallel_forks": 1}:
+        failures += fail(f"a cap of 1 under --isolated-forks 4 stamped {stamps}")
+    stamps = run.fork_stamps({"name": "demo", "max_parallel_forks": 8}, args)
+    if stamps != {"capture_max_parallel_forks": 4, "max_parallel_forks": 8}:
+        failures += fail(f"a cap above --isolated-forks changed the isolated recording: {stamps}")
+    stamps = run.fork_stamps({"name": "demo"}, argparse.Namespace(isolated_capture=False,
+                                                                  isolated_forks=4))
+    if stamps != {"capture_max_parallel_forks": None, "max_parallel_forks": None}:
+        failures += fail(f"a shared arm without a cap stamped {stamps}")
+    for bad in (0, -1, "2", True, 1.5):
+        try:
+            run.fork_cap({"name": "demo", "max_parallel_forks": bad})
+            failures += fail(f"max_parallel_forks = {bad!r} was accepted")
+        except SystemExit:
+            pass
+    return failures
+
+
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".github", "fixtures")
 
 
@@ -5389,6 +5464,7 @@ def case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows():
 
 
 CASES = (case_every_case_in_this_file_is_registered,
+         case_rows_under_another_fork_cap_are_not_resumed_or_paired,
          case_the_neutral_set_is_a_null_change_and_a_neutral_edit,
          case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_alone,
          case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows,
@@ -5441,6 +5517,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_killed_build_stops_its_daemons_before_the_harness_goes_on,
          case_a_stop_that_fails_is_said_and_does_not_raise,
          case_every_harness_build_retries_a_failed_download_longer,
+         case_a_projects_fork_cap_reaches_every_build_of_both_arms,
+         case_a_projects_fork_cap_bounds_the_isolated_recording_and_is_stamped,
          case_a_guest_build_that_failed_on_a_download_runs_once_more,
          case_a_guest_build_that_failed_for_another_reason_runs_once,
          case_the_harness_reads_a_download_failure_as_the_ci_script_does,

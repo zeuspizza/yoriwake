@@ -145,7 +145,8 @@ failure would save more hours and keep fewer of those rows.
 | field | source | serves |
 |---|---|---|
 | `capture_mode` | the arm run.py was asked for | every per-arm comparison |
-| `capture_max_parallel_forks` | `--isolated-forks` (default: cores); None on the shared arm | overhead shared vs isolated (the isolated figure is not the host's layout) |
+| `capture_max_parallel_forks` | `--isolated-forks` (default: cores); never above `max_parallel_forks`; None on the shared arm | overhead shared vs isolated (the isolated figure is not the host's layout) |
+| `max_parallel_forks` | the project file's cap on every build's test forks, both arms and every phase alike (`fork-cap.init.gradle`, which only lowers); None: the guest's own forks | which files ran fewer forks than the guest's CI would |
 | `paired_with` | `--pair-with`; each row is matched to its paired row per mutation, `(target, kind, index)`, and a paired file holding one mutation twice is refused (files written before 2026-10-08 matched by label, so two declarations of one name could take each other's ground truth) | provenance of the isolated rows' ground truth |
 | `rejected_mutations` | the compile gate's rejections as `[target, kind, index]`, beside the labels in `rejected_targets`; None before 2026-10-08 | resume: a rejected declaration does not skip its namesakes |
 | `revert` | `revert/v1` only: the census window and classifier, eligible commits per stratum, not-eligible counts by reason, rejections as `[target, reason, variant, census labels]` and counted by reason and label, and per inverted label the rows, the miss-possible rows and whether the shape is reached | published beside a revert figure; no rejection ceiling applies |

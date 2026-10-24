@@ -30,11 +30,28 @@ test_task = "testPlayDebugUnitTest"
 # duckduckgo-android's is.
 test_classes_task = "compilePlayDebugUnitTestJavaWithJavac"
 
-flags = []
+# Bounds every Kotlin compile daemon the build starts; see the memory note below.
+flags = ["-Pkotlin.daemon.jvmargs=-Xmx2g"]
 sources = ["AnkiDroid/src/main/java"]
 
-# A large Robolectric suite. Set before the first OOM, not after.
-daemon_jvmargs = "-Xmx6g"
+# MEMORY, for the 16 GB CI runner, which was shut down mid-recording in every full run on it,
+# with nothing in any log. The target is a peak Java RSS of 12,800 MB: 16 GB, less ~1.5
+# GB the runner holds idle, less 2 GB to spare. Measured on a 64 GB Mac (macOS resident sizes, so a
+# lower bound), one isolated recording at --isolated-forks 4, sampled every 5 s:
+#
+#   -Xmx6g, the guest's 4 forks:              peak 20,680 MB (test workers 13,120, Kotlin 5,020,
+#               Gradle 2,475); capture 195.6s, baseline 226.3s
+#   -Xmx6g, 1 fork:                           peak 16,296 MB (Kotlin 10,214 over 3 daemons,
+#               Gradle 2,963, test worker 3,001); capture 361.9s, baseline 433.2s
+#   as set here, 2 forks:                     peak 12,767 MB (Kotlin 5,777 over 3 daemons at
+#               -Xmx2g, Gradle 2,649 at -Xmx3g, test workers 4,224); capture 241.7s, baseline 286.3s
+#
+# The build starts three Kotlin compile daemons, one per compiler classpath, and each inherits the
+# Gradle daemon's heap unless `kotlin.daemon.jvmargs` (in `flags`) bounds it. 3g is the project's
+# own `org.gradle.jvmargs`. 2 forks fit with 33 MB to spare; 1 fork is the fallback if a runner's
+# samples show less room.
+daemon_jvmargs = "-Xmx3g"
+max_parallel_forks = 2
 
 # REQUIRES: an Android SDK via ANDROID_HOME, compileSdk 36 (AGP downloads it when the licences are
 # accepted, which they are on this machine), and the Robolectric android-all jars, which are fetched

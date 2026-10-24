@@ -6,6 +6,8 @@ Cases return a count of failed checks; one `test_*` entry point asserts.
     python3 bench/test_merge.py
 """
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -279,6 +281,144 @@ def case_a_named_set_merges_into_its_own_directory_and_refuses_another_sets_shar
                 os.path.exists(os.path.join(out, "sweep.json")):
             failures += fail("a named set's sweep summary is not beside its files")
     return failures
+
+
+def _project(root, name, rows, **stamps):
+    """One project's artifacts as the workflow lays them out: a recording, its list, one shard."""
+    header = {**STAMPS, "project": name, **stamps}
+    os.makedirs(os.path.join(root, name))
+    for file, data in (("recording.json", {**_recording(), **header}),
+                       ("accepted.json", {**_accepted(len(rows), [[0, len(rows)]]), **header}),
+                       ("shard-1-of-1.json", {**_shard(rows, 1, 1), **header})):
+        with open(os.path.join(root, name, file), "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+
+
+def _earlier(root, merged, missing, arm="full"):
+    """An earlier sweep's unpacked release: its projects' artifacts and its summary."""
+    previous = os.path.join(root, "previous")
+    for name, rows in merged.items():
+        _project(os.path.join(previous, "art"), name, rows)
+    os.makedirs(os.path.join(previous, "merged"))
+    with open(os.path.join(previous, "merged", "sweep.json"), "w", encoding="utf-8") as handle:
+        json.dump({"arm": arm, "projects": sorted(merged), "missing": missing}, handle)
+    return previous
+
+
+def _merge(argv):
+    """`merge.main`'s exit code, and the summary it printed or the refusal it wrote."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = merge.main(argv)
+    return code, json.loads(out.getvalue()) if code == 0 else err.getvalue()
+
+
+def _completion(root, planned, missing=(), arm="full", completes=True):
+    argv = [os.path.join(root, "art"), "--planned", *planned, "--arm", arm,
+            "--out", os.path.join(root, "out")]
+    for entry in missing:
+        argv += ["--missing", entry]
+    if completes:
+        argv += ["--completes", os.path.join(root, "previous")]
+    return _merge(argv)
+
+
+MISS = [_row(0, narrowed=True, broke=True)]
+QUIET = [_row(0, narrowed=True)]
+
+
+def case_a_run_that_merges_the_projects_an_earlier_sweep_lacked_completes_it():
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        _earlier(root, {"okio": MISS}, {"demo": "its record job failed"})
+        _project(os.path.join(root, "art"), "demo", MISS, plugin_commit="p2")
+        code, summary = _completion(root, ["demo"])
+        if code != 0:
+            return fail(f"a completion was refused: {summary}")
+        if summary["projects"] != ["demo", "okio"] or summary["missing"] != {}:
+            failures += fail(f"the completed sweep: {summary}")
+        if summary.get("plugin_commits") != ["p1", "p2"]:
+            failures += fail(f"the plugin commits of both runs: {summary.get('plugin_commits')}")
+        for name in ("demo", "okio", "sweep"):
+            if not os.path.isfile(os.path.join(root, "out", f"{name}.json")):
+                failures += fail(f"the completed sweep wrote no {name}.json")
+    return failures
+
+
+def case_a_completion_is_judged_by_the_union_not_by_its_own_rows():
+    """A re-run of a project or two can hold no row where a miss was possible; the sweep it
+    completes does."""
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        _earlier(root, {"okio": MISS}, {"demo": "its record job failed"})
+        _project(os.path.join(root, "art"), "demo", QUIET)
+        code, why = _completion(root, ["demo"], completes=False)
+        if code == 0 or "could have missed" not in why:
+            failures += fail(f"the re-run alone was not refused for its rows: {why}")
+        code, summary = _completion(root, ["demo"])
+        if code != 0 or summary.get("miss_possible_rows") != 1:
+            failures += fail(f"the completed sweep: {summary}")
+    return failures
+
+
+def case_a_project_still_missing_keeps_the_earlier_reason_unless_this_run_gives_one():
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        _earlier(root, {"okio": MISS}, {"demo": "its record job failed",
+                                        "kafka": "its shard found no map"})
+        _project(os.path.join(root, "art"), "demo", MISS)
+        code, summary = _completion(root, ["demo"])
+        if code != 0 or summary.get("missing") != {"kafka": "its shard found no map"}:
+            failures += fail(f"kafka, not re-run: {summary}")
+        code, summary = _completion(root, ["demo", "kafka"], ["kafka=its record job failed"])
+        if code != 0 or summary.get("missing") != {"kafka": "its record job failed"}:
+            failures += fail(f"kafka, re-run and failed again: {summary}")
+        code, why = _completion(root, ["demo", "kafka"])
+        if code == 0 or "no output" not in why or "kafka" not in why:
+            failures += fail(f"kafka, re-run with no output and not declared: {why}")
+    return failures
+
+
+def case_a_completion_that_is_not_the_same_measurement_or_not_a_completion_is_refused():
+    failures = 0
+    for what, art, planned, arm, needle in (
+            ("another selector", {"demo": {"selector_digest": "s2"}}, ["demo"], "full",
+             "selector_digest"),
+            ("another grammar", {"demo": {"grammar_digest": "g2"}}, ["demo"], "full",
+             "grammar_digest"),
+            ("another arm", {"demo": {}}, ["demo"], "reduced", "the earlier sweep is the full arm"),
+            ("a project merged by both", {"demo": {}, "okio": {}}, ["demo", "okio"], "full",
+             "already merged okio"),
+            ("a project the earlier run did not plan", {"demo": {}, "moshi": {}},
+             ["demo", "moshi"], "full", "did not plan moshi")):
+        with tempfile.TemporaryDirectory() as root:
+            _earlier(root, {"okio": MISS}, {"demo": "its record job failed"})
+            for name, stamps in art.items():
+                _project(os.path.join(root, "art"), name, MISS, **stamps)
+            code, why = _completion(root, planned, arm=arm)
+            if code == 0 or needle not in why:
+                failures += fail(f"{what}: {why}")
+    with tempfile.TemporaryDirectory() as root:
+        os.makedirs(os.path.join(root, "previous", "merged"))
+        _project(os.path.join(root, "art"), "demo", MISS)
+        code, why = _completion(root, ["demo"])
+        if code == 0 or "sweep.json" not in why:
+            failures += fail(f"an earlier release with no summary: {why}")
+    return failures
+
+
+def case_one_sweep_measured_under_two_selectors_is_refused():
+    demo = {**_recording(), "mutations": MISS}
+    okio = {**demo, "project": "okio", "selector_digest": "s2"}
+    why = _refused(lambda: merge.check_sweep(["demo", "okio"], {"demo": demo, "okio": okio},
+                                             arm="full", isolated=False))
+    if not why or "selector_digest" not in why or "s2 (okio)" not in why:
+        return fail(f"two selectors in one sweep: {why}")
+    summary = merge.check_sweep(["demo", "okio"],
+                                {"demo": demo, "okio": {**okio, "selector_digest": "s1",
+                                                        "plugin_commit": "p2"}},
+                                arm="full", isolated=False)
+    return 0 if summary["plugin_commits"] == ["p1", "p2"] else fail(f"two commits: {summary}")
 
 
 def test_merge():

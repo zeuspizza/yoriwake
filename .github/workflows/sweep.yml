@@ -15,6 +15,11 @@ name: sweep
 # dispatch that leaves `only` empty gets its default, `demo`; only a run with no inputs at all (a
 # schedule) sees it empty, and sweeps every project.
 #
+# A full sweep that lacked some projects is completed by a dispatch that re-runs them, with
+# `completes` naming its run: the draft release then holds both runs' projects as one sweep. It is
+# refused before measuring unless the selector's sources are the earlier run's, and the merge
+# refuses rows measured under another selector or grammar (bench/merge.py --completes).
+#
 # Weekly, the full arm of every project on `main`'s head, so a harness defect or a cost regression
 # shows up within a week of the change rather than on release night; a scheduled run that fails
 # opens an issue (last job). It takes about 7.5 to 10 hours, an estimate from the first full run on
@@ -50,6 +55,10 @@ on:
         description: runner seconds per local second, measured on the demo
         type: string
         default: '1.5'
+      completes:
+        description: the run id of an earlier full sweep, some of whose missing projects only re-runs
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -57,6 +66,10 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    # Reads the head commit of the run a completion names.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       tier: ${{ steps.plan.outputs.tier }}
       projects: ${{ steps.plan.outputs.projects }}
@@ -70,10 +83,45 @@ jobs:
           BASE: ${{ inputs.base }}
           MAJOR: ${{ inputs.major_release }}
           ONLY: ${{ inputs.only }}
+          COMPLETES: ${{ inputs.completes }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           # A scheduled run has no inputs; it sweeps the full arm. A dispatch always carries a tier.
           TIER=${TIER:-full}
+          # Refused here rather than after hours of measuring: a completion's rows join the earlier
+          # run's only if both measured the same selector.
+          if [ -n "$COMPLETES" ]; then
+            case $COMPLETES in
+              *[!0-9]*) echo "completes takes a run id, not '$COMPLETES'"; exit 1 ;;
+            esac
+            [ "$TIER" = full ] || { echo "a completion is a full sweep, not tier $TIER"; exit 1; }
+            if [ -z "$ONLY" ] || [ "$ONLY" = all ]; then
+              echo "a completion re-runs the projects only names, not '$ONLY'"; exit 1
+            fi
+            read -r workflow sha < <(gh run view "$COMPLETES" --json workflowName,headSha --jq '"\(.workflowName) \(.headSha)"')
+            [ "$workflow" = sweep ] || { echo "run $COMPLETES is a '$workflow' run, not a sweep"; exit 1; }
+            if ! git cat-file -e "$sha^{commit}" 2>/dev/null; then
+              echo "run $COMPLETES ran '$sha', which this checkout cannot reach"; exit 1
+            fi
+            # Both sides, not tier.py's three-dot diff: a change on the earlier run's branch alone
+            # moves the selector as much as one here.
+            mapfile -t changed < <(git diff --name-only "$sha" HEAD)
+            moved=$(python3 -c 'import sys, bench.tier as t; print(*t.decide(sys.argv[1:])["selector_paths"])' \
+              "${changed[@]+"${changed[@]}"}")
+            if [ -n "$moved" ]; then
+              echo "the selector's sources moved since run $COMPLETES ($sha): $moved"; exit 1
+            fi
+            # The mutation grammar too: the merge refuses two grammars, and only after the hours.
+            # Every set's grammar files, since which set a project draws from is not known here.
+            redrawn=$(python3 -c 'import sys; sys.path.insert(0, "bench"); import run
+          grammar = set(run.GRAMMAR_SOURCE_FILES) | set(run.REVERT_GRAMMAR_FILES)
+          grammar |= {f for files in run.SET_GRAMMAR_FILES.values() for f in files}
+          print(*sorted(grammar & set(sys.argv[1:])))' "${changed[@]+"${changed[@]}"}")
+            if [ -n "$redrawn" ]; then
+              echo "the mutation grammar moved since run $COMPLETES ($sha): $redrawn"; exit 1
+            fi
+          fi
           if [ "$TIER" = auto ]; then
             base=${BASE:-$(git describe --tags --abbrev=0 --match 'v*')}
             major=()
@@ -181,6 +229,10 @@ jobs:
           FACTOR: ${{ inputs.factor }}
         run: |
           set -eu
+          # A runner that runs out of memory or disk is shut down whole, and this step's log is all
+          # it leaves: the machine's use, every 30 seconds, beside the build's.
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
           mapfile -t args < <(jq -r '.[]' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted-out "bench/logs/$NAME/accepted.json"
           # The dispatch input's default, for a scheduled run, which has none.
@@ -306,6 +358,10 @@ jobs:
           SHARD: ${{ matrix.slice.shard }}/${{ matrix.slice.of }}
         run: |
           set -eu
+          # A runner that runs out of memory or disk is shut down whole, and this step's log is all
+          # it leaves: the machine's use, every 30 seconds, beside the build's.
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
           tar -xzf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench
           mapfile -t args < <(jq -r '.[] | select(. != "--recapture")' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted "bench/logs/$NAME/accepted.json" \
@@ -340,6 +396,8 @@ jobs:
           MISSING: ${{ needs.slices.outputs.missing }}
           ARM: ${{ needs.plan.outputs.tier }}
           RUN: ${{ github.run_id }}
+          COMPLETES: ${{ inputs.completes }}
+          REPO: ${{ github.repository }}
         run: |
           set -eu
           names=$(jq -r '.[].project' <<< "$PLAN")
@@ -380,18 +438,50 @@ jobs:
           done
           missing_args=()
           for entry in "${declared[@]+"${declared[@]}"}"; do missing_args+=(--missing "$entry"); done
+          completes=()
+          if [ -n "$COMPLETES" ]; then
+            # The earlier run's newest draft: each merge attempt of a run adds a draft under the
+            # same tag, and the last saw the most artifacts. A tag names none of them alone, and
+            # `gh release download` takes only a tag, so the asset is fetched by its id.
+            export TAG="sweep-$COMPLETES"
+            gh api --paginate "repos/$REPO/releases" --jq '.[] | select(.draft and .tag_name == env.TAG)
+              | {at: .created_at, asset: .assets[]} | select(.asset.name == env.TAG + ".tar.gz")
+              | [.at, .asset.id] | @tsv' > drafts.tsv
+            asset=$(sort -r drafts.tsv | head -n 1 | cut -f 2)
+            [ -n "$asset" ] || { echo "run $COMPLETES has no draft release $TAG to complete"; exit 1; }
+            gh api -H 'Accept: application/octet-stream' "repos/$REPO/releases/assets/$asset" \
+              > previous.tar.gz
+            mkdir -p previous
+            tar -xzf previous.tar.gz -C previous
+            rm previous.tar.gz
+            completes=(--completes previous)
+          fi
           python3 bench/merge.py art --planned $names "${missing_args[@]+"${missing_args[@]}"}" \
-            --arm "$ARM" --out merged
+            --arm "$ARM" --out merged "${completes[@]+"${completes[@]}"}"
+          partial=("${declared[@]+"${declared[@]}"}")
+          title="Benchmark sweep $RUN ($ARM arm)"
+          notes="Merged results of sweep run $RUN, with the maps and decision records."
+          if [ -n "$COMPLETES" ]; then
+            # The release stands alone, as the replay job reads it: the earlier run's projects
+            # and evidence come along.
+            mkdir -p art
+            cp -R previous/art/. art/
+            cp -R previous/evidence/. evidence/
+            title="Benchmark sweep $RUN ($ARM arm, completes $COMPLETES)"
+            notes="Merged results of sweep run $RUN and of sweep run $COMPLETES, which it completes,"
+            notes="$notes with the maps and decision records."
+            # What the earlier run lacked and this one did not re-run is missing still.
+            mapfile -t partial < <(jq -r '.missing | to_entries[] | "\(.key)=\(.value)"' \
+              "$(find merged -name sweep.json)")
+          fi
           # The merged results and each job's evidence (its maps and decision records), not the
           # guests' checkouts.
           tar -czf "sweep-$RUN.tar.gz" merged art evidence
-          title="Benchmark sweep $RUN ($ARM arm)"
-          notes="Merged results of sweep run $RUN, with the maps and decision records."
-          if [ "${#declared[@]}" -gt 0 ]; then
-            title="Benchmark sweep $RUN ($ARM arm, PARTIAL)"
+          if [ "${#partial[@]}" -gt 0 ]; then
+            title="${title%)}, PARTIAL)"
             notes="$notes
 
-          Missing, so this is not the planned sweep: $(printf '%s; ' "${declared[@]}")"
+          Missing, so this is not the planned sweep: $(printf '%s; ' "${partial[@]}")"
           fi
           gh release create "sweep-$RUN" --draft --title "$title" \
             --notes "$notes" "sweep-$RUN.tar.gz"

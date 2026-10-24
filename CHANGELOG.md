@@ -20,6 +20,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A run forced by untracked files names their directories and how to list them in `notReadByTests`. Map: left alone.
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.
+- A native library is proposed, and re-reviewed on a new major version, through an issue form. Map: left alone.
 
 ## [0.3.0] - 2026-10-22
 

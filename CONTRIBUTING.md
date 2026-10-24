@@ -139,6 +139,27 @@ most useful thing it asks is whether a test that should have run did not.
 
 Security issues go through [SECURITY.md](SECURITY.md), not the issue tracker.
 
+## Native libraries
+
+A library joins the [reviewed list](docs/reference.md#native-libraries) through the
+[native library proposal](https://github.com/zeuspizza/yoriwake/issues/new?template=native-library.yml)
+form. Each release compares every listed library with its latest major version
+([RELEASING.md](RELEASING.md)), and one that moved gets a re-review issue. A re-review answers the
+form's questions again against the new major's native sources, then records one outcome:
+
+- **keep**: nothing the native code opens, or how its path is chosen, changed; the reviewed version
+  in the reference moves to the new one.
+- **update**: the entry still holds with a change, such as a new loading class or file-name pattern
+  in `ReviewedLibraries`; the reference's row says what the native code now opens, and its reviewed
+  version and source link move to the new one.
+- **remove**: the new version opens a path that can name a class file or a jar, other than one a
+  test passes as data; the entry goes, and that library applies the wide rule from the release that
+  drops it.
+
+A keep only records the review, and a removal only widens selection. An update changes what is
+trusted, so it is a change to selection and meets
+[what a change to selection must prove](#what-a-change-to-selection-must-prove).
+
 ## Releases
 
 How a version is cut, and how a fix reaches you: [RELEASING.md](RELEASING.md).
