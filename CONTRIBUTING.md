@@ -106,8 +106,9 @@ guards run in four worktrees under `sandbox/prove-guards/` and never write your 
 
 On a pull request, CI runs fast mode and the guards the change can affect; a change to
 `plugin/src/main` or `agent/src/main` runs every guard instead, and every guard runs nightly. Each
-of these runs in 8 shards, the guards whose label hashes to each (`--shard I/8`, with the same
-`--mode` and `--changed` as the job), and a check job under the job's name fails unless every guard
+of these runs in 8 shards of its selected guards, balanced by measured cost with a functional
+class's guards together (`--shard I/8`, with the same `--mode` and `--changed` as the job,
+reproduces one), and a check job under the job's name fails unless every guard
 the run selects fired in exactly one shard. A separate check fails a pull request that removes a
 guard, or changes its target, fragment, suite or expected test, or takes a suite out of fast mode,
 until a maintainer approves it.
