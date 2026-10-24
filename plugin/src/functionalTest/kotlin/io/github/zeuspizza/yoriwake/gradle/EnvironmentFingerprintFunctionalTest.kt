@@ -128,9 +128,9 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
     fun `a selecting run on another installed JDK runs everything`(@TempDir dir: File) {
         val other = anotherJdk()
         assumeTrue(other != null, "no second JDK of another version is installed")
-        recorded(dir, "-Pjvm=${File(System.getProperty("java.home"), "bin/java").absolutePath}")
+        recorded(dir, "-Pjvm=${launcher(File(System.getProperty("java.home"))).absolutePath}")
 
-        val output = runner(dir, "test", "-Pyoriwake.select", "-Pjvm=${File(other, "bin/java").absolutePath}").build().output
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pjvm=${launcher(other!!).absolutePath}").build().output
 
         assertEquals(both, ranTests(dir), output)
         assertEquals("environment-changed", decisionNotes(dir)["refusal-kind"], output)
@@ -279,6 +279,10 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         assertContains(output, "environmentInclude holds '*'")
     }
 
+    /** The JDK's launcher: Windows names it java.exe, and a missing executable fails the build. */
+    private fun launcher(home: File): File =
+        File(home, "bin/java.exe").takeIf { it.isFile } ?: File(home, "bin/java")
+
     /** An installed JDK of another major version that can run Java 11 classes, or null. */
     private fun anotherJdk(): File? {
         val current = File(System.getProperty("java.home")).canonicalFile
@@ -295,7 +299,7 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         }.getOrDefault(emptyList()).mapNotNull { line -> line.trim().substringAfterLast(' ').takeIf { it.startsWith("/") }?.let(::File) }
         val own = feature(current)
         return (fromCi + fromMac).map { it.canonicalFile }.distinct()
-            .filter { File(it, "bin/java").isFile && it != current }
+            .filter { launcher(it).isFile && it != current }
             .firstOrNull { home -> feature(home)?.let { it >= 11 && it != own } == true }
             .also { found -> found?.let { assertNotEquals(current, it) } }
     }
