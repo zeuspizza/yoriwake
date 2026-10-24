@@ -432,6 +432,20 @@ public abstract class YoriwakeExtension {
     public abstract val systemPropertyIgnore: org.gradle.api.provider.ListProperty<String>
 
     /**
+     * Paths a `Test` task's tests depend on in ways coverage cannot see (a compose file handed to a
+     * container, migrations a database runs), as `task=glob` entries: `dependsOn("integrationTest",
+     * "/docker/compose.yml")`. Globs are Ant-style, relative to this project or to the root project with a
+     * leading `/`. A changed path an entry matches runs that task in full. It can only cause more tests
+     * to run. A single test declares the same with `@Tag("yoriwake-depends-on:<glob>")`.
+     */
+    public abstract val dependsOn: org.gradle.api.provider.ListProperty<String>
+
+    /** Declares that every test of the `Test` task [task] depends on the paths [glob] matches. */
+    public fun dependsOn(task: String, glob: String) {
+        dependsOn.add("$task=$glob")
+    }
+
+    /**
      * Above this many changed paths, a selecting run runs every test without analysing the change:
      * a change that size (a rename across packages, a formatter run) selects almost everything or
      * forces a full run anyway. 5,000 by default; 1 or more.
