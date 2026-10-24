@@ -430,11 +430,37 @@ def case_the_early_access_job_runs_weekly_bounded_and_read_only():
         ("    timeout-minutes: 30", "its job has no 30-minute bound"),
         ("release: EA", "it does not install an early-access build"),
         ("-Pyoriwake.functional.earlyAccessJdk=", "it does not name the JDK to the range test"),
+        ("matrix_check.py early-access plugin/build/test-results/functionalTestGradle9",
+         "it does not check its test ran"),
     ):
         if needle not in text:
             problems += fail(f"jdk-ea.yml: {why}")
     return problems
 
+
+def case_the_early_access_check_passes_only_when_its_test_passed():
+    """A skipped test is a green Gradle task, so the job's only proof is the case's own status."""
+    problems = 0
+    early = ("TestJvmRangeFunctionalTest", "test JVM on the newest early-access JDK(File)")
+    for cases, expected in (
+        ([early + ("passed",), ("TestJvmRangeFunctionalTest", JDK_11, "skipped")], None),
+        ([early + ("skipped",)], "skipped"),
+        ([early + ("failed",)], "failed"),
+        ([("TestJvmRangeFunctionalTest", JDK_11, "passed")], "absent"),
+    ):
+        with tempfile.TemporaryDirectory() as root:
+            directory = os.path.join(_cell(root, "linux/9.8.0/21", cases=cases), "functionalTest")
+            found = matrix_check.early_access_problems(directory)
+        if expected is None and found:
+            problems += fail(f"a passed early-access case was refused: {found}")
+        if expected is not None and (len(found) != 1 or f": {expected}," not in found[0]
+                                     or matrix_check.EARLY_ACCESS_TEST not in found[0]):
+            problems += fail(f"a {expected} early-access case was not named as {expected}: {found}")
+    with tempfile.TemporaryDirectory() as root:
+        found = matrix_check.early_access_problems(root)
+    if len(found) != 1 or "ran no tests" not in found[0]:
+        problems += fail(f"empty results were not refused as running no tests: {found}")
+    return problems
 
 
 def matrix_schedule_problems(text):
@@ -2331,6 +2357,7 @@ CASES = (
     case_a_job_that_ran_another_commit_fails,
     case_a_cell_with_two_tasks_results_fails,
     case_the_early_access_job_runs_weekly_bounded_and_read_only,
+    case_the_early_access_check_passes_only_when_its_test_passed,
     case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job,
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
     case_a_tag_releases_its_version_and_a_dispatch_rehearses,
