@@ -5,16 +5,19 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ABSENCE_PROVABL
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ACCOUNTED_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_BYTES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_CLASSES_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEMPT_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MOVED_FILES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PROJECT_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNMAPPABLE_PATHS_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.select.PathGlob
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
@@ -31,6 +34,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
+import io.github.zeuspizza.yoriwake.gradle.change.Declarations
 import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
 import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.jacocoCeilingNote
@@ -113,6 +117,8 @@ internal fun TestTaskWiring.configureSelection(
     fromBuildScript: TestPatterns,
     notReadByTests: List<String>,
     environment: EnvironmentFingerprint.Rules,
+    projectDir: String,
+    declarations: List<Declarations.Declaration>,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -228,6 +234,8 @@ internal fun TestTaskWiring.configureSelection(
     test.inputs.property(
         "yoriwake.changeSet", changeSetDigest(ChangeDetection.split(paths, project.rootDir)))
     test.systemProperty(SELECT_PROPERTY, "true")
+    // A test's declared-dependency tag is relative to its project; the agent resolves it against this.
+    test.systemProperty(PROJECT_DIR_PROPERTY, projectDir)
     // Forwarded only when asked for; the agent defaults it to false.
     test.systemProperty(
         CLASS_GRANULARITY_PROPERTY, settings.classGranularity.toString())
@@ -278,6 +286,14 @@ internal fun TestTaskWiring.configureSelection(
         ) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
         reportDigest(widening) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
 
+        // The build declared that every test of this task depends on such a path, which coverage cannot see.
+        val declaredHit = paths.firstOrNull { path -> declarations.any { PathGlob.matches(it.resolved, path) } }
+        if (declaredHit != null && !widening.forces) {
+            val entry = declarations.first { PathGlob.matches(it.resolved, declaredHit) }
+            val why = "$declaredHit changed, which dependsOn declares every test of this task depends on (${entry.glob})"
+            test.logger.lifecycle("[yoriwake] ${test.path}: $why")
+            refuse(test, RefusalKind.DECLARED_PATH_CHANGED, why)
+        }
         val changed = if (widening.forces) {
             // Unknown, not "nothing": selection is switched off and everything executes, as
             // SelectionFilter does for a missing select flag.
@@ -315,6 +331,8 @@ internal fun TestTaskWiring.configureSelection(
                 CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,
                 MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles,
                 UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,
+                // Every changed path, before any is dropped, for the tests that declare a dependency on one.
+                CHANGED_PATHS_PROPERTY to paths,
                 ABSENCE_PROVABLE_PROPERTY to established.provable,
                 // Separate property: a test class that has ever run is in the loaded-class union by
                 // definition, so the absence rule would never fire for it.

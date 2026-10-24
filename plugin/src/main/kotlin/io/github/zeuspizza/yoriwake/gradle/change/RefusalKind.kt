@@ -166,6 +166,9 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
      * toolchain for the tests, lifts this.
      */
     TEST_JVM_UNSUPPORTED(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TEST_JVM_UNSUPPORTED_KIND),
+
+    /** A changed path matches the build's `dependsOn` for this task: the build declared every test depends on it. */
+    DECLARED_PATH_CHANGED("declared-path-changed"),
     ;
 
     companion object {
