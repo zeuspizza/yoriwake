@@ -126,11 +126,18 @@ public final class MapReader {
      */
     public static final class ResourceReads {
         private final Set<String> recorded;
+        private final Set<String> sources;
         private final List<FirstTouch> reads;
 
-        ResourceReads(Set<String> recorded, List<FirstTouch> reads) {
+        ResourceReads(Set<String> recorded, Set<String> sources, List<FirstTouch> reads) {
             this.recorded = recorded;
+            this.sources = sources;
             this.reads = reads;
+        }
+
+        /** Whether this JVM's recorded reads include the source files it opened. */
+        public boolean recordedSources(String jvm) {
+            return sources.contains(jvm);
         }
 
         /** Whether this JVM's reads were recorded; one that was not read everything. */
@@ -409,6 +416,7 @@ public final class MapReader {
             return null;
         }
         Set<String> recorded = new HashSet<>();
+        Set<String> sources = new HashSet<>();
         List<FirstTouch> reads = new ArrayList<>();
         try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
             String line;
@@ -423,6 +431,9 @@ public final class MapReader {
                 }
                 if (AgentContract.RESOURCE_RECORDED.equals(parts[2])) {
                     recorded.add(parts[0]);
+                    if (AgentContract.RESOURCE_RECORDED_SOURCES.equals(parts[3])) {
+                        sources.add(parts[0]);
+                    }
                 } else if (AgentContract.RESOURCE_READ.equals(parts[2])) {
                     reads.add(new FirstTouch(parts[0], sequence, parts[3]));
                 } else if (!AgentContract.RESOURCE_LOADER.equals(parts[2])) {
@@ -432,7 +443,7 @@ public final class MapReader {
         } catch (IOException e) {
             return null;
         }
-        return new ResourceReads(recorded, reads);
+        return new ResourceReads(recorded, sources, reads);
     }
 
     /** The recorded instrumentation scope, or empty (unknown) on any failure. */

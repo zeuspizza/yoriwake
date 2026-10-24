@@ -625,6 +625,7 @@ internal fun changeSet(
         .withExemptTestClasses(established.exemptTestClasses)
         .withChangedBytes(changedBytes.sorted())
         .withMovedFiles(movedFiles.sorted())
+        .withIgnoredPaths(scoped.ignore.ignored.map { it.path })
 
 /** What the daemon can say about the run the test JVM is about to perform. */
 internal data class FullRunOutlook(

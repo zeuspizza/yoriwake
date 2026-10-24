@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore.Protection
+import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
 import org.gradle.api.InvalidUserDataException
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
@@ -180,6 +181,22 @@ class PathIgnoreTest {
         val applied = PathIgnore.apply(paths, declaration(root, "**"), namesNothing)
         assertEquals(listOf("README.md"), applied.ignored.map { it.path })
         assertEquals(paths - "README.md", applied.kept)
+    }
+
+    @Test
+    fun `a path git printed in quotes is kept as git-quoted`(@TempDir root: File) {
+        val quoted = "\"docs/\\303\\274bersicht.md\""
+        val applied = PathIgnore.apply(listOf(quoted, "docs/a.md"), declaration(root, "**"), namesNothing)
+        assertEquals(listOf(quoted), applied.kept)
+        assertEquals(PathIgnore.Kept(quoted, "**", Protection.GIT_QUOTED), applied.notIgnored.single())
+    }
+
+    @Test
+    fun `a map that records no reads is said to give no read evidence`(@TempDir root: File) {
+        val applied = PathIgnore.apply(listOf("docs/a.md"), declaration(root, "docs/**"), namesNothing)
+        val lines = PathIgnoreReport.lines(applied, File(root, "no-map"))
+        assertTrue(lines.any { "nothing can show that the paths pathIgnore left out are unread" in it }, "$lines")
+        assertEquals(PathIgnore.Evidence.NO_READ_EVIDENCE, PathIgnoreReport.evidence(applied, File(root, "no-map"))["docs/a.md"])
     }
 
     @Test

@@ -1176,6 +1176,63 @@ class SelectorTest {
     }
 
     @Test
+    fun `a read of an entry of an ignored archive reads it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/x.zip!/e"))),
+            accounted = true,
+            ignored = listOf("docs/x.zip"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+    }
+
+    private fun recordedSources(jvm: String) = "$jvm\t0\t${AgentContract.RESOURCE_RECORDED}\t${AgentContract.RESOURCE_RECORDED_SOURCES}"
+
+    @Test
+    fun `an ignored source file runs every test of a JVM whose record leaves out the sources it opened`(@TempDir dir: File) {
+        val before = decide(
+            stampMap(dir, listOf(recorded("j"), recordedSources("k"))),
+            accounted = true,
+            ignored = listOf("docs/snippets/Example.kt"),
+        )
+        assertTrue(before.includes(placed("com.acme.EarlierTest")))
+        assertTrue(before.includes(placed("com.acme.LaterTest")))
+        assertFalse(before.includes(placed("com.acme.ChangedTest")))
+
+        val noTable = decide(stampMap(File(dir, "none"), null), accounted = true, ignored = listOf("docs/snippets/Example.kt"))
+        assertTrue(noTable.includes(placed("com.acme.EarlierTest")))
+    }
+
+    @Test
+    fun `an ignored source file no JVM that records its sources read runs nothing more`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recordedSources("j"), recordedSources("k"))),
+            accounted = true,
+            ignored = listOf("docs/snippets/Example.kt"),
+        )
+
+        assertEquals(0, decision.selectedCount())
+    }
+
+    @Test
+    fun `an ignored path alone claims no unobserved window`(@TempDir dir: File) {
+        val rules = Selector.rules(
+            map(
+                dir,
+                test("com.acme.EarlierTest", "com.acme.Other"),
+                positions = listOf("j\t2\t${placed("com.acme.EarlierTest")}"),
+                firstTouches = listOf("j\t0\t${AgentContract.FIRST_TOUCH_ANY}"),
+                resourceTouches = listOf(recorded("j")),
+            ),
+            ChangeSet.of(emptyList(), emptyList()).withAccountedFor(true).withIgnoredPaths(listOf("docs/a.md")),
+            true,
+        )
+
+        assertFalse(Rule.SHARES_JVM_UNOBSERVED in rules.rulesFor(placed("com.acme.EarlierTest"), Verdict.SKIPPED))
+    }
+
+    @Test
     fun `the ignored path's window is named as its own rule`(@TempDir dir: File) {
         val rules = Selector.rules(
             stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/snippets.md"))),

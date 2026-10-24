@@ -15,6 +15,12 @@ internal object PathIgnore {
         /** Outside the Gradle root: git prints it verbatim, so it looks like a root-relative path. */
         OUTSIDE_ROOT("outside-root"),
 
+        /**
+         * Quoted by git, as it prints a name with bytes it escapes: the string is not the path, so no
+         * protection below can be judged on it.
+         */
+        GIT_QUOTED("git-quoted"),
+
         /** A build script, a settings or properties file, a version catalog, or build logic. */
         BUILD_FILE("build-file"),
 
@@ -165,6 +171,7 @@ internal object PathIgnore {
         val directories = segments.dropLast(1)
         return when {
             path in declaration.outsideRoot -> Protection.OUTSIDE_ROOT
+            path.startsWith("\"") -> Protection.GIT_QUOTED
             isBuildFile(segments.last(), directories) ||
                 declaration.buildLogicDirs.any { path.startsWith("$it/") } ||
                 inNestedBuild(declaration.rootDir, directories) -> Protection.BUILD_FILE

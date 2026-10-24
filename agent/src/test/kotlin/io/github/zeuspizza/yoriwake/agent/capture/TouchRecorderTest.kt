@@ -322,6 +322,15 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `a source file read outside the root is kept only as a read`(@TempDir root: File, @TempDir elsewhere: File) {
+        val snippet = File(elsewhere, "Example.kt").apply { writeText("fun main() {}") }
+        val recorder = TouchRecorder(root.path)
+        recorder.read(snippet)
+
+        assertEquals(listOf(AgentContract.TOUCH_READ to snippet.path), drained(recorder))
+    }
+
+    @Test
     fun `a manifest read from project code is not the class loader's`() {
         assertFalse(TouchRecorder.loaderReadingManifest())
     }

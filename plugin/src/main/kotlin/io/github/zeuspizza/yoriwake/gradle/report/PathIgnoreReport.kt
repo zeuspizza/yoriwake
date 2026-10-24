@@ -11,9 +11,9 @@ import java.io.File
 internal object PathIgnoreReport {
 
     /**
-     * What the map at [mapDir] says about each path [applied] left out: read when a JVM whose
-     * reads it recorded read the path, a directory above it, or every file; otherwise not read when
-     * every JVM that ran a test recorded its reads, and no read evidence when any did not.
+     * What the map at [mapDir] says about each path [applied] left out: read when the selector opens
+     * a window for it in some JVM; otherwise not read when every JVM that ran a test recorded its
+     * reads, and no read evidence when any did not.
      */
     fun evidence(applied: PathIgnore.Applied, mapDir: File): Map<String, PathIgnore.Evidence> {
         if (applied.ignored.isEmpty()) return emptyMap()
@@ -24,7 +24,7 @@ internal object PathIgnoreReport {
         }
         return applied.ignored.associate { (path, _) ->
             path to when {
-                reads != null && reads.reads().any { reads.recorded(it.jvm()) && Selector.readsIgnored(it.className(), listOf(path)) } ->
+                map != null && map.isUsable && Selector.ignoredPathWindows(map, listOf(path)).isNotEmpty() ->
                     PathIgnore.Evidence.READ
                 everyJvmRecorded -> PathIgnore.Evidence.NOT_READ
                 else -> PathIgnore.Evidence.NO_READ_EVIDENCE

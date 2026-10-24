@@ -1200,12 +1200,16 @@ compiles or what the build reads. The run names each, with the protection that k
 - `outside-root`: a path in the repository outside the root project's directory, when the build
   lives in a subdirectory;
 - `named-in-classes`: a path whose full path or file name a compiled class of the task holds as a
-  string, such as a `ReadmeTest` naming `README.md`.
+  string, such as a `ReadmeTest` naming `README.md`;
+- `git-quoted`: a path git printed in quotes, as it does a name with bytes it escapes, which no
+  rule above can be judged on.
 
 A path left out is still a changed path a test may read, and the map says so where it can: a test
 JVM that read the path at capture, a directory above it, or every file (from a child process or an
 unreviewed native library on), runs every test from that read on (`shares-jvm-ignored-path`), and the
-console says the path was read despite its entry. A map recorded before the plugin recorded reads,
+console says the path was read despite its entry. A changed source file left out runs every test
+of a test JVM whose record does not include the source files it opened, which a map recorded before
+this release does not. A map recorded before the plugin recorded reads,
 or a test JVM whose reads were not recorded, leaves the declaration as made, and `explain.json`
 says `no-read-evidence`. A file the build copies from a declared path onto the test
 classpath, such as `processResources { from("CHANGELOG.md") }`, is compared on the classpath as

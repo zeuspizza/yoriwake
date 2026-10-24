@@ -306,8 +306,15 @@ public final class AgentContract {
     /** A {@link #RESOURCE_TOUCH_FILE} kind: a manifest read by the JDK's class loader. */
     public static final String RESOURCE_LOADER = "loader";
 
-    /** A {@link #RESOURCE_TOUCH_FILE} kind, with sequence 0 and an empty path: the JVM's reads were recorded. */
+    /**
+     * A {@link #RESOURCE_TOUCH_FILE} kind, with sequence 0: the JVM's reads were recorded. Its path
+     * is {@link #RESOURCE_RECORDED_SOURCES} when source files it opened are among them, and empty
+     * in a map recorded before they were.
+     */
     public static final String RESOURCE_RECORDED = "recorded";
+
+    /** The path of a {@link #RESOURCE_RECORDED} row whose JVM's reads include the source files it opened. */
+    public static final String RESOURCE_RECORDED_SOURCES = "sources";
 
     /** A first-touch class meaning "every class": the JVM's loads and reads were not all observed. */
     public static final String FIRST_TOUCH_ANY = "*";

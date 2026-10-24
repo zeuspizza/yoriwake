@@ -233,6 +233,24 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a declared path in a build this one includes stays in the change set`(@TempDir dir: File) {
+        // No settings file of its own: what keeps it is that the build includes it.
+        captured(
+            dir, declaring("**/*.md"),
+            "settings.gradle.kts" to "rootProject.name = \"sample\"\nincludeBuild(\"build-logic\")\n",
+            "build-logic/build.gradle.kts" to "",
+            "build-logic/README.md" to "# Logic\n",
+        )
+        File(dir, "build-logic/README.md").writeText("# Logic, again\n")
+
+        val output = selecting(dir)
+
+        assertContains(output, "matches build-logic/README.md, which stays in the change set (build-file)")
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
+    }
+
+    @Test
     fun `an entry outside the grammar fails the build naming pathIgnore and the entry`(@TempDir dir: File) {
         build(dir, "build.gradle.kts" to declaring("!docs/**"), oneClass, oneTest)
 

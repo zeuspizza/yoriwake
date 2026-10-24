@@ -70,6 +70,7 @@ path-ignore-evidence	no-read-evidence
 path-ignore-evidence	not-read
 path-ignore-evidence	read
 path-ignore-protection	build-file
+path-ignore-protection	git-quoted
 path-ignore-protection	named-in-classes
 path-ignore-protection	outside-root
 path-ignore-protection	source-set
