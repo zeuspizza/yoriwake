@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
 import java.io.File
+import java.util.Locale
 
 /**
  * Where each path that forces a run came from, as far as the tree and the last capture can say.
@@ -21,17 +22,20 @@ internal object ForcingPaths {
     }
 
     /**
-     * [origins] for the forcing paths that got one; a path HEAD or the base tracks, or every path when git
-     * could not say which are tracked, gets none and is only counted in [unnamed].
+     * [origins] for the forcing paths that got one, and [names] what each is called on the console;
+     * a path HEAD or the base tracks gets none and is only counted in [unnamed]. When git could not
+     * say which paths are tracked, every path is counted there and [untold] is set.
      */
     class Classified(
         val origins: Map<String, Origin>,
         val moves: Map<String, WorkingTree.Move>,
         val sourceDirOf: Map<String, String>,
         val unnamed: Int,
+        val names: Map<String, String> = emptyMap(),
+        val untold: Boolean = false,
     ) {
         companion object {
-            fun unnamed(count: Int) = Classified(emptyMap(), emptyMap(), emptyMap(), count)
+            fun unnamed(count: Int) = Classified(emptyMap(), emptyMap(), emptyMap(), count, untold = true)
 
             val NONE = unnamed(0)
         }
@@ -40,13 +44,15 @@ internal object ForcingPaths {
     /**
      * Classifies [forcing] against [sourceDirs] (root-relative, every source set's). [tracked] and
      * [captured] are asked only when there is a path to classify, and [captured] only when a path
-     * is neither tracked nor in a source directory.
+     * is neither tracked nor in a source directory. [holdsTracked] says whether git tracks a file
+     * at or under a directory; it names each classified path.
      */
     fun classify(
         forcing: Collection<String>,
         sourceDirs: Collection<String>,
         tracked: (Collection<String>) -> Set<String>?,
         captured: () -> Map<String, WorkingTree.Move>?,
+        holdsTracked: (String) -> Boolean,
     ): Classified {
         if (forcing.isEmpty()) return Classified.NONE
         val headTracks = tracked(forcing) ?: return Classified.unnamed(forcing.size)
@@ -71,7 +77,21 @@ internal object ForcingPaths {
             },
             sourceDirOf,
             forcing.size - origins.size,
+            origins.keys.associateWith { name(it, holdsTracked) },
         )
+    }
+
+    // What a build lists to stop the path forcing: the outermost directory above it that git
+    // tracks nothing in, as a notReadByTests glob, so a regenerated tree of thousands of files is
+    // one name; the path itself when its own directory holds a tracked file.
+    private fun name(path: String, holdsTracked: (String) -> Boolean): String {
+        var slash = path.indexOf('/')
+        while (slash >= 0) {
+            val dir = path.substring(0, slash)
+            if (!holdsTracked(dir)) return "$dir/*"
+            slash = path.indexOf('/', slash + 1)
+        }
+        return path
     }
 
     /**
@@ -85,7 +105,8 @@ internal object ForcingPaths {
         forcing: Collection<String>,
         sourceDirs: Collection<String>,
         base: String?,
-    ): Classified = runCatching { classifyTree(rootDir, mapDir, forcing, sourceDirs, base) }.getOrDefault(Classified.NONE)
+        git: (List<String>) -> String? = { ChangeDetection.rawGit(rootDir, it) },
+    ): Classified = runCatching { classifyTree(rootDir, mapDir, forcing, sourceDirs, base, git) }.getOrDefault(Classified.NONE)
 
     private fun classifyTree(
         rootDir: File,
@@ -93,29 +114,50 @@ internal object ForcingPaths {
         forcing: Collection<String>,
         sourceDirs: Collection<String>,
         base: String?,
-    ): Classified = classify(
-        forcing, sourceDirs,
-        tracked = { paths -> tracked(rootDir, base, paths) },
-        captured = {
-            val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE).takeIf(File::isFile)
-                ?.let { runCatching { it.readText() }.getOrNull() }
-                ?.let(WorkingTree::parse)
-            WorkingTree.capturedMoves(mapDir, snapshot?.takenMillis)
-        },
-    )
+        git: (List<String>) -> String?,
+    ): Classified {
+        val tree by lazy { TrackedTree.list(base, git) }
+        return classify(
+            forcing, sourceDirs,
+            tracked = { paths -> tree?.let { listed -> paths.filterTo(mutableSetOf(), listed::tracks) } },
+            captured = {
+                val snapshot = File(mapDir, WorkingTree.SNAPSHOT_FILE).takeIf(File::isFile)
+                    ?.let { runCatching { it.readText() }.getOrNull() }
+                    ?.let(WorkingTree::parse)
+                WorkingTree.capturedMoves(mapDir, snapshot?.takenMillis)
+            },
+            // Unknown reads as held, which names the path itself rather than a wider glob.
+            holdsTracked = { dir -> tree?.holds(dir) ?: true },
+        )
+    }
 
-    // Each path is asked both under the build's prefix and from the repository's top: the change
-    // set keeps a path outside a build in a subdirectory repo-relative. A path deleted since [base]
-    // is only in its tree. Either match withholds an origin, which is the safe direction.
-    private fun tracked(rootDir: File, base: String?, paths: Collection<String>): Set<String>? {
-        val prefix = ChangeDetection.rawGit(rootDir, listOf("rev-parse", "--show-prefix"))
-            ?.trimEnd('\n') ?: return null
-        val listed = ChangeDetection.rawGit(
-            rootDir,
-            listOfNotNull("ls-files", "-z", "--full-name", base?.let { "--with-tree=$it" }, "--") +
-                paths.flatMap { listOf(":(top,literal)$prefix$it", ":(top,literal)$it") }.distinct(),
-        )?.split('\u0000')?.filter(String::isNotEmpty)?.toSet() ?: return null
-        return paths.filterTo(mutableSetOf()) { "$prefix$it" in listed || it in listed }
+    // Each path is looked up both under the build's prefix and from the repository's top: the
+    // change set keeps a path outside a build in a subdirectory repo-relative. A path deleted since
+    // the base is only in its tree. Either match withholds an origin, which is the safe direction.
+    private class TrackedTree(private val prefix: String, private val files: Set<String>) {
+
+        // Each tracked file and every directory above it; a submodule is listed as one entry.
+        private val held: Set<String> by lazy {
+            files.flatMapTo(HashSet()) { file ->
+                generateSequence(file) { it.substringBeforeLast('/', "").ifEmpty { null } }.asIterable()
+            }
+        }
+
+        fun tracks(path: String) = "$prefix$path" in files || path in files
+
+        fun holds(dir: String) = "$prefix$dir" in held || dir in held
+
+        companion object {
+            fun list(base: String?, git: (List<String>) -> String?): TrackedTree? {
+                val prefix = git(listOf("rev-parse", "--show-prefix"))?.trimEnd('\n') ?: return null
+                // The whole index, once, whatever the number of forcing paths: one pathspec per
+                // path overran the command line on a large untracked tree, and git said nothing.
+                val listed = git(
+                    listOfNotNull("ls-files", "-z", "--full-name", base?.let { "--with-tree=$it" }, "--", ":/")
+                )?.split('\u0000')?.filterTo(HashSet(), String::isNotEmpty) ?: return null
+                return TrackedTree(prefix, listed)
+            }
+        }
     }
 
     /** Every source set's directories of the build, relative to [rootDir]; those outside it are left out. */
@@ -130,35 +172,52 @@ internal object ForcingPaths {
 
     private const val NAMED = 5
 
-    /** One line per origin, at most [NAMED] paths each, then how many other paths force too. */
+    /**
+     * One line per origin, naming at most [NAMED] directories or files each, those holding the most
+     * forcing paths first, then how many other paths force too. When git could not say which paths
+     * are tracked, one line counts them instead.
+     */
     fun lines(task: String, classified: Classified): List<String> {
-        if (classified.origins.isEmpty()) return emptyList()
+        if (classified.origins.isEmpty()) {
+            val count = classified.unnamed
+            if (!classified.untold || count == 0) return emptyList()
+            return listOf(
+                "$count changed ${if (count == 1) "path forces" else "paths force"} this run and could not be " +
+                    "told apart from tracked ones; ${explainTask(task)} lists a sample in explain.json."
+            )
+        }
         val byOrigin = classified.origins.entries.groupBy({ it.value }, { it.key })
         return buildList {
             byOrigin[Origin.WRITTEN_DURING_CAPTURE]?.let { paths ->
-                val named = named(paths) { "$it (${moved(classified.moves[it])})" }
+                val groups = grouped(paths, classified)
+                val named = named(groups) { name, files ->
+                    if (files == listOf(name)) "$name (${moved(classified.moves[name])})" else counted(name, files)
+                }
                 add(
                     "$named changed during $task's last capture build (by its tasks or its tests), so a " +
                         "selecting run sees ${them(paths)} changed and runs everything. If a test writes " +
                         "such a file and no test, the writer included, ever reads it back, have it write " +
                         "the file into the project's build directory (Derby: the derby.stream.error.file " +
                         "system property). If a test reads it, or a build task writes it, moving it hides " +
-                        "its changes from selection; see $REFERENCE."
+                        "its changes from selection; see $REFERENCE. ${listing(paths, groups)}"
                 )
             }
             byOrigin[Origin.GENERATED_IN_SOURCES]?.let { paths ->
-                val dirs = paths.take(NAMED).mapNotNull { classified.sourceDirOf[it] }.distinct()
+                val groups = grouped(paths, classified)
+                val dirs = groups.take(NAMED).flatMap { it.second }.mapNotNull { classified.sourceDirOf[it] }.distinct()
                 add(
-                    "${named(paths) { it }} ${be(paths)} untracked and in source " +
+                    "${named(groups, ::counted)} ${be(paths)} untracked and in source " +
                         "${if (dirs.size == 1) "directory" else "directories"} ${dirs.joinToString(", ")}, " +
-                        "so on the classpath (generated by the build, or not yet added to git); tests can " +
-                        "read ${them(paths)}, so a change to ${them(paths)} runs everything."
+                        "so on the classpath (generated by the build, or not yet added to git). " +
+                        listing(paths, groups)
                 )
             }
             byOrigin[Origin.UNTRACKED]?.let { paths ->
+                val groups = grouped(paths, classified)
                 add(
-                    "${named(paths) { it }} ${be(paths)} untracked or ignored and " +
-                        "${if (paths.size == 1) "counts" else "count"} by content; see $REFERENCE."
+                    "${named(groups, ::counted)} ${be(paths)} untracked or ignored and " +
+                        "${if (paths.size == 1) "counts" else "count"} by content; see $REFERENCE. " +
+                        listing(paths, groups)
                 )
             }
             if (classified.unnamed > 0) {
@@ -170,9 +229,30 @@ internal object ForcingPaths {
         }
     }
 
-    private fun named(paths: List<String>, name: (String) -> String): String =
-        paths.take(NAMED).joinToString(", ", transform = name) +
-            if (paths.size > NAMED) " and ${paths.size - NAMED} more" else ""
+    /** [paths] by the name they are listed under, the names holding the most paths first. */
+    private fun grouped(paths: List<String>, classified: Classified): List<Pair<String, List<String>>> =
+        paths.groupBy { classified.names[it] ?: it }.toList()
+            .sortedWith(compareByDescending<Pair<String, List<String>>> { it.second.size }.thenBy { it.first })
+
+    private fun named(groups: List<Pair<String, List<String>>>, label: (String, List<String>) -> String): String =
+        groups.take(NAMED).joinToString(", ") { (name, files) -> label(name, files) } +
+            if (groups.size > NAMED) " and ${groups.size - NAMED} more" else ""
+
+    private fun counted(name: String, files: List<String>) =
+        if (files.size == 1) name else "$name (${"%,d".format(Locale.ROOT, files.size)} files)"
+
+    // Offered under the condition that makes it safe: a test still sees what the build compiles
+    // or copies from these files onto its classpath, which the selecting run compares by content.
+    private fun listing(paths: List<String>, groups: List<Pair<String, List<String>>>): String =
+        "If neither a test nor a build step reads ${if (paths.size == 1) "this file" else "these files"} other " +
+            "than to compile or copy ${them(paths)} onto the test classpath (whose changed classes run the " +
+            "tests that executed them, and whose changed files the tests that read them), list " +
+            "${them(paths)} in notReadByTests: " +
+            groups.take(NAMED).joinToString(", ") { "\"${it.first}\"" } +
+            (if (groups.size > NAMED) ", and the ${groups.size - NAMED} more alike" else "") + "."
+
+    private fun explainTask(task: String) =
+        task.substringBeforeLast(':') + ":yoriwakeExplain" + task.substringAfterLast(':').replaceFirstChar(Char::uppercase)
 
     private fun moved(move: WorkingTree.Move?) = when (move) {
         WorkingTree.Move.CREATED -> "created"

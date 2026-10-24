@@ -208,7 +208,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("change-set-stale", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         // Not explained: the explain build would regenerate the resource first.
-        assertNamedWithoutRemedy(output, "app/gen/main/resources/info.properties")
+        assertNamedWithoutRemedy(output, "app/gen/*")
     }
 
     @Test
@@ -227,7 +227,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
         assertEquals("generated-in-sources", explainedOrigins(dir)["app/gen/main/resources/info.properties"])
-        assertNamedWithoutRemedy(output, "app/gen/main/resources/info.properties")
+        assertNamedWithoutRemedy(output, "app/gen/*")
     }
 
     @Test
@@ -269,7 +269,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
         assertEquals("untracked", explainedOrigins(dir)["app/fixtures/data.json"])
-        assertNamedWithoutRemedy(output, "app/fixtures/data.json")
+        assertNamedWithoutRemedy(output, "app/fixtures/*")
     }
 
     @Test
@@ -403,7 +403,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("generated-in-sources", explainedOrigins(dir)["lib/src/main/resources/stamp.txt"])
-        assertNamedWithoutRemedy(output, "lib/src/main/resources/stamp.txt")
+        assertNamedWithoutRemedy(output, "lib/src/*")
     }
 
     @Test
@@ -503,9 +503,107 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertTrue("gradle/libs.versions.toml" in explained, explained.toString())
         assertNull(explained["gradle/libs.versions.toml"])
         assertNamedWithRemedy(output, "app/run.log")
-        assertNamedWithoutRemedy(output, "app/gen/main/resources/info.properties")
-        assertNamedWithoutRemedy(output, "app/fixtures/data.json")
+        assertNamedWithoutRemedy(output, "app/gen/*")
+        assertNamedWithoutRemedy(output, "app/fixtures/*")
         assertTrue(output.lines().any { it.startsWith("[yoriwake] :app:test: 1 other") }, output)
+    }
+
+    /**
+     * A build that, like many, regenerates ignored files on every run: a versions resource from
+     * the `stamp` property into its own resource directory, and a package manager's tree beside a
+     * tracked package file.
+     */
+    private val regeneratingBuild = """
+        val generateVersions by tasks.registering {
+            val stamp = providers.gradleProperty("stamp").orElse(System.currentTimeMillis().toString())
+            val out = layout.projectDirectory.file("gen-src/main/resources/META-INF/app.versions.properties")
+            inputs.property("stamp", stamp)
+            outputs.file(out)
+            doLast { out.asFile.apply { parentFile.mkdirs() }.writeText("stamp=" + stamp.get() + "\n") }
+        }
+        sourceSets.main { resources.srcDir("gen-src/main/resources") }
+        tasks.processResources { dependsOn(generateVersions) }
+        val installPackages by tasks.registering {
+            val modules = layout.projectDirectory.dir("web/node_modules")
+            outputs.dir(modules)
+            doLast { (1..300).forEach { modules.file("m" + it + "/index.js").asFile.apply { parentFile.mkdirs() }.writeText("// " + it) } }
+        }
+        tasks.test { dependsOn(installPackages) }
+    """
+
+    private fun regeneratingFixture(dir: File, appBuild: String = "", vararg extra: Pair<String, String>) {
+        fixture(dir, regeneratingBuild + appBuild, "web/package.json" to "{}", *extra)
+        File(dir, ".gitignore").appendText("gen-src/\nnode_modules/\n")
+        commit(dir, "ignore generated")
+    }
+
+    @Test
+    fun `a run forced by regenerated ignored directories names them and how to list them`(@TempDir dir: File) {
+        regeneratingFixture(dir)
+        capture(dir, "-Pstamp=a")
+        runner(dir, ":app:processResources", "-Pstamp=b").build()
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Pstamp=b")
+
+        assertEquals(both, ranTests(app(dir)), output)
+        assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        val generated = linesNaming(output, "app/gen-src/*")
+        assertEquals(1, generated.size, output)
+        assertContains(generated.single(), "notReadByTests")
+        val modules = linesNaming(output, "app/web/node_modules/* (300 files)")
+        assertEquals(1, modules.size, output)
+        assertContains(modules.single(), "notReadByTests")
+        assertEquals(emptyList(), linesNaming(output, "app/web/node_modules/m1/"), output)
+    }
+
+    /** Reads the regenerated versions resource the way a test can: through the classpath. */
+    private val versionsReaderTest = "src/test/java/dev/sample/VersionsTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import java.io.InputStream;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class VersionsTest {
+            @Test void reads() throws Exception {
+                try (InputStream in = getClass().getResourceAsStream("/META-INF/app.versions.properties")) {
+                    assertNotNull(in);
+                    in.readAllBytes();
+                }
+            }
+        }
+    """.trimIndent()
+
+    /** The globs the forced run names, listed as it says. */
+    private val listedAsNamed = """
+        yoriwake { notReadByTests.addAll("app/gen-src/*", "app/web/node_modules/*") }
+    """
+
+    @Test
+    fun `with the named directories listed, a regenerated resource still runs the test that reads it`(
+        @TempDir dir: File,
+    ) {
+        regeneratingFixture(dir, listedAsNamed, versionsReaderTest)
+        capture(dir, "-Pstamp=a")
+        runner(dir, ":app:processResources", "-Pstamp=b").build()
+
+        val output = select(dir, "-Pstamp=b")
+
+        assertEquals(setOf("dev.sample.VersionsTest"), ranTests(app(dir)), output)
+    }
+
+    @Test
+    fun `with the named directories listed and the resource as captured, the selecting run narrows`(
+        @TempDir dir: File,
+    ) {
+        regeneratingFixture(dir, listedAsNamed, versionsReaderTest)
+        capture(dir, "-Pstamp=a")
+        changeBeta(app(dir))
+
+        val output = select(dir, "-Pstamp=a")
+
+        val ran = ranTests(app(dir))
+        assertTrue("dev.sample.BetaTest" in ran && ran.size < 3, "$ran\n$output")
+        assertNull(decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
     }
 
     // What a dating capture records of the files that moved while it ran.
