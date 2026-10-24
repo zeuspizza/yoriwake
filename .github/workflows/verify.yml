@@ -77,15 +77,17 @@ jobs:
       - run: python3 .github/test_ci.py
       - name: the release's signing and upload refusal work
         run: .github/check_release_signing.sh
+      # The coverage job reads it; kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-linux-unit
           path: plugin/build/jacoco/test.exec
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
       # The agent's measured coverage, so a ratchet is set from this run without another.
+      # A person reads it: setting a ratchet from a green pull request's run, or reading a red gate.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: ${{ !cancelled() }}
         with:
           name: coverage-report-agent
           path: agent/build/reports/jacoco/test/jacocoTestReport.xml
@@ -117,6 +119,7 @@ jobs:
         if: failure()
         shell: bash
         run: python3 .github/ci.py list-test-kit-homes plugin/build/tmp > plugin/build/test-kit-homes.txt
+      # A person reads it to see what a failed shard's TestKit daemons downloaded and logged.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -128,21 +131,23 @@ jobs:
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
+      # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: functional-linux-functionalTest-${{ matrix.shard }}-of-2
           path: plugin/build/test-results/functionalTest/*.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
       # The daemons' coverage and the test JVM's own, for the coverage job.
+      # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage-linux-functionalTest-${{ matrix.shard }}-of-2
           path: plugin/build/jacoco/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
@@ -190,6 +195,7 @@ jobs:
         if: failure()
         shell: bash
         run: python3 .github/ci.py list-test-kit-homes plugin/build/tmp > plugin/build/test-kit-homes.txt
+      # A person reads it to see what a failed shard's TestKit daemons downloaded and logged.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -201,21 +207,23 @@ jobs:
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
+      # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: functional-linux-functionalTestGradle9-${{ matrix.shard }}-of-2
           path: plugin/build/test-results/functionalTestGradle9/*.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
       # The daemons' coverage and the test JVM's own, for the coverage job.
+      # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage-linux-functionalTestGradle9-${{ matrix.shard }}-of-2
           path: plugin/build/jacoco/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
@@ -239,8 +247,8 @@ jobs:
         run: python3 .github/functional_shards.py check shards --count 2
 
   # The plugin's coverage gate over the unit tests and every Linux shard of both functional suites,
-  # as `./gradlew build` gates locally. The report goes up whatever the outcome, so a ratchet is set
-  # and a red gate read from this run without another.
+  # as `./gradlew build` gates locally. The report goes up unless the run was cancelled, so a ratchet
+  # is set and a red gate read from this run without another.
   coverage:
     name: coverage gate
     needs: [changes, build, functional-shard, functional-gradle9-shard]
@@ -270,8 +278,9 @@ jobs:
             exit 1
           fi
           grep -q "no daemon coverage from functionalTest and functionalTestGradle9" refusal.log || { cat refusal.log; exit 1; }
+      # A person reads it: setting a ratchet from a green pull request's run, or reading a red gate.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: ${{ !cancelled() }}
         with:
           name: coverage-report-plugin
           path: |
@@ -279,6 +288,7 @@ jobs:
             coverage-data/**/summary.txt
           if-no-files-found: warn
           retention-days: 7
+      # A person reads it when the coverage gate failed.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -318,6 +328,7 @@ jobs:
           map=$(python3 .github/ci.py find-map samples/demo)
           grep -q "dev.demo.Alpha" "$map"
 
+      # The select jobs of this run read it; a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-map
@@ -464,6 +475,7 @@ jobs:
           map=$(python .github/ci.py find-map samples/demo)
           grep -q "dev.demo.Alpha" "$map"
 
+      # The select jobs of this run read it; a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-map-windows
@@ -578,6 +590,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - shell: bash
         run: ./gradlew build -x functionalTest -x functionalTestGradle9 -Pyoriwake.functional.coverage=false --continue --console=plain
+      # A person reads it when the Windows unit build failed.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -614,6 +627,7 @@ jobs:
         if: failure()
         shell: bash
         run: python .github/ci.py list-test-kit-homes plugin/build/tmp > plugin/build/test-kit-homes.txt
+      # A person reads it to see what a failed shard's TestKit daemons downloaded and logged.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -625,13 +639,14 @@ jobs:
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
+      # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: functional-windows-functionalTest-${{ matrix.shard }}-of-8
           path: plugin/build/test-results/functionalTest/*.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
@@ -681,6 +696,7 @@ jobs:
         if: failure()
         shell: bash
         run: python .github/ci.py list-test-kit-homes plugin/build/tmp > plugin/build/test-kit-homes.txt
+      # A person reads it to see what a failed shard's TestKit daemons downloaded and logged.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -692,13 +708,14 @@ jobs:
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
+      # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: functional-windows-functionalTestGradle9-${{ matrix.shard }}-of-8
           path: plugin/build/test-results/functionalTestGradle9/*.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.

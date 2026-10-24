@@ -98,11 +98,15 @@ jobs:
           xargs sha256sum < files > SHA256SUMS
           rm files
           cat SHA256SUMS
+      # attest, publish and github-release read it, and any re-run of them: after an approval
+      # wait, or a failed github-release once the Portal has the version. Both end within
+      # GitHub's 30-day re-run limit.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-files
           path: release/
           if-no-files-found: error
+          retention-days: 30
 
   # Vouches for the tested files, on a runner that builds and runs nothing.
   attest:
@@ -175,11 +179,13 @@ jobs:
           -Pyoriwake.sign -Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository" --console=plain
       # Kept before the upload, which cannot be taken back: if a later step fails, the signatures
       # for the release that is already public are not lost.
+      # github-release reads it too, and a re-run of it within GitHub's 30-day limit.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-signatures
           path: release/repository/**/*.asc
           if-no-files-found: error
+          retention-days: 30
       - name: publish
         env:
           GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}

@@ -122,6 +122,8 @@ jobs:
           git rev-parse HEAD > cell-results/sha.txt
           cp -R plugin/build/test-results/functionalTest* cell-results/ || true
 
+      # The summary reads every cell. A re-run of a failed cell, possible for 30 days, re-runs
+      # it, so every matrix artifact lasts as long as that.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -171,13 +173,16 @@ jobs:
           mkdir job-sha
           git rev-parse HEAD > job-sha/sha.txt
 
+      # The select jobs read it. "Re-run failed jobs" on a failed select does not re-run its
+      # capture, so it lasts as long as a re-run can come.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-map-${{ matrix.os }}
           path: samples/demo/.gradle/yoriwake
           include-hidden-files: true
-          retention-days: 1
+          retention-days: 30
 
+      # The summary reads it, with the cells, for as long as a cell can be re-run.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sha-capture-${{ matrix.os }}
@@ -236,6 +241,7 @@ jobs:
           mkdir job-sha
           git rev-parse HEAD > job-sha/sha.txt
 
+      # The summary reads it, with the cells, for as long as a cell can be re-run.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sha-select-${{ matrix.from }}-on-${{ matrix.os }}

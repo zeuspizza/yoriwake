@@ -91,13 +91,14 @@ jobs:
           BASE: ${{ needs.changes.outputs.base }}
         run: python3 scripts/prove_guards.py --mode full --changed "${BASE:?no merge base}" --shard ${{ matrix.shard }}/8 --results results/changed.json
       # Always, and an error when empty: the check reads every shard's results.
+      # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: guards-pr-${{ matrix.shard }}-of-8
           path: results/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every guard the check selects itself, the shards' flags but no shard, fired in exactly one.
@@ -151,13 +152,15 @@ jobs:
       - run: |
           mkdir -p results
           python3 scripts/prove_guards.py --mode full --shard ${{ matrix.shard }}/8 --results results/full.json
+      # The check job reads every shard's results. Kept a day: a re-run after a day needs
+      # "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: guards-every-${{ matrix.shard }}-of-8
           path: results/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   full:
     name: guards, every one
