@@ -6,6 +6,8 @@ package io.github.zeuspizza.yoriwake.gradle.fixtures
  */
 
 /** Body copied into every call site. Its absence from coverage proves nothing. Must stay refused. */
+// The inline body is the shape under test, not a speed-up.
+@Suppress("NOTHING_TO_INLINE")
 inline fun copiedIntoCallers(n: Int): Boolean = n > 0
 
 /** Copied exactly as a Java `static final` String is. Must stay refused. */

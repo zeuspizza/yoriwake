@@ -77,6 +77,11 @@ tasks.compileJava {
 
 kotlin {
     jvmToolchain(21)
+    // A warning nobody reads is a warning nobody acts on. The guard script and the benchmark's
+    // publish build deliberately broken sources and pass `-Pyoriwake.kotlinWarningsAsErrors=false`.
+    compilerOptions {
+        allWarningsAsErrors = providers.gradleProperty("yoriwake.kotlinWarningsAsErrors").orNull?.toBooleanStrict() ?: true
+    }
 }
 
 // Scripted capture runs for CaptureCharacterizationTest: a stand-in JaCoCo runtime and one driver

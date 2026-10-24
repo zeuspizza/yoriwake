@@ -425,6 +425,11 @@ kotlin {
     jvmToolchain(buildJdk)
     // Public is only what a host build or the init script touches; everything else is internal.
     explicitApi()
+    // A warning nobody reads is a warning nobody acts on. The guard script and the benchmark's
+    // publish build deliberately broken sources and pass `-Pyoriwake.kotlinWarningsAsErrors=false`.
+    compilerOptions {
+        allWarningsAsErrors = providers.gradleProperty("yoriwake.kotlinWarningsAsErrors").orNull?.toBooleanStrict() ?: true
+    }
 }
 
 // The stdlib is Gradle's, not ours, and Gradle 8.14 embeds Kotlin 2.0.21: compiled against 2.0,
