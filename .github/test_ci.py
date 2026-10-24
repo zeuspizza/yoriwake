@@ -323,6 +323,72 @@ def unpinned_uses(text):
     return found
 
 
+def gradle_notice_problems(text):
+    """What lets setup-gradle's out-of-date notice back, or saves a cache under a live daemon.
+
+    The build runs on the supported floor on purpose, and only the build-capture switch drops the
+    action's notice about it; with capture off, a job that writes the cache must stop its own
+    daemons, which the action stopped for captured builds, or a Windows save can hit a lock.
+    """
+    if "gradle/actions/setup-gradle" not in text:
+        return []
+    problems = []
+    if not re.search(r"^env:\n(?:  .*\n)*  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'$", text, re.M):
+        problems.append("no top-level env setting GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE to 'true'")
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("jobs:"))
+    heads = [(i, m.group(1)) for i, line in enumerate(lines)
+             if i > start and (m := re.match(r"^  ([\w-]+):\s*$", line))]
+    for n, (head, name) in enumerate(heads):
+        job = lines[head:heads[n + 1][0] if n + 1 < len(heads) else len(lines)]
+        for k, line in enumerate(job):
+            if "gradle/actions/setup-gradle" not in line:
+                continue
+            indent = len(line) - len(line.lstrip())
+            step = []
+            for later in job[k + 1:]:
+                if later.strip() and len(later) - len(later.lstrip()) <= indent:
+                    break
+                step.append(later)
+            if any("cache-read-only" in s or "cache-disabled" in s for s in step):
+                continue
+            body = [l for l in job if l.strip() and len(l) - len(l.lstrip()) >= 4]
+            if not body or body[-1].strip() != "run: ./gradlew --stop":
+                problems.append(f"job {name} writes the Gradle cache and does not end by stopping the daemons")
+    return problems
+
+
+def case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon():
+    problems = 0
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in gradle_notice_problems(handle.read()):
+                problems += fail(f"{name}: {problem}")
+    return problems
+
+
+def case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_reported():
+    problems = 0
+    head = "permissions:\n  contents: read\n\n"
+    switch = "env:\n  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'\n\n"
+    setup = "      - uses: gradle/actions/setup-gradle@0123456789012345678901234567890123456789 # v6.4.0\n"
+    stop = "      - name: stop\n        if: always()\n        run: ./gradlew --stop\n"
+    writing = "jobs:\n  build:\n    steps:\n" + setup + "      - run: ./gradlew build\n"
+    reading = ("jobs:\n  read:\n    steps:\n" + setup + "        with:\n          cache-read-only: true\n"
+               "      - run: ./gradlew build\n")
+    if gradle_notice_problems(head + switch + writing + stop):
+        problems += fail(f"a complete workflow was reported: {gradle_notice_problems(head + switch + writing + stop)}")
+    if not any("GRADLE_ACTIONS_SKIP" in p for p in gradle_notice_problems(head + writing + stop)):
+        problems += fail("a workflow without the switch passed")
+    if not any("job build" in p for p in gradle_notice_problems(head + switch + writing)):
+        problems += fail("a cache-writing job without the stop passed")
+    if gradle_notice_problems(head + switch + reading):
+        problems += fail("a read-only job was required to stop its daemons")
+    if gradle_notice_problems("on: push\njobs:\n  scan:\n    steps:\n      - run: true\n"):
+        problems += fail("a workflow that sets no Gradle up was required to carry the switch")
+    return problems
+
+
 def case_a_tag_pin_is_reported():
     problems = 0
     if not unpinned_uses("    steps:\n      - uses: actions/checkout@v7\n"):
@@ -2247,6 +2313,8 @@ CASES = (
     case_a_tag_pin_is_reported,
     case_a_sha_without_its_version_comment_is_reported,
     case_every_workflow_pins_its_actions_by_sha,
+    case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
+    case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_reported,
     case_the_reference_table_and_the_matrix_cells_agree,
     case_a_table_that_drifts_from_the_cells_is_reported,
     case_a_malformed_row_or_axis_is_reported,
