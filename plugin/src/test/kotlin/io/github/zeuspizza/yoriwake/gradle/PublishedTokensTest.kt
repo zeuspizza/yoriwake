@@ -8,6 +8,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.change.DigestSilence
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.FilterVerdict
@@ -58,6 +59,8 @@ class PublishedTokensTest {
         add("audit-state", Audit.State.entries.map { it.token })
         add("digest-silence", DigestSilence.entries.map { it.token })
         add("forcing-path-origin", ForcingPaths.Origin.entries.map { it.token })
+        add("path-ignore-protection", PathIgnore.Protection.entries.map { it.token })
+        add("path-ignore-evidence", PathIgnore.Evidence.entries.map { it.token })
         add("filter-verdict", listOf(FilterVerdict.UNFILTERED, FilterVerdict.FILTERED))
         add("framework", listOf(Audit.TaskFacts.PLATFORM))
         add("refusals-key", listOf(INLINE_REFUSAL_KEY))

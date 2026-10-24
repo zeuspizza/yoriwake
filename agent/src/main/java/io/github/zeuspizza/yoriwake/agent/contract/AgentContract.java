@@ -101,6 +101,13 @@ public final class AgentContract {
     public static final String MOVED_FILES_PROPERTY = "yoriwake.change.movedFiles";
 
     /**
+     * Changed paths the build's {@code pathIgnore} took out of the change set, comma-separated, each
+     * as {@code <path> \t <entry>} with {@code %} and {@code ,} written as {@code %25} and {@code %2C}.
+     * Each runs the tests from its first read on in every JVM whose reads the map recorded.
+     */
+    public static final String IGNORED_PATHS_PROPERTY = "yoriwake.change.ignored";
+
+    /**
      * The file holding every list-valued change-set property, {@link #CHANGE_SET_FILE} in the map
      * directory. A change set can name tens of thousands of paths, more than one command line
      * carries, so those properties are never passed to the test JVM directly. Set means the file
@@ -309,8 +316,15 @@ public final class AgentContract {
     /** A {@link #RESOURCE_TOUCH_FILE} kind: a manifest read by the JDK's class loader. */
     public static final String RESOURCE_LOADER = "loader";
 
-    /** A {@link #RESOURCE_TOUCH_FILE} kind, with sequence 0 and an empty path: the JVM's reads were recorded. */
+    /**
+     * A {@link #RESOURCE_TOUCH_FILE} kind, with sequence 0: the JVM's reads were recorded. Its path
+     * is {@link #RESOURCE_RECORDED_SOURCES} when source files it opened are among them, and empty
+     * in a map recorded before they were.
+     */
     public static final String RESOURCE_RECORDED = "recorded";
+
+    /** The path of a {@link #RESOURCE_RECORDED} row whose JVM's reads include the source files it opened. */
+    public static final String RESOURCE_RECORDED_SOURCES = "sources";
 
     /** A first-touch class meaning "every class": the JVM's loads and reads were not all observed. */
     public static final String FIRST_TOUCH_ANY = "*";
@@ -387,7 +401,7 @@ public final class AgentContract {
     public static final String TOUCH_PLAN_STARTED = "plan-started";
 
     /**
-     * A touch kind: a file that is not a class or source file was opened beneath the {@link
+     * A touch kind: a file that is not a class file was opened beneath the {@link
      * #CAPTURE_ROOT_PROPERTY}, an archive read whole included; its absolute path, or a jar entry
      * as {@code <jar>!/<entry>}. One read may give several rows, one per name it went by, or, for a
      * read the agent could not place, its path as given.
@@ -543,6 +557,9 @@ public final class AgentContract {
     /** The properties left out of the environment comparison, copied from {@link #FINGERPRINT_IGNORED_PROPERTY}. */
     public static final String FINGERPRINT_IGNORED_NOTE = "fingerprint-ignored";
 
+    /** How many changed paths {@code pathIgnore} took out, from {@link #IGNORED_PATHS_PROPERTY}. */
+    public static final String PATHS_IGNORED_NOTE = "paths-ignored";
+
     /**
      * What a selecting run of the same inputs would have noted as its outcome, on an observing run:
      * {@code outcome [\t full-run-kind [\t refusal-kind]]}. The {@link #OUTCOME_NOTE} says what ran.
@@ -659,6 +676,12 @@ public final class AgentContract {
      * the capture, or in a JVM whose reads of such files were not recorded.
      */
     public static final String RULE_SHARES_JVM_MOVED_CLASSPATH_FILE = "shares-jvm-moved-classpath-file";
+
+    /**
+     * The test ran at or after its JVM first read a changed path {@code pathIgnore} declares no test
+     * reads, a directory above it, or every file.
+     */
+    public static final String RULE_SHARES_JVM_IGNORED_PATH = "shares-jvm-ignored-path";
 
     /**
      * The test ran at or after the point from which its JVM's touches were not all observed

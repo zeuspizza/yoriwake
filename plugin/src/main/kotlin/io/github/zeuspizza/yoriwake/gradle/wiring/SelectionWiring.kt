@@ -10,6 +10,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEMPT_TEST_CLASSES_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.IGNORED_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MOVED_FILES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PROJECT_DIR_PROPERTY
@@ -35,6 +36,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
 import io.github.zeuspizza.yoriwake.gradle.change.Declarations
+import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
 import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.jacocoCeilingNote
@@ -48,6 +50,8 @@ import io.github.zeuspizza.yoriwake.gradle.change.establish
 import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
 import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
 import io.github.zeuspizza.yoriwake.gradle.change.NotRead
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
+import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.change.wouldRunEverything
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -116,9 +120,11 @@ internal fun TestTaskWiring.configureSelection(
     runPlan: RunPlan,
     fromBuildScript: TestPatterns,
     notReadByTests: List<String>,
+    pathIgnore: List<String>,
     environment: EnvironmentFingerprint.Rules,
     projectDir: String,
     declarations: List<Declarations.Declaration>,
+    largeChange: Int,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -130,51 +136,13 @@ internal fun TestTaskWiring.configureSelection(
     val age = runPlan.widening!!.age
     val drift = runPlan.widening.drift
     if (age is MapAge.Unknown) {
-        refuse(test, age.kind, age.reason)
-        val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         val cause = if (age.kind == RefusalKind.SNAPSHOT_ABSENT) {
             "A map captured before snapshots were recorded looks like this"
         } else {
             "A rebase, a force-push, a map cached from a different history, or one 0.1.0 captured " +
                 "under a test filter in its build script all look like this"
         }
-        test.doFirst { task ->
-            if (refusedAtExecution(test)) return@doFirst
-            // A map recorded in isolation is left as it is, as by every other fallback.
-            val leftAlone = decideCapture(
-                mapDir,
-                mapUsable = runCatching {
-                    io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
-                }.getOrDefault(false),
-                fullRun = true,
-                learnable = emptySet(),
-                ageKnown = false,
-            ).takeUnless { it.capture }
-            // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
-            // map must not promise that its capture clears the refusal.
-            val undated = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast)
-            task.logger.lifecycle(
-                "[yoriwake] ${task.path}: ${age.reason}, and the whole suite runs. $cause; " +
-                    when {
-                        leftAlone != null -> "the next recording run clears it."
-                        undated != null -> "this run's capture cannot clear it ($undated); a run without that does."
-                        else -> "this run's capture clears it."
-                    }
-            )
-            // Running everything, so it captures and dates the map; otherwise a build that
-            // always selects would refuse forever. An isolated map waits for its recording run.
-            applyCaptureDecision(
-                test, mapDir, refusalJacoco, observing,
-                leftAlone ?: CaptureDecision(
-                    capture = true, fullRun = true, mapCurrent = false,
-                    reason = if (undated == null) {
-                        "running everything, so this run also captures and dates the map."
-                    } else {
-                        "running everything."
-                    },
-                ),
-            )
-        }
+        refuseAndRecord(test, mapDir, observing, fromBuildScript, age.kind, age.reason, cause, clears = true)
         return
     }
     val widened = (age as MapAge.Known).base
@@ -217,11 +185,26 @@ internal fun TestTaskWiring.configureSelection(
         return
     }
 
+    // Before any analysis: a change this size would end in a full run, so analysing it only costs.
+    // Counted against the base the run was asked about, which the map's age cannot grow.
+    val asked = runPlan.widening.requested ?: widened
+    ChangeDetection.changedPaths(project.providers, project.rootDir, asked.ref, buildMemo)?.let { askedPaths ->
+        val count = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct().size
+        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->
+            refuseAndRecord(
+                test, mapDir, observing, fromBuildScript, RefusalKind.LARGE_CHANGE, reason,
+                "Analysing a change this size costs more than it saves", clears = false,
+            )
+            return
+        }
+    }
+
     // Resolved to plain values and providers here: a task action may not touch Project under
     // the configuration cache.
     val classpathFacts = classpathFacts(project, test, paths)
     val rootDir = project.rootDir
     val sourceDirs = ForcingPaths.sourceDirs(rootDir, projectFacts(project, buildMemo).allSourceDirs)
+    val ignore = pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOfNotNull(against, stamp), paths, buildMemo)
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -231,8 +214,13 @@ internal fun TestTaskWiring.configureSelection(
     // The whole change set, as an input: the file is not one, and a different change set must
     // re-run the task, or a change that forces a full run finds it up to date and runs nothing.
     // Only configuration-time state is an input; what the actions below set is not.
+    // With a declaration, each path it can take out is in by its content as well: the name alone
+    // would leave the task up to date after a second edit to the same file, unlogged.
     test.inputs.property(
-        "yoriwake.changeSet", changeSetDigest(ChangeDetection.split(paths, project.rootDir)))
+        "yoriwake.changeSet",
+        changeSetDigest(ChangeDetection.split(paths, project.rootDir)) +
+            (ignore?.let { ":" + ignoredContentDigest(project, it, paths) } ?: ""),
+    )
     test.systemProperty(SELECT_PROPERTY, "true")
     // A test's declared-dependency tag is relative to its project; the agent resolves it against this.
     test.systemProperty(PROJECT_DIR_PROPERTY, projectDir)
@@ -249,7 +237,8 @@ internal fun TestTaskWiring.configureSelection(
         if (refusedAtExecution(test)) {
             return@doFirst
         }
-        val scoped = scopedChange(paths, classpathFacts, notReadByTests)
+        val scoped = scopedChange(paths, classpathFacts, notReadByTests, ignore)
+        PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
         val established = establish(
             { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") },
             mapDir, scoped.change, classpathFacts,
@@ -338,6 +327,10 @@ internal fun TestTaskWiring.configureSelection(
                 // definition, so the absence rule would never fire for it.
                 OWN_TEST_CLASSES_PROPERTY to established.testClasses,
                 EXEMPT_TEST_CLASSES_PROPERTY to established.exemptTestClasses,
+            ) + (
+                // Only when there is one, so a build without a declaration hands over what it did.
+                if (scoped.ignore.ignored.isEmpty()) emptyMap()
+                else mapOf(IGNORED_PATHS_PROPERTY to scoped.ignore.ignored.map(PathIgnore::encode))
             ),
         )
         if (established.testClasses.isNotEmpty()) {
@@ -382,6 +375,62 @@ internal fun TestTaskWiring.configureSelection(
 }
 
 /**
+ * Refuses to select, so the whole suite runs, and has that run capture and date the map unless the
+ * map was recorded in isolation. The console line is [reason], then [cause]; when [clears], it also
+ * says whether this run's capture clears the refusal.
+ */
+private fun refuseAndRecord(
+    test: Test,
+    mapDir: File,
+    observing: Boolean,
+    fromBuildScript: TestPatterns,
+    kind: RefusalKind,
+    reason: String,
+    cause: String,
+    clears: Boolean,
+) {
+    refuse(test, kind, reason)
+    val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+    test.doFirst { task ->
+        if (refusedAtExecution(test)) return@doFirst
+        // A map recorded in isolation is left as it is, as by every other fallback.
+        val leftAlone = decideCapture(
+            mapDir,
+            mapUsable = runCatching {
+                io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
+            }.getOrDefault(false),
+            fullRun = true,
+            learnable = emptySet(),
+            ageKnown = false,
+        ).takeUnless { it.capture }
+        // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
+        // map must not promise that its capture clears the refusal.
+        val undated = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast)
+        task.logger.lifecycle(
+            "[yoriwake] ${task.path}: $reason, and the whole suite runs. $cause" + if (!clears) "." else "; " +
+                when {
+                    leftAlone != null -> "the next recording run clears it."
+                    undated != null -> "this run's capture cannot clear it ($undated); a run without that does."
+                    else -> "this run's capture clears it."
+                }
+        )
+        // Running everything, so it captures and dates the map; otherwise a build that
+        // always selects would refuse forever. An isolated map waits for its recording run.
+        applyCaptureDecision(
+            test, mapDir, refusalJacoco, observing,
+            leftAlone ?: CaptureDecision(
+                capture = true, fullRun = true, mapCurrent = false,
+                reason = if (undated == null) {
+                    "running everything, so this run also captures and dates the map."
+                } else {
+                    "running everything."
+                },
+            ),
+        )
+    }
+}
+
+/**
  * The base a selecting run compares from, widened to the map's age, and the working tree's drift
  * since the capture. The run plan asks it once, before any decline is checked.
  */
@@ -403,7 +452,7 @@ internal fun selectionWidening(
     val drift = if (stampAge is MapAge.Known) worktreeDrift(project, mapDir, buildMemo) else null
     val age = (drift as? WorkingTree.Drift.Unknown)?.let { MapAge.Unknown(it.kind, it.reason) }
         ?: stampAge
-    return RunPlan.Widening(age, drift)
+    return RunPlan.Widening(age, drift, base)
 }
 
 /**
@@ -878,6 +927,57 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
             ),
         )
     }
+}
+
+/**
+ * The declaration a selecting run applies, or null when [entries] is empty. Plain values, read at
+ * configuration: a task action may not touch Project. A path outside the root that git could not
+ * place is treated as outside, so it is kept.
+ */
+internal fun pathIgnoreDeclaration(
+    project: Project,
+    entries: List<String>,
+    sourceDirs: List<String>,
+    against: List<String>,
+    paths: List<String>,
+    buildMemo: BuildMemo?,
+): PathIgnore.Declaration? {
+    if (entries.isEmpty()) return null
+    val outside = against.map { ChangeDetection.outsideRoot(project.providers, project.rootDir, it, buildMemo) }
+    return PathIgnore.Declaration(
+        entries,
+        project.rootDir,
+        sourceDirs,
+        buildLogicDirs(project),
+        if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
+    )
+}
+
+/** The root-relative directories of the builds this one includes, which hold build logic. */
+internal fun buildLogicDirs(project: Project): List<String> =
+    runCatching { project.gradle.includedBuilds.map { it.projectDir } }.getOrDefault(emptyList())
+        .let { ForcingPaths.sourceDirs(project.rootDir, it) }
+
+/**
+ * Each changed path an entry matches, by name and content, read through a provider so a reused
+ * configuration-cache entry sees the file change.
+ */
+private fun ignoredContentDigest(project: Project, declaration: PathIgnore.Declaration, paths: List<String>): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    (declaration.entries + "\u0000").forEach { digest.update(it.toByteArray(Charsets.UTF_8)); digest.update(0) }
+    paths.filter { path -> declaration.entries.any { PathIgnore.matches(it, path) } }.sorted().forEach { path ->
+        val file = File(project.rootDir, path)
+        val content = if (file.isFile) {
+            project.providers.fileContents(project.objects.fileProperty().fileValue(file)).asBytes.orNull
+        } else {
+            null
+        }
+        digest.update(path.toByteArray(Charsets.UTF_8))
+        digest.update(0)
+        digest.update(content?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it) } ?: ByteArray(0))
+        digest.update(0)
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
 /** The configuration-time change set as one short value, standing in for it as a task input. */

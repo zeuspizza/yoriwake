@@ -25,7 +25,7 @@ class DeclaredDependenciesFunctionalTest : FunctionalTestSupport() {
         }
     """.trimIndent()
 
-    private val ignoringDocker = """yoriwake { notReadByTests.add("docker/*") }"""
+    private val ignoringDocker = """yoriwake { pathIgnore.add("docker/**") }"""
 
     private val fixture = "docker/fixture.json" to "{\"rows\": 1}\n"
 

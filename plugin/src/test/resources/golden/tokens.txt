@@ -66,6 +66,14 @@ map-outcome	NONE
 map-outcome	SKIPPED
 map-outcome	SUCCESSFUL
 map-outcome	UNKNOWN
+path-ignore-evidence	no-read-evidence
+path-ignore-evidence	not-read
+path-ignore-evidence	read
+path-ignore-protection	build-file
+path-ignore-protection	git-quoted
+path-ignore-protection	named-in-classes
+path-ignore-protection	outside-root
+path-ignore-protection	source-set
 refusal-kind	annotations-changed
 refusal-kind	annotations-unrecorded
 refusal-kind	bytes-unrecorded
@@ -90,6 +98,7 @@ refusal-kind	full-run-commit
 refusal-kind	full-run-requested
 refusal-kind	full-run-scheduled
 refusal-kind	in-jvm-parallelism
+refusal-kind	large-change
 refusal-kind	map-untrusted
 refusal-kind	map-unverified
 refusal-kind	no-change-set
@@ -133,6 +142,7 @@ row-rule	own-class-changed
 row-rule	reaches-change
 row-rule	shares-jvm-changed-bytes
 row-rule	shares-jvm-changed-class
+row-rule	shares-jvm-ignored-path
 row-rule	shares-jvm-moved-classpath-file
 row-rule	shares-jvm-unobserved
 row-rule	shares-jvm-unpositioned

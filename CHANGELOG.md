@@ -18,12 +18,18 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Added
 
 - A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
+- `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
+- `largeChangeThreshold` (5,000 paths): a larger change runs everything without analysing it. Map: left alone.
+
+### Deprecated
+
+- `notReadByTests` warns as deprecated: `pathIgnore` replaces it and protects what a build or test reads. Map: left alone.
 
 ### Changed
 
 - A native library load is judged by the file the JDK opened; an attempt that found no file no longer widens. Map: left alone.
-
-- A run forced by untracked files names their directories and how to list them in `notReadByTests`. Map: left alone.
+- A native library or foreign-function call that widens a run names the class that made it. Map: left alone.
+- A run forced by untracked files names their directories and how to list them in `pathIgnore`. Map: left alone.
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.
 - A native library is proposed, and re-reviewed on a new major version, through an issue form. Map: left alone.

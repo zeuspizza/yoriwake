@@ -135,6 +135,7 @@ AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contrac
 SELECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 CLASSPATH_SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
 NOT_READ = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
+PATH_IGNORE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
 PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
@@ -465,6 +466,8 @@ def unit_suite():
          "--tests", "*ForcingPathsTest*",
          # Which moved classpath files reach the selector, and which force the run.
          "--tests", "*ClasspathFilesTest*",
+         # pathIgnore's grammar, checked against Gradle's own, and what it may never leave out.
+         "--tests", "*PathIgnoreTest*",
          "--rerun"])
     if done.returncode == 0:
         return []
@@ -691,6 +694,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from MultiProjectFunctionalTest, as many builds of the same shape, until an
     # every-guard run measures it.
     "DeclaredDependenciesFunctionalTest": 36,
+    # Estimated from DecisionRulesFunctionalTest, as many builds of the same shape, until an
+    # every-guard run measures it.
+    "LargeChangeFunctionalTest": 30,
     "DeclineFunctionalTest": 65,
     "DevelocityFunctionalTest": 79,
     "EnvironmentFingerprintFunctionalTest": 82,
@@ -702,6 +708,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "JvmSharedFunctionalTest": 172,
     "MapDatingFunctionalTest": 229,
     "MapProvenanceFunctionalTest": 98,
+    # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
+    # every-guard run measures it.
+    "PathIgnoreFunctionalTest": 61,
     "MultiProjectFunctionalTest": 36,
     "MultiplatformFunctionalTest": 140,
     "NamedTestsFunctionalTest": 111,
@@ -2009,8 +2018,8 @@ MUTATIONS = [
      "                name.length();",
      agent_suite, "a hidden class defined from outside the JDK is kept by the name in its bytes, and the JDK's own are not"),
     ("a call from outside the JDK is taken for the JDK's own", TOUCH_RECORDER,
-     "                        return JdkCode.isJdk(frame);",
-     "                        return true;",
+     "        return caller != null && !throughAProxy[0] && JdkCode.isJdk(caller);",
+     "        return caller != null && !throughAProxy[0];",
      agent_suite, "a hidden class defined from outside the JDK is kept by the name in its bytes, and the JDK's own are not"),
     # Reflection and method-handle frames call on someone else's behalf, and a method reference's
     # proxy is hidden: judged as the caller, either made a test's own call look like the JDK's.
@@ -2021,8 +2030,8 @@ MUTATIONS = [
     # A proxy dispatches to a handle its maker chose: JDK code that calls the proxy did not ask
     # for the hooked call, so a walk that passed over a proxy class records it.
     ("a hooked call through a proxy JDK code calls is taken for the JDK's own", TOUCH_RECORDER,
-     "                        if (throughAProxy) {",
-     "                        if (false) {",
+     "        return caller != null && !throughAProxy[0] && JdkCode.isJdk(caller);",
+     "        return caller != null && JdkCode.isJdk(caller);",
      agent_suite, "a hooked method reached through an interface proxy that JDK code calls is judged as the project's"),
     ("a varargs collector, a constant bootstrap or an interpreted lambda form is taken for the caller", TOUCH_RECORDER,
      '        return name.startsWith("java.lang.invoke.")',
@@ -2050,13 +2059,15 @@ MUTATIONS = [
      "                    StackWalker.Option.RETAIN_CLASS_REFERENCE)).walk(frames -> {",
      functional_suite, "the foreign-function API reached through a method reference JDK code calls selects"),
     ("native code reached through the foreign-function API no longer touches every class", TOUCH_RECORDER,
-     '                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API");',
+     '                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API"\n'
+     '                        + (from != null ? ": from " + from.getName() : ""));',
      "                touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);",
      agent_suite, "native code reached through the foreign-function API from outside the JDK touches every class"),
     # Native code reads any file out of sight, so a native library touches every class from its
     # load unless its sources were reviewed and it is loaded by the class that ships with it.
     ("a native library not on the reviewed list no longer touches every class", TOUCH_RECORDER,
-     '                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file);',
+     '                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file\n'
+     '                        + (caller != null ? " from " + caller.getName() : ""));',
      "                touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);",
      agent_suite, "a native library that is not on the reviewed list touches every class from its load"),
     # A native load is judged by what the JDK opened: a by-name attempt that found no file is
@@ -2582,8 +2593,8 @@ MUTATIONS = [
      "",
      functional_suite, "a declined run with in-JVM parallelism keeps its token and the host's JaCoCo"),
     ("the unknown-age fallback captures on a declined run", SELECTION_WIRING,
-     "        test.doFirst { task ->\n            if (refusedAtExecution(test)) return@doFirst\n",
-     "        test.doFirst { task ->\n",
+     "    test.doFirst { task ->\n        if (refusedAtExecution(test)) return@doFirst\n        // A map recorded in isolation",
+     "    test.doFirst { task ->\n        // A map recorded in isolation",
      functional_suite, "a declined selecting run on a map of unknown age writes nothing"),
     # Tests named with `--tests` all run on a selecting run: selection used to drop a named
     # test the change did not reach, and the build failed on "No tests found".
@@ -2832,6 +2843,16 @@ MUTATIONS = [
      "        if (listed != digest) {",
      "        if (false) {",
      functional_suite, "a map that differs from its trusted digest runs every test"),
+    # A change above the large-change threshold runs everything without its analysis; counted
+    # against the requested base, or an aging map would turn every small change into a full run.
+    ("a change above the large-change threshold is analysed", SELECTION_WIRING,
+     "        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->",
+     "        LargeChange.refusal(count, Int.MAX_VALUE, asked.ref)?.let { reason ->",
+     functional_suite, "more changed paths than the threshold run everything and record the map"),
+    ("the large-change threshold counts the change widened to the map's age", SELECTION_WIRING,
+     "    val asked = runPlan.widening.requested ?: widened\n",
+     "    val asked = widened\n",
+     functional_suite, "an old map does not push a small change over the threshold"),
     ("the provenance check is not registered", SELECTION_WIRING,
      "        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)\n",
      "",
@@ -3037,8 +3058,8 @@ MUTATIONS = [
      '    val keepsIsolation = mode == "isolated"',
      unit_suite, "a full run over a map recorded in isolation, wholly or in part, does not instrument"),
     ("a run refused over the map's age captures over a map recorded in isolation", SELECTION_WIRING,
-     "            ).takeUnless { it.capture }",
-     "            ).takeUnless { true }",
+     "        ).takeUnless { it.capture }\n        // Read here, where",
+     "        ).takeUnless { true }\n        // Read here, where",
      functional_suite, "a selecting run that refuses over the map's age leaves an isolated map alone"),
     # Cost, not safety: a map selection cannot read holds nothing isolation could keep.
     ("an unusable map labelled isolated is never rebuilt", CAPTURE_DECISION,
@@ -3531,6 +3552,94 @@ MUTATIONS = [
      "    val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }",
      "    val read = paths.filterNot { NotRead.isIdeState(it) }",
      functional_suite, "a changed file notReadByTests lists is no change"),
+    # PATHIGNORE. A declared path leaves the change set; what compiles or what the build reads
+    # never does, every use is named, and a read the map recorded runs the tests after it.
+    ("an entry outside pathIgnore's grammar is accepted", PATH_IGNORE,
+     "        problem(entry)?.let { why ->",
+     "        problem(entry)?.takeIf { false }?.let { why ->",
+     unit_suite, "entries written for another dialect fail the build naming pathIgnore and the entry"),
+    ("a pathIgnore star crosses directories", PATH_IGNORE,
+     '        if (pattern[p] == "**") return (s..segments.size).any { matchFrom(pattern, p + 1, segments, it) }',
+     '        if ("*" in pattern[p]) return (s..segments.size).any { matchFrom(pattern, p + 1, segments, it) }',
+     unit_suite, "each pattern matches what Gradle's include matches"),
+    ("pathIgnore protects nothing", PATH_IGNORE,
+     "        matched.keys.forEach { path -> protection(path, declaration)?.let { protectedBy[path] = it } }",
+     "        matched.keys.forEach { _ -> }",
+     unit_suite, "a double star alone leaves out only unprotected paths"),
+    ("pathIgnore leaves out a file under a src directory Gradle does not report", PATH_IGNORE,
+     '            "src" in directories || declaration.sourceDirs.any { path.startsWith("$it/") } -> Protection.SOURCE_SET',
+     '            declaration.sourceDirs.any { path.startsWith("$it/") } -> Protection.SOURCE_SET',
+     unit_suite, "a file under any src directory is kept as source-set"),
+    ("pathIgnore leaves out a build file", PATH_IGNORE,
+     "            isBuildFile(segments.last(), directories) ||",
+     "            false ||",
+     unit_suite, "build files and build logic are kept as build-file"),
+    ("pathIgnore leaves out a path outside the Gradle root", PATH_IGNORE,
+     "            path in declaration.outsideRoot -> Protection.OUTSIDE_ROOT",
+     "            false -> Protection.OUTSIDE_ROOT",
+     unit_suite, "a path outside the Gradle root is kept as outside-root"),
+    ("pathIgnore leaves out a path a compiled class names", PATH_IGNORE,
+     "            val named = runCatching { namedInClasses(candidates) }.getOrNull() ?: candidates",
+     "            val named = emptySet<String>()",
+     unit_suite, "a path a compiled class names is kept as named-in-classes"),
+    ("the selecting run places no changed path outside the Gradle root", SELECTION_WIRING,
+     "        if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),",
+     "        emptySet(),",
+     functional_suite, "a declared path outside a build below the repository root stays in the change set"),
+    ("a change set pathIgnore emptied is not accounted for", SELECTION_WIRING,
+     "            accountedFor(paths, scoped).toString(),",
+     "            accountedFor(scoped.ignore.kept, scoped).toString(),",
+     functional_suite, "a change to declared paths only runs nothing extra and names each path"),
+    ("a declared file's content is not a task input", SELECTION_WIRING,
+     "            (ignore?.let { \":\" + ignoredContentDigest(project, it, paths) } ?: \"\"),",
+     "            \"\",",
+     functional_suite, "editing the same declared file twice runs the task both times"),
+    ("yoriwakeExplain applies no pathIgnore", EXPLAIN_TASK,
+     "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), ignore)",
+     "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), null)",
+     functional_suite, "a change to declared paths only runs nothing extra and names each path"),
+    ("a forced run leaves no paths-ignored note", SELECTION_FILTER,
+     "            if (pathsIgnored > 0) {",
+     "            if (pathsIgnored > 0 && daemonRefusal() == null && decision != null && !decision.isFullRun()) {",
+     functional_suite, "a forced run still names what it left out"),
+    ("a read ignored path opens no window", SELECTOR,
+     "            Map<String, Integer> opens = ignoredPathWindows(map, change.ignoredPaths());",
+     "            Map<String, Integer> opens = new HashMap<>();",
+     agent_suite, "a read ignored path runs the tests from its first read on in the JVM that read it"),
+    ("a read of a directory above an ignored path is not a read of it", SELECTOR,
+     '            if (file.equals(path) || file.startsWith(path + "/")) {',
+     "            if (file.equals(path)) {",
+     agent_suite, "a read of a directory above an ignored path reads it"),
+    ("a JVM that read every file did not read an ignored path", SELECTOR,
+     "    public static boolean readsIgnored(String path, Collection<String> ignored) {\n"
+     "        if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {",
+     "    public static boolean readsIgnored(String path, Collection<String> ignored) {\n"
+     "        if (false) {",
+     agent_suite, "a JVM that read every file from a point runs from there on an ignored path"),
+    ("a test with no position stays skipped when a JVM read an ignored path", SELECTOR,
+     "            return !opens.isEmpty();",
+     "            return false;",
+     agent_suite, "a test the map holds no position for runs once a JVM read an ignored path"),
+    ("a read of an entry of an ignored archive is not a read of it", SELECTOR,
+     '            if (path.startsWith(file + "!/")) {',
+     "            if (false) {",
+     agent_suite, "a read of an entry of an ignored archive reads it"),
+    ("a JVM whose record leaves out the sources it opened vouches for an ignored source file", SELECTOR,
+     "                    if (reads == null || !reads.recordedSources(position.jvm())) {",
+     "                    if (false) {",
+     agent_suite, "an ignored source file runs every test of a JVM whose record leaves out the sources it opened"),
+    ("pathIgnore leaves out a path git printed in quotes", PATH_IGNORE,
+     '            path.startsWith("\\"") -> Protection.GIT_QUOTED',
+     "            false -> Protection.GIT_QUOTED",
+     unit_suite, "a path git printed in quotes is kept as git-quoted"),
+    ("the selecting run knows no build this one includes", SELECTION_WIRING,
+     "    runCatching { project.gradle.includedBuilds.map { it.projectDir } }.getOrDefault(emptyList())",
+     "    emptyList<File>()",
+     functional_suite, "a declared path in a build this one includes stays in the change set"),
+    ("a source file a test opens is not a read of its path", TOUCH_RECORDER,
+     '                if (!path.endsWith(".class")) {',
+     "                if (false) {",
+     agent_suite, "a source file read beneath the root is kept by its path too"),
     # THE ENVIRONMENT FINGERPRINT. A map recorded under another JDK, other system properties
     # or another value of a listed variable says which tests a change reaches somewhere else.
     ("the environment comparison always matches", ENVIRONMENT_FINGERPRINT,

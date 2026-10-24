@@ -407,13 +407,26 @@ public abstract class YoriwakeExtension {
     public abstract val fullRunEveryDays: org.gradle.api.provider.Property<Int>
 
     /**
+     * Deprecated: use [pathIgnore], which keeps the protections this lacks; this is removed in a later
+     * release.
+     *
      * Files neither the tests nor the build ever read, as globs over paths relative to the root
      * project: `notReadByTests.addAll("*.md", "LICENSE")`. Paths match whole, and `*` matches any
      * characters, slashes included, so `docs` followed by a slash and a star is every file under
      * `docs`. A changed file one matches is no change, where it would otherwise force a full run.
      * Empty by default; an entry that names a file a test does read skips that test.
      */
+    @Deprecated("Use pathIgnore, which keeps a path forcing when a build or a test reads it.")
     public abstract val notReadByTests: org.gradle.api.provider.ListProperty<String>
+
+    /**
+     * Paths no test reads, as Ant-style globs over paths relative to the root project, as Gradle's
+     * `include` takes them: `pathIgnore.add("CHANGELOG.md")`, and `docs/` for everything under
+     * `docs`. A changed path one matches leaves the change set, and every run that leaves one out
+     * names it. Sources, resources, build files and anything under a `src` directory are never left
+     * out, and a test the map saw reading a path runs when it changes. Empty by default.
+     */
+    public abstract val pathIgnore: org.gradle.api.provider.ListProperty<String>
 
     /**
      * Environment variables compared between the run that recorded the map and a selecting run, as
@@ -445,8 +458,17 @@ public abstract class YoriwakeExtension {
         dependsOn.add("$task=$glob")
     }
 
+    /**
+     * Above this many changed paths, a selecting run runs every test without analysing the change:
+     * a change that size (a rename across packages, a formatter run) selects almost everything or
+     * forces a full run anyway. 5,000 by default; 1 or more.
+     */
+    public abstract val largeChangeThreshold: org.gradle.api.provider.Property<Int>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)
+        @Suppress("LeakingThis")
+        largeChangeThreshold.convention(io.github.zeuspizza.yoriwake.gradle.change.LargeChange.DEFAULT_THRESHOLD)
     }
 }

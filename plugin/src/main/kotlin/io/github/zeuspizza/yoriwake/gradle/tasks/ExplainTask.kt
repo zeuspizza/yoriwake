@@ -20,6 +20,8 @@ import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
+import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.changeSet
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
@@ -31,12 +33,14 @@ import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
+import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
 import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
 import io.github.zeuspizza.yoriwake.gradle.wiring.DevelocityDetection
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestPatterns
+import io.github.zeuspizza.yoriwake.gradle.wiring.buildLogicDirs
 import io.github.zeuspizza.yoriwake.gradle.wiring.checkEnvironment
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentRefusal
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentView
@@ -100,6 +104,14 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val notReadByTests: ListProperty<String>
 
+    /** The build's `pathIgnore`: changed paths that match one leave the change set, unless protected. */
+    @get:Input
+    @get:Optional
+    abstract val pathIgnore: ListProperty<String>
+
+    @get:Internal("only names where build logic lies; the task is untracked")
+    var buildLogicDirs: List<String> = emptyList()
+
     /** The build's `fullRunEveryBuilds`; unset when it has none. */
     @get:Input
     @get:Optional
@@ -114,6 +126,10 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val checksProvenance: Property<Boolean>
+
+    /** The build's `largeChangeThreshold`. */
+    @get:Input
+    abstract val largeChangeThreshold: Property<Int>
 
     /** The digest that list names for this map; unset when it names none. */
     @get:Input
@@ -280,6 +296,21 @@ internal abstract class ExplainTask : DefaultTask() {
             )
             return
         }
+        // As the run checks it, against the base it was asked about, before any analysis.
+        ChangeDetection.changedPaths(git, rootDir, resolvedBase.ref)?.let { askedPaths ->
+            val count = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct().size
+            LargeChange.refusal(count, largeChangeThreshold.get(), resolvedBase.ref)?.let { reason ->
+                logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
+                writeUnanswered(
+                    mapDir, taskPath, base,
+                    io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                    reason,
+                    refusalKind = RefusalKind.LARGE_CHANGE.token,
+                    branch = branch,
+                )
+                return
+            }
+        }
         // Checked by the run before anything narrows, so it explains every line below it.
         if (checksProvenance.getOrElse(false)) {
             MapProvenance.verify(mapDir, listedDigest.orNull).refusal?.let { (kind, reason) ->
@@ -330,7 +361,16 @@ internal abstract class ExplainTask : DefaultTask() {
             else -> "partly with a fresh test JVM per test class and partly in shared test JVMs"
         }
         logger.lifecycle("[yoriwake] $taskPath: the map was recorded $recorded ($mode)")
-        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()))
+        // As the run applies it, with the same diffs to place paths outside the root.
+        val ignore = pathIgnore.getOrElse(emptyList()).takeIf { it.isNotEmpty() }?.let { entries ->
+            val outside = listOfNotNull(base, age.stamp).map { ChangeDetection.outsideRoot(git, rootDir, it) }
+            PathIgnore.Declaration(
+                entries, rootDir, sourceDirs, buildLogicDirs,
+                if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
+            )
+        }
+        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), ignore)
+        PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         val found = establish(
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },
             mapDir, scoped.change, facts,
@@ -389,6 +429,7 @@ internal abstract class ExplainTask : DefaultTask() {
         )
         writeExplanation(
             mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing, branch,
+            PathIgnoreReport.evidence(scoped.ignore, mapDir),
         )
         ForcingPaths.lines(taskPath, forcing).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (decision.isFullRun) {
@@ -425,7 +466,9 @@ internal abstract class ExplainTask : DefaultTask() {
             fullRunBranches: List<String>,
             schedule: Schedule.Limits,
             notReadByTests: List<String>,
+            pathIgnore: List<String>,
             environment: EnvironmentFingerprint.Rules,
+            largeChange: Int,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -436,6 +479,8 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.taskPath.set(test.path)
                 task.rootDir = project.rootDir
                 task.mapDir = mapDir
+                // Before the declined return: a required input left unset fails the task's validation.
+                task.largeChangeThreshold.set(largeChange)
                 if (scope is ScopeOutcome.NotApplied) {
                     task.declined = scope.detail
                     return@register
@@ -444,6 +489,8 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)
+                task.pathIgnore.set(pathIgnore)
+                task.buildLogicDirs = buildLogicDirs(project)
                 schedule.builds?.let(task.fullRunEveryBuilds::set)
                 schedule.days?.let(task.fullRunEveryDays::set)
                 task.environment = environment
