@@ -441,6 +441,12 @@ loaded by any other class, a shaded copy, or a file renamed through the library'
 property applies the wide rule. A file of the same name on `java.library.path` is taken to be the
 library.
 
+A load counts once the JDK has opened a library: judged by the file it resolved, not the name asked
+for, so a class loader's `findLibrary` that returns another file is judged by that file. An attempt
+that finds no file, as a library trying several names for its platform makes, is not a load. On
+macOS 11 or later, where system libraries have no file on disk, the JDK skips that check and an
+attempt is not a load only when opening it fails.
+
 | Library | Loading class | Reviewed | What its native code opens |
 |---|---|---|---|
 | Netty epoll transport | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final](https://github.com/netty/netty/tree/netty-4.2.18.Final/transport-native-epoll/src/main/c) | `/proc/sys/net/ipv4/tcp_fastopen`; a file whose path is passed to `FileDescriptor.from`, opened write-only; otherwise only descriptors Java opened |

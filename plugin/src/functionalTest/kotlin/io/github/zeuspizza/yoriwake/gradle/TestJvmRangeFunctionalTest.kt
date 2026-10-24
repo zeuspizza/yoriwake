@@ -53,6 +53,21 @@ class TestJvmRangeFunctionalTest : FunctionalTestSupport() {
     }
 
     /** [expected] reads the build's JaCoCo version and says what selection must do; null narrows. */
+    /**
+     * Runs first and asks for a native library no file provides, as a library trying its platform's
+     * names does. On every JDK that is no load, so the run still narrows: judged where the JDK has
+     * opened a library, a hook this JDK's own classes must take.
+     */
+    private val absentLibraryAttempt = "src/test/java/dev/sample/AaNativeTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        class AaNativeTest {
+            @Test void tries() {
+                try { System.loadLibrary("yoriwakeabsentcodec"); } catch (UnsatisfiedLinkError absent) { }
+            }
+        }
+    """.trimIndent()
+
     private fun capturesAndSelects(dir: File, jdk: Int, expected: ((jacoco: String) -> String)? = null) {
         val asked = System.getProperty("yoriwake.functional.testJvms")
         assumeTrue(asked == null || jdk.toString() in asked.split(","), "not in yoriwake.functional.testJvms")
@@ -61,7 +76,7 @@ class TestJvmRangeFunctionalTest : FunctionalTestSupport() {
             dir,
             "build.gradle.kts" to "$minimalBuild\njava { toolchain { languageVersion = JavaLanguageVersion.of($jdk) } }" +
                 (if (expected == null) "" else "\n$versionTask"),
-            oneClass, secondClass, oneTest, secondTest, classOrderByName,
+            oneClass, secondClass, oneTest, secondTest, classOrderByName, absentLibraryAttempt,
         )
         toolchains(dir)
         ignoreBuildOutputs(dir)

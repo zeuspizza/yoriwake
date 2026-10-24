@@ -528,6 +528,25 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `once the JDK's resolution is hooked, an attempt is not a load and only a library it opened counts`() {
+        val recorder = TouchRecorder().apply { resolving = true }
+        // Netty tries names until one is found: the attempts that found nothing reach only here.
+        recorder.library(arrayOf<Any>(TouchRecorderTest::class.java, "netty_transport_native_epoll_aarch_64"))
+        assertEquals(emptyList(), drained(recorder))
+
+        recorder.resolved(arrayOf<Any>(TouchRecorderTest::class.java, "/opt/acme/lib/libacme.so"))
+        assertEquals(AgentContract.TOUCH_ALL, drained(recorder).single().first)
+    }
+
+    @Test
+    fun `without the JDK's resolution hooked, every attempt is judged as a load`() {
+        val recorder = TouchRecorder()
+        recorder.library(arrayOf<Any>(TouchRecorderTest::class.java, "acme"))
+
+        assertEquals(AgentContract.TOUCH_ALL, drained(recorder).single().first)
+    }
+
+    @Test
     fun `a library loaded by path is named by its file, with either of Windows' separators`() {
         // Windows' System.load takes '/' as readily as '\', so '/' may not be read as a bare name.
         val recorder = TouchRecorder()

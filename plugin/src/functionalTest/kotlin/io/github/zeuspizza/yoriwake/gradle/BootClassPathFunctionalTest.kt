@@ -120,9 +120,9 @@ class BootClassPathFunctionalTest : FunctionalTestSupport() {
     private fun names(vararg simple: String) = simple.map { "dev.sample.$it" }.toSet()
 
     /**
-     * A class on the boot class path that asks for a native library file that does not exist: the
-     * load is seen as it starts, so the fixture needs no compiler, and the failed load is caught.
-     * The first test checks the class really came from the bootstrap loader.
+     * A class on the boot class path that loads a native library file: a copy of one every JDK
+     * ships, so the fixture needs no compiler. The first test checks the class really came from the
+     * bootstrap loader.
      */
     private val codec = "src/boot/java/com/acme/nativecodec/Codec.java" to """
         package com.acme.nativecodec;
@@ -167,9 +167,15 @@ class BootClassPathFunctionalTest : FunctionalTestSupport() {
             ),
             test(
                 "P1NativeTest",
-                """@Test void loads() {
-                    assertFalse($codecName.load(
-                        new java.io.File(System.getProperty("java.io.tmpdir"), "libacmecodec.so")));
+                """@Test void loads() throws Exception {
+                    java.io.File home = new java.io.File(System.getProperty("java.home"));
+                    String mapped = System.mapLibraryName("prefs");
+                    java.io.File source = new java.io.File(home, "lib/" + mapped);
+                    if (!source.isFile()) source = new java.io.File(home, "bin/" + mapped);
+                    java.io.File file = new java.io.File(
+                        java.nio.file.Files.createTempDirectory("native").toFile(), "libacmecodec.so");
+                    java.nio.file.Files.copy(source.toPath(), file.toPath());
+                    assertTrue($codecName.load(file));
                 }""",
             ),
             test("P2ToolTest", "@Test void runs() { assertTrue(Tool.name().startsWith(\"tool\")); }"),

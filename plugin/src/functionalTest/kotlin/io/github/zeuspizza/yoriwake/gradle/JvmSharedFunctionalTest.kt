@@ -794,14 +794,15 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
 
     /**
      * A test that asks [loader] to load a native library file named [file], then a test that runs
-     * Tool, then one that does not. The file does not exist: the load is seen as it starts, so the
-     * fixture needs no compiler, and the failed load is caught.
+     * Tool, then one that does not. The file is a copy of a library every JDK ships, so the load
+     * succeeds with no compiler; with [present] false it does not exist, and the attempt fails.
      */
     private fun nativeLoad(
         dir: File,
         prefix: String,
         loader: String,
         file: String,
+        present: Boolean = true,
         buildScript: String = orderedBuild,
     ): Set<String> {
         val pkg = loader.substringBeforeLast('.')
@@ -821,9 +822,22 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
             first(prefix),
             test(
                 "${prefix}1NativeTest",
-                """@Test void loads() {
-                    assertFalse($loader.load(new java.io.File(System.getProperty("java.io.tmpdir"), "$file")));
-                }""",
+                if (present) {
+                    """@Test void loads() throws Exception {
+                        java.io.File home = new java.io.File(System.getProperty("java.home"));
+                        String mapped = System.mapLibraryName("prefs");
+                        java.io.File source = new java.io.File(home, "lib/" + mapped);
+                        if (!source.isFile()) source = new java.io.File(home, "bin/" + mapped);
+                        java.io.File file = new java.io.File(
+                            java.nio.file.Files.createTempDirectory("native").toFile(), "$file");
+                        java.nio.file.Files.copy(source.toPath(), file.toPath());
+                        assertTrue($loader.load(file));
+                    }"""
+                } else {
+                    """@Test void tries() {
+                        assertFalse($loader.load(new java.io.File(System.getProperty("java.io.tmpdir"), "$file")));
+                    }"""
+                },
             ),
             test("${prefix}2ToolTest", "@Test void runs() { assertTrue(Tool.name().startsWith(\"tool\")); }"),
             test("${prefix}3LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
@@ -840,6 +854,13 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         val ran = nativeLoad(dir, "P", "com.acme.nativecodec.Loader", "libacmecodec.so")
 
         assertEquals(names("P1NativeTest", "P2ToolTest", "P3LaterTest"), ran)
+    }
+
+    @Test
+    fun `an attempt to load a native library that finds no file is not a load`(@TempDir dir: File) {
+        val ran = nativeLoad(dir, "N", "com.acme.nativecodec.Loader", "libabsentcodec.so", present = false)
+
+        assertEquals(names("N2ToolTest", "N3LaterTest"), ran)
     }
 
     @Test

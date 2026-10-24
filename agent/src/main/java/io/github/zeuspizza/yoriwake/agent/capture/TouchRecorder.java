@@ -126,7 +126,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 return;
             }
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
-                    this::childProcess, this::nativeCode, this::library, this::environmentRead);
+                    this::childProcess, this::nativeCode, this::library, this::resolved, this::environmentRead);
+            resolving = hooks.resolving;
             guards = GuardHooks.install(instrumentation, this::guard, this::guardLost);
             incomplete = hooks.reads != null ? hooks.reads : JdkCode.imageAltered();
             lookupsIncomplete = hooks.lookups != null ? hooks.lookups : nativeAgent();
@@ -308,11 +309,32 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     /**
-     * The library hooks' sink: {caller, file or library name}. Native code can read any class file
-     * out of sight, so a library loaded from outside the JDK touches every class from here, unless
-     * it is a reviewed one loaded by its own class. That one still reaches any class by name.
+     * Whether native loads arrive at {@link #resolved}, as the JDK opened them; until then, and on
+     * a JVM where that hook could not be installed, every attempt at {@link #library} counts.
      */
+    volatile boolean resolving;
+
+    /** The library hooks' sink, at every attempt: {caller, file or library name}. */
     void library(Object loaded) {
+        if (!resolving) {
+            judgeLoad(loaded);
+        }
+    }
+
+    /**
+     * The resolution hooks' sink: {caller, the path the JDK resolved}, only for a library it loaded,
+     * so a by-name attempt that found no file is not a load.
+     */
+    void resolved(Object loaded) {
+        judgeLoad(loaded);
+    }
+
+    /**
+     * Native code can read any class file out of sight, so a library loaded from outside the JDK
+     * touches every class from here, unless it is a reviewed one loaded by its own class. That one
+     * still reaches any class by name.
+     */
+    private void judgeLoad(Object loaded) {
         if (inside.get() != null) {
             return;
         }

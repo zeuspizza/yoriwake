@@ -67,6 +67,8 @@ final class ReadHooks {
     private static final String BRIDGE_PACKAGE = "io/github/zeuspizza/yoriwake/readbridge";
     private static final String DEFINER = BRIDGE_PACKAGE + "/Definer";
     private static final String CONSUMER = "java/util/function/Consumer";
+    /** The holder's method the return hooks call. */
+    static final String LOADED = "loaded";
 
     /**
      * Owner, method, descriptor, and what to pass: an argument slot, -1 for {this, argument 1}, -2
@@ -158,6 +160,20 @@ final class ReadHooks {
     };
 
     /**
+     * Where the JDK has decided which file a native library load opens, and whether it did: the
+     * resolved path's first Java receiver, judged as it returns, a library ({@code true} or non-null)
+     * or none. On macOS 11+ no existence check runs first, so only the return tells a by-name
+     * attempt that found nothing from a load. The slots are the caller's and the path's.
+     */
+    static final String[][] RESOLUTIONS = {
+        // JDK 11.
+        {"java/lang/ClassLoader$NativeLibrary", "loadLibrary", "(Ljava/lang/Class;Ljava/lang/String;Z)Z", "r0,1"},
+        // JDK 17 and later.
+        {"jdk/internal/loader/NativeLibraries", "loadLibrary",
+            "(Ljava/lang/Class;Ljava/lang/String;Z)Ljdk/internal/loader/NativeLibrary;", "r1,2"},
+    };
+
+    /**
      * The two ways code reads an environment variable: by name, where the sink gets the name, and
      * the whole environment at once, where it gets null. Only names are ever passed on, never a
      * value.
@@ -175,11 +191,21 @@ final class ReadHooks {
         final String lookups;
         /** The environment hooks report apart: missing them only leaves the variables read unnamed. */
         final String environment;
+        /**
+         * Whether native loads are judged by the file the JDK resolved; otherwise by every attempt
+         * at {@link #LIBRARIES}, which counts a by-name attempt that found nothing as a load.
+         */
+        final boolean resolving;
 
         Installed(String reads, String lookups, String environment) {
+            this(reads, lookups, environment, false);
+        }
+
+        Installed(String reads, String lookups, String environment, boolean resolving) {
             this.reads = reads;
             this.lookups = lookups;
             this.environment = environment;
+            this.resolving = resolving;
         }
     }
 
@@ -191,7 +217,7 @@ final class ReadHooks {
      */
     static Installed install(Instrumentation instrumentation, Consumer<Object> reads, Consumer<Object> lookups,
             Consumer<Object> defines, Consumer<Object> processes, Consumer<Object> natives,
-            Consumer<Object> libraries, Consumer<Object> environment) {
+            Consumer<Object> libraries, Consumer<Object> resolved, Consumer<Object> environment) {
         if (!instrumentation.isRetransformClassesSupported()) {
             String why = "this JVM cannot retransform classes";
             return new Installed(why, why, why);
@@ -202,6 +228,7 @@ final class ReadHooks {
         List<String[]> processHooks = new ArrayList<>();
         List<String[]> nativeHooks = new ArrayList<>();
         List<String[]> libraryHooks = new ArrayList<>();
+        List<String[]> resolutionHooks = new ArrayList<>();
         List<String[]> environmentHooks = new ArrayList<>();
         Injector injector;
         String providerWhy;
@@ -216,6 +243,7 @@ final class ReadHooks {
             holder.getField("PROCESS").set(null, processes);
             holder.getField("NATIVE").set(null, natives);
             holder.getField("LIBRARY").set(null, libraries);
+            holder.getField("RESOLVED").set(null, resolved);
             // A value of no kind the sink records: it loads what the sink needs and records nothing.
             environment.accept(Boolean.TRUE);
             holder.getField("ENV").set(null, environment);
@@ -225,6 +253,7 @@ final class ReadHooks {
             addAll(defineHooks, DEFINES, "DEFINE", true);
             addAll(processHooks, PROCESSES, "PROCESS", false);
             addAll(libraryHooks, LIBRARIES, "LIBRARY", false);
+            addAll(resolutionHooks, RESOLUTIONS, "RESOLVED", true);
             addAll(environmentHooks, ENVIRONMENT, "ENV", false);
             for (String[] hook : NATIVES) {
                 // The API is absent before it existed; where its class exists every hook must hold.
@@ -234,7 +263,7 @@ final class ReadHooks {
             }
             List<String[]> all = new ArrayList<>();
             for (List<String[]> hooks : Arrays.asList(readHooks, lookupHooks, defineHooks, processHooks, nativeHooks,
-                    libraryHooks, environmentHooks)) {
+                    libraryHooks, resolutionHooks, environmentHooks)) {
                 all.addAll(hooks);
             }
             injector = new Injector(all);
@@ -263,7 +292,9 @@ final class ReadHooks {
                 installed("native-code", nativeHooks, injector, failed));
         String lookupsWhy = installed("lookup", lookupHooks, injector, failed);
         String environmentWhy = installed("environment", environmentHooks, injector, failed);
-        return new Installed(readsWhy, lookupsWhy, environmentWhy);
+        // Missing, loads are judged at every attempt instead: wider, never narrower.
+        boolean resolving = !resolutionHooks.isEmpty() && installed("resolution", resolutionHooks, injector, failed) == null;
+        return new Installed(readsWhy, lookupsWhy, environmentWhy, resolving);
     }
 
     /** Each hook with the holder field its sink sits in; when {@code ifPresent}, only where this JDK has it. */
@@ -455,12 +486,52 @@ final class ReadHooks {
         ClassWriter writer = new ClassWriter(0);
         writer.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_SUPER,
                 HOLDER, null, "java/lang/Object", null);
-        for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "ENV", "GUARD"}) {
+        for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "RESOLVED", "ENV",
+                "GUARD"}) {
             writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, field,
                     "L" + CONSUMER + ";", null, null).visitEnd();
         }
+        writeLoaded(writer);
         writer.visitEnd();
         return writer.toByteArray();
+    }
+
+    /**
+     * {@code static void loaded(Object result, Object caller, Object name)}: {@code RESOLVED} gets
+     * {caller, name} when {@code result} is a library, neither null nor {@code Boolean.FALSE}. The
+     * return hooks call it, so the JDK method itself gains no branch and no frame.
+     */
+    private static void writeLoaded(ClassWriter writer) {
+        MethodVisitor body = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, LOADED,
+                "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", null, null);
+        body.visitCode();
+        Label done = new Label();
+        body.visitVarInsn(Opcodes.ALOAD, 0);
+        body.visitJumpInsn(Opcodes.IFNULL, done);
+        body.visitVarInsn(Opcodes.ALOAD, 0);
+        body.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/Boolean", "FALSE", "Ljava/lang/Boolean;");
+        body.visitJumpInsn(Opcodes.IF_ACMPEQ, done);
+        body.visitFieldInsn(Opcodes.GETSTATIC, HOLDER, "RESOLVED", "L" + CONSUMER + ";");
+        body.visitVarInsn(Opcodes.ASTORE, 3);
+        body.visitVarInsn(Opcodes.ALOAD, 3);
+        body.visitJumpInsn(Opcodes.IFNULL, done);
+        body.visitVarInsn(Opcodes.ALOAD, 3);
+        body.visitInsn(Opcodes.ICONST_2);
+        body.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_0);
+        body.visitVarInsn(Opcodes.ALOAD, 1);
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_1);
+        body.visitVarInsn(Opcodes.ALOAD, 2);
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, CONSUMER, "accept", "(Ljava/lang/Object;)V", true);
+        body.visitLabel(done);
+        body.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+        body.visitInsn(Opcodes.RETURN);
+        body.visitMaxs(5, 4);
+        body.visitEnd();
     }
 
     /** Prepends the sink call to each hooked method, and records which it found. */
@@ -497,6 +568,10 @@ final class ReadHooks {
                         String[] hook = methods.get(name + descriptor);
                         if (hook != null && (access & (Opcodes.ACC_NATIVE | Opcodes.ACC_ABSTRACT)) == 0) {
                             here.add(className + '.' + name + descriptor);
+                            if (hook[0].startsWith("r")) {
+                                String[] slots = hook[0].substring(1).split(",");
+                                return new ReturnCall(visitor, Integer.parseInt(slots[0]), Integer.parseInt(slots[1]));
+                            }
                             return new SinkCall(visitor, Integer.parseInt(hook[0]), hook[1]);
                         }
                         return visitor;
@@ -563,6 +638,42 @@ final class ReadHooks {
         @Override
         public void visitMaxs(int maxStack, int maxLocals) {
             super.visitMaxs(maxStack + 5, maxLocals);
+        }
+    }
+
+    /**
+     * Before each normal return, {@code loaded(result, caller, name)} with the value about to be
+     * returned, boxed when it is a {@code boolean}. A throw is no load and reaches no return.
+     */
+    private static final class ReturnCall extends MethodVisitor {
+        private final int caller;
+        private final int name;
+
+        ReturnCall(MethodVisitor visitor, int caller, int name) {
+            super(Opcodes.ASM9, visitor);
+            this.caller = caller;
+            this.name = name;
+        }
+
+        @Override
+        public void visitInsn(int opcode) {
+            if (opcode == Opcodes.IRETURN || opcode == Opcodes.ARETURN) {
+                super.visitInsn(Opcodes.DUP);
+                if (opcode == Opcodes.IRETURN) {
+                    super.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;",
+                            false);
+                }
+                super.visitVarInsn(Opcodes.ALOAD, caller);
+                super.visitVarInsn(Opcodes.ALOAD, name);
+                super.visitMethodInsn(Opcodes.INVOKESTATIC, HOLDER, LOADED,
+                        "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", false);
+            }
+            super.visitInsn(opcode);
+        }
+
+        @Override
+        public void visitMaxs(int maxStack, int maxLocals) {
+            super.visitMaxs(maxStack + 4, maxLocals);
         }
     }
 }
