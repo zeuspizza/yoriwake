@@ -18,6 +18,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Added
 
 - A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
+- `largeChangeThreshold` (5,000 paths): a larger change runs everything without analysing it. Map: left alone.
 
 ### Changed
 

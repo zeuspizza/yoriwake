@@ -31,6 +31,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.Declarations
+import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -99,6 +100,14 @@ internal class TestTaskWiring(internal val settings: Settings) {
             atLeastOne(extension.fullRunEveryDays.orNull, "fullRunEveryDays", project.path),
         )
         val notReadByTests = extension.notReadByTests.getOrElse(emptyList())
+        val largeChange = extension.largeChangeThreshold.getOrElse(LargeChange.DEFAULT_THRESHOLD).also {
+            if (it < 1) {
+                throw org.gradle.api.InvalidUserDataException(
+                    "[yoriwake] ${project.path}: largeChangeThreshold is $it; it counts changed paths, so it must " +
+                        "be 1 or more. Set it above the repository's file count to never skip the analysis."
+                )
+            }
+        }
         // Validated now, so a wrong entry fails the build rather than declaring for nothing.
         val projectDir = project.rootDir.toPath().relativize(project.projectDir.toPath()).joinToString("/")
         val declarations = Declarations.parse(
@@ -133,7 +142,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, environment, buildMemo, projectDir, declarations) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, environment, buildMemo, projectDir, declarations, largeChange) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -150,7 +159,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, environment) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, environment, largeChange) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -191,6 +200,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         buildMemo: BuildMemo?,
         projectDir: String,
         declarations: List<Declarations.Declaration>,
+        largeChange: Int,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
         val scopeOutcome = applyJacocoIncludes(project, test, scope)
@@ -321,7 +331,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
             configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, environment,
-                projectDir, declarations.filter { it.task == test.name })
+                projectDir, declarations.filter { it.task == test.name }, largeChange)
         } else {
             declineSelection(test, mapDir, runPlan)
         }

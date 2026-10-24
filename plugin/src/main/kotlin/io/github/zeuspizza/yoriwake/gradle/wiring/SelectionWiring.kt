@@ -35,6 +35,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
 import io.github.zeuspizza.yoriwake.gradle.change.Declarations
+import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
 import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.jacocoCeilingNote
@@ -119,6 +120,7 @@ internal fun TestTaskWiring.configureSelection(
     environment: EnvironmentFingerprint.Rules,
     projectDir: String,
     declarations: List<Declarations.Declaration>,
+    largeChange: Int,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -130,51 +132,13 @@ internal fun TestTaskWiring.configureSelection(
     val age = runPlan.widening!!.age
     val drift = runPlan.widening.drift
     if (age is MapAge.Unknown) {
-        refuse(test, age.kind, age.reason)
-        val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
         val cause = if (age.kind == RefusalKind.SNAPSHOT_ABSENT) {
             "A map captured before snapshots were recorded looks like this"
         } else {
             "A rebase, a force-push, a map cached from a different history, or one 0.1.0 captured " +
                 "under a test filter in its build script all look like this"
         }
-        test.doFirst { task ->
-            if (refusedAtExecution(test)) return@doFirst
-            // A map recorded in isolation is left as it is, as by every other fallback.
-            val leftAlone = decideCapture(
-                mapDir,
-                mapUsable = runCatching {
-                    io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
-                }.getOrDefault(false),
-                fullRun = true,
-                learnable = emptySet(),
-                ageKnown = false,
-            ).takeUnless { it.capture }
-            // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
-            // map must not promise that its capture clears the refusal.
-            val undated = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast)
-            task.logger.lifecycle(
-                "[yoriwake] ${task.path}: ${age.reason}, and the whole suite runs. $cause; " +
-                    when {
-                        leftAlone != null -> "the next recording run clears it."
-                        undated != null -> "this run's capture cannot clear it ($undated); a run without that does."
-                        else -> "this run's capture clears it."
-                    }
-            )
-            // Running everything, so it captures and dates the map; otherwise a build that
-            // always selects would refuse forever. An isolated map waits for its recording run.
-            applyCaptureDecision(
-                test, mapDir, refusalJacoco, observing,
-                leftAlone ?: CaptureDecision(
-                    capture = true, fullRun = true, mapCurrent = false,
-                    reason = if (undated == null) {
-                        "running everything, so this run also captures and dates the map."
-                    } else {
-                        "running everything."
-                    },
-                ),
-            )
-        }
+        refuseAndRecord(test, mapDir, observing, fromBuildScript, age.kind, age.reason, cause, clears = true)
         return
     }
     val widened = (age as MapAge.Known).base
@@ -215,6 +179,20 @@ internal fun TestTaskWiring.configureSelection(
             )
         }
         return
+    }
+
+    // Before any analysis: a change this size would end in a full run, so analysing it only costs.
+    // Counted against the base the run was asked about, which the map's age cannot grow.
+    val asked = runPlan.widening.requested ?: widened
+    ChangeDetection.changedPaths(project.providers, project.rootDir, asked.ref, buildMemo)?.let { askedPaths ->
+        val count = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct().size
+        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->
+            refuseAndRecord(
+                test, mapDir, observing, fromBuildScript, RefusalKind.LARGE_CHANGE, reason,
+                "Analysing a change this size costs more than it saves", clears = false,
+            )
+            return
+        }
     }
 
     // Resolved to plain values and providers here: a task action may not touch Project under
@@ -382,6 +360,62 @@ internal fun TestTaskWiring.configureSelection(
 }
 
 /**
+ * Refuses to select, so the whole suite runs, and has that run capture and date the map unless the
+ * map was recorded in isolation. The console line is [reason], then [cause]; when [clears], it also
+ * says whether this run's capture clears the refusal.
+ */
+private fun refuseAndRecord(
+    test: Test,
+    mapDir: File,
+    observing: Boolean,
+    fromBuildScript: TestPatterns,
+    kind: RefusalKind,
+    reason: String,
+    cause: String,
+    clears: Boolean,
+) {
+    refuse(test, kind, reason)
+    val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+    test.doFirst { task ->
+        if (refusedAtExecution(test)) return@doFirst
+        // A map recorded in isolation is left as it is, as by every other fallback.
+        val leftAlone = decideCapture(
+            mapDir,
+            mapUsable = runCatching {
+                io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
+            }.getOrDefault(false),
+            fullRun = true,
+            learnable = emptySet(),
+            ageKnown = false,
+        ).takeUnless { it.capture }
+        // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
+        // map must not promise that its capture clears the refusal.
+        val undated = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast)
+        task.logger.lifecycle(
+            "[yoriwake] ${task.path}: $reason, and the whole suite runs. $cause" + if (!clears) "." else "; " +
+                when {
+                    leftAlone != null -> "the next recording run clears it."
+                    undated != null -> "this run's capture cannot clear it ($undated); a run without that does."
+                    else -> "this run's capture clears it."
+                }
+        )
+        // Running everything, so it captures and dates the map; otherwise a build that
+        // always selects would refuse forever. An isolated map waits for its recording run.
+        applyCaptureDecision(
+            test, mapDir, refusalJacoco, observing,
+            leftAlone ?: CaptureDecision(
+                capture = true, fullRun = true, mapCurrent = false,
+                reason = if (undated == null) {
+                    "running everything, so this run also captures and dates the map."
+                } else {
+                    "running everything."
+                },
+            ),
+        )
+    }
+}
+
+/**
  * The base a selecting run compares from, widened to the map's age, and the working tree's drift
  * since the capture. The run plan asks it once, before any decline is checked.
  */
@@ -403,7 +437,7 @@ internal fun selectionWidening(
     val drift = if (stampAge is MapAge.Known) worktreeDrift(project, mapDir, buildMemo) else null
     val age = (drift as? WorkingTree.Drift.Unknown)?.let { MapAge.Unknown(it.kind, it.reason) }
         ?: stampAge
-    return RunPlan.Widening(age, drift)
+    return RunPlan.Widening(age, drift, base)
 }
 
 /**
