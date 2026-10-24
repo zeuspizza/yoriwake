@@ -1101,7 +1101,8 @@ from a run under another verdict is not reused. An unreadable list or a malforme
 build.
 
 The list is only as good as where it comes from: write it from the digests a run on the default
-branch recorded, never from the restored directory. Where no list is passed, nothing is checked and
+branch recorded, never from the restored directory. After an upgrade, the first default-branch run
+renews it ([Upgrading and your map](#upgrading-and-your-map)). Where no list is passed, nothing is checked and
 selection trusts any restored map, as in 0.1.0.
 
 On GitHub, [yoriwake-action](https://github.com/zeuspizza/yoriwake-action#which-maps-a-pull-request-trusts)
@@ -1389,6 +1390,13 @@ have:
   The next full run rebuilds it. A version is bumped only when a stale record could still look
   like a passing one while being wrong, because nothing re-observes a record that is never
   selected.
+
+With a [trusted-map list](#who-can-write-the-map-you-restore), a release that changes which map
+files the digest covers changes every digest, so the list your default branch wrote on the earlier
+version names none of the new one's. Until the default branch's first run on the new version
+records and lists new digests, each pull request runs everything as `map-untrusted`, with a reason
+that names the release that wrote the list rather than one that reads like a changed map. Do not
+purge the cache over it: the default branch's next run restores narrowing.
 
 Two other messages are not upgrades: a map holding records but no `schema-version` is a capture
 that died partway (delete the directory and capture again), and a directory with neither predates

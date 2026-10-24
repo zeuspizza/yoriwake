@@ -22,6 +22,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A native library is proposed, and re-reviewed on a new major version, through an issue form. Map: left alone.
 - A suite on SQLite JDBC 3.53.4.0 narrows as on any reviewed library, until a connection enables extension loading. Map: left alone.
 
+### Fixed
+
+- A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
+
 ## [0.3.0] - 2026-10-22
 
 **Your map:** repaired on the next build, which runs every test once and records the environment.

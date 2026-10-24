@@ -83,6 +83,33 @@ class MapProvenanceFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a list an earlier release wrote runs every test, and says which release wrote it`(@TempDir dir: File) {
+        recorded(dir)
+        val earlier = MapProvenance.EARLIER.single { it.releases == "0.2.0" }
+        val trusted = listing(dir, MapProvenance.digest(mapDir(dir), earlier.files))
+        changeBeta(dir)
+
+        val output = select(dir, trusted)
+
+        assertEquals(both, ranTests(dir))
+        assertEquals("map-untrusted", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE])
+        assertContains(output, "the trusted-map list was written by yoriwake 0.2.0")
+        assertContains(output, "the default branch's next run on this version")
+    }
+
+    @Test
+    fun `explain names the release that wrote an earlier list`(@TempDir dir: File) {
+        recorded(dir)
+        val earlier = MapProvenance.EARLIER.single { it.releases == "0.2.0" }
+        changeBeta(dir)
+
+        val output = runner(dir, "yoriwakeExplainTest",
+            listing(dir, MapProvenance.digest(mapDir(dir), earlier.files))).build().output
+
+        assertContains(output, "would run everything: the trusted-map list was written by yoriwake 0.2.0")
+    }
+
+    @Test
     fun `a crafted map carrying an honest map's digest file is untrusted`(@TempDir dir: File) {
         // The forger's map says BetaTest executed nothing, and keeps the honest map-digest beside it.
         recorded(dir)

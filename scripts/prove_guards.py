@@ -2745,6 +2745,13 @@ MUTATIONS = [
      functional_suite, "a failing test restores the host file before the host's report reads it"),
     # On a run given a trusted-map list, a map narrows only when the list names its exact digest
     #: a pull request can restore a map from a cache scope it wrote.
+    # A list an earlier release wrote vouches for none of the files this version added to the digest:
+    # recognising it may only change the refusal's reason, never trust the map.
+    ("an earlier digest scheme's match is trusted", MAP_PROVENANCE,
+     "                return Verdict.Untrusted(\n                    \"the trusted-map list was written by",
+     "                if (true) return Verdict.Trusted(digest)\n"
+     "                return Verdict.Untrusted(\n                    \"the trusted-map list was written by",
+     unit_suite, "a file only this version digests, changed under an earlier list, is still not trusted"),
     ("a listed map is trusted whatever its content", MAP_PROVENANCE,
      "        if (listed != digest) {",
      "        if (false) {",
