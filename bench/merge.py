@@ -14,6 +14,13 @@ A project whose recording or shard job failed is declared with `--missing NAME=R
 holding back every other project's rows: the summary lists it with its reason, so the sweep says
 which projects it lacks, and the workflow still fails the run.
 
+A later run that re-measures some of those projects completes the earlier sweep with
+`--completes DIR`, the earlier run's unpacked release (its `merged/` and `art/`). The result is one
+sweep of both: the earlier run's plan, each project's file from the run that measured it, and a
+project still missing with this run's reason if it declared one. It refuses a project the earlier
+run merged or did not plan, another arm, and, as any sweep does, files measured under more than one
+selector or grammar.
+
 The narrowed target stops a single job once enough of its rows narrowed, which a list fixed before
 measuring cannot know. So shards measure the whole list, and the merge keeps rows in draw order up
 to the one that reaches the target: the sample a single job would have drawn. `pool/v1` stops per
@@ -22,6 +29,7 @@ rows past it are counted in `rows_past_target`.
 
     python3 bench/merge.py --arm full --planned demo okio --out bench/results DIR
     python3 bench/merge.py --arm full --planned demo okio --missing "okio=its record job failed" ...
+    python3 bench/merge.py --arm full --planned okio --completes previous --out bench/results DIR
 
 `DIR/<project>/` holds `recording.json`, `accepted.json` and `shard-<k>-of-<n>.json`.
 """
@@ -148,6 +156,16 @@ def check_sweep(planned, merged, arm, isolated, missing=None):
     `missing` maps each project declared missing to why; one also merged is a contradiction.
     """
     missing = missing or {}
+    # Two selectors' rows in one recall figure describe neither; commits that share one may differ.
+    for stamp in ("selector_digest", "grammar_digest"):
+        by_value = {}
+        for name, data in sorted(merged.items()):
+            if data.get(stamp) is not None:
+                by_value.setdefault(data[stamp], []).append(name)
+        if len(by_value) > 1:
+            raise Refused(f"the merged files were measured under {len(by_value)} {stamp}s: "
+                          + "; ".join(f"{value} ({', '.join(names)})"
+                                      for value, names in sorted(by_value.items())))
     unplanned = sorted(name for name in missing if name not in planned)
     if unplanned:
         raise Refused(f"declared missing but not planned: {', '.join(unplanned)}")
@@ -167,8 +185,40 @@ def check_sweep(planned, merged, arm, isolated, missing=None):
     if not possible:
         raise Refused(f"the {arm} arm has no row that could have missed a failure, so its recall "
                       f"figure would be a statement about nothing")
+    commits = sorted({data.get("plugin_commit") for data in merged.values()} - {None})
     return {"arm": arm, "projects": sorted(merged), "missing": dict(sorted(missing.items())),
-            "miss_possible_rows": possible, "isolated_arm": "ran" if isolated else "not run"}
+            "miss_possible_rows": possible, "isolated_arm": "ran" if isolated else "not run",
+            "plugin_commits": commits}
+
+
+def complete(directory, arm, planned, merged, missing):
+    """This run's projects folded into the earlier sweep unpacked at `directory`: the plan, the
+    merged files and the missing projects of both, for `check_sweep` to judge as one sweep."""
+    found = [os.path.join(root, "sweep.json") for root, _, names
+             in os.walk(os.path.join(directory, "merged")) if "sweep.json" in names]
+    if len(found) != 1:
+        raise Refused(f"{directory}/merged holds {len(found)} sweep.json files, not one")
+    with open(found[0], encoding="utf-8") as handle:
+        earlier = json.load(handle)
+    if earlier.get("arm") != arm:
+        raise Refused(f"the earlier sweep is the {earlier.get('arm')} arm, this one the {arm} arm")
+    # Only what the earlier sweep lacks: a project in both would hold two draws of one sweep.
+    redone = sorted(name for name in planned if name in earlier["projects"])
+    if redone:
+        raise Refused(f"the earlier sweep already merged {', '.join(redone)}")
+    unplanned = sorted(name for name in planned if name not in earlier["missing"])
+    if unplanned:
+        raise Refused(f"the earlier sweep did not plan {', '.join(unplanned)}")
+    unplanned = sorted(name for name in missing if name not in planned)
+    if unplanned:
+        raise Refused(f"declared missing but not planned: {', '.join(unplanned)}")
+    union = {name: merge_directory(os.path.join(directory, "art", name))
+             for name in earlier["projects"]}
+    union.update(merged)
+    # A project this run planned is missing only if this run says so; the earlier reason would hide
+    # one that left no output.
+    still = {name: reason for name, reason in earlier["missing"].items() if name not in planned}
+    return earlier["projects"] + sorted(earlier["missing"]), union, {**still, **missing}
 
 
 def main(argv=None):
@@ -181,6 +231,8 @@ def main(argv=None):
     parser.add_argument("--arm", choices=("full", "reduced"), required=True)
     parser.add_argument("--isolated", action="store_true", help="the isolated arm ran")
     parser.add_argument("--out", required=True)
+    parser.add_argument("--completes", metavar="DIR",
+                        help="the earlier sweep's unpacked release, which this run completes")
     args = parser.parse_args(argv)
     try:
         missing = {}
@@ -192,7 +244,10 @@ def main(argv=None):
         merged = {name: merge_directory(os.path.join(args.artifacts, name))
                   for name in args.planned
                   if name not in missing and os.path.isdir(os.path.join(args.artifacts, name))}
-        summary = check_sweep(args.planned, merged, args.arm, args.isolated, missing)
+        planned = args.planned
+        if args.completes:
+            planned, merged, missing = complete(args.completes, args.arm, planned, merged, missing)
+        summary = check_sweep(planned, merged, args.arm, args.isolated, missing)
     except Refused as refused:
         print(f"REFUSED: {refused}", file=sys.stderr)
         return 1
