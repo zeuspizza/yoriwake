@@ -32,6 +32,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RAW_SCHEMA_VERS
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_LOADER
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_READ
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_RECORDED
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_RECORDED_SOURCES
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RESOURCE_TOUCH_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SCOPE_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCHES_COMPLETE
@@ -847,7 +848,8 @@ internal object CoverageDecoder {
             return ResourceSink({}, { _, _, _ -> }, { _, _ -> }, {})
         }
         return ResourceSink(
-            recorded = { resource(RESOURCE_RECORDED, "", 0) },
+            // This agent records the source files a JVM opens among its reads; a map before it did not.
+            recorded = { resource(RESOURCE_RECORDED, RESOURCE_RECORDED_SOURCES, 0) },
             read = { kind, path, sequence ->
                 // The agent kept it as beneath the root; one this cannot key could be any file.
                 val key = ClasspathFiles.keyOf(rootDir, path)

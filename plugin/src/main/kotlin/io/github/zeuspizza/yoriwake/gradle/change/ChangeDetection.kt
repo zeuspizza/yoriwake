@@ -340,19 +340,55 @@ internal object ChangeDetection {
     ): List<String>? = trackedPaths(cachedRunner(providers, projectDir, memo), projectDir, against)
 
     fun trackedPaths(git: Runner, projectDir: File, against: String): List<String>? {
-        // --no-renames: with rename detection git reports only the destination, and tests of the
-        // class that left the old path are never selected. --ignore-submodules=none: a submodule
-        // whose `ignore` setting hides its changes is still reported, as its path. Untracked files
-        // in it count too: `untracked` would hide them in a submodule that sets no `ignore` at all.
-        val tracked = git.run(
-            listOf(
-                "diff", "--name-only", "--no-renames", "--ignore-submodules=none",
-                "--end-of-options", against,
-            )
-        ) ?: return null
+        val tracked = diff(git, against) ?: return null
         // Only the diff list is rebased: `git diff --name-only` prints repo-relative paths, while
         // `git ls-files --others` prints cwd-relative ones.
         return rebaseToProject(git, projectDir, tracked)
+    }
+
+    // --no-renames: with rename detection git reports only the destination, and tests of the class
+    // that left the old path are never selected. --ignore-submodules=none: a submodule whose
+    // `ignore` setting hides its changes is still reported, as its path. Untracked files in it count
+    // too: `untracked` would hide them in a submodule that sets no `ignore` at all.
+    private fun diff(git: Runner, against: String): List<String>? = git.run(
+        listOf(
+            "diff", "--name-only", "--no-renames", "--ignore-submodules=none",
+            "--end-of-options", against,
+        )
+    )
+
+    /**
+     * The paths [trackedPaths] reports for [against] that lie outside the Gradle root, which it
+     * leaves verbatim: as strings they cannot be told from root-relative ones. Null when git could
+     * not answer.
+     */
+    fun outsideRoot(git: Runner, projectDir: File, against: String): List<String>? {
+        requireSingleCommit(against)
+        val tracked = diff(git, against) ?: return null
+        val prefix = when (val found = rootPrefix(git, projectDir)) {
+            null -> return null
+            "" -> return emptyList()
+            else -> found
+        }
+        return tracked.filterNot { it.startsWith("$prefix/") }
+    }
+
+    fun outsideRoot(providers: ProviderFactory, projectDir: File, against: String, memo: BuildMemo? = null): List<String>? =
+        outsideRoot(cachedRunner(providers, projectDir, memo), projectDir, against)
+
+    /**
+     * The Gradle root's directory relative to the repository's top, "" when they are the same, null
+     * when git or the file system could not say.
+     */
+    private fun rootPrefix(git: Runner, projectDir: File): String? {
+        val top = git.run(listOf("rev-parse", "--show-toplevel"))
+            ?.firstOrNull()?.takeIf(String::isNotBlank) ?: return null
+        val root = runCatching { File(top).canonicalFile }.getOrNull() ?: return null
+        val here = runCatching { projectDir.canonicalFile }.getOrNull() ?: return null
+        if (root == here) {
+            return ""
+        }
+        return here.relativeToOrNull(root)?.invariantSeparatorsPath?.trim('/')
     }
 
     /** The untracked side of [changedPaths]. */
@@ -367,15 +403,7 @@ internal object ChangeDetection {
         projectDir: File,
         paths: List<String>,
     ): List<String> {
-        val top = git.run(listOf("rev-parse", "--show-toplevel"))
-            ?.firstOrNull()?.takeIf(String::isNotBlank) ?: return paths
-        val root = runCatching { File(top).canonicalFile }.getOrNull() ?: return paths
-        val here = runCatching { projectDir.canonicalFile }.getOrNull() ?: return paths
-        if (root == here) {
-            return paths
-        }
-        val prefix = here.relativeToOrNull(root)?.invariantSeparatorsPath?.trim('/')
-            ?.takeIf { it.isNotEmpty() } ?: return paths
+        val prefix = rootPrefix(git, projectDir)?.takeIf { it.isNotEmpty() } ?: return paths
         return paths.map { path ->
             if (path.startsWith("$prefix/")) path.removePrefix("$prefix/") else path
         }

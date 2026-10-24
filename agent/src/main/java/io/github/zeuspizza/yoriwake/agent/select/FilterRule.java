@@ -42,6 +42,7 @@ public final class FilterRule {
             AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
             AgentContract.CHANGED_BYTES_PROPERTY,
             AgentContract.MOVED_FILES_PROPERTY,
+            AgentContract.IGNORED_PATHS_PROPERTY,
             AgentContract.REFUSED_PROPERTY,
             AgentContract.REFUSED_KIND_PROPERTY,
             AgentContract.CLASS_GRANULARITY_PROPERTY,
@@ -60,7 +61,8 @@ public final class FilterRule {
                     AgentContract.OWN_TEST_CLASSES_PROPERTY,
                     AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
                     AgentContract.CHANGED_BYTES_PROPERTY,
-                    AgentContract.MOVED_FILES_PROPERTY)));
+                    AgentContract.MOVED_FILES_PROPERTY,
+                    AgentContract.IGNORED_PATHS_PROPERTY)));
 
     /**
      * The decision's inputs as the daemon meant them: {@code system}, with every name in {@link
@@ -140,6 +142,7 @@ public final class FilterRule {
                 .withExemptTestClasses(splitProperty(property, AgentContract.EXEMPT_TEST_CLASSES_PROPERTY))
                 .withChangedBytes(splitProperty(property, AgentContract.CHANGED_BYTES_PROPERTY))
                 .withMovedFiles(splitProperty(property, AgentContract.MOVED_FILES_PROPERTY))
+                .withIgnoredPaths(ignoredPaths(orEmpty(property, AgentContract.IGNORED_PATHS_PROPERTY)))
                 // Answers before the map or change set is consulted, so a refused run cannot be
                 // narrowed by a later rule.
                 .withDaemonRefusal(refusalFrom(property))
@@ -196,6 +199,35 @@ public final class FilterRule {
     private static String orEmpty(UnaryOperator<String> property, String name) {
         String value = property.apply(name);
         return value == null ? "" : value;
+    }
+
+    /** The paths of an {@link AgentContract#IGNORED_PATHS_PROPERTY} value, without their entries. */
+    public static List<String> ignoredPaths(String raw) {
+        List<String> paths = new ArrayList<>();
+        for (String item : raw.split(",")) {
+            int tab = item.lastIndexOf('\t');
+            String path = tab < 0 ? item : item.substring(0, tab);
+            if (!path.isEmpty()) {
+                paths.add(unescape(path));
+            }
+        }
+        return paths;
+    }
+
+    private static String unescape(String value) {
+        StringBuilder out = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            if (value.startsWith("%2C", index)) {
+                out.append(',');
+                index += 2;
+            } else if (value.startsWith("%25", index)) {
+                out.append('%');
+                index += 2;
+            } else {
+                out.append(value.charAt(index));
+            }
+        }
+        return out.toString();
     }
 
     private static List<String> splitProperty(UnaryOperator<String> property, String name) {

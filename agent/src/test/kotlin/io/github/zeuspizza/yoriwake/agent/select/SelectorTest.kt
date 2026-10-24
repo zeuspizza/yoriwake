@@ -74,11 +74,12 @@ class SelectorTest {
         bytes: List<String> = emptyList(),
         accounted: Boolean = false,
         moved: List<String> = emptyList(),
+        ignored: List<String> = emptyList(),
     ) = Selector.decide(
         map,
         ChangeSet.of(changed, unmappable).withAbsenceProvable(provable)
             .withChangedBytes(bytes).withAccountedFor(accounted).withExemptTestClasses(exempt)
-            .withOwnTestClasses(own).withMovedFiles(moved),
+            .withOwnTestClasses(own).withMovedFiles(moved).withIgnoredPaths(ignored),
         discovered,
     )
 
@@ -1088,6 +1089,159 @@ class SelectorTest {
 
         assertTrue(Rule.SHARES_JVM_MOVED_CLASSPATH_FILE in rules.rulesFor(placed("com.acme.ReaderTest"), Verdict.SHARES_JVM_WITH_CHANGE))
         assertFalse(Rule.SHARES_JVM_MOVED_CLASSPATH_FILE in rules.rulesFor(placed("com.acme.EarlierTest"), Verdict.SKIPPED))
+    }
+
+    // A path the build declares no test reads, which a test read at capture, runs the tests from
+    // that read on in its JVM: evidence adds tests to a declaration, never removes them.
+
+    @Test
+    fun `a read ignored path runs the tests from its first read on in the JVM that read it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/snippets.md"))),
+            accounted = true,
+            ignored = listOf("docs/snippets.md"),
+        )
+
+        assertFalse(decision.isFullRun)
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+        assertTrue(decision.includes(placed("com.acme.LaterTest")))
+        assertFalse(decision.includes(placed("com.acme.ChangedTest")))
+    }
+
+    @Test
+    fun `an ignored path no JVM read runs nothing more`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/other.md"))),
+            accounted = true,
+            ignored = listOf("docs/snippets.md"),
+        )
+
+        assertFalse(decision.isFullRun)
+        assertEquals(0, decision.selectedCount())
+    }
+
+    @Test
+    fun `a read of a directory above an ignored path reads it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs"))),
+            accounted = true,
+            ignored = listOf("docs/snippets.md"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+    }
+
+    @Test
+    fun `a JVM that read every file from a point runs from there on an ignored path`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 6, AgentContract.FIRST_TOUCH_ANY))),
+            accounted = true,
+            ignored = listOf("docs/snippets.md"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.ReaderTest")))
+        assertTrue(decision.includes(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `without recorded reads an ignored path stays left out as declared`(@TempDir dir: File) {
+        val unrecorded = decide(
+            stampMap(dir, listOf(recorded("k"), read("j", 4, "docs/snippets.md"))),
+            accounted = true,
+            ignored = listOf("docs/snippets.md"),
+        )
+        assertEquals(0, unrecorded.selectedCount())
+
+        val noTable = decide(stampMap(File(dir, "none"), null), accounted = true, ignored = listOf("docs/snippets.md"))
+        assertFalse(noTable.isFullRun)
+        assertEquals(0, noTable.selectedCount())
+    }
+
+    @Test
+    fun `a test the map holds no position for runs once a JVM read an ignored path`(@TempDir dir: File) {
+        val placedOnly = map(
+            dir,
+            test("com.acme.PlacedTest", "com.acme.Other"),
+            test("com.acme.UnplacedTest", "com.acme.Other"),
+            positions = listOf("j	2	${placed("com.acme.PlacedTest")}"),
+            resourceTouches = listOf(recorded("j"), read("j", 2, "docs/snippets.md")),
+        )
+        val read = decide(placedOnly, accounted = true, ignored = listOf("docs/snippets.md"))
+        assertTrue(read.includes(placed("com.acme.UnplacedTest")))
+
+        val unread = decide(placedOnly, accounted = true, ignored = listOf("docs/other.md"))
+        assertFalse(unread.includes(placed("com.acme.UnplacedTest")))
+    }
+
+    @Test
+    fun `a read of an entry of an ignored archive reads it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/x.zip!/e"))),
+            accounted = true,
+            ignored = listOf("docs/x.zip"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+    }
+
+    private fun recordedSources(jvm: String) = "$jvm\t0\t${AgentContract.RESOURCE_RECORDED}\t${AgentContract.RESOURCE_RECORDED_SOURCES}"
+
+    @Test
+    fun `an ignored source file runs every test of a JVM whose record leaves out the sources it opened`(@TempDir dir: File) {
+        val before = decide(
+            stampMap(dir, listOf(recorded("j"), recordedSources("k"))),
+            accounted = true,
+            ignored = listOf("docs/snippets/Example.kt"),
+        )
+        assertTrue(before.includes(placed("com.acme.EarlierTest")))
+        assertTrue(before.includes(placed("com.acme.LaterTest")))
+        assertFalse(before.includes(placed("com.acme.ChangedTest")))
+
+        val noTable = decide(stampMap(File(dir, "none"), null), accounted = true, ignored = listOf("docs/snippets/Example.kt"))
+        assertTrue(noTable.includes(placed("com.acme.EarlierTest")))
+    }
+
+    @Test
+    fun `an ignored source file no JVM that records its sources read runs nothing more`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recordedSources("j"), recordedSources("k"))),
+            accounted = true,
+            ignored = listOf("docs/snippets/Example.kt"),
+        )
+
+        assertEquals(0, decision.selectedCount())
+    }
+
+    @Test
+    fun `an ignored path alone claims no unobserved window`(@TempDir dir: File) {
+        val rules = Selector.rules(
+            map(
+                dir,
+                test("com.acme.EarlierTest", "com.acme.Other"),
+                positions = listOf("j\t2\t${placed("com.acme.EarlierTest")}"),
+                firstTouches = listOf("j\t0\t${AgentContract.FIRST_TOUCH_ANY}"),
+                resourceTouches = listOf(recorded("j")),
+            ),
+            ChangeSet.of(emptyList(), emptyList()).withAccountedFor(true).withIgnoredPaths(listOf("docs/a.md")),
+            true,
+        )
+
+        assertFalse(Rule.SHARES_JVM_UNOBSERVED in rules.rulesFor(placed("com.acme.EarlierTest"), Verdict.SKIPPED))
+    }
+
+    @Test
+    fun `the ignored path's window is named as its own rule`(@TempDir dir: File) {
+        val rules = Selector.rules(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/snippets.md"))),
+            ChangeSet.of(emptyList(), emptyList()).withAccountedFor(true).withIgnoredPaths(listOf("docs/snippets.md")),
+            true,
+        )
+
+        assertTrue(Rule.SHARES_JVM_IGNORED_PATH in rules.rulesFor(placed("com.acme.ReaderTest"), Verdict.SHARES_JVM_WITH_CHANGE))
+        assertFalse(Rule.SHARES_JVM_IGNORED_PATH in rules.rulesFor(placed("com.acme.EarlierTest"), Verdict.SKIPPED))
     }
 
     @Test

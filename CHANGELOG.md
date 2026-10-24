@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
+
 ### Changed
 
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.

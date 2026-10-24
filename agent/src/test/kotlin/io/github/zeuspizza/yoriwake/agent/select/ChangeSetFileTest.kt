@@ -49,6 +49,23 @@ class ChangeSetFileTest {
     }
 
     @Test
+    fun `the ignored paths come from the file, each without its entry and with commas restored`(@TempDir dir: File) {
+        val file = written(
+            File(dir, "change-set"),
+            AgentContract.IGNORED_PATHS_PROPERTY to "docs/a%2Cb.md\tdocs/**,notes/100%25.md\t**/*.md,x\ty\t*",
+        )
+        val inputs = FilterRule.resolveInputs(system(
+            AgentContract.CHANGE_SET_FILE_PROPERTY to file.path,
+            AgentContract.IGNORED_PATHS_PROPERTY to "stale.md\t*.md",
+        ))
+
+        assertEquals(
+            listOf("docs/a,b.md", "notes/100%.md", "x\ty"),
+            FilterRule.ignoredPaths(inputs.apply(AgentContract.IGNORED_PATHS_PROPERTY)),
+        )
+    }
+
+    @Test
     fun `a change-set file that is missing or cut short refuses, so everything runs`(@TempDir dir: File) {
         // Read as an empty change set, either would narrow with nothing known to have changed.
         val cut = written(File(dir, "cut"), AgentContract.CHANGED_CLASSES_PROPERTY to "dev.Alpha", end = false)
