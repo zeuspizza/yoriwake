@@ -628,6 +628,9 @@ class TouchRecorderTest {
                 "librocksdbjni-linux64.so", "librocksdbjni-osx-arm64.jnilib", "librocksdbjni8765432.so",
             ),
             // Conditional: these name the entry, whose guard then decides.
+            "io.netty.util.internal.NativeLibraryUtil" to listOf(
+                "libnetty_transport_native_io_uring42_x86_64.so", "libnetty_transport_native_io_uring42123.so",
+            ),
             "org.sqlite.SQLiteJDBCLoader" to listOf(
                 "sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.so",
                 "sqlite-unknown-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.dylib", "libsqlitejdbc.jnilib",
@@ -640,8 +643,6 @@ class TouchRecorderTest {
             }
         }
         for (file in listOf(
-            // The in-tree io_uring transport lets any caller submit an open; not reviewed.
-            "libnetty_transport_native_io_uring42_x86_64.so", "libnetty_transport_native_io_uring42123.so",
             // netty-tcnative's BoringSSL and OpenSSL builds share this name; not reviewed.
             "libnetty_tcnative_osx_aarch_64.jnilib", "libacme.so", "libshaded_netty_transport_native_epoll_x86_64.so",
         )) {
@@ -653,6 +654,77 @@ class TouchRecorderTest {
         for (file in listOf("sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-sqlitejdbc.dll", "libacme.so")) {
             assertFalse(ReviewedLibraries.reviewed("org.sqlite.SQLiteJDBCLoader", file), file)
         }
+    }
+
+    @Test
+    fun `the incubator's static-name fallback with digits is taken for the in-tree transport, guard and all`() {
+        val entry = ReviewedLibraries.entry("io.netty.util.internal.NativeLibraryUtil",
+            "libnetty_transport_native_io_uring4217.so")!!
+        assertEquals("io/netty/channel/uring/SubmissionQueue", entry[2])
+        assertEquals(2, ReviewedLibraries.entry("io.netty.util.internal.NativeLibraryUtil",
+            "libnetty_transport_native_io_uring_x86_64.so")!!.size)
+    }
+
+    /** Netty's loading helper and SubmissionQueue, the guard class, in a loader over [dir] with the jar's version file. */
+    private class IoUringStandIn(dir: File, version: String) :
+        java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), TouchRecorderTest::class.java.classLoader) {
+        init {
+            val queue = org.objectweb.asm.ClassWriter(0).run {
+                visit(org.objectweb.asm.Opcodes.V1_8, 0, "io/netty/channel/uring/SubmissionQueue", null,
+                    "java/lang/Object", null)
+                visitMethod(0, "enqueueSqe", "(BBSIJJIIJSSIJ)J", null, null).apply {
+                    visitCode()
+                    visitInsn(org.objectweb.asm.Opcodes.LCONST_0)
+                    visitInsn(org.objectweb.asm.Opcodes.LRETURN)
+                    visitMaxs(2, 18)
+                    visitEnd()
+                }
+                visitEnd()
+                toByteArray()
+            }
+            File(dir, "io/netty/channel/uring/SubmissionQueue.class").apply { parentFile.mkdirs() }.writeBytes(queue)
+            File(dir, "META-INF/maven/io.netty/netty-transport-classes-io_uring/pom.properties")
+                .apply { parentFile.mkdirs() }.writeText("version=$version\n")
+        }
+
+        val caller: Class<*> by lazy {
+            val bytes = org.objectweb.asm.ClassWriter(0).run {
+                visit(org.objectweb.asm.Opcodes.V11, org.objectweb.asm.Opcodes.ACC_PUBLIC,
+                    "io/netty/util/internal/NativeLibraryUtil", null, "java/lang/Object", null)
+                visitEnd()
+                toByteArray()
+            }
+            defineClass("io.netty.util.internal.NativeLibraryUtil", bytes, 0, bytes.size)
+        }
+    }
+
+    private val ioUringFile = "/tmp/libnetty_transport_native_io_uring42_x86_64123456.so"
+    private val outsideNetty = "Netty io_uring was given an operation outside its own: opcode "
+
+    @Test
+    fun `Netty's io_uring with its guard armed counts as a lookup of every class, until it is given an open`(
+        @TempDir dir: File,
+    ) {
+        for (version in listOf("4.2.18.Final", "4.2.19.Final")) {
+            val recorder = TouchRecorder().apply { guards = GuardHooks(null) }
+            recorder.library(arrayOf<Any>(IoUringStandIn(File(dir, version).apply { mkdirs() }, version).caller, ioUringFile))
+            assertEquals(listOf(any), drained(recorder), version)
+
+            recorder.guard(arrayOf<Any>(outsideNetty, true, 18))
+            assertEquals(listOf(AgentContract.TOUCH_ALL to outsideNetty + "18"), drained(recorder), version)
+        }
+    }
+
+    @Test
+    fun `Netty's io_uring at a version nobody reviewed touches every class from its load`(@TempDir dir: File) {
+        val recorder = TouchRecorder().apply { guards = GuardHooks(null) }
+        recorder.library(arrayOf<Any>(IoUringStandIn(dir, "4.2.20.Final").caller, ioUringFile))
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "a reviewed native library was loaded without its condition: "
+                + ioUringFile.substringAfterLast('/') + ", since its version 4.2.20.Final is not one reviewed"),
+            drained(recorder),
+        )
     }
 
     /**
