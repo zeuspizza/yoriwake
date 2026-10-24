@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
 jobs:
   early-access:
     name: test JVM on the newest early-access JDK
@@ -63,8 +68,14 @@ jobs:
             -Porg.gradle.java.installations.auto-detect=false \
             -Porg.gradle.java.installations.paths="$EA_HOME,$JAVA_HOME"
 
+      # Gradle reports a skipped test as success, so a green test step alone proves nothing ran.
+      - name: the early-access test ran and passed
+        if: ${{ !cancelled() }}
+        run: python3 .github/matrix_check.py early-access plugin/build/test-results/functionalTestGradle9
+
       - name: name the outcome
         if: failure()
         run: |
-          echo "The early-access JDK did not do what this commit's ceilings predict; the test's" \
-            "message names the JDK, the expected outcome and the decision notes." >> "$GITHUB_STEP_SUMMARY"
+          echo "Either the early-access JDK did not do what this commit's ceilings predict (the test's" \
+            "message names the JDK, the expected outcome and the decision notes), or the early-access" \
+            "test did not run: the step that failed says which." >> "$GITHUB_STEP_SUMMARY"

@@ -32,7 +32,7 @@ third of them must not read like a run that proved all of them. The split is by 
 by guess; see SUITES. Count what a run will attempt from its first line, not from a duration
 written anywhere: the table grows, and every written duration has gone stale.
 """
-import argparse, atexit, contextlib, glob, itertools, json, os, re, shutil, signal, subprocess, sys, hashlib, time, zlib
+import argparse, atexit, contextlib, glob, itertools, json, os, re, shutil, signal, subprocess, sys, hashlib, math, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "bench"))
@@ -153,6 +153,7 @@ TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture
 JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCode.java"
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
 REVIEWED_LIBRARIES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedLibraries.java"
+GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/GuardHooks.java"
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
@@ -458,6 +459,8 @@ def unit_suite():
          "--tests", "*SelectionRecordTest*",
          # The full-run marker: how commit messages are read for it.
          "--tests", "*CommitScanTest*",
+         # Which moved classpath files reach the selector, and which force the run.
+         "--tests", "*ClasspathFilesTest*",
          "--rerun"])
     if done.returncode == 0:
         return []
@@ -645,7 +648,9 @@ SUITES = [
     ("agent", agent_suite, 6),
     # About 1.4s warm with a mutation applied, both tasks.
     ("jdk identity", jdk_identity_suite, 1.5),
-    ("unit", unit_suite, 11),
+    # 19.0-20.2s over three unmutated runs with the moved-classpath-files class, warm daemon, on
+    # an Apple M1 Max; 18.9-19.3s without it.
+    ("unit", unit_suite, 19.5),
     ("qualify", qualify_suite, 12),
     ("config cost", config_cost_suite, 1),
     # The shaded jars and both direct SBOMs, then the merge and its check; an estimate until a
@@ -662,6 +667,47 @@ SUITES = [
 ]
 
 SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
+
+# One run of each functional class on a GitHub runner, in seconds, for balancing the shards: the
+# registry's one functional figure cannot tell a 30s class from a 230s one. Derived from the job
+# logs of the every-guard run 39274620985 (8 shards, 574 guards): in each shard, each class's
+# interval between its tree's `<Class> done in <tree> at <N>s` lines, divided by its guards in that
+# shard plus the baseline each shard pays, averaged over the shards that ran it. Re-measured by
+# repeating that on a later every-guard run.
+FUNCTIONAL_CLASS_SECONDS = {
+    "AuditAndExplainFunctionalTest": 52,
+    "BootClassPathFunctionalTest": 50,
+    "BranchPolicyFunctionalTest": 81,
+    "CaptureFunctionalTest": 97,
+    "ChangedBytesFunctionalTest": 40,
+    "ClassFileCeilingFunctionalTest": 55,
+    "ComplementFunctionalTest": 214,
+    "ConfigurationCacheFunctionalTest": 40,
+    "DecisionRulesFunctionalTest": 26,
+    "DeclineFunctionalTest": 65,
+    "DevelocityFunctionalTest": 79,
+    "EnvironmentFingerprintFunctionalTest": 82,
+    "FullRunRequestFunctionalTest": 101,
+    "GeneratedClasspathFilesFunctionalTest": 120,
+    "HostCoverageFunctionalTest": 60,
+    "InitScriptFunctionalTest": 54,
+    "IsolatedCaptureFunctionalTest": 71,
+    "JvmSharedFunctionalTest": 172,
+    "MapDatingFunctionalTest": 229,
+    "MapProvenanceFunctionalTest": 98,
+    "MultiProjectFunctionalTest": 36,
+    "MultiplatformFunctionalTest": 140,
+    "NamedTestsFunctionalTest": 111,
+    "NestedLoaderFunctionalTest": 40,
+    "ObservationFunctionalTest": 79,
+    "RefusalFunctionalTest": 96,
+    "RevertAfterUndatedCaptureFunctionalTest": 224,
+    "ScheduledFullRunFunctionalTest": 72,
+    "SelectionFunctionalTest": 197,
+    "TestLauncherFunctionalTest": 42,
+    "TestRetryFunctionalTest": 79,
+    "TestWrittenFilesFunctionalTest": 104,
+}
 
 # The fast set: what runs on every pull request, so it must stay well inside a runner's patience.
 # The next suite added to it should come with a measurement, not an estimate. `python`,
@@ -2097,6 +2143,50 @@ MUTATIONS = [
      "            if (own && PATTERNS[i].matcher(fileName).matches()) {",
      "            if (own) {",
      agent_suite, "every reviewed entry matches the names its loader gives the file, and nothing else"),
+    # A conditional reviewed library counts only while the call that would turn its unreviewed
+    # feature on is wrapped in the loader that loads it, at a version reviewed, and that call,
+    # turned on, touches every class.
+    ("a conditional reviewed library counts without its guard", TOUCH_RECORDER,
+     "        if (entry.length == 2) {",
+     "        if (entry.length > 0) {",
+     agent_suite, "SQLite whose guard cannot be armed touches every class from its load"),
+    ("a guarded call that turns its feature on is not recorded", TOUCH_RECORDER,
+     "            if (Boolean.TRUE.equals(pair[1])) {",
+     "            if (Boolean.FALSE.equals(pair[1])) {",
+     agent_suite, "SQLite loaded with its guard armed counts as a lookup of every class, until a connection enables extensions"),
+    ("a guard class defined without its guard is not recorded", TOUCH_RECORDER,
+     "            touch(AgentContract.TOUCH_ALL, (String) why);",
+     "            why.getClass();",
+     agent_suite, "a guard class defined without its guard touches every class"),
+    ("the wrapped native no longer reports its argument", GUARD_HOOKS,
+     '        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, consumer, "accept", "(Ljava/lang/Object;)V", true);',
+     "        body.visitInsn(Opcodes.POP2);",
+     agent_suite, "a wrapped native reports its argument before the native runs"),
+    ("the renamed native stays public", GUARD_HOOKS,
+     "                int hidden = (access & ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED))\n"
+     "                        | Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC;",
+     "                int hidden = access;",
+     agent_suite, "the renamed native is private and synthetic"),
+    ("a guard no JVM could arm counts as armed", GUARD_HOOKS,
+     "        if (disarmed != null) {\n            return disarmed;",
+     "        if (false) {\n            return disarmed;",
+     agent_suite, "no guard is armed where native methods cannot be wrapped"),
+    ("a guard class that cannot take the wrap counts as armed", GUARD_HOOKS,
+     "            if (!declaresNative(new ClassReader(in), wrap)) {",
+     "            if (false) {",
+     agent_suite, "a guard is armed in a loader that defined its class wrapped, and in no other"),
+    ("a guard class defined without its wrap goes unreported", GUARD_HOOKS,
+     '                failures.accept(className.replace(\'/\', \'.\') + " was defined without its guard: " + t);',
+     "                t.getClass();",
+     agent_suite, "a guard class defined without its native counts as a guard lost"),
+    ("a conditional library counts at any version", GUARD_HOOKS,
+     "                if (listed.equals(version)) {",
+     "                if (version != null) {",
+     agent_suite, "only a version reviewed, read beside the guard class, is listed"),
+    ("the guard sink is never set", GUARD_HOOKS,
+     '.getField("GUARD").set(null, guard);',
+     '.getField("GUARD");',
+     functional_suite, "a SQLite connection that enables extension loading selects every later test in its JVM"),
     # A looked-up name is a descriptor only with a leading `L` AND a trailing `;`: `LoginTest` in
     # the default package, unwrapped, dates a class that does not exist and lets LoginTest go.
     ("a looked-up name starting with L is unwrapped as if it were a descriptor", COVERAGE_DECODER,
@@ -2325,6 +2415,17 @@ MUTATIONS = [
      '                if (how != "changed" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
      '                if (how == "appeared" || how == "unreadable" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
      functional_suite, "a file gone from a sibling jar runs everything"),
+    # A moved file is handed to the selector only when a read of it is recorded as the file's. A
+    # source file's reads are recorded as its class's, and an archive in a directory is read by its
+    # entries, so neither can ever match a read: handed over, the test reading it is skipped.
+    ("a moved source file is handed over", CLASSPATH_FILES,
+     "                if (SOURCE_SUFFIXES.any(path::endsWith)) return null",
+     "                if (false) return null",
+     unit_suite, "a moved source file is not handed over, its reads are recorded as a class's"),
+    ("an archive inside a directory is handed over", CLASSPATH_FILES,
+     '                if ("!/" !in path && isArchive(File(rootDir, path))) return null',
+     "                if (false) return null",
+     unit_suite, "an archive inside a directory is not handed over, by its name or by its content"),
     # The agent records a zip it knows by its content, one behind a launch script among them, by its
     # entries: handed over as a plain file, it matches no read.
     ("a zip behind a launch script is handed over as a plain file again", CLASSPATH_FILES,
@@ -4209,16 +4310,71 @@ def _report(index, fired, refusal):
     return 1
 
 
-def shard_of(label, count):
-    """The shard, 1 to `count`, a guard belongs to: CRC32 of its label, as the functional suites
-    shard by class name. Stable across runs and Python versions, which `hash()` is not."""
-    return zlib.crc32(label.encode(ENCODING)) % count + 1
+def _place(units, count, shards):
+    """Each (weight, name, guards) unit, heaviest first, to the shard with the least weight so far,
+    then the fewest units, then the lowest index; returns each shard's weight."""
+    load, held = [0.0] * count, [0] * count
+    for weight, _name, guards in sorted(units, key=lambda unit: (-unit[0], unit[1])):
+        lightest = min(range(count), key=lambda i: (load[i], held[i], i))
+        load[lightest] += weight
+        held[lightest] += 1
+        shards[lightest].extend(guards)
+    return load
+
+
+def class_seconds(name):
+    """One run of a functional class on CI: measured, the median of those measured for a class not
+    yet measured, and the whole suite for a guard whose class does not resolve."""
+    known = sorted(FUNCTIONAL_CLASS_SECONDS.values())
+    if name is None:
+        return sum(known)
+    return FUNCTIONAL_CLASS_SECONDS.get(name, known[len(known) // 2])
+
+
+def partition(mutations, count):
+    """`mutations` in `count` shards balanced by cost, each in `mutations`' order, and each shard's
+    projected (functional, other) seconds. Computed from the selection, the weights above and the
+    checkout only, so every machine splits a commit's selection alike.
+
+    A functional class's guards share one tree's run and its one baseline, so they stay together
+    unless the class outweighs one tree's share of the functional phase; then it splits into
+    near-equal chunks. Functional chunks weigh CI seconds and the other guards their suite's
+    registry seconds; the two scales are balanced apart, never added.
+    """
+    by_class, other = {}, []
+    for m in mutations:
+        if m[4] is functional_suite:
+            by_class.setdefault(_class_of(m[4], m[5]), []).append(m)
+        else:
+            other.append(m)
+    rate = class_seconds
+    weights = {name: (len(guards) + 1) * rate(name) for name, guards in by_class.items()}
+    share = sum(weights.values()) / (count * ALONE_SLOTS) if weights else 0
+    units = []
+    for name, guards in by_class.items():
+        pieces = 1 if weights[name] <= share else min(len(guards), math.ceil(weights[name] / share))
+        for piece in range(pieces):
+            chunk = guards[piece * len(guards) // pieces:(piece + 1) * len(guards) // pieces]
+            units.append(((len(chunk) + 1) * rate(name), name or "", chunk))
+    shards = [[] for _ in range(count)]
+    functional = _place(units, count, shards)
+    cost = {fn: c for _n, fn, c in SUITES}
+    rest = _place([(cost.get(m[4], 0), m[0], [m]) for m in other], count, shards)
+    order = {m[0]: i for i, m in enumerate(mutations)}
+    return [sorted(shard, key=lambda m: order[m[0]]) for shard in shards], list(zip(functional, rest))
 
 
 def in_shard(mutations, shard):
     """The guards of `mutations` that `shard`, an (index, count) pair, runs, in their order."""
     index, count = shard
-    return [m for m in mutations if shard_of(m[0], count) == index]
+    return partition(mutations, count)[0][index - 1]
+
+
+def shard_projections(mutations, count):
+    """One line per shard: its guards and projected weights, so the balance reads before a dispatch."""
+    shards, loads = partition(mutations, count)
+    return [f"shard {i + 1}/{count}: {len(shard)} guard(s), functional ~{loads[i][0]:.0f}s on CI, "
+            f"other ~{loads[i][1]:.0f}s by the registry" for i, shard in enumerate(shards)]
 
 
 def parse_shard(text):
@@ -4302,8 +4458,9 @@ def main(argv=None):
                         help="run nothing; name each guard removed or re-aimed since BASE, and each "
                              "suite taken out of the fast set, and exit 1 if there is any")
     parser.add_argument("--shard", metavar="I/N",
-                        help="only the selected guards whose label hashes to shard I of N, as CI "
-                             "runs them; with the same flags, reproduces one CI shard")
+                        help="only shard I of N of the selected guards, split by measured cost with "
+                             "a functional class's guards together, as CI runs them; with the same "
+                             "flags, reproduces one CI shard")
     parser.add_argument("--results", metavar="FILE",
                         help="write each guard this run held and its outcome to FILE as JSON, on "
                              "every exit")
@@ -4380,6 +4537,9 @@ def _main(args, held):
             {"label": m[0], "suite": SUITE_NAMES[m[4]]} for m in selected]})
         print(f"{len(selected)} of {len(MUTATIONS)} guards selected, written to "
               f"{args.list_selection}; none was run.")
+        if shard:
+            for line in shard_projections(selected, shard[1]):
+                print(line)
         return 0
     if args.changed and not selected:
         print(f"nothing since {args.changed} can affect any guard ({len(changed)} changed "
@@ -4397,9 +4557,12 @@ def _main(args, held):
         if not selected:
             print(f"shard {args.shard} holds none of the {len(whole)} guard(s) this run selected; "
                   f"no guard was run here, and none is claimed.")
-            for m in whole:
-                print(f"  {m[0]} is shard {shard_of(m[0], shard[1])}'s")
+            shards, _loads = partition(whole, shard[1])
+            for i, held_there in enumerate(shards):
+                for m in held_there:
+                    print(f"  {m[0]} is shard {i + 1}'s")
             return 0
+        projection = shard_projections(whole, shard[1])[shard[0] - 1]
     held["ran"] = selected
 
     # STRUCTURALLY. The baseline set is DERIVED from the mutations about to run rather than
@@ -4458,6 +4621,8 @@ def _main(args, held):
           f"{len(selected)} of {len(MUTATIONS)} guards, {len(needed)} of {len(SUITES)} suites"
           f"{f', {args.jobs} workers' if args.jobs > 1 else ''}"
           f"{f', shard {args.shard} of the {len(whole)} selected' if shard else ''}")
+    if shard:
+        print(projection)
     if args.jobs > 1:
         return _run_parallel(args, selected, skipped, reasons)
     # THE BASELINE, FIRST. Every line below reads "the guard fired" from a failing suite, so a suite

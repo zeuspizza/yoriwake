@@ -273,8 +273,12 @@ class ClasspathFilesTest {
     }
 
     @Test
-    fun `any move whose readers are not recorded is not handed over`(@TempDir root: File) {
-        file(root, "res/fixture.bin", "PK\u0003\u0004 an archive by its content")
+    fun `any move whose readers are not recorded is not handed over`(@TempDir dir: File) {
+        val root = File(dir, "project").apply { mkdirs() }
+        // Each file exists, so a case is stopped by its own rule: a file that cannot be read counts
+        // as an archive and would be stopped by that rule instead.
+        file(dir, "elsewhere/a.properties", "a")
+        file(root, "a,b.properties", "a")
         val cases = mapOf(
             "appeared" to (emptyMap<String, String>() to mapOf("a.properties" to "1")),
             "gone" to (mapOf("a.properties" to "1") to emptyMap()),
@@ -282,9 +286,6 @@ class ClasspathFilesTest {
             "a class file" to (mapOf("x.jar!/A.class" to "1") to mapOf("x.jar!/A.class" to "2")),
             "outside the root" to (mapOf("../elsewhere/a.properties" to "1") to mapOf("../elsewhere/a.properties" to "2")),
             "a comma" to (mapOf("a,b.properties" to "1") to mapOf("a,b.properties" to "2")),
-            "a source file" to (mapOf("res/config.groovy" to "1") to mapOf("res/config.groovy" to "2")),
-            "an archive by its name" to (mapOf("res/fixture.jar" to "1") to mapOf("res/fixture.jar" to "2")),
-            "an archive by its content" to (mapOf("res/fixture.bin" to "1") to mapOf("res/fixture.bin" to "2")),
             "loaded attributes" to (
                 mapOf("x.jar!/META-INF/MANIFEST.MF" to "1", "x.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "e") to
                     mapOf("x.jar!/META-INF/MANIFEST.MF" to "2", "x.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}" to "f")
@@ -293,6 +294,28 @@ class ClasspathFilesTest {
         for ((case, tables) in cases) {
             assertEquals(null, ClasspathFiles.compare(tables.first, tables.second).traceable(root), case)
         }
+    }
+
+    /** One file of [path] that changed, written beneath [root] with [content]. */
+    private fun changed(root: File, path: String, content: String): List<String>? {
+        file(root, path, content)
+        return ClasspathFiles.compare(mapOf(path to "1"), mapOf(path to "2")).traceable(root)
+    }
+
+    @Test
+    fun `a moved source file is not handed over, its reads are recorded as a class's`(@TempDir root: File) {
+        for (path in listOf("res/config.groovy", "res/A.java", "res/a.kt", "res/a.scala")) {
+            assertEquals(null, changed(root, path, "plain text"), path)
+        }
+        assertEquals(listOf("res/config.properties"), changed(root, "res/config.properties", "plain text"))
+    }
+
+    @Test
+    fun `an archive inside a directory is not handed over, by its name or by its content`(@TempDir root: File) {
+        assertEquals(null, changed(root, "res/fixture.jar", "plain text"), "an archive by its name")
+        assertEquals(null, changed(root, "res/fixture.bin", "PK\u0003\u0004 an archive by its content"),
+            "an archive by its content")
+        assertEquals(listOf("res/fixture.txt"), changed(root, "res/fixture.txt", "plain text"))
     }
 
     @Test

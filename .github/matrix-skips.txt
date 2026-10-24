@@ -4,4 +4,4 @@ DeclineFunctionalTest.a Gradle older than 8_14 gets a named decline, runs every 
 TestJvmRangeFunctionalTest.test JVM on JDK 25 | */8.14/* | Gradle before 9.1 does not support Java 25
 ClassFileCeilingCharacterizationTest.a change to a module JaCoCo cannot instrument runs the test in another module that executes it | */8.14/* | Gradle before 9.1 does not support Java 25
 GeneratedClasspathFilesFunctionalTest.a generated resource read in another letter case runs the test that reads it | linux/*/* | Linux file systems tell letter cases apart, so no other letter case reaches the file
-TestJvmRangeFunctionalTest.test JVM on the newest early-access JDK | */*/* | run by the early-access workflow, which names the JDK it installs
+TestJvmRangeFunctionalTest.test JVM on the newest early-access JDK | */*/* | run by the early-access workflow, which fails if it skips there

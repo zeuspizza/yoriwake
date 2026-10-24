@@ -5,8 +5,8 @@ name: guards
 # changes the plugin's or agent's shipped sources runs every guard instead. Every guard also runs
 # nightly, and on dispatch before a release. A guard that does not fire fails the job and names it.
 #
-# Each guard job runs in 8 shards, each the selected guards whose label hashes to it
-# (`--shard I/N`), and a check job under the job's required name: every shard succeeded, and every
+# Each guard job runs in 8 shards of the selected guards, balanced by measured cost with a functional
+# class's guards together (`--shard I/N`), and a check job under the job's required name: every shard succeeded, and every
 # guard the check selects itself fired in exactly one shard (.github/guard_shards.py).
 #
 # A scheduled workflow that sees no repository activity for 60 days is disabled by GitHub; the
@@ -27,6 +27,11 @@ concurrency:
 # harness a pull request brings cannot reach anything.
 permissions:
   contents: read
+
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
 
 jobs:
   # Whether the change needs guards at all, and whether it reaches the shipped sources. Either
@@ -99,6 +104,11 @@ jobs:
           path: results/
           if-no-files-found: error
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every guard the check selects itself, the shards' flags but no shard, fired in exactly one.
@@ -161,6 +171,11 @@ jobs:
           path: results/
           if-no-files-found: error
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   full:
     name: guards, every one

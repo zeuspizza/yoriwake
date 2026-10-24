@@ -29,6 +29,11 @@ concurrency:
 permissions:
   contents: read
 
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
 # The build in parallel jobs, split by task, and each functional suite further by test class into
 # shards: together they run everything `./gradlew build` runs, and the slowest shard sets the time.
 # A check job per suite, named as the suite, proves every test class ran in exactly one shard.
@@ -93,6 +98,11 @@ jobs:
           path: agent/build/reports/jacoco/test/jacocoTestReport.xml
           if-no-files-found: warn
           retention-days: 7
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   functional-shard:
     name: functional on Gradle 8.14 (shard ${{ matrix.shard }}/2)
@@ -148,6 +158,11 @@ jobs:
           path: plugin/build/jacoco/
           if-no-files-found: error
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
@@ -224,6 +239,11 @@ jobs:
           path: plugin/build/jacoco/
           if-no-files-found: error
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
@@ -295,6 +315,11 @@ jobs:
           name: coverage-report-plugin-html
           path: plugin/build/reports/jacoco/test/html/
           retention-days: 7
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   capture:
     name: build a map
@@ -335,6 +360,11 @@ jobs:
           path: samples/demo/.gradle/yoriwake
           include-hidden-files: true
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   select:
     name: select on another machine
@@ -390,6 +420,11 @@ jobs:
 
       - name: the registry's test ran and failed, the unrelated ones did not
         run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py --mutated epsilon
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   # A map is per operating system: one captured on another makes a selecting run run every test
   # (`environment-changed`), and these two jobs show that refusal in both directions, with the
@@ -441,6 +476,12 @@ jobs:
       - name: every test ran, because the map was recorded on another operating system
         shell: bash
         run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py --mutated alpha-on-another-os
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        shell: bash
+        run: ./gradlew --stop
 
   capture-on-windows:
     name: build a map on windows
@@ -482,6 +523,12 @@ jobs:
           path: samples/demo/.gradle/yoriwake
           include-hidden-files: true
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        shell: bash
+        run: ./gradlew --stop
 
   # Selection on Windows, on another runner from a cold checkout, as `select` is on Linux.
   select-on-windows-from-windows:
@@ -538,6 +585,12 @@ jobs:
       - name: the registry's test ran and failed, the unrelated ones did not
         shell: bash
         run: YORIWAKE_REQUIRE_DECISIONS=1 python .github/assert_selection.py --mutated epsilon
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        shell: bash
+        run: ./gradlew --stop
 
   select-on-linux:
     name: select on linux, against a map captured on windows
@@ -568,6 +621,11 @@ jobs:
 
       - name: every test ran, because the map was recorded on another operating system
         run: YORIWAKE_REQUIRE_DECISIONS=1 python3 .github/assert_selection.py --mutated alpha-on-another-os
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   # The build on Windows, split as on Linux so the slowest suite sets the time. The checkout keeps
   # the runner's CRLF line endings, as a Windows developer's does; .gitattributes pins the files
@@ -599,6 +657,12 @@ jobs:
             **/build/test-results/**
             **/build/reports/tests/**
           retention-days: 7
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        shell: bash
+        run: ./gradlew --stop
 
   functional-windows-shard:
     name: functional on Gradle 8.14 on windows (shard ${{ matrix.shard }}/8)
@@ -647,6 +711,12 @@ jobs:
           path: plugin/build/test-results/functionalTest/*.xml
           if-no-files-found: error
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        shell: bash
+        run: ./gradlew --stop
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
@@ -716,6 +786,12 @@ jobs:
           path: plugin/build/test-results/functionalTestGradle9/*.xml
           if-no-files-found: error
           retention-days: 1
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        shell: bash
+        run: ./gradlew --stop
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every test class the sources declare ran in exactly one of them.
