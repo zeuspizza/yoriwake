@@ -32,7 +32,7 @@ third of them must not read like a run that proved all of them. The split is by 
 by guess; see SUITES. Count what a run will attempt from its first line, not from a duration
 written anywhere: the table grows, and every written duration has gone stale.
 """
-import argparse, atexit, contextlib, glob, itertools, json, os, re, shutil, signal, subprocess, sys, hashlib, time, zlib
+import argparse, atexit, contextlib, glob, itertools, json, os, re, shutil, signal, subprocess, sys, hashlib, math, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "bench"))
@@ -662,6 +662,47 @@ SUITES = [
 ]
 
 SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
+
+# One run of each functional class on a GitHub runner, in seconds, for balancing the shards: the
+# registry's one functional figure cannot tell a 30s class from a 230s one. Derived from the job
+# logs of the every-guard run 39274620985 (8 shards, 574 guards): in each shard, each class's
+# interval between its tree's `<Class> done in <tree> at <N>s` lines, divided by its guards in that
+# shard plus the baseline each shard pays, averaged over the shards that ran it. Re-measured by
+# repeating that on a later every-guard run.
+FUNCTIONAL_CLASS_SECONDS = {
+    "AuditAndExplainFunctionalTest": 52,
+    "BootClassPathFunctionalTest": 50,
+    "BranchPolicyFunctionalTest": 81,
+    "CaptureFunctionalTest": 97,
+    "ChangedBytesFunctionalTest": 40,
+    "ClassFileCeilingFunctionalTest": 55,
+    "ComplementFunctionalTest": 214,
+    "ConfigurationCacheFunctionalTest": 40,
+    "DecisionRulesFunctionalTest": 26,
+    "DeclineFunctionalTest": 65,
+    "DevelocityFunctionalTest": 79,
+    "EnvironmentFingerprintFunctionalTest": 82,
+    "FullRunRequestFunctionalTest": 101,
+    "GeneratedClasspathFilesFunctionalTest": 120,
+    "HostCoverageFunctionalTest": 60,
+    "InitScriptFunctionalTest": 54,
+    "IsolatedCaptureFunctionalTest": 71,
+    "JvmSharedFunctionalTest": 172,
+    "MapDatingFunctionalTest": 229,
+    "MapProvenanceFunctionalTest": 98,
+    "MultiProjectFunctionalTest": 36,
+    "MultiplatformFunctionalTest": 140,
+    "NamedTestsFunctionalTest": 111,
+    "NestedLoaderFunctionalTest": 40,
+    "ObservationFunctionalTest": 79,
+    "RefusalFunctionalTest": 96,
+    "RevertAfterUndatedCaptureFunctionalTest": 224,
+    "ScheduledFullRunFunctionalTest": 72,
+    "SelectionFunctionalTest": 197,
+    "TestLauncherFunctionalTest": 42,
+    "TestRetryFunctionalTest": 79,
+    "TestWrittenFilesFunctionalTest": 104,
+}
 
 # The fast set: what runs on every pull request, so it must stay well inside a runner's patience.
 # The next suite added to it should come with a measurement, not an estimate. `python`,
@@ -4209,16 +4250,71 @@ def _report(index, fired, refusal):
     return 1
 
 
-def shard_of(label, count):
-    """The shard, 1 to `count`, a guard belongs to: CRC32 of its label, as the functional suites
-    shard by class name. Stable across runs and Python versions, which `hash()` is not."""
-    return zlib.crc32(label.encode(ENCODING)) % count + 1
+def _place(units, count, shards):
+    """Each (weight, name, guards) unit, heaviest first, to the shard with the least weight so far,
+    then the fewest units, then the lowest index; returns each shard's weight."""
+    load, held = [0.0] * count, [0] * count
+    for weight, _name, guards in sorted(units, key=lambda unit: (-unit[0], unit[1])):
+        lightest = min(range(count), key=lambda i: (load[i], held[i], i))
+        load[lightest] += weight
+        held[lightest] += 1
+        shards[lightest].extend(guards)
+    return load
+
+
+def class_seconds(name):
+    """One run of a functional class on CI: measured, the median of those measured for a class not
+    yet measured, and the whole suite for a guard whose class does not resolve."""
+    known = sorted(FUNCTIONAL_CLASS_SECONDS.values())
+    if name is None:
+        return sum(known)
+    return FUNCTIONAL_CLASS_SECONDS.get(name, known[len(known) // 2])
+
+
+def partition(mutations, count):
+    """`mutations` in `count` shards balanced by cost, each in `mutations`' order, and each shard's
+    projected (functional, other) seconds. Computed from the selection, the weights above and the
+    checkout only, so every machine splits a commit's selection alike.
+
+    A functional class's guards share one tree's run and its one baseline, so they stay together
+    unless the class outweighs one tree's share of the functional phase; then it splits into
+    near-equal chunks. Functional chunks weigh CI seconds and the other guards their suite's
+    registry seconds; the two scales are balanced apart, never added.
+    """
+    by_class, other = {}, []
+    for m in mutations:
+        if m[4] is functional_suite:
+            by_class.setdefault(_class_of(m[4], m[5]), []).append(m)
+        else:
+            other.append(m)
+    rate = class_seconds
+    weights = {name: (len(guards) + 1) * rate(name) for name, guards in by_class.items()}
+    share = sum(weights.values()) / (count * ALONE_SLOTS) if weights else 0
+    units = []
+    for name, guards in by_class.items():
+        pieces = 1 if weights[name] <= share else min(len(guards), math.ceil(weights[name] / share))
+        for piece in range(pieces):
+            chunk = guards[piece * len(guards) // pieces:(piece + 1) * len(guards) // pieces]
+            units.append(((len(chunk) + 1) * rate(name), name or "", chunk))
+    shards = [[] for _ in range(count)]
+    functional = _place(units, count, shards)
+    cost = {fn: c for _n, fn, c in SUITES}
+    rest = _place([(cost.get(m[4], 0), m[0], [m]) for m in other], count, shards)
+    order = {m[0]: i for i, m in enumerate(mutations)}
+    return [sorted(shard, key=lambda m: order[m[0]]) for shard in shards], list(zip(functional, rest))
 
 
 def in_shard(mutations, shard):
     """The guards of `mutations` that `shard`, an (index, count) pair, runs, in their order."""
     index, count = shard
-    return [m for m in mutations if shard_of(m[0], count) == index]
+    return partition(mutations, count)[0][index - 1]
+
+
+def shard_projections(mutations, count):
+    """One line per shard: its guards and projected weights, so the balance reads before a dispatch."""
+    shards, loads = partition(mutations, count)
+    return [f"shard {i + 1}/{count}: {len(shard)} guard(s), functional ~{loads[i][0]:.0f}s on CI, "
+            f"other ~{loads[i][1]:.0f}s by the registry" for i, shard in enumerate(shards)]
 
 
 def parse_shard(text):
@@ -4302,8 +4398,9 @@ def main(argv=None):
                         help="run nothing; name each guard removed or re-aimed since BASE, and each "
                              "suite taken out of the fast set, and exit 1 if there is any")
     parser.add_argument("--shard", metavar="I/N",
-                        help="only the selected guards whose label hashes to shard I of N, as CI "
-                             "runs them; with the same flags, reproduces one CI shard")
+                        help="only shard I of N of the selected guards, split by measured cost with "
+                             "a functional class's guards together, as CI runs them; with the same "
+                             "flags, reproduces one CI shard")
     parser.add_argument("--results", metavar="FILE",
                         help="write each guard this run held and its outcome to FILE as JSON, on "
                              "every exit")
@@ -4380,6 +4477,9 @@ def _main(args, held):
             {"label": m[0], "suite": SUITE_NAMES[m[4]]} for m in selected]})
         print(f"{len(selected)} of {len(MUTATIONS)} guards selected, written to "
               f"{args.list_selection}; none was run.")
+        if shard:
+            for line in shard_projections(selected, shard[1]):
+                print(line)
         return 0
     if args.changed and not selected:
         print(f"nothing since {args.changed} can affect any guard ({len(changed)} changed "
@@ -4397,9 +4497,12 @@ def _main(args, held):
         if not selected:
             print(f"shard {args.shard} holds none of the {len(whole)} guard(s) this run selected; "
                   f"no guard was run here, and none is claimed.")
-            for m in whole:
-                print(f"  {m[0]} is shard {shard_of(m[0], shard[1])}'s")
+            shards, _loads = partition(whole, shard[1])
+            for i, held_there in enumerate(shards):
+                for m in held_there:
+                    print(f"  {m[0]} is shard {i + 1}'s")
             return 0
+        projection = shard_projections(whole, shard[1])[shard[0] - 1]
     held["ran"] = selected
 
     # STRUCTURALLY. The baseline set is DERIVED from the mutations about to run rather than
@@ -4458,6 +4561,8 @@ def _main(args, held):
           f"{len(selected)} of {len(MUTATIONS)} guards, {len(needed)} of {len(SUITES)} suites"
           f"{f', {args.jobs} workers' if args.jobs > 1 else ''}"
           f"{f', shard {args.shard} of the {len(whole)} selected' if shard else ''}")
+    if shard:
+        print(projection)
     if args.jobs > 1:
         return _run_parallel(args, selected, skipped, reasons)
     # THE BASELINE, FIRST. Every line below reads "the guard fired" from a failing suite, so a suite
