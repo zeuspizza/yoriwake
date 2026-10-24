@@ -1349,7 +1349,10 @@ changed resource the tests that read it, but a test that reads a listed file its
 only that file changed. Two shapes that fit: a resource directory a build task regenerates on every
 run, such as `gen-src/*` holding a versions file stamped with the commit, and a package manager's
 tree such as `docs-client/node_modules/*` that no test reads. A run forced by such files names the
-globs; see [Files written into the source tree](#files-written-into-the-source-tree).
+globs; see [Files written into the source tree](#files-written-into-the-source-tree). A listed glob
+also covers files added under it later, and a listed directory of generated sources no longer
+forces a run when they change, nor gets the checks a changed source gets (annotations, constants):
+list one only if no test depends on what is generated in it.
 
 `environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
 entry or one of only `*` fails the build. See [The environment

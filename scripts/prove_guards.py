@@ -647,7 +647,7 @@ SUITES = [
     ("agent", agent_suite, 6),
     # About 1.4s warm with a mutation applied, both tasks.
     ("jdk identity", jdk_identity_suite, 1.5),
-    ("unit", unit_suite, 11),
+    ("unit", unit_suite, 19),
     ("qualify", qualify_suite, 12),
     ("config cost", config_cost_suite, 1),
     # The shaded jars and both direct SBOMs, then the merge and its check; an estimate until a
@@ -2287,6 +2287,12 @@ MUTATIONS = [
      "            if (!classified.untold || count == 0) return emptyList()",
      "            if (classified.untold || count >= 0) return emptyList()",
      unit_suite, "when git cannot say what is tracked the forcing paths are still counted"),
+    # A build in a subdirectory of its repository: a directory is looked up under the build's
+    # prefix, or every untracked path there is offered as one glob over the whole tree above it.
+    ("a directory is looked up only from the repository's top", FORCING_PATHS,
+     '        fun holds(dir: String) = "$prefix$dir" in held || dir in held',
+     "        fun holds(dir: String) = dir in held",
+     unit_suite, "a build under a subdirectory of the repo names an untracked directory by its own path"),
     # A build-produced file on the test classpath that moved since the capture forces, named, unless
     # the map records which tests read it, and a map that records no such files forces once and
     # captures them: a file generated from git state or the clock reaches a test through no tracked

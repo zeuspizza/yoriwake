@@ -168,6 +168,29 @@ class ForcingPathsTest {
     }
 
     @Test
+    fun `files a capture wrote under an untracked directory are named by it with their count`() {
+        val written = (1..3).map { "app/out/r$it.txt" }
+        val classified = classify(written, captured = written.associateWith { WorkingTree.Move.CREATED })
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+
+        assertTrue(line.startsWith("app/out/* (3 files) changed during :app:test's last capture build"), line)
+        assertFalse("(created)" in line, line)
+        assertContains(line, "list them in notReadByTests: \"app/out/*\".")
+    }
+
+    @Test
+    fun `more than five untracked directories are named five at a time, and the rest counted`() {
+        val classified = classify((1..7).map { "app/d$it/f.txt" })
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+
+        assertContains(line, "app/d5/* and 2 more are untracked")
+        assertContains(line, "\"app/d5/*\", and the 2 more alike.")
+        assertFalse("app/d6/*" in line, line)
+    }
+
+    @Test
     fun `every untracked origin says when listing its paths in notReadByTests is safe`() {
         val classified = classify(
             listOf("app/run.log", "app/src/main/resources/x.txt", "app/data.json"),
@@ -238,5 +261,40 @@ class ForcingPathsTest {
 
         assertEquals(mapOf("notes.txt" to Origin.UNTRACKED), classified.origins)
         assertEquals(2, classified.unnamed)
+    }
+
+    @Test
+    fun `a build under a subdirectory of the repo names an untracked directory by its own path`(@TempDir repo: File) {
+        fun git(vararg args: String) {
+            val code = ProcessBuilder("git", *args).directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
+            check(code == 0) { "git ${args.joinToString(" ")} failed with $code" }
+        }
+        git("init")
+        val root = File(repo, "backend")
+        File(root, "src/main/resources").mkdirs()
+        File(root, "src/main/resources/a.txt").writeText("a")
+        File(root, "web").mkdirs()
+        File(root, "web/package.json").writeText("{}")
+        git("add", ".")
+        git("-c", "user.email=t@e.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-m", "base")
+        File(root, "src/main/resources/gen").mkdirs()
+        File(root, "src/main/resources/gen/v.properties").writeText("v")
+        File(root, "web/node_modules/m").mkdirs()
+        File(root, "web/node_modules/m/index.js").writeText("m")
+
+        val classified = ForcingPaths.classify(
+            root, File(repo, "map"),
+            listOf("src/main/resources/gen/v.properties", "web/node_modules/m/index.js"),
+            listOf("src/main/resources"),
+            base = "HEAD",
+        )
+
+        assertEquals(
+            mapOf(
+                "src/main/resources/gen/v.properties" to "src/main/resources/gen/*",
+                "web/node_modules/m/index.js" to "web/node_modules/*",
+            ),
+            classified.names,
+        )
     }
 }
