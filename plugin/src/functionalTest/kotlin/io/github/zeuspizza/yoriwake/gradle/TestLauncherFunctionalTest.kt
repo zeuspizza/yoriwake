@@ -88,7 +88,7 @@ class TestLauncherFunctionalTest : FunctionalTestSupport() {
         val connector = GradleConnector.newConnector()
             .forProjectDirectory(dir)
             .useGradleVersion(FunctionalGradle.version)
-            .useGradleUserHomeDir(FunctionalGradle.testKitDir())
+            .useGradleUserHomeDir(FunctionalGradle.toolingApiDir())
         try {
             connector.connect().use { connection ->
                 val launcher = operation(connection)
