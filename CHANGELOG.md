@@ -19,6 +19,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
 - `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
+- `largeChangeThreshold` (5,000 paths): a larger change runs everything without analysing it. Map: left alone.
 
 ### Deprecated
 
@@ -26,6 +27,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A native library or foreign-function call that widens a run names the class that made it. Map: left alone.
 - A run forced by untracked files names their directories and how to list them in `pathIgnore`. Map: left alone.
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.

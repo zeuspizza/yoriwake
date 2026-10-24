@@ -21,6 +21,11 @@ class TouchRecorderTest {
 
     private fun drained(recorder: TouchRecorder) = recorder.drain().map { it[0] to it[1] }
 
+    /** [drained] without the calling class a foreign-function reason ends with. */
+    private fun causes(recorder: TouchRecorder) = drained(recorder).map { it.first to it.second.substringBefore(": from ") }
+
+    private val self = " from " + TouchRecorderTest::class.java.name
+
     @Test
     fun `a class or source file read is kept once, and any other file is not`() {
         val recorder = TouchRecorder()
@@ -516,8 +521,8 @@ class TouchRecorderTest {
 
         val why = "a native library that is not on the reviewed list was loaded: "
         assertEquals(
-            listOf(AgentContract.TOUCH_ALL to why + "libacme.so",
-                AgentContract.TOUCH_ALL to why + System.mapLibraryName("codec")),
+            listOf(AgentContract.TOUCH_ALL to why + "libacme.so" + self,
+                AgentContract.TOUCH_ALL to why + System.mapLibraryName("codec") + self),
             drained(recorder),
         )
     }
@@ -534,7 +539,7 @@ class TouchRecorderTest {
         // Off Windows a backslash is part of a name, so the whole name is the library's.
         val backFile = if (File.separatorChar == '\\') "back.dll" else System.mapLibraryName(back)
         assertEquals(
-            listOf(AgentContract.TOUCH_ALL to why + "forward.dll", AgentContract.TOUCH_ALL to why + backFile),
+            listOf(AgentContract.TOUCH_ALL to why + "forward.dll" + self, AgentContract.TOUCH_ALL to why + backFile + self),
             drained(recorder),
         )
     }
@@ -568,7 +573,8 @@ class TouchRecorderTest {
 
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to
-                "a native library that is not on the reviewed list was loaded: " + System.mapLibraryName("codec")),
+                "a native library that is not on the reviewed list was loaded: " + System.mapLibraryName("codec")
+                    + " from " + standin.boot.BootCaller::class.java.name),
             drained(recorder),
         )
     }
@@ -611,7 +617,7 @@ class TouchRecorderTest {
         kotlin.test.assertFalse(ReviewedLibraries.reviewed("net.jpountz.util.Native", "lz4-java.dll"))
         val file = System.mapLibraryName("lz4-java")
         val expected = if (file.endsWith(".dll")) {
-            listOf(AgentContract.TOUCH_ALL to "a native library that is not on the reviewed list was loaded: $file")
+            listOf(AgentContract.TOUCH_ALL to "a native library that is not on the reviewed list was loaded: $file from net.jpountz.util.Native")
         } else {
             listOf(any)
         }
@@ -924,6 +930,18 @@ class TouchRecorderTest {
 
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
+            causes(recorder),
+        )
+    }
+
+    @Test
+    fun `native code reached through the foreign-function API names the class that called the hooked method`() {
+        val recorder = TouchRecorder()
+        standin.Hooked.call { recorder.nativeCode(null) }
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to
+                "native code was reached through the foreign-function API: from " + TouchRecorderTest::class.java.name),
             drained(recorder),
         )
     }
@@ -935,7 +953,7 @@ class TouchRecorderTest {
         call.invoke(null, Runnable { native.nativeCode(null) })
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
-            drained(native),
+            causes(native),
             "Method.invoke is not the caller",
         )
 
@@ -944,7 +962,7 @@ class TouchRecorderTest {
             .invokeWithArguments(Runnable { handled.nativeCode(null) })
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
-            drained(handled),
+            causes(handled),
             "MethodHandle.invokeWithArguments is not the caller",
         )
 
@@ -952,7 +970,7 @@ class TouchRecorderTest {
         standin.Hooked.referencedThroughTheJdk { referenced.nativeCode(null) }
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
-            drained(referenced),
+            causes(referenced),
             "a method reference handed to JDK code belongs to the class that wrote it",
         )
 
@@ -965,7 +983,7 @@ class TouchRecorderTest {
             through(Runnable { recorder.nativeCode(null) })
             assertEquals(
                 listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
-                drained(recorder),
+                causes(recorder),
                 "$route is not the caller",
             )
         }
@@ -981,7 +999,7 @@ class TouchRecorderTest {
         standin.Hooked.Caller.throughAnInterfaceProxyTheJdkCalls { native.nativeCode(null) }
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
-            drained(native),
+            causes(native),
             "JDK code that calls a proxy did not choose what the proxy calls",
         )
 
@@ -1007,7 +1025,7 @@ class TouchRecorderTest {
         standin.boot.BootCaller.call(Consumer { native.nativeCode(null) }, "value")
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
-            drained(native),
+            causes(native),
         )
 
         val defined = TouchRecorder()
@@ -1023,7 +1041,7 @@ class TouchRecorderTest {
 
         assertEquals(
             listOf(AgentContract.TOUCH_ALL to "native code was reached through the foreign-function API"),
-            drained(recorder),
+            causes(recorder),
         )
     }
 }

@@ -98,6 +98,7 @@ refusal-kind	full-run-commit
 refusal-kind	full-run-requested
 refusal-kind	full-run-scheduled
 refusal-kind	in-jvm-parallelism
+refusal-kind	large-change
 refusal-kind	map-untrusted
 refusal-kind	map-unverified
 refusal-kind	no-change-set

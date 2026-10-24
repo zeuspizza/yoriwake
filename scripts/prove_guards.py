@@ -694,6 +694,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from MultiProjectFunctionalTest, as many builds of the same shape, until an
     # every-guard run measures it.
     "DeclaredDependenciesFunctionalTest": 36,
+    # Estimated from DecisionRulesFunctionalTest, as many builds of the same shape, until an
+    # every-guard run measures it.
+    "LargeChangeFunctionalTest": 30,
     "DeclineFunctionalTest": 65,
     "DevelocityFunctionalTest": 79,
     "EnvironmentFingerprintFunctionalTest": 82,
@@ -2015,8 +2018,8 @@ MUTATIONS = [
      "                name.length();",
      agent_suite, "a hidden class defined from outside the JDK is kept by the name in its bytes, and the JDK's own are not"),
     ("a call from outside the JDK is taken for the JDK's own", TOUCH_RECORDER,
-     "                        return JdkCode.isJdk(frame);",
-     "                        return true;",
+     "        return caller != null && !throughAProxy[0] && JdkCode.isJdk(caller);",
+     "        return caller != null && !throughAProxy[0];",
      agent_suite, "a hidden class defined from outside the JDK is kept by the name in its bytes, and the JDK's own are not"),
     # Reflection and method-handle frames call on someone else's behalf, and a method reference's
     # proxy is hidden: judged as the caller, either made a test's own call look like the JDK's.
@@ -2027,8 +2030,8 @@ MUTATIONS = [
     # A proxy dispatches to a handle its maker chose: JDK code that calls the proxy did not ask
     # for the hooked call, so a walk that passed over a proxy class records it.
     ("a hooked call through a proxy JDK code calls is taken for the JDK's own", TOUCH_RECORDER,
-     "                        if (throughAProxy) {",
-     "                        if (false) {",
+     "        return caller != null && !throughAProxy[0] && JdkCode.isJdk(caller);",
+     "        return caller != null && JdkCode.isJdk(caller);",
      agent_suite, "a hooked method reached through an interface proxy that JDK code calls is judged as the project's"),
     ("a varargs collector, a constant bootstrap or an interpreted lambda form is taken for the caller", TOUCH_RECORDER,
      '        return name.startsWith("java.lang.invoke.")',
@@ -2056,13 +2059,15 @@ MUTATIONS = [
      "                    StackWalker.Option.RETAIN_CLASS_REFERENCE)).walk(frames -> {",
      functional_suite, "the foreign-function API reached through a method reference JDK code calls selects"),
     ("native code reached through the foreign-function API no longer touches every class", TOUCH_RECORDER,
-     '                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API");',
+     '                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API"\n'
+     '                        + (from != null ? ": from " + from.getName() : ""));',
      "                touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);",
      agent_suite, "native code reached through the foreign-function API from outside the JDK touches every class"),
     # Native code reads any file out of sight, so a native library touches every class from its
     # load unless its sources were reviewed and it is loaded by the class that ships with it.
     ("a native library not on the reviewed list no longer touches every class", TOUCH_RECORDER,
-     '                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file);',
+     '                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file\n'
+     '                        + (caller != null ? " from " + caller.getName() : ""));',
      "                touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);",
      agent_suite, "a native library that is not on the reviewed list touches every class from its load"),
     ("the native-library hook is installed with no sink behind it", READ_HOOKS,
@@ -2573,8 +2578,8 @@ MUTATIONS = [
      "",
      functional_suite, "a declined run with in-JVM parallelism keeps its token and the host's JaCoCo"),
     ("the unknown-age fallback captures on a declined run", SELECTION_WIRING,
-     "        test.doFirst { task ->\n            if (refusedAtExecution(test)) return@doFirst\n",
-     "        test.doFirst { task ->\n",
+     "    test.doFirst { task ->\n        if (refusedAtExecution(test)) return@doFirst\n        // A map recorded in isolation",
+     "    test.doFirst { task ->\n        // A map recorded in isolation",
      functional_suite, "a declined selecting run on a map of unknown age writes nothing"),
     # Tests named with `--tests` all run on a selecting run: selection used to drop a named
     # test the change did not reach, and the build failed on "No tests found".
@@ -2823,6 +2828,16 @@ MUTATIONS = [
      "        if (listed != digest) {",
      "        if (false) {",
      functional_suite, "a map that differs from its trusted digest runs every test"),
+    # A change above the large-change threshold runs everything without its analysis; counted
+    # against the requested base, or an aging map would turn every small change into a full run.
+    ("a change above the large-change threshold is analysed", SELECTION_WIRING,
+     "        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->",
+     "        LargeChange.refusal(count, Int.MAX_VALUE, asked.ref)?.let { reason ->",
+     functional_suite, "more changed paths than the threshold run everything and record the map"),
+    ("the large-change threshold counts the change widened to the map's age", SELECTION_WIRING,
+     "    val asked = runPlan.widening.requested ?: widened\n",
+     "    val asked = widened\n",
+     functional_suite, "an old map does not push a small change over the threshold"),
     ("the provenance check is not registered", SELECTION_WIRING,
      "        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)\n",
      "",
@@ -3028,8 +3043,8 @@ MUTATIONS = [
      '    val keepsIsolation = mode == "isolated"',
      unit_suite, "a full run over a map recorded in isolation, wholly or in part, does not instrument"),
     ("a run refused over the map's age captures over a map recorded in isolation", SELECTION_WIRING,
-     "            ).takeUnless { it.capture }",
-     "            ).takeUnless { true }",
+     "        ).takeUnless { it.capture }\n        // Read here, where",
+     "        ).takeUnless { true }\n        // Read here, where",
      functional_suite, "a selecting run that refuses over the map's age leaves an isolated map alone"),
     # Cost, not safety: a map selection cannot read holds nothing isolation could keep.
     ("an unusable map labelled isolated is never rebuilt", CAPTURE_DECISION,

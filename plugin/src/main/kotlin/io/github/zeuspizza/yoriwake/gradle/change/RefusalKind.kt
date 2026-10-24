@@ -169,6 +169,9 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
 
     /** A changed path matches the build's `dependsOn` for this task: the build declared every test depends on it. */
     DECLARED_PATH_CHANGED("declared-path-changed"),
+
+    /** More paths changed than `largeChangeThreshold`; raising it lifts this. */
+    LARGE_CHANGE("large-change"),
     ;
 
     companion object {
