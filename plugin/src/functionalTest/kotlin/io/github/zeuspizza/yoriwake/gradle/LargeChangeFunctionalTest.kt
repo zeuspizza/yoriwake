@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 
 /**
@@ -73,6 +74,21 @@ class LargeChangeFunctionalTest : FunctionalTestSupport() {
 
         assertNotEquals("large-change", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertContains(output, ":test: narrowing")
+    }
+
+    @Test
+    fun `paths pathIgnore takes out are not counted`(@TempDir dir: File) {
+        captured(dir, threshold(3, """pathIgnore.add("docs/**")"""))
+        changeAlpha(dir)
+        (1..4).forEach { File(dir, "docs/$it.md").apply { parentFile.mkdirs() }.writeText("$it\n") }
+        commit(dir, "five paths, four ignored")
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-P${Settings.BASE}=HEAD~1").build().output
+        val explained = runner(dir, "yoriwakeExplainTest", "-P${Settings.BASE}=HEAD~1").build().output
+
+        assertNotEquals("large-change", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, ":test: narrowing")
+        assertFalse("would run everything" in explained, explained)
     }
 
     @Test

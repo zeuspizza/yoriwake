@@ -298,7 +298,14 @@ internal abstract class ExplainTask : DefaultTask() {
         }
         // As the run checks it, against the base it was asked about, before any analysis.
         ChangeDetection.changedPaths(git, rootDir, resolvedBase.ref)?.let { askedPaths ->
-            val count = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct().size
+            val changed = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct()
+            val ignore = pathIgnore.getOrElse(emptyList()).takeIf { it.isNotEmpty() }?.let { entries ->
+                PathIgnore.Declaration(
+                    entries, rootDir, sourceDirs, buildLogicDirs,
+                    ChangeDetection.outsideRoot(git, rootDir, resolvedBase.ref)?.toSet() ?: changed.toSet(),
+                )
+            }
+            val count = LargeChange.counted(changed, ignore)
             LargeChange.refusal(count, largeChangeThreshold.get(), resolvedBase.ref)?.let { reason ->
                 logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
                 writeUnanswered(

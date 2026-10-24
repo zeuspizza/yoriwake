@@ -188,8 +188,12 @@ internal fun TestTaskWiring.configureSelection(
     // Before any analysis: a change this size would end in a full run, so analysing it only costs.
     // Counted against the base the run was asked about, which the map's age cannot grow.
     val asked = runPlan.widening.requested ?: widened
+    val sourceDirs = ForcingPaths.sourceDirs(project.rootDir, projectFacts(project, buildMemo).allSourceDirs)
     ChangeDetection.changedPaths(project.providers, project.rootDir, asked.ref, buildMemo)?.let { askedPaths ->
-        val count = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct().size
+        val changed = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct()
+        val count = LargeChange.counted(
+            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(asked.ref), changed, buildMemo),
+        )
         LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->
             refuseAndRecord(
                 test, mapDir, observing, fromBuildScript, RefusalKind.LARGE_CHANGE, reason,
@@ -203,7 +207,6 @@ internal fun TestTaskWiring.configureSelection(
     // the configuration cache.
     val classpathFacts = classpathFacts(project, test, paths)
     val rootDir = project.rootDir
-    val sourceDirs = ForcingPaths.sourceDirs(rootDir, projectFacts(project, buildMemo).allSourceDirs)
     val ignore = pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOfNotNull(against, stamp), paths, buildMemo)
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
