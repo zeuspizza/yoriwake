@@ -193,7 +193,9 @@ everything, and names it, one line per kind. Files under a directory git tracks 
 by the outermost such directory, as a glob with its file count (`docs-client/node_modules/* (62,444
 files)`), the largest first; a file beside a tracked one is named as itself. Each line ends with the
 globs to list in [`notReadByTests`](#properties-and-tasks), and the condition under which that is
-safe:
+safe. No glob is offered for a directory that holds sources: a source file among the changed files,
+or a source tree laid out as a source set's (`main/java`, `main/kotlin`) in it or one level below.
+Listed, a later change to those sources would no longer count as one.
 
 - **Changed during the last capture build** (`written-during-capture`): created, rewritten or
   deleted while the capture that dated the map ran, by its tests or its tasks. If a test writes it

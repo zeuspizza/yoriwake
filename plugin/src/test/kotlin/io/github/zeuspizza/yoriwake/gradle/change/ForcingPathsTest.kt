@@ -25,7 +25,8 @@ class ForcingPathsTest {
         forcing: Collection<String>,
         tracked: Set<String> = emptySet(),
         captured: Map<String, WorkingTree.Move>? = emptyMap(),
-    ) = ForcingPaths.classify(forcing, sourceDirs, { tracked }, { captured }, ::holdsTracked)
+        sourceRoots: Set<String> = emptySet(),
+    ) = ForcingPaths.classify(forcing, sourceDirs, { tracked }, { captured }, ::holdsTracked) { it in sourceRoots }
 
     @Test
     fun `a path in a source directory is named as there even when the capture moved it`() {
@@ -148,6 +149,57 @@ class ForcingPathsTest {
         val line = ForcingPaths.lines(":app:test", classified).single()
         assertContains(line, "app/gen-src/* is untracked")
         assertContains(line, "list it in notReadByTests: \"app/gen-src/*\".")
+    }
+
+    @Test
+    fun `a directory holding source files is named, and no glob is offered for it`() {
+        val classified = classify(listOf(
+            "app/gen-src/main/java/dev/Generated.java", "app/gen-src/main/resources/app.properties",
+            "app/web/dist/bundle.js.map",
+        ))
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+        assertContains(line, "app/gen-src/* (2 files)")
+        assertContains(line, "list it in notReadByTests: \"app/web/dist/*\".")
+        assertContains(line, "app/gen-src/* holds source files, so no glob is offered for it")
+        assertFalse("\"app/gen-src/*\"" in line, line)
+    }
+
+    @Test
+    fun `a directory with a source tree on disk gets no glob, though only a resource in it changed`() {
+        val classified = classify(listOf("app/gen-src/main/resources/app.properties"), sourceRoots = setOf("app/gen-src"))
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+        assertContains(line, "app/gen-src/* holds source files, so no glob is offered for it")
+        assertFalse("notReadByTests" in line, line)
+    }
+
+    @Test
+    fun `a source tree is found at a directory or one level below it`(@TempDir root: File) {
+        File(root, "app/gen-src/main/java/dev").mkdirs()
+        File(root, "app/out/module/main/kotlin").mkdirs()
+        File(root, "app/web/dist/main").mkdirs()
+        for ((path, holds) in listOf(
+            "app/gen-src/main/resources/a.properties" to true,
+            "app/out/module/a.txt" to true,
+            "app/web/dist/main/a.js" to false,
+        )) {
+            val classified = ForcingPaths.classify(root, File(root, "map"), listOf(path), sourceDirs, null) { args ->
+                when (args.first()) {
+                    "rev-parse" -> "\n"
+                    else -> repo.joinToString("\u0000")
+                }
+            }
+            assertEquals(holds, classified.names.getValue(path) in classified.holdingSources, path)
+        }
+    }
+
+    @Test
+    fun `when every directory holds sources, only the reason is given`() {
+        val line = ForcingPaths.lines(":app:test", classify(listOf("app/gen-src/main/kotlin/dev/A.kt"))).single()
+
+        assertContains(line, "app/gen-src/* holds source files, so no glob is offered for it")
+        assertFalse("notReadByTests" in line, line)
     }
 
     @Test
