@@ -429,6 +429,7 @@ library.
 | zstd-jni | `com.github.luben.zstd.util.Native` | [1.5.7-20](https://github.com/luben/zstd-jni/tree/v1.5.7-20/src/main/native) | nothing |
 | lz4-java (`at.yawk.lz4`, and `org.lz4` 1.8.0) | `net.jpountz.util.Native` | [1.12.0](https://github.com/yawkat/lz4-java/tree/v1.12.0/src/jni) | nothing |
 | RocksDB | `org.rocksdb.NativeLibraryLoader` | [11.8.1](https://github.com/facebook/rocksdb/tree/v11.8.1/java/rocksjni) | the files of a database in the directories a test names, only by the names RocksDB itself writes; fixed `/proc` and `/sys` paths |
+| SQLite JDBC (conditional, below) | `org.sqlite.SQLiteJDBCLoader` | [3.53.4.0](https://github.com/xerial/sqlite-jdbc/tree/3.53.4.0/src/main/java/org/sqlite/core) only | the database files a test names and the journal, WAL and lock files SQLite names after them; random temporary files; `/dev/urandom` |
 
 Two notes on the list:
 
@@ -438,8 +439,17 @@ Two notes on the list:
 - Reviewed and left off: Netty's in-tree io_uring transport, whose public API lets any caller submit
   a file open to the kernel; netty-tcnative, whose BoringSSL and OpenSSL builds share file names,
   and whose OpenSSL build reads a configuration file and loads modules from paths the environment
-  names; SQLite JDBC, which loads any native library an SQL statement names once
-  `enable_load_extension` is set on a connection; and JNA, which calls any native function.
+  names; and JNA, which calls any native function.
+- SQLite JDBC is listed on a condition. Once a connection enables extension loading (the
+  `enable_load_extension` property, `SQLiteConfig.enableLoadExtension(true)`,
+  `SQLiteDataSource.setLoadExtension(true)`, or a direct call), SQL can load any native library by
+  name. Every one of those ends in the driver's native `NativeDB.enable_load_extension`, which the
+  agent wraps as the class is defined, so a call that turns it on touches every class from there.
+  The entry counts only at the exact version listed, read from the driver jar's own version file,
+  and only when the JVM can wrap a native method and the driver's `NativeDB` in the loading class's
+  loader takes the wrap; otherwise the load applies the wide rule. On Linux the driver runs `uname`
+  to find its library unless `org.sqlite.lib.path` names its folder, and that child process runs
+  every later test in the JVM anyway.
 - Only the Linux and macOS builds (`.so`, `.dylib`, `.jnilib`) were reviewed. A library's Windows
   build (`.dll`) is not on the list, so on Windows each of these applies the wide rule.
 
@@ -655,6 +665,9 @@ Three things differ:
   - a [reviewed native library](#native-libraries) given the path of a class file or jar as data,
     such as a database file or directory a test names. The review found no other way for one to
     read a class file;
+  - a call, made by reflection with `setAccessible`, to the renamed native method the agent leaves
+    behind when it wraps [SQLite JDBC's](#native-libraries) `enable_load_extension`. The renamed
+    method is private and synthetic, so no lookup of public methods reaches it by accident;
   - the JDK's class-loading or library-loading internals called by reflection (a native lookup
     such as `Class.forName0`, a class loader's protected `loadClass(String, boolean)`, or
     `ClassLoader.loadLibrary`), which needs `java.base` opened to your code. A class your code

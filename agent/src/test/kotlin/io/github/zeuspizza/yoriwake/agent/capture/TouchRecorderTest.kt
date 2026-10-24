@@ -627,6 +627,11 @@ class TouchRecorderTest {
             "org.rocksdb.NativeLibraryLoader" to listOf(
                 "librocksdbjni-linux64.so", "librocksdbjni-osx-arm64.jnilib", "librocksdbjni8765432.so",
             ),
+            // Conditional: these name the entry, whose guard then decides.
+            "org.sqlite.SQLiteJDBCLoader" to listOf(
+                "sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.so",
+                "sqlite-unknown-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.dylib", "libsqlitejdbc.jnilib",
+            ),
         )
         for ((loader, files) in reviewed) {
             for (file in files) {
@@ -644,8 +649,104 @@ class TouchRecorderTest {
         }
         // A system library of that bare name need not be the build that was reviewed.
         assertFalse(ReviewedLibraries.reviewed("org.conscrypt.NativeLibraryUtil", "libconscrypt.so"))
-        assertFalse(ReviewedLibraries.reviewed("org.sqlite.SQLiteJDBCLoader",
-            "sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.so"))
+        // Only the Linux and macOS builds were reviewed, and a name org.sqlite.lib.name chose is not the library's.
+        for (file in listOf("sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-sqlitejdbc.dll", "libacme.so")) {
+            assertFalse(ReviewedLibraries.reviewed("org.sqlite.SQLiteJDBCLoader", file), file)
+        }
+    }
+
+    /**
+     * sqlite-jdbc's loading class and NativeDB, the guard class, in a loader of their own over [dir],
+     * with the version file the driver's jar carries.
+     */
+    private class SqliteStandIn(dir: File, version: String) :
+        java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), TouchRecorderTest::class.java.classLoader) {
+        init {
+            val nativeDb = org.objectweb.asm.ClassWriter(0).run {
+                visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, "org/sqlite/core/NativeDB",
+                    null, "java/lang/Object", null)
+                visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC or org.objectweb.asm.Opcodes.ACC_NATIVE,
+                    "enable_load_extension", "(Z)I", null, null).visitEnd()
+                visitEnd()
+                toByteArray()
+            }
+            File(dir, "org/sqlite/core/NativeDB.class").apply { parentFile.mkdirs() }.writeBytes(nativeDb)
+            File(dir, "META-INF/maven/org.xerial/sqlite-jdbc/pom.properties").apply { parentFile.mkdirs() }
+                .writeText("version=$version\n")
+        }
+
+        val caller: Class<*> by lazy {
+            val bytes = org.objectweb.asm.ClassWriter(0).run {
+                visit(org.objectweb.asm.Opcodes.V11, org.objectweb.asm.Opcodes.ACC_PUBLIC, "org/sqlite/SQLiteJDBCLoader",
+                    null, "java/lang/Object", null)
+                visitEnd()
+                toByteArray()
+            }
+            defineClass("org.sqlite.SQLiteJDBCLoader", bytes, 0, bytes.size)
+        }
+    }
+
+    private val sqliteFile = "/tmp/sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.dylib"
+    private val extensions = "SQLite extension loading was enabled on a connection"
+
+    @Test
+    fun `SQLite loaded with its guard armed counts as a lookup of every class, until a connection enables extensions`(
+        @TempDir dir: File,
+    ) {
+        val recorder = TouchRecorder().apply { guards = GuardHooks(null) }
+        recorder.library(arrayOf<Any>(SqliteStandIn(dir, "3.53.4.0").caller, sqliteFile))
+        recorder.guard(arrayOf<Any>(extensions, false))
+        assertEquals(listOf(any), drained(recorder))
+
+        recorder.guard(arrayOf<Any>(extensions, true))
+        assertEquals(listOf(AgentContract.TOUCH_ALL to extensions), drained(recorder))
+    }
+
+    @Test
+    fun `SQLite whose guard cannot be armed touches every class from its load`(@TempDir dir: File) {
+        val recorder = TouchRecorder().apply { guards = GuardHooks.none("this JVM cannot wrap a native method") }
+        recorder.library(arrayOf<Any>(SqliteStandIn(dir, "3.53.4.0").caller, sqliteFile))
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "a reviewed native library was loaded without its condition: "
+                + sqliteFile.substringAfterLast('/') + ", since this JVM cannot wrap a native method"),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `SQLite at a version nobody reviewed touches every class from its load`(@TempDir dir: File) {
+        val recorder = TouchRecorder().apply { guards = GuardHooks(null) }
+        recorder.library(arrayOf<Any>(SqliteStandIn(dir, "3.53.5.0").caller, sqliteFile))
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "a reviewed native library was loaded without its condition: "
+                + sqliteFile.substringAfterLast('/') + ", since its version 3.53.5.0 is not one reviewed"),
+            drained(recorder),
+        )
+    }
+
+    @Test
+    fun `a guarded call that turns its feature on touches every class even inside another sink`() {
+        val recorder = TouchRecorder()
+        // A read the agent makes itself sets the re-entry guard; the library's call still counts.
+        val inside = TouchRecorder::class.java.getDeclaredField("inside").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        (inside.get(recorder) as ThreadLocal<Boolean>).set(true)
+        recorder.guard(arrayOf<Any>(extensions, true))
+
+        assertEquals(listOf(AgentContract.TOUCH_ALL to extensions), drained(recorder))
+    }
+
+    @Test
+    fun `a guard class defined without its guard touches every class`() {
+        val recorder = TouchRecorder()
+        recorder.guardLost("org.sqlite.core.NativeDB was defined without its guard: x")
+
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "org.sqlite.core.NativeDB was defined without its guard: x"),
+            drained(recorder),
+        )
     }
 
     /** The bytes of an empty class named [internalName]. */

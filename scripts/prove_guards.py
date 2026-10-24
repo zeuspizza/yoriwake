@@ -153,6 +153,7 @@ TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture
 JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCode.java"
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
 REVIEWED_LIBRARIES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedLibraries.java"
+GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/GuardHooks.java"
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
@@ -2142,6 +2143,50 @@ MUTATIONS = [
      "            if (own && PATTERNS[i].matcher(fileName).matches()) {",
      "            if (own) {",
      agent_suite, "every reviewed entry matches the names its loader gives the file, and nothing else"),
+    # A conditional reviewed library counts only while the call that would turn its unreviewed
+    # feature on is wrapped in the loader that loads it, at a version reviewed, and that call,
+    # turned on, touches every class.
+    ("a conditional reviewed library counts without its guard", TOUCH_RECORDER,
+     "        if (entry.length == 2) {",
+     "        if (entry.length > 0) {",
+     agent_suite, "SQLite whose guard cannot be armed touches every class from its load"),
+    ("a guarded call that turns its feature on is not recorded", TOUCH_RECORDER,
+     "            if (Boolean.TRUE.equals(pair[1])) {",
+     "            if (Boolean.FALSE.equals(pair[1])) {",
+     agent_suite, "SQLite loaded with its guard armed counts as a lookup of every class, until a connection enables extensions"),
+    ("a guard class defined without its guard is not recorded", TOUCH_RECORDER,
+     "            touch(AgentContract.TOUCH_ALL, (String) why);",
+     "            why.getClass();",
+     agent_suite, "a guard class defined without its guard touches every class"),
+    ("the wrapped native no longer reports its argument", GUARD_HOOKS,
+     '        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, consumer, "accept", "(Ljava/lang/Object;)V", true);',
+     "        body.visitInsn(Opcodes.POP2);",
+     agent_suite, "a wrapped native reports its argument before the native runs"),
+    ("the renamed native stays public", GUARD_HOOKS,
+     "                int hidden = (access & ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED))\n"
+     "                        | Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC;",
+     "                int hidden = access;",
+     agent_suite, "the renamed native is private and synthetic"),
+    ("a guard no JVM could arm counts as armed", GUARD_HOOKS,
+     "        if (disarmed != null) {\n            return disarmed;",
+     "        if (false) {\n            return disarmed;",
+     agent_suite, "no guard is armed where native methods cannot be wrapped"),
+    ("a guard class that cannot take the wrap counts as armed", GUARD_HOOKS,
+     "            if (!declaresNative(new ClassReader(in), wrap)) {",
+     "            if (false) {",
+     agent_suite, "a guard is armed in a loader that defined its class wrapped, and in no other"),
+    ("a guard class defined without its wrap goes unreported", GUARD_HOOKS,
+     '                failures.accept(className.replace(\'/\', \'.\') + " was defined without its guard: " + t);',
+     "                t.getClass();",
+     agent_suite, "a guard class defined without its native counts as a guard lost"),
+    ("a conditional library counts at any version", GUARD_HOOKS,
+     "                if (listed.equals(version)) {",
+     "                if (version != null) {",
+     agent_suite, "only a version reviewed, read beside the guard class, is listed"),
+    ("the guard sink is never set", GUARD_HOOKS,
+     '.getField("GUARD").set(null, guard);',
+     '.getField("GUARD");',
+     functional_suite, "a SQLite connection that enables extension loading selects every later test in its JVM"),
     # A looked-up name is a descriptor only with a leading `L` AND a trailing `;`: `LoginTest` in
     # the default package, unwrapped, dates a class that does not exist and lets LoginTest go.
     ("a looked-up name starting with L is unwrapped as if it were a descriptor", COVERAGE_DECODER,
