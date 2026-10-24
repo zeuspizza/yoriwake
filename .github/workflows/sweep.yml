@@ -181,6 +181,10 @@ jobs:
           FACTOR: ${{ inputs.factor }}
         run: |
           set -eu
+          # A runner that runs out of memory or disk is shut down whole, and this step's log is all
+          # it leaves: the machine's use, every 30 seconds, beside the build's.
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
           mapfile -t args < <(jq -r '.[]' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted-out "bench/logs/$NAME/accepted.json"
           # The dispatch input's default, for a scheduled run, which has none.
@@ -306,6 +310,10 @@ jobs:
           SHARD: ${{ matrix.slice.shard }}/${{ matrix.slice.of }}
         run: |
           set -eu
+          # A runner that runs out of memory or disk is shut down whole, and this step's log is all
+          # it leaves: the machine's use, every 30 seconds, beside the build's.
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
           tar -xzf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench
           mapfile -t args < <(jq -r '.[] | select(. != "--recapture")' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted "bench/logs/$NAME/accepted.json" \
