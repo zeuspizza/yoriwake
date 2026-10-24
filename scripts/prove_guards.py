@@ -684,6 +684,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "ComplementFunctionalTest": 214,
     "ConfigurationCacheFunctionalTest": 40,
     "DecisionRulesFunctionalTest": 26,
+    # Estimated from MultiProjectFunctionalTest, as many builds of the same shape, until an
+    # every-guard run measures it.
+    "DeclaredDependenciesFunctionalTest": 36,
     "DeclineFunctionalTest": 65,
     "DevelocityFunctionalTest": 79,
     "EnvironmentFingerprintFunctionalTest": 82,
