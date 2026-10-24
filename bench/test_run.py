@@ -25,6 +25,7 @@ import sys
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import process  # noqa: E402
 import run  # noqa: E402
 import target_ordering  # noqa: E402  (the subsystem these tests actually cover)
 import isolation  # noqa: E402  (order_dependent, the only code allowed to discount a miss)
@@ -334,10 +335,18 @@ def case_a_silent_build_is_killed_rather_than_waited_out(tmp):
     failures = 0
     os.makedirs(tmp, exist_ok=True)
     log = os.path.join(tmp, "quiet.log")
-    # Says one thing, then goes quiet for far longer than the stall window without exiting.
-    code, seconds = run.run(
-        [sys.executable, "-c", "import time; print('starting', flush=True); time.sleep(120)"],
-        tmp, log, stall_seconds=2)
+    # NO REAL THREAD DUMP. A stall attaches jstack to every JVM on the machine, and attaching writes
+    # `.attach_pid<pid>` into each target JVM's working directory: in a guard run that is another
+    # worker's checkout, whose next suite then refuses it as dirty and proves nothing.
+    original_dump = process.dump_threads
+    process.dump_threads = lambda log_path: []
+    try:
+        # Says one thing, then goes quiet for far longer than the stall window without exiting.
+        code, seconds = run.run(
+            [sys.executable, "-c", "import time; print('starting', flush=True); time.sleep(120)"],
+            tmp, log, stall_seconds=2)
+    finally:
+        process.dump_threads = original_dump
 
     if code != run.STALLED:
         print(f"  FAIL: a silent build returned {code}, not STALLED")
