@@ -2072,6 +2072,11 @@ MUTATIONS = [
      agent_suite, "a native library that is not on the reviewed list touches every class from its load"),
     # A native load is judged by what the JDK opened: a by-name attempt that found no file is
     # not one, and a library the JDK did open always is.
+    # The host's compression libraries count for RocksDB only at a version reviewed.
+    ("a host compression library counts at any version", REVIEWED_LIBRARIES,
+     "\"libz\\\\.so\\\\.1\\\\.(2\\\\.11|3)|",
+     "\"libz\\\\.so(\\\\.[0-9.]+)?|",
+     agent_suite, "the host's compression libraries RocksDB loads count only at a version reviewed, by RocksDB itself"),
     ("a library the JDK resolved and opened is not judged", TOUCH_RECORDER,
      "    void resolved(Object loaded) {\n        judgeLoad(loaded);\n",
      "    void resolved(Object loaded) {\n",
