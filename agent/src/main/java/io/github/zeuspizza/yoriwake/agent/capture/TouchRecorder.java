@@ -295,7 +295,10 @@ public final class TouchRecorder implements CaptureSession.Touches {
         inside.set(Boolean.TRUE);
         try {
             if (!calledFromJdk()) {
-                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API");
+                // Named, so a run that widens can be traced to the library that called.
+                Class<?> from = callerOfHooked(new boolean[1]);
+                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API"
+                        + (from != null ? ": from " + from.getName() : ""));
             }
         } catch (Throwable t) {
             incomplete = "native code could not be recorded: " + t;
@@ -336,7 +339,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 touch(AgentContract.TOUCH_ALL, "a reviewed native library was loaded without its condition: " + file
                         + ", since " + unmet);
             } else {
-                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file);
+                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file
+                        + (caller != null ? " from " + caller.getName() : ""));
             }
         } catch (Throwable t) {
             incomplete = "a native library load could not be recorded: " + t;
@@ -405,11 +409,20 @@ public final class TouchRecorder implements CaptureSession.Touches {
      * its maker chose, so whoever called the proxy, JDK code included, did not ask for the hooked call.
      */
     static boolean calledFromJdk() {
+        boolean[] throughAProxy = {false};
+        Class<?> caller = callerOfHooked(throughAProxy);
+        return caller != null && !throughAProxy[0] && JdkCode.isJdk(caller);
+    }
+
+    /**
+     * The class that called the hooked method, past the frames that call on another's behalf, or
+     * null when none is found. {@code throughAProxy[0]} says whether a proxy stood between them.
+     */
+    static Class<?> callerOfHooked(boolean[] throughAProxy) {
         try {
             return StackWalker.getInstance(java.util.EnumSet.of(StackWalker.Option.RETAIN_CLASS_REFERENCE,
                     StackWalker.Option.SHOW_HIDDEN_FRAMES)).walk(frames -> {
                 Class<?> hooked = null;
-                boolean throughAProxy = false;
                 for (java.util.Iterator<StackWalker.StackFrame> it = frames.iterator(); it.hasNext(); ) {
                     Class<?> frame = it.next().getDeclaringClass();
                     if (hooked == null) {
@@ -417,18 +430,15 @@ public final class TouchRecorder implements CaptureSession.Touches {
                             hooked = frame;
                         }
                     } else if (frame != hooked && !passesOver(frame)) {
-                        if (throughAProxy) {
-                            return false;
-                        }
-                        return JdkCode.isJdk(frame);
+                        return frame;
                     } else if (JdkCode.isProxy(frame)) {
-                        throughAProxy = true;
+                        throughAProxy[0] = true;
                     }
                 }
-                return false;
+                return null;
             });
         } catch (Throwable t) {
-            return false;
+            return null;
         }
     }
 
