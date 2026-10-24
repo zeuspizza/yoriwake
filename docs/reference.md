@@ -60,6 +60,9 @@ Every line carries the `[yoriwake]` prefix.
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
 | `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from; see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `pathIgnore left out N changed paths (…): <paths>` | the changed paths `pathIgnore` took out of the change set, counted by entry; see [Paths no test reads](#paths-no-test-reads) |
+| `pathIgnore entry '<entry>' matches <path>, which stays in the change set (<protection>)` | a declared path that is protected, and why |
+| `<path> was read at capture, … despite pathIgnore entry '<entry>' …` | a test JVM read a declared path when the map was recorded, so the tests from that read on run |
 
 Reasons, one per test:
 
@@ -82,7 +85,9 @@ Files in the map directory that are meant to be read:
 - `explain.json`: written by `yoriwakeExplain<Task>`. Carries `fullRunKind` and `refusalKind` as
   tokens, so a script can branch on the cause without matching English. `forcingPathOrigins` lists
   the paths that force the run, each with `written-during-capture`, `generated-in-sources`,
-  `untracked`, or no origin for a path HEAD tracks.
+  `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists every path `pathIgnore`
+  left out, with its entry and what the map says about it (`read`, `not-read` or
+  `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its protection.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
 - `observation.json`: written by an [observing run](#observing-before-you-select): what selection
   would have left out, and which of those failed.
@@ -104,11 +109,12 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   another file that lists it. That includes a file your tests or your build write into the source
   tree outside `build/`, such as a `derby.log`: untracked and ignored files count. The run names
   each such file; see [Files written into the source tree](#files-written-into-the-source-tree).
-  Three kinds of file are no change: an IDE's state (anything under an `.idea`, `.vscode` or
+  Four kinds of file are no change: an IDE's state (anything under an `.idea`, `.vscode` or
   `.fleet` directory at any depth, and `*.iml` files); a file the build's `notReadByTests` lists
-  (see [Properties and tasks](#properties-and-tasks)); and a Java or Kotlin source of a module that
-  is not on the task's runtime classpath, which no compiled class of the task names. The console
-  counts the first two;
+  (see [Properties and tasks](#properties-and-tasks)); a path the build's `pathIgnore` declares (see
+  [Paths no test reads](#paths-no-test-reads)); and a Java or Kotlin source of a module that is not
+  on the task's runtime classpath, which no compiled class of the task names. The console counts
+  the first two and names each of the third;
 - a changed class the map has never recorded, because uncovered and unrecordable look the same. A
   test class this task runs is the exception: discovery runs it whatever the map knows;
 - a changed class whose annotations, on the class or any member and with their values, differ from
@@ -1160,6 +1166,66 @@ What it does not show:
 - A task off the JUnit Platform never asks the filter: its outcome is `not-decided`, and its tests
   are counted in `testsWithoutVerdict`.
 
+## Paths no test reads
+
+A change to documentation, a changelog or CI configuration is a changed path coverage cannot see,
+so it runs every test. `pathIgnore` declares the paths in the repository no test reads, and a change
+to only those runs nothing extra:
+
+```kotlin
+yoriwake {
+    pathIgnore.addAll("docs/**", "**/*.md", ".github/")
+}
+```
+
+Entries are Ant-style globs over paths relative to the root project, as Gradle's `include` and
+`exclude` take them, matched whole and in the letter case git reports: `*` matches within one
+directory, `?` one character within one, `**` as a whole segment any number of directories, none
+included (`**/*.md` matches `README.md`), and a trailing `/` everything below a directory. An entry
+that starts with `!` or `/`, names a drive, holds a backslash, a `.` or `..` segment, `**` inside a
+segment, `[`, `]`, `{` or `}`, a control character, or nothing, fails the build naming
+`pathIgnore` and the entry. The list is per project, like `fullRunBranches`; a convention plugin
+sets it everywhere. There is no `-P` flag: a declaration that stops a change from running tests
+belongs in the reviewed build.
+
+Some paths stay in the change set whatever an entry matches, so `**` cannot switch off what
+compiles or what the build reads. The run names each, with the protection that kept it:
+
+- `source-set`: a path under any source set's directory of any project of the build, or under any
+  directory named `src`. So a Markdown fixture under `src/test/resources` keeps forcing with
+  `**/*.md` declared, and so does a documentation tree with its own `src` directory;
+- `build-file`: a build script (`*.gradle`, `*.gradle.kts`), `gradle.properties`, a version
+  catalog, anything under a `gradle` directory, the wrapper, and build logic: `buildSrc`, a build
+  this one includes, and any directory below the root that holds its own settings file;
+- `outside-root`: a path in the repository outside the root project's directory, when the build
+  lives in a subdirectory;
+- `named-in-classes`: a path whose full path or file name a compiled class of the task holds as a
+  string, such as a `ReadmeTest` naming `README.md`.
+
+A path left out is still a changed path a test may read, and the map says so where it can: a test
+JVM that read the path at capture, a directory above it, or every file (from a child process or an
+unreviewed native library on), runs every test from that read on (`shares-jvm-ignored-path`), and the
+console says the path was read despite its entry. A map recorded before the plugin recorded reads,
+or a test JVM whose reads were not recorded, leaves the declaration as made, and `explain.json`
+says `no-read-evidence`. A file the build copies from a declared path onto the test
+classpath, such as `processResources { from("CHANGELOG.md") }`, is compared on the classpath as
+[generated files on the test classpath](#generated-files-on-the-test-classpath) are: its readers
+run, or every test does.
+
+What a wrong declaration costs: a test that depends on a declared path and that nothing above
+catches is skipped when only that path changed. A README snippet check, a changelog-version test or
+a test that validates `.github/workflows` is caught when it opens the file in its own test JVM. One
+is skipped when it only asks whether the file exists or lists its directory, or when the file
+reaches it from outside its JVM's view: a container or a server the test talks to, or the build
+reading the file and passing it on. Every run that left a path out names it in the console, in
+`decisions.tsv` (the `paths-ignored` note and the `input.yoriwake.change.ignored` list) and in
+`explain.json`. To try a declaration before relying on it, run with
+[`-Pyoriwake.observe`](#observing-before-you-select): the run applies it, runs every test, and lists
+each failing test selection would have left out.
+
+`notReadByTests` takes a list for the same purpose with none of this: its `*` crosses directories,
+nothing is protected, no read is checked, and only a count is printed.
+
 ## Running what a selection skipped
 
 A selecting run on a pull request leaves out the tests the change cannot reach. Later in the same
@@ -1308,6 +1374,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `fullRunEveryBuilds` | `Int` | unset | Run every test once a task has executed this many times since its last full run. |
 | `fullRunEveryDays` | `Int` | unset | Run every test once this many days have passed since a task's last full run; with both set, whichever comes first. |
 | `notReadByTests` | `List<String>` | empty | Globs of files no test or build reads: a changed one is no change. |
+| `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. See [Paths no test reads](#paths-no-test-reads). |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
 
@@ -1321,6 +1388,7 @@ yoriwake {
     fullRunEveryBuilds = 20                // every 20th build of a task runs everything; off by default
     fullRunEveryDays = 7                   // or a week after the last full run, whichever first
     notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
+    pathIgnore.addAll("docs/**", "**/*.md") // paths no test reads, protected and logged
     environmentInclude.add("DB_MODE")      // a variable compared besides TZ, LANG and LC_ALL
     systemPropertyIgnore.add("build.number") // a property left out of that comparison
 }
@@ -1337,6 +1405,8 @@ matching any characters, slashes included: `docs/*` is everything under `docs/`,
 Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
 a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
 nothing reads: a test that reads a listed file is skipped when only that file changed.
+
+`pathIgnore` does the same job with guards; see [Paths no test reads](#paths-no-test-reads).
 
 `environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
 entry or one of only `*` fails the build. See [The environment

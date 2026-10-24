@@ -134,6 +134,7 @@ AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contrac
 SELECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 CLASSPATH_SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
 NOT_READ = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
+PATH_IGNORE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
 CLASSPATH_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
@@ -458,6 +459,8 @@ def unit_suite():
          "--tests", "*SelectionRecordTest*",
          # The full-run marker: how commit messages are read for it.
          "--tests", "*CommitScanTest*",
+         # pathIgnore's grammar, checked against Gradle's own, and what it may never leave out.
+         "--tests", "*PathIgnoreTest*",
          "--rerun"])
     if done.returncode == 0:
         return []
@@ -3347,6 +3350,78 @@ MUTATIONS = [
      "    val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }",
      "    val read = paths.filterNot { NotRead.isIdeState(it) }",
      functional_suite, "a changed file notReadByTests lists is no change"),
+    # PATHIGNORE. A declared path leaves the change set; what compiles or what the build reads
+    # never does, every use is named, and a read the map recorded runs the tests after it.
+    ("an entry outside pathIgnore's grammar is accepted", PATH_IGNORE,
+     "        problem(entry)?.let { why ->",
+     "        problem(entry)?.takeIf { false }?.let { why ->",
+     unit_suite, "entries written for another dialect fail the build naming pathIgnore and the entry"),
+    ("a pathIgnore star crosses directories", PATH_IGNORE,
+     '        if (pattern[p] == "**") return (s..segments.size).any { matchFrom(pattern, p + 1, segments, it) }',
+     '        if ("*" in pattern[p]) return (s..segments.size).any { matchFrom(pattern, p + 1, segments, it) }',
+     unit_suite, "each pattern matches what Gradle's include matches"),
+    ("pathIgnore protects nothing", PATH_IGNORE,
+     "        matched.keys.forEach { path -> protection(path, declaration)?.let { protectedBy[path] = it } }",
+     "        matched.keys.forEach { _ -> }",
+     unit_suite, "a double star alone leaves out only unprotected paths"),
+    ("pathIgnore leaves out a file under a src directory Gradle does not report", PATH_IGNORE,
+     '            "src" in directories || declaration.sourceDirs.any { path.startsWith("$it/") } -> Protection.SOURCE_SET',
+     '            declaration.sourceDirs.any { path.startsWith("$it/") } -> Protection.SOURCE_SET',
+     unit_suite, "a file under any src directory is kept as source-set"),
+    ("pathIgnore leaves out a build file", PATH_IGNORE,
+     "            isBuildFile(segments.last(), directories) ||",
+     "            false ||",
+     unit_suite, "build files and build logic are kept as build-file"),
+    ("pathIgnore leaves out a path outside the Gradle root", PATH_IGNORE,
+     "            path in declaration.outsideRoot -> Protection.OUTSIDE_ROOT",
+     "            false -> Protection.OUTSIDE_ROOT",
+     unit_suite, "a path outside the Gradle root is kept as outside-root"),
+    ("pathIgnore leaves out a path a compiled class names", PATH_IGNORE,
+     "            val named = runCatching { namedInClasses(candidates) }.getOrNull() ?: candidates",
+     "            val named = emptySet<String>()",
+     unit_suite, "a path a compiled class names is kept as named-in-classes"),
+    ("the selecting run places no changed path outside the Gradle root", SELECTION_WIRING,
+     "        if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),",
+     "        emptySet(),",
+     functional_suite, "a declared path outside a build below the repository root stays in the change set"),
+    ("a change set pathIgnore emptied is not accounted for", SELECTION_WIRING,
+     "            accountedFor(paths, scoped).toString(),",
+     "            accountedFor(scoped.ignore.kept, scoped).toString(),",
+     functional_suite, "a change to declared paths only runs nothing extra and names each path"),
+    ("a declared file's content is not a task input", SELECTION_WIRING,
+     "            (ignore?.let { \":\" + ignoredContentDigest(project, it, paths) } ?: \"\"),",
+     "            \"\",",
+     functional_suite, "editing the same declared file twice runs the task both times"),
+    ("yoriwakeExplain applies no pathIgnore", EXPLAIN_TASK,
+     "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), ignore)",
+     "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), null)",
+     functional_suite, "a change to declared paths only runs nothing extra and names each path"),
+    ("a forced run leaves no paths-ignored note", SELECTION_FILTER,
+     "            if (pathsIgnored > 0) {",
+     "            if (pathsIgnored > 0 && daemonRefusal() == null && decision != null && !decision.isFullRun()) {",
+     functional_suite, "a forced run still names what it left out"),
+    ("a read ignored path opens no window", SELECTOR,
+     "            Map<String, Integer> opens = ignoredPathWindows(map, change.ignoredPaths());",
+     "            Map<String, Integer> opens = new HashMap<>();",
+     agent_suite, "a read ignored path runs the tests from its first read on in the JVM that read it"),
+    ("a read of a directory above an ignored path is not a read of it", SELECTOR,
+     '            if (file.equals(path) || file.startsWith(path + "/")) {',
+     "            if (file.equals(path)) {",
+     agent_suite, "a read of a directory above an ignored path reads it"),
+    ("a JVM that read every file did not read an ignored path", SELECTOR,
+     "    public static boolean readsIgnored(String path, Collection<String> ignored) {\n"
+     "        if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {",
+     "    public static boolean readsIgnored(String path, Collection<String> ignored) {\n"
+     "        if (false) {",
+     agent_suite, "a JVM that read every file from a point runs from there on an ignored path"),
+    ("a test with no position stays skipped when a JVM read an ignored path", SELECTOR,
+     "            return !opens.isEmpty();",
+     "            return false;",
+     agent_suite, "a test the map holds no position for runs once a JVM read an ignored path"),
+    ("a source file a test opens is not a read of its path", TOUCH_RECORDER,
+     '                if (!path.endsWith(".class")) {',
+     "                if (false) {",
+     agent_suite, "a source file read beneath the root is kept by its path too"),
     # THE ENVIRONMENT FINGERPRINT. A map recorded under another JDK, other system properties
     # or another value of a listed variable says which tests a change reaches somewhere else.
     ("the environment comparison always matches", ENVIRONMENT_FINGERPRINT,

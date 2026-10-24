@@ -9,6 +9,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECLINES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEMPT_TEST_CLASSES_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.IGNORED_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MOVED_FILES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
@@ -44,6 +45,8 @@ import io.github.zeuspizza.yoriwake.gradle.change.establish
 import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
 import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
 import io.github.zeuspizza.yoriwake.gradle.change.NotRead
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
+import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.change.wouldRunEverything
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -112,6 +115,7 @@ internal fun TestTaskWiring.configureSelection(
     runPlan: RunPlan,
     fromBuildScript: TestPatterns,
     notReadByTests: List<String>,
+    pathIgnore: List<String>,
     environment: EnvironmentFingerprint.Rules,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
@@ -216,6 +220,7 @@ internal fun TestTaskWiring.configureSelection(
     val classpathFacts = classpathFacts(project, test, paths)
     val rootDir = project.rootDir
     val sourceDirs = ForcingPaths.sourceDirs(rootDir, projectFacts(project, buildMemo).allSourceDirs)
+    val ignore = pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOfNotNull(against, stamp), paths, buildMemo)
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -225,8 +230,13 @@ internal fun TestTaskWiring.configureSelection(
     // The whole change set, as an input: the file is not one, and a different change set must
     // re-run the task, or a change that forces a full run finds it up to date and runs nothing.
     // Only configuration-time state is an input; what the actions below set is not.
+    // With a declaration, each path it can take out is in by its content as well: the name alone
+    // would leave the task up to date after a second edit to the same file, unlogged.
     test.inputs.property(
-        "yoriwake.changeSet", changeSetDigest(ChangeDetection.split(paths, project.rootDir)))
+        "yoriwake.changeSet",
+        changeSetDigest(ChangeDetection.split(paths, project.rootDir)) +
+            (ignore?.let { ":" + ignoredContentDigest(project, it, paths) } ?: ""),
+    )
     test.systemProperty(SELECT_PROPERTY, "true")
     // Forwarded only when asked for; the agent defaults it to false.
     test.systemProperty(
@@ -241,7 +251,8 @@ internal fun TestTaskWiring.configureSelection(
         if (refusedAtExecution(test)) {
             return@doFirst
         }
-        val scoped = scopedChange(paths, classpathFacts, notReadByTests)
+        val scoped = scopedChange(paths, classpathFacts, notReadByTests, ignore)
+        PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
         val established = establish(
             { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") },
             mapDir, scoped.change, classpathFacts,
@@ -320,6 +331,10 @@ internal fun TestTaskWiring.configureSelection(
                 // definition, so the absence rule would never fire for it.
                 OWN_TEST_CLASSES_PROPERTY to established.testClasses,
                 EXEMPT_TEST_CLASSES_PROPERTY to established.exemptTestClasses,
+            ) + (
+                // Only when there is one, so a build without a declaration hands over what it did.
+                if (scoped.ignore.ignored.isEmpty()) emptyMap()
+                else mapOf(IGNORED_PATHS_PROPERTY to scoped.ignore.ignored.map(PathIgnore::encode))
             ),
         )
         if (established.testClasses.isNotEmpty()) {
@@ -860,6 +875,57 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
             ),
         )
     }
+}
+
+/**
+ * The declaration a selecting run applies, or null when [entries] is empty. Plain values, read at
+ * configuration: a task action may not touch Project. A path outside the root that git could not
+ * place is treated as outside, so it is kept.
+ */
+internal fun pathIgnoreDeclaration(
+    project: Project,
+    entries: List<String>,
+    sourceDirs: List<String>,
+    against: List<String>,
+    paths: List<String>,
+    buildMemo: BuildMemo?,
+): PathIgnore.Declaration? {
+    if (entries.isEmpty()) return null
+    val outside = against.map { ChangeDetection.outsideRoot(project.providers, project.rootDir, it, buildMemo) }
+    return PathIgnore.Declaration(
+        entries,
+        project.rootDir,
+        sourceDirs,
+        buildLogicDirs(project),
+        if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
+    )
+}
+
+/** The root-relative directories of the builds this one includes, which hold build logic. */
+internal fun buildLogicDirs(project: Project): List<String> =
+    runCatching { project.gradle.includedBuilds.map { it.projectDir } }.getOrDefault(emptyList())
+        .let { ForcingPaths.sourceDirs(project.rootDir, it) }
+
+/**
+ * Each changed path an entry matches, by name and content, read through a provider so a reused
+ * configuration-cache entry sees the file change.
+ */
+private fun ignoredContentDigest(project: Project, declaration: PathIgnore.Declaration, paths: List<String>): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    (declaration.entries + "\u0000").forEach { digest.update(it.toByteArray(Charsets.UTF_8)); digest.update(0) }
+    paths.filter { path -> declaration.entries.any { PathIgnore.matches(it, path) } }.sorted().forEach { path ->
+        val file = File(project.rootDir, path)
+        val content = if (file.isFile) {
+            project.providers.fileContents(project.objects.fileProperty().fileValue(file)).asBytes.orNull
+        } else {
+            null
+        }
+        digest.update(path.toByteArray(Charsets.UTF_8))
+        digest.update(0)
+        digest.update(content?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it) } ?: ByteArray(0))
+        digest.update(0)
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
 /** The configuration-time change set as one short value, standing in for it as a task input. */

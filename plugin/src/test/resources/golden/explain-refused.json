@@ -12,6 +12,8 @@
   "unmappablePathsSample": ["build.gradle.kts", "docs/README.md"],
   "forcingPathOrigins": [{ "path": "build.gradle.kts", "origin": null }, { "path": "docs/README.md", "origin": "untracked" }],
   "offClasspath": 2,
+  "ignoredPaths": [],
+  "notIgnored": [],
   "provablyUntested": 1,
   "ownTestClasses": 1,
   "inlineScanExhausted": true,

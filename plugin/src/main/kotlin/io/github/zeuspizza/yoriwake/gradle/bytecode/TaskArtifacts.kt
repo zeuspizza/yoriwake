@@ -184,9 +184,10 @@ internal class TaskArtifacts(
     /**
      * Which of these repository paths any compiled class on the classpath can name; a test can only
      * read a file it can name. An ancestor counts as a hit, for paths assembled at runtime. Known
-     * limit: a test that walks the repository from its root names nothing.
+     * limit: a test that walks the repository from its root names nothing. Without [ancestors], only
+     * the path and its file name count: a directory name such as `docs` is in too many classes.
      */
-    fun pathsNamedInClasses(paths: Collection<String>): Set<String> {
+    fun pathsNamedInClasses(paths: Collection<String>, ancestors: Boolean = true): Set<String> {
         if (paths.isEmpty()) {
             return emptySet()
         }
@@ -198,7 +199,7 @@ internal class TaskArtifacts(
         val unsearchable = paths.filterTo(mutableSetOf()) { path -> path.any { it.code > 127 } }
         val needlesByPath = (paths - unsearchable).associateWith { path ->
             val forms = mutableSetOf(path, path.substringAfterLast('/'))
-            var parent = path.substringBeforeLast('/', "")
+            var parent = if (ancestors) path.substringBeforeLast('/', "") else ""
             while (parent.isNotEmpty()) {
                 forms += parent
                 forms += parent.substringAfterLast('/')

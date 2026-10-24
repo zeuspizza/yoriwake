@@ -20,6 +20,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.changeSet
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
@@ -31,12 +32,14 @@ import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
+import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
 import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
 import io.github.zeuspizza.yoriwake.gradle.wiring.DevelocityDetection
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestPatterns
+import io.github.zeuspizza.yoriwake.gradle.wiring.buildLogicDirs
 import io.github.zeuspizza.yoriwake.gradle.wiring.checkEnvironment
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentRefusal
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentView
@@ -99,6 +102,14 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val notReadByTests: ListProperty<String>
+
+    /** The build's `pathIgnore`: changed paths that match one leave the change set, unless protected. */
+    @get:Input
+    @get:Optional
+    abstract val pathIgnore: ListProperty<String>
+
+    @get:Internal("only names where build logic lies; the task is untracked")
+    var buildLogicDirs: List<String> = emptyList()
 
     /** The build's `fullRunEveryBuilds`; unset when it has none. */
     @get:Input
@@ -330,7 +341,16 @@ internal abstract class ExplainTask : DefaultTask() {
             else -> "partly with a fresh test JVM per test class and partly in shared test JVMs"
         }
         logger.lifecycle("[yoriwake] $taskPath: the map was recorded $recorded ($mode)")
-        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()))
+        // As the run applies it, with the same diffs to place paths outside the root.
+        val ignore = pathIgnore.getOrElse(emptyList()).takeIf { it.isNotEmpty() }?.let { entries ->
+            val outside = listOfNotNull(base, age.stamp).map { ChangeDetection.outsideRoot(git, rootDir, it) }
+            PathIgnore.Declaration(
+                entries, rootDir, sourceDirs, buildLogicDirs,
+                if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
+            )
+        }
+        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), ignore)
+        PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         val found = establish(
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },
             mapDir, scoped.change, facts,
@@ -389,6 +409,7 @@ internal abstract class ExplainTask : DefaultTask() {
         )
         writeExplanation(
             mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing, branch,
+            PathIgnoreReport.evidence(scoped.ignore, mapDir),
         )
         ForcingPaths.lines(taskPath, forcing).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (decision.isFullRun) {
@@ -425,6 +446,7 @@ internal abstract class ExplainTask : DefaultTask() {
             fullRunBranches: List<String>,
             schedule: Schedule.Limits,
             notReadByTests: List<String>,
+            pathIgnore: List<String>,
             environment: EnvironmentFingerprint.Rules,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
@@ -444,6 +466,8 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)
+                task.pathIgnore.set(pathIgnore)
+                task.buildLogicDirs = buildLogicDirs(project)
                 schedule.builds?.let(task.fullRunEveryBuilds::set)
                 schedule.days?.let(task.fullRunEveryDays::set)
                 task.environment = environment

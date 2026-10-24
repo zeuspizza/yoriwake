@@ -594,8 +594,8 @@ internal fun absenceVerdicts(
 
 /**
  * Whether the change set emptied because every changed path was accounted for (a class source off
- * this task's classpath, an IDE's state, or a path notReadByTests lists), rather than git reporting
- * nothing, which forces.
+ * this task's classpath, an IDE's state, a path notReadByTests lists, or one pathIgnore took out),
+ * rather than git reporting nothing, which forces. [paths] is the change set before any of them.
  */
 internal fun accountedFor(
     paths: List<String>,
@@ -667,6 +667,8 @@ internal data class ScopedChange(
     val ideState: Int = 0,
     /** Changed paths `notReadByTests` declares unread, no change. */
     val notReadByTests: Int = 0,
+    /** What `pathIgnore` took out of the change set, and what it matched and could not. */
+    val ignore: PathIgnore.Applied = PathIgnore.Applied.none(emptyList()),
 ) {
     /** Whether every path was dropped as off-classpath, as opposed to an empty change set. */
     val everythingWasOffClasspath: Boolean
@@ -676,30 +678,34 @@ internal data class ScopedChange(
 }
 
 /**
- * The change set with an IDE's state, what [notReadByTests] declares, and other modules' sources
- * removed, computed at execution time. The classpath part keeps every path whenever the classpath
- * or its classes cannot be established.
+ * The change set with what [ignore] declares, an IDE's state, what [notReadByTests] declares, and
+ * other modules' sources removed, computed at execution time. The classpath part keeps every path
+ * whenever the classpath or its classes cannot be established.
  */
 internal fun scopedChange(
-    paths: List<String>,
+    changed: List<String>,
     facts: ClasspathFacts,
     notReadByTests: List<String> = emptyList(),
+    ignore: PathIgnore.Declaration? = null,
 ): ScopedChange {
+    // The same artifacts `establish` builds, so a path this task's classes name is kept. Lazy: most
+    // change sets have no path to ask about.
+    val artifacts by lazy { TaskArtifacts(facts.classpath.files, facts.buildDirs.values, facts.testOutputs.files) }
+    val applied = PathIgnore.apply(changed, ignore) { candidates -> artifacts.pathsNamedInClasses(candidates, ancestors = false) }
+    val paths = applied.kept
     val declared = NotRead.declared(notReadByTests)
     val ideState = paths.count(NotRead::isIdeState)
     val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }
-    // The same artifacts `establish` builds, so a sibling path this task's classes name is kept.
-    // Lazy: most change sets have no off-classpath path to ask about.
     val present = modulesOnClasspath(facts)
     val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present) { candidates ->
-        TaskArtifacts(facts.classpath.files, facts.buildDirs.values, facts.testOutputs.files)
-            .pathsNamedInClasses(candidates)
+        artifacts.pathsNamedInClasses(candidates)
     }
     return ScopedChange(
         ChangeDetection.split(restriction.kept, facts.rootDir),
         restriction.dropped.size,
         ideState = ideState,
         notReadByTests = paths.size - read.size - ideState,
+        ignore = applied,
     )
 }
 

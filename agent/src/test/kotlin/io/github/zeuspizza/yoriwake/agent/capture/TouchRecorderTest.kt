@@ -302,6 +302,26 @@ class TouchRecorderTest {
     }
 
     @Test
+    fun `a source file read beneath the root is kept by its path too, and a class file only as a read`(
+        @TempDir root: File,
+    ) {
+        val snippet = File(root, "docs/snippets/Example.kt").apply { parentFile.mkdirs(); writeText("fun main() {}") }
+        val compiled = File(root, "build/classes/Codec.class").apply { parentFile.mkdirs(); writeText("x") }
+        val recorder = TouchRecorder(root.path)
+        recorder.read(snippet)
+        recorder.read(compiled)
+
+        assertEquals(
+            listOf(
+                AgentContract.TOUCH_READ to snippet.path,
+                AgentContract.TOUCH_RESOURCE to snippet.absolutePath,
+                AgentContract.TOUCH_READ to compiled.path,
+            ),
+            drained(recorder),
+        )
+    }
+
+    @Test
     fun `a manifest read from project code is not the class loader's`() {
         assertFalse(TouchRecorder.loaderReadingManifest())
     }
