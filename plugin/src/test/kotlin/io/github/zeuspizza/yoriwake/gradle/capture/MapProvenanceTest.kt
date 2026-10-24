@@ -55,6 +55,49 @@ class MapProvenanceTest {
         assertIs<MapProvenance.Verdict.Unverified>(MapProvenance.verify(dir, null))
     }
 
+    // Computed outside this code, by the digest's definition over each release's file list.
+    private val releasedDigest = "638c298d36cfd92afc529aca0b0b635542d09b5912f8aa190b3a0cdf340b02ef"
+    private val currentDigest = "965cdb082c9b16416f782c73b99086925df47091ee6bbc0eac7353c6d06dde73"
+
+    @Test
+    fun `each digest scheme gives the digest its release wrote`(@TempDir dir: File) {
+        map(dir)
+
+        assertEquals(releasedDigest, MapProvenance.digest(dir, MapProvenance.EARLIER.single { it.releases == "0.2.0" }.files))
+        assertEquals(
+            currentDigest, MapProvenance.digest(dir),
+            "the digested files changed: freeze the last released list in MapProvenance.EARLIER, so a " +
+                "trusted-map list that release wrote is named as such, then pin the new digest here",
+        )
+    }
+
+    @Test
+    fun `a list an earlier release wrote is named as such, and still not trusted`(@TempDir dir: File) {
+        map(dir)
+
+        val verdict = assertIs<MapProvenance.Verdict.Untrusted>(MapProvenance.verify(dir, releasedDigest))
+        assertContains(verdict.reason, "written by yoriwake 0.2.0")
+        assertContains(verdict.reason, "covers a different set of files")
+        assertContains(verdict.reason, "the default branch's next run on this version")
+    }
+
+    @Test
+    fun `a file only this version digests, changed under an earlier list, is still not trusted`(@TempDir dir: File) {
+        map(dir)
+        File(dir, AgentContract.ENVIRONMENT_FILE).writeText("PATH\t1\n")
+
+        val verdict = assertIs<MapProvenance.Verdict.Untrusted>(MapProvenance.verify(dir, releasedDigest))
+        assertContains(verdict.reason, "written by yoriwake 0.2.0")
+    }
+
+    @Test
+    fun `a digest no release computed keeps the plain reason`(@TempDir dir: File) {
+        map(dir)
+
+        val verdict = assertIs<MapProvenance.Verdict.Untrusted>(MapProvenance.verify(dir, "f".repeat(64)))
+        assertContains(verdict.reason, "the map is not what the trusted-map list vouches for")
+    }
+
     @Test
     fun `a trusted-map list is read line by line, and a malformed line names itself`() {
         val digest = "a".repeat(64)

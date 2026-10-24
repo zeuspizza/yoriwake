@@ -21,6 +21,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.
 - A native library is proposed, and re-reviewed on a new major version, through an issue form. Map: left alone.
 
+### Fixed
+
+- A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
+
 ## [0.3.0] - 2026-10-22
 
 **Your map:** repaired on the next build, which runs every test once and records the environment.
