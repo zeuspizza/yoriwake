@@ -432,6 +432,7 @@ library.
 |---|---|---|---|
 | Netty epoll transport | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final](https://github.com/netty/netty/tree/netty-4.2.18.Final/transport-native-epoll/src/main/c) | `/proc/sys/net/ipv4/tcp_fastopen`; a file whose path is passed to `FileDescriptor.from`, opened write-only; otherwise only descriptors Java opened |
 | Netty kqueue transport | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final](https://github.com/netty/netty/tree/netty-4.2.18.Final/transport-native-kqueue/src/main/c) | a file whose path is passed to `FileDescriptor.from`, opened write-only; otherwise only descriptors Java opened |
+| Netty io_uring transport (conditional, below) | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final and 4.2.19.Final](https://github.com/netty/netty/tree/netty-4.2.19.Final/transport-native-io_uring/src/main/c) only | a probe file in the temporary directory, written and never read; as epoll otherwise; the kernel opens nothing for the operations Netty submits |
 | Netty io_uring transport (incubator) | `io.netty.util.internal.NativeLibraryUtil` | [0.0.26.Final](https://github.com/netty/netty-incubator-transport-io_uring/tree/netty-incubator-transport-parent-io_uring-0.0.26.Final/transport-native-io_uring/src/main/c) | a probe file in the temporary directory, written and never read; as epoll otherwise |
 | Conscrypt | `org.conscrypt.NativeLibraryUtil` | [2.7.0](https://github.com/google/conscrypt/tree/2.7.0/common/src/jni) | `/dev/urandom` where `getrandom` is missing; no path from Java |
 | snappy-java | `org.xerial.snappy.SnappyLoader` | [1.1.10.8](https://github.com/xerial/snappy-java/tree/v1.1.10.8/src/main/java/org/xerial/snappy) | nothing |
@@ -445,8 +446,15 @@ Two notes on the list:
 - `RocksDB.loadLibrary`, which RocksDB calls for itself, first tries to load the system's
   compression libraries by name (`snappy`, `z`, `bzip2`, `lz4`, `zstd`). Those are not reviewed, so
   a JVM that loads RocksDB that way applies the wide rule from there.
-- Reviewed and left off: Netty's in-tree io_uring transport, whose public API lets any caller submit
-  a file open to the kernel; netty-tcnative, whose BoringSSL and OpenSSL builds share file names,
+- Netty's io_uring transport is listed on a condition. Its public API lets any caller hand the
+  kernel an operation, a file open among them. Every operation reaches the ring through one Java
+  method, `SubmissionQueue.enqueueSqe`, which the agent checks as it is entered: one of the 19
+  operations Netty itself submits goes on, and any other, before the kernel sees it, touches every
+  class from there. No operation that takes a path or gives a file a new name is among the 19. The
+  entry counts only at the versions listed, read from the classes jar's own version file, and only
+  when that method in the loading class's loader takes the check; otherwise the load applies the
+  wide rule.
+- Reviewed and left off: netty-tcnative, whose BoringSSL and OpenSSL builds share file names,
   and whose OpenSSL build reads a configuration file and loads modules from paths the environment
   names; and JNA, which calls any native function.
 - SQLite JDBC is listed on a condition. Once a connection enables extension loading (the
@@ -677,6 +685,8 @@ Three things differ:
   - a call, made by reflection with `setAccessible`, to the renamed native method the agent leaves
     behind when it wraps [SQLite JDBC's](#native-libraries) `enable_load_extension`. The renamed
     method is private and synthetic, so no lookup of public methods reaches it by accident;
+  - an operation written into [Netty's io_uring](#native-libraries) ring without its
+    `SubmissionQueue.enqueueSqe`, by reflection into Netty's package-private classes;
   - the JDK's class-loading or library-loading internals called by reflection (a native lookup
     such as `Class.forName0`, a class loader's protected `loadClass(String, boolean)`, or
     `ClassLoader.loadLibrary`), which needs `java.base` opened to your code. A class your code
