@@ -13,10 +13,18 @@ import java.util.regex.Pattern;
  * or as {@code System.loadLibrary} maps the library's name, and on the class that called
  * {@code System.load} or {@code System.loadLibrary}: the entry's class or a class nested in it. A
  * shaded or renamed copy, or the same file loaded by any other class, does not match.
+ *
+ * <p>A conditional entry was reviewed safe unless a call turns a feature on. It counts only while
+ * {@link GuardHooks} wraps that call in the loader that loads the library, and only at the exact
+ * versions reviewed, read from the version file beside the guard class: a release that adds
+ * another way to turn the feature on is not covered by the review of one that had none.
  */
 final class ReviewedLibraries {
 
-    /** Loading class, then the file name. */
+    /**
+     * Loading class, then the file name; for a conditional entry, then the guard class, the
+     * version file beside it, and the versions reviewed, comma-separated.
+     */
     private static final String[][] REVIEWED = {
         // Netty's loader defines this helper into the transport's class loader and loads through it.
         {"io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_epoll(_[a-z0-9_]+)?[0-9]*\\.so"},
@@ -32,6 +40,11 @@ final class ReviewedLibraries {
         {"com.github.luben.zstd.util.Native", "libzstd-jni-[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.(so|dylib)"},
         {"net.jpountz.util.Native", "liblz4-java(-[0-9]+)?\\.(so|dylib)"},
         {"org.rocksdb.NativeLibraryLoader", "librocksdbjni(-[a-z0-9_-]+)?[0-9]*\\.(so|dylib|jnilib)"},
+        // Safe unless a connection enables extension loading, which lets SQL load any library.
+        {"org.sqlite.SQLiteJDBCLoader",
+            "(sqlite-([0-9.]+|unknown)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)?"
+                + "libsqlitejdbc\\.(so|dylib|jnilib)",
+            "org/sqlite/core/NativeDB", "META-INF/maven/org.xerial/sqlite-jdbc/pom.properties", "3.53.4.0"},
     };
 
     private static final Pattern[] PATTERNS = new Pattern[REVIEWED.length];
@@ -46,13 +59,18 @@ final class ReviewedLibraries {
 
     /** Whether {@code loadingClass}, a binary name, loading a file named {@code fileName} is reviewed. */
     static boolean reviewed(String loadingClass, String fileName) {
+        return entry(loadingClass, fileName) != null;
+    }
+
+    /** The entry {@code loadingClass} loading a file named {@code fileName} matches, or null. */
+    static String[] entry(String loadingClass, String fileName) {
         for (int i = 0; i < REVIEWED.length; i++) {
             String owner = REVIEWED[i][0];
             boolean own = loadingClass.equals(owner) || loadingClass.startsWith(owner + "$");
             if (own && PATTERNS[i].matcher(fileName).matches()) {
-                return true;
+                return REVIEWED[i];
             }
         }
-        return false;
+        return null;
     }
 }

@@ -19,6 +19,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.
+- A suite on SQLite JDBC 3.53.4.0 narrows as on any reviewed library, until a connection enables extension loading. Map: left alone.
 
 ## [0.3.0] - 2026-10-22
 

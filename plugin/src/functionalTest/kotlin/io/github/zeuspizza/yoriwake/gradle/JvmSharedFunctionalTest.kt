@@ -1,5 +1,8 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -840,6 +843,106 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         )
 
         assertEquals(names("Q2ToolTest", "Q3LaterTest"), ran)
+    }
+
+    /**
+     * The real SQLite driver at [version]: a test opens an in-memory database through [connect], then
+     * a test that runs Tool, then one that does not. The driver's own library is copied out of its
+     * jar and named by `org.sqlite.lib.path` first, so the driver loads it from there: without that
+     * it finds its folder by asking `uname`, a child process that runs every later test on Linux.
+     * Returns what ran, and why the capture's first `all` line says every class was touched.
+     */
+    private fun sqlite(dir: File, prefix: String, connect: String, version: String = "3.53.4.0"): Pair<Set<String>, String?> {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows"), "only the Linux and macOS builds were reviewed")
+        var why: String? = null
+        val ran = selectedAfter(
+            dir, "src/main/java/dev/sample/Tool.java", { it.replace("\"tool\"", "\"tool!\"") },
+            main("Tool", "public class Tool { public static String name() { return \"tool\"; } }"),
+            "src/test/java/dev/sample/SqliteLibrary.java" to """
+                package dev.sample;
+                import java.io.InputStream;
+                import java.nio.file.*;
+                final class SqliteLibrary {
+                    static void useOwnCopy() throws Exception {
+                        String os = System.getProperty("os.name").startsWith("Mac") ? "Mac" : "Linux";
+                        String arch = System.getProperty("os.arch").matches("aarch64|arm64") ? "aarch64" : "x86_64";
+                        String file = System.mapLibraryName("sqlitejdbc");
+                        Path folder = Files.createTempDirectory("sqlite");
+                        try (InputStream in = org.sqlite.SQLiteJDBCLoader.class
+                                .getResourceAsStream("/org/sqlite/native/" + os + "/" + arch + "/" + file)) {
+                            Files.copy(in, folder.resolve(file));
+                        }
+                        System.setProperty("org.sqlite.lib.path", folder.toString());
+                    }
+                }
+            """.trimIndent(),
+            first(prefix),
+            test(
+                "${prefix}1SqliteTest",
+                """@Test void queries() throws Exception {
+                    SqliteLibrary.useOwnCopy();
+                    try (java.sql.Connection connection = $connect) {
+                        assertTrue(connection.createStatement().execute("select 1"));
+                    }
+                }""",
+            ),
+            test("${prefix}2ToolTest", "@Test void runs() { assertTrue(Tool.name().startsWith(\"tool\")); }"),
+            test("${prefix}3LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            buildScript = orderedBuild.replace(
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n" +
+                    "    testImplementation(\"org.xerial:sqlite-jdbc:$version\")",
+            ),
+            // The library copier is not a test class.
+            testCount = 4,
+            editMap = { map ->
+                why = CoverageDecoder.recordsDir(map).walk().filter { it.name == AgentContract.TOUCHES_FILE }
+                    .flatMap { it.readLines().asSequence() }
+                    .map { it.split("\t") }
+                    .firstOrNull { AgentContract.TOUCH_ALL in it }
+                    ?.last()
+            },
+        )
+        return ran to why
+    }
+
+    private val sqliteMemory = "java.sql.DriverManager.getConnection(\"jdbc:sqlite::memory:\")"
+    private val sqliteExtensions = "SQLite extension loading was enabled on a connection"
+
+    @Test
+    fun `a test that uses SQLite without extensions narrows as on any reviewed library`(@TempDir dir: File) {
+        val (ran, why) = sqlite(dir, "S", sqliteMemory)
+
+        assertEquals(names("S2ToolTest", "S3LaterTest"), ran, "every class touched because: $why")
+    }
+
+    @Test
+    fun `a SQLite connection that enables extension loading selects every later test in its JVM`(@TempDir dir: File) {
+        val connections = listOf(
+            "java.sql.DriverManager.getConnection(\"jdbc:sqlite::memory:?enable_load_extension=true\")",
+            "((java.util.concurrent.Callable<java.sql.Connection>) () -> { org.sqlite.SQLiteConfig config = " +
+                "new org.sqlite.SQLiteConfig(); config.enableLoadExtension(true); " +
+                "return config.createConnection(\"jdbc:sqlite::memory:\"); }).call()",
+            // Straight to the native, by reflection, past every setting.
+            "((java.util.concurrent.Callable<java.sql.Connection>) () -> { java.sql.Connection c = $sqliteMemory; " +
+                "Object db = ((org.sqlite.SQLiteConnection) c).getDatabase(); " +
+                "db.getClass().getMethod(\"enable_load_extension\", boolean.class).invoke(db, true); return c; }).call()",
+        )
+        for ((i, connect) in connections.withIndex()) {
+            val (ran, why) = sqlite(File(dir, "$i").apply { mkdirs() }, "S", connect)
+
+            assertEquals(names("S1SqliteTest", "S2ToolTest", "S3LaterTest"), ran, connect)
+            assertEquals(sqliteExtensions, why, connect)
+        }
+    }
+
+    @Test
+    fun `SQLite at a version nobody reviewed selects every later test in its JVM`(@TempDir dir: File) {
+        val (ran, why) = sqlite(dir, "S", sqliteMemory, version = "3.53.2.1")
+
+        assertEquals(names("S1SqliteTest", "S2ToolTest", "S3LaterTest"), ran)
+        assertEquals("a reviewed native library was loaded without its condition: " + System.mapLibraryName("sqlitejdbc") +
+            ", since its version 3.53.2.1 is not one reviewed", why)
     }
 
     @Test

@@ -59,6 +59,8 @@ tasks.jar {
             "Premain-Class" to "io.github.zeuspizza.yoriwake.agent.capture.LoadedClassRecorder",
             // The read hooks rewrite six JDK entry points that are loaded before premain runs.
             "Can-Retransform-Classes" to "true",
+            // Conditional reviewed libraries wrap a native method to see each call to it.
+            "Can-Set-Native-Method-Prefix" to "true",
         )
     }
 }
