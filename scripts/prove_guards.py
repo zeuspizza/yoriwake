@@ -1989,8 +1989,8 @@ MUTATIONS = [
      "                name.length();",
      agent_suite, "a hidden class defined from outside the JDK is kept by the name in its bytes, and the JDK's own are not"),
     ("a call from outside the JDK is taken for the JDK's own", TOUCH_RECORDER,
-     "                        return JdkCode.isJdk(frame);",
-     "                        return true;",
+     "        return caller != null && !throughAProxy[0] && JdkCode.isJdk(caller);",
+     "        return caller != null && !throughAProxy[0];",
      agent_suite, "a hidden class defined from outside the JDK is kept by the name in its bytes, and the JDK's own are not"),
     # Reflection and method-handle frames call on someone else's behalf, and a method reference's
     # proxy is hidden: judged as the caller, either made a test's own call look like the JDK's.
@@ -2001,8 +2001,8 @@ MUTATIONS = [
     # A proxy dispatches to a handle its maker chose: JDK code that calls the proxy did not ask
     # for the hooked call, so a walk that passed over a proxy class records it.
     ("a hooked call through a proxy JDK code calls is taken for the JDK's own", TOUCH_RECORDER,
-     "                        if (throughAProxy) {",
-     "                        if (false) {",
+     "        return caller != null && !throughAProxy[0] && JdkCode.isJdk(caller);",
+     "        return caller != null && JdkCode.isJdk(caller);",
      agent_suite, "a hooked method reached through an interface proxy that JDK code calls is judged as the project's"),
     ("a varargs collector, a constant bootstrap or an interpreted lambda form is taken for the caller", TOUCH_RECORDER,
      '        return name.startsWith("java.lang.invoke.")',
@@ -2030,13 +2030,15 @@ MUTATIONS = [
      "                    StackWalker.Option.RETAIN_CLASS_REFERENCE)).walk(frames -> {",
      functional_suite, "the foreign-function API reached through a method reference JDK code calls selects"),
     ("native code reached through the foreign-function API no longer touches every class", TOUCH_RECORDER,
-     '                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API");',
+     '                touch(AgentContract.TOUCH_ALL, "native code was reached through the foreign-function API"\n'
+     '                        + (from != null ? ": from " + from.getName() : ""));',
      "                touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);",
      agent_suite, "native code reached through the foreign-function API from outside the JDK touches every class"),
     # Native code reads any file out of sight, so a native library touches every class from its
     # load unless its sources were reviewed and it is loaded by the class that ships with it.
     ("a native library not on the reviewed list no longer touches every class", TOUCH_RECORDER,
-     '                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file);',
+     '                touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file\n'
+     '                        + (caller != null ? " from " + caller.getName() : ""));',
      "                touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);",
      agent_suite, "a native library that is not on the reviewed list touches every class from its load"),
     ("the native-library hook is installed with no sink behind it", READ_HOOKS,
