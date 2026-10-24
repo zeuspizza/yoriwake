@@ -1,7 +1,7 @@
 """Checks that a guard run split into shards proved every guard it selected, each exactly once.
 
-Each guard job runs as several jobs, each proving the selected guards whose label hashes to its
-shard (`prove_guards.py --shard <index>/<count> --results FILE`). A shard that filters too much, one
+Each guard job runs as several jobs, each proving its shard of the selected guards, split by measured
+cost (`prove_guards.py --shard <index>/<count> --results FILE`). A shard that filters too much, one
 that never runs, or one that selected from another base would leave a guard proved nowhere while
 every job is green, so this check compares two things the shard filter does not produce:
 
