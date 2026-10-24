@@ -25,4 +25,15 @@ object FunctionalGradle {
         System.getProperty("org.gradle.internal.worker.tmpdir") ?: System.getProperty("java.io.tmpdir"),
         ".gradle-test-kit-$gradleVersion",
     ).also(FunctionalCoverage::configure)
+
+    /**
+     * The Gradle home for Tooling API clients, beside [testKitDir] and never the same: a Tooling API
+     * daemon stopping in a TestKit home is the one event a Kotlin DSL compile failure in that home
+     * was seen to follow, so the two kinds of daemon do not share one. Configured like it, so its
+     * daemons report coverage too.
+     */
+    fun toolingApiDir(gradleVersion: String = version): File = File(
+        System.getProperty("org.gradle.internal.worker.tmpdir") ?: System.getProperty("java.io.tmpdir"),
+        ".gradle-tooling-api-$gradleVersion",
+    ).also(FunctionalCoverage::configure)
 }

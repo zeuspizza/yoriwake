@@ -15,14 +15,19 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
+
 ### Changed
 
 - A native library or foreign-function call that widens a run names the class that made it. Map: left alone.
-
+- A run forced by untracked files names their directories and how to list them in `notReadByTests`. Map: left alone.
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.
 - A native library is proposed, and re-reviewed on a new major version, through an issue form. Map: left alone.
 - A suite on SQLite JDBC 3.53.4.0 narrows as on any reviewed library, until a connection enables extension loading. Map: left alone.
+- A suite on Netty's io_uring transport 4.2.18 or 4.2.19 narrows, until it submits an operation Netty does not. Map: left alone.
 
 ### Fixed
 

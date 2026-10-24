@@ -59,7 +59,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
-| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from; see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `notReadByTests`; see [Files written into the source tree](#files-written-into-the-source-tree) |
 
 Reasons, one per test:
 
@@ -189,7 +189,13 @@ has never seen always runs.
 
 A file the tests or the build write into the source tree outside the build directories counts as
 a change by its content, tracked or not, ignored or not. A run that sees it changed runs
-everything, and names it, one line per kind:
+everything, and names it, one line per kind. Files under a directory git tracks nothing in are named
+by the outermost such directory, as a glob with its file count (`docs-client/node_modules/* (62,444
+files)`), the largest first; a file beside a tracked one is named as itself. Each line ends with the
+globs to list in [`notReadByTests`](#properties-and-tasks), and the condition under which that is
+safe. No glob is offered for a directory that holds sources: a source file among the changed files,
+or a source tree laid out as a source set's (`main/java`, `main/kotlin`) in it or one level below.
+Listed, a later change to those sources would no longer count as one.
 
 - **Changed during the last capture build** (`written-during-capture`): created, rewritten or
   deleted while the capture that dated the map ran, by its tests or its tasks. If a test writes it
@@ -204,11 +210,14 @@ everything, and names it, one line per kind:
 - **In CI**, a file the capture's tests create is in the change set of every fresh checkout that
   lacks it, so such a project runs everything on every pull request until the file moves.
 - **Untracked in a source directory** (`generated-in-sources`): a file a build task generates into
-  a source or resource directory, or one not yet added to git. It is on the classpath, tests can
-  read it, and its changes are changes; nothing is offered to make it stop counting.
+  a source or resource directory, or one not yet added to git. Tests read the copy the build puts
+  on the classpath, which is compared on its own (see [Generated files on the test
+  classpath](#generated-files-on-the-test-classpath)), so the generated directory can be listed in
+  `notReadByTests` when nothing reads it otherwise.
 - **Untracked** (`untracked`): any other untracked or ignored file; it counts by content.
 
-A file HEAD tracks gets no line: the run cannot tell a test's write from your edit.
+A file HEAD tracks gets no line: the run cannot tell a test's write from your edit. When git cannot
+say which forcing paths it tracks, one line counts them and `yoriwakeExplain<Task>` lists a sample.
 
 ### Generated files on the test classpath
 
@@ -423,6 +432,7 @@ library.
 |---|---|---|---|
 | Netty epoll transport | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final](https://github.com/netty/netty/tree/netty-4.2.18.Final/transport-native-epoll/src/main/c) | `/proc/sys/net/ipv4/tcp_fastopen`; a file whose path is passed to `FileDescriptor.from`, opened write-only; otherwise only descriptors Java opened |
 | Netty kqueue transport | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final](https://github.com/netty/netty/tree/netty-4.2.18.Final/transport-native-kqueue/src/main/c) | a file whose path is passed to `FileDescriptor.from`, opened write-only; otherwise only descriptors Java opened |
+| Netty io_uring transport (conditional, below) | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final and 4.2.19.Final](https://github.com/netty/netty/tree/netty-4.2.19.Final/transport-native-io_uring/src/main/c) only | a probe file in the temporary directory, written and never read; as epoll otherwise; the kernel opens nothing for the operations Netty submits |
 | Netty io_uring transport (incubator) | `io.netty.util.internal.NativeLibraryUtil` | [0.0.26.Final](https://github.com/netty/netty-incubator-transport-io_uring/tree/netty-incubator-transport-parent-io_uring-0.0.26.Final/transport-native-io_uring/src/main/c) | a probe file in the temporary directory, written and never read; as epoll otherwise |
 | Conscrypt | `org.conscrypt.NativeLibraryUtil` | [2.7.0](https://github.com/google/conscrypt/tree/2.7.0/common/src/jni) | `/dev/urandom` where `getrandom` is missing; no path from Java |
 | snappy-java | `org.xerial.snappy.SnappyLoader` | [1.1.10.8](https://github.com/xerial/snappy-java/tree/v1.1.10.8/src/main/java/org/xerial/snappy) | nothing |
@@ -436,8 +446,15 @@ Two notes on the list:
 - `RocksDB.loadLibrary`, which RocksDB calls for itself, first tries to load the system's
   compression libraries by name (`snappy`, `z`, `bzip2`, `lz4`, `zstd`). Those are not reviewed, so
   a JVM that loads RocksDB that way applies the wide rule from there.
-- Reviewed and left off: Netty's in-tree io_uring transport, whose public API lets any caller submit
-  a file open to the kernel; netty-tcnative, whose BoringSSL and OpenSSL builds share file names,
+- Netty's io_uring transport is listed on a condition. Its public API lets any caller hand the
+  kernel an operation, a file open among them. Every operation reaches the ring through one Java
+  method, `SubmissionQueue.enqueueSqe`, which the agent checks as it is entered: one of the 19
+  operations Netty itself submits goes on, and any other, before the kernel sees it, touches every
+  class from there. No operation that takes a path or gives a file a new name is among the 19. The
+  entry counts only at the versions listed, read from the classes jar's own version file, and only
+  when that method in the loading class's loader takes the check; otherwise the load applies the
+  wide rule.
+- Reviewed and left off: netty-tcnative, whose BoringSSL and OpenSSL builds share file names,
   and whose OpenSSL build reads a configuration file and loads modules from paths the environment
   names; and JNA, which calls any native function.
 - SQLite JDBC is listed on a condition. Once a connection enables extension loading (the
@@ -668,6 +685,8 @@ Three things differ:
   - a call, made by reflection with `setAccessible`, to the renamed native method the agent leaves
     behind when it wraps [SQLite JDBC's](#native-libraries) `enable_load_extension`. The renamed
     method is private and synthetic, so no lookup of public methods reaches it by accident;
+  - an operation written into [Netty's io_uring](#native-libraries) ring without its
+    `SubmissionQueue.enqueueSqe`, by reflection into Netty's package-private classes;
   - the JDK's class-loading or library-loading internals called by reflection (a native lookup
     such as `Class.forName0`, a class loader's protected `loadClass(String, boolean)`, or
     `ClassLoader.loadLibrary`), which needs `java.base` opened to your code. A class your code
@@ -1325,6 +1344,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `notReadByTests` | `List<String>` | empty | Globs of files no test or build reads: a changed one is no change. |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
+| `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |
 
 For example:
 
@@ -1338,6 +1358,7 @@ yoriwake {
     notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
     environmentInclude.add("DB_MODE")      // a variable compared besides TZ, LANG and LC_ALL
     systemPropertyIgnore.add("build.number") // a property left out of that comparison
+    dependsOn("integrationTest", "/docker/**") // a changed compose file runs integrationTest in full
 }
 ```
 
@@ -1351,7 +1372,25 @@ class and method, and Spock features by their specification and feature name
 matching any characters, slashes included: `docs/*` is everything under `docs/`, `*.md` every
 Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
 a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
-nothing reads: a test that reads a listed file is skipped when only that file changed.
+no test and no build step reads, except to compile or copy them onto the test classpath: a selecting
+run compares what lands there by content, a changed class running the tests that executed it and a
+changed resource the tests that read it, but a test that reads a listed file itself is skipped when
+only that file changed. Two shapes that fit: a resource directory a build task regenerates on every
+run, such as `gen-src/*` holding a versions file stamped with the commit, and a package manager's
+tree such as `docs-client/node_modules/*` that no test reads. A run forced by such files names the
+globs; see [Files written into the source tree](#files-written-into-the-source-tree). A listed glob
+also covers files added under it later, and a listed directory of generated sources no longer
+forces a run when they change, nor gets the checks a changed source gets (annotations, constants):
+list one only if no test depends on what is generated in it.
+
+`dependsOn` declares what coverage cannot see a test depend on: a compose file handed to a
+container, migrations a database runs, fixtures another process reads. Each entry is a `Test` task
+of the project and an Ant-style glob, relative to the project or, with a leading `/`, to the root
+project: `*` and `?` within a directory, `**` as a whole segment for any number of directories. A
+changed path an entry matches runs that task in full, whatever else the change holds; a single test
+or class declares the same with `@Tag("yoriwake-depends-on:<glob>")`, which selects it when such a
+path changes. A declaration can only cause more tests to run. An entry that matches every path, or
+names no `Test` task of its project, fails the build.
 
 `environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
 entry or one of only `*` fails the build. See [The environment

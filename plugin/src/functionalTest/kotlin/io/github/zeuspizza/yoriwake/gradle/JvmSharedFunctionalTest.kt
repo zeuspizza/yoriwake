@@ -797,7 +797,13 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
      * Tool, then one that does not. The file does not exist: the load is seen as it starts, so the
      * fixture needs no compiler, and the failed load is caught.
      */
-    private fun nativeLoad(dir: File, prefix: String, loader: String, file: String): Set<String> {
+    private fun nativeLoad(
+        dir: File,
+        prefix: String,
+        loader: String,
+        file: String,
+        buildScript: String = orderedBuild,
+    ): Set<String> {
         val pkg = loader.substringBeforeLast('.')
         val simple = loader.substringAfterLast('.')
         return selectedAfter(
@@ -821,6 +827,7 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
             ),
             test("${prefix}2ToolTest", "@Test void runs() { assertTrue(Tool.name().startsWith(\"tool\")); }"),
             test("${prefix}3LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            buildScript = buildScript,
             // The loader is not a test class.
             testCount = 4,
         )
@@ -843,6 +850,35 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         )
 
         assertEquals(names("Q2ToolTest", "Q3LaterTest"), ran)
+    }
+
+    /** The build with Netty's io_uring classes at [version] on the test classpath, nothing they depend on. */
+    private fun withIoUringClasses(version: String) = orderedBuild.replace(
+        "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+        "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n" +
+            "    testImplementation(\"io.netty:netty-transport-classes-io_uring:$version\") { isTransitive = false }",
+    )
+
+    @Test
+    fun `Netty's own io_uring transport at a reviewed version narrows, with its submission writer guarded`(
+        @TempDir dir: File,
+    ) {
+        val ran = nativeLoad(
+            dir, "U", "io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_io_uring42_x86_64.so",
+            buildScript = withIoUringClasses("4.2.19.Final"),
+        )
+
+        assertEquals(names("U2ToolTest", "U3LaterTest"), ran)
+    }
+
+    @Test
+    fun `Netty's own io_uring transport at a version nobody reviewed selects every later test`(@TempDir dir: File) {
+        val ran = nativeLoad(
+            dir, "V", "io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_io_uring42_x86_64.so",
+            buildScript = withIoUringClasses("4.2.17.Final"),
+        )
+
+        assertEquals(names("V1NativeTest", "V2ToolTest", "V3LaterTest"), ran)
     }
 
     /**

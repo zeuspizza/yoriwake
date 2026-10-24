@@ -57,6 +57,16 @@ public final class AgentContract {
     public static final String UNMAPPABLE_PATHS_PROPERTY = "yoriwake.change.unmappable";
 
     /**
+     * Every changed path relative to the root project, before any is dropped as off the classpath
+     * or declared unread, comma-separated. Only matched against tests' declared dependencies
+     * ({@code @Tag("yoriwake-depends-on:<glob>")}), each of which it can only add.
+     */
+    public static final String CHANGED_PATHS_PROPERTY = "yoriwake.change.paths";
+
+    /** The test task's project directory relative to the root project, {@code ""} for the root. */
+    public static final String PROJECT_DIR_PROPERTY = "yoriwake.project.dir";
+
+    /**
      * Set when every changed path was accounted for: off this task's classpath, or unreadable.
      * Without it an empty change set is indistinguishable from git having nothing to say.
      */
@@ -668,6 +678,9 @@ public final class AgentContract {
 
     /** Pinned by pattern or tag. */
     public static final String RULE_ALWAYS_RUN = "always-run";
+
+    /** Its {@code yoriwake-depends-on:} tag matches a changed path. */
+    public static final String RULE_DECLARES_CHANGED_PATH = "declares-changed-path";
 
     /**
      * Its engine runs every test it discovered or none, so selection never leaves one out. Also the

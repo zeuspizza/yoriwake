@@ -30,7 +30,14 @@ final class ReviewedLibraries {
         {"io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_epoll(_[a-z0-9_]+)?[0-9]*\\.so"},
         {"io.netty.util.internal.NativeLibraryUtil",
             "libnetty_transport_native_kqueue(_[a-z0-9_]+)?[0-9]*\\.(so|dylib|jnilib)"},
-        // The incubator's transport. Netty's own, named io_uring42, lets any caller submit an open.
+        // Netty's own io_uring transport lets any caller submit an operation, an open among them:
+        // reviewed safe for the operations Netty itself submits. Before the incubator's, whose
+        // static-name fallback with digits this also matches, and which then has no guard class.
+        {"io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_io_uring42(_[a-z0-9_]+)?[0-9]*\\.so",
+            "io/netty/channel/uring/SubmissionQueue",
+            "META-INF/maven/io.netty/netty-transport-classes-io_uring/pom.properties",
+            "4.2.18.Final,4.2.19.Final"},
+        // The incubator's transport.
         {"io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_io_uring_[a-z0-9_]+\\.so"},
         {"org.conscrypt.NativeLibraryUtil", "libconscrypt_openjdk_jni(-[a-z]+-[a-z0-9_]+)?[0-9]*\\.(so|dylib|jnilib)"},
         {"org.xerial.snappy.SnappyLoader",
