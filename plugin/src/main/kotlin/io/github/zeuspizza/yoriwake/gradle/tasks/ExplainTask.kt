@@ -457,6 +457,8 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.taskPath.set(test.path)
                 task.rootDir = project.rootDir
                 task.mapDir = mapDir
+                // Before the declined return: a required input left unset fails the task's validation.
+                task.largeChangeThreshold.set(largeChange)
                 if (scope is ScopeOutcome.NotApplied) {
                     task.declined = scope.detail
                     return@register
@@ -465,7 +467,6 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)
-                task.largeChangeThreshold.set(largeChange)
                 schedule.builds?.let(task.fullRunEveryBuilds::set)
                 schedule.days?.let(task.fullRunEveryDays::set)
                 task.environment = environment
