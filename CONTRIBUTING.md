@@ -13,6 +13,11 @@ them: the functional suite runs a test JVM on each. `-Pyoriwake.functional.testJ
 others for a local run. CI runs each functional suite in shards by test class;
 `-Pyoriwake.functional.shard=3/8` runs the same classes as its shard 3 of 8, to reproduce one.
 
+The build runs on Gradle 8.14, the oldest Gradle the plugin supports, so the plugin compiles only
+against what that Gradle offers; the 9.x line is tested through TestKit and the supported matrix.
+The wrapper moves with that floor, and is revisited when Gradle 10 ends fixes for 8.x. CI turns off
+setup-gradle's build capture, whose only effect here was a notice that 8.14 is out of date.
+
 ```bash
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin
 python3 .github/test_ci.py   # the CI helper scripts' own tests

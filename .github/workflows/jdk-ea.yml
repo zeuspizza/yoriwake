@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
 jobs:
   early-access:
     name: test JVM on the newest early-access JDK

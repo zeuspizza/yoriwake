@@ -28,6 +28,11 @@ concurrency:
 permissions:
   contents: read
 
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
 jobs:
   # Whether the change needs guards at all, and whether it reaches the shipped sources. Either
   # answer missing runs more, never less: a skipped job satisfies a required check. Also the base
@@ -98,6 +103,11 @@ jobs:
           path: results/
           if-no-files-found: error
           retention-days: 7
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   # Named as the unsharded job was, and the check that is required: every shard succeeded and
   # every guard the check selects itself, the shards' flags but no shard, fired in exactly one.
@@ -158,6 +168,11 @@ jobs:
           path: results/
           if-no-files-found: error
           retention-days: 7
+      # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
+      # cache, and a live daemon's files can lock a Windows save.
+      - name: stop the Gradle daemons before the cache is saved
+        if: always()
+        run: ./gradlew --stop
 
   full:
     name: guards, every one
