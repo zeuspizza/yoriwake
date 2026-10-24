@@ -323,6 +323,57 @@ def unpinned_uses(text):
     return found
 
 
+def unexplained_uploads(text):
+    """Each `upload-artifact` step without `retention-days` in its block, or without a `#` comment
+    on the line above it: an artifact nobody sized is kept 90 days, and one nobody named a reader
+    for cannot be sized. A step opened by `- if:` starts there."""
+    lines = text.splitlines()
+    found = []
+    for number, line in enumerate(lines):
+        if "actions/upload-artifact@" not in line or not line.lstrip().startswith(("- uses:", "uses:")):
+            continue
+        start = number
+        if not line.lstrip().startswith("- "):
+            start = next(i for i in range(number, -1, -1) if lines[i].lstrip().startswith("- "))
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = next((i for i in range(start + 1, len(lines))
+                    if lines[i].strip() and len(lines[i]) - len(lines[i].lstrip()) <= indent), len(lines))
+        if not any(l.strip().startswith("retention-days:") for l in lines[start:end]):
+            found.append(f"line {number + 1}: no retention-days")
+        if start == 0 or not lines[start - 1].strip().startswith("#"):
+            found.append(f"line {number + 1}: no comment naming its reader above the step")
+    return found
+
+
+def case_an_upload_without_a_retention_or_a_reader_is_reported():
+    problems = 0
+    good = ("      # The check job reads it.\n"
+            "      - uses: actions/upload-artifact@0123456789012345678901234567890123456789 # v4.0.0\n"
+            "        with:\n          name: a\n          retention-days: 1\n")
+    if unexplained_uploads(good):
+        problems += fail(f"an upload with a comment and a retention was reported: {unexplained_uploads(good)}")
+    guarded = good.replace("      - uses:", "      - if: failure()\n        uses:")
+    if unexplained_uploads(guarded):
+        problems += fail(f"an upload opened by `- if:` was reported: {unexplained_uploads(guarded)}")
+    if not any("retention" in p for p in unexplained_uploads(good.replace("          retention-days: 1\n", ""))):
+        problems += fail("an upload without retention-days passed")
+    if not any("comment" in p for p in unexplained_uploads("      run: x\n" + good.split("\n", 1)[1])):
+        problems += fail("an upload whose line above is code passed")
+    borrowed = good.replace("          retention-days: 1\n", "") + "      - run: true\n        retention-days: 1\n"
+    if not any("retention" in p for p in unexplained_uploads(borrowed)):
+        problems += fail("a retention-days of the next step was counted for this one")
+    return problems
+
+
+def case_every_upload_names_its_retention_and_its_reader():
+    problems = 0
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in unexplained_uploads(handle.read()):
+                problems += fail(f"{name} {problem}")
+    return problems
+
+
 def gradle_notice_problems(text):
     """What lets setup-gradle's out-of-date notice back, or saves a cache under a live daemon.
 
@@ -2339,6 +2390,8 @@ CASES = (
     case_a_tag_pin_is_reported,
     case_a_sha_without_its_version_comment_is_reported,
     case_every_workflow_pins_its_actions_by_sha,
+    case_an_upload_without_a_retention_or_a_reader_is_reported,
+    case_every_upload_names_its_retention_and_its_reader,
     case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
     case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_reported,
     case_the_reference_table_and_the_matrix_cells_agree,
