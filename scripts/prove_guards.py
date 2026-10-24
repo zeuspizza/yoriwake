@@ -157,6 +157,7 @@ JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCo
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
 REVIEWED_LIBRARIES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedLibraries.java"
 GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/GuardHooks.java"
+JAR_IDENTITY = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JarIdentity.java"
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
@@ -2072,6 +2073,28 @@ MUTATIONS = [
      agent_suite, "a native library that is not on the reviewed list touches every class from its load"),
     # A native load is judged by what the JDK opened: a by-name attempt that found no file is
     # not one, and a library the JDK did open always is.
+    # netty-tcnative's BoringSSL build counts only by its bytes, against the resource of the one
+    # jar that declares that artifact at a version reviewed; its OpenSSL build shares its names.
+    ("a tcnative library is identified without comparing its bytes", JAR_IDENTITY,
+     "                    if (x != y) {\n                        return \"\";",
+     "                    if (false) {\n                        return \"\";",
+     agent_suite, "a library whose bytes differ, or that no jar holds, is not identified"),
+    ("the jar holding the bytes may be any artifact", JAR_IDENTITY,
+     "            if (!artifact.equals(declared)) {",
+     "            if (false) {",
+     agent_suite, "the same bytes in a jar of the OpenSSL build or of two artifacts are not identified"),
+    ("a jar declaring two artifacts identifies the library", JAR_IDENTITY,
+     "                if (declared != null) {\n                    return jar.getName() + \" declares more",
+     "                if (false) {\n                    return jar.getName() + \" declares more",
+     agent_suite, "the same bytes in a jar of the OpenSSL build or of two artifacts are not identified"),
+    ("any version of the BoringSSL build is identified", JAR_IDENTITY,
+     "            return artifact + \" \" + version + \" is not a version reviewed\";",
+     "            return null;",
+     functional_suite, "netty-tcnative's BoringSSL build at a version nobody reviewed selects every later test"),
+    ("netty-tcnative is listed by its name alone", REVIEWED_LIBRARIES,
+     "\"libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\\\.(so|dylib|jnilib)\",\n            \"identity:io.netty\", \"netty-tcnative-boringssl-static\", \"2.0.84.Final\"},",
+     "\"libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\\\.(so|dylib|jnilib)\"},",
+     agent_suite, "netty-tcnative not identified as the BoringSSL build by its bytes touches every class from its load"),
     ("a library the JDK resolved and opened is not judged", TOUCH_RECORDER,
      "    void resolved(Object loaded) {\n        judgeLoad(loaded);\n",
      "    void resolved(Object loaded) {\n",
