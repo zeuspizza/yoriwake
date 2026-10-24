@@ -444,8 +444,9 @@ Two notes on the list:
   build (`.dll`) is not on the list, so on Windows each of these applies the wide rule.
 
 An entry covers the version reviewed. Each is reviewed again when its library ships a new major
-version, and until then a later version counts as the one reviewed. To propose a library, open an
-issue with its version, a link to its native sources at that tag, every file open, `mmap`,
+version, and until then a later version counts as the one reviewed. To propose a library, open a
+[native library proposal](https://github.com/zeuspizza/yoriwake/issues/new?template=native-library.yml):
+it asks for its version, a link to its native sources at that tag, every file open, `mmap`,
 directory scan and `dlopen` in them with where each path comes from, the file names its loader
 gives the library, and the class that calls `System.load` or `System.loadLibrary`.
 
