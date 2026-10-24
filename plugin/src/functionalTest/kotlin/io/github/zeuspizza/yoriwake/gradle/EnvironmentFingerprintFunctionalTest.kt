@@ -295,7 +295,8 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         }.getOrDefault(emptyList()).mapNotNull { line -> line.trim().substringAfterLast(' ').takeIf { it.startsWith("/") }?.let(::File) }
         val own = feature(current)
         return (fromCi + fromMac).map { it.canonicalFile }.distinct()
-            .filter { File(it, "bin/java").isFile && it != current }
+            // Windows names the launcher java.exe; looking only for bin/java skipped the test there.
+            .filter { (File(it, "bin/java").isFile || File(it, "bin/java.exe").isFile) && it != current }
             .firstOrNull { home -> feature(home)?.let { it >= 11 && it != own } == true }
             .also { found -> found?.let { assertNotEquals(current, it) } }
     }
