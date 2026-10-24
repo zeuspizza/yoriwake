@@ -122,7 +122,7 @@ jobs:
         run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/2 --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
-      # read, and the homes' daemon logs.
+      # read, and the homes' daemon logs, the Tooling API home's included.
       - name: list what the TestKit homes downloaded
         if: failure()
         shell: bash
@@ -135,6 +135,7 @@ jobs:
             plugin/build/test-kit-homes.txt
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
+            plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
@@ -200,7 +201,7 @@ jobs:
         run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/2 --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
-      # read, and the homes' daemon logs.
+      # read, and the homes' daemon logs, the Tooling API home's included.
       - name: list what the TestKit homes downloaded
         if: failure()
         shell: bash
@@ -213,6 +214,7 @@ jobs:
             plugin/build/test-kit-homes.txt
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
+            plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
@@ -673,7 +675,7 @@ jobs:
         run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 -Pyoriwake.functional.coverage=false --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
-      # read, and the homes' daemon logs.
+      # read, and the homes' daemon logs, the Tooling API home's included.
       - name: list what the TestKit homes downloaded
         if: failure()
         shell: bash
@@ -686,6 +688,7 @@ jobs:
             plugin/build/test-kit-homes.txt
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
+            plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
@@ -746,7 +749,7 @@ jobs:
         run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/8 -Pyoriwake.functional.coverage=false --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
-      # read, and the homes' daemon logs.
+      # read, and the homes' daemon logs, the Tooling API home's included.
       - name: list what the TestKit homes downloaded
         if: failure()
         shell: bash
@@ -759,6 +762,7 @@ jobs:
             plugin/build/test-kit-homes.txt
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
+            plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log
           include-hidden-files: true
           retention-days: 7
       # Always, and an error when empty: the check below reads every shard's results.
