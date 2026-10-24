@@ -59,7 +59,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
-| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from; see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `notReadByTests`; see [Files written into the source tree](#files-written-into-the-source-tree) |
 
 Reasons, one per test:
 
@@ -189,7 +189,13 @@ has never seen always runs.
 
 A file the tests or the build write into the source tree outside the build directories counts as
 a change by its content, tracked or not, ignored or not. A run that sees it changed runs
-everything, and names it, one line per kind:
+everything, and names it, one line per kind. Files under a directory git tracks nothing in are named
+by the outermost such directory, as a glob with its file count (`docs-client/node_modules/* (62,444
+files)`), the largest first; a file beside a tracked one is named as itself. Each line ends with the
+globs to list in [`notReadByTests`](#properties-and-tasks), and the condition under which that is
+safe. No glob is offered for a directory that holds sources: a source file among the changed files,
+or a source tree laid out as a source set's (`main/java`, `main/kotlin`) in it or one level below.
+Listed, a later change to those sources would no longer count as one.
 
 - **Changed during the last capture build** (`written-during-capture`): created, rewritten or
   deleted while the capture that dated the map ran, by its tests or its tasks. If a test writes it
@@ -204,11 +210,14 @@ everything, and names it, one line per kind:
 - **In CI**, a file the capture's tests create is in the change set of every fresh checkout that
   lacks it, so such a project runs everything on every pull request until the file moves.
 - **Untracked in a source directory** (`generated-in-sources`): a file a build task generates into
-  a source or resource directory, or one not yet added to git. It is on the classpath, tests can
-  read it, and its changes are changes; nothing is offered to make it stop counting.
+  a source or resource directory, or one not yet added to git. Tests read the copy the build puts
+  on the classpath, which is compared on its own (see [Generated files on the test
+  classpath](#generated-files-on-the-test-classpath)), so the generated directory can be listed in
+  `notReadByTests` when nothing reads it otherwise.
 - **Untracked** (`untracked`): any other untracked or ignored file; it counts by content.
 
-A file HEAD tracks gets no line: the run cannot tell a test's write from your edit.
+A file HEAD tracks gets no line: the run cannot tell a test's write from your edit. When git cannot
+say which forcing paths it tracks, one line counts them and `yoriwakeExplain<Task>` lists a sample.
 
 ### Generated files on the test classpath
 
@@ -1351,7 +1360,16 @@ class and method, and Spock features by their specification and feature name
 matching any characters, slashes included: `docs/*` is everything under `docs/`, `*.md` every
 Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
 a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
-nothing reads: a test that reads a listed file is skipped when only that file changed.
+no test and no build step reads, except to compile or copy them onto the test classpath: a selecting
+run compares what lands there by content, a changed class running the tests that executed it and a
+changed resource the tests that read it, but a test that reads a listed file itself is skipped when
+only that file changed. Two shapes that fit: a resource directory a build task regenerates on every
+run, such as `gen-src/*` holding a versions file stamped with the commit, and a package manager's
+tree such as `docs-client/node_modules/*` that no test reads. A run forced by such files names the
+globs; see [Files written into the source tree](#files-written-into-the-source-tree). A listed glob
+also covers files added under it later, and a listed directory of generated sources no longer
+forces a run when they change, nor gets the checks a changed source gets (annotations, constants):
+list one only if no test depends on what is generated in it.
 
 `environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
 entry or one of only `*` fails the build. See [The environment

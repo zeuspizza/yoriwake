@@ -460,6 +460,8 @@ def unit_suite():
          "--tests", "*SelectionRecordTest*",
          # The full-run marker: how commit messages are read for it.
          "--tests", "*CommitScanTest*",
+         # What a forced run says about its untracked paths: one git call however many there are.
+         "--tests", "*ForcingPathsTest*",
          # Which moved classpath files reach the selector, and which force the run.
          "--tests", "*ClasspathFilesTest*",
          "--rerun"])
@@ -2365,6 +2367,23 @@ MUTATIONS = [
      "                path in moves -> Origin.WRITTEN_DURING_CAPTURE",
      "                true -> Origin.WRITTEN_DURING_CAPTURE",
      functional_suite, "an untracked fixture added after the capture forces the selecting run"),
+    # One pathspec per forcing path overran the command line on a large untracked tree; git then
+    # failed, and a run forced by tens of thousands of files said nothing about them.
+    ("git is asked one pathspec per forcing path", FORCING_PATHS,
+     "            tracked = { paths -> tree?.let { listed -> paths.filterTo(mutableSetOf(), listed::tracks) } },",
+     "            tracked = { paths -> git(listOf(\"ls-files\", \"--\") + paths); "
+     "tree?.let { listed -> paths.filterTo(mutableSetOf(), listed::tracks) } },",
+     unit_suite, "git is asked the same arguments for ten thousand forcing paths as for ten"),
+    ("a run whose forcing paths git could not tell apart says nothing", FORCING_PATHS,
+     "            if (!classified.untold || count == 0) return emptyList()",
+     "            if (classified.untold || count >= 0) return emptyList()",
+     unit_suite, "when git cannot say what is tracked the forcing paths are still counted"),
+    # A build in a subdirectory of its repository: a directory is looked up under the build's
+    # prefix, or every untracked path there is offered as one glob over the whole tree above it.
+    ("a directory is looked up only from the repository's top", FORCING_PATHS,
+     '        fun holds(dir: String) = "$prefix$dir" in held || dir in held',
+     "        fun holds(dir: String) = dir in held",
+     unit_suite, "a build under a subdirectory of the repo names an untracked directory by its own path"),
     # A build-produced file on the test classpath that moved since the capture forces, named, unless
     # the map records which tests read it, and a map that records no such files forces once and
     # captures them: a file generated from git state or the clock reaches a test through no tracked
