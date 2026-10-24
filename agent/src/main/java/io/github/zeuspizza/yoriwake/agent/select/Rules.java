@@ -87,6 +87,9 @@ public final class Rules {
         if (verdict == Verdict.ALWAYS_RUN) {
             found.add(Rule.ALWAYS_RUN);
         }
+        if (verdict == Verdict.DECLARES_CHANGED_PATH) {
+            found.add(Rule.DECLARES_CHANGED_PATH);
+        }
         if (verdict == Verdict.CLASS_GRANULARITY) {
             found.add(Rule.CLASS_GRANULARITY);
         }

@@ -20,6 +20,8 @@ public enum Verdict {
     SELECTION_FAILED,
     /** Pinned by pattern or tag. */
     ALWAYS_RUN,
+    /** Its declared-dependency tag matches a changed path; see {@link DependsOn}. */
+    DECLARES_CHANGED_PATH,
     /** Its engine cannot honour an exclusion; see {@link FilterRule#engineRunsEverything}. */
     ENGINE_RUNS_EVERYTHING,
     /** Excluded on its own, included because another test in its class is selected. */

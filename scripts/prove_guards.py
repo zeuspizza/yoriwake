@@ -136,6 +136,7 @@ SELECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/S
 CLASSPATH_SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
 NOT_READ = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
+PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
 CLASSPATH_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
 WORKING_TREE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
@@ -687,6 +688,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "ComplementFunctionalTest": 214,
     "ConfigurationCacheFunctionalTest": 40,
     "DecisionRulesFunctionalTest": 26,
+    # Estimated from MultiProjectFunctionalTest, as many builds of the same shape, until an
+    # every-guard run measures it.
+    "DeclaredDependenciesFunctionalTest": 36,
     "DeclineFunctionalTest": 65,
     "DevelocityFunctionalTest": 79,
     "EnvironmentFingerprintFunctionalTest": 82,
@@ -1230,6 +1234,20 @@ MUTATIONS = [
     # CLASS GRANULARITY. It can only ever INCLUDE, so it cannot lose a failure --
     # what it can do is become the default nobody chose, which is a narrowing change for every
     # adopter made by a one-word edit.
+    # A declared dependency is one coverage cannot see: a changed path a test's tag or a task's
+    # dependsOn matches must run its declarers, or the declaration protects nothing.
+    ("a test's declared dependency no longer selects it", SELECTION_FILTER,
+     "        if (declaresChangedPath(descriptor)) {",
+     "        if (false) {",
+     agent_suite, "a test whose declared dependency matches a changed path is selected"),
+    ("a task's declared dependency no longer runs it in full", SELECTION_WIRING,
+     "        if (declaredHit != null && !widening.forces) {",
+     "        if (false && declaredHit != null && !widening.forces) {",
+     functional_suite, "a path the build declares for a task runs that task in full"),
+    ("a double star in a declared dependency matches exactly one directory", PATH_GLOB,
+     "            for (int next = s; next <= segments.length; next++) {",
+     "            for (int next = s + 1; next <= Math.min(s + 1, segments.length); next++) {",
+     agent_suite, "a star stays within a directory, a double star crosses any number"),
     ("class granularity becomes the default nobody asked for", SELECTION_FILTER,
      'System.getProperty(CLASS_GRANULARITY_PROPERTY, "false")',
      'System.getProperty(CLASS_GRANULARITY_PROPERTY, "true")',

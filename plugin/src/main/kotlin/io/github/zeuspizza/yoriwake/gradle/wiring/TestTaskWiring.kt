@@ -30,6 +30,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
+import io.github.zeuspizza.yoriwake.gradle.change.Declarations
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -98,6 +99,11 @@ internal class TestTaskWiring(internal val settings: Settings) {
             atLeastOne(extension.fullRunEveryDays.orNull, "fullRunEveryDays", project.path),
         )
         val notReadByTests = extension.notReadByTests.getOrElse(emptyList())
+        // Validated now, so a wrong entry fails the build rather than declaring for nothing.
+        val projectDir = project.rootDir.toPath().relativize(project.projectDir.toPath()).joinToString("/")
+        val declarations = Declarations.parse(
+            extension.dependsOn.getOrElse(emptyList()), projectDir, project.path, names.toSet(),
+        )
         val environment = EnvironmentFingerprint.Rules(
             validNames(extension.systemPropertyIgnore.getOrElse(emptyList()), "systemPropertyIgnore", project.path),
             validNames(extension.environmentInclude.getOrElse(emptyList()), "environmentInclude", project.path),
@@ -127,7 +133,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, environment, buildMemo) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, environment, buildMemo, projectDir, declarations) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -183,6 +189,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         notReadByTests: List<String>,
         environment: EnvironmentFingerprint.Rules,
         buildMemo: BuildMemo?,
+        projectDir: String,
+        declarations: List<Declarations.Declaration>,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
         val scopeOutcome = applyJacocoIncludes(project, test, scope)
@@ -312,7 +320,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
-            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, environment)
+            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, environment,
+                projectDir, declarations.filter { it.task == test.name })
         } else {
             declineSelection(test, mapDir, runPlan)
         }

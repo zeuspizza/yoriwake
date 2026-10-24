@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
+
 ### Changed
 
 - A run forced by untracked files names their directories and how to list them in `notReadByTests`. Map: left alone.

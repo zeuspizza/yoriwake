@@ -268,6 +268,7 @@ class TestTaskWiringCharacterizationTest {
               prop yoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
               prop yoriwake.internal.capture.root=<project>
               prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
+              prop yoriwake.project.dir=
               prop yoriwake.select=true
               prop yoriwake.select.classGranularity=false
               jvmArgs []
@@ -353,6 +354,7 @@ class TestTaskWiringCharacterizationTest {
             prop yoriwake.internal.capture.outputDir=
             prop yoriwake.internal.capture.root=<project>
             prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
+            prop yoriwake.project.dir=
             prop yoriwake.run.token=<token>
             prop yoriwake.select=true
             prop yoriwake.select.classGranularity=false
@@ -361,6 +363,7 @@ class TestTaskWiringCharacterizationTest {
             arg -Dyoriwake.internal.capture.outputDir
             arg -Dyoriwake.internal.capture.root=<project>
             arg -Dyoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
+            arg -Dyoriwake.project.dir
             arg -Dyoriwake.run.token=<token>
             arg -Dyoriwake.select=true
             arg -Dyoriwake.select.classGranularity=false
@@ -377,6 +380,7 @@ class TestTaskWiringCharacterizationTest {
             yoriwake.change.exemptTestClasses=
             yoriwake.change.movedFiles=
             yoriwake.change.ownTestClasses=
+            yoriwake.change.paths=src/main/java/dev/sample/Alpha.java
             yoriwake.change.unmappable=
             """.trimIndent(),
             selectChangeSet,
