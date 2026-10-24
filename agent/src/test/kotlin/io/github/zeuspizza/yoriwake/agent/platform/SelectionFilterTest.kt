@@ -32,6 +32,8 @@ class SelectionFilterTest {
         AgentContract.COMPLEMENT_RECORD_PROPERTY,
         AgentContract.REFUSED_PROPERTY,
         AgentContract.ALWAYS_RUN_PROPERTY,
+        AgentContract.CHANGED_PATHS_PROPERTY,
+        AgentContract.PROJECT_DIR_PROPERTY,
     )
 
     @AfterEach
@@ -215,6 +217,46 @@ class SelectionFilterTest {
 
         assertTrue(SelectionFilter(false).apply(Descriptor(testId("Beta"), test = true)).included())
         assertTrue(SelectionFilter(false).apply(Descriptor(testId("Alpha"), test = true)).included())
+    }
+
+    /** A test carrying JUnit Platform tags, as `@Tag` gives them. */
+    private class Tagged(id: String, private val tags: Set<String>) :
+        AbstractTestDescriptor(UniqueId.parse(id), id) {
+        override fun getType() = TestDescriptor.Type.TEST
+        override fun getSource(): Optional<TestSource> = Optional.empty()
+        override fun getTags(): Set<org.junit.platform.engine.TestTag> =
+            tags.map { org.junit.platform.engine.TestTag.create(it) }.toSet()
+    }
+
+    /** Whether [tag] on Beta, which the change cannot reach, selects it when [paths] changed in [projectDir]. */
+    private fun declares(dir: File, tag: String, paths: String, projectDir: String = ""): Boolean {
+        writeMap(dir, record("Alpha", "com.acme.A"), record("Beta", "com.acme.B"))
+        selectingAgainst(dir, "com.acme.A")
+        System.setProperty(AgentContract.CHANGED_PATHS_PROPERTY, paths)
+        System.setProperty(AgentContract.PROJECT_DIR_PROPERTY, projectDir)
+        assertTrue(SelectionFilter(false).apply(Tagged(testId("Beta"), emptySet())).excluded(), "untagged, it must be left out")
+        return SelectionFilter(false).apply(Tagged(testId("Beta"), setOf(tag))).included()
+    }
+
+    @Test
+    fun `a test whose declared dependency matches a changed path is selected`(@TempDir dir: File) {
+        assertTrue(declares(dir, "yoriwake-depends-on:/docker/**", "src/main/java/com/acme/A.java,docker/db/init.sql"))
+    }
+
+    @Test
+    fun `a declared dependency no changed path matches selects nothing`(@TempDir dir: File) {
+        assertFalse(declares(dir, "yoriwake-depends-on:/docker/**", "src/main/java/com/acme/A.java,dockerfile"))
+    }
+
+    @Test
+    fun `a declared dependency is relative to the test's project, or to the root with a slash`(@TempDir dir: File) {
+        assertTrue(declares(dir, "yoriwake-depends-on:src/main/resources/db/**", "app/src/main/resources/db/V2.sql", "app"))
+        assertFalse(declares(dir, "yoriwake-depends-on:src/main/resources/db/**", "src/main/resources/db/V2.sql", "app"))
+    }
+
+    @Test
+    fun `a declared dependency that cannot be read selects its test`(@TempDir dir: File) {
+        assertTrue(declares(dir, "yoriwake-depends-on:**", "src/main/java/com/acme/A.java"))
     }
 
     @Test

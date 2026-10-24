@@ -1324,6 +1324,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `notReadByTests` | `List<String>` | empty | Globs of files no test or build reads: a changed one is no change. |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
+| `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |
 
 For example:
 
@@ -1337,6 +1338,7 @@ yoriwake {
     notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
     environmentInclude.add("DB_MODE")      // a variable compared besides TZ, LANG and LC_ALL
     systemPropertyIgnore.add("build.number") // a property left out of that comparison
+    dependsOn("integrationTest", "/docker/**") // a changed compose file runs integrationTest in full
 }
 ```
 
@@ -1351,6 +1353,15 @@ matching any characters, slashes included: `docs/*` is everything under `docs/`,
 Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
 a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
 nothing reads: a test that reads a listed file is skipped when only that file changed.
+
+`dependsOn` declares what coverage cannot see a test depend on: a compose file handed to a
+container, migrations a database runs, fixtures another process reads. Each entry is a `Test` task
+of the project and an Ant-style glob, relative to the project or, with a leading `/`, to the root
+project: `*` and `?` within a directory, `**` as a whole segment for any number of directories. A
+changed path an entry matches runs that task in full, whatever else the change holds; a single test
+or class declares the same with `@Tag("yoriwake-depends-on:<glob>")`, which selects it when such a
+path changes. A declaration can only cause more tests to run. An entry that matches every path, or
+names no `Test` task of its project, fails the build.
 
 `environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
 entry or one of only `*` fails the build. See [The environment
