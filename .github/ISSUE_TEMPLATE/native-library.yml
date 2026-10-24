@@ -1,0 +1,66 @@
+name: Propose a native library
+description: Ask for a native library to join the reviewed list, with what a reviewer needs to check it.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A library on the [reviewed list](https://github.com/zeuspizza/yoriwake/blob/main/docs/reference.md#native-libraries)
+        keeps selection narrow after it loads, so the list is only as safe as each review. A reviewer
+        reads the native sources at the version you name and checks every answer below against them.
+        The same fields serve a re-review when a listed library ships a new major version.
+
+  - type: input
+    id: library
+    attributes:
+      label: Library and version
+      description: The artifact's coordinates and the exact version, for example `org.xerial.snappy:snappy-java:1.1.10.8`.
+    validations:
+      required: true
+
+  - type: input
+    id: sources
+    attributes:
+      label: Native sources at that version
+      description: A link to the native sources at the release's tag, not a branch.
+    validations:
+      required: true
+
+  - type: textarea
+    id: opens
+    attributes:
+      label: Every file open, mmap, directory scan and dlopen
+      description: >-
+        One line each, with the source file and line, and where the path comes from: a constant, the
+        environment, a system property, or an argument from Java (and which Java call passes it).
+        Write "none" if the native code opens nothing by path.
+    validations:
+      required: true
+
+  - type: textarea
+    id: file-names
+    attributes:
+      label: The file names its loader gives the library
+      description: >-
+        Per OS and architecture, including the renamed copy the loader extracts to a temporary
+        directory, and any property or variable that overrides the name or the directory.
+    validations:
+      required: true
+
+  - type: input
+    id: loading-class
+    attributes:
+      label: The class that calls System.load or System.loadLibrary
+      description: Its fully qualified name, and whether a shaded copy of it is published.
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: >-
+        For example a public API that lets a caller pass a path to the native code, or a project
+        whose tests load the library.
+    validations:
+      required: false
