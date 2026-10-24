@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -1872,6 +1873,53 @@ def _sweep_step(text, opener):
             'while IFS= read -r __l; do eval "$__a+=(\\"\\$__l\\")"; done; }\n' + script)
 
 
+SAMPLER = os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "machine_sampler.sh")
+
+
+def case_the_machine_sampler_logs_memory_disk_and_the_largest_processes():
+    """What a runner shut down for want of memory or disk leaves in its job log."""
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        meminfo = os.path.join(root, "meminfo")
+        with open(meminfo, "w", encoding="utf-8") as handle:
+            handle.write("MemTotal: 16384000 kB\nMemAvailable: 4096000 kB\nSwapTotal: 4096000 kB\n"
+                         "SwapFree: 3072000 kB\n")
+        sampler = subprocess.Popen(["sh", SAMPLER, "1"], stdout=subprocess.PIPE, text=True,
+                                   env={**os.environ, "MACHINE_SAMPLER_MEMINFO": meminfo})
+        time.sleep(2.5)
+        sampler.terminate()
+        lines = sampler.communicate()[0].splitlines()
+        if len(lines) < 3 or "memory total 16000M" not in lines[0]:
+            problems += fail(f"the sampler printed no header and two samples: {lines}")
+        for line in lines[1:]:
+            if not (line.startswith("[machine] ") and "memory used 12000M available 4000M, swap used 1000M" in line
+                    and re.search(r"free on / \d+M, on the workspace \d+M; largest: \S", line)):
+                problems += fail(f"a sample lacks memory, swap, disk or the largest processes: {line!r}")
+        tools = os.path.join(root, "bin")
+        os.makedirs(tools)
+        for tool in ("ps", "awk", "sort"):
+            os.symlink(shutil.which(tool), os.path.join(tools, tool))
+        done = subprocess.run([shutil.which("sh"), SAMPLER, "1"], capture_output=True, text=True,
+                              timeout=10, env={**os.environ, "PATH": tools})
+        if done.returncode != 0 or done.stdout.strip() != "[machine] not sampling: df is not on PATH":
+            problems += fail(f"a sampler without df did not say so once and exit 0: {done.returncode}, {done.stdout!r}")
+    return problems
+
+
+def case_every_measuring_step_samples_the_machine_until_it_ends():
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for opener in ("\n      - name: record and cut into slices", "\n      - name: measure this slice"):
+        script = _sweep_step(text, opener)
+        start = script.find("bench/machine_sampler.sh & sampler=$!")
+        if start < 0 or "trap 'kill \"$sampler\" 2>/dev/null || true' EXIT" not in script \
+                or start > script.find("python3 bench/run.py"):
+            problems += fail(f"sweep.yml:{opener.split('name: ')[1]} does not sample the machine from "
+                             f"before the build until the step ends")
+    return problems
+
+
 def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
     """One failed project must not cost the others their rows, and a sweep short of one must say so
     and fail: kafka's record failed and kafka-core lost a shard, so only okio is merged, the release
@@ -2228,6 +2276,8 @@ CASES = (
     case_a_completion_that_cannot_complete_is_refused_before_it_measures,
     case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft,
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
+    case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
+    case_every_measuring_step_samples_the_machine_until_it_ends,
 )
 
 
