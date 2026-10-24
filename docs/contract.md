@@ -7,9 +7,9 @@ tooling or changing either side.
 
 The names are defined once, in
 [`AgentContract`](../agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contract/AgentContract.java).
-The plugin compiles against it, so the two sides cannot drift. A test checks every table below
-against that class, so this page cannot drift from it either. Names not listed here are internal and
-can change in any release.
+The plugin compiles against it, so the two sides cannot drift. A test checks every table of
+constants below against that class, so this page cannot drift from it either. Names and
+tokens not listed here are internal and can change in any release.
 
 ## System properties
 
@@ -335,6 +335,33 @@ it ended. A test JVM that wrote no record (killed, halted) leaves its tests out 
 | `STAMP_CONFIGURATION_NOTE` | `configuration` | A SHA-256 of the task's system properties and JVM arguments other than yoriwake's, its include and exclude patterns and its framework's filters |
 
 A record of another version, or whose rows do not match `rows`, is unusable whole.
+
+## Published tokens
+
+Every token the plugin and the agent write for a script or a person to match on, by category. Each
+is spelled exactly as listed, and a rename is a breaking change. The same spelling can mean
+different things in two categories. A test checks this table against the code, both ways.
+
+| Category | Tokens | Where they appear |
+|---|---|---|
+| audit-blocker | `class-file-unsupported`, `classes-absent-from-map`, `classpath-unresolved-here`, `decode-refused`, `develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`, `framework-unknown`, `git-unavailable`, `gradle-too-old`, `in-jvm-parallelism`, `inline-scan-incomplete`, `isolated-projects`, `jacoco-disabled`, `kotlin-multiplatform`, `no-host-plugin`, `not-on-junit-platform`, `recorded-no-coverage`, `scope-not-applied`, `smap-absent`, `test-jvm-unsupported` | `audit.json` and the audit's console report: what stops the task narrowing |
+| audit-state | `DO NOT ENABLE`, `NARROWING ONLY`, `NO CONCLUSION`, `WORTH IT` | `audit.json` (`state`) and the audit's console report: the payback verdict |
+| capture-mode | `isolated`, `mixed`, `shared` | `jvm-mode.tsv` (`isolated`, `shared`); `yoriwakeExplain<Task>`, for the whole map |
+| console-tally | `engine-runs-everything`, `full-run`, `not-in-map`, `not-known-to-pass`, `reaches-change`, `shares-jvm-with-change`, `skipped` | the `of N tests discovered` console line, as its keys |
+| decline-kind | `gradle-too-old`, `includes-rejected`, `isolated-projects`, `jacoco-disabled`, `kotlin-multiplatform`, `no-host-plugin`, `no-jacoco-extension`, `no-jacoco-plugin`, `no-packages-derived` | the console line of a task the plugin declines |
+| digest-silence | `digest-table-absent`, `digest-walk-budget-spent`, `digest-walk-nothing-to-scan`, `digest-walk-unaccounted-output`, `digest-walk-unreadable` | `explain.json` (`digestSilence`): why the compiled-bytes rule compared nothing |
+| filter-verdict | `no`, `yes` | the configuring console line, as `unfiltered=` |
+| forcing-path-origin | `generated-in-sources`, `untracked`, `written-during-capture` | `explain.json` (`forcingPathOrigins`) and the console |
+| framework | `junit-platform` | `task-facts`, which the audit reads |
+| full-run-kind | `daemon-refused`, `empty-change-set`, `map-unusable`, `no-coverage-for-changed`, `no-coverage-for-changed-bytes`, `startup-coverage`, `test-jvm-unsupported`, `unmappable-paths` | `decisions.tsv` (`full-run-kind`) and `explain.json` (`fullRunKind`) |
+| map-outcome | `FLAKY`, `NONE`, `SKIPPED`, `SUCCESSFUL`, `UNKNOWN` | `coverage.tsv`, as a record's outcome |
+| refusal-kind | `annotations-changed`, `annotations-unrecorded`, `bytes-unrecorded`, `change-set-stale`, `change-set-unreadable`, `class-file-unsupported`, `classpath-files-changed`, `classpath-files-unrecorded`, `complement-no-record`, `complement-record-mismatch`, `constant-changed`, `constant-unrecorded`, `decline-undetermined`, `develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`, `environment-changed`, `environment-unrecorded`, `full-run-branch`, `full-run-commit`, `full-run-requested`, `full-run-scheduled`, `in-jvm-parallelism`, `map-untrusted`, `map-unverified`, `no-change-set`, `scan-exhausted`, `scan-refused`, `scan-threw`, `smap-absent`, `snapshot-absent`, `stamp-absent`, `stamp-unrelatable`, `test-jvm-unsupported`, `tests-named`, `unnamed` | `decisions.tsv` (`refusal-kind`), `explain.json` (`refusalKind`) and the console |
+| refusals-key | `(inline widening)` | `explain.json` (`refusals`) |
+| row-reason | `ALREADY_RAN`, `ALWAYS_RUN`, `CLASS_GRANULARITY`, `DAEMON_REFUSED`, `ENGINE_RUNS_EVERYTHING`, `FULL_RUN`, `NOT_ALREADY_RAN`, `NOT_IN_MAP`, `NOT_KNOWN_TO_PASS`, `OBSERVING`, `REACHES_CHANGE`, `SELECTION_FAILED`, `SELECTION_NOT_REQUESTED`, `SHARES_JVM_WITH_CHANGE`, `SKIPPED` | `decisions.tsv`, as a row's reason |
+| row-rule | `always-run`, `changed-bytes`, `class-granularity`, `class-setup`, `engine-runs-everything`, `none`, `not-in-map`, `not-known-to-pass`, `own-class-changed`, `reaches-change`, `shares-jvm-changed-bytes`, `shares-jvm-changed-class`, `shares-jvm-moved-classpath-file`, `shares-jvm-unobserved`, `shares-jvm-unpositioned`, `unknown` | `decisions.tsv`, in its `#+` rule lines |
+| row-verdict | `excluded`, `included` | `decisions.tsv`, as a row's verdict |
+| rules-basis | `complete`, `failed`, `from-refused-inputs`, `no-change-set`, `no-map` | `decisions.tsv` (`rules`) |
+| run-outcome | `complemented`, `full-run`, `narrowed`, `not-decided`, `selection-not-requested` | `decisions.tsv` (`outcome`) |
 
 ## Versions
 

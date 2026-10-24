@@ -1932,6 +1932,37 @@ def unfinished_map(checkout, module, task):
     return None
 
 
+def record_without_map(recording, capture_map, capture_log, module, task_path=None, unfinished=None):
+    """Why a recording run must stop after a capture that left no map, or None.
+
+    A recording run hands its map to every shard of its project. Without one, each shard refuses
+    and the record job's baseline, preflight and compile gate are spent for nothing: kestra and
+    kotlinx-serialization pin Gradle 8.7, the plugin declines below its floor, and both record jobs
+    passed while their shards found no map (kestra has since moved to a Gradle the plugin supports).
+    What the plugin said about the module or its test task is the reason, so it is quoted; an
+    unsharded run keeps forcing every row as before.
+    """
+    if not recording or capture_map:
+        return None
+    path = f":{module}" if module else ":"
+    # The project's declines name the project; the test task's own lines (a decode that could not
+    # update the map) name the task.
+    said = [f"[yoriwake] {path}: "] + ([f"[yoriwake] {task_path} ", f"[yoriwake] {task_path}: "]
+                                       if task_path else [])
+    try:
+        with open(capture_log, encoding="utf-8", errors="replace") as handle:
+            lines = [line.rstrip("\n") for line in handle if line.startswith(tuple(said))]
+    except OSError:
+        lines = []
+    why = [f"  {line}" for line in lines]
+    if unfinished:
+        why.insert(0, f"  the capture wrote raw records under {unfinished} but never merged them")
+    elif not lines:
+        why = [f"  the plugin said nothing about {path} in {capture_log}"]
+    return "\n".join([f"REFUSING: the capture left no map for {path}, so no shard could measure "
+                       f"against this record"] + why)
+
+
 def misses_a_row_that_skipped_nothing_cannot_have(missed, selected_ran, full_ran, decisions):
     """Drops apparent misses from a row where selection excluded nothing. Returns what survives.
 
@@ -4962,6 +4993,11 @@ def main():
         # records are kept whole, `.exec` included: they are what every later question about this
         # map is answered from, and the next instrumented build clears them.
         capture_map = find_map(checkout, module, task_name)
+        refusal = record_without_map(args.accepted_out, capture_map, capture_log, module,
+                                     task_path, unfinished_map(checkout, module, task_name))
+        if refusal:
+            print(refusal, flush=True)
+            return 1
         RUN_STAMPS.update({
             "capture_arm": arm_stats(capture_log),
             "capture_touch_all_reasons": sweep_data.touch_all_reasons(capture_map),
