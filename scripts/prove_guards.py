@@ -65,7 +65,8 @@ def source(path):
 
 # Guards prove test outcomes, and the functional suite's coverage would only add time; the same
 # arguments everywhere, so the warm-up's configuration cache entry is the one the runs reuse.
-GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false"]
+# A mutation may leave the compiler something to warn about; it is judged on its test, not refused.
+GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false", "-Pyoriwake.kotlinWarningsAsErrors=false"]
 
 
 def gradle(args):
