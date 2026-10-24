@@ -249,6 +249,8 @@ jobs:
           cp "bench/logs/$NAME/accepted.json" "record/$NAME/"
           tar -czf "record/$NAME/state.tar.gz" -C bench "logs/$NAME" "results/$NAME.json" \
             "$CHECKOUT" logs/evidence
+      # The slices, each shard and the merge read it. Three days cover a weekend re-run of a
+      # scheduled sweep's failed jobs; the merge must finish before the first record expires.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: record-${{ matrix.project.project }}
@@ -256,6 +258,7 @@ jobs:
           path: record/
       # A record job that fails says why in its logs, not in the job's own output: the warm-up's
       # build error, the stalled capture's last lines. Not named record-*, which the slices read.
+      # A person reads it to see why the record job failed.
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -371,6 +374,7 @@ jobs:
           mapfile -t args < <(jq -r '.[] | select(. != "--recapture")' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted "bench/logs/$NAME/accepted.json" \
             --shard "$SHARD"
+      # The merge reads it; kept as long as the records it was cut from.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shard-${{ matrix.slice.project }}-${{ matrix.slice.shard }}-of-${{ matrix.slice.of }}

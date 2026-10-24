@@ -27,6 +27,8 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import io.github.zeuspizza.yoriwake.agent.engines.PlatformEvents;
 import io.github.zeuspizza.yoriwake.agent.host.AttachedLoader;
 import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun;
+import io.github.zeuspizza.yoriwake.agent.select.DependsOn;
+import io.github.zeuspizza.yoriwake.agent.select.PathGlob;
 import io.github.zeuspizza.yoriwake.agent.select.FilterRule;
 import io.github.zeuspizza.yoriwake.agent.select.SelectionRecordFile;
 import io.github.zeuspizza.yoriwake.agent.select.Selector;
@@ -269,6 +271,35 @@ public class SelectionFilter implements PostDiscoveryFilter {
         return new String[] {RUN_FULL, kind == null ? "" : kind.token()};
     }
 
+    /**
+     * Whether a {@code yoriwake-depends-on:} tag of the test matches a changed path. A tag that
+     * cannot be evaluated selects the test: it only ever adds, so doubt runs it.
+     */
+    private boolean declaresChangedPath(TestDescriptor descriptor) {
+        for (TestTag tag : descriptor.getTags()) {
+            String glob = DependsOn.globOf(tag.getName());
+            if (glob == null) {
+                continue;
+            }
+            try {
+                String projectDir = inputs().apply(AgentContract.PROJECT_DIR_PROPERTY);
+                String changed = inputs().apply(AgentContract.CHANGED_PATHS_PROPERTY);
+                if (projectDir == null || changed == null || PathGlob.problem(glob) != null) {
+                    return true;
+                }
+                String resolved = PathGlob.resolve(glob, projectDir);
+                for (String path : changed.split(",")) {
+                    if (!path.isEmpty() && PathGlob.matches(resolved, path)) {
+                        return true;
+                    }
+                }
+            } catch (Throwable unreadable) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // By @Tag or by pattern, so pinning needs nothing on the host's compile classpath.
     private boolean isPinned(TestDescriptor descriptor) {
         try {
@@ -388,6 +419,12 @@ public class SelectionFilter implements PostDiscoveryFilter {
             pinned.incrementAndGet();
             record(descriptor, Verdict.ALWAYS_RUN);
             return FilterResult.included("always-run by configuration");
+        }
+        // Before the map too: a declared dependency is one coverage cannot see, so no rule below
+        // could have selected the test for it, and a full run still records why it ran.
+        if (declaresChangedPath(descriptor)) {
+            record(descriptor, Verdict.DECLARES_CHANGED_PATH);
+            return FilterResult.included("it declares a dependency on a changed path");
         }
 
         Selector.Decision current = decide();

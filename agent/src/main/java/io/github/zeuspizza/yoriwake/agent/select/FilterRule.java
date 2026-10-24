@@ -36,6 +36,8 @@ public final class FilterRule {
             AgentContract.SELECT_PROPERTY,
             AgentContract.CHANGED_CLASSES_PROPERTY,
             AgentContract.UNMAPPABLE_PATHS_PROPERTY,
+            AgentContract.CHANGED_PATHS_PROPERTY,
+            AgentContract.PROJECT_DIR_PROPERTY,
             AgentContract.ACCOUNTED_PROPERTY,
             AgentContract.ABSENCE_PROVABLE_PROPERTY,
             AgentContract.OWN_TEST_CLASSES_PROPERTY,
@@ -57,6 +59,7 @@ public final class FilterRule {
             Arrays.asList(
                     AgentContract.CHANGED_CLASSES_PROPERTY,
                     AgentContract.UNMAPPABLE_PATHS_PROPERTY,
+                    AgentContract.CHANGED_PATHS_PROPERTY,
                     AgentContract.ABSENCE_PROVABLE_PROPERTY,
                     AgentContract.OWN_TEST_CLASSES_PROPERTY,
                     AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,

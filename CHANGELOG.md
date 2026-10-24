@@ -17,6 +17,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
 - `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
 
 ### Deprecated
@@ -30,6 +31,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.
 - A native library is proposed, and re-reviewed on a new major version, through an issue form. Map: left alone.
 - A suite on SQLite JDBC 3.53.4.0 narrows as on any reviewed library, until a connection enables extension loading. Map: left alone.
+- A suite on Netty's io_uring transport 4.2.18 or 4.2.19 narrows, until it submits an operation Netty does not. Map: left alone.
 
 ### Fixed
 
