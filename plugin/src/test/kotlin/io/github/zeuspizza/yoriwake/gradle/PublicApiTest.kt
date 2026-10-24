@@ -62,13 +62,14 @@ class PublicApiTest {
     @Test
     fun `the extension exposes exactly the properties a build script configures`() {
         val properties = YoriwakeExtension::class.java.methods
-            .filter { it.declaringClass == YoriwakeExtension::class.java && it.name.startsWith("get") }
+            // Not synthetic: a deprecated property also compiles to a `get<name>$annotations` method.
+            .filter { it.declaringClass == YoriwakeExtension::class.java && it.name.startsWith("get") && !it.isSynthetic }
             .map { it.name.removePrefix("get").replaceFirstChar(Char::lowercase) }
             .toSet()
 
         assertEquals(
             setOf(
-                "enabled", "alwaysRun", "fullRunBranches", "fullRunEveryBuilds", "fullRunEveryDays", "notReadByTests",
+                "enabled", "alwaysRun", "fullRunBranches", "fullRunEveryBuilds", "fullRunEveryDays", "notReadByTests", "pathIgnore",
                 "environmentInclude", "systemPropertyIgnore", "dependsOn", "largeChangeThreshold",
             ),
             properties,

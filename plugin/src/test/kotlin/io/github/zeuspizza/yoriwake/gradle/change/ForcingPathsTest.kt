@@ -134,7 +134,7 @@ class ForcingPathsTest {
         assertContains(lines[0], "and 2 more")
         assertFalse("app/f6.log" in lines[0])
         assertContains(lines[0], "derby.stream.error.file")
-        assertContains(lines[1], "app/src/main/resources/*")
+        assertContains(lines[1], "app/src/main/resources/**")
         assertContains(lines[2], "app/data.json")
         assertTrue(lines.drop(1).none { "derby.stream.error.file" in it })
         assertContains(lines[3], "1 other")
@@ -145,10 +145,10 @@ class ForcingPathsTest {
         val path = "app/gen-src/main/resources/META-INF/app.versions.properties"
         val classified = classify(listOf(path))
 
-        assertEquals(mapOf(path to "app/gen-src/*"), classified.names)
+        assertEquals(mapOf(path to "app/gen-src/**"), classified.names)
         val line = ForcingPaths.lines(":app:test", classified).single()
-        assertContains(line, "app/gen-src/* is untracked")
-        assertContains(line, "list it in notReadByTests: \"app/gen-src/*\".")
+        assertContains(line, "app/gen-src/** is untracked")
+        assertContains(line, "list it in pathIgnore: \"app/gen-src/**\".")
     }
 
     @Test
@@ -159,10 +159,10 @@ class ForcingPathsTest {
         ))
 
         val line = ForcingPaths.lines(":app:test", classified).single()
-        assertContains(line, "app/gen-src/* (2 files)")
-        assertContains(line, "list it in notReadByTests: \"app/web/dist/*\".")
-        assertContains(line, "app/gen-src/* holds source files, so no glob is offered for it")
-        assertFalse("\"app/gen-src/*\"" in line, line)
+        assertContains(line, "app/gen-src/** (2 files)")
+        assertContains(line, "list it in pathIgnore: \"app/web/dist/**\".")
+        assertContains(line, "app/gen-src/** holds source files, so no glob is offered for it")
+        assertFalse("\"app/gen-src/**\"" in line, line)
     }
 
     @Test
@@ -170,8 +170,8 @@ class ForcingPathsTest {
         val classified = classify(listOf("app/gen-src/main/resources/app.properties"), sourceRoots = setOf("app/gen-src"))
 
         val line = ForcingPaths.lines(":app:test", classified).single()
-        assertContains(line, "app/gen-src/* holds source files, so no glob is offered for it")
-        assertFalse("notReadByTests" in line, line)
+        assertContains(line, "app/gen-src/** holds source files, so no glob is offered for it")
+        assertFalse("in pathIgnore: " in line, line)
     }
 
     @Test
@@ -198,8 +198,8 @@ class ForcingPathsTest {
     fun `when every directory holds sources, only the reason is given`() {
         val line = ForcingPaths.lines(":app:test", classify(listOf("app/gen-src/main/kotlin/dev/A.kt"))).single()
 
-        assertContains(line, "app/gen-src/* holds source files, so no glob is offered for it")
-        assertFalse("notReadByTests" in line, line)
+        assertContains(line, "app/gen-src/** holds source files, so no glob is offered for it")
+        assertFalse("in pathIgnore: " in line, line)
     }
 
     @Test
@@ -214,8 +214,8 @@ class ForcingPathsTest {
 
         val line = ForcingPaths.lines(":app:test", classified).single()
 
-        assertTrue(line.startsWith("app/web/node_modules/* (1,200 files), app/gen-src/* are untracked"), line)
-        assertContains(line, "notReadByTests: \"app/web/node_modules/*\", \"app/gen-src/*\".")
+        assertTrue(line.startsWith("app/web/node_modules/** (1,200 files), app/gen-src/** are untracked"), line)
+        assertContains(line, "pathIgnore: \"app/web/node_modules/**\", \"app/gen-src/**\".")
         assertFalse("m1/" in line, line)
     }
 
@@ -226,9 +226,9 @@ class ForcingPathsTest {
 
         val line = ForcingPaths.lines(":app:test", classified).single()
 
-        assertTrue(line.startsWith("app/out/* (3 files) changed during :app:test's last capture build"), line)
+        assertTrue(line.startsWith("app/out/** (3 files) changed during :app:test's last capture build"), line)
         assertFalse("(created)" in line, line)
-        assertContains(line, "list them in notReadByTests: \"app/out/*\".")
+        assertContains(line, "list them in pathIgnore: \"app/out/**\".")
     }
 
     @Test
@@ -237,13 +237,13 @@ class ForcingPathsTest {
 
         val line = ForcingPaths.lines(":app:test", classified).single()
 
-        assertContains(line, "app/d5/* and 2 more are untracked")
-        assertContains(line, "\"app/d5/*\", and the 2 more alike.")
-        assertFalse("app/d6/*" in line, line)
+        assertContains(line, "app/d5/** and 2 more are untracked")
+        assertContains(line, "\"app/d5/**\", and the 2 more alike.")
+        assertFalse("app/d6/**" in line, line)
     }
 
     @Test
-    fun `every untracked origin says when listing its paths in notReadByTests is safe`() {
+    fun `every origin pathIgnore can leave out says when listing its paths is safe, and a source directory's gets none`() {
         val classified = classify(
             listOf("app/run.log", "app/src/main/resources/x.txt", "app/data.json"),
             captured = mapOf("app/run.log" to WorkingTree.Move.CREATED),
@@ -252,11 +252,15 @@ class ForcingPathsTest {
         val lines = ForcingPaths.lines(":app:test", classified)
 
         assertEquals(3, lines.size, lines.joinToString("\n"))
-        lines.forEach {
+        val (inSources, offered) = lines.partition { "app/src/main/resources" in it }
+        offered.forEach {
             assertContains(it, "If neither a test nor a build step reads")
             assertContains(it, "onto the test classpath")
-            assertContains(it, "in notReadByTests: ")
+            assertContains(it, "in pathIgnore: ")
         }
+        // pathIgnore keeps everything under a source directory, so a glob there would do nothing.
+        assertContains(inSources.single(), "is under a source directory, which pathIgnore never leaves out")
+        assertFalse("in pathIgnore: " in inSources.single(), inSources.single())
     }
 
     @Test
@@ -343,8 +347,8 @@ class ForcingPathsTest {
 
         assertEquals(
             mapOf(
-                "src/main/resources/gen/v.properties" to "src/main/resources/gen/*",
-                "web/node_modules/m/index.js" to "web/node_modules/*",
+                "src/main/resources/gen/v.properties" to "src/main/resources/gen/**",
+                "web/node_modules/m/index.js" to "web/node_modules/**",
             ),
             classified.names,
         )

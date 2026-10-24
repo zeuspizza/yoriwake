@@ -1122,7 +1122,7 @@ class CoverageDecoderTest {
 
         assertEquals(
             listOf(
-                listOf("0", AgentContract.RESOURCE_RECORDED, ""),
+                listOf("0", AgentContract.RESOURCE_RECORDED, AgentContract.RESOURCE_RECORDED_SOURCES),
                 listOf("1", AgentContract.RESOURCE_LOADER, "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF"),
                 listOf("2", AgentContract.RESOURCE_READ, "app/build/resources/test/info.properties"),
                 listOf("2", AgentContract.RESOURCE_READ, "lib/build/libs/lib.jar!/build-info.properties"),
@@ -1150,7 +1150,7 @@ class CoverageDecoderTest {
 
         assertEquals(
             listOf(
-                listOf("0", AgentContract.RESOURCE_RECORDED, ""),
+                listOf("0", AgentContract.RESOURCE_RECORDED, AgentContract.RESOURCE_RECORDED_SOURCES),
                 listOf("1", AgentContract.RESOURCE_READ, "app/info.properties"),
             ),
             resourceRows(mapDir),
@@ -1209,7 +1209,7 @@ class CoverageDecoderTest {
 
         CoverageDecoder.decode(mapDir, listOf("com.acme"), rootDir = root)
 
-        assertEquals(listOf(listOf("0", AgentContract.RESOURCE_RECORDED, "")), resourceRows(mapDir))
+        assertEquals(listOf(listOf("0", AgentContract.RESOURCE_RECORDED, AgentContract.RESOURCE_RECORDED_SOURCES)), resourceRows(mapDir))
     }
 
     @Test

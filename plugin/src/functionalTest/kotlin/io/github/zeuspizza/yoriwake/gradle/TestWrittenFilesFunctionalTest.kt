@@ -208,7 +208,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("change-set-stale", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         // Not explained: the explain build would regenerate the resource first.
-        assertNamedWithoutRemedy(output, "app/gen/*")
+        assertNamedWithoutRemedy(output, "app/gen/**")
     }
 
     @Test
@@ -227,7 +227,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
         assertEquals("generated-in-sources", explainedOrigins(dir)["app/gen/main/resources/info.properties"])
-        assertNamedWithoutRemedy(output, "app/gen/*")
+        assertNamedWithoutRemedy(output, "app/gen/**")
     }
 
     @Test
@@ -269,7 +269,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
         assertEquals("untracked", explainedOrigins(dir)["app/fixtures/data.json"])
-        assertNamedWithoutRemedy(output, "app/fixtures/*")
+        assertNamedWithoutRemedy(output, "app/fixtures/**")
     }
 
     @Test
@@ -403,7 +403,7 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("generated-in-sources", explainedOrigins(dir)["lib/src/main/resources/stamp.txt"])
-        assertNamedWithoutRemedy(output, "lib/src/*")
+        assertNamedWithoutRemedy(output, "lib/src/**")
     }
 
     @Test
@@ -503,8 +503,8 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         assertTrue("gradle/libs.versions.toml" in explained, explained.toString())
         assertNull(explained["gradle/libs.versions.toml"])
         assertNamedWithRemedy(output, "app/run.log")
-        assertNamedWithoutRemedy(output, "app/gen/*")
-        assertNamedWithoutRemedy(output, "app/fixtures/*")
+        assertNamedWithoutRemedy(output, "app/gen/**")
+        assertNamedWithoutRemedy(output, "app/fixtures/**")
         assertTrue(output.lines().any { it.startsWith("[yoriwake] :app:test: 1 other") }, output)
     }
 
@@ -548,12 +548,13 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(both, ranTests(app(dir)), output)
         assertEquals("unmappable-paths", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
-        val generated = linesNaming(output, "app/gen-src/*")
+        // A resource directory of the build's: pathIgnore keeps it, so no glob is offered for it.
+        val generated = linesNaming(output, "app/gen-src/**")
         assertEquals(1, generated.size, output)
-        assertContains(generated.single(), "notReadByTests")
-        val modules = linesNaming(output, "app/web/node_modules/* (300 files)")
+        assertContains(generated.single(), "app/gen-src/** is under a source directory, which pathIgnore never leaves out")
+        val modules = linesNaming(output, "app/web/node_modules/** (300 files)")
         assertEquals(1, modules.size, output)
-        assertContains(modules.single(), "notReadByTests")
+        assertContains(modules.single(), "pathIgnore: \"app/web/node_modules/**\"")
         assertEquals(emptyList(), linesNaming(output, "app/web/node_modules/m1/"), output)
     }
 
@@ -573,7 +574,10 @@ class TestWrittenFilesFunctionalTest : FunctionalTestSupport() {
         }
     """.trimIndent()
 
-    /** The globs the forced run names, listed as it says. */
+    /**
+     * The two directories left out with notReadByTests, which, unlike pathIgnore, also leaves out
+     * files under a source directory: while it exists, doing so must stay safe.
+     */
     private val listedAsNamed = """
         yoriwake { notReadByTests.addAll("app/gen-src/*", "app/web/node_modules/*") }
     """

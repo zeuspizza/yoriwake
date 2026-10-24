@@ -180,6 +180,11 @@ public class SelectionFilter implements PostDiscoveryFilter {
                 // Whatever the outcome: a build reading why a run narrowed sees what was not compared.
                 decisions.note(FINGERPRINT_IGNORED_NOTE, ignored);
             }
+            // Whatever the outcome too: a wrong declaration is found by reading what it took out.
+            int pathsIgnored = FilterRule.ignoredPaths(orEmpty(inputs().apply(AgentContract.IGNORED_PATHS_PROPERTY))).size();
+            if (pathsIgnored > 0) {
+                decisions.note(AgentContract.PATHS_IGNORED_NOTE, String.valueOf(pathsIgnored));
+            }
             // From the properties, not the decision, so a refused run with no tests still records why.
             String refusal = daemonRefusal();
             if (refusal != null) {

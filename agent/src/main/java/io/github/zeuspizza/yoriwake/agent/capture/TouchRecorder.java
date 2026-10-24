@@ -507,6 +507,13 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 if (!definingAClass()) {
                     touchNamed(AgentContract.TOUCH_READ, path);
                 }
+                // A source file a test opens is also a file it read, by its path: a snippet under
+                // `docs/` is one, and its class name, if any, says nothing about where it lives.
+                if (!path.endsWith(".class")) {
+                    for (String form : recordedAs(new File(path).getAbsolutePath())) {
+                        touchNamed(AgentContract.TOUCH_RESOURCE, form);
+                    }
+                }
                 return;
             }
             File file = new File(path);

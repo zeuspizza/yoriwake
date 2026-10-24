@@ -27,6 +27,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.JvmArgFiles
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
@@ -99,7 +100,17 @@ internal class TestTaskWiring(internal val settings: Settings) {
             atLeastOne(extension.fullRunEveryBuilds.orNull, "fullRunEveryBuilds", project.path),
             atLeastOne(extension.fullRunEveryDays.orNull, "fullRunEveryDays", project.path),
         )
+        // Still honoured while deprecated; the warning below is the user's.
+        @Suppress("DEPRECATION")
         val notReadByTests = extension.notReadByTests.getOrElse(emptyList())
+        if (notReadByTests.isNotEmpty()) {
+            project.logger.warn(
+                "[yoriwake] ${project.path}: notReadByTests is deprecated and will be removed in a later release. " +
+                    "Use pathIgnore, whose globs are Ant-style (`docs/**` for everything under docs) and which keeps " +
+                    "a path forcing when it is a build file, a source, named in compiled classes or read by a test."
+            )
+        }
+        val pathIgnore = PathIgnore.validated(extension.pathIgnore.getOrElse(emptyList()), project.path)
         val largeChange = extension.largeChangeThreshold.getOrElse(LargeChange.DEFAULT_THRESHOLD).also {
             if (it < 1) {
                 throw org.gradle.api.InvalidUserDataException(
@@ -142,7 +153,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, environment, buildMemo, projectDir, declarations, largeChange) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -159,7 +170,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, environment, largeChange) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, largeChange) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -196,6 +207,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         fullRunBranches: List<String>,
         schedule: Schedule.Limits,
         notReadByTests: List<String>,
+        pathIgnore: List<String>,
         environment: EnvironmentFingerprint.Rules,
         buildMemo: BuildMemo?,
         projectDir: String,
@@ -330,7 +342,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // One a declined run left when its decode never ran must not discard this capture.
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
-            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, environment,
+            configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, pathIgnore, environment,
                 projectDir, declarations.filter { it.task == test.name }, largeChange)
         } else {
             declineSelection(test, mapDir, runPlan)

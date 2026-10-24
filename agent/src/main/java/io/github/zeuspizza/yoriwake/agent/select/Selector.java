@@ -403,6 +403,14 @@ public final class Selector {
                 }
             }
         }
+        if (!change.ignoredPaths().isEmpty()) {
+            Map<String, Integer> opens = ignoredPathWindows(map, change.ignoredPaths());
+            for (MapReader.Entry test : tests) {
+                if (ranInOpenedWindow(map, test, opens) && selected.add(test.testId())) {
+                    sharedJvmOnly.add(test.testId());
+                }
+            }
+        }
 
         return Decision.selecting(selected, knownTestIds, notKnownToPass(tests), sharedJvmOnly);
     }
@@ -507,17 +515,18 @@ public final class Selector {
                 }
             }
         }
-        if (!changed.isEmpty() || !bytes.isEmpty() || !change.movedFiles().isEmpty()) {
+        if (!changed.isEmpty() || !bytes.isEmpty() || !change.movedFiles().isEmpty()
+                || !change.ignoredPaths().isEmpty()) {
             Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), changed, knownTestIds);
-            sharesJvm(map, tests, changed, bytes, change.movedFiles(), exempt, byTest);
+            sharesJvm(map, tests, changed, bytes, change.movedFiles(), change.ignoredPaths(), exempt, byTest);
         }
         return new Rules(basis, forcing, byTest, knownTestIds);
     }
 
     /** {@link #ranAfterFirstTouch}, with each window kept apart by what opened it. */
     private static void sharesJvm(MapReader.Result map, List<MapReader.Entry> tests,
-            Collection<String> changed, Set<String> bytes, Collection<String> moved, Set<String> exempt,
-            Map<String, EnumSet<Rule>> byTest) {
+            Collection<String> changed, Set<String> bytes, Collection<String> moved, Collection<String> ignored,
+            Set<String> exempt, Map<String, EnumSet<Rule>> byTest) {
         List<String> dated = new ArrayList<>();
         for (String prefix : changed) {
             if (!exempt.contains(prefix)) {
@@ -555,10 +564,22 @@ public final class Selector {
         if (!moved.isEmpty()) {
             opened.put(Rule.SHARES_JVM_MOVED_CLASSPATH_FILE, movedFileWindows(map, tests, moved));
         }
+        boolean unpositionedRun = !changed.isEmpty() || !bytes.isEmpty() || !moved.isEmpty();
+        // An ignored path alone opens only its own window: the unobserved one belongs to the others.
+        if (!unpositionedRun) {
+            opened.remove(Rule.SHARES_JVM_UNOBSERVED);
+        }
+        if (!ignored.isEmpty()) {
+            Map<String, Integer> windows = ignoredPathWindows(map, ignored);
+            opened.put(Rule.SHARES_JVM_IGNORED_PATH, windows);
+            unpositionedRun = unpositionedRun || !windows.isEmpty();
+        }
         for (MapReader.Entry test : tests) {
             List<MapReader.Position> positions = map.positionsOf(test.testId());
             if (positions.isEmpty()) {
-                add(byTest, test.testId(), Rule.SHARES_JVM_UNPOSITIONED);
+                if (unpositionedRun) {
+                    add(byTest, test.testId(), Rule.SHARES_JVM_UNPOSITIONED);
+                }
                 continue;
             }
             for (Map.Entry<Rule, Map<String, Integer>> window : opened.entrySet()) {
@@ -673,6 +694,82 @@ public final class Selector {
         }
         for (String file : moved) {
             if (file.equals(path) || file.startsWith(path + "!/") || path.startsWith(file + "!/")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Where each JVM's window for the ignored paths opens: at its first read of one of them, of a
+     * directory above one, of an archive holding one, or of every file. Only a JVM whose reads the
+     * map recorded opens one: for any other, and for a map that records no reads, the declaration
+     * stands as the build made it. Source files are the exception: a JVM whose record does not
+     * include the ones it opened (a map recorded before it did) opens at its first record.
+     */
+    public static Map<String, Integer> ignoredPathWindows(MapReader.Result map, Collection<String> ignored) {
+        Map<String, Integer> opens = new HashMap<>();
+        MapReader.ResourceReads reads = map.resourceReads();
+        if (anySource(ignored)) {
+            for (MapReader.Entry entry : map.entries()) {
+                for (MapReader.Position position : map.positionsOf(entry.testId())) {
+                    if (reads == null || !reads.recordedSources(position.jvm())) {
+                        opens.put(position.jvm(), 0);
+                    }
+                }
+            }
+        }
+        if (reads == null) {
+            return opens;
+        }
+        for (MapReader.FirstTouch read : reads.reads()) {
+            if (reads.recorded(read.jvm()) && readsIgnored(read.className(), ignored)) {
+                opens.merge(read.jvm(), read.sequence(), Math::min);
+            }
+        }
+        return opens;
+    }
+
+    private static boolean anySource(Collection<String> paths) {
+        for (String path : paths) {
+            if (path.endsWith(".java") || path.endsWith(".kt") || path.endsWith(".groovy") || path.endsWith(".scala")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether reading {@code path} reads an ignored path: the path, a directory above it, an entry
+     * of it when it is an archive, or every file.
+     */
+    public static boolean readsIgnored(String path, Collection<String> ignored) {
+        if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {
+            return true;
+        }
+        for (String file : ignored) {
+            if (file.equals(path) || file.startsWith(path + "/")) {
+                return true;
+            }
+            if (path.startsWith(file + "!/")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the test ran at or after its JVM's window opened. One with no position may have run
+     * in any JVM, so it runs once any window opened, and not when none did.
+     */
+    private static boolean ranInOpenedWindow(MapReader.Result map, MapReader.Entry test, Map<String, Integer> opens) {
+        List<MapReader.Position> positions = map.positionsOf(test.testId());
+        if (positions.isEmpty()) {
+            return !opens.isEmpty();
+        }
+        for (MapReader.Position position : positions) {
+            Integer opensAt = opens.get(position.jvm());
+            if (opensAt != null && position.sequence() >= opensAt) {
                 return true;
             }
         }

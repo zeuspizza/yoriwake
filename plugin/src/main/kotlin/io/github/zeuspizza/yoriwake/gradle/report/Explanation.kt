@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.change.Established
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.InlineWidening
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.ScopedChange
 import java.io.File
 
@@ -27,6 +28,8 @@ internal fun writeExplanation(
     forcing: ForcingPaths.Classified = ForcingPaths.Classified.NONE,
     /** What was checked out, written only when `fullRunBranches` is set. */
     branch: String? = null,
+    /** What the map says about each path `pathIgnore` left out. */
+    ignoredEvidence: Map<String, PathIgnore.Evidence> = emptyMap(),
 ) {
     val known = decision.knownTests()
     val selected = if (decision.isFullRun) known else decision.selectedCount()
@@ -62,6 +65,21 @@ internal fun writeExplanation(
         )
         append("],").append('\n')
         append("""  "offClasspath": ${scoped.dropped},""").append('\n')
+        // Every path, not a sample: a wrong declaration is found by reading this list.
+        append("""  "ignoredPaths": [""")
+        append(
+            scoped.ignore.ignored.joinToString(", ") { (path, entry) ->
+                """{ "path": ${Json.string(path)}, "entry": ${Json.string(entry)}, "evidence": ${Json.string(ignoredEvidence[path]?.token)} }"""
+            }
+        )
+        append("],").append('\n')
+        append("""  "notIgnored": [""")
+        append(
+            scoped.ignore.notIgnored.joinToString(", ") { (path, entry, protection) ->
+                """{ "path": ${Json.string(path)}, "entry": ${Json.string(entry)}, "protection": ${Json.string(protection.token)} }"""
+            }
+        )
+        append("],").append('\n')
         append("""  "provablyUntested": ${established.provable.size},""").append('\n')
         append("""  "ownTestClasses": ${established.testClasses.size},""").append('\n')
         append("""  "inlineScanExhausted": ${widening.scanExhausted},""").append('\n')
@@ -136,6 +154,8 @@ internal fun writeUnanswered(
         append("""  "unmappablePathsSample": [],""").append('\n')
         append("""  "forcingPathOrigins": [],""").append('\n')
         append("""  "offClasspath": 0,""").append('\n')
+        append("""  "ignoredPaths": [],""").append('\n')
+        append("""  "notIgnored": [],""").append('\n')
         append("""  "provablyUntested": 0,""").append('\n')
         append("""  "ownTestClasses": 0,""").append('\n')
         append("""  "inlineScanExhausted": false,""").append('\n')

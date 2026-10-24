@@ -144,7 +144,8 @@ class ReferenceTest {
 
     /** Each property of the extension, with its type as a build script assigns it. */
     private val extensionTypes: Map<String, String> = YoriwakeExtension::class.java.methods
-        .filter { it.declaringClass == YoriwakeExtension::class.java && it.name.startsWith("get") }
+        // Not synthetic: a deprecated property also compiles to a `get<name>$annotations` method.
+        .filter { it.declaringClass == YoriwakeExtension::class.java && it.name.startsWith("get") && !it.isSynthetic }
         .associate { getter ->
             val type = getter.genericReturnType as ParameterizedType
             val element = kotlinName(type.actualTypeArguments.single() as Class<*>)

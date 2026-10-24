@@ -12,6 +12,8 @@
   "unmappablePathsSample": [],
   "forcingPathOrigins": [],
   "offClasspath": 0,
+  "ignoredPaths": [],
+  "notIgnored": [],
   "provablyUntested": 0,
   "ownTestClasses": 0,
   "inlineScanExhausted": false,
