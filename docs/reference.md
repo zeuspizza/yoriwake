@@ -132,7 +132,8 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   files; see [Generated files on the test classpath](#generated-files-on-the-test-classpath);
 - a change touching startup coverage, which no single test owns;
 - more changed paths than `largeChangeThreshold` (5,000 by default) against the base the run was
-  asked about, with untracked files and the working tree's drift (`large-change`). A change that
+  asked about, with untracked files and the working tree's drift, less the paths `pathIgnore` takes
+  out (`large-change`). A change that
   size selects almost everything or forces anyway, so the run skips the analysis and records the
   map. The count does not grow with the map's age. The default is Datadog's published bound;
   whether the analysis saved is worth it at that size is unmeasured;
