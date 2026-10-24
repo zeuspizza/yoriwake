@@ -599,6 +599,28 @@ testing {
                         functionalCellJdk?.let { jdk ->
                             javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(jdk) }
                         }
+                        // A Tooling API client registers its daemons under a home's `daemon/`, TestKit under
+                        // `test-kit-daemon/`: one registered in a TestKit home during this run means a test
+                        // shares that home with the Tooling API again. Homes outlive a run, so only entries
+                        // written since it started count.
+                        val workDir = temporaryDir
+                        val startMark = File(temporaryDir, "run-started")
+                        doFirst { startMark.writeText("") }
+                        doLast {
+                            val started = startMark.lastModified()
+                            val shared = workDir.walk().maxDepth(3)
+                                .filter { it.isDirectory && it.name.startsWith(".gradle-test-kit-") }
+                                .filter { home ->
+                                    File(home, "daemon").walk().any { it.isFile && it.lastModified() >= started }
+                                }
+                                .toList()
+                            if (shared.isNotEmpty()) {
+                                throw GradleException(
+                                    "a Tooling API daemon ran in the TestKit home ${shared.joinToString()}; " +
+                                        "connect with FunctionalGradle.toolingApiDir() instead"
+                                )
+                            }
+                        }
                         if (name.startsWith("breakAttempts")) {
                             filter.includeTestsMatching("$breakAttemptsPackage.*")
                         } else {
