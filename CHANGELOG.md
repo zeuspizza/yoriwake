@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- `largeChangeThreshold` (5,000 paths): a larger change runs everything without analysing it. Map: left alone.
+
 ### Changed
 
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.

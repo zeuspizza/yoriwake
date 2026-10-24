@@ -431,8 +431,17 @@ public abstract class YoriwakeExtension {
      */
     public abstract val systemPropertyIgnore: org.gradle.api.provider.ListProperty<String>
 
+    /**
+     * Above this many changed paths, a selecting run runs every test without analysing the change:
+     * a change that size (a rename across packages, a formatter run) selects almost everything or
+     * forces a full run anyway. 5,000 by default; 1 or more.
+     */
+    public abstract val largeChangeThreshold: org.gradle.api.provider.Property<Int>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)
+        @Suppress("LeakingThis")
+        largeChangeThreshold.convention(io.github.zeuspizza.yoriwake.gradle.change.LargeChange.DEFAULT_THRESHOLD)
     }
 }

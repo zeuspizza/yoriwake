@@ -685,6 +685,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "ComplementFunctionalTest": 214,
     "ConfigurationCacheFunctionalTest": 40,
     "DecisionRulesFunctionalTest": 26,
+    # Estimated from DecisionRulesFunctionalTest, as many builds of the same shape, until an
+    # every-guard run measures it.
+    "LargeChangeFunctionalTest": 30,
     "DeclineFunctionalTest": 65,
     "DevelocityFunctionalTest": 79,
     "EnvironmentFingerprintFunctionalTest": 82,
@@ -2507,8 +2510,8 @@ MUTATIONS = [
      "",
      functional_suite, "a declined run with in-JVM parallelism keeps its token and the host's JaCoCo"),
     ("the unknown-age fallback captures on a declined run", SELECTION_WIRING,
-     "        test.doFirst { task ->\n            if (refusedAtExecution(test)) return@doFirst\n",
-     "        test.doFirst { task ->\n",
+     "    test.doFirst { task ->\n        if (refusedAtExecution(test)) return@doFirst\n        // A map recorded in isolation",
+     "    test.doFirst { task ->\n        // A map recorded in isolation",
      functional_suite, "a declined selecting run on a map of unknown age writes nothing"),
     # Tests named with `--tests` all run on a selecting run: selection used to drop a named
     # test the change did not reach, and the build failed on "No tests found".
@@ -2757,6 +2760,16 @@ MUTATIONS = [
      "        if (listed != digest) {",
      "        if (false) {",
      functional_suite, "a map that differs from its trusted digest runs every test"),
+    # A change above the large-change threshold runs everything without its analysis; counted
+    # against the requested base, or an aging map would turn every small change into a full run.
+    ("a change above the large-change threshold is analysed", SELECTION_WIRING,
+     "        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->",
+     "        LargeChange.refusal(count, Int.MAX_VALUE, asked.ref)?.let { reason ->",
+     functional_suite, "more changed paths than the threshold run everything and record the map"),
+    ("the large-change threshold counts the change widened to the map's age", SELECTION_WIRING,
+     "    val asked = runPlan.widening.requested ?: widened\n",
+     "    val asked = widened\n",
+     functional_suite, "an old map does not push a small change over the threshold"),
     ("the provenance check is not registered", SELECTION_WIRING,
      "        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)\n",
      "",
@@ -2962,8 +2975,8 @@ MUTATIONS = [
      '    val keepsIsolation = mode == "isolated"',
      unit_suite, "a full run over a map recorded in isolation, wholly or in part, does not instrument"),
     ("a run refused over the map's age captures over a map recorded in isolation", SELECTION_WIRING,
-     "            ).takeUnless { it.capture }",
-     "            ).takeUnless { true }",
+     "        ).takeUnless { it.capture }\n        // Read here, where",
+     "        ).takeUnless { true }\n        // Read here, where",
      functional_suite, "a selecting run that refuses over the map's age leaves an isolated map alone"),
     # Cost, not safety: a map selection cannot read holds nothing isolation could keep.
     ("an unusable map labelled isolated is never rebuilt", CAPTURE_DECISION,
