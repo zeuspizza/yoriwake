@@ -458,6 +458,8 @@ def unit_suite():
          "--tests", "*SelectionRecordTest*",
          # The full-run marker: how commit messages are read for it.
          "--tests", "*CommitScanTest*",
+         # Which moved classpath files reach the selector, and which force the run.
+         "--tests", "*ClasspathFilesTest*",
          "--rerun"])
     if done.returncode == 0:
         return []
@@ -645,7 +647,9 @@ SUITES = [
     ("agent", agent_suite, 6),
     # About 1.4s warm with a mutation applied, both tasks.
     ("jdk identity", jdk_identity_suite, 1.5),
-    ("unit", unit_suite, 11),
+    # 19.0-20.2s over three unmutated runs with the moved-classpath-files class, warm daemon, on
+    # an Apple M1 Max; 18.9-19.3s without it.
+    ("unit", unit_suite, 19.5),
     ("qualify", qualify_suite, 12),
     ("config cost", config_cost_suite, 1),
     # The shaded jars and both direct SBOMs, then the merge and its check; an estimate until a
@@ -2366,6 +2370,17 @@ MUTATIONS = [
      '                if (how != "changed" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
      '                if (how == "appeared" || how == "unreadable" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null',
      functional_suite, "a file gone from a sibling jar runs everything"),
+    # A moved file is handed to the selector only when a read of it is recorded as the file's. A
+    # source file's reads are recorded as its class's, and an archive in a directory is read by its
+    # entries, so neither can ever match a read: handed over, the test reading it is skipped.
+    ("a moved source file is handed over", CLASSPATH_FILES,
+     "                if (SOURCE_SUFFIXES.any(path::endsWith)) return null",
+     "                if (false) return null",
+     unit_suite, "a moved source file is not handed over, its reads are recorded as a class's"),
+    ("an archive inside a directory is handed over", CLASSPATH_FILES,
+     '                if ("!/" !in path && isArchive(File(rootDir, path))) return null',
+     "                if (false) return null",
+     unit_suite, "an archive inside a directory is not handed over, by its name or by its content"),
     # The agent records a zip it knows by its content, one behind a launch script among them, by its
     # entries: handed over as a plain file, it matches no read.
     ("a zip behind a launch script is handed over as a plain file again", CLASSPATH_FILES,
