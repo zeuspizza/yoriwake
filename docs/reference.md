@@ -125,6 +125,11 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   then never recorded). One whose readers the map records runs only them. The run names up to five
   files; see [Generated files on the test classpath](#generated-files-on-the-test-classpath);
 - a change touching startup coverage, which no single test owns;
+- more changed paths than `largeChangeThreshold` (5,000 by default) against the base the run was
+  asked about, with untracked files and the working tree's drift (`large-change`). A change that
+  size selects almost everything or forces anyway, so the run skips the analysis and records the
+  map. The count does not grow with the map's age. The default is Datadog's published bound;
+  whether the analysis saved is worth it at that size is unmeasured;
 - an empty change set, which cannot be told apart from not having one;
 - git could not report a change set, or no base could be resolved;
 - the working tree changed between configuring the build and running the task, for instance
@@ -1325,6 +1330,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `notReadByTests` | `List<String>` | empty | Globs of files no test or build reads: a changed one is no change. |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
+| `largeChangeThreshold` | `Int` | `5000` | Above this many changed paths, run every test without analysing the change. |
 
 For example:
 
@@ -1338,6 +1344,7 @@ yoriwake {
     notReadByTests.addAll("docs/*", "*.md") // changed files no test or build reads: no change
     environmentInclude.add("DB_MODE")      // a variable compared besides TZ, LANG and LC_ALL
     systemPropertyIgnore.add("build.number") // a property left out of that comparison
+    largeChangeThreshold = 20000           // more changed paths than this run everything
 }
 ```
 

@@ -68,7 +68,12 @@ internal class RunPlan(
      * The base widened to the map's age, or why that age is unknown, and how the working tree moved
      * since the capture: worked out once, for the declines and then for the change set.
      */
-    class Widening(val age: MapAge, val drift: WorkingTree.Drift?)
+    class Widening(
+        val age: MapAge,
+        val drift: WorkingTree.Drift?,
+        /** The base the run was asked to compare from, before widening; null when the same. */
+        val requested: io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection.Base? = null,
+    )
 
     val selecting: Boolean get() = kind == Kind.SELECT
 

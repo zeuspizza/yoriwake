@@ -20,6 +20,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
+import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.changeSet
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
@@ -114,6 +115,10 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val checksProvenance: Property<Boolean>
+
+    /** The build's `largeChangeThreshold`. */
+    @get:Input
+    abstract val largeChangeThreshold: Property<Int>
 
     /** The digest that list names for this map; unset when it names none. */
     @get:Input
@@ -280,6 +285,21 @@ internal abstract class ExplainTask : DefaultTask() {
             )
             return
         }
+        // As the run checks it, against the base it was asked about, before any analysis.
+        ChangeDetection.changedPaths(git, rootDir, resolvedBase.ref)?.let { askedPaths ->
+            val count = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct().size
+            LargeChange.refusal(count, largeChangeThreshold.get(), resolvedBase.ref)?.let { reason ->
+                logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
+                writeUnanswered(
+                    mapDir, taskPath, base,
+                    io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                    reason,
+                    refusalKind = RefusalKind.LARGE_CHANGE.token,
+                    branch = branch,
+                )
+                return
+            }
+        }
         // Checked by the run before anything narrows, so it explains every line below it.
         if (checksProvenance.getOrElse(false)) {
             MapProvenance.verify(mapDir, listedDigest.orNull).refusal?.let { (kind, reason) ->
@@ -426,6 +446,7 @@ internal abstract class ExplainTask : DefaultTask() {
             schedule: Schedule.Limits,
             notReadByTests: List<String>,
             environment: EnvironmentFingerprint.Rules,
+            largeChange: Int,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -444,6 +465,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)
+                task.largeChangeThreshold.set(largeChange)
                 schedule.builds?.let(task.fullRunEveryBuilds::set)
                 schedule.days?.let(task.fullRunEveryDays::set)
                 task.environment = environment

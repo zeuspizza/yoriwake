@@ -166,6 +166,9 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
      * toolchain for the tests, lifts this.
      */
     TEST_JVM_UNSUPPORTED(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TEST_JVM_UNSUPPORTED_KIND),
+
+    /** More paths changed than `largeChangeThreshold`; raising it lifts this. */
+    LARGE_CHANGE("large-change"),
     ;
 
     companion object {
