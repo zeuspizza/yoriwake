@@ -17,6 +17,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A native library load is judged by the file the JDK opened; an attempt that found no file no longer widens. Map: left alone.
+
 - A run forced by untracked files names their directories and how to list them in `notReadByTests`. Map: left alone.
 - The release check's long CI jobs retry a dependency download that failed in transit. Map: left alone.
 - The contract lists every published token, and the reference the extension's types and defaults. Map: left alone.
