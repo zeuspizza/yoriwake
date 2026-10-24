@@ -12,6 +12,7 @@ import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.net.URL;
 import java.security.ProtectionDomain;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
@@ -40,6 +41,17 @@ final class GuardHooks {
     static final String[][] NATIVE_WRAPS = {
         {"org/sqlite/core/NativeDB", "enable_load_extension", "(Z)I",
             "SQLite extension loading was enabled on a connection"},
+    };
+
+    /**
+     * Guard class, a Java method whose first argument names an operation, its descriptor, what a
+     * report means, and the operations it may be given unreported. Checked as the method is entered.
+     */
+    static final String[][] ENTRY_CHECKS = {
+        // Netty's only writer of a submission queue entry, and the opcodes its own code submits.
+        {"io/netty/channel/uring/SubmissionQueue", "enqueueSqe", "(BBSIJJIIJSSIJ)J",
+            "Netty io_uring was given an operation outside its own: opcode ",
+            "0,2,6,9,10,11,13,14,15,16,19,22,23,26,27,30,34,47,48"},
     };
 
     /** Why no guard can be armed in this JVM; null once the transformer is in place. */
@@ -111,8 +123,8 @@ final class GuardHooks {
             if (in == null) {
                 return wrap[0].replace('/', '.') + " is not found beside " + caller.getName();
             }
-            if (!declaresNative(new ClassReader(in), wrap)) {
-                return wrap[0].replace('/', '.') + " declares no native " + wrap[1] + wrap[2];
+            if (!declares(new ClassReader(in), wrap)) {
+                return wrap[0].replace('/', '.') + " declares no " + kind(wrap) + " " + wrap[1] + wrap[2];
             }
             return null;
         } catch (Throwable t) {
@@ -180,13 +192,22 @@ final class GuardHooks {
         }
     }
 
-    private static boolean declaresNative(ClassReader reader, String[] wrap) {
+    /** What {@code wrap} rewrites: a native for a wrap, a method with a body for an entry check. */
+    private static String kind(String[] wrap) {
+        return wrap.length == 4 ? "native" : "method";
+    }
+
+    /** Whether the class declares the method {@code wrap} rewrites, native or with a body as it needs. */
+    private static boolean declares(ClassReader reader, String[] wrap) {
         boolean[] found = {false};
+        boolean nativeWanted = wrap.length == 4;
         reader.accept(new ClassVisitor(Opcodes.ASM9) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature,
                     String[] exceptions) {
-                if ((access & Opcodes.ACC_NATIVE) != 0 && name.equals(wrap[1]) && descriptor.equals(wrap[2])) {
+                boolean bodied = (access & (Opcodes.ACC_NATIVE | Opcodes.ACC_ABSTRACT)) == 0;
+                if ((nativeWanted ? (access & Opcodes.ACC_NATIVE) != 0 : bodied)
+                        && name.equals(wrap[1]) && descriptor.equals(wrap[2])) {
                     found[0] = true;
                 }
                 return null;
@@ -195,11 +216,13 @@ final class GuardHooks {
         return found[0];
     }
 
-    /** The guard class named {@code className}, or null. */
+    /** The wrap or entry check of the guard class named {@code className}, or null. */
     static String[] wrapFor(String className) {
-        for (String[] wrap : NATIVE_WRAPS) {
-            if (wrap[0].equals(className)) {
-                return wrap;
+        for (String[][] table : new String[][][] {NATIVE_WRAPS, ENTRY_CHECKS}) {
+            for (String[] wrap : table) {
+                if (wrap[0].equals(className)) {
+                    return wrap;
+                }
             }
         }
         return null;
@@ -211,6 +234,9 @@ final class GuardHooks {
      * access that reports its argument and then calls it. Throws when the class has no such native.
      */
     static byte[] wrapped(byte[] bytes, String[] wrap, String holder) {
+        if (wrap.length == 5) {
+            return checked(bytes, wrap, holder);
+        }
         ClassReader reader = new ClassReader(bytes);
         // No COMPUTE_FRAMES: that would load classes from inside a transformer. The two frames the
         // wrapper needs are written by hand.
@@ -292,6 +318,101 @@ final class GuardHooks {
         body.visitInsn(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN));
         body.visitMaxs(6, argument + 1);
         body.visitEnd();
+    }
+
+    /**
+     * {@code bytes} with the method of {@code check} entered through a test of its first argument:
+     * one of the operations listed goes on unreported, any other reports before the body runs.
+     * Throws when the class has no such method with a body.
+     */
+    static byte[] checked(byte[] bytes, String[] check, String holder) {
+        String[] listed = check[4].split(",");
+        int[] allowed = new int[listed.length];
+        for (int i = 0; i < listed.length; i++) {
+            allowed[i] = Integer.parseInt(listed[i]);
+        }
+        Arrays.sort(allowed);
+        ClassReader reader = new ClassReader(bytes);
+        ClassWriter writer = new ClassWriter(reader, 0);
+        boolean[] found = {false};
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature,
+                    String[] exceptions) {
+                MethodVisitor next = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if ((access & (Opcodes.ACC_NATIVE | Opcodes.ACC_ABSTRACT)) != 0 || !name.equals(check[1])
+                        || !descriptor.equals(check[2])) {
+                    return next;
+                }
+                found[0] = true;
+                int argument = (access & Opcodes.ACC_STATIC) != 0 ? 0 : 1;
+                return new MethodVisitor(Opcodes.ASM9, next) {
+                    @Override
+                    public void visitCode() {
+                        super.visitCode();
+                        writeCheck(mv, holder, argument, check[3], allowed);
+                    }
+
+                    @Override
+                    public void visitMaxs(int maxStack, int maxLocals) {
+                        super.visitMaxs(Math.max(maxStack, 6), maxLocals);
+                    }
+                };
+            }
+        }, 0);
+        if (!found[0]) {
+            throw new IllegalStateException(check[0].replace('/', '.') + " declares no method " + check[1] + check[2]);
+        }
+        return writer.toByteArray();
+    }
+
+    /**
+     * {@code switch (op & 0xFF) { case allowed...: break; default: Consumer s = GUARD; if (s != null)
+     * s.accept(new Object[] {why, Boolean.TRUE, Integer.valueOf(op & 0xFF)}); }} ahead of the body.
+     * An allowed operation costs one switch and no call.
+     */
+    private static void writeCheck(MethodVisitor body, String holder, int argument, String why, int[] allowed) {
+        String consumer = "java/util/function/Consumer";
+        Label report = new Label();
+        Label absent = new Label();
+        Label proceed = new Label();
+        Label[] targets = new Label[allowed.length];
+        Arrays.fill(targets, proceed);
+        body.visitVarInsn(Opcodes.ILOAD, argument);
+        body.visitIntInsn(Opcodes.SIPUSH, 0xFF);
+        body.visitInsn(Opcodes.IAND);
+        body.visitLookupSwitchInsn(report, allowed, targets);
+        body.visitLabel(report);
+        body.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+        body.visitFieldInsn(Opcodes.GETSTATIC, holder, "GUARD", "L" + consumer + ";");
+        body.visitInsn(Opcodes.DUP);
+        body.visitJumpInsn(Opcodes.IFNULL, absent);
+        body.visitInsn(Opcodes.ICONST_3);
+        body.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_0);
+        body.visitLdcInsn(why);
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_1);
+        body.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/Boolean", "TRUE", "Ljava/lang/Boolean;");
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_2);
+        body.visitVarInsn(Opcodes.ILOAD, argument);
+        body.visitIntInsn(Opcodes.SIPUSH, 0xFF);
+        body.visitInsn(Opcodes.IAND);
+        body.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false);
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, consumer, "accept", "(Ljava/lang/Object;)V", true);
+        body.visitJumpInsn(Opcodes.GOTO, proceed);
+        body.visitLabel(absent);
+        body.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[] {consumer});
+        body.visitInsn(Opcodes.POP);
+        body.visitLabel(proceed);
+        body.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+        // The body's own first frame, if it has one, must not share this offset.
+        body.visitInsn(Opcodes.NOP);
     }
 
     /** Wraps each guard class as it is defined, in every loader, and on every retransformation. */

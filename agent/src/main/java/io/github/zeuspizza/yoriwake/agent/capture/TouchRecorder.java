@@ -379,7 +379,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     /**
-     * The guards' sink: {what turning it on means, whether this call turns it on}. Turned on, the
+     * The guards' sink: {what turning it on means, whether this call turns it on}, and for an entry
+     * check the operation it was given, which ends the reason. Turned on, the
      * reviewed library can reach native code nobody reviewed, so every class counts as touched from
      * here. Recorded even inside another sink: the call is the library's, not the agent's.
      */
@@ -387,7 +388,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
         try {
             Object[] pair = (Object[]) call;
             if (Boolean.TRUE.equals(pair[1])) {
-                touch(AgentContract.TOUCH_ALL, (String) pair[0]);
+                touch(AgentContract.TOUCH_ALL, pair.length > 2 ? pair[0] + String.valueOf(pair[2]) : (String) pair[0]);
             }
         } catch (Throwable t) {
             incomplete = "a guarded native call could not be recorded: " + t;

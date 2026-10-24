@@ -136,6 +136,7 @@ SELECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/S
 CLASSPATH_SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
 NOT_READ = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
+PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
 CLASSPATH_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
 WORKING_TREE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
@@ -687,6 +688,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "ComplementFunctionalTest": 214,
     "ConfigurationCacheFunctionalTest": 40,
     "DecisionRulesFunctionalTest": 26,
+    # Estimated from MultiProjectFunctionalTest, as many builds of the same shape, until an
+    # every-guard run measures it.
+    "DeclaredDependenciesFunctionalTest": 36,
     "DeclineFunctionalTest": 65,
     "DevelocityFunctionalTest": 79,
     "EnvironmentFingerprintFunctionalTest": 82,
@@ -1230,6 +1234,20 @@ MUTATIONS = [
     # CLASS GRANULARITY. It can only ever INCLUDE, so it cannot lose a failure --
     # what it can do is become the default nobody chose, which is a narrowing change for every
     # adopter made by a one-word edit.
+    # A declared dependency is one coverage cannot see: a changed path a test's tag or a task's
+    # dependsOn matches must run its declarers, or the declaration protects nothing.
+    ("a test's declared dependency no longer selects it", SELECTION_FILTER,
+     "        if (declaresChangedPath(descriptor)) {",
+     "        if (false) {",
+     agent_suite, "a test whose declared dependency matches a changed path is selected"),
+    ("a task's declared dependency no longer runs it in full", SELECTION_WIRING,
+     "        if (declaredHit != null && !widening.forces) {",
+     "        if (false && declaredHit != null && !widening.forces) {",
+     functional_suite, "a path the build declares for a task runs that task in full"),
+    ("a double star in a declared dependency matches exactly one directory", PATH_GLOB,
+     "            for (int next = s; next <= segments.length; next++) {",
+     "            for (int next = s + 1; next <= Math.min(s + 1, segments.length); next++) {",
+     agent_suite, "a star stays within a directory, a double star crosses any number"),
     ("class granularity becomes the default nobody asked for", SELECTION_FILTER,
      'System.getProperty(CLASS_GRANULARITY_PROPERTY, "false")',
      'System.getProperty(CLASS_GRANULARITY_PROPERTY, "true")',
@@ -2176,9 +2194,32 @@ MUTATIONS = [
      "            touch(AgentContract.TOUCH_ALL, (String) why);",
      "            why.getClass();",
      agent_suite, "a guard class defined without its guard touches every class"),
+    # Netty's in-tree io_uring transport counts as reviewed only for the operations Netty itself
+    # submits: any other, an open among them, must report before the ring sees it.
+    ("the io_uring entry check lets every operation through", GUARD_HOOKS,
+     "        body.visitLookupSwitchInsn(report, allowed, targets);",
+     "        body.visitInsn(Opcodes.POP);\n        body.visitJumpInsn(Opcodes.GOTO, proceed);",
+     agent_suite, "an operation Netty submits goes on unreported, any other is reported before the body runs"),
+    ("the io_uring entry check is not injected", GUARD_HOOKS,
+     "                        writeCheck(mv, holder, argument, check[3], allowed);\n",
+     "",
+     agent_suite, "an operation Netty submits goes on unreported, any other is reported before the body runs"),
+    ("an open is among the io_uring operations allowed", GUARD_HOOKS,
+     "\"0,2,6,9,10,11,13,14,15,16,19,",
+     "\"0,2,6,9,10,11,13,14,15,16,18,19,",
+     agent_suite, "no operation that takes a path or names a file is allowed"),
+    ("Netty's io_uring loads without its condition", REVIEWED_LIBRARIES,
+     "\"libnetty_transport_native_io_uring42(_[a-z0-9_]+)?[0-9]*\\\\.so\",\n            \"io/netty/channel/uring/SubmissionQueue\",\n            \"META-INF/maven/io.netty/netty-transport-classes-io_uring/pom.properties\",\n            \"4.2.18.Final,4.2.19.Final\"},",
+     "\"libnetty_transport_native_io_uring42(_[a-z0-9_]+)?[0-9]*\\\\.so\"},",
+     agent_suite, "Netty's io_uring at a version nobody reviewed touches every class from its load"),
+    ("Netty's io_uring is listed at a version nobody reviewed", REVIEWED_LIBRARIES,
+     "\"4.2.18.Final,4.2.19.Final\"},",
+     "\"4.2.17.Final,4.2.18.Final,4.2.19.Final\"},",
+     functional_suite, "Netty's own io_uring transport at a version nobody reviewed selects every later test"),
     ("the wrapped native no longer reports its argument", GUARD_HOOKS,
-     '        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, consumer, "accept", "(Ljava/lang/Object;)V", true);',
-     "        body.visitInsn(Opcodes.POP2);",
+     '        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, consumer, "accept", "(Ljava/lang/Object;)V", true);\n'
+     '        body.visitLabel(done);',
+     "        body.visitInsn(Opcodes.POP2);\n        body.visitLabel(done);",
      agent_suite, "a wrapped native reports its argument before the native runs"),
     ("the renamed native stays public", GUARD_HOOKS,
      "                int hidden = (access & ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED))\n"
@@ -2190,7 +2231,7 @@ MUTATIONS = [
      "        if (false) {\n            return disarmed;",
      agent_suite, "no guard is armed where native methods cannot be wrapped"),
     ("a guard class that cannot take the wrap counts as armed", GUARD_HOOKS,
-     "            if (!declaresNative(new ClassReader(in), wrap)) {",
+     "            if (!declares(new ClassReader(in), wrap)) {",
      "            if (false) {",
      agent_suite, "a guard is armed in a loader that defined its class wrapped, and in no other"),
     ("a guard class defined without its wrap goes unreported", GUARD_HOOKS,
