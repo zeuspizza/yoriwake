@@ -59,7 +59,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
-| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from; see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore`; see [Files written into the source tree](#files-written-into-the-source-tree) |
 | `pathIgnore left out N changed paths (…): <paths>` | the changed paths `pathIgnore` took out of the change set, counted by entry; see [Paths no test reads](#paths-no-test-reads) |
 | `pathIgnore entry '<entry>' matches <path>, which stays in the change set (<protection>)` | a declared path that is protected, and why |
 | `<path> was read at capture, … despite pathIgnore entry '<entry>' …` | a test JVM read a declared path when the map was recorded, so the tests from that read on run |
@@ -195,7 +195,15 @@ has never seen always runs.
 
 A file the tests or the build write into the source tree outside the build directories counts as
 a change by its content, tracked or not, ignored or not. A run that sees it changed runs
-everything, and names it, one line per kind:
+everything, and names it, one line per kind. Files under a directory git tracks nothing in are named
+by the outermost such directory, as a glob with its file count (`docs-client/node_modules/** (62,444
+files)`), the largest first; a file beside a tracked one is named as itself. Each line ends with the
+globs to list in [`pathIgnore`](#paths-no-test-reads), and the condition under which that is
+safe. No glob is offered for a directory that holds sources: a source file among the changed files,
+or a source tree laid out as a source set's (`main/java`, `main/kotlin`) in it or one level below.
+Listed, a later change to those sources would no longer count as one. Nor for a path under a source
+set's directory or any `src` directory, which `pathIgnore` never leaves out: generating it under the
+build directory instead stops the full runs.
 
 - **Changed during the last capture build** (`written-during-capture`): created, rewritten or
   deleted while the capture that dated the map ran, by its tests or its tasks. If a test writes it
@@ -210,11 +218,14 @@ everything, and names it, one line per kind:
 - **In CI**, a file the capture's tests create is in the change set of every fresh checkout that
   lacks it, so such a project runs everything on every pull request until the file moves.
 - **Untracked in a source directory** (`generated-in-sources`): a file a build task generates into
-  a source or resource directory, or one not yet added to git. It is on the classpath, tests can
-  read it, and its changes are changes; nothing is offered to make it stop counting.
+  a source or resource directory, or one not yet added to git. Tests read the copy the build puts
+  on the classpath, which is compared on its own (see [Generated files on the test
+  classpath](#generated-files-on-the-test-classpath)). `pathIgnore` keeps it, as everything under a
+  source directory; generating it under the build directory stops the full runs.
 - **Untracked** (`untracked`): any other untracked or ignored file; it counts by content.
 
-A file HEAD tracks gets no line: the run cannot tell a test's write from your edit.
+A file HEAD tracks gets no line: the run cannot tell a test's write from your edit. When git cannot
+say which forcing paths it tracks, one line counts them and `yoriwakeExplain<Task>` lists a sample.
 
 ### Generated files on the test classpath
 
@@ -435,6 +446,7 @@ library.
 | zstd-jni | `com.github.luben.zstd.util.Native` | [1.5.7-20](https://github.com/luben/zstd-jni/tree/v1.5.7-20/src/main/native) | nothing |
 | lz4-java (`at.yawk.lz4`, and `org.lz4` 1.8.0) | `net.jpountz.util.Native` | [1.12.0](https://github.com/yawkat/lz4-java/tree/v1.12.0/src/jni) | nothing |
 | RocksDB | `org.rocksdb.NativeLibraryLoader` | [11.8.1](https://github.com/facebook/rocksdb/tree/v11.8.1/java/rocksjni) | the files of a database in the directories a test names, only by the names RocksDB itself writes; fixed `/proc` and `/sys` paths |
+| SQLite JDBC (conditional, below) | `org.sqlite.SQLiteJDBCLoader` | [3.53.4.0](https://github.com/xerial/sqlite-jdbc/tree/3.53.4.0/src/main/java/org/sqlite/core) only | the database files a test names and the journal, WAL and lock files SQLite names after them; random temporary files; `/dev/urandom` |
 
 Two notes on the list:
 
@@ -444,14 +456,24 @@ Two notes on the list:
 - Reviewed and left off: Netty's in-tree io_uring transport, whose public API lets any caller submit
   a file open to the kernel; netty-tcnative, whose BoringSSL and OpenSSL builds share file names,
   and whose OpenSSL build reads a configuration file and loads modules from paths the environment
-  names; SQLite JDBC, which loads any native library an SQL statement names once
-  `enable_load_extension` is set on a connection; and JNA, which calls any native function.
+  names; and JNA, which calls any native function.
+- SQLite JDBC is listed on a condition. Once a connection enables extension loading (the
+  `enable_load_extension` property, `SQLiteConfig.enableLoadExtension(true)`,
+  `SQLiteDataSource.setLoadExtension(true)`, or a direct call), SQL can load any native library by
+  name. Every one of those ends in the driver's native `NativeDB.enable_load_extension`, which the
+  agent wraps as the class is defined, so a call that turns it on touches every class from there.
+  The entry counts only at the exact version listed, read from the driver jar's own version file,
+  and only when the JVM can wrap a native method and the driver's `NativeDB` in the loading class's
+  loader takes the wrap; otherwise the load applies the wide rule. On Linux the driver runs `uname`
+  to find its library unless `org.sqlite.lib.path` names its folder, and that child process runs
+  every later test in the JVM anyway.
 - Only the Linux and macOS builds (`.so`, `.dylib`, `.jnilib`) were reviewed. A library's Windows
   build (`.dll`) is not on the list, so on Windows each of these applies the wide rule.
 
 An entry covers the version reviewed. Each is reviewed again when its library ships a new major
-version, and until then a later version counts as the one reviewed. To propose a library, open an
-issue with its version, a link to its native sources at that tag, every file open, `mmap`,
+version, and until then a later version counts as the one reviewed. To propose a library, open a
+[native library proposal](https://github.com/zeuspizza/yoriwake/issues/new?template=native-library.yml):
+it asks for its version, a link to its native sources at that tag, every file open, `mmap`,
 directory scan and `dlopen` in them with where each path comes from, the file names its loader
 gives the library, and the class that calls `System.load` or `System.loadLibrary`.
 
@@ -660,6 +682,9 @@ Three things differ:
   - a [reviewed native library](#native-libraries) given the path of a class file or jar as data,
     such as a database file or directory a test names. The review found no other way for one to
     read a class file;
+  - a call, made by reflection with `setAccessible`, to the renamed native method the agent leaves
+    behind when it wraps [SQLite JDBC's](#native-libraries) `enable_load_extension`. The renamed
+    method is private and synthetic, so no lookup of public methods reaches it by accident;
   - the JDK's class-loading or library-loading internals called by reflection (a native lookup
     such as `Class.forName0`, a class loader's protected `loadClass(String, boolean)`, or
     `ClassLoader.loadLibrary`), which needs `java.base` opened to your code. A class your code
@@ -1093,7 +1118,8 @@ from a run under another verdict is not reused. An unreadable list or a malforme
 build.
 
 The list is only as good as where it comes from: write it from the digests a run on the default
-branch recorded, never from the restored directory. Where no list is passed, nothing is checked and
+branch recorded, never from the restored directory. After an upgrade, the first default-branch run
+renews it ([Upgrading and your map](#upgrading-and-your-map)). Where no list is passed, nothing is checked and
 selection trusts any restored map, as in 0.1.0.
 
 On GitHub, [yoriwake-action](https://github.com/zeuspizza/yoriwake-action#which-maps-a-pull-request-trusts)
@@ -1409,7 +1435,16 @@ class and method, and Spock features by their specification and feature name
 matching any characters, slashes included: `docs/*` is everything under `docs/`, `*.md` every
 Markdown file at any depth. A changed file one matches is no change, where it would otherwise force
 a full run. It is empty by default and per project, like `fullRunBranches`. Only list files that
-nothing reads: a test that reads a listed file is skipped when only that file changed.
+no test and no build step reads, except to compile or copy them onto the test classpath: a selecting
+run compares what lands there by content, a changed class running the tests that executed it and a
+changed resource the tests that read it, but a test that reads a listed file itself is skipped when
+only that file changed. Two shapes that fit: a resource directory a build task regenerates on every
+run, such as `gen-src/*` holding a versions file stamped with the commit, and a package manager's
+tree such as `docs-client/node_modules/*` that no test reads. A run forced by such files names the
+globs; see [Files written into the source tree](#files-written-into-the-source-tree). A listed glob
+also covers files added under it later, and a listed directory of generated sources no longer
+forces a run when they change, nor gets the checks a changed source gets (annotations, constants):
+list one only if no test depends on what is generated in it.
 
 `pathIgnore` does the same job with guards; see [Paths no test reads](#paths-no-test-reads).
 
@@ -1450,6 +1485,13 @@ have:
   The next full run rebuilds it. A version is bumped only when a stale record could still look
   like a passing one while being wrong, because nothing re-observes a record that is never
   selected.
+
+With a [trusted-map list](#who-can-write-the-map-you-restore), a release that changes which map
+files the digest covers changes every digest, so the list your default branch wrote on the earlier
+version names none of the new one's. Until the default branch's first run on the new version
+records and lists new digests, each pull request runs everything as `map-untrusted`, with a reason
+that names the release that wrote the list rather than one that reads like a changed map. Do not
+purge the cache over it: the default branch's next run restores narrowing.
 
 Two other messages are not upgrades: a map holding records but no `schema-version` is a capture
 that died partway (delete the directory and capture again), and a directory with neither predates

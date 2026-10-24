@@ -688,7 +688,7 @@ internal fun trustedDigest(project: Project, settings: Settings, mapDir: File): 
     val listed = try {
         MapProvenance.parseTrustedList(text, flag)
     } catch (malformed: IllegalArgumentException) {
-        throw InvalidUserDataException(malformed.message)
+        throw InvalidUserDataException(malformed.message.orEmpty())
     }
     return TrustedDigest(listed[mapDir.name])
 }

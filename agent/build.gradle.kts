@@ -59,6 +59,8 @@ tasks.jar {
             "Premain-Class" to "io.github.zeuspizza.yoriwake.agent.capture.LoadedClassRecorder",
             // The read hooks rewrite six JDK entry points that are loaded before premain runs.
             "Can-Retransform-Classes" to "true",
+            // Conditional reviewed libraries wrap a native method to see each call to it.
+            "Can-Set-Native-Method-Prefix" to "true",
         )
     }
 }
@@ -77,6 +79,11 @@ tasks.compileJava {
 
 kotlin {
     jvmToolchain(21)
+    // A warning nobody reads is a warning nobody acts on. The guard script and the benchmark's
+    // publish build deliberately broken sources and pass `-Pyoriwake.kotlinWarningsAsErrors=false`.
+    compilerOptions {
+        allWarningsAsErrors = providers.gradleProperty("yoriwake.kotlinWarningsAsErrors").orNull?.toBooleanStrict() ?: true
+    }
 }
 
 // Scripted capture runs for CaptureCharacterizationTest: a stand-in JaCoCo runtime and one driver

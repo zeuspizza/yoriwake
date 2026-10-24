@@ -55,6 +55,12 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private volatile String environmentIncomplete = "the yoriwake agent was not attached to this JVM";
     private final ThreadLocal<Boolean> inside = new ThreadLocal<>();
     /**
+     * The guards of conditional reviewed libraries; null, and none armed, until the agent installs
+     * them. Not built eagerly: they need the agent's ASM, which a recorder made without the agent
+     * jar does not have.
+     */
+    volatile GuardHooks guards;
+    /**
      * The root project's directory, as given and as resolved, each ending in a separator; empty
      * when it was not given, and then no non-class file is recorded.
      */
@@ -109,6 +115,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             nameIn(new byte[0]);
             ZipContent.holdsAZip(new File(""));
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
+            guard(new Object[] {"", Boolean.FALSE});
             // JDK classes the agent's ASM cannot read take no hooks; said here, under its own name.
             unsupported = ClassFileSupport.testJvmUnsupported(
                     System.getProperty("java.specification.version"),
@@ -120,6 +127,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             }
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
                     this::childProcess, this::nativeCode, this::library, this::environmentRead);
+            guards = GuardHooks.install(instrumentation, this::guard, this::guardLost);
             incomplete = hooks.reads != null ? hooks.reads : JdkCode.imageAltered();
             lookupsIncomplete = hooks.lookups != null ? hooks.lookups : nativeAgent();
             environmentIncomplete = hooks.environment;
@@ -320,8 +328,13 @@ public final class TouchRecorder implements CaptureSession.Touches {
             // unreviewed file read as a reviewed one.
             int separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf(File.separatorChar));
             String file = separator >= 0 ? name.substring(separator + 1) : System.mapLibraryName(name);
-            if (caller != null && ReviewedLibraries.reviewed(caller.getName(), file)) {
+            String[] entry = caller != null ? ReviewedLibraries.entry(caller.getName(), file) : null;
+            String unmet = entry != null ? unmet(caller, entry) : null;
+            if (entry != null && unmet == null) {
                 touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);
+            } else if (entry != null) {
+                touch(AgentContract.TOUCH_ALL, "a reviewed native library was loaded without its condition: " + file
+                        + ", since " + unmet);
             } else {
                 touch(AgentContract.TOUCH_ALL, "a native library that is not on the reviewed list was loaded: " + file);
             }
@@ -329,6 +342,42 @@ public final class TouchRecorder implements CaptureSession.Touches {
             incomplete = "a native library load could not be recorded: " + t;
         } finally {
             inside.remove();
+        }
+    }
+
+    /** Null when a conditional entry's guard holds for this load, or why not; always null for any other. */
+    private String unmet(Class<?> caller, String[] entry) {
+        if (entry.length == 2) {
+            return null;
+        }
+        GuardHooks installed = guards;
+        String unarmed = installed == null ? "the yoriwake agent did not install the native-method guards"
+                : installed.unarmed(caller, GuardHooks.wrapFor(entry[2]));
+        return unarmed != null ? unarmed : GuardHooks.unlisted(caller, entry[2], entry[3], entry[4].split(","));
+    }
+
+    /**
+     * The guards' sink: {what turning it on means, whether this call turns it on}. Turned on, the
+     * reviewed library can reach native code nobody reviewed, so every class counts as touched from
+     * here. Recorded even inside another sink: the call is the library's, not the agent's.
+     */
+    void guard(Object call) {
+        try {
+            Object[] pair = (Object[]) call;
+            if (Boolean.TRUE.equals(pair[1])) {
+                touch(AgentContract.TOUCH_ALL, (String) pair[0]);
+            }
+        } catch (Throwable t) {
+            incomplete = "a guarded native call could not be recorded: " + t;
+        }
+    }
+
+    /** A guard class defined without its wrap: none of its calls can be seen from here. */
+    void guardLost(Object why) {
+        try {
+            touch(AgentContract.TOUCH_ALL, (String) why);
+        } catch (Throwable t) {
+            incomplete = "a guard class defined without its guard could not be recorded: " + t;
         }
     }
 

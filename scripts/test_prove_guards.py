@@ -495,6 +495,12 @@ def _results(path):
         return json.load(f)
 
 
+def _shard_of(label, mutations, count=8):
+    """The shard, 1 to `count`, the partition puts a guard in."""
+    shards, _loads = pg.partition(mutations, count)
+    return next(i + 1 for i, shard in enumerate(shards) if any(m[0] == label for m in shard))
+
+
 def case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one():
     """A guard in no shard is proved nowhere while every shard is green."""
     failures = 0
@@ -504,10 +510,78 @@ def case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one():
         failures += fail("the 8 shards are not a partition of the table")
     if [pg.in_shard(pg.MUTATIONS, (index, 8)) for index in range(1, 9)] != shards:
         failures += fail("the same table split twice gave different shards")
-    # CRC32 of the label, as the functional suites shard by class name; `hash()` would move every
-    # guard between Python processes.
-    if pg.shard_of("abc", 8) != 3:
-        failures += fail(f"`abc` is in shard {pg.shard_of('abc', 8)} of 8, not 3")
+    # Fewer guards than shards: the rest hold none, and none is lost.
+    three = pg.MUTATIONS[:3]
+    split, _loads = pg.partition(three, 8)
+    if sorted(len(shard) for shard in split) != [0] * 5 + [1] * 3:
+        failures += fail(f"3 guards in 8 shards were split {[len(shard) for shard in split]}")
+    return failures
+
+
+def case_a_functional_class_stays_whole_unless_it_outweighs_a_tree_share():
+    """Each shard pays a class's baseline once per tree that runs it, so scattering costs time."""
+    failures = 0
+    split, _loads = pg.partition(pg.MUTATIONS, 8)
+    classes = {}
+    for index, shard in enumerate(split):
+        for m in shard:
+            if m[4] is pg.functional_suite:
+                classes.setdefault(pg._class_of(m[4], m[5]), set()).add(index)
+    functional = [m for m in pg.MUTATIONS if m[4] is pg.functional_suite]
+    rates = pg.FUNCTIONAL_CLASS_SECONDS
+    counts = {}
+    for m in functional:
+        counts[pg._class_of(m[4], m[5])] = counts.get(pg._class_of(m[4], m[5]), 0) + 1
+    share = sum((n + 1) * rates[name] for name, n in counts.items()) / (8 * pg.ALONE_SLOTS)
+    for name, shards in classes.items():
+        weight = (counts[name] + 1) * rates[name]
+        allowed = 1 if weight <= share else min(counts[name], -(-weight // share))
+        if len(shards) > allowed:
+            failures += fail(f"{name} ({counts[name]} guards, {weight}s) spread over {len(shards)} "
+                             f"shards; at most {allowed} for a {share:.0f}s share")
+    if len(classes.get("JvmSharedFunctionalTest", ())) < 2:
+        failures += fail("JvmSharedFunctionalTest, heavier than a tree's share, was not split")
+    # One class alone outweighs every share: each guard its own chunk, and no endless split.
+    ten = [m for m in functional if pg._class_of(m[4], m[5]) == "JvmSharedFunctionalTest"][:10]
+    split, _loads = pg.partition(ten, 8)
+    if sum(map(len, split)) != len(ten) or max(map(len, split)) > 2:
+        failures += fail(f"one class of {len(ten)} guards was split {[len(s) for s in split]}")
+    return failures
+
+
+def case_every_functional_guard_has_a_measured_class_and_an_unknown_one_weighs_the_median():
+    failures = 0
+    for m in pg.MUTATIONS:
+        if m[4] is pg.functional_suite and pg._class_of(m[4], m[5]) not in pg.FUNCTIONAL_CLASS_SECONDS:
+            failures += fail(f"{m[0]}'s class {pg._class_of(m[4], m[5])} has no measured seconds")
+    rates = sorted(pg.FUNCTIONAL_CLASS_SECONDS.values())
+    if pg.class_seconds("NotYetMeasuredFunctionalTest") != rates[len(rates) // 2]:
+        failures += fail(f"a class missing from the table weighs {pg.class_seconds('NotYetMeasuredFunctionalTest')}, "
+                         f"not the median {rates[len(rates) // 2]}")
+    if pg.class_seconds(None) != sum(rates):
+        failures += fail("a guard whose class does not resolve does not weigh the whole suite")
+    return failures
+
+
+def case_the_shards_functional_walls_are_within_one_chunk_of_each_other():
+    """A summed load can balance while one tree carries a whole class: the wall is the test."""
+    failures = 0
+    split, _loads = pg.partition(pg.MUTATIONS, 8)
+    walls, heaviest = [], 0
+    for shard in split:
+        groups = {}
+        for m in shard:
+            if m[4] is pg.functional_suite:
+                groups.setdefault(pg._class_of(m[4], m[5]), []).append(m)
+        chunks = sorted(((len(g) + 1) * pg.FUNCTIONAL_CLASS_SECONDS[name] for name, g in groups.items()),
+                        reverse=True)
+        heaviest = max([heaviest] + chunks)
+        trees = [0] * pg.ALONE_SLOTS
+        for chunk in chunks:
+            trees[trees.index(min(trees))] += chunk
+        walls.append(max(trees))
+    if max(walls) - min(walls) > heaviest:
+        failures += fail(f"the 8 shards' functional walls {walls} differ by more than one chunk ({heaviest}s)")
     return failures
 
 
@@ -570,7 +644,7 @@ def case_an_empty_shard_succeeds_and_says_whose_guards_it_left():
     failures = 0
     with _synthetic([("alpha", True)]) as tmp:
         result = os.path.join(tmp, "result.json")
-        home = pg.shard_of("alpha", 8)
+        home = _shard_of("alpha", [m for m in pg.MUTATIONS if m[0] == "alpha"])
         other = home % 8 + 1
         # A guard the base does not have is selected by --changed even when nothing else moved.
         for argv in (["--guard", "alpha"], ["--mode", "full", "--changed", "HEAD"]):
@@ -589,7 +663,8 @@ def case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it():
     failures = 0
     with _synthetic([("caught", True), ("missed", False)]) as tmp:
         result = os.path.join(tmp, "result.json")
-        code, out = _run(["--guard", "caught", "--shard", f"{pg.shard_of('caught', 8)}/8",
+        caught = [m for m in pg.MUTATIONS if m[0] == "caught"]
+        code, out = _run(["--guard", "caught", "--shard", f"{_shard_of('caught', caught)}/8",
                           "--results", result, "--jobs", "1"])
         got = _results(result)["guards"]
         if code != 0 or [(g["label"], g["outcome"]) for g in got] != [("caught", "fired")]:
@@ -698,6 +773,9 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_cold_worker_trees_compile_one_at_a_time_before_the_guards,
          case_a_tree_that_does_not_compile_names_the_compiler_errors,
          case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one,
+    case_a_functional_class_stays_whole_unless_it_outweighs_a_tree_share,
+    case_every_functional_guard_has_a_measured_class_and_an_unknown_one_weighs_the_median,
+    case_the_shards_functional_walls_are_within_one_chunk_of_each_other,
          case_a_shard_that_is_not_one_of_n_refuses,
          case_an_empty_shard_succeeds_and_says_whose_guards_it_left,
          case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it,

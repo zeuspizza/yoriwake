@@ -143,7 +143,7 @@ internal fun modulesOnClasspath(facts: ClasspathFacts): Set<String> {
     }
     // "Could not be asked" answers the empty set, which ClasspathScope.restrict reads as "drop
     // nothing".
-    val declared = facts.declared.getOrElse(null) ?: return emptySet()
+    val declared = facts.declared.getOrNull() ?: return emptySet()
     val present = mutableSetOf<String>()
     present += declared
     facts.buildDirs.forEach { (path, buildDir) ->

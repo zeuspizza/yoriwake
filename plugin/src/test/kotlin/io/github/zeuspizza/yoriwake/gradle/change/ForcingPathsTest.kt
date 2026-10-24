@@ -13,11 +13,20 @@ class ForcingPathsTest {
 
     private val sourceDirs = listOf("app/src/main/resources", "app/src/test/resources")
 
+    /** The files git tracks around the paths classified here. */
+    private val repo = setOf(
+        "build.gradle.kts", "app/build.gradle.kts", "app/web/package.json",
+        "app/src/main/java/dev/Alpha.java", "app/src/test/java/dev/AlphaTest.java",
+    )
+
+    private fun holdsTracked(dir: String) = repo.any { it.startsWith("$dir/") }
+
     private fun classify(
         forcing: Collection<String>,
         tracked: Set<String> = emptySet(),
         captured: Map<String, WorkingTree.Move>? = emptyMap(),
-    ) = ForcingPaths.classify(forcing, sourceDirs, { tracked }, { captured })
+        sourceRoots: Set<String> = emptySet(),
+    ) = ForcingPaths.classify(forcing, sourceDirs, { tracked }, { captured }, ::holdsTracked) { it in sourceRoots }
 
     @Test
     fun `a path in a source directory is named as there even when the capture moved it`() {
@@ -75,7 +84,7 @@ class ForcingPathsTest {
 
     @Test
     fun `when git cannot say what is tracked no path gets an origin`() {
-        val classified = ForcingPaths.classify(listOf("app/run.log"), sourceDirs, { null }, { emptyMap() })
+        val classified = ForcingPaths.classify(listOf("app/run.log"), sourceDirs, { null }, { emptyMap() }, ::holdsTracked)
 
         assertEquals(emptyMap(), classified.origins)
         assertEquals(1, classified.unnamed)
@@ -89,6 +98,7 @@ class ForcingPathsTest {
             emptyList(), sourceDirs,
             { asked = true; emptySet() },
             { asked = true; emptyMap() },
+            { asked = true; true },
         )
 
         assertFalse(asked)
@@ -101,6 +111,7 @@ class ForcingPathsTest {
 
         val classified = ForcingPaths.classify(
             listOf("build.gradle.kts"), sourceDirs, { setOf("build.gradle.kts") }, { read = true; emptyMap() },
+            ::holdsTracked,
         )
 
         assertFalse(read)
@@ -123,10 +134,159 @@ class ForcingPathsTest {
         assertContains(lines[0], "and 2 more")
         assertFalse("app/f6.log" in lines[0])
         assertContains(lines[0], "derby.stream.error.file")
-        assertContains(lines[1], "app/src/main/resources/x.txt")
+        assertContains(lines[1], "app/src/main/resources/**")
         assertContains(lines[2], "app/data.json")
         assertTrue(lines.drop(1).none { "derby.stream.error.file" in it })
         assertContains(lines[3], "1 other")
+    }
+
+    @Test
+    fun `a path under directories git tracks nothing in is named by the outermost, as a glob to list`() {
+        val path = "app/gen-src/main/resources/META-INF/app.versions.properties"
+        val classified = classify(listOf(path))
+
+        assertEquals(mapOf(path to "app/gen-src/**"), classified.names)
+        val line = ForcingPaths.lines(":app:test", classified).single()
+        assertContains(line, "app/gen-src/** is untracked")
+        assertContains(line, "list it in pathIgnore: \"app/gen-src/**\".")
+    }
+
+    @Test
+    fun `a directory holding source files is named, and no glob is offered for it`() {
+        val classified = classify(listOf(
+            "app/gen-src/main/java/dev/Generated.java", "app/gen-src/main/resources/app.properties",
+            "app/web/dist/bundle.js.map",
+        ))
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+        assertContains(line, "app/gen-src/** (2 files)")
+        assertContains(line, "list it in pathIgnore: \"app/web/dist/**\".")
+        assertContains(line, "app/gen-src/** holds source files, so no glob is offered for it")
+        assertFalse("\"app/gen-src/**\"" in line, line)
+    }
+
+    @Test
+    fun `a directory with a source tree on disk gets no glob, though only a resource in it changed`() {
+        val classified = classify(listOf("app/gen-src/main/resources/app.properties"), sourceRoots = setOf("app/gen-src"))
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+        assertContains(line, "app/gen-src/** holds source files, so no glob is offered for it")
+        assertFalse("in pathIgnore: " in line, line)
+    }
+
+    @Test
+    fun `a source tree is found at a directory or one level below it`(@TempDir root: File) {
+        File(root, "app/gen-src/main/java/dev").mkdirs()
+        File(root, "app/out/module/main/kotlin").mkdirs()
+        File(root, "app/web/dist/main").mkdirs()
+        for ((path, holds) in listOf(
+            "app/gen-src/main/resources/a.properties" to true,
+            "app/out/module/a.txt" to true,
+            "app/web/dist/main/a.js" to false,
+        )) {
+            val classified = ForcingPaths.classify(root, File(root, "map"), listOf(path), sourceDirs, null) { args ->
+                when (args.first()) {
+                    "rev-parse" -> "\n"
+                    else -> repo.joinToString("\u0000")
+                }
+            }
+            assertEquals(holds, classified.names.getValue(path) in classified.holdingSources, path)
+        }
+    }
+
+    @Test
+    fun `when every directory holds sources, only the reason is given`() {
+        val line = ForcingPaths.lines(":app:test", classify(listOf("app/gen-src/main/kotlin/dev/A.kt"))).single()
+
+        assertContains(line, "app/gen-src/** holds source files, so no glob is offered for it")
+        assertFalse("in pathIgnore: " in line, line)
+    }
+
+    @Test
+    fun `a path whose own directory holds a tracked file is named as itself`() {
+        assertEquals(mapOf("app/data.json" to "app/data.json"), classify(listOf("app/data.json")).names)
+    }
+
+    @Test
+    fun `untracked directories are named largest first, each with its file count`() {
+        val modules = (1..1_200).map { "app/web/node_modules/m$it/index.js" }
+        val classified = classify(listOf("app/gen-src/v.properties") + modules)
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+
+        assertTrue(line.startsWith("app/web/node_modules/** (1,200 files), app/gen-src/** are untracked"), line)
+        assertContains(line, "pathIgnore: \"app/web/node_modules/**\", \"app/gen-src/**\".")
+        assertFalse("m1/" in line, line)
+    }
+
+    @Test
+    fun `files a capture wrote under an untracked directory are named by it with their count`() {
+        val written = (1..3).map { "app/out/r$it.txt" }
+        val classified = classify(written, captured = written.associateWith { WorkingTree.Move.CREATED })
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+
+        assertTrue(line.startsWith("app/out/** (3 files) changed during :app:test's last capture build"), line)
+        assertFalse("(created)" in line, line)
+        assertContains(line, "list them in pathIgnore: \"app/out/**\".")
+    }
+
+    @Test
+    fun `more than five untracked directories are named five at a time, and the rest counted`() {
+        val classified = classify((1..7).map { "app/d$it/f.txt" })
+
+        val line = ForcingPaths.lines(":app:test", classified).single()
+
+        assertContains(line, "app/d5/** and 2 more are untracked")
+        assertContains(line, "\"app/d5/**\", and the 2 more alike.")
+        assertFalse("app/d6/**" in line, line)
+    }
+
+    @Test
+    fun `every origin pathIgnore can leave out says when listing its paths is safe, and a source directory's gets none`() {
+        val classified = classify(
+            listOf("app/run.log", "app/src/main/resources/x.txt", "app/data.json"),
+            captured = mapOf("app/run.log" to WorkingTree.Move.CREATED),
+        )
+
+        val lines = ForcingPaths.lines(":app:test", classified)
+
+        assertEquals(3, lines.size, lines.joinToString("\n"))
+        val (inSources, offered) = lines.partition { "app/src/main/resources" in it }
+        offered.forEach {
+            assertContains(it, "If neither a test nor a build step reads")
+            assertContains(it, "onto the test classpath")
+            assertContains(it, "in pathIgnore: ")
+        }
+        // pathIgnore keeps everything under a source directory, so a glob there would do nothing.
+        assertContains(inSources.single(), "is under a source directory, which pathIgnore never leaves out")
+        assertFalse("in pathIgnore: " in inSources.single(), inSources.single())
+    }
+
+    @Test
+    fun `when git cannot say what is tracked the forcing paths are still counted`() {
+        val classified = ForcingPaths.classify(
+            listOf("app/run.log", "app/data.json", "build.gradle.kts"), sourceDirs, { null }, { emptyMap() }, ::holdsTracked,
+        )
+
+        val lines = ForcingPaths.lines(":app:test", classified)
+
+        assertEquals(1, lines.size, lines.joinToString("\n"))
+        assertContains(lines.single(), "3 changed paths force this run")
+        assertContains(lines.single(), ":app:yoriwakeExplainTest")
+    }
+
+    @Test
+    fun `git is asked the same arguments for ten thousand forcing paths as for ten`(@TempDir dir: File) {
+        fun asked(count: Int): List<List<String>> {
+            val calls = mutableListOf<List<String>>()
+            ForcingPaths.classify(
+                dir, File(dir, "map"), (1..count).map { "web/node_modules/m$it/index.js" }, sourceDirs, base = "HEAD",
+            ) { calls += it; "" }
+            return calls
+        }
+
+        assertEquals(asked(10), asked(10_000))
     }
 
     @Test
@@ -157,5 +317,40 @@ class ForcingPathsTest {
 
         assertEquals(mapOf("notes.txt" to Origin.UNTRACKED), classified.origins)
         assertEquals(2, classified.unnamed)
+    }
+
+    @Test
+    fun `a build under a subdirectory of the repo names an untracked directory by its own path`(@TempDir repo: File) {
+        fun git(vararg args: String) {
+            val code = ProcessBuilder("git", *args).directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
+            check(code == 0) { "git ${args.joinToString(" ")} failed with $code" }
+        }
+        git("init")
+        val root = File(repo, "backend")
+        File(root, "src/main/resources").mkdirs()
+        File(root, "src/main/resources/a.txt").writeText("a")
+        File(root, "web").mkdirs()
+        File(root, "web/package.json").writeText("{}")
+        git("add", ".")
+        git("-c", "user.email=t@e.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-m", "base")
+        File(root, "src/main/resources/gen").mkdirs()
+        File(root, "src/main/resources/gen/v.properties").writeText("v")
+        File(root, "web/node_modules/m").mkdirs()
+        File(root, "web/node_modules/m/index.js").writeText("m")
+
+        val classified = ForcingPaths.classify(
+            root, File(repo, "map"),
+            listOf("src/main/resources/gen/v.properties", "web/node_modules/m/index.js"),
+            listOf("src/main/resources"),
+            base = "HEAD",
+        )
+
+        assertEquals(
+            mapOf(
+                "src/main/resources/gen/v.properties" to "src/main/resources/gen/**",
+                "web/node_modules/m/index.js" to "web/node_modules/**",
+            ),
+            classified.names,
+        )
     }
 }

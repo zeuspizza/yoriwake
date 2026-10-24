@@ -40,7 +40,7 @@ object TestIdentifiers {
         methods.forEach { container.addChild(Descriptor(container.uniqueId.append("method", it), true)) }
         @Suppress("DEPRECATION")
         val plan = TestPlan.from(listOf<TestDescriptor>(engine), NoParameters)
-        val classId = plan.getTestIdentifier(container.uniqueId.toString())
+        val classId = plan.getTestIdentifier(container.uniqueId)
         return Triple(plan, classId, plan.getChildren(classId).sortedBy { it.uniqueId })
     }
 
@@ -55,7 +55,7 @@ object TestIdentifiers {
         templates.forEach { container.addChild(Descriptor(container.uniqueId.append("test-template", it), false)) }
         @Suppress("DEPRECATION")
         val plan = TestPlan.from(listOf<TestDescriptor>(engine), NoParameters)
-        val classId = plan.getTestIdentifier(container.uniqueId.toString())
+        val classId = plan.getTestIdentifier(container.uniqueId)
         return Triple(plan, classId, plan.getChildren(classId).sortedBy { it.uniqueId })
     }
 

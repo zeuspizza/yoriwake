@@ -19,7 +19,7 @@ internal object PathIgnoreReport {
         if (applied.ignored.isEmpty()) return emptyMap()
         val map = runCatching { MapReader.read(mapDir) }.getOrNull()
         val reads = map?.takeIf { it.isUsable }?.resourceReads()
-        val everyJvmRecorded = reads != null && map != null && map.entries().all { entry ->
+        val everyJvmRecorded = map != null && reads != null && map.entries().all { entry ->
             map.positionsOf(entry.testId()).all { reads.recorded(it.jvm()) }
         }
         return applied.ignored.associate { (path, _) ->

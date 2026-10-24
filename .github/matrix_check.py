@@ -32,6 +32,7 @@ SKIPS = os.path.join(HERE, "matrix-skips.txt")
 TABLE_HEADING = "### Supported matrix"
 REFERENCE_CELL = "linux/9.8.0/21"
 IDENTITY_TEST = "MatrixCellIdentityTest.the builds run on the Gradle and daemon JDK this cell asks for"
+EARLY_ACCESS_TEST = "TestJvmRangeFunctionalTest.test JVM on the newest early-access JDK"
 
 CELL_LINE = re.compile(
     r"^\s*-\s*\{\s*os:\s*(\w+),\s*runner:\s*([\w.-]+),\s*gradle:\s*'([\d.]+)',\s*task:\s*\w+,"
@@ -262,6 +263,15 @@ def results_problems(artifacts, candidate, labels, rows, allowlist):
     return problems, lines
 
 
+def early_access_problems(directory):
+    """Why the early-access job's results do not show its test passing: Gradle reports a skip as success."""
+    statuses, _ = read_results(directory) if os.path.isdir(directory) else ({}, "")
+    if not statuses:
+        return [f"{directory}: ran no tests"]
+    status = statuses.get(EARLY_ACCESS_TEST, "absent")
+    return [] if status == "passed" else [f"{EARLY_ACCESS_TEST}: {status}, so the early-access JDK was not tested"]
+
+
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
@@ -274,7 +284,16 @@ def main(argv=None):
     results = sub.add_parser("results", help="check a run's downloaded artifacts")
     results.add_argument("artifacts")
     results.add_argument("--candidate", required=True)
+    early = sub.add_parser("early-access", help="check the early-access job's test ran and passed")
+    early.add_argument("results")
     args = parser.parse_args(argv)
+
+    if args.command == "early-access":
+        # Before the table check: drift there fails pull requests, not the weekly early-access run.
+        problems = early_access_problems(args.results)
+        for problem in problems:
+            print(f"FAIL: {problem}")
+        return 1 if problems else 0
 
     labels = cells(read(WORKFLOW))
     rows = table_rows(read(REFERENCE))

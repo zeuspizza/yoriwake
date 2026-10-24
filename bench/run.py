@@ -4385,7 +4385,8 @@ def publish_plugin_under_test():
     print(f"publishing the plugin under test to mavenLocal from {SOURCE} at {commit}", flush=True)
     before = selector_digest()
     code, seconds = run(
-        [wrapper(SOURCE), "--quiet", ":plugin:publishToMavenLocal"], SOURCE,
+        # A control's planted defect may leave the compiler something to warn about.
+        [wrapper(SOURCE), "--quiet", ":plugin:publishToMavenLocal", "-Pyoriwake.kotlinWarningsAsErrors=false"], SOURCE,
         os.path.join(HERE, "logs", "publish.log"),
     )
     if code != 0:

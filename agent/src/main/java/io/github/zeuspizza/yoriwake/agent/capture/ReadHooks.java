@@ -62,7 +62,7 @@ import java.util.stream.Stream;
  */
 final class ReadHooks {
 
-    private static final String HOLDER = "java/lang/YoriwakeReadSink";
+    static final String HOLDER = "java/lang/YoriwakeReadSink";
     private static final String BRIDGE_MODULE = "io.github.zeuspizza.yoriwake.readbridge";
     private static final String BRIDGE_PACKAGE = "io/github/zeuspizza/yoriwake/readbridge";
     private static final String DEFINER = BRIDGE_PACKAGE + "/Definer";
@@ -448,13 +448,14 @@ final class ReadHooks {
 
     /**
      * {@code public final class java.lang.YoriwakeReadSink} with one {@code public static volatile
-     * Consumer} per sink: {@code SINK, LOOKUP, DEFINE, PROCESS, NATIVE, LIBRARY, ENV}.
+     * Consumer} per sink: {@code SINK, LOOKUP, DEFINE, PROCESS, NATIVE, LIBRARY, ENV}, and
+     * {@code GUARD}, which {@link GuardHooks} sets.
      */
     private static byte[] holderBytes() {
         ClassWriter writer = new ClassWriter(0);
         writer.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_SUPER,
                 HOLDER, null, "java/lang/Object", null);
-        for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "ENV"}) {
+        for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "ENV", "GUARD"}) {
             writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, field,
                     "L" + CONSUMER + ";", null, null).visitEnd();
         }

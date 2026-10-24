@@ -44,11 +44,34 @@ internal object MapProvenance {
         AgentContract.MAP_SCHEMA_VERSION_FILE,
     ).sorted()
 
+    /**
+     * The file lists earlier releases digested, frozen as they were released: a release that adds a
+     * map file changes every digest, so a trusted-map list its predecessor wrote names none of this
+     * version's. Recognising one changes only the refusal's reason, never the verdict: an earlier
+     * list covers none of the files this version added, so it vouches for none of them. Names are
+     * literals, so renaming a constant later cannot move a frozen list.
+     */
+    class EarlierScheme(val releases: String, files: List<String>) {
+        val files: List<String> = files.sorted()
+    }
+
+    val EARLIER: List<EarlierScheme> = listOf(
+        EarlierScheme(
+            "0.2.0",
+            listOf(
+                "coverage.tsv", "positions.tsv", "first-touch.tsv", "named-touch.tsv", "jvm-mode.tsv",
+                "scope", "effective-scope", "loaded.txt", "loaded-provenance", "loaded-scope", "constants",
+                "class-digests", "annotation-digests", "resource-digests", "capture-commit",
+                "worktree-snapshot", "schema-version",
+            ),
+        ),
+    )
+
     /** Each file's name, length and bytes in a fixed order; an absent file contributes its name and `-`. */
-    fun digest(mapDir: File): String {
+    fun digest(mapDir: File, files: List<String> = DIGESTED): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(64 * 1024)
-        DIGESTED.forEach { name ->
+        files.forEach { name ->
             digest.update(name.toByteArray(Charsets.UTF_8))
             digest.update(0)
             val file = File(mapDir, name)
@@ -117,6 +140,14 @@ internal object MapProvenance {
             )
         }
         if (listed != digest) {
+            val earlier = EARLIER.firstOrNull { runCatching { digest(mapDir, it.files) }.getOrNull() == listed }
+            if (earlier != null) {
+                return Verdict.Untrusted(
+                    "the trusted-map list was written by yoriwake ${earlier.releases}, whose digest covers a " +
+                        "different set of files than this version checks (digest $digest, listed $listed); " +
+                        "the default branch's next run on this version lists the map anew and restores narrowing"
+                )
+            }
             return Verdict.Untrusted(
                 "the map is not what the trusted-map list vouches for (digest $digest, listed $listed)"
             )

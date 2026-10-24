@@ -13,6 +13,11 @@ them: the functional suite runs a test JVM on each. `-Pyoriwake.functional.testJ
 others for a local run. CI runs each functional suite in shards by test class;
 `-Pyoriwake.functional.shard=3/8` runs the same classes as its shard 3 of 8, to reproduce one.
 
+The build runs on Gradle 8.14, the oldest Gradle the plugin supports, so the plugin compiles only
+against what that Gradle offers; the 9.x line is tested through TestKit and the supported matrix.
+The wrapper moves with that floor, and is revisited when Gradle 10 ends fixes for 8.x. CI turns off
+setup-gradle's build capture, whose only effect here was a notice that 8.14 is out of date.
+
 ```bash
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin
 python3 .github/test_ci.py   # the CI helper scripts' own tests
@@ -106,8 +111,9 @@ guards run in four worktrees under `sandbox/prove-guards/` and never write your 
 
 On a pull request, CI runs fast mode and the guards the change can affect; a change to
 `plugin/src/main` or `agent/src/main` runs every guard instead, and every guard runs nightly. Each
-of these runs in 8 shards, the guards whose label hashes to each (`--shard I/8`, with the same
-`--mode` and `--changed` as the job), and a check job under the job's name fails unless every guard
+of these runs in 8 shards of its selected guards, balanced by measured cost with a functional
+class's guards together (`--shard I/8`, with the same `--mode` and `--changed` as the job,
+reproduces one), and a check job under the job's name fails unless every guard
 the run selects fired in exactly one shard. A separate check fails a pull request that removes a
 guard, or changes its target, fragment, suite or expected test, or takes a suite out of fast mode,
 until a maintainer approves it.
@@ -138,6 +144,27 @@ Use the [bug report form](https://github.com/zeuspizza/yoriwake/issues/new?templ
 most useful thing it asks is whether a test that should have run did not.
 
 Security issues go through [SECURITY.md](SECURITY.md), not the issue tracker.
+
+## Native libraries
+
+A library joins the [reviewed list](docs/reference.md#native-libraries) through the
+[native library proposal](https://github.com/zeuspizza/yoriwake/issues/new?template=native-library.yml)
+form. Each release compares every listed library with its latest major version
+([RELEASING.md](RELEASING.md)), and one that moved gets a re-review issue. A re-review answers the
+form's questions again against the new major's native sources, then records one outcome:
+
+- **keep**: nothing the native code opens, or how its path is chosen, changed; the reviewed version
+  in the reference moves to the new one.
+- **update**: the entry still holds with a change, such as a new loading class or file-name pattern
+  in `ReviewedLibraries`; the reference's row says what the native code now opens, and its reviewed
+  version and source link move to the new one.
+- **remove**: the new version opens a path that can name a class file or a jar, other than one a
+  test passes as data; the entry goes, and that library applies the wide rule from the release that
+  drops it.
+
+A keep only records the review, and a removal only widens selection. An update changes what is
+trusted, so it is a change to selection and meets
+[what a change to selection must prove](#what-a-change-to-selection-must-prove).
 
 ## Releases
 
