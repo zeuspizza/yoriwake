@@ -78,6 +78,15 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a build that still sets notReadByTests is told it is deprecated`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild + "\nyoriwake { notReadByTests.add(\"docs/*\") }\n", oneClass, oneTest)
+
+        val output = runner(dir, "help").build().output
+
+        assertContains(output, "notReadByTests is deprecated and will be removed in a later release. Use pathIgnore")
+    }
+
+    @Test
     fun `without a declaration a change to documentation forces as before`(@TempDir dir: File) {
         captured(dir, minimalBuild, guide)
         File(dir, "docs/guide.md").writeText("# Guide, again\n")

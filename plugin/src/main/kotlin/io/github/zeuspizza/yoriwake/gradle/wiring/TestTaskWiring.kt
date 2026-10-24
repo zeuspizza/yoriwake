@@ -98,7 +98,16 @@ internal class TestTaskWiring(internal val settings: Settings) {
             atLeastOne(extension.fullRunEveryBuilds.orNull, "fullRunEveryBuilds", project.path),
             atLeastOne(extension.fullRunEveryDays.orNull, "fullRunEveryDays", project.path),
         )
+        // Still honoured while deprecated; the warning below is the user's.
+        @Suppress("DEPRECATION")
         val notReadByTests = extension.notReadByTests.getOrElse(emptyList())
+        if (notReadByTests.isNotEmpty()) {
+            project.logger.warn(
+                "[yoriwake] ${project.path}: notReadByTests is deprecated and will be removed in a later release. " +
+                    "Use pathIgnore, whose globs are Ant-style (`docs/**` for everything under docs) and which keeps " +
+                    "a path forcing when it is a build file, a source, named in compiled classes or read by a test."
+            )
+        }
         val pathIgnore = PathIgnore.validated(extension.pathIgnore.getOrElse(emptyList()), project.path)
         val environment = EnvironmentFingerprint.Rules(
             validNames(extension.systemPropertyIgnore.getOrElse(emptyList()), "systemPropertyIgnore", project.path),

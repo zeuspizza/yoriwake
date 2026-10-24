@@ -407,12 +407,16 @@ public abstract class YoriwakeExtension {
     public abstract val fullRunEveryDays: org.gradle.api.provider.Property<Int>
 
     /**
+     * Deprecated: use [pathIgnore], which keeps the protections this lacks; this is removed in a later
+     * release.
+     *
      * Files neither the tests nor the build ever read, as globs over paths relative to the root
      * project: `notReadByTests.addAll("*.md", "LICENSE")`. Paths match whole, and `*` matches any
      * characters, slashes included, so `docs` followed by a slash and a star is every file under
      * `docs`. A changed file one matches is no change, where it would otherwise force a full run.
      * Empty by default; an entry that names a file a test does read skips that test.
      */
+    @Deprecated("Use pathIgnore, which keeps a path forcing when a build or a test reads it.")
     public abstract val notReadByTests: org.gradle.api.provider.ListProperty<String>
 
     /**

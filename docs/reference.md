@@ -1228,7 +1228,8 @@ reading the file and passing it on. Every run that left a path out names it in t
 each failing test selection would have left out.
 
 `notReadByTests` takes a list for the same purpose with none of this: its `*` crosses directories,
-nothing is protected, no read is checked, and only a count is printed.
+nothing is protected, no read is checked, and only a count is printed. It is deprecated: a build
+that sets it is warned, and a later release removes it.
 
 ## Running what a selection skipped
 
@@ -1377,7 +1378,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `fullRunBranches` | `List<String>` | empty | Branches on which a selecting run runs every test and records the map instead. See [When to refresh](#when-to-refresh). |
 | `fullRunEveryBuilds` | `Int` | unset | Run every test once a task has executed this many times since its last full run. |
 | `fullRunEveryDays` | `Int` | unset | Run every test once this many days have passed since a task's last full run; with both set, whichever comes first. |
-| `notReadByTests` | `List<String>` | empty | Globs of files no test or build reads: a changed one is no change. |
+| `notReadByTests` | `List<String>` | empty | Deprecated: use `pathIgnore`. Globs of files no test or build reads: a changed one is no change. |
 | `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. See [Paths no test reads](#paths-no-test-reads). |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
