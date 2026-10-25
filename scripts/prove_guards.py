@@ -2189,7 +2189,7 @@ MUTATIONS = [
      agent_suite, "a patch of the base module marks the capture incomplete"),
     # Each entry this list gained after its first review, struck out: its test must fail.
     ("Netty's macOS DNS resolver is not reviewed", REVIEWED_LIBRARIES,
-     '"libnetty_resolver_dns_native_macos(_[a-z0-9_]+)?[0-9]*\\\\.(dylib|jnilib)"',
+     '"libnetty_resolver_dns_native_macos(_(x86_64|aarch_64))?[0-9]*\\\\.(dylib|jnilib)"',
      '"libnetty_resolver_dns_native_macos_struck"',
      functional_suite, "Netty's macOS DNS resolver and Amazon Corretto Crypto Provider narrow as reviewed libraries"),
     ("Amazon Corretto Crypto Provider is not reviewed", REVIEWED_LIBRARIES,
