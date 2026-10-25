@@ -1,8 +1,5 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
-import org.gradle.api.provider.Property
-import org.gradle.api.provider.ValueSource
-import org.gradle.api.provider.ValueSourceParameters
 import java.io.File
 
 /**
@@ -70,18 +67,5 @@ internal object CaptureStart {
         val file = File(path).let { if (it.isAbsolute) it else File(rootDir, path) }
         if (!file.exists()) return ABSENT
         return WorkingTree.statToken(file.toPath()) ?: unreadable
-    }
-
-    /**
-     * [read] at configuration time. A value source, so a reusing build re-obtains it before any
-     * task runs, compilation included, and reconfigures when it moved.
-     */
-    internal abstract class Source : ValueSource<String, Source.Parameters> {
-
-        interface Parameters : ValueSourceParameters {
-            val rootDir: Property<String>
-        }
-
-        override fun obtain(): String = read(File(parameters.rootDir.get())).encode()
     }
 }

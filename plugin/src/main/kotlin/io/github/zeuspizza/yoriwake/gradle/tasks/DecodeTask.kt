@@ -1,35 +1,13 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
-import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.Settings
-import io.github.zeuspizza.yoriwake.gradle.bytecode.DigestScan
-import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
-import io.github.zeuspizza.yoriwake.gradle.change.classFileCeiling
-import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
-import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
-import io.github.zeuspizza.yoriwake.gradle.capture.JUnitXmlFailures
-import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
-import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
-import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
-import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
-import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
+import io.github.zeuspizza.yoriwake.gradle.capture.DecodeRun
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
-import io.github.zeuspizza.yoriwake.gradle.report.Audit
-import io.github.zeuspizza.yoriwake.gradle.report.Observation
 import io.github.zeuspizza.yoriwake.gradle.wiring.AfterTest
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
-import io.github.zeuspizza.yoriwake.gradle.wiring.declinedLeftAloneMarker
-import io.github.zeuspizza.yoriwake.gradle.wiring.develocityRefusalMarker
-import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
-import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
-import io.github.zeuspizza.yoriwake.gradle.wiring.pendingClasspathFiles
-import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
-import io.github.zeuspizza.yoriwake.gradle.wiring.pendingStats
-import io.github.zeuspizza.yoriwake.gradle.wiring.pendingSnapshot
-import io.github.zeuspizza.yoriwake.gradle.wiring.ranMarker
-import io.github.zeuspizza.yoriwake.gradle.wiring.undatedRunMarker
+import java.io.File
 import org.gradle.api.DefaultTask
 import org.gradle.api.Project
 import org.gradle.api.provider.ListProperty
@@ -41,7 +19,6 @@ import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.UntrackedTask
 import org.gradle.api.tasks.testing.Test
-import java.io.File
 
 /**
  * Decodes the run's records into the map the selector will read. A run that captured nothing
@@ -112,419 +89,38 @@ internal abstract class DecodeTask : DefaultTask() {
     @get:Internal("Gradle's JUnit XML for the run, read for failures a stopped test JVM never recorded")
     var junitXml: File? = null
 
-    /** The schedule's count, kept only when a limit is set; a failed write never fails the decode. */
-    private fun recordSchedule(taskPath: String, fullRun: Boolean) {
-        if (!scheduleSet.getOrElse(false)) return
-        Schedule.record(mapDir, fullRun)?.let { problem ->
-            logger.warn(
-                "[yoriwake] $taskPath could not record this run for the scheduled full run ($problem), " +
-                    "so the scheduled full run may come later than configured."
-            )
-        }
-    }
-
     @TaskAction
     fun decode() {
         val taskPath = taskPath.get()
         // First, so a report that runs after this task reads the restored file.
         afterTest.runIfPending(taskPath, logger)
-        val patterns = patterns.get()
-        val selecting = selecting.get()
-        val marker = ranMarker(CoverageDecoder.recordsDir(mapDir))
-        val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
-        val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
-        val develocityDeclined = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
-        val datedSnapshot = pendingSnapshot(mapDir)
-        val startStats = pendingStats(mapDir)
-        // Read once and removed, so a later run never mistakes this run's walk for its own.
-        val classpathFiles = pendingClasspathFiles(mapDir).let { file ->
-            CoverageDecoder.readClasspathFilesFrom(file).also { runCatching { file.delete() } }
-        }
-        // The environment the test JVMs started in, read once and removed as the walk above.
-        val environment = EnvironmentFingerprint.readPending(mapDir)
-            .also { runCatching { File(mapDir, EnvironmentFingerprint.PENDING_FILE).delete() } }
-        val pending = CaptureStart.Pending.decode(
-            pendingHead(mapDir).takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
-        )
-        // Why the run cannot date the map, as its test task read its filter while executing. Over
-        // the inputs below, which a reused configuration fixed before an IDE's test launcher added
-        // its patterns. Read once and removed, as the walk above.
-        val undatedAtExecution = undatedRunMarker(CoverageDecoder.recordsDir(mapDir)).let { file ->
-            file.takeIf(File::isFile)?.let { runCatching { it.readText().trim() }.getOrDefault("") }
-                .also { runCatching { file.delete() } }
-        }
-        val datesTheMap = undatedAtExecution == null && datesTheMap.getOrElse(false)
-        val wholeTask = undatedAtExecution == null && wholeTask.getOrElse(false)
-        val undatedReason = undatedAtExecution ?: undatedReason.getOrElse("")
-        // Before every return below, so each of them leaves a report of this run.
-        if (observing.getOrElse(false)) {
-            observe(taskPath, pending, when {
-                develocityDeclined.isFile -> "Develocity declined this run"
-                parallelRefused.isFile -> "in-JVM parallel execution is enabled, so nothing was captured"
-                !marker.isFile -> "the test task did no work"
-                else -> null
-            })
-        }
-        // Before every return below. A run that did no work leaves the record of the run that did.
-        if (asksSelection.getOrElse(false) && marker.isFile) {
-            recordSelection(taskPath, selecting, fullRunMarker.isFile)
-        }
-        // First: Develocity ran or chose this run's tests, and nothing of ours acted on it.
-        if (develocityDeclined.delete()) {
-            marker.delete()
-            parallelRefused.delete()
-            fullRunMarker.delete()
-            logger.lifecycle(
-                "[yoriwake] $taskPath: Develocity declined this run, so the map is left exactly as it was."
-            )
-            return
-        }
-        // Before the ran-marker check: this run did work but declined to capture, and a
-        // decode would merge older records into a map it must not touch.
-        if (parallelRefused.delete()) {
-            marker.delete()
-            logger.lifecycle(
-                "[yoriwake] $taskPath: declined over in-JVM parallelism, so the map is left " +
-                    "exactly as it was."
-            )
-            return
-        }
-        // A complement run that left out what its record lists captured nothing on purpose, and the map
-        // and the record stay as they are.
-        val complemented = File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE)
-        if (complementing.getOrElse(false) && complemented.isFile) {
-            val commit = runCatching { SelectionRecord.stampOf(SelectionRecord.read(complemented.readText())).commit }.getOrNull()
-            complemented.delete()
-            if (marker.delete()) {
-                fullRunMarker.delete()
-                recordSchedule(taskPath, fullRun = false)
-                logger.lifecycle(SelectionRecord.complemented(mapDir).line(taskPath, commit))
-                return
-            }
-        }
-        // The marker exists only when the test task actually executed; see ranMarker.
-        if (!marker.delete()) {
-            logger.info("[yoriwake] $taskPath did no work; the map is left as it is")
-            return
-        }
-        // A declined run that left a map recorded in isolation alone captured nothing on purpose.
-        val leftAlone = declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir))
-        if (leftAlone.isFile) {
-            val reason = runCatching { leftAlone.readText().trim() }.getOrDefault("")
-            leftAlone.delete()
-            fullRunMarker.delete()
-            // A declined run ran every test, which is what the schedule bounds, though the map stays as
-            // it was; one that ran only the tests named for it did not.
-            recordSchedule(taskPath, fullRun = datesTheMap)
-            logger.lifecycle("[yoriwake] $taskPath: $reason")
-            return
-        }
-        // Read here, not through a provider, which resolves before any task action runs.
-        // A run that executed the whole suite dates the map even under `-Pyoriwake.select`,
-        // or the map's age would never reset.
-        val executedEverything = fullRunMarker.delete()
-        // The HEAD the tests saw, read before the build compiled anything; null when it could not be
-        // read, which removes the stamp so the next run refuses. HEAD even on a dirty tree: the
-        // working-tree snapshot beside the stamp covers what HEAD does not pin.
-        val start = pending?.reading
-        val now = CaptureStart.read(rootDir)
-        val captureCommit = start?.head
-        // Records span two commits once either moved, and no single diff covers both. A HEAD that
-        // cannot be read now differs from the one read at the start. Without a start reading there
-        // is nothing to compare, and the missing stamp is what keeps the next run safe.
-        val startHead = if (start == null) now.head else start.head
-        val headNow = now.head
-        val headMoved = startHead != headNow
-        val startReflogs = start?.reflogs ?: now.reflogs
-        val reflogsNow = now.reflogs
-        val reflogMoved = startReflogs != reflogsNow
-        // Dated only if every test JVM finished: one that died mid-plan leaves older
-        // records for tests it never reached.
-        val unfinished = CoverageDecoder.unfinishedWorkers(mapDir)
-        val observedEverything = datesTheMap && (!selecting || executedEverything)
-        if (observedEverything && unfinished.isNotEmpty()) {
-            logger.warn(
-                "[yoriwake] $taskPath: ${CoverageDecoder.describeUnfinished(mapDir, unfinished)} did not finish its run (a test " +
-                    "that exited the JVM, or a worker that was killed or crashed), so the map " +
-                    "is not dated: the tests it never reached keep records from an older " +
-                    "capture, and selection widens across every commit since the last " +
-                    "complete one."
-            )
-        }
-        val datesMap = observedEverything && unfinished.isEmpty() && !headMoved && !reflogMoved
-        // Keyed on running everything, not on the decode stamping the map: a full run with no worker
-        // records returns before any stamp, and the count must still reset there.
-        recordSchedule(taskPath, fullRun = datesMap)
-        val hasWorkerRecords = CoverageDecoder.recordsDir(mapDir).listFiles().orEmpty()
-            .any { it.isDirectory && it.name.startsWith(AgentContract.WORKER_DIR_PREFIX) }
-        // Merged undated, these records would describe code the stamp's commit does not hold, and a
-        // later change that undoes it would be in no diff. Kept, the map stays at one commit.
-        if (!datesMap && hasWorkerRecords) {
-            val reason = when {
-                // A narrowed selecting run is not a capture; it never meant to write the map.
-                selecting && !executedEverything -> null
-                !datesTheMap -> undatedReason.ifEmpty { "the run was filtered" }
-                unfinished.isNotEmpty() -> "${CoverageDecoder.describeUnfinished(mapDir, unfinished)} did not finish"
-                headMoved -> "HEAD moved from ${startHead ?: "nothing"} to ${headNow ?: "something unreadable"} during the run"
-                startReflogs.first != reflogsNow.first -> "HEAD's reflog changed during the run"
-                startReflogs.second != reflogsNow.second -> "the stash's reflog changed during the run"
-                else -> "the run could not be dated"
-            }
-            // Read on its own: a report that cannot be read must not cost the failures the agent's
-            // own records hold.
-            val reported = runCatching {
-                JUnitXmlFailures.classes(junitXml) { report, problem ->
-                    logger.warn("[yoriwake] $taskPath could not read $report for failures ($problem)")
-                }
-            }.getOrElse { problem ->
-                logger.warn("[yoriwake] $taskPath could not read Gradle's test report for failures ($problem)")
-                emptySet()
-            }
-            val failures = runCatching { CoverageDecoder.carryFailures(mapDir, reported) }.getOrElse { problem ->
-                logger.warn("[yoriwake] $taskPath could not mark this run's failures in the map ($problem)")
-                0
-            }
-            if (failures > 0) {
-                writeDigest(taskPath)
-            }
-            val kept = if (failures == 0) "" else ", except that the $failures test(s) it saw fail or skip keep that outcome"
-            if (reason == null) {
-                logger.info("[yoriwake] $taskPath selected part of the suite, so its records were not kept$kept")
-            } else {
-                logger.lifecycle(
-                    "[yoriwake] $taskPath: $reason, so this run's coverage was not kept and the map is " +
-                        "as it was$kept."
-                )
-            }
-            return
-        }
-        val artifacts = if (datesMap) {
-            runCatching {
-                TaskArtifacts(
-                    facts.classpath.files, facts.buildDirs.values, facts.testOutputs.files,
-                )
-            }.getOrNull()
-        } else {
-            null
-        }
-        if (!selecting) {
-            // Recorded as usual; said now, so the full runs that follow are no surprise.
-            artifacts?.let { runCatching { classFileCeiling(facts, it) }.getOrNull() }?.let { ceiling ->
-                logger.lifecycle(
-                    "[yoriwake] $taskPath: selecting runs of this task will run every test " +
-                        "(${ceiling.kind.token}): ${ceiling.cause}. ${ceiling.remedy}"
-                )
-            }
-        }
-        val outcome = runCatching {
-            CoverageDecoder.decode(
-                mapDir,
-                patterns,
-                selecting,
-                wholeTask,
-                loadedScope.getOrElse(emptyList()),
-                captureCommit,
-                datesMap,
-                effectiveScope.orNull,
-                // So a later run can ask whether a constant changed. Null records nothing:
-                // a missing digest would read as a class declaring no constant.
-                runCatching {
-                    artifacts?.constantDigests()
-                }.onFailure {
-                    logger.warn(
-                        "[yoriwake] $taskPath: could not record constants ($it); every change to " +
-                            "a constant holder forces until the next capture succeeds"
-                    )
-                }.getOrNull(),
-                // A digest of every class, so a later run can see changes `git diff`
-                // cannot. Recorded on every capture so turning the flag on works at once.
-                runCatching {
-                    when (val scan = artifacts?.classDigests()) {
-                        null -> null
-                        is DigestScan.Found -> scan.digests
-                        is DigestScan.Refused -> {
-                            logger.info(
-                                "[yoriwake] $taskPath: no class digests recorded " +
-                                    "(${scan.kind}: ${scan.reason})"
-                            )
-                            null
-                        }
-                    }
-                }.getOrNull(),
-                // Every class's annotations, so a later run forces when one changes: a test that
-                // only scans a class never executes it.
-                annotationDigests = runCatching {
-                    when (val scan = artifacts?.classDigests(Recordability::annotationDigest)) {
-                        null -> null
-                        is DigestScan.Found -> scan.digests
-                        is DigestScan.Refused -> {
-                            logger.warn(
-                                "[yoriwake] $taskPath: no annotation digests recorded " +
-                                    "(${scan.kind}: ${scan.reason}); every change forces a full " +
-                                    "run until a capture records them"
-                            )
-                            null
-                        }
-                    }
-                }.getOrNull(),
-                // What the test JVM saw on its classpath, walked before it started; null records none,
-                // and the next selecting run forces until a capture does.
-                classpathFiles = classpathFiles,
-                // Asked only once records were merged, which only a dating capture does. Every path
-                // touched since the start reading is unknown. A start file that is missing, or that
-                // another build has rewritten since, removes the snapshot, and the next run refuses.
-                worktreeSnapshot = {
-                    WorkingTree.reobserve(
-                        rootDir,
-                        WorkingTree.readStart(datedSnapshot, pending?.snapshotId),
-                        WorkingTree.readStart(startStats, pending?.statsId),
-                    )
-                },
-                isolated = isolated.getOrElse(false),
-                environment = environment,
-                // Which classpath files each JVM read, by the paths the classpath digests name.
-                rootDir = rootDir,
-            )
-        }
-        // A map we cannot write leaves the previous one alone; it never fails someone
-        // else's tests from inside a finalizer.
-        outcome.onFailure {
-            // Recorded for `yoriwakeAudit`, not only warned: the kept map looks healthy
-            // while it ages.
-            Audit.TaskFacts.recordDecodeRefusal(mapDir, it.toString())
-            // It may have written part of the map, so its digest no longer describes it.
-            runCatching { File(mapDir, AgentContract.MAP_DIGEST_FILE).delete() }
-            logger.warn("[yoriwake] $taskPath could not update the map ($it)")
-            return
-        }
-        when (val decoded = outcome.getOrNull()) {
-            // A capture run that recorded nothing usually means the Platform listener never
-            // loaded (TestNG, say), and every later run would silently run everything.
-            // Not for selecting runs, which may legitimately deselect everything.
-            null -> if (selecting) {
-                logger.info(
-                    "[yoriwake] $taskPath selected no tests, so there was nothing to record"
-                )
-            } else {
-                // Recorded for `yoriwakeAudit`, which would otherwise advise capturing a
-                // map that can never gain coverage.
-                Audit.TaskFacts.recordCoverage(mapDir, false)
-                logger.warn(
-                    "[yoriwake] $taskPath ran but recorded no coverage, so no map was built and " +
-                        "selection will never narrow anything here. The JUnit Platform, " +
-                        "plain JUnit 4 and TestNG are all captured, so a run that records " +
-                        "nothing usually means JaCoCo is not attached to this task, or its " +
-                        "engine is one this tool has not been taught. The previous map at " +
-                        "$mapDir is unchanged."
-                )
-            }
-            else -> {
-                writeDigest(taskPath)
-                Audit.TaskFacts.recordCoverage(mapDir, true)
-                // A merge that worked is the only thing that clears the refusal.
-                Audit.TaskFacts.recordDecodeRefusal(mapDir, null)
-                // Only the decode knows how many worker JVMs contributed to the summed
-                // durations. Only a dating run records it, as the durations are the merged
-                // map's.
-                if (datesMap) {
-                    Audit.TaskFacts.recordWorkers(mapDir, decoded.workers)
-                }
-                logger.lifecycle(
-                    "[yoriwake] $taskPath map updated: ${decoded.captured} records captured, " +
-                        "${decoded.total} known" +
-                        if (decoded.unattributable > 0) {
-                            ", ${decoded.unattributable} of them unattributable"
-                        } else {
-                            ""
-                        }
-                )
-                // Warn when the map is mostly unusable, usually a framework like
-                // Robolectric running tests in its own classloader. Over the merged map.
-                if (decoded.mapTests > 0 &&
-                    decoded.mapUnattributable * 2 > decoded.mapTests
-                ) {
-                    val percent = decoded.mapUnattributable * 100 / decoded.mapTests
-                    logger.warn(
-                        "[yoriwake] $taskPath: $percent% of the ${decoded.mapTests} tests in " +
-                            "this map carry no class, so those tests will run on " +
-                            "every build and selection will narrow little. A framework " +
-                            "that runs tests in its own classloader (Robolectric is the " +
-                            "common one) is the usual cause."
-                    )
-                }
-                // A full run that did not record drops the loaded-class union until the
-                // next recording capture. Said out loud: a capability disappears.
-                if (decoded.unionDiscarded) {
-                    logger.lifecycle(
-                        "[yoriwake] $taskPath ran without -P${Settings.LOADED}, so the " +
-                            "loaded-class union it could not vouch for was discarded. " +
-                            "Changes to code no test executes will force a full run " +
-                            "until the next capture with -P${Settings.LOADED}."
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Writes and prints what this observing run shows, against the map the test JVM read: the decode
-     * below rewrites it. [note] says why no outcome of this run is read. A report that cannot be
-     * written costs the report, never the map.
-     */
-    private fun observe(taskPath: String, pending: CaptureStart.Pending?, note: String?) {
-        runCatching {
-            val report = Observation.write(
-                mapDir,
-                Observation.Run(
-                    taskPath,
-                    commit = pending?.reading?.head ?: CaptureStart.read(rootDir).head,
-                    mapCaptureCommit = File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE).takeIf(File::isFile)
-                        ?.let { runCatching { it.readText().trim() }.getOrNull() },
-                    note = note,
-                ),
-            )
-            logger.lifecycle(Observation.line(report))
-        }.onFailure {
-            runCatching { File(mapDir, AgentContract.OBSERVATION_FILE).delete() }
-            logger.warn("[yoriwake] $taskPath could not write ${AgentContract.OBSERVATION_FILE} ($it)")
-        }
-    }
-
-    /**
-     * Writes what a complement run may leave out of this selecting run, or removes any record when
-     * this run cannot vouch for one. A record that cannot be written costs the complement a full run.
-     */
-    private fun recordSelection(taskPath: String, selecting: Boolean, ranEverything: Boolean) {
-        val outcome = runCatching {
-            if (selecting) {
-                SelectionRecord.afterSelectingRun(mapDir, rootDir, ranEverything)
-            } else {
-                SelectionRecord.afterDeclinedRun(mapDir)
-            }
-        }.getOrElse {
-            runCatching { File(mapDir, AgentContract.SELECTION_FILE).delete() }
-            SelectionRecord.Outcome.Removed(it.toString())
-        }
-        when (outcome) {
-            is SelectionRecord.Outcome.Written -> logger.lifecycle(
-                "[yoriwake] $taskPath: ${AgentContract.SELECTION_FILE} lists the ${outcome.tests} tests this run " +
-                    "ran, for a complement run at the same commit to leave out."
-            )
-            is SelectionRecord.Outcome.Removed -> logger.info(
-                "[yoriwake] $taskPath: no ${AgentContract.SELECTION_FILE} for this run: ${outcome.reason}"
-            )
-        }
-    }
-
-    /**
-     * Last after any write to the map, so a caller can list exactly what this decode left. One that
-     * cannot be written is removed rather than left describing an older map.
-     */
-    private fun writeDigest(taskPath: String) {
-        runCatching { MapProvenance.writeDigest(mapDir) }.onFailure {
-            runCatching { File(mapDir, AgentContract.MAP_DIGEST_FILE).delete() }
-            logger.warn("[yoriwake] $taskPath could not write the map's digest ($it); a run given a trusted-map list will not narrow from it")
-        }
+        val facts = facts
+        DecodeRun(
+            taskPath = taskPath,
+            patterns = patterns.get(),
+            selecting = selecting.get(),
+            observing = observing.getOrElse(false),
+            asksSelection = asksSelection.getOrElse(false),
+            complementing = complementing.getOrElse(false),
+            wholeTask = wholeTask.getOrElse(false),
+            loadedScope = loadedScope.getOrElse(emptyList()),
+            datesTheMap = datesTheMap.getOrElse(false),
+            undatedReason = undatedReason.getOrElse(""),
+            effectiveScope = effectiveScope.orNull,
+            isolated = isolated.getOrElse(false),
+            scheduleSet = scheduleSet.getOrElse(false),
+            rootDir = rootDir,
+            mapDir = mapDir,
+            facts = facts,
+            taskArtifacts = { TaskArtifacts(facts.classpath.files, facts.buildDirs.values, facts.testOutputs.files) },
+            junitXml = junitXml,
+            loadedFlag = "-P${Settings.LOADED}",
+            logger = object : DecodeRun.Log {
+                override fun lifecycle(message: String) = logger.lifecycle(message)
+                override fun warn(message: String) = logger.warn(message)
+                override fun info(message: String) = logger.info(message)
+            },
+        ).run()
     }
 
     /** What the `Test` task's wiring decided that the decode reads back. */
