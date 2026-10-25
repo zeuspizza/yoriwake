@@ -7,7 +7,7 @@ import java.io.File
  * file matching unioned, over runtime, compile and annotation-processor classpaths. Empty when
  * nothing could be established, which the caller reads as "drop nothing".
  */
-fun modulesOnClasspath(facts: ClasspathView): Set<String> {
+internal fun modulesOnClasspath(facts: ClasspathView): Set<String> {
     val reachable = runCatching {
         facts.classpathFiles() + facts.compileTimeFiles()
     }.getOrElse { return emptySet() }

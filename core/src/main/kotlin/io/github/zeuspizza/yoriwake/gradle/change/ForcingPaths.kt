@@ -8,7 +8,7 @@ import java.util.Locale
  * It only explains a forced run: nothing here reaches the change set, so a path that forces
  * keeps forcing whatever it is called.
  */
-object ForcingPaths {
+internal object ForcingPaths {
 
     enum class Origin(val token: String) {
         /** Untracked or ignored, inside a source directory: on a classpath, so tests can read it. */

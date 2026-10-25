@@ -9,7 +9,7 @@ import java.io.File
  * Under `.gradle/`, not `build/`: a map costs a full suite run to rebuild and must survive `clean`.
  * One directory per test task, so two tasks never share a record sequence space.
  */
-object MapLocation {
+internal object MapLocation {
 
     /** The map directory for one test task. */
     fun forTask(gradleUserSubdir: File, taskPath: String): File =

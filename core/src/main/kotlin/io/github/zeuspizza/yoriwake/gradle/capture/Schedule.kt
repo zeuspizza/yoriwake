@@ -10,7 +10,7 @@ import java.time.ZoneOffset
  * `fullRunEveryBuilds` or `fullRunEveryDays`: past the bound, a selecting run runs everything, so a
  * gap in the map cannot hide for longer. Two plugin-private files beside the map travel with it.
  */
-object Schedule {
+internal object Schedule {
 
     /** The build's `fullRunEveryBuilds` and `fullRunEveryDays`, each null when unset. */
     data class Limits(val builds: Int?, val days: Int?) {

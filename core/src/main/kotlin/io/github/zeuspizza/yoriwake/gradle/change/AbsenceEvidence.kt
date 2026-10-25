@@ -16,7 +16,7 @@ import org.jacoco.core.runtime.WildcardMatcher
  * A provable verdict means only: had a test executed this class, a probe would have fired, and
  * nothing else could have depended on it invisibly.
  */
-object AbsenceEvidence {
+internal object AbsenceEvidence {
 
     /** What was established for one changed class prefix. */
     data class Verdict(val provable: Boolean, val reason: String?)

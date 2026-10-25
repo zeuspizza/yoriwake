@@ -8,7 +8,7 @@ package io.github.zeuspizza.yoriwake.gradle.change
  * age, so an aging map cannot turn a small change into a full run on every build. Paths
  * `pathIgnore` takes out are not counted.
  */
-object LargeChange {
+internal object LargeChange {
 
     /** Datadog's published bound: commits touching more files than this never skipped a test. */
     const val DEFAULT_THRESHOLD = 5_000

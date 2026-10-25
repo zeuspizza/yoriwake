@@ -1638,9 +1638,11 @@ MUTATIONS = [
     # An SBOM that drifts from the jar it describes is worse than none, and nothing a user runs would
     # notice: the check on every build is what notices, so each way of drifting must trip it.
     ("the SBOM drops a library the plugin jar bundles", PLUGIN_BUILD,
-     '"components" to components(pluginBom.get().asFile).map { library(it, pluginRelocations) } + agent,',
-     '"components" to components(pluginBom.get().asFile).filter { it["name"] != "asm-tree" }'
-     '.map { library(it, pluginRelocations) } + agent,',
+     '.filterNot { "project_path=" in it["purl"] as String }',
+     '.filterNot { "project_path=" in it["purl"] as String }.filter { it["name"] != "asm-tree" }',
+     sbom_suite, "the SBOM lists"),
+    ("the SBOM lists the core module as a library the plugin jar bundles", PLUGIN_BUILD,
+     '.filterNot { "project_path=" in it["purl"] as String }', '',
      sbom_suite, "the SBOM lists"),
     ("the SBOM stops naming where ASM was relocated", PLUGIN_BUILD,
      'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core", "org.ow2.asm" to "org.objectweb.asm")',

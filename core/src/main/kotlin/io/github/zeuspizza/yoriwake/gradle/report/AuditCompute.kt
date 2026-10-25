@@ -60,7 +60,7 @@ private val NO_COUNTS = Counts(lines = 0, malformed = 0, testRecords = 0, nonTes
  * The whole verdict, as data. Lives outside `YoriwakePlugin.kt`, which the JaCoCo line floor
  * excludes.
  */
-fun Audit.audit(
+internal fun Audit.audit(
     mapDir: File,
     taskPath: String,
     captureTask: String,
@@ -272,7 +272,7 @@ fun Audit.audit(
  * Pure, and must never run a test task or spawn a nested build: a nested Gradle build from a
  * task action deadlocks on the outer build's own file locks.
  */
-fun Audit.blockers(
+internal fun Audit.blockers(
     facts: TaskFacts,
     scopeRefusal: ScopeOutcome.NotApplied? = null,
     inlineScan: InlineScan? = null,
@@ -568,7 +568,7 @@ private fun read(coverage: File): Records {
  * How many of this module's own classes the map covers, out of how many it compiled, or null.
  * Own classes only, since the map spans the whole build.
  */
-fun Audit.ownClassCoverage(mapDir: File, ownClasses: Set<String>): Pair<Int, Int>? {
+internal fun Audit.ownClassCoverage(mapDir: File, ownClasses: Set<String>): Pair<Int, Int>? {
     if (ownClasses.isEmpty()) return null
     val coverage = File(mapDir, AgentContract.COVERAGE_FILE)
     if (!coverage.isFile) return null
@@ -644,7 +644,7 @@ private fun provenance(mapDir: File): Provenance {
  * This task's contribution to the build-wide payback, or the axis it could not supply, with the
  * same refusals as [Payback.paybackLines] so the two cannot disagree.
  */
-fun Audit.taskPayback(
+internal fun Audit.taskPayback(
     taskPath: String,
     result: Result,
     cost: Payback.ConfigureCost?,

@@ -7,7 +7,7 @@ import java.io.File
 // Whether a run instruments. External tooling reads its reason strings, so keep them stable.
 
 /** Whether this run instruments, and why; one decision shared by the run and `yoriwakeExplain`. */
-data class CaptureDecision(
+internal data class CaptureDecision(
     val capture: Boolean,
     val fullRun: Boolean,
     /** Whether the map already accounts for everything this change could teach it. */
@@ -23,7 +23,7 @@ data class CaptureDecision(
  * host's fork settings, so what it captured would supersede those records with shared-JVM ones.
  * Only a recording run updates such a map.
  */
-fun decideCapture(
+internal fun decideCapture(
     mapDir: File,
     mapUsable: Boolean,
     fullRun: Boolean,

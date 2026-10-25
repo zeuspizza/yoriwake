@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit
  * Turns changed file paths into class prefixes the selector can reason about, and paths it cannot
  * (build scripts, catalogs, resources), which are reported as unmappable rather than ignored.
  */
-object ChangeDetection {
+internal object ChangeDetection {
 
     // Any number of leading directories, including none: a single-project build has no module
     // segment before `src/`.
@@ -408,21 +408,21 @@ object ChangeDetection {
     }
 
     /** git's whole output, unsplit, for `-z` listings -- or null when it could not answer. */
-    fun rawGit(workingDir: File, arguments: List<String>): String? {
+    internal fun rawGit(workingDir: File, arguments: List<String>): String? {
         val output = runCatching { exec(workingDir, arguments) }.getOrDefault(FAILED)
         return if (output == FAILED || output == TIMED_OUT) null else output
     }
 
     /** Sentinel for "git could not answer", never to be confused with "git said nothing". */
-    const val FAILED = "\u0000yoriwake-git-failed"
+    internal const val FAILED = "\u0000yoriwake-git-failed"
 
     /** Like [FAILED] to every caller, but lets the diagnostic report a hung git separately. */
-    const val TIMED_OUT = "\u0000yoriwake-git-timed-out"
+    internal const val TIMED_OUT = "\u0000yoriwake-git-timed-out"
 
-    const val TIMEOUT_SECONDS = 30L
+    internal const val TIMEOUT_SECONDS = 30L
 
     /** One git invocation, or a sentinel; shared so configuration and execution ask alike. */
-    fun exec(workingDir: File, arguments: List<String>): String {
+    internal fun exec(workingDir: File, arguments: List<String>): String {
         if ("--ignore-submodules=none" !in arguments) return spawn(workingDir, arguments)
         // The flag reaches only this repository's own `.gitmodules`: git learns whether a submodule
         // is dirty by running status inside it, where that submodule's `.gitmodules` still applies,

@@ -16,7 +16,7 @@ import org.objectweb.asm.Opcodes
  * tool stripped look the same. So [scan] answers "nothing named here", and callers
  * decide project-wide whether the signal exists (see [Scan.carriesSmap]).
  */
-object InlinedSources {
+internal object InlinedSources {
 
     /**
      * Everything one class file says about code copied into it, from a single ASM pass.

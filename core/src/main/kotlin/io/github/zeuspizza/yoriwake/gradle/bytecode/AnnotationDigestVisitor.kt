@@ -22,7 +22,7 @@ import org.objectweb.asm.TypePath
  * reflective read reaches them, and their offsets move with every body edit. So is Kotlin's SMAP
  * annotation; see [visitAnnotation].
  */
-class AnnotationDigestVisitor : ClassVisitor(Opcodes.ASM9) {
+internal class AnnotationDigestVisitor : ClassVisitor(Opcodes.ASM9) {
 
     private val elements = sortedMapOf<String, MutableList<String>>()
 

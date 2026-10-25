@@ -10,7 +10,7 @@ package io.github.zeuspizza.yoriwake.gradle.change
  * and everything else: a test or the build can read a resource without naming it, found by a
  * pattern, by walking a directory, or handed over by path.
  */
-object ClasspathScope {
+internal object ClasspathScope {
 
     /** What the restriction did, so the run can report it rather than silently shrinking a diff. */
     data class Restriction(val kept: List<String>, val dropped: List<String>)
@@ -52,7 +52,7 @@ object ClasspathScope {
      * The module whose directory is the longest prefix of this path, so a present parent module
      * never vouches for an absent nested one, or the reverse.
      */
-    fun ownerOf(path: String, moduleDirs: Map<String, String>): Pair<String, String>? =
+    internal fun ownerOf(path: String, moduleDirs: Map<String, String>): Pair<String, String>? =
         moduleDirs.entries
             .filter { (dir, _) -> dir.isNotEmpty() && (path == dir || path.startsWith("$dir/")) }
             .maxByOrNull { (dir, _) -> dir.length }

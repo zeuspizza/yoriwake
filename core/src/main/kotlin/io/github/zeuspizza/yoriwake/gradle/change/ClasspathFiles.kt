@@ -16,7 +16,7 @@ import java.util.jar.Manifest
  * content is recorded at each dating capture and compared before a selecting run's tests start.
  * Class files are the class-digest rule's.
  */
-object ClasspathFiles {
+internal object ClasspathFiles {
 
     /** What a file that could not be read digests to: never equal to anything, itself included. */
     const val UNREADABLE = "unreadable"

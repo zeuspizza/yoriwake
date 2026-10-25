@@ -8,7 +8,7 @@ import java.util.UUID
  * argument with the arguments that file holds, read by the launcher's own rules. A system property
  * passed that way is set in the test JVM like one passed directly, so the fingerprint must see it.
  */
-object JvmArgFiles {
+internal object JvmArgFiles {
 
     /**
      * [arguments] with every argument file expanded, a relative one resolved against [workingDir],

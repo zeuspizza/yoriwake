@@ -14,7 +14,7 @@ import java.io.File
  * The decision `yoriwakeExplain` prints, as a file an agent can read instead of grepping the log.
  * Hand-rolled JSON: the plugin ships inside a foreign build and adds no dependency for it.
  */
-fun writeExplanation(
+internal fun writeExplanation(
     mapDir: File,
     taskPath: String,
     base: String,
@@ -125,12 +125,12 @@ fun writeExplanation(
 }
 
 /** Where `yoriwakeExplain` writes the decision for a machine to read. */
-const val EXPLANATION_FILE = "explain.json"
+internal const val EXPLANATION_FILE = "explain.json"
 
 /** How many unmappable paths an explanation lists before it stops. A sample, and it says so. */
-const val UNMAPPABLE_SAMPLE = 40
+internal const val UNMAPPABLE_SAMPLE = 40
 
-fun writeUnanswered(
+internal fun writeUnanswered(
     mapDir: File,
     taskPath: String,
     base: String,
@@ -192,5 +192,5 @@ fun writeUnanswered(
  * `selected of known` as a percentage, in `Locale.ROOT`: the share is pasted into issues and
  * grepped for, and a decimal comma breaks both.
  */
-fun selectionShare(selected: Int, known: Int): String =
+internal fun selectionShare(selected: Int, known: Int): String =
     String.format(java.util.Locale.ROOT, "(%.1f%%)", if (known == 0) 0.0 else 100.0 * selected / known)

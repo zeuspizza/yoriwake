@@ -18,7 +18,7 @@ import java.io.File
  */
 
 /** What the daemon could establish about a change set, for the rules that need bytecode. */
-data class Established(
+internal data class Established(
     /** Changed classes whose absence from the map means untested, as far as this side can tell. */
     val provable: Set<String>,
     /** Changed classes that are this task's own test classes, which discovery already runs. */
@@ -32,7 +32,7 @@ data class Established(
     val exemptTestClasses: Set<String> = emptySet(),
 )
 
-fun establish(
+internal fun establish(
     report: (String) -> Unit,
     mapDir: File,
     change: ChangeDetection.Change,
@@ -89,7 +89,7 @@ fun establish(
  * One helper for every call site, so selection and `yoriwakeExplain` never answer different
  * questions.
  */
-class InlineWidening private constructor(
+internal class InlineWidening private constructor(
     /** The changed classes, unioned with the classes that inlined them. Empty when [forces]. */
     val prefixes: List<String>,
     val inliners: Set<String>,
@@ -143,7 +143,7 @@ class InlineWidening private constructor(
 }
 
 /** What the bytes comparison compares against on this call. */
-class DigestRule(
+internal class DigestRule(
     /** The map's recorded table, from `CoverageDecoder.readClassDigests`. Null when it has none. */
     val recorded: Map<String, String>?,
     /** Whether the bytes to walk come from this run's compile tasks. */
@@ -155,7 +155,7 @@ class DigestRule(
  * [added] names classes whose bytecode moved where `git diff` cannot see it (a constant, an inline
  * body); [silence] tells "nothing compared" apart from "everything matched".
  */
-data class DigestWidening(
+internal data class DigestWidening(
     /** Classes whose current digest differs from the recorded one, or that one side does not hold. */
     val added: Set<String> = emptySet(),
     /** Why nothing was compared, as a [DigestSilence] token. Null when the comparison actually ran. */
@@ -172,11 +172,11 @@ data class DigestWidening(
 )
 
 /** The comparison every selecting call site runs. Top-level: a task action may not reach Project. */
-fun digestRule(mapDir: File, bytesAreFresh: Boolean): DigestRule =
+internal fun digestRule(mapDir: File, bytesAreFresh: Boolean): DigestRule =
     DigestRule(CoverageDecoder.readClassDigests(mapDir), bytesAreFresh)
 
 /** What comparing the build-produced files on the classpath against the map found. */
-sealed interface ClasspathFilesVerdict {
+internal sealed interface ClasspathFilesVerdict {
     data object Unchanged : ClasspathFilesVerdict
     data class Moved(val moved: ClasspathFiles.Moved) : ClasspathFilesVerdict
     /**
@@ -193,7 +193,7 @@ sealed interface ClasspathFilesVerdict {
  * reads what the test JVM will read. Top-level: a task action may not reach Project. [walked]
  * receives the files it compared, when it walked them.
  */
-fun classpathFilesRule(
+internal fun classpathFilesRule(
     mapDir: File,
     facts: ClasspathView,
     walked: (Map<String, String>) -> Unit = {},
@@ -223,7 +223,7 @@ fun classpathFilesRule(
  * then the moved files are only logged, so the reason stays the source path's. Files whose readers
  * the map records are handed to the selector instead.
  */
-fun InlineWidening.withClasspathFiles(
+internal fun InlineWidening.withClasspathFiles(
     verdict: ClasspathFilesVerdict,
     forcedByPaths: Boolean,
     log: (String) -> Unit,
@@ -265,7 +265,7 @@ fun InlineWidening.withClasspathFiles(
 }
 
 /** Says what the bytes comparison found; a comparison that could not run forces and says so. */
-fun reportDigest(widening: InlineWidening, log: (String) -> Unit) {
+internal fun reportDigest(widening: InlineWidening, log: (String) -> Unit) {
     val digest = widening.digest ?: return
     if (digest.silence != null || widening.forces) return
     val stale =
@@ -313,7 +313,7 @@ private fun bytesRefusal(digest: DigestWidening?): InlineWidening {
 }
 
 /** Why the digest rule compared nothing, as the token `explain.json` reports in `digestSilence`. */
-enum class DigestSilence(val token: String) {
+internal enum class DigestSilence(val token: String) {
     /** No table: the map predates the digest walk, or its last capture could not finish one. */
     TABLE_ABSENT("digest-table-absent"),
 
@@ -335,9 +335,9 @@ enum class DigestSilence(val token: String) {
 }
 
 /** Parenthesised because every other key in [Established.refusals] is a class name. */
-const val INLINE_REFUSAL_KEY: String = "(inline widening)"
+internal const val INLINE_REFUSAL_KEY: String = "(inline widening)"
 
-const val INLINE_SCAN_REFUSAL: String =
+internal const val INLINE_SCAN_REFUSAL: String =
     "the classes that inline the changed sources could not be read, so the whole suite runs. " +
         "An inline body is copied into its call sites, and coverage cannot see that edge."
 
@@ -348,7 +348,7 @@ const val INLINE_SCAN_REFUSAL: String =
  * - A changed class declares a compile-time constant: the value is copied into every consumer, so
  *   a test that baked in the old value records no coverage edge to the holder.
  */
-fun widenForInlining(
+internal fun widenForInlining(
     prefixes: Collection<String>,
     facts: ClasspathView,
     /** The map's recorded constant digests; empty forces on every holder. */
@@ -439,7 +439,7 @@ fun widenForInlining(
  * Which classes of this build's output no longer digest the way the map recorded them. Never
  * refuses: [DigestWidening.silence] tells the ways of knowing nothing apart from agreement.
  */
-fun compareDigests(rule: DigestRule, artifacts: TaskArtifacts): DigestWidening {
+internal fun compareDigests(rule: DigestRule, artifacts: TaskArtifacts): DigestWidening {
     val recorded = rule.recorded ?: return DigestWidening(
         silence = DigestSilence.TABLE_ABSENT.token,
         bytesAreFresh = rule.bytesAreFresh,
@@ -498,7 +498,7 @@ private fun kindOf(kind: InlineScan.Kind): RefusalKind = when (kind) {
  * The constant-holder refusal, or null when no changed class declares one. Classes that cannot
  * be established, or a throw, refuse: empty is not unknown.
  */
-fun constantHolderRefusal(
+internal fun constantHolderRefusal(
     prefixes: Collection<String>,
     /** Recorded constant digests; empty forces on every holder. [classesOf] stays last. */
     recordedConstants: Map<String, String> = emptyMap(),
@@ -560,7 +560,7 @@ fun constantHolderRefusal(
     )
 }
 
-fun absenceVerdicts(
+internal fun absenceVerdicts(
     report: (String) -> Unit,
     mapDir: File,
     change: ChangeDetection.Change,
@@ -597,7 +597,7 @@ fun absenceVerdicts(
  * this task's classpath, an IDE's state, a path notReadByTests lists, or one pathIgnore took out),
  * rather than git reporting nothing, which forces. [paths] is the change set before any of them.
  */
-fun accountedFor(
+internal fun accountedFor(
     paths: List<String>,
     scoped: ScopedChange,
 ): Boolean = paths.isNotEmpty() &&
@@ -608,7 +608,7 @@ fun accountedFor(
  * The change set the three daemon-side `Selector.decide` sites hand it, built one way so they cannot
  * disagree. [changed] is the caller's: widened by inlining at some sites and not at others.
  */
-fun changeSet(
+internal fun changeSet(
     changed: List<String>,
     paths: List<String>,
     scoped: ScopedChange,
@@ -628,7 +628,7 @@ fun changeSet(
         .withIgnoredPaths(scoped.ignore.ignored.map { it.path })
 
 /** What the daemon can say about the run the test JVM is about to perform. */
-data class FullRunOutlook(
+internal data class FullRunOutlook(
     val fullRun: Boolean,
     /** Whether `MapReader` could read a map at all. An unusable map is never current. */
     val mapUsable: Boolean,
@@ -639,7 +639,7 @@ data class FullRunOutlook(
  * `Selector.decide` and inputs `yoriwakeExplain` uses. Anything that cannot be established is a
  * full run, which also makes capture happen, so an error here costs time and never coverage.
  */
-fun wouldRunEverything(
+internal fun wouldRunEverything(
     mapDir: File,
     changed: Collection<String>,
     scoped: ScopedChange,
@@ -661,7 +661,7 @@ fun wouldRunEverything(
 }.getOrDefault(FullRunOutlook(fullRun = true, mapUsable = false))
 
 /** A change set narrowed to this task's classpath, and how much was dropped. */
-data class ScopedChange(
+internal data class ScopedChange(
     val change: ChangeDetection.Change,
     val dropped: Int,
     /** Changed paths that are an IDE's state, no change. */
@@ -683,7 +683,7 @@ data class ScopedChange(
  * other modules' sources removed, computed at execution time. The classpath part keeps every path
  * whenever the classpath or its classes cannot be established.
  */
-fun scopedChange(
+internal fun scopedChange(
     changed: List<String>,
     facts: ClasspathView,
     notReadByTests: List<String> = emptyList(),
@@ -725,7 +725,7 @@ fun scopedChange(
  * nested configuration beside it still forces. Not covered: a test that reads another test
  * class's annotations.
  */
-fun annotationRefusal(
+internal fun annotationRefusal(
     prefixes: Collection<String>,
     recorded: Map<String, String>?,
     /** [Established.testClasses]: the changed sources in this task's own test output. */

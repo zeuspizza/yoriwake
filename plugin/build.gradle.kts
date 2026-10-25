@@ -343,7 +343,9 @@ val mergeSbom by tasks.registering {
                     "name" to "yoriwake-gradle-plugin", "version" to v, "purl" to purl("yoriwake-gradle-plugin"),
                 ),
             ),
-            "components" to components(pluginBom.get().asFile).map { library(it, pluginRelocations) } + agent,
+            // The core module is the plugin's own code, compiled into its jar, not a library it bundles.
+            "components" to components(pluginBom.get().asFile).filterNot { "project_path=" in it["purl"] as String }
+                .map { library(it, pluginRelocations) } + agent,
         )
         // GitHub's attestation refuses a CycloneDX document without a serial number. A random one
         // would make two builds of one commit differ, so it is derived from the document itself.
@@ -525,6 +527,13 @@ val coreProject = project(":core")
 val coreClasses = coreProject.tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin")
     .flatMap { it.destinationDirectory }
 val coreJar = coreProject.tasks.named<Jar>("jar").flatMap { it.archiveFile }
+
+// Core's declarations stay `internal`, so they add nothing to the plugin's public surface: every
+// compilation here reads them as its own module's, as a test compilation reads main's.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach { friendPaths.from(coreClasses, coreJar) }
+
+// The published sources cover every class the jar carries, core's included.
+tasks.withType<Jar>().matching { it.name == "sourcesJar" }.configureEach { from(coreProject.layout.projectDirectory.dir("src/main/kotlin")) }
 
 val instrumentPluginClasses by tasks.registering(JavaExec::class) {
     description = "Instruments the plugin's classes for coverage in the functional suite's TestKit daemons."

@@ -5,7 +5,7 @@ import java.io.File
 import java.util.Locale
 
 /** Break-even: test time selection saves against what the plugin costs at configuration. */
-object Payback {
+internal object Payback {
 
     /**
      * The recorded per-test time in a map. [workers] is null when not recorded rather than assumed
@@ -368,4 +368,4 @@ object Payback {
  * A share as a percentage in `Locale.ROOT`: it is copied into issues and grepped by scripts,
  * none of which survive a decimal comma.
  */
-fun percent(share: Double) = String.format(Locale.ROOT, "%.1f%%", share * 100)
+internal fun percent(share: Double) = String.format(Locale.ROOT, "%.1f%%", share * 100)

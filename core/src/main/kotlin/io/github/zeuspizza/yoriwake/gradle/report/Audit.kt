@@ -13,7 +13,7 @@ import java.io.File
  * timed runs. Most terminal states are refusals, because shares over a map that does not describe
  * the suite read healthier than the suite is.
  */
-object Audit {
+internal object Audit {
 
     const val AUDIT_FILE = "audit.json"
 

@@ -8,7 +8,7 @@ import java.io.File
  * taken out, whatever an entry matches, and each match is reported either way, so a wrong
  * declaration can be found.
  */
-object PathIgnore {
+internal object PathIgnore {
 
     /** Why a path an entry matches stays in the change set. */
     enum class Protection(val token: String) {

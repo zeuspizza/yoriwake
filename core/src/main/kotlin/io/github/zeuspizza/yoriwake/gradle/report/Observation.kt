@@ -12,7 +12,7 @@ import java.util.Locale
  * writer's decision record, the outcomes from this run's raw records; the report claims nothing
  * either of them does not hold.
  */
-object Observation {
+internal object Observation {
 
     /** What the decode knows of the run beside the records. */
     data class Run(

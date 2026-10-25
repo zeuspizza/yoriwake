@@ -7,7 +7,7 @@ import org.objectweb.asm.Opcodes
  * The newest class files the plugin's ASM and the host's JaCoCo can be trusted with. A class above
  * either is read or instrumented wrongly or not at all, so selection over it cannot be trusted.
  */
-object ClassFileSupport {
+internal object ClassFileSupport {
 
     /** The ceiling of one JaCoCo version as a Java version, and why it was assumed when it was. */
     data class JacocoCeiling(val java: Int, val note: String?)

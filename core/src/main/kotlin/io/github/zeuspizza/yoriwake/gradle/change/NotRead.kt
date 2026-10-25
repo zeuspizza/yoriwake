@@ -7,7 +7,7 @@ import io.github.zeuspizza.yoriwake.agent.select.Glob
  * in `notReadByTests` that neither its tests nor the build read. Every other changed file a
  * coverage map cannot see forces a full run.
  */
-object NotRead {
+internal object NotRead {
 
     /** Rewritten by an IDE as you work, at any depth, and read by no build or test. */
     private val IDE_STATE_DIRECTORIES = setOf(".idea", ".vscode", ".fleet")

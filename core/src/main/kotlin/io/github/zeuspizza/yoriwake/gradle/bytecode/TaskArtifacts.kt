@@ -5,7 +5,7 @@ import java.util.Optional
 import java.util.zip.ZipFile
 
 /** What the inline scan found, or why it refused to answer. A refusal always names its cause. */
-sealed interface InlineScan {
+internal sealed interface InlineScan {
     /** The classes that inline one of the changed sources. Empty means none, and is a fact. */
     data class Found(val classes: Set<String>) : InlineScan
 
@@ -42,7 +42,7 @@ sealed interface InlineScan {
  * Runs an inline scan and says whether resolving the classpath or scanning it failed: the two have
  * unrelated remedies, and a selecting build resolves the classpath only after its producers ran.
  */
-fun scanOrExplain(
+internal fun scanOrExplain(
     resolve: () -> TaskArtifacts,
     scan: (TaskArtifacts) -> InlineScan,
 ): InlineScan = runCatching(resolve).fold(
@@ -65,19 +65,19 @@ fun scanOrExplain(
 )
 
 /** The newest class-file major version among a task's own classes, and the first class at it. */
-data class ClassFileVersions(val maxMajor: Int, val firstAtMax: String)
+internal data class ClassFileVersions(val maxMajor: Int, val firstAtMax: String)
 
 /**
  * Why a bounded walk over this build's own classes stopped. [budgetSpent] is separate because a
  * budget is a number somebody can raise, and everything else is a file somebody has to look at.
  */
-data class WalkStop(val reason: String, val budgetSpent: Boolean = false)
+internal data class WalkStop(val reason: String, val budgetSpent: Boolean = false)
 
 /**
  * Every class of this build's own output, digested -- or why the walk could not finish. Kept apart
  * from an empty map: reading a class absent from an unfinished walk as "unchanged" would narrow.
  */
-sealed interface DigestScan {
+internal sealed interface DigestScan {
     /** Complete. Every class of the own output is in [digests]. */
     data class Found(val digests: Map<String, String>, val counts: Counts) : DigestScan
 
@@ -108,7 +108,7 @@ sealed interface DigestScan {
  * Everything here answers null or false rather than throwing. This runs inside someone else's build,
  * and a question it cannot answer must degrade into a full run, never into a failure.
  */
-class TaskArtifacts(
+internal class TaskArtifacts(
     classpath: Collection<File>,
     private val moduleBuildDirs: Collection<String>,
     /** This task's own compiled test classes, from `Test.testClassesDirs`. */
@@ -523,7 +523,7 @@ class TaskArtifacts(
      * jar cannot be read, the budget runs out, or a Kotlin output carries no SMAP at all (e.g. a
      * tool stripped the attribute). A pure Java output does not refuse: Java has no inline bodies.
      */
-    fun classesInlining(
+    internal fun classesInlining(
         prefixes: Collection<String>,
         /** False when no changed source could be inlined, so a missing SMAP is no blind spot. */
         inlinableSourceChanged: Boolean = true,
@@ -653,7 +653,7 @@ class TaskArtifacts(
      * into a consumer whose source `git diff` shows unchanged. Complete or refused, never partial:
      * a class missing from a partial map would read as a matching digest.
      */
-    fun classDigests(
+    internal fun classDigests(
         /** What each class digests to; the annotation table walks the same classes. */
         digestOf: (ByteArray) -> Recordability.Digest = Recordability::classDigest,
     ): DigestScan {
@@ -757,7 +757,7 @@ class TaskArtifacts(
      * only where a test JVM of [testJvm] would load it, and everywhere when that is unknown. Null
      * when the walk could not finish; the walks after it refuse on their own then.
      */
-    fun classFileVersions(testJvm: Int?): ClassFileVersions? {
+    internal fun classFileVersions(testJvm: Int?): ClassFileVersions? {
         var newest: ClassFileVersions? = null
         fun consider(name: String, header: ByteArray?) {
             // Not a class file's header at all: the walks that read the whole class refuse on it,

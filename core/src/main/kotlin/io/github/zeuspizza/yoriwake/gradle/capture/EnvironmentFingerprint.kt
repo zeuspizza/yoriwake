@@ -23,7 +23,7 @@ import java.security.SecureRandom
  * run captures is decided there, and a capture writes the fingerprint it was compared against.
  * Values of system properties and variables are kept only as digests salted per map.
  */
-object EnvironmentFingerprint {
+internal object EnvironmentFingerprint {
 
     /** Written by a capturing run before its test JVM starts, folded into the map by its decode. */
     const val PENDING_FILE = "environment.pending"

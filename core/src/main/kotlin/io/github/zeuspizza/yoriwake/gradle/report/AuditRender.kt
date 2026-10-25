@@ -13,7 +13,7 @@ import java.util.Locale
 
 // The audit as text and as audit.json, apart from how the verdict is reached.
 
-fun narrowingLines(
+internal fun narrowingLines(
     d: Distribution,
     counts: Counts,
 ): List<String> = buildList {
@@ -58,7 +58,7 @@ fun narrowingLines(
 }
 
 /** The narrowing half only, worded so it cannot imply anything about the toll. */
-fun unmeasuredToll(captureTask: String) = listOf(
+internal fun unmeasuredToll(captureTask: String) = listOf(
     "Whether narrowing repays what instrumenting costs is UNMEASURED here, and is not " +
         "derivable from a map: an instrumented full run arrives before any uninstrumented one. " +
         "One project's overhead does not predict another's: it varies widely between suites. " +
@@ -70,7 +70,7 @@ fun unmeasuredToll(captureTask: String) = listOf(
  * The blocker list as prose, never as a verdict: the terminal state says whether any of it is
  * worth doing.
  */
-fun blockerLines(blockers: List<Blocker>): List<String> = buildList {
+internal fun blockerLines(blockers: List<Blocker>): List<String> = buildList {
     if (blockers.isEmpty()) {
         // Said explicitly, because silence reads like an audit that never looked.
         add(
@@ -87,10 +87,10 @@ fun blockerLines(blockers: List<Blocker>): List<String> = buildList {
     }
 }
 
-fun seconds(value: Double?) =
+internal fun seconds(value: Double?) =
     value?.let { String.format(Locale.ROOT, "%.1fs", it) } ?: "no time"
 
-fun provenanceLines(provenance: Provenance): List<String> = buildList {
+internal fun provenanceLines(provenance: Provenance): List<String> = buildList {
     if (provenance.captureCommit == null) {
         add(
             "This map carries no capture-commit stamp, so the age of what it describes is " +
@@ -116,7 +116,7 @@ fun provenanceLines(provenance: Provenance): List<String> = buildList {
  * Written before anything is logged, so a missing file never has to be told apart from a log
  * line in a shape the caller does not parse.
  */
-fun Audit.write(mapDir: File, result: Result) {
+internal fun Audit.write(mapDir: File, result: Result) {
     val json = buildString {
         append("{\n")
         append("""  "version": $PAYLOAD_VERSION,""").append('\n')

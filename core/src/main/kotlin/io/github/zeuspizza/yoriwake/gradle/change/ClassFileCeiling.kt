@@ -12,7 +12,7 @@ import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView
  * Checked before every rule that reads those classes, so the named cause wins over the unreadable
  * digest or missing coverage it would otherwise surface as.
  */
-fun classFileCeiling(facts: ClasspathView, artifacts: TaskArtifacts): CeilingRefusal? {
+internal fun classFileCeiling(facts: ClasspathView, artifacts: TaskArtifacts): CeilingRefusal? {
     val testJvm = facts.testJvm()
     val classes = classCeiling(facts, artifacts, testJvm)
     val agentCeiling = AgentClassFileSupport.effectiveCeiling(facts.agentCeiling())
@@ -47,7 +47,7 @@ private fun testJvmRefusal(jvmMajor: Int, agentCeiling: Int, classes: CeilingRef
 }
 
 /** The line a run prints when `jacoco.toolVersion` is not one the plugin knows, or null. */
-fun jacocoCeilingNote(facts: ClasspathView): String? =
+internal fun jacocoCeilingNote(facts: ClasspathView): String? =
     facts.jacocoVersion()?.let { ClassFileSupport.jacocoCeiling(it.ifEmpty { null }).note }
 
 

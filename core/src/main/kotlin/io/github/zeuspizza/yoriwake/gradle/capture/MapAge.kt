@@ -8,11 +8,11 @@ import java.io.File
 // `yoriwakeExplain` so both widen the base the same way.
 
 /** A valid `capture-commit` stamp, or null. A non-hash (say, from a restored cache) is none. */
-fun validCaptureStamp(raw: String?): String? =
+internal fun validCaptureStamp(raw: String?): String? =
     raw?.trim()?.takeIf { it.matches(Regex("[0-9a-fA-F]{7,40}")) }
 
 /** How far back a change set must reach for a map's records to be current, or why nobody can say. */
-sealed interface MapAge {
+internal sealed interface MapAge {
     /** [stamp] is the map's capture commit, null when there is no map. */
     data class Known(val base: ChangeDetection.Base, val stamp: String? = null) : MapAge
     data class Unknown(val kind: RefusalKind, val reason: String) : MapAge
@@ -25,7 +25,7 @@ sealed interface MapAge {
  * no usable stamp has an unknown age and refuses, since the unwidened base would miss every change
  * between the capture and the base. With no map at all the base stands: that run runs everything.
  */
-fun widenToMapAge(
+internal fun widenToMapAge(
     base: ChangeDetection.Base,
     stamp: String?,
     mapPresent: Boolean,
@@ -54,7 +54,7 @@ fun widenToMapAge(
 }
 
 /** The same read, for callers that have a map directory rather than a provider's text. */
-fun readCaptureStamp(mapDir: File): String? = validCaptureStamp(
+internal fun readCaptureStamp(mapDir: File): String? = validCaptureStamp(
     File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE)
         .takeIf(File::isFile)
         ?.let { runCatching { it.readText() }.getOrNull() }

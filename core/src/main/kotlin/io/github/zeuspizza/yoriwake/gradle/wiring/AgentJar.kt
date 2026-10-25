@@ -8,7 +8,7 @@ import java.io.File
  * Bundled rather than resolved: agent and plugin share a record format, and shipping them together
  * keeps a host from pinning a mismatched agent version.
  */
-object AgentJar {
+internal object AgentJar {
 
     const val RESOURCE = "yoriwake-agent.jar"
 

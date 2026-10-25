@@ -9,7 +9,7 @@ import java.util.Properties
  * Tests interleaved in one JVM share one JaCoCo agent, so the reset-and-dump pairing would blend
  * their coverage. Parallel forks are safe and must not be restricted: each has its own agent.
  */
-object ParallelismDetector {
+internal object ParallelismDetector {
 
     const val PROPERTY = "junit.jupiter.execution.parallel.enabled"
     const val CONFIG_FILE = "junit-platform.properties"

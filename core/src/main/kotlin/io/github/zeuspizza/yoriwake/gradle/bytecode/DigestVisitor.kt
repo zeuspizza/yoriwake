@@ -23,7 +23,7 @@ import org.objectweb.asm.TypePath
  *
  * Labels are fed by first-seen order, never by identity, whose `toString` names a heap address.
  */
-class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opcodes.ASM9) {
+internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opcodes.ASM9) {
 
     private val labels = HashMap<Label, Int>()
 

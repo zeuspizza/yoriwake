@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
  *
  * Paths are relative to the Gradle root, like [ChangeDetection.changedPaths].
  */
-object WorkingTree {
+internal object WorkingTree {
 
     /** Beside `capture-commit`, and written under the same gate: see [CoverageDecoder.decode]. */
     const val SNAPSHOT_FILE = "worktree-snapshot"
@@ -286,7 +286,7 @@ object WorkingTree {
     class Moves(val takenMillis: Long, val paths: Map<String, Move>)
 
     /** One sorted line per path; the footer's count refuses a file cut short, as [render]'s does. */
-    fun renderMoves(moves: Moves): String = buildString {
+    internal fun renderMoves(moves: Moves): String = buildString {
         append(MOVED_HEADER).append('\t').append(moves.takenMillis).append('\n')
         moves.paths.toSortedMap().forEach { (path, move) ->
             append(move.token).append('\t').append(escape(path)).append('\n')
@@ -294,7 +294,7 @@ object WorkingTree {
         append(FOOTER).append('\t').append(moves.paths.size).append('\n')
     }
 
-    fun parseMoves(text: String): Moves? = runCatching {
+    internal fun parseMoves(text: String): Moves? = runCatching {
         val lines = text.split('\n').dropLastWhile(String::isEmpty)
         val header = lines.first().split('\t')
         require(header.size == 2 && header[0] == MOVED_HEADER)
@@ -411,7 +411,7 @@ object WorkingTree {
     }
 
     /** Recorded paths whose state differs now, and listed paths the snapshot never saw. */
-    fun moved(rootDir: File, snapshot: Snapshot, listed: Collection<String>): Set<String> {
+    internal fun moved(rootDir: File, snapshot: Snapshot, listed: Collection<String>): Set<String> {
         val moved = sortedSetOf<String>()
         snapshot.entries.forEach { (path, recorded) ->
             if (!same(recorded, observe(rootDir, path, snapshot))) moved += path
@@ -430,7 +430,7 @@ object WorkingTree {
      * One path's state, hashing only when the stat does not vouch for it. The stat is trusted only
      * for an entry the snapshot recorded well before it was taken -- see [RACY_MILLIS].
      */
-    fun observe(rootDir: File, path: String, previous: Snapshot?): State {
+    internal fun observe(rootDir: File, path: String, previous: Snapshot?): State {
         val file = File(rootDir, path).toPath()
         val before = stat(file) ?: return Absent
         if (before === UNREADABLE) return Unknown
@@ -449,7 +449,7 @@ object WorkingTree {
     private val UNREADABLE = Pair("", 0L)
 
     /** [stat]'s token for one file, null when it is not a regular file or cannot be read. */
-    fun statToken(file: Path): String? = stat(file)?.takeIf { it !== UNREADABLE }?.first
+    internal fun statToken(file: Path): String? = stat(file)?.takeIf { it !== UNREADABLE }?.first
 
     /** (stat token, mtime in millis), null when absent, [UNREADABLE] for anything but a file. */
     private fun stat(file: Path): Pair<String, Long>? = try {
@@ -497,7 +497,7 @@ object WorkingTree {
      * The footer carries the count, so a file cut short is refused rather than read as a tree with
      * fewer dirty paths.
      */
-    fun render(snapshot: Snapshot): String = buildString {
+    internal fun render(snapshot: Snapshot): String = buildString {
         append(HEADER).append('\t').append(snapshot.takenMillis).append('\n')
         snapshot.entries.toSortedMap().forEach { (path, state) ->
             when (state) {
@@ -511,7 +511,7 @@ object WorkingTree {
         append(FOOTER).append('\t').append(snapshot.entries.size).append('\n')
     }
 
-    fun parse(text: String): Snapshot? = runCatching {
+    internal fun parse(text: String): Snapshot? = runCatching {
         val lines = text.split('\n').dropLastWhile(String::isEmpty)
         val header = lines.first().split('\t')
         require(header.size == 2 && header[0] == HEADER)
@@ -541,14 +541,14 @@ object WorkingTree {
     private fun unescape(path: String): String =
         path.replace("%0D", "\r").replace("%0A", "\n").replace("%09", "\t").replace("%25", "%")
 
-    fun encode(drift: Drift): String = when (drift) {
+    internal fun encode(drift: Drift): String = when (drift) {
         is Drift.Moved -> (listOf("moved") + drift.paths).joinToString("\u0000")
         Drift.Unlisted -> "unlisted"
         is Drift.Unknown -> listOf("unknown", drift.kind.token, drift.reason).joinToString("\u0000")
     }
 
     /** Anything this did not write reads as [Drift.Unlisted], which refuses. */
-    fun decode(encoded: String?): Drift {
+    internal fun decode(encoded: String?): Drift {
         val parts = encoded?.split('\u0000') ?: return Drift.Unlisted
         return when (parts.first()) {
             "moved" -> Drift.Moved(parts.drop(1).toSet())

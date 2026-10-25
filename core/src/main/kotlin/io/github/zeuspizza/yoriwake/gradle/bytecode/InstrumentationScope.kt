@@ -11,7 +11,7 @@ import java.io.File
  * Packages come from the sources' `package` declarations, not directory shape: a source set rooted
  * at `src` would otherwise yield `main.java.com.acme`, which matches nothing.
  */
-object InstrumentationScope {
+internal object InstrumentationScope {
 
     /** Bounds the symlink-cycle case; no real source tree is anywhere near this deep. */
     private const val MAX_DEPTH = 64

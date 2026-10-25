@@ -35,6 +35,7 @@ import run  # noqa: E402
 SOURCE_ROOT = checkout.ROOT
 AGENT = os.path.join(SOURCE_ROOT, "agent/src/main/java/io/github/zeuspizza/yoriwake/agent")
 PLUGIN = os.path.join(SOURCE_ROOT, "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle")
+CORE = os.path.join(SOURCE_ROOT, "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle")
 
 
 def fail(message):
@@ -104,7 +105,7 @@ def case_the_tokens_the_gate_classifies_on_are_the_ones_the_agent_writes():
     if '"refusal_kind"' not in sweep:
         failures += fail("sweep_corpus.py stopped reading the refusal kind")
     # The harness counts these as asked for, not refused; the plugin must mark the same ones.
-    kinds = _read(os.path.join(PLUGIN, "change", "RefusalKind.kt"))
+    kinds = _read(os.path.join(CORE, "change", "RefusalKind.kt"))
     marked = set(re.findall(r'\("([a-z-]+)", requested = true\)', kinds))
     if marked != assert_recall.REQUESTED_DECLINES:
         failures += fail(f"the plugin marks {sorted(marked)} as requested, the harness reads "
@@ -240,8 +241,9 @@ def case_the_u31_names_the_harness_reads_are_the_ones_the_product_writes():
     if not re.search(r"\bMAP_SCHEMA_VERSION\s*=\s*\d+\s*;", contract):
         failures += fail("MAP_SCHEMA_VERSION is no longer an int literal checkout_schema_version reads")
     settings = _read(os.path.join(PLUGIN, "Settings.kt"))
-    if "-P" + (_kotlin_constant(settings, "ISOLATED_CAPTURE") or "") != run.ISOLATED_CAPTURE_FLAG:
-        failures += fail(f"Settings.ISOLATED_CAPTURE is {_kotlin_constant(settings, 'ISOLATED_CAPTURE')!r}")
+    names = _read(os.path.join(CORE, "SettingNames.kt"))
+    if "-P" + (_kotlin_constant(names, "ISOLATED_CAPTURE") or "") != run.ISOLATED_CAPTURE_FLAG:
+        failures += fail(f"SettingNames.ISOLATED_CAPTURE is {_kotlin_constant(names, 'ISOLATED_CAPTURE')!r}")
     if _kotlin_constant(settings, "COUNTERS") != "yoriwake.internal.counters":
         failures += fail("Settings.COUNTERS moved; run.gradle passes -Pyoriwake.internal.counters")
     verdict = _read(os.path.join(AGENT, "select", "Verdict.java"))
@@ -251,7 +253,7 @@ def case_the_u31_names_the_harness_reads_are_the_ones_the_product_writes():
     decode = _read(os.path.join(PLUGIN, "tasks", "DecodeTask.kt"))
     if f'"{sweep_data.DECODE_TASK_PREFIX}' not in decode:
         failures += fail(f"the decode task is no longer named {sweep_data.DECODE_TASK_PREFIX}<Task>")
-    audit = _read(os.path.join(PLUGIN, "report", "Audit.kt"))
+    audit = _read(os.path.join(CORE, "report", "Audit.kt"))
     if f'const val FILE = "{sweep_data.TASK_FACTS_FILE}"' not in audit:
         failures += fail(f"Audit.TaskFacts no longer writes {sweep_data.TASK_FACTS_FILE}")
     record = _read(os.path.join(AGENT, "platform", "DecisionRecord.java"))

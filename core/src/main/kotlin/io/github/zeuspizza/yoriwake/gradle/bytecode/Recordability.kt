@@ -12,7 +12,7 @@ import org.objectweb.asm.Opcodes
  * No for classes without code, with compile-time constants (JLS 13.1), in Kotlin (`inline` bodies
  * are copied into call sites), or that cannot be read.
  */
-object Recordability {
+internal object Recordability {
 
     /** Why a class cannot support reasoning from absence, or null when it can. */
     data class Verdict(val recordable: Boolean, val reason: String?) {

@@ -11,7 +11,7 @@ import java.security.MessageDigest
  * cache scope it wrote itself, which no reviewer sees; on a run given a trusted-map list, a map
  * narrows only when the list names its exact digest. Without a list nothing is checked.
  */
-object MapProvenance {
+internal object MapProvenance {
 
     /**
      * Every map file a selecting run or the test JVM reads to decide what runs: the files the decode

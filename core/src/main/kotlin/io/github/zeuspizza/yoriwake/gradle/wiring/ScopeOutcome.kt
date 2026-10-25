@@ -1,7 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.wiring
 
 /** What happened when the plugin tried to scope coverage, in a form the diagnostic can report. */
-sealed class ScopeOutcome(val detail: String) {
+internal sealed class ScopeOutcome(val detail: String) {
     class Applied(val patterns: List<String>) : ScopeOutcome("derived ${patterns.joinToString()}") {
         override fun toString() = "derived(${patterns.joinToString()})"
     }

@@ -5,7 +5,7 @@ package io.github.zeuspizza.yoriwake.gradle.report
  *
  * Hand-rolled so the plugin adds no dependency to the host build.
  */
-object Json {
+internal object Json {
 
     /** [value] as a JSON string literal, or `null` when there is none. */
     fun string(value: String?): String = if (value == null) "null" else "\"${escape(value)}\""

@@ -9,7 +9,7 @@ import javax.xml.stream.XMLStreamConstants
  * sent: a test JVM stopped before it wrote its records cannot lose them. Read by class only, the
  * top-level class of each test, since the report's names are not the agent's test ids.
  */
-object JUnitXmlFailures {
+internal object JUnitXmlFailures {
 
     /**
      * The top-level class of every test reported failed or in error under [dir]. Empty when there

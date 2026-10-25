@@ -10,7 +10,7 @@ import java.io.File
  *
  * Throws [MapNotWritten] on failure; callers decide what an unwritten file means.
  */
-fun writeAtomically(target: File, content: String) {
+internal fun writeAtomically(target: File, content: String) {
     val temporary = File(target.parentFile, target.name + ".tmp")
     temporary.writeText(content)
     if (temporary.renameTo(target)) {

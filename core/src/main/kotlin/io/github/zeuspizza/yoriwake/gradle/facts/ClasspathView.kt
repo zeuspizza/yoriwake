@@ -7,7 +7,7 @@ import java.io.File
  * Each front end backs it by its own build model; every function is asked only when a rule needs
  * its answer, and may cost a resolution then.
  */
-interface ClasspathView {
+internal interface ClasspathView {
     val rootDir: File
 
     /** Repository-relative module directory to module path, for every module in the build. */

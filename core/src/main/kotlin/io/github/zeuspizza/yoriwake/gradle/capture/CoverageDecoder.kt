@@ -65,13 +65,13 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 /** A map that could not be written. Caught by the caller; never allowed to fail the host build. */
-class MapNotWritten(target: File) : Exception("[yoriwake] could not write $target")
+internal class MapNotWritten(target: File) : Exception("[yoriwake] could not write $target")
 
 /** Turns raw agent records into the text the selector reads, one line per record:
  * `outcome \t durationNanos \t class,class,class \t testId` (`testId` last: it may hold any text).
  * Decoded here, daemon side, because the agent must carry no unshaded `org.jacoco.core`.
  */
-object CoverageDecoder {
+internal object CoverageDecoder {
 
     /** What a decode did to the map: what this run captured, and what the map now holds. */
     data class Outcome(
@@ -313,7 +313,7 @@ object CoverageDecoder {
      * The JVMs behind these record directories: a JVM that ran several test plans has one
      * directory per plan, and one loaded-class list and completion marker for all of them.
      */
-    fun jvmCount(workers: List<File>): Int =
+    internal fun jvmCount(workers: List<File>): Int =
         workers.map { it.name.replace(PLAN_SUFFIX, "") }.distinct().size
 
     private val PLAN_SUFFIX = Regex("""${Regex.escape(AgentContract.PLAN_DIR_SUFFIX)}[0-9]+$""")
@@ -956,7 +956,7 @@ object CoverageDecoder {
      * path, since where the class root ends is not recorded. The scope filter keeps the real one,
      * and a spare name can only select more.
      */
-    fun namesForPath(path: String): List<String> {
+    internal fun namesForPath(path: String): List<String> {
         val normalised = path.replace('\\', '/')
         val extension = listOf(".class", ".java", ".kt", ".groovy", ".scala").firstOrNull(normalised::endsWith)
             ?: return emptyList()

@@ -9,7 +9,7 @@ package io.github.zeuspizza.yoriwake.gradle.bytecode
  *
  * Empty includes means "everything"; an unknown scope is represented by writing no file.
  */
-data class EffectiveScope(val includes: List<String>, val excludes: List<String>) {
+internal data class EffectiveScope(val includes: List<String>, val excludes: List<String>) {
 
     /**
      * One line per pattern, tagged and sorted, so a reordering by another plugin does not read as a

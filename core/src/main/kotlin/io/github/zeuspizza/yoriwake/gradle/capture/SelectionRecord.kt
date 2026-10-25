@@ -18,7 +18,7 @@ import java.util.UUID
  * clean tree at both ends, then the task, the build, the classpath and the task's configuration. The
  * test JVM adds its own identity to each decision record, and the records must agree.
  */
-object SelectionRecord {
+internal object SelectionRecord {
 
     /** The stamp read where the run starts, with the run's token; the decode consumes it. */
     const val START_FILE = "selection-start.pending"

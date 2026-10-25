@@ -8,7 +8,7 @@ import java.io.File
 // What `pathIgnore` did on a run, as the console and explain.json say it. Only explains: nothing
 // here changes the change set or what the test JVM selects.
 
-object PathIgnoreReport {
+internal object PathIgnoreReport {
 
     /**
      * What the map at [mapDir] says about each path [applied] left out: read when the selector opens

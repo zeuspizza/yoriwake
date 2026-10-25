@@ -8,7 +8,7 @@ package io.github.zeuspizza.yoriwake.gradle.change
  *
  * [requested] marks the kinds a user asked for, so a reader never counts them as the tool refusing.
  */
-enum class RefusalKind(val token: String, val requested: Boolean = false) {
+internal enum class RefusalKind(val token: String, val requested: Boolean = false) {
     /** The map's capture stamp cannot be related to the base, so its age is unknown. */
     STAMP_UNRELATABLE("stamp-unrelatable"),
 
