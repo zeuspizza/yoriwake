@@ -46,6 +46,8 @@ internal class Settings(lookup: (String) -> String?) {
 
     val loaded: Boolean = parseFlag(LOADED, lookup(LOADED))
     val classGranularity: Boolean = parseFlag(CLASS_GRANULARITY, lookup(CLASS_GRANULARITY))
+    /** Null when not passed, so the build's `narrowPlainRunners` answers. */
+    val narrowPlainRunners: Boolean? = lookup(NARROW_PLAIN_RUNNERS)?.let { parseFlag(NARROW_PLAIN_RUNNERS, it) }
     val counters: String? = lookup(COUNTERS)
     /** Raw, because "present but unparseable" and "never supplied" get different answers. */
     val forcedShare: String? = lookup(FORCED_SHARE)
@@ -59,6 +61,7 @@ internal class Settings(lookup: (String) -> String?) {
         const val DISABLED = "yoriwake.disabled"
         const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
         const val ALWAYS_RUN = "yoriwake.alwaysRun"
+        const val NARROW_PLAIN_RUNNERS = "yoriwake.narrowPlainRunners"
         const val TRUSTED_MAPS = "yoriwake.trustedMaps"
         const val MEASURE_TOLL = "yoriwake.audit.measureToll"
         const val INSTRUMENTED_SECONDS = "yoriwake.audit.instrumentedSeconds"
