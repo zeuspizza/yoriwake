@@ -17,6 +17,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- `narrowPlainRunners` lets a selecting run of a plain JUnit 4 task leave out whole test classes. Map: left alone.
+- `recordSequentially` records an in-JVM parallel suite one test at a time, so it can be selected. Map: left alone.
 - Kover's default agent is tested beside yoriwake; the reference says what its reports show on narrowed runs. Map: left alone.
 - A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
 - `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
@@ -28,6 +30,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A map crosses checkouts whose only difference is `core.autocrlf`. Map: repaired on the next build if captured with CRLF.
 - A suite on netty-tcnative's BoringSSL build 2.0.84 narrows, told from its OpenSSL build by the library's bytes. Map: left alone.
 - A suite on Netty's macOS DNS resolver or Amazon Corretto Crypto Provider narrows as on any reviewed library. Map: left alone.
 - A suite on Gradle's native-platform and file events narrows unless it makes a link or changes directory through it. Map: left alone.
@@ -43,6 +46,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A test JVM that finds parallelism the plugin missed records nothing. Map: left alone.
 - A test the engine starts and never finishes runs every time and no longer discards the capture. Map: left alone.
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
 

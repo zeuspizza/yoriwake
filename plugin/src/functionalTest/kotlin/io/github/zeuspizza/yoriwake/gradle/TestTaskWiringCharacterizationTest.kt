@@ -234,19 +234,19 @@ class TestTaskWiringCharacterizationTest {
             #3 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/task-facts
             #4 Execute doFirst {} action
-            #5 Execute doFirst {} action
-              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
-            #6 Execute doFirst {} action
-            #7 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/after-test.pending
-            #8 Execute doFirst {} action
-            #9 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/ran.marker
-            #10 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
-            #11 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/environment.pending
               +file .gradle/yoriwake/test-7f007aca/fingerprint-salt
+            #5 Execute doFirst {} action
+            #6 Execute doFirst {} action
+              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
+            #7 Execute doFirst {} action
+            #8 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/after-test.pending
+            #9 Execute doFirst {} action
+            #10 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/ran.marker
+            #11 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/capture-head.pending
             #12 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
             #13 Execute doFirst {} action
@@ -293,12 +293,13 @@ class TestTaskWiringCharacterizationTest {
             #8 Execute doFirst {} action
             #9 Execute doFirst {} action
             #10 Execute doFirst {} action
-              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #11 Execute doFirst {} action
+              jvmArgs [-javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar]
             #12 Execute doFirst {} action
-              +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #13 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/after-test.pending
             #14 Execute doFirst {} action
+            #15 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/ran.marker
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv
               -file .gradle/yoriwake/test-7f007aca/decisions.tsv.<pid>-<n>.part
@@ -314,7 +315,6 @@ class TestTaskWiringCharacterizationTest {
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/plan-complete
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/raw-schema-version
               -file .gradle/yoriwake/test-7f007aca/raw/worker-<n>/touches.tsv
-            #15 Execute doFirst {} action
             #16 Execute doFirst {} action
             #17 Execute doFirst {} action
             #18 Execute doFirst {} action

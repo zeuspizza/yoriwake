@@ -7,3 +7,8 @@ GeneratedClasspathFilesFunctionalTest.a generated resource read in another lette
 TestJvmRangeFunctionalTest.test JVM on the newest early-access JDK | */*/* | run by the early-access workflow, which fails if it skips there
 JvmSharedFunctionalTest.a test that uses Gradle's native-platform and file events narrows as on any reviewed library | windows/*/* | only the Linux and macOS builds of native-platform and file events were reviewed
 JvmSharedFunctionalTest.a link native-platform makes or a working directory it changes selects every later test in its JVM | windows/*/* | only the Linux and macOS builds of native-platform and file events were reviewed
+JvmSharedFunctionalTest.a test that uses SQLite without extensions narrows as on any reviewed library | windows/*/* | only the Linux and macOS builds of SQLite's native library were reviewed
+JvmSharedFunctionalTest.a SQLite connection that enables extension loading selects every later test in its JVM | windows/*/* | only the Linux and macOS builds of SQLite's native library were reviewed
+JvmSharedFunctionalTest.SQLite at a version nobody reviewed selects every later test in its JVM | windows/*/* | only the Linux and macOS builds of SQLite's native library were reviewed
+JvmSharedFunctionalTest.netty-tcnative's BoringSSL build at the reviewed version, told by its bytes, narrows | windows/*/* | only the Linux and macOS builds of netty-tcnative were reviewed
+JvmSharedFunctionalTest.netty-tcnative's BoringSSL build at a version nobody reviewed selects every later test | windows/*/* | only the Linux and macOS builds of netty-tcnative were reviewed

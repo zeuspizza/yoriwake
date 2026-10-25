@@ -144,6 +144,7 @@ SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/w
 PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
 CLASSPATH_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
+TRACKED_TEXT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/TrackedText.kt"
 WORKING_TREE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
 MAP_PROVENANCE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/MapProvenance.kt"
 DEVELOCITY_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/DevelocityDetection.kt"
@@ -165,6 +166,7 @@ JAR_IDENTITY = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/J
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
+PARALLEL_READ_BACK = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/ParallelReadBack.java"
 MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
@@ -178,6 +180,7 @@ SCHEDULE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/S
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
 # with it, four columns left: the functions were members of `object Audit` and are now top level.
 AUDIT_COMPUTE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
+AUDIT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt"
 # The payback engine moved out of Audit.kt; its mutation anchors moved with it, which is the
 # check that the move changed no behaviour -- an anchor left behind refuses before any suite runs.
 PAYBACK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
@@ -709,6 +712,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "FullRunRequestFunctionalTest": 101,
     "GeneratedClasspathFilesFunctionalTest": 120,
     "HostCoverageFunctionalTest": 60,
+    # Estimated from its local time (21s for eight builds) doubled for a runner, until an
+    # every-guard run measures it.
+    "InJvmParallelismCharacterizationTest": 45,
     "InitScriptFunctionalTest": 54,
     "IsolatedCaptureFunctionalTest": 71,
     "JvmSharedFunctionalTest": 172,
@@ -720,8 +726,8 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
     # every-guard run measures it.
     "PathIgnoreFunctionalTest": 61,
-    # An estimate: 46 s locally for its 3 tests on both Gradle versions, scaled as SelectionFunctionalTest.
-    "PlainRunnerSelectionFunctionalTest": 60,
+    # An estimate: 46-48 s locally per Gradle version for its 10 tests, scaled as SelectionFunctionalTest.
+    "PlainRunnerSelectionFunctionalTest": 90,
     "MultiProjectFunctionalTest": 36,
     "MultiplatformFunctionalTest": 140,
     "NamedTestsFunctionalTest": 111,
@@ -731,6 +737,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "RevertAfterUndatedCaptureFunctionalTest": 224,
     "ScheduledFullRunFunctionalTest": 72,
     "SelectionFunctionalTest": 197,
+    # Estimated from its local time (27s for nine tests) doubled for a runner, until an
+    # every-guard run measures it.
+    "SequentialRecordingFunctionalTest": 55,
     "TestLauncherFunctionalTest": 42,
     "TestRetryFunctionalTest": 79,
     "TestWrittenFilesFunctionalTest": 104,
@@ -1298,8 +1307,8 @@ MUTATIONS = [
     # capturing trades a loud failure for a blended map that outlives the run and is believed by
     # every later one.
     ("in-JVM parallelism fails the build again instead of declining", TEST_TASK_WIRING,
-     "            ) ?: return@doFirst\n",
-     "            )\n            check(source == null) { \"in-JVM parallelism\" }\n            if (source == null) return@doFirst\n",
+     "            source ?: return@doFirst\n",
+     "            check(source == null) { \"in-JVM parallelism\" }\n            if (source == null) return@doFirst\n",
      functional_suite, "in-JVM parallel execution is declined"),
     ("capture proceeds under the parallelism decline, so the map can be blended", TEST_TASK_WIRING,
      '            test.systemProperty(RECORDS_DIR_PROPERTY, "")\n'
@@ -1307,7 +1316,8 @@ MUTATIONS = [
      "                jacoco?.isEnabled = false",
      "            runCatching {\n"
      "                jacoco?.isEnabled = true",
-     functional_suite, "byte-identical after it"),
+     # The agent's own read-back now keeps the map whole too; the host's JaCoCo left on is what shows.
+     functional_suite, "a run declined over in-JVM parallelism leaves no host file"),
     # The unpack, back inside configuration. Every first build after an install then configures
     # twice, which is invisible in a build log and costs every two-arm cache measurement a third arm.
     ("the agent is unpacked during configuration again", TEST_TASK_WIRING,
@@ -2540,6 +2550,25 @@ MUTATIONS = [
     # the map records which tests read it, and a map that records no such files forces once and
     # captures them: a file generated from git state or the clock reaches a test through no tracked
     # path.
+    # A copy of a tracked text file git writes with CRLF compares by its LF form, and nothing else
+    # does: not a generated file, not one pinned to eol=lf.
+    ("a copy of a tracked text file compares by its bytes", CLASSPATH_FILES,
+     "        return runCatching { text.digest(bytes, relative) }.getOrNull() ?: sha256(ByteArrayInputStream(bytes))",
+     "        return sha256(ByteArrayInputStream(bytes))",
+     unit_suite, "a copy of a tracked text file digests the same whatever its line endings"),
+    ("every file with CRLF compares by its LF form", TRACKED_TEXT,
+     "        val paths = index?.get(blobId(lf)) ?: return null\n",
+     "        if (true) return hex(MessageDigest.getInstance(\"SHA-256\").digest(lf))\n"
+     "        val paths = index?.get(blobId(lf)) ?: return null\n",
+     unit_suite, "a file no tracked blob matches, or matched at another path, keeps its bytes digest"),
+    ("a copy matches a tracked file at any path", TRACKED_TEXT,
+     '            (path == relative || path.endsWith("/$relative")) &&',
+     '            true &&',
+     unit_suite, "a file no tracked blob matches, or matched at another path, keeps its bytes digest"),
+    ("a copy need not match what git checked out", TRACKED_TEXT,
+     "                runCatching { File(rootDir, path).readBytes().contentEquals(bytes) }.getOrDefault(false)",
+     "                true",
+     unit_suite, "a copy with carriage returns git did not write keeps its bytes digest"),
     ("a moved classpath file is ignored", SELECTION,
      "    if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this",
      "    if (verdict is ClasspathFilesVerdict.Moved || verdict == ClasspathFilesVerdict.Unchanged || forces) return this",
@@ -2827,6 +2856,53 @@ MUTATIONS = [
      "        if (FilterRule.engineRunsEverything(id)) {\n            run.countComplementRan();",
      "        if (false) {\n            run.countComplementRan();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # The test JVM has the last word on whether its tests run one at a time: a setting the plugin
+    # did not see must still keep interleaved tests out of the map.
+    ("a test JVM that sees parallel execution captures", PLATFORM_EVENTS,
+     "        if (concurrent != null) {",
+     "        if (false && concurrent != null) {",
+     agent_suite, "a test JVM whose tests may run concurrently captures nothing and says why"),
+    ("a worker that captured nothing over parallelism lets the decode go on", DECODE_TASK,
+     "        if (unconfirmed.isNotEmpty()) {",
+     "        if (false) {",
+     functional_suite, "parallel execution a host's doFirst turns on records nothing"),
+    # A flagged recording run turns the engines' parallel switches off, and only then captures.
+    ("a flagged recording run leaves parallel execution on", TEST_TASK_WIRING,
+     '                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "false") }',
+     '                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "true") }',
+     functional_suite, "a flagged recording run of a parallel suite records it one test at a time"),
+    ("a flagged selecting run of a parallel suite is declined", TEST_TASK_WIRING,
+     "            if (recordSequentially && platform) {\n                keepParallelism(",
+     "            if (false) {\n                keepParallelism(",
+     functional_suite, "a flagged selecting run narrows with the suite's own scheduling and captures nothing"),
+    ("recordSequentially is always on", TEST_TASK_WIRING,
+     "        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)",
+     "        val recordSequentially = true",
+     functional_suite, "the extension property alone records sequentially, and the command line turns it off"),
+    ("the read-back ignores the vintage engine's switch", PARALLEL_READ_BACK,
+     "        if (enabled(parameters.apply(VINTAGE))) {",
+     "        if (false) {",
+     agent_suite, "the vintage engine's switch on is unconfirmed, naming it"),
+    ("a flagged selecting run overrides parallelism and captures", TEST_TASK_WIRING,
+     "            if (recordSequentially && platform && recording) {",
+     "            if (recordSequentially && platform) {",
+     functional_suite, "a flagged selecting run on a map of unknown age keeps the suite's scheduling and records nothing"),
+    ("a flagged TestNG task takes the JUnit Platform override", TEST_TASK_WIRING,
+     "            val platform = test.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions\n",
+     "            val platform = true\n",
+     functional_suite, "the flag leaves a parallel TestNG suite declined, and says it covers the JUnit Platform only"),
+    ("a run that kept its parallel scheduling is not counted by the schedule", DECODE_TASK,
+     "            if (marker.delete()) recordSchedule(taskPath, fullRun = datesTheMap && (!selecting || fullRunMarker.delete()))\n",
+     "            marker.delete()\n",
+     functional_suite, "flagged selecting runs count toward the scheduled full run"),
+    ("the build's recordSequentially is ignored", TEST_TASK_WIRING,
+     "        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)",
+     "        val recordSequentially = settings.recordSequentially ?: false",
+     functional_suite, "the extension property alone records sequentially, and the command line turns it off"),
+    ("the decision record keeps the plugin's word over the test JVM's", SELECTION_RUN,
+     "            String parallelism = Concurrency.unconfirmed() != null",
+     "            String parallelism = false",
+     functional_suite, "a flagged run whose host turns parallel execution back on records nothing"),
     # A test an engine starts and never finishes is closed not known to pass, so the rest of the
     # capture can date the map; at JVM shutdown nothing is closed.
     ("a finished container leaves the tests beneath it open", CAPTURE_SESSION,
@@ -3723,6 +3799,36 @@ MUTATIONS = [
     # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.
     # Plain JUnit 4: a class is left out only through Gradle's own early return, only when the run
     # asked for it, only for runners that run exactly the class's own methods, ignored tests unjudged.
+    # narrowPlainRunners reaches the test JVM only on a selecting or observing run of a JUnit 4
+    # task, is a task input there, and only a run that had it clears the audit's blocker.
+    ("plain JUnit 4 is narrowed without narrowPlainRunners", TEST_TASK_WIRING,
+     "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
+     "            if (junit4 && (selecting || observing)) {",
+     functional_suite, "without narrowPlainRunners, every class runs"),
+    ("a recording run hands narrowPlainRunners to the agent", TEST_TASK_WIRING,
+     "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
+     "            if (narrowPlainRunners && junit4) {",
+     functional_suite, "a recording run with the flag hands the agent nothing to judge"),
+    ("an observing run hands narrowPlainRunners to no agent", TEST_TASK_WIRING,
+     "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
+     "            if (narrowPlainRunners && junit4 && selecting) {",
+     functional_suite, "an observing run records what it would leave out and leaves out nothing"),
+    ("the audit takes the flag for the agent's hook", AUDIT,
+     "                    it.copy(plainNarrowed = notes.isNotEmpty() && notes.all { note -> note == AgentContract.PLAIN_FILTER_HOOKED })",
+     "                    it.copy(plainNarrowed = true)",
+     functional_suite, "the audit stops asking for the JUnit Platform once a selecting run narrowed plain JUnit 4"),
+    ("narrowPlainRunners is not a task input", TEST_TASK_WIRING,
+     "            test.inputs.property(NARROW_PLAIN_RUNNERS_PROPERTY, true)\n",
+     "",
+     functional_suite, "the audit stops asking for the JUnit Platform once a selecting run narrowed plain JUnit 4"),
+    ("the audit drops the Platform blocker for any plain JUnit 4 task", AUDIT_COMPUTE,
+     "        facts.framework == TaskFacts.JUNIT4 && facts.plainNarrowed == true -> Unit",
+     "        facts.framework == TaskFacts.JUNIT4 -> Unit",
+     functional_suite, "the audit stops asking for the JUnit Platform once a selecting run narrowed plain JUnit 4"),
+    ("the build's narrowPlainRunners is ignored", TEST_TASK_WIRING,
+     "        val narrowPlainRunners = settings.narrowPlainRunners ?: extension.narrowPlainRunners.getOrElse(false)",
+     "        val narrowPlainRunners = settings.narrowPlainRunners ?: false",
+     functional_suite, "the build's narrowPlainRunners alone narrows"),
     ("the agent's answer to leave a JUnit 4 class out is not taken", JUNIT4_SELECTION,
      "            return current.judge(runner);",
      "            current.judge(runner);\n            return false;",
@@ -3751,7 +3857,7 @@ MUTATIONS = [
      "            if (AgentContract.NARROW_PLAIN_JUNIT4.equals(\n"
      "                    HostBuild.current().property(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {",
      "            if (true) {",
-     functional_suite, "without the agent told to judge plain JUnit 4, every class runs"),
+     functional_suite, "without narrowPlainRunners, every class runs"),
     ("a class with no test is left out", CLASS_VERDICTS,
      "        boolean allSkipped = !ids.isEmpty();",
      "        boolean allSkipped = true;",
