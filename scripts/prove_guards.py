@@ -142,6 +142,7 @@ CLASSPATH_SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/chan
 NOT_READ = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
 PATH_IGNORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
+SELECTING_STEP = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/SelectingStep.kt"
 PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
 CLASSPATH_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
@@ -1263,7 +1264,7 @@ MUTATIONS = [
      "        if (declaresChangedPath(descriptor)) {",
      "        if (false) {",
      agent_suite, "a test whose declared dependency matches a changed path is selected"),
-    ("a task's declared dependency no longer runs it in full", SELECTION_WIRING,
+    ("a task's declared dependency no longer runs it in full", SELECTING_STEP,
      "        if (declaredHit != null && !widening.forces) {",
      "        if (false && declaredHit != null && !widening.forces) {",
      functional_suite, "a path the build declares for a task runs that task in full"),
@@ -1673,7 +1674,7 @@ MUTATIONS = [
      "                add(byTest, test.testId(), Rule.OWN_CLASS_CHANGED);",
      "",
      agent_suite, "an edited test class names own-class-changed on its tests"),
-    ("the plugin stops handing changed bytes to the test JVM", SELECTION_WIRING,
+    ("the plugin stops handing changed bytes to the test JVM", SELECTING_STEP,
      "                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,",
      "                CHANGED_BYTES_PROPERTY to emptySet<String>(),",
      functional_suite, "a class rewritten after compilation selects the tests that recorded it"),
@@ -1700,10 +1701,10 @@ MUTATIONS = [
      "    return memo.value(key) { memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered) }",
      "    return memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered)",
      guard_suite, "the git command set does not grow with the number of projects"),
-    ("the unmappable paths are passed on the test JVM's command line again", SELECTION_WIRING,
-     "        writeChangeSet(\n            test, changeSetFile,",
-     "        test.systemProperty(UNMAPPABLE_PATHS_PROPERTY, scoped.change.unmappablePaths.sorted().joinToString(\",\"))\n"
-     "        writeChangeSet(\n            test, changeSetFile,",
+    ("the unmappable paths are passed on the test JVM's command line again", SELECTING_STEP,
+     "        writeChangeSet(\n            host, changeSetFile,",
+     "        host.property(UNMAPPABLE_PATHS_PROPERTY, scoped.change.unmappablePaths.sorted().joinToString(\",\"))\n"
+     "        writeChangeSet(\n            host, changeSetFile,",
      functional_suite, "a change set longer than a command line still starts the test JVM"),
     # The change set left the test JVM's command line, and with it the task's inputs: Gradle then
     # found a task whose change had grown to a forcing one up to date, and ran nothing.
@@ -1746,9 +1747,9 @@ MUTATIONS = [
      functional_suite, "a change set git cannot compute again when the task runs"),
     # Fallbacks never overwrite a map recorded in isolation. The run git could not report changes
     # for kept capture as configured, so its decode merged shared-JVM records into that map.
-    ("a run git cannot report changes for rewrites an isolated map", SELECTION_WIRING,
-     "            applyCaptureDecision(\n                test, mapDir, refusalJacoco, observing,\n                decideCapture(",
-     "            if (false) applyCaptureDecision(\n                test, mapDir, refusalJacoco, observing,\n                decideCapture(",
+    ("a run git cannot report changes for rewrites an isolated map", SELECTING_STEP,
+     '        // left as it is, as by every other fallback.\n        applyCapture(\n',
+     '        // left as it is, as by every other fallback.\n        if (false) applyCapture(\n',
      functional_suite, "a selecting run git cannot report changes for leaves an isolated map alone"),
     ("a change-set file that cannot be read narrows as an empty change set", FILTER_RULE,
      "            if (AgentContract.REFUSED_PROPERTY.equals(name)) {\n                return refusal;",
@@ -2477,7 +2478,7 @@ MUTATIONS = [
     # A forced run names where each untracked forcing path came from, and only says so: the
     # classification never reaches the change set, and only a path the capture saw move is offered
     # the build-directory remedy.
-    ("test-written files leave the change set", SELECTION_WIRING,
+    ("test-written files leave the change set", SELECTING_STEP,
      "                UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,",
      "                UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths.filterNot { "
      "forcing.origins[it] == ForcingPaths.Origin.WRITTEN_DURING_CAPTURE },",
@@ -2645,8 +2646,8 @@ MUTATIONS = [
      "",
      functional_suite, "a declined run with in-JVM parallelism keeps its token and the host's JaCoCo"),
     ("the unknown-age fallback captures on a declined run", SELECTION_WIRING,
-     "    test.doFirst { task ->\n        if (refusedAtExecution(test)) return@doFirst\n        // A map recorded in isolation",
-     "    test.doFirst { task ->\n        // A map recorded in isolation",
+     '    test.doFirst {\n        if (refusedAtExecution(test)) return@doFirst\n        // Read here, where',
+     '    test.doFirst {\n        // Read here, where',
      functional_suite, "a declined selecting run on a map of unknown age writes nothing"),
     # Tests named with `--tests` all run on a selecting run: selection used to drop a named
     # test the change did not reach, and the build failed on "No tests found".
@@ -2715,7 +2716,7 @@ MUTATIONS = [
      functional_suite, "an observing run executes every test and records what selection would have left out"),
     # ...and captures as a recording run does: taking a selecting run's capture decision leaves a
     # narrowed observation's map uncaptured, and the map it reports against stops refreshing.
-    ("an observing run takes a selecting run's capture decision", SELECTION_WIRING,
+    ("an observing run takes a selecting run's capture decision", SELECTING_STEP,
      "    val decision = if (observing) OBSERVING_CAPTURE else decided\n",
      "    val decision = if (false) OBSERVING_CAPTURE else decided\n",
      functional_suite, "an observing run writes the map a recording run writes on the same state"),
@@ -3145,9 +3146,9 @@ MUTATIONS = [
      "    val keepsIsolation = mode != MODE_SHARED",
      '    val keepsIsolation = mode == "isolated"',
      unit_suite, "a full run over a map recorded in isolation, wholly or in part, does not instrument"),
-    ("a run refused over the map's age captures over a map recorded in isolation", SELECTION_WIRING,
-     "        ).takeUnless { it.capture }\n        // Read here, where",
-     "        ).takeUnless { true }\n        // Read here, where",
+    ("a run refused over the map's age captures over a map recorded in isolation", SELECTING_STEP,
+     '        ).takeUnless { it.capture }\n',
+     '        ).takeUnless { true }\n',
      functional_suite, "a selecting run that refuses over the map's age leaves an isolated map alone"),
     # Cost, not safety: a map selection cannot read holds nothing isolation could keep.
     ("an unusable map labelled isolated is never rebuilt", CAPTURE_DECISION,
@@ -3674,7 +3675,7 @@ MUTATIONS = [
      "        if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),",
      "        emptySet(),",
      functional_suite, "a declared path outside a build below the repository root stays in the change set"),
-    ("a change set pathIgnore emptied is not accounted for", SELECTION_WIRING,
+    ("a change set pathIgnore emptied is not accounted for", SELECTING_STEP,
      "            accountedFor(paths, scoped).toString(),",
      "            accountedFor(scoped.ignore.kept, scoped).toString(),",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
@@ -3796,9 +3797,9 @@ MUTATIONS = [
      "    if (false) refuseAChangedEnvironment(test, mapDir, environment, jacoco, changeSetFile, observing)",
      functional_suite, "another value of a system property runs everything, and no value is printed or stored"),
     # Without it the old fingerprint stays, and every later selecting run refuses again.
-    ("a refusal over the environment calls the map current and records nothing", SELECTION_WIRING,
-     "                ageKnown = false,\n            ),\n        )\n    }\n}\n\n/** [EnvironmentFingerprint.check], with",
-     "                ageKnown = true,\n            ),\n        )\n    }\n}\n\n/** [EnvironmentFingerprint.check], with",
+    ("a refusal over the environment calls the map current and records nothing", SELECTING_STEP,
+     "                ageKnown = false,\n            ),\n        )\n    }\n\n    /**\n     * Hands the list-valued",
+     "                ageKnown = true,\n            ),\n        )\n    }\n\n    /**\n     * Hands the list-valued",
      functional_suite, "a map recorded on another JDK runs everything, names both, and records this one"),
     ("environmentInclude adds no variable to the comparison", TEST_TASK_WIRING,
      '            validNames(extension.environmentInclude.getOrElse(emptyList()), "environmentInclude", project.path),',
