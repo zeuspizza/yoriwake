@@ -1,3 +1,4 @@
+import java.util.zip.ZipFile
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
@@ -98,7 +99,9 @@ val shadedPrefix = "io.github.zeuspizza.yoriwake.shaded.maven"
 tasks.shadowJar {
     archiveClassifier = ""
     from(tasks.named("generateMavenPluginDescriptor"))
-    relocate("kotlin", "$shadedPrefix.kotlin")
+    // Classes only: core names the host's own Kotlin annotations in string constants, which must
+    // keep naming `kotlin`, not this copy.
+    relocate("kotlin", "$shadedPrefix.kotlin") { skipStringConstants = true }
     relocate("org.intellij.lang.annotations", "$shadedPrefix.annotations")
     relocate("org.jetbrains.annotations", "$shadedPrefix.annotations")
     relocate("org.jacoco.core", "$shadedPrefix.jacoco.core")
@@ -107,6 +110,28 @@ tasks.shadowJar {
     exclude("META-INF/*.kotlin_module", "META-INF/versions/**", "module-info.class", "META-INF/maven/org.*/**")
 }
 tasks.jar { archiveClassifier = "plain" }
+
+// A relocation that rewrote core's descriptor strings would read every host class as not Kotlin,
+// and nothing would fail: the jar is read back for the strings core matches on.
+val checkShadedStrings by tasks.registering {
+    description = "Fails if shading rewrote the Kotlin type names core matches host classes by."
+    val jar = tasks.shadowJar.flatMap { it.archiveFile }
+    inputs.file(jar)
+    doLast {
+        val expected = mapOf(
+            "io/github/zeuspizza/yoriwake/gradle/bytecode/InlinedSources" to "Lkotlin/Metadata;",
+            "io/github/zeuspizza/yoriwake/gradle/bytecode/Recordability" to "Lkotlin/Metadata;",
+            "io/github/zeuspizza/yoriwake/gradle/bytecode/AnnotationDigestVisitor" to "Lkotlin/jvm/internal/SourceDebugExtension;",
+        )
+        ZipFile(jar.get().asFile).use { zip ->
+            for ((type, literal) in expected) {
+                val bytes = zip.getInputStream(requireNotNull(zip.getEntry("$type.class")) { "$type is not in the jar" }).readBytes()
+                check(literal in String(bytes, Charsets.ISO_8859_1)) { "$type no longer holds \"$literal\": shading rewrote it" }
+            }
+        }
+    }
+}
+tasks.check { dependsOn(checkShadedStrings) }
 tasks.assemble { dependsOn(tasks.shadowJar) }
 
 val functionalRepository = layout.buildDirectory.dir("functional-repo")
@@ -148,7 +173,7 @@ dependencies {
 val cleanFunctionalRepository by tasks.registering(Delete::class) { delete(functionalRepository) }
 tasks.named("publishMavenPluginPublicationToFunctionalRepository") { dependsOn(cleanFunctionalRepository) }
 
-val functionalTestTask = tasks.register<Test>("functionalTest") {
+tasks.register<Test>("functionalTest") {
     description = "Runs real Maven builds over fixtures with the published plugin."
     group = "verification"
     testClassesDirs = functionalTest.output.classesDirs
@@ -167,4 +192,3 @@ val functionalTestTask = tasks.register<Test>("functionalTest") {
     // One Maven build at a time: they share a local repository, so each library is downloaded once.
     maxParallelForks = 1
 }
-tasks.check { dependsOn(functionalTestTask) }

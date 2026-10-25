@@ -2,6 +2,8 @@ package io.github.zeuspizza.yoriwake.maven
 
 import java.io.File
 import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.test.fail
@@ -17,6 +19,9 @@ object FunctionalMaven {
 
     /** The supported matrix: the floor, the latest 3.9.x, the latest 3.x and Maven 4. */
     val MATRIX = listOf("3.9.0", "3.9.16", "3.10.0", "4.0.0-rc-7")
+
+    /** Runs before its release only when a build asks, as this suite does for the matrix. */
+    const val PRE_RELEASE = "4.0.0-rc-7"
 
     /** The newest Maven below the floor, for the decline. */
     const val BELOW_FLOOR = "3.8.8"
@@ -47,7 +52,11 @@ object FunctionalMaven {
     fun copy(fixture: File, dir: File): File = File(dir, "fixture").also { fixture.copyRecursively(it) }
 
     /** Runs Maven [version] in [project] with [arguments]; the plugin resolves from this build. */
-    fun run(version: String, project: File, vararg arguments: String): Result {
+    fun run(version: String, project: File, vararg arguments: String): Result =
+        runPlain(version, project, "-Dyoriwake.internal.mavenPreRelease=true", *arguments)
+
+    /** As [run], without allowing a Maven that is not released. */
+    fun runPlain(version: String, project: File, vararg arguments: String): Result {
         val home = File(project.parentFile, "home").apply { mkdirs() }
         val settings = File(home, "settings.xml").apply { writeText(settingsXml()) }
         val windows = System.getProperty("os.name").startsWith("Windows")
@@ -59,6 +68,8 @@ object FunctionalMaven {
         val process = ProcessBuilder(command).directory(project).redirectErrorStream(true).apply {
             environment()["JAVA_HOME"] = System.getProperty("java.home")
             environment()["MAVEN_OPTS"] = "-Duser.home=${home.path}"
+            // The machine's ~/.mavenrc would set its own options for every build.
+            environment()["MAVEN_SKIP_RC"] = "true"
             environment().remove("MAVEN_ARGS")
         }.start()
         val output = process.inputStream.bufferedReader().readText()
@@ -87,25 +98,40 @@ object FunctionalMaven {
         </settings>
     """.trimIndent()
 
-    /** The unpacked distribution of [version], downloaded and checked on first use. */
+    /**
+     * The unpacked distribution of [version], downloaded and checked on first use. It is unpacked
+     * into a directory of its own and moved into place whole, so a download or unpacking cut short,
+     * or one racing another worktree's, never leaves a half distribution to be reused.
+     */
     @Synchronized
     private fun distribution(version: String): File {
         val home = File(distributions, "apache-maven-$version")
-        if (File(home, "bin").isDirectory) return home
+        if (home.isDirectory) return home
         val expected = requireNotNull(sha512[version]) { "no SHA-512 pinned for Maven $version" }
         distributions.mkdirs()
-        val archive = File(distributions, "apache-maven-$version-bin.tar.gz")
-        val major = version.substringBefore('.')
-        URI("https://archive.apache.org/dist/maven/maven-$major/$version/binaries/${archive.name}").toURL()
-            .openStream().use { input -> archive.outputStream().use { input.copyTo(it) } }
-        val actual = MessageDigest.getInstance("SHA-512").digest(archive.readBytes()).joinToString("") { "%02x".format(it) }
-        if (actual != expected) {
-            archive.delete()
-            fail("Maven $version's archive has SHA-512 $actual, not the published $expected")
+        val staging = Files.createTempDirectory(distributions.toPath(), "download-").toFile()
+        try {
+            val name = "apache-maven-$version-bin.tar.gz"
+            val archive = File(staging, name)
+            val major = version.substringBefore('.')
+            val connection = URI("https://archive.apache.org/dist/maven/maven-$major/$version/binaries/$name").toURL()
+                .openConnection().apply { connectTimeout = 30_000; readTimeout = 60_000 }
+            connection.getInputStream().use { input -> archive.outputStream().use { input.copyTo(it) } }
+            val actual = MessageDigest.getInstance("SHA-512").digest(archive.readBytes()).joinToString("") { "%02x".format(it) }
+            if (actual != expected) fail("Maven $version's archive has SHA-512 $actual, not the published $expected")
+            val unpacked = ProcessBuilder("tar", "xzf", name).directory(staging).inheritIO().start().waitFor()
+            val tree = File(staging, home.name)
+            check(unpacked == 0 && File(tree, "bin").isDirectory) { "could not unpack $name" }
+            try {
+                Files.move(tree.toPath(), home.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            } catch (raced: java.nio.file.FileAlreadyExistsException) {
+                // Another worktree's build put the same distribution in place first.
+            } catch (raced: java.nio.file.DirectoryNotEmptyException) {
+                // As above, on a platform that reports it this way.
+            }
+        } finally {
+            staging.deleteRecursively()
         }
-        val unpacked = ProcessBuilder("tar", "xzf", archive.name).directory(distributions).inheritIO().start().waitFor()
-        check(unpacked == 0 && File(home, "bin").isDirectory) { "could not unpack ${archive.name}" }
-        archive.delete()
         return home
     }
 }

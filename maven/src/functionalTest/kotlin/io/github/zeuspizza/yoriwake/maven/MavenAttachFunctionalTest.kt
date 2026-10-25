@@ -35,6 +35,17 @@ class MavenAttachFunctionalTest {
     }
 
     @Test
+    fun `a Maven that is not released gets a named line and an untouched build`(@TempDir dir: File) {
+        val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
+
+        val output = FunctionalMaven.runPlain(FunctionalMaven.PRE_RELEASE, project, "verify").succeeded().output
+
+        assertContains(output, "[yoriwake] maven-version: Maven ${FunctionalMaven.PRE_RELEASE} is not a release")
+        assertFalse("[yoriwake] attached" in output, output)
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
     fun `enabled false in the plugin's configuration says and changes nothing`(@TempDir dir: File) {
         val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
         val pom = File(project, "pom.xml")
@@ -45,7 +56,7 @@ class MavenAttachFunctionalTest {
             )
         )
 
-        val output = FunctionalMaven.run(FunctionalMaven.MATRIX.last(), project, "verify").succeeded().output
+        val output = FunctionalMaven.run(FunctionalMaven.MATRIX.first(), project, "verify").succeeded().output
 
         assertFalse("[yoriwake]" in output, output)
     }
