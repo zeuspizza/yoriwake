@@ -711,7 +711,7 @@ class AuditTest {
         assertContains(assertNotNull(blocker.remedy), "junit-vintage.init.gradle.kts")
         // The honesty condition travels with the remedy or the remedy is a trap: a vintage run is
         // evidence about the suite it actually runs, which is not the one that was failing.
-        assertContains(blocker.remedy, "only honest evidence about the suite it")
+        assertContains(assertNotNull(blocker.remedy), "only honest evidence about the suite it")
     }
 
     @Test

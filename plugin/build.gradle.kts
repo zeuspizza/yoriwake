@@ -57,6 +57,9 @@ dependencies {
         implementation("org.ow2.asm:asm-tree:$asmVersion")
     }
 
+    // The shared daemon-side logic, bundled into the plugin jar by shadowJar like the libraries above.
+    implementation(project(":core"))
+
     // compileOnly: the daemon calls Selector before the test JVM starts, but an `implementation`
     // dependency would put the agent in the published POM. unpackAgentClasses bundles it instead.
     compileOnly(project(":agent"))
@@ -454,7 +457,7 @@ tasks.test {
     inputs.files(rootProject.file("docs/reference.md"), rootProject.file("docs/contract.md"))
         .withPropertyName("checkedDocs")
         .withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs.files(layout.projectDirectory.dir("src/main"), rootProject.file("agent/src/main"))
+    inputs.files(layout.projectDirectory.dir("src/main"), rootProject.file("core/src/main"), rootProject.file("agent/src/main"))
         .withPropertyName("mainSources")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 }
@@ -516,16 +519,28 @@ dependencies {
 
 val instrumentedPluginClasses = layout.buildDirectory.dir("coverage/instrumented-classes")
 
+// The shared core's compiled classes and jar: measured and instrumented with the plugin's own, and
+// the jar kept off the daemons' classpath when its instrumented copy stands in for it.
+val coreProject = project(":core")
+val coreClasses = coreProject.tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin")
+    .flatMap { it.destinationDirectory }
+val coreJar = coreProject.tasks.named<Jar>("jar").flatMap { it.archiveFile }
+
 val instrumentPluginClasses by tasks.registering(JavaExec::class) {
     description = "Instruments the plugin's classes for coverage in the functional suite's TestKit daemons."
     val compiled = tasks.compileKotlin.flatMap { it.destinationDirectory }
+    val core = coreClasses
     val instrumented = instrumentedPluginClasses
     inputs.dir(compiled)
+    inputs.dir(core)
     outputs.dir(instrumented)
     classpath(coverageInstrumenter)
     mainClass = "org.jacoco.cli.internal.Main"
     argumentProviders += CommandLineArgumentProvider {
-        listOf("instrument", compiled.get().asFile.path, "--dest", instrumented.get().asFile.path, "--quiet")
+        listOf(
+            "instrument", compiled.get().asFile.path, core.get().asFile.path,
+            "--dest", instrumented.get().asFile.path, "--quiet",
+        )
     }
     // A class whose source was deleted must not linger in the copy.
     doFirst { instrumented.get().asFile.deleteRecursively() }
@@ -534,7 +549,11 @@ val instrumentPluginClasses by tasks.registering(JavaExec::class) {
 if (functionalCoverage) {
     tasks.pluginUnderTestMetadata {
         val compiled = tasks.compileKotlin.get().destinationDirectory.get().asFile
-        pluginClasspath.setFrom(instrumentPluginClasses, sourceSets.main.get().runtimeClasspath.filter { it != compiled })
+        val core = coreJar.get().asFile
+        pluginClasspath.setFrom(
+            instrumentPluginClasses,
+            sourceSets.main.get().runtimeClasspath.filter { it != compiled && it != core },
+        )
     }
 }
 
@@ -668,7 +687,8 @@ gradlePlugin {
 }
 
 // One report and one gate over the unit tests and both functional suites, measured over this
-// module's own compiled Kotlin: the bundled agent and relocated ASM would swamp the number.
+// module's own compiled Kotlin and the shared core's: the bundled agent and relocated ASM would
+// swamp the number.
 // Coverage finds code no test executes; the guards, not coverage, prove the safety rules.
 val gatedFunctionalTasks = listOf("functionalTest", "functionalTestGradle9")
 // CI runs each functional suite in shards, in jobs of their own, and gates in a later job on the
@@ -677,7 +697,7 @@ val coverageData = providers.gradleProperty("yoriwake.coverage.data").orNull?.le
 
 listOf(tasks.jacocoTestReport, tasks.jacocoTestCoverageVerification).forEach { coverageTask ->
     coverageTask.configure {
-        classDirectories.setFrom(tasks.compileKotlin.flatMap { it.destinationDirectory })
+        classDirectories.setFrom(tasks.compileKotlin.flatMap { it.destinationDirectory }, coreClasses)
         executionData.setFrom()
         if (coverageData != null) {
             executionData.from(fileTree(coverageData) { include("**/*.exec") })

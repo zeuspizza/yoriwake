@@ -123,7 +123,7 @@ CLASS_VERDICTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/
 JUNIT4_SELECTION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Selection.java"
 LOADED_CLASS_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/LoadedClassRecorder.java"
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
-CHANGE_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
+CHANGE_DETECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
 FILTER_RULE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/FilterRule.java"
 RULES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Rules.java"
@@ -136,21 +136,23 @@ AUDIT_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/A
 DECODE_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/DecodeTask.kt"
 AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contract/AgentContract.java"
 # ChangeSelection.kt was split by responsibility; each anchor followed its function, unchanged.
-SELECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
-CLASSPATH_SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
-NOT_READ = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
-PATH_IGNORE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
+SELECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
+CLASSPATH_SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
+NOT_READ = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
+PATH_IGNORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
 PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
-CLASSPATH_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
-WORKING_TREE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
-MAP_PROVENANCE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/MapProvenance.kt"
+CLASSPATH_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
+WORKING_TREE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
+WORKING_TREE_GRADLE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTreeGradle.kt"
+PATH_IGNORE_VALIDATION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnoreValidation.kt"
+MAP_PROVENANCE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/MapProvenance.kt"
 DEVELOCITY_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/DevelocityDetection.kt"
-FORCING_PATHS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ForcingPaths.kt"
+FORCING_PATHS = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ForcingPaths.kt"
 PROJECT_FACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ProjectFacts.kt"
 CLASSPATH_FACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ClasspathFacts.kt"
-COVERAGE_DECODER = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CoverageDecoder.kt"
+COVERAGE_DECODER = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CoverageDecoder.kt"
 SETTINGS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/Settings.kt"
 RUN_PLAN = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/RunPlan.kt"
 CAPTURE_SESSION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureSession.java"
@@ -168,27 +170,27 @@ PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engine
 MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
-SELECTION_RECORD = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
-CAPTURE_DECISION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CaptureDecision.kt"
+SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
+CAPTURE_DECISION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CaptureDecision.kt"
 EXPLAIN_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/ExplainTask.kt"
-ENVIRONMENT_FINGERPRINT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
-JVM_ARG_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
-CLASS_FILE_CEILING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
-SCHEDULE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/Schedule.kt"
+ENVIRONMENT_FINGERPRINT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
+JVM_ARG_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
+CLASS_FILE_CEILING = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
+SCHEDULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/Schedule.kt"
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
 # with it, four columns left: the functions were members of `object Audit` and are now top level.
-AUDIT_COMPUTE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
+AUDIT_COMPUTE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
 # The payback engine moved out of Audit.kt; its mutation anchors moved with it, which is the
 # check that the move changed no behaviour -- an anchor left behind refuses before any suite runs.
-PAYBACK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
-SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InstrumentationScope.kt"
+PAYBACK = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
+SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InstrumentationScope.kt"
 CAFFEINE_PROJECT = "bench/projects/caffeine.toml"
 QUALIFY_SRC = "bench/qualify.py"
 CONFIG_COST = "bench/config_cost.py"
-TASK_ARTIFACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/TaskArtifacts.kt"
-DIGEST_VISITOR = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/DigestVisitor.kt"
-RECORDABILITY = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/Recordability.kt"
-ABSENCE_EVIDENCE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/AbsenceEvidence.kt"
+TASK_ARTIFACTS = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/TaskArtifacts.kt"
+DIGEST_VISITOR = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/DigestVisitor.kt"
+RECORDABILITY = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/Recordability.kt"
+ABSENCE_EVIDENCE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/AbsenceEvidence.kt"
 PY_ISOLATION = "bench/isolation.py"
 TARGET_ORDERING = "bench/target_ordering.py"
 MUTATIONS_SRC = "bench/mutations.py"
@@ -1515,15 +1517,15 @@ MUTATIONS = [
     # And the build files the old pathspec covered. Dropping them was the review's sharpest find:
     # `agent/build.gradle.kts` pins the ASM version the agent instruments with.
     ("the digest stops covering the plugin and agent build files", PY_SRC,
-     'SELECTOR_SOURCE_FILES = ("plugin/build.gradle.kts", "agent/build.gradle.kts")',
+     'SELECTOR_SOURCE_FILES = ("plugin/build.gradle.kts", "core/build.gradle.kts", "agent/build.gradle.kts")',
      'SELECTOR_SOURCE_FILES = ()',
      python_suite, "did not move the digest"),
     # THE SELECTOR DIGEST. It decides whether a results file still describes the
     # selector in the tree, so getting it wrong publishes rows measured by a different selector as
     # current evidence -- the exact failure the stale check exists to prevent, wearing its name.
     ("the digest stops covering the agent, so agent-only changes read fresh", PY_SRC,
-     'SELECTOR_SOURCE_DIRS = ("plugin/src/main", "agent/src/main")',
-     'SELECTOR_SOURCE_DIRS = ("plugin/src/main",)',
+     'SELECTOR_SOURCE_DIRS = ("plugin/src/main", "core/src/main", "agent/src/main")',
+     'SELECTOR_SOURCE_DIRS = ("plugin/src/main", "core/src/main")',
      python_suite, "did NOT move the digest"),
     # And the absent-digest REASON. Note what this guard does NOT claim: with the branch removed
     # the verdict is still stale, because `None != current` is also true -- so safety does not
@@ -1686,14 +1688,14 @@ MUTATIONS = [
     # A selecting run filters the working tree once per build while configuring, memoised by build
     # root and excluded directories. Keyed without the root, a build sharing the memo would be
     # handed another's listing and miss its own new ignored files.
-    ("one build's working-tree listing is handed to another", WORKING_TREE,
-     '        val key = YoriwakePlugin.WORKTREE_KEY + rootDir.path + "\\u0000" +',
-     '        val key = YoriwakePlugin.WORKTREE_KEY +',
+    ("one build's working-tree listing is handed to another", WORKING_TREE_GRADLE,
+     '    val key = YoriwakePlugin.WORKTREE_KEY + rootDir.path + "\\u0000" +',
+     '    val key = YoriwakePlugin.WORKTREE_KEY +',
      unit_suite, "two builds in one memo each get their own working-tree listing"),
     # Filtered once per `Test` task, the listing took minutes on spring-boot's 527 tasks.
-    ("the working tree is filtered once per Test task again", WORKING_TREE,
-     "        return memo.value(key) { memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered) }",
-     "        return memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered)",
+    ("the working tree is filtered once per Test task again", WORKING_TREE_GRADLE,
+     "    return memo.value(key) { memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered) }",
+     "    return memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered)",
      guard_suite, "the git command set does not grow with the number of projects"),
     ("the unmappable paths are passed on the test JVM's command line again", SELECTION_WIRING,
      "        writeChangeSet(\n            test, changeSetFile,",
@@ -3637,9 +3639,9 @@ MUTATIONS = [
      functional_suite, "a changed file notReadByTests lists is no change"),
     # PATHIGNORE. A declared path leaves the change set; what compiles or what the build reads
     # never does, every use is named, and a read the map recorded runs the tests after it.
-    ("an entry outside pathIgnore's grammar is accepted", PATH_IGNORE,
-     "        problem(entry)?.let { why ->",
-     "        problem(entry)?.takeIf { false }?.let { why ->",
+    ("an entry outside pathIgnore's grammar is accepted", PATH_IGNORE_VALIDATION,
+     "    problem(entry)?.let { why ->",
+     "    problem(entry)?.takeIf { false }?.let { why ->",
      unit_suite, "entries written for another dialect fail the build naming pathIgnore and the entry"),
     ("a pathIgnore star crosses directories", PATH_IGNORE,
      '        if (pattern[p] == "**") return (s..segments.size).any { matchFrom(pattern, p + 1, segments, it) }',
@@ -4127,8 +4129,8 @@ MUTATIONS = [
      "| `yoriwake.base=<ref>` |", "| `yoriwake.baseRef=<ref>` |", reference_suite,
      "every property the table lists is read"),
     ("Settings reads a flag the reference's Properties table does not list", SETTINGS,
-     '        const val BASE = "yoriwake.base"\n',
-     '        const val BASE = "yoriwake.base"\n        const val BASE_REF = "yoriwake.baseRef"\n',
+     '        const val BASE = SettingNames.BASE\n',
+     '        const val BASE = SettingNames.BASE\n        const val BASE_REF = "yoriwake.baseRef"\n',
      reference_suite, "every flag the plugin reads is listed"),
     ("the reference names a -P flag Settings does not read", REFERENCE_DOC,
      "**`-Pyoriwake.fullRun`**", "**`-Pyoriwake.fullrun`**", reference_suite,
@@ -4259,7 +4261,7 @@ def _locked(name):
     """Whether a suite's runs take the Gradle lock: every Gradle suite not named safe without it."""
     return name in GRADLE_SUITES and name not in UNLOCKED_SUITES
 BUILD_FILES = ("build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradle/",
-               "agent/build.gradle.kts", "plugin/build.gradle.kts")
+               "agent/build.gradle.kts", "plugin/build.gradle.kts", "core/build.gradle.kts")
 
 
 def _under(path, prefixes):

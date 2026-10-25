@@ -133,7 +133,7 @@ def needs_checks(paths):
 
 
 # The sources a pull request must pass every guard for: what the plugin and agent ship.
-PRODUCT_SOURCES = ("plugin/src/main/", "agent/src/main/")
+PRODUCT_SOURCES = ("plugin/src/main/", "core/src/main/", "agent/src/main/")
 
 
 def touches_product(paths):

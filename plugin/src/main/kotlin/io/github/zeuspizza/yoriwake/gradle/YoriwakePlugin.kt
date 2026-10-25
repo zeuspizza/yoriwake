@@ -298,7 +298,7 @@ public abstract class YoriwakePlugin : Plugin<Project> {
         internal const val WORKTREE_SNAPSHOT_COUNTER = "worktreeSnapshot"
 
         /** Where `yoriwakeExplain` writes the decision for a machine to read. */
-        internal const val EXPLANATION_FILE = "explain.json"
+        internal const val EXPLANATION_FILE = io.github.zeuspizza.yoriwake.gradle.report.EXPLANATION_FILE
 
         /** The oldest Gradle the plugin runs on; below it the plugin declines. */
         internal const val MINIMUM_GRADLE = "8.14"

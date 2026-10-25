@@ -14,7 +14,6 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERT
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
-import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
@@ -25,16 +24,24 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.JvmArgFiles
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
+import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
+import io.github.zeuspizza.yoriwake.gradle.capture.ScheduleSource
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
-import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.Declarations
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTreeStartSource
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTreeStatsSource
+import io.github.zeuspizza.yoriwake.gradle.change.cachedRawGit
+import io.github.zeuspizza.yoriwake.gradle.change.configuredListing
+import io.github.zeuspizza.yoriwake.gradle.change.head
+import io.github.zeuspizza.yoriwake.gradle.change.validated
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -44,11 +51,11 @@ import io.github.zeuspizza.yoriwake.gradle.tasks.ExplainTask
 import io.github.zeuspizza.yoriwake.gradle.wiring.JacocoScoping.allProjectPackages
 import io.github.zeuspizza.yoriwake.gradle.wiring.JacocoScoping.applyJacocoIncludes
 import io.github.zeuspizza.yoriwake.gradle.wiring.JacocoScoping.deriveScope
+import java.io.File
 import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.gradle.testing.jacoco.tasks.JacocoReportBase
-import java.io.File
 
 /**
  * Everything the plugin does to one `Test` task: the agent and its system properties, capture,
@@ -564,7 +571,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // Asked outside the memo's compute below: git memoises through the same map.
         val tracked = git(listOf("ls-files", "-z"))
         val stats = {
-            project.providers.of(WorkingTree.StatsSource::class.java) {
+            project.providers.of(WorkingTreeStatsSource::class.java) {
                 it.parameters.rootDir.set(rootDir.absolutePath)
                 it.parameters.file.set(pendingStats(mapDir).absolutePath)
                 // Unset when git could not answer, which the source reads as exactly that.
@@ -576,7 +583,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         runCatching { (memo?.provider(YoriwakePlugin.CAPTURE_STATS_KEY + rootDir.path, stats) ?: stats()).get() }
         val start = pendingSnapshot(mapDir)
         val snapshot = {
-            project.providers.of(WorkingTree.StartSource::class.java) {
+            project.providers.of(WorkingTreeStartSource::class.java) {
                 it.parameters.rootDir.set(rootDir.absolutePath)
                 it.parameters.file.set(start.absolutePath)
                 listed?.let { joined -> it.parameters.listed.set(joined) }
@@ -1230,7 +1237,7 @@ internal data class FilterVerdict(
 
 /** Why the scheduled full run is due for this map, through a value source a reused entry re-obtains. */
 internal fun scheduleDue(project: Project, mapDir: File, schedule: Schedule.Limits): String? =
-    project.providers.of(Schedule.Source::class.java) {
+    project.providers.of(ScheduleSource::class.java) {
         it.parameters.mapDir.set(mapDir.absolutePath)
         schedule.builds?.let { builds -> it.parameters.builds.set(builds) }
         schedule.days?.let { days -> it.parameters.days.set(days) }

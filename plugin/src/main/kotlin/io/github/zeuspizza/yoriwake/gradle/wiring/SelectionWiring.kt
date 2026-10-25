@@ -27,6 +27,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
+import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenanceSource
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.validCaptureStamp
@@ -36,33 +37,41 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
 import io.github.zeuspizza.yoriwake.gradle.change.Declarations
-import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
-import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
-import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
-import io.github.zeuspizza.yoriwake.gradle.change.jacocoCeilingNote
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
-import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
-import io.github.zeuspizza.yoriwake.gradle.change.changeSet
-import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
-import io.github.zeuspizza.yoriwake.gradle.change.accountedFor
-import io.github.zeuspizza.yoriwake.gradle.change.digestRule
-import io.github.zeuspizza.yoriwake.gradle.change.establish
-import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
-import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
+import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.NotRead
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
-import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
+import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTreeDriftSource
+import io.github.zeuspizza.yoriwake.gradle.change.accountedFor
+import io.github.zeuspizza.yoriwake.gradle.change.cachedRawGit
+import io.github.zeuspizza.yoriwake.gradle.change.changeSet
+import io.github.zeuspizza.yoriwake.gradle.change.changedPaths
+import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
+import io.github.zeuspizza.yoriwake.gradle.change.commonAncestor
+import io.github.zeuspizza.yoriwake.gradle.change.configuredListing
+import io.github.zeuspizza.yoriwake.gradle.change.defaultBase
+import io.github.zeuspizza.yoriwake.gradle.change.digestRule
+import io.github.zeuspizza.yoriwake.gradle.change.establish
+import io.github.zeuspizza.yoriwake.gradle.change.jacocoCeilingNote
+import io.github.zeuspizza.yoriwake.gradle.change.outsideRoot
+import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
+import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
+import io.github.zeuspizza.yoriwake.gradle.change.trackedPaths
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
+import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.wouldRunEverything
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
+import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
+import java.io.File
 import org.gradle.api.InvalidUserDataException
 import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
-import java.io.File
 
 // The selecting half of the Test-task wiring: the change set, its widening and the capture
 // decision. Called from the same point of TestTaskWiring.configure, so doFirst order is kept.
@@ -763,7 +772,7 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
     observing: Boolean,
 ) {
     // Fingerprinted at execution, so a result cached under another verdict is never reused.
-    val provenance = project.providers.of(MapProvenance.Source::class.java) {
+    val provenance = project.providers.of(MapProvenanceSource::class.java) {
         it.parameters.mapDir.set(mapDir.absolutePath)
         listed?.let { digest -> it.parameters.listed.set(digest) }
     }
@@ -1074,7 +1083,7 @@ private fun worktreeDrift(project: Project, mapDir: File, buildMemo: BuildMemo?)
     }
     return WorkingTree.decode(
         runCatching {
-            project.providers.of(WorkingTree.DriftSource::class.java) {
+            project.providers.of(WorkingTreeDriftSource::class.java) {
                 it.parameters.rootDir.set(project.rootDir.absolutePath)
                 it.parameters.mapDir.set(mapDir.absolutePath)
                 // Left unset for an unlisted tree, which the source reads as exactly that.

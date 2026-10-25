@@ -1,0 +1,181 @@
+package io.github.zeuspizza.yoriwake.gradle.change
+
+/**
+ * Why the daemon refused to let a run narrow, as one of a closed set: the token the test JVM gets
+ * in `yoriwake.refused.kind`, `decisions.tsv` records as `refusal-kind` and `explain.json` reports
+ * as `refusalKind`. Each value has a different remedy, so a reader can tell whether recapturing
+ * would help.
+ *
+ * [requested] marks the kinds a user asked for, so a reader never counts them as the tool refusing.
+ */
+enum class RefusalKind(val token: String, val requested: Boolean = false) {
+    /** The map's capture stamp cannot be related to the base, so its age is unknown. */
+    STAMP_UNRELATABLE("stamp-unrelatable"),
+
+    /** A map exists and carries no usable capture stamp, so its age is unknown. */
+    STAMP_ABSENT("stamp-absent"),
+
+    /** A map exists without a readable working-tree snapshot. See [WorkingTree]. */
+    SNAPSHOT_ABSENT("snapshot-absent"),
+
+    /** git could not report a change set at all -- distinct from reporting an empty one. */
+    NO_CHANGE_SET("no-change-set"),
+
+    /** A refusal that named no kind. Recorded rather than dropped, so the gate still sees it. */
+    UNNAMED("unnamed"),
+
+    /** In-JVM parallelism: the one refusal that also suppresses capture. */
+    IN_JVM_PARALLELISM("in-jvm-parallelism"),
+
+    /** The map holds no digest for a changed constant holder. A capture fixes this. */
+    CONSTANT_UNRECORDED("constant-unrecorded"),
+
+    /** A constant's value differs from the captured one. Recapturing will not change that. */
+    CONSTANT_CHANGED("constant-changed"),
+
+    /** The map holds no annotation digest for a changed class that has annotations. A capture fixes this. */
+    ANNOTATIONS_UNRECORDED("annotations-unrecorded"),
+
+    /** A changed class's annotations differ from the captured ones. Recapturing will not change that. */
+    ANNOTATIONS_CHANGED("annotations-changed"),
+
+    /**
+     * The map holds no digest of the compiled classes, so bytes that changed with no source
+     * change cannot be ruled out. A capture fixes this.
+     */
+    BYTES_UNRECORDED("bytes-unrecorded"),
+
+    /**
+     * The map holds no digests of the build-produced files on this task's classpath, or they could
+     * not be taken now. A capture fixes the first.
+     */
+    CLASSPATH_FILES_UNRECORDED("classpath-files-unrecorded"),
+
+    /**
+     * A build-produced file on this task's classpath differs from the captured one, with no tracked
+     * change behind it. Recapturing will not change that.
+     */
+    CLASSPATH_FILES_CHANGED("classpath-files-changed"),
+
+    /** The inline scan or the bytes walk ran out of budget, or could not read something it walked. */
+    SCAN_EXHAUSTED("scan-exhausted"),
+
+    /** The scan threw. A defect, unlike [SCAN_EXHAUSTED], which is a size problem. */
+    SCAN_THREW("scan-threw"),
+
+    /** The scan declined to start: there was nothing to walk, or no artifacts to walk it with. */
+    SCAN_REFUSED("scan-refused"),
+
+    /** The walk finished and no SMAP exists anywhere, with Kotlin in the output. */
+    SMAP_ABSENT("smap-absent"),
+
+    /** The change set could not be handed to the test JVM through its file. */
+    CHANGE_SET_UNREADABLE(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_UNREADABLE_KIND),
+
+    /**
+     * The working tree changed between configuration and the task's execution, or could not be
+     * listed again then: the change set no longer describes the tree the tests see.
+     */
+    CHANGE_SET_STALE("change-set-stale"),
+
+    /**
+     * A run given a trusted-map list found the map not named there: no trusted run vouched for it.
+     * The next recording on the default branch, listed by the caller, fixes this.
+     */
+    MAP_UNVERIFIED("map-unverified"),
+
+    /**
+     * The trusted-map list names the map with another digest: its content is not what a trusted
+     * run recorded. The next recording on the default branch replaces it.
+     */
+    MAP_UNTRUSTED("map-untrusted"),
+
+    /**
+     * The test JVM's JDK, OS, system properties or listed environment variables differ from those
+     * the map was recorded under. The capture this run makes records the new environment.
+     */
+    ENVIRONMENT_CHANGED("environment-changed"),
+
+    /**
+     * The map holds no readable environment fingerprint for a JVM that ran a test, as a map recorded
+     * before fingerprints were does. A capture fixes this.
+     */
+    ENVIRONMENT_UNRECORDED("environment-unrecorded"),
+
+    /**
+     * Develocity Test Distribution runs this task's tests, possibly on other machines: yoriwake
+     * declines, so it neither selects nor records. Turning it off for the task lifts this.
+     */
+    DEVELOCITY_TEST_DISTRIBUTION("develocity-test-distribution"),
+
+    /** Develocity Predictive Test Selection chooses this task's tests: yoriwake declines as above. */
+    DEVELOCITY_TEST_SELECTION("develocity-test-selection"),
+
+    /** The task carries a Develocity test extension whose switches could not be read: declines. */
+    DEVELOCITY_UNDETERMINED("develocity-undetermined"),
+
+    /**
+     * Tests were named with `--tests`: every test that filter matches runs, as asked. Dropping
+     * `--tests` lifts this.
+     */
+    TESTS_NAMED("tests-named", requested = true),
+
+    /**
+     * Whether a decline holds could not be read: tests named with `--tests`, the checked-out branch
+     * while `fullRunBranches` is set, or a commit asking for a full run. Everything runs.
+     */
+    DECLINE_UNDETERMINED("decline-undetermined"),
+
+    /** `-Pyoriwake.fullRun` asked a selecting run to run everything; it records the map instead. */
+    FULL_RUN_REQUESTED("full-run-requested", requested = true),
+
+    /** The checked-out branch is one `fullRunBranches` lists; as above. */
+    FULL_RUN_BRANCH("full-run-branch", requested = true),
+
+    /** A commit since the base asks for a full run with a `yoriwake: full` line; as above. */
+    FULL_RUN_COMMIT("full-run-commit", requested = true),
+
+    /**
+     * `fullRunEveryBuilds` or `fullRunEveryDays` was reached since the last full run; as above. The
+     * full run resets the count.
+     */
+    FULL_RUN_SCHEDULED("full-run-scheduled", requested = true),
+
+    /**
+     * A complement run found no selection record for its task: no selecting run that narrowed at a
+     * clean tree left one there. Everything runs and the map is recorded.
+     */
+    COMPLEMENT_NO_RECORD("complement-no-record"),
+
+    /**
+     * A complement run's selection record was stamped with another commit, tree, task, build,
+     * classpath, configuration or test JVM, or could not be read. Everything runs.
+     */
+    COMPLEMENT_RECORD_MISMATCH(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND),
+
+    /**
+     * A class of the task's own output is compiled for a newer Java than the plugin's ASM reads or
+     * the host's JaCoCo officially instruments, so its digest or its coverage cannot be trusted. A
+     * newer yoriwake, or a newer `jacoco.toolVersion`, lifts this.
+     */
+    CLASS_FILE_UNSUPPORTED("class-file-unsupported"),
+
+    /**
+     * The test JVM runs a newer Java than the agent's ASM reads, so the read hooks cannot go into
+     * its JDK's classes and what its tests read cannot all be seen. A newer yoriwake, or an older
+     * toolchain for the tests, lifts this.
+     */
+    TEST_JVM_UNSUPPORTED(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TEST_JVM_UNSUPPORTED_KIND),
+
+    /** A changed path matches the build's `dependsOn` for this task: the build declared every test depends on it. */
+    DECLARED_PATH_CHANGED("declared-path-changed"),
+
+    /** More paths changed than `largeChangeThreshold`; raising it lifts this. */
+    LARGE_CHANGE("large-change"),
+    ;
+
+    companion object {
+        /** The kind a token names, or null for one this build does not know. */
+        fun fromToken(token: String): RefusalKind? = entries.firstOrNull { it.token == token }
+    }
+}
