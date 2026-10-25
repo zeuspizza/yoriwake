@@ -454,6 +454,7 @@ attempt is not a load only when opening it fails.
 | Netty kqueue transport | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final](https://github.com/netty/netty/tree/netty-4.2.18.Final/transport-native-kqueue/src/main/c) | a file whose path is passed to `FileDescriptor.from`, opened write-only; otherwise only descriptors Java opened |
 | Netty io_uring transport (conditional, below) | `io.netty.util.internal.NativeLibraryUtil` | [4.2.18.Final and 4.2.19.Final](https://github.com/netty/netty/tree/netty-4.2.19.Final/transport-native-io_uring/src/main/c) only | a probe file in the temporary directory, written and never read; as epoll otherwise; the kernel opens nothing for the operations Netty submits |
 | Netty io_uring transport (incubator) | `io.netty.util.internal.NativeLibraryUtil` | [0.0.26.Final](https://github.com/netty/netty-incubator-transport-io_uring/tree/netty-incubator-transport-parent-io_uring-0.0.26.Final/transport-native-io_uring/src/main/c) | a probe file in the temporary directory, written and never read; as epoll otherwise |
+| netty-tcnative BoringSSL build (conditional, below) | `io.netty.util.internal.NativeLibraryUtil` | [2.0.84.Final](https://github.com/netty/netty-tcnative/tree/netty-tcnative-parent-2.0.84.Final) only | certificate and key files a test names by path; `/dev/urandom` where `getrandom` is missing |
 | Netty macOS DNS resolver | `io.netty.util.internal.NativeLibraryUtil` | [4.2.19.Final](https://github.com/netty/netty/tree/netty-4.2.19.Final/resolver-dns-native-macos/src/main/c) | nothing; it asks the system's DNS configuration service, which reads its fixed files in its own process |
 | Conscrypt | `org.conscrypt.NativeLibraryUtil` | [2.7.0](https://github.com/google/conscrypt/tree/2.7.0/common/src/jni) | `/dev/urandom` where `getrandom` is missing; no path from Java |
 | Amazon Corretto Crypto Provider | `com.amazon.corretto.crypto.provider.Loader` | [2.5.0](https://github.com/corretto/amazon-corretto-crypto-provider/tree/2.5.0/csrc) (AWS-LC v1.47.0) | `/dev/urandom` where `getrandom` is missing, and `/dev/sysgenid`; no path from Java, and no configuration file |
@@ -480,9 +481,14 @@ Two notes on the list:
   entry counts only at the versions listed, read from the classes jar's own version file, and only
   when that method in the loading class's loader takes the check; otherwise the load applies the
   wide rule.
-- Reviewed and left off: netty-tcnative, whose BoringSSL and OpenSSL builds share file names,
-  and whose OpenSSL build reads a configuration file and loads modules from paths the environment
-  names; and JNA, which calls any native function.
+- Reviewed and left off: netty-tcnative's OpenSSL build, which reads a configuration file and
+  loads modules from paths the environment names; and JNA, which calls any native function.
+- netty-tcnative's BoringSSL build is listed by what the file is, not its name, which its OpenSSL
+  build shares: the loaded file counts only when its bytes equal the native resource of a jar on
+  the loading class's class path whose Maven metadata names `netty-tcnative-boringssl-static`, and
+  no other artifact of Netty's, at the version listed. A copy on `java.library.path` counts when
+  it is byte for byte that resource. On macOS, a set `DYLD_` variable applies the wide rule, since
+  it can load another library than the file compared.
 - SQLite JDBC is listed on a condition. Once a connection enables extension loading (the
   `enable_load_extension` property, `SQLiteConfig.enableLoadExtension(true)`,
   `SQLiteDataSource.setLoadExtension(true)`, or a direct call), SQL can load any native library by

@@ -28,6 +28,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A suite on netty-tcnative's BoringSSL build 2.0.84 narrows, told from its OpenSSL build by the library's bytes. Map: left alone.
 - A suite on Netty's macOS DNS resolver or Amazon Corretto Crypto Provider narrows as on any reviewed library. Map: left alone.
 - A RocksDB suite narrows on hosts whose zlib, snappy, lz4 and zstd are at a version reviewed. Map: left alone.
 - A native library load is judged by the file the JDK opened; an attempt that found no file no longer widens. Map: left alone.

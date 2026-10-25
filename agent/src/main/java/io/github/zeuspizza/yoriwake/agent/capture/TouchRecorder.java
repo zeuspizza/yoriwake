@@ -355,7 +355,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             int separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf(File.separatorChar));
             String file = separator >= 0 ? name.substring(separator + 1) : System.mapLibraryName(name);
             String[] entry = caller != null ? ReviewedLibraries.entry(caller.getName(), file) : null;
-            String unmet = entry != null ? unmet(caller, entry) : null;
+            String unmet = entry != null ? unmet(caller, entry, name) : null;
             if (entry != null && unmet == null) {
                 touchNamed(AgentContract.TOUCH_LOOKUP, AgentContract.FIRST_TOUCH_ANY);
             } else if (entry != null) {
@@ -372,10 +372,25 @@ public final class TouchRecorder implements CaptureSession.Touches {
         }
     }
 
-    /** Null when a conditional entry's guard holds for this load, or why not; always null for any other. */
-    private String unmet(Class<?> caller, String[] entry) {
+    /** Null when a conditional entry's condition holds for this load of {@code loaded}, or why not; always null for any other. */
+    private String unmet(Class<?> caller, String[] entry, String loaded) {
         if (entry.length == 2) {
             return null;
+        }
+        if (entry[2].startsWith("identity:")) {
+            return JarIdentity.unmet(caller, loaded, entry[2].substring("identity:".length()), entry[3],
+                    entry[4].split(","), System::getenv, name -> {
+                        // Asked as the host's own code would: what its loader does here is recorded.
+                        inside.remove();
+                        try {
+                            ClassLoader loader = caller.getClassLoader();
+                            return loader == null ? ClassLoader.getSystemResources(name) : loader.getResources(name);
+                        } catch (java.io.IOException unreadable) {
+                            return null;
+                        } finally {
+                            inside.set(Boolean.TRUE);
+                        }
+                    });
         }
         GuardHooks installed = guards;
         String unarmed = installed == null ? "the yoriwake agent did not install the native-method guards"
