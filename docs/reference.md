@@ -522,6 +522,22 @@ gives the library, and the class that calls `System.load` or `System.loadLibrary
 - **A job whose coverage report matters** runs without `-Pyoriwake.select`. It records, so it
   reports everything it ran.
 
+## Kover
+
+Tested with Kover 0.9.8 on Gradle 8.14 and 9.8.0.
+
+- **Kover's default agent** runs beside yoriwake. Each test's captured classes and the JaCoCo
+  report are the same as without Kover, and Kover's report is the same as with
+  `-Pyoriwake.disabled`. Applying Kover first does not change what each test captures.
+- **On a narrowed run** Kover's agent still runs, over the selected tests only. `koverXmlReport`
+  covers only those tests, and `koverVerify` can fail a rule the full suite meets. Run Kover's
+  reports and verification in the job that records, without `-Pyoriwake.select`.
+- **Kover's JaCoCo mode (`useJacoco()`)** adds a second JaCoCo agent. Beside Gradle's `jacoco`
+  plugin the test JVM fails at start (`duplicate class definition for java.lang.$JaCoCo`), with or
+  without yoriwake. Where it does run, with Gradle's JaCoCo switched off on the test task or not
+  applied, yoriwake has no JaCoCo to capture through: it captures and selects nothing for that
+  task, and Kover's report is whole.
+
 ## Requirements
 
 - **The [supported matrix](#supported-matrix):** the Gradle versions, daemon and test-JVM JDKs,

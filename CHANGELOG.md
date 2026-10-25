@@ -17,6 +17,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- Kover's default agent is tested beside yoriwake; the reference says what its reports show on narrowed runs. Map: left alone.
 - A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
 - `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
 - `largeChangeThreshold` (5,000 paths): a larger change runs everything without analysing it. Map: left alone.
