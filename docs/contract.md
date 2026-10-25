@@ -30,6 +30,8 @@ the run as `change-set-unreadable`.
 | `SELECT_PROPERTY` | `yoriwake.select` | plugin → agent | `true` to narrow; anything else runs everything |
 | `OBSERVE_PROPERTY` | `yoriwake.observe` | plugin → agent | `true` on an observing run: every test runs, and each row's selecting verdict is recorded as an observation line. Set beside `yoriwake.select`, which still decides that verdict |
 | `CLASS_GRANULARITY_PROPERTY` | `yoriwake.select.classGranularity` | plugin → agent | `true` rounds a selection up to whole classes |
+| `NARROW_PLAIN_RUNNERS_PROPERTY` | `yoriwake.plainRunners.narrow` | plugin → agent | The framework outside the JUnit Platform whose test classes a selecting run may leave out whole. Unset, its tests all run |
+| `NARROW_PLAIN_JUNIT4` | `junit4` | plugin → agent | `yoriwake.plainRunners.narrow`'s value for plain JUnit 4 |
 | `CHANGED_CLASSES_PROPERTY` | `yoriwake.change.classes` | plugin → agent | Changed classes |
 | `UNMAPPABLE_PATHS_PROPERTY` | `yoriwake.change.unmappable` | plugin → agent | Changed paths no class was derived from; any one forces |
 | `CHANGED_PATHS_PROPERTY` | `yoriwake.change.paths` | plugin → agent | Every changed path, before any is dropped; matched only against tests' `yoriwake-depends-on:` tags |
@@ -120,6 +122,7 @@ is written as it is.
 | `RUN_FILE` | `run.properties` | Under Maven, every contract property for the test JVM, `java.util.Properties` form, beside the map |
 | `RUN_FILE_END` | `#end` | The run file's last line |
 | `PLAN_COMPLETE_FILE` | `plan-complete` | Empty. Written only when the worker's whole run ended normally |
+| `OPEN_TESTS_FILE` | `open-tests` | The tests still open when the worker's run ended without finishing, one escaped id per line. Absent when none was |
 
 ### First touches
 
@@ -250,6 +253,14 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `RUN_NOT_DECIDED` | `not-decided` | Outcome: discovery never asked |
 | `RUN_COMPLEMENTED` | `complemented` | Outcome: a complement run left out the tests the selection record lists as ran. Its rows read `ALREADY_RAN` (excluded) or `NOT_ALREADY_RAN` (included) |
 | `COMPLEMENT_NOTE` | `complement` | On a complement run, `leftOut \t ran`: how many tests this writer left out as already run, and how many it ran |
+| `PLAIN_FILTER_NOTE` | `plain-filter` | On a run that narrows a plain framework, whether its executor took the hook that leaves a class out: one of the three values below |
+| `PLAIN_FILTER_HOOKED` | `hooked` | Plain filter: the executor took the hook |
+| `PLAIN_FILTER_UNHOOKED` | `unhooked` | Plain filter: the executor's shape is not one the hook knows, so every class ran |
+| `PLAIN_FILTER_UNSUPPORTED` | `unsupported` | Plain filter: the hook could not reach the judgement, or the judgement threw, so every class ran |
+| `CLASS_RUNS_WHOLE_NOTE` | `class-runs-whole` | `<token>=<count>`, comma-separated: how many classes ran whole because of a runner or shape selection does not judge, by the tokens below |
+| `CLASS_RUNS_WHOLE_JUNIT4_RUNNER` | `junit4-runner` | Ran whole: a JUnit 4 class whose runner is not on the allow-list |
+| `CLASS_RUNS_WHOLE_JUNIT4_SHAPE` | `junit4-shape` | Ran whole: a JUnit 4 class whose tests' descriptions name another class, no method, or none at all |
+| `CLASS_RUNS_WHOLE_JUNIT4_NOT_FILTERABLE` | `junit4-not-filterable` | Ran whole: a JUnit 4 class whose runner cannot be filtered |
 | `RULES_NOTE` | `rules` | What the rule lines were computed from, one of the five values below. Absent when the run decided nothing |
 | `FORCING_KINDS_NOTE` | `forcing-kinds` | Every full-run kind whose condition held, comma-separated in the order the selector checks them, or `none`. `full-run-kind` names only the first |
 | `RULES_COMPLETE` | `complete` | Rules: from every input the selector reads |
@@ -272,7 +283,8 @@ recorded, never read back: the selector decides first and computes these apart f
 Each rule is evaluated on its own, beneath a full run or a refusal too, so the line under a
 full-run row says what the selection would have been without whatever forced it. The selection
 coverage alone makes, with the known tests of an edited test class (`own-class-changed`), is every
-row whose line names a rule outside the `shares-jvm-*` family and `class-granularity`.
+row whose line names a rule outside the `shares-jvm-*` family, `class-granularity` and
+`class-runs-whole`.
 
 | Constant | Rule | The test runs because |
 |---|---|---|
@@ -293,6 +305,7 @@ row whose line names a rule outside the `shares-jvm-*` family and `class-granula
 | `RULE_DECLARES_CHANGED_PATH` | `declares-changed-path` | Its `yoriwake-depends-on:` tag matches a changed path |
 | `RULE_ENGINE_RUNS_EVERYTHING` | `engine-runs-everything` | Its engine runs every test it discovered or none (Kotest), so selection never leaves it out |
 | `RULE_CLASS_GRANULARITY` | `class-granularity` | Another test in its class is selected, and selection rounds up to classes |
+| `RULE_CLASS_RUNS_WHOLE` | `class-runs-whole` | Its class uses a runner or construct selection does not leave out, so the whole class runs |
 | `RULE_NONE` | `none` | Nothing would run it |
 | `RULE_UNKNOWN` | `unknown` | Its rules could not be computed |
 
@@ -367,6 +380,7 @@ different things in two categories. A test checks this table against the code, b
 | audit-blocker | `class-file-unsupported`, `classes-absent-from-map`, `classpath-unresolved-here`, `decode-refused`, `develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`, `framework-unknown`, `git-unavailable`, `gradle-too-old`, `in-jvm-parallelism`, `inline-scan-incomplete`, `isolated-projects`, `jacoco-disabled`, `kotlin-multiplatform`, `no-host-plugin`, `not-on-junit-platform`, `recorded-no-coverage`, `scope-not-applied`, `smap-absent`, `test-jvm-unsupported` | `audit.json` and the audit's console report: what stops the task narrowing |
 | audit-state | `DO NOT ENABLE`, `NARROWING ONLY`, `NO CONCLUSION`, `WORTH IT` | `audit.json` (`state`) and the audit's console report: the payback verdict |
 | capture-mode | `isolated`, `mixed`, `shared` | `jvm-mode.tsv` (`isolated`, `shared`); `yoriwakeExplain<Task>`, for the whole map |
+| class-runs-whole | `junit4-not-filterable`, `junit4-runner`, `junit4-shape` | `decisions.tsv` (`class-runs-whole`), as its keys |
 | console-tally | `engine-runs-everything`, `full-run`, `not-in-map`, `not-known-to-pass`, `reaches-change`, `shares-jvm-with-change`, `skipped` | the `of N tests discovered` console line, as its keys |
 | decline-kind | `gradle-too-old`, `includes-rejected`, `isolated-projects`, `jacoco-disabled`, `kotlin-multiplatform`, `no-host-plugin`, `no-jacoco-extension`, `no-jacoco-plugin`, `no-packages-derived` | the console line of a task the plugin declines |
 | digest-silence | `digest-table-absent`, `digest-walk-budget-spent`, `digest-walk-nothing-to-scan`, `digest-walk-unaccounted-output`, `digest-walk-unreadable` | `explain.json` (`digestSilence`): why the compiled-bytes rule compared nothing |
@@ -377,10 +391,11 @@ different things in two categories. A test checks this table against the code, b
 | map-outcome | `FLAKY`, `NONE`, `SKIPPED`, `SUCCESSFUL`, `UNKNOWN` | `coverage.tsv`, as a record's outcome |
 | path-ignore-evidence | `no-read-evidence`, `not-read`, `read` | `explain.json` (`ignoredPaths`): what the map says about whether a test read a path `pathIgnore` left out |
 | path-ignore-protection | `build-file`, `git-quoted`, `named-in-classes`, `outside-root`, `source-set` | `explain.json` (`notIgnored`) and the console: why a path a `pathIgnore` entry matches stays in the change set |
+| plain-filter | `hooked`, `unhooked`, `unsupported` | `decisions.tsv` (`plain-filter`) |
 | refusal-kind | `annotations-changed`, `annotations-unrecorded`, `bytes-unrecorded`, `change-set-stale`, `change-set-unreadable`, `class-file-unsupported`, `classpath-files-changed`, `classpath-files-unrecorded`, `complement-no-record`, `complement-record-mismatch`, `constant-changed`, `constant-unrecorded`, `declared-path-changed`, `decline-undetermined`, `develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`, `environment-changed`, `environment-unrecorded`, `full-run-branch`, `full-run-commit`, `full-run-requested`, `full-run-scheduled`, `in-jvm-parallelism`, `large-change`, `map-untrusted`, `map-unverified`, `no-change-set`, `scan-exhausted`, `scan-refused`, `scan-threw`, `smap-absent`, `snapshot-absent`, `stamp-absent`, `stamp-unrelatable`, `test-jvm-unsupported`, `tests-named`, `unnamed` | `decisions.tsv` (`refusal-kind`), `explain.json` (`refusalKind`) and the console |
 | refusals-key | `(inline widening)` | `explain.json` (`refusals`) |
-| row-reason | `ALREADY_RAN`, `ALWAYS_RUN`, `CLASS_GRANULARITY`, `DAEMON_REFUSED`, `DECLARES_CHANGED_PATH`, `ENGINE_RUNS_EVERYTHING`, `FULL_RUN`, `NOT_ALREADY_RAN`, `NOT_IN_MAP`, `NOT_KNOWN_TO_PASS`, `OBSERVING`, `REACHES_CHANGE`, `SELECTION_FAILED`, `SELECTION_NOT_REQUESTED`, `SHARES_JVM_WITH_CHANGE`, `SKIPPED` | `decisions.tsv`, as a row's reason |
-| row-rule | `always-run`, `changed-bytes`, `class-granularity`, `class-setup`, `declares-changed-path`, `engine-runs-everything`, `none`, `not-in-map`, `not-known-to-pass`, `own-class-changed`, `reaches-change`, `shares-jvm-changed-bytes`, `shares-jvm-changed-class`, `shares-jvm-ignored-path`, `shares-jvm-moved-classpath-file`, `shares-jvm-unobserved`, `shares-jvm-unpositioned`, `unknown` | `decisions.tsv`, in its `#+` rule lines |
+| row-reason | `ALREADY_RAN`, `ALWAYS_RUN`, `CLASS_GRANULARITY`, `CLASS_RUNS_WHOLE`, `DAEMON_REFUSED`, `DECLARES_CHANGED_PATH`, `ENGINE_RUNS_EVERYTHING`, `FULL_RUN`, `NOT_ALREADY_RAN`, `NOT_IN_MAP`, `NOT_KNOWN_TO_PASS`, `OBSERVING`, `REACHES_CHANGE`, `SELECTION_FAILED`, `SELECTION_NOT_REQUESTED`, `SHARES_JVM_WITH_CHANGE`, `SKIPPED` | `decisions.tsv`, as a row's reason |
+| row-rule | `always-run`, `changed-bytes`, `class-granularity`, `class-runs-whole`, `class-setup`, `declares-changed-path`, `engine-runs-everything`, `none`, `not-in-map`, `not-known-to-pass`, `own-class-changed`, `reaches-change`, `shares-jvm-changed-bytes`, `shares-jvm-changed-class`, `shares-jvm-ignored-path`, `shares-jvm-moved-classpath-file`, `shares-jvm-unobserved`, `shares-jvm-unpositioned`, `unknown` | `decisions.tsv`, in its `#+` rule lines |
 | row-verdict | `excluded`, `included` | `decisions.tsv`, as a row's verdict |
 | rules-basis | `complete`, `failed`, `from-refused-inputs`, `no-change-set`, `no-map` | `decisions.tsv` (`rules`) |
 | run-outcome | `complemented`, `full-run`, `narrowed`, `not-decided`, `selection-not-requested` | `decisions.tsv` (`outcome`) |

@@ -1,6 +1,9 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import org.gradle.testkit.runner.GradleRunner
+import org.jacoco.core.data.ExecutionDataReader
+import org.jacoco.core.data.ExecutionDataStore
+import org.jacoco.core.data.SessionInfoStore
 import java.io.File
 import kotlin.test.assertEquals
 
@@ -142,6 +145,28 @@ abstract class FunctionalTestSupport {
             .orEmpty()
             .map { it.name.removePrefix("TEST-").removeSuffix(".xml") }
             .toSet()
+
+    /** The execution file Gradle's own JaCoCo agent writes for `test`. */
+    protected fun hostFile(dir: File) = File(dir, "build/jacoco/test.exec")
+
+    /** Those of [classes] with any probe hit, over every given execution file. */
+    protected fun classesHitIn(classes: Set<String>, vararg files: File): Set<String> =
+        executionData(*files).first.contents.filter { it.hasHits() }.map { it.name }.filter { it in classes }.toSet()
+
+    protected fun executionData(vararg files: File): Pair<ExecutionDataStore, SessionInfoStore> {
+        val store = ExecutionDataStore()
+        val sessions = SessionInfoStore()
+        files.forEach { file ->
+            file.inputStream().buffered().use { input ->
+                ExecutionDataReader(input).apply {
+                    setExecutionDataVisitor(store)
+                    setSessionInfoVisitor(sessions)
+                    read()
+                }
+            }
+        }
+        return store to sessions
+    }
 
     protected val junit4Build = """
         plugins {

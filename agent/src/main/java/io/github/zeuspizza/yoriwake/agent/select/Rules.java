@@ -93,6 +93,9 @@ public final class Rules {
         if (verdict == Verdict.CLASS_GRANULARITY) {
             found.add(Rule.CLASS_GRANULARITY);
         }
+        if (verdict == Verdict.CLASS_RUNS_WHOLE) {
+            found.add(Rule.CLASS_RUNS_WHOLE);
+        }
         return found;
     }
 

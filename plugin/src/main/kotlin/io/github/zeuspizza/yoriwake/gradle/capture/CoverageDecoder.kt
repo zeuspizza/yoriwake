@@ -24,6 +24,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_FLAKY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_NOT_A_TEST
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_SUCCESSFUL
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_UNKNOWN
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OPEN_TESTS_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PLAN_COMPLETE_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.POSITIONS_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RAW_DIR
@@ -147,6 +148,24 @@ internal object CoverageDecoder {
             .filterNot { File(it, PLAN_COMPLETE_FILE).isFile }
             .map(File::getName)
             .sorted()
+
+    /**
+     * The workers that did not finish, each with the tests its agent found still open when its JVM
+     * ended, up to three and how many more; a worker with no such list (a halt writes none) is
+     * named alone.
+     */
+    fun describeUnfinished(mapDir: File, workers: List<String>): String =
+        workers.joinToString { worker ->
+            val open = runCatching {
+                File(recordsDir(mapDir), "$worker/$OPEN_TESTS_FILE").takeIf(File::isFile)
+                    ?.readLines()?.filter(String::isNotBlank)?.map(Tsv::unescape)
+            }.getOrNull().orEmpty()
+            when {
+                open.isEmpty() -> worker
+                open.size <= 3 -> "$worker (open: ${open.joinToString()})"
+                else -> "$worker (open: ${open.take(3).joinToString()} and ${open.size - 3} more)"
+            }
+        }
 
     /**
      * How the map's JVMs that ran a test were recorded: [MODE_ISOLATED] or [MODE_SHARED] when they
