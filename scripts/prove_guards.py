@@ -143,6 +143,7 @@ NOT_READ = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotR
 PATH_IGNORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
 SELECTING_STEP = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/SelectingStep.kt"
+SELECTION_SETUP = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/SelectionSetup.kt"
 PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
 CLASSPATH_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
@@ -1730,9 +1731,9 @@ MUTATIONS = [
     # The base was widened only to the common ancestor with the capture stamp. A map captured on
     # another branch, then used on one forked before that branch's commit, recorded a resource the
     # ancestor shares with the tree, and the test that reads it was skipped.
-    ("a map captured off this history selects without the capture commit's diff", SELECTION_WIRING,
-     "    val stamp = age.stamp\n",
-     "    val stamp: String? = null\n",
+    ("a map captured off this history selects without the capture commit's diff", SELECTION_SETUP,
+     "        val stamp = age.stamp\n",
+     "        val stamp: String? = null\n",
      functional_suite, "a map captured on another branch counts what differs from its capture commit"),
     # The comparison left out every path under build output or Gradle's state, tracked ones too, so
     # an edit to a committed TestKit fixture under a `build/` selected on the configured change set.
@@ -2930,17 +2931,17 @@ MUTATIONS = [
      functional_suite, "a map that differs from its trusted digest runs every test"),
     # A change above the large-change threshold runs everything without its analysis; counted
     # against the requested base, or an aging map would turn every small change into a full run.
-    ("a change above the large-change threshold is analysed", SELECTION_WIRING,
-     "        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->",
-     "        LargeChange.refusal(count, Int.MAX_VALUE, asked.ref)?.let { reason ->",
+    ("a change above the large-change threshold is analysed", SELECTION_SETUP,
+     "            LargeChange.refusal(counted(asked.ref, changed), largeChange, asked.ref)?.let { reason ->",
+     "            LargeChange.refusal(counted(asked.ref, changed), Int.MAX_VALUE, asked.ref)?.let { reason ->",
      functional_suite, "more changed paths than the threshold run everything and record the map"),
-    ("the large-change threshold counts the change widened to the map's age", SELECTION_WIRING,
-     "    val asked = runPlan.widening.requested ?: widened\n",
-     "    val asked = widened\n",
+    ("the large-change threshold counts the change widened to the map's age", SELECTION_SETUP,
+     "        val asked = widening.requested ?: widened\n",
+     "        val asked = widened\n",
      functional_suite, "an old map does not push a small change over the threshold"),
     ("the large-change threshold counts paths pathIgnore takes out", SELECTION_WIRING,
-     "            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(asked.ref), changed, buildMemo),",
-     "            changed, pathIgnoreDeclaration(project, emptyList(), sourceDirs, listOf(asked.ref), changed, buildMemo),",
+     "            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),",
+     "            changed, pathIgnoreDeclaration(project, emptyList(), sourceDirs, listOf(base), changed, buildMemo),",
      functional_suite, "paths pathIgnore takes out are not counted"),
     ("the provenance check is not registered", SELECTION_WIRING,
      "        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)\n",

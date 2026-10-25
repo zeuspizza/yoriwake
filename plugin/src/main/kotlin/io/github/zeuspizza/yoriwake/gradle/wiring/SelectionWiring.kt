@@ -43,6 +43,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.NotRead
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.SelectingStep
+import io.github.zeuspizza.yoriwake.gradle.change.SelectionSetup
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTreeDriftSource
 import io.github.zeuspizza.yoriwake.gradle.change.accountedFor
@@ -143,58 +144,37 @@ internal fun TestTaskWiring.configureSelection(
     // Read before any refusal below, so a list that cannot be read fails every selecting run alike.
     val trusted = trustedDigest(project, settings, mapDir)
 
-    val age = runPlan.widening!!.age
-    val drift = runPlan.widening.drift
-    if (age is MapAge.Unknown) {
-        val cause = if (age.kind == RefusalKind.SNAPSHOT_ABSENT) {
-            "A map captured before snapshots were recorded looks like this"
-        } else {
-            "A rebase, a force-push, a map cached from a different history, or one 0.1.0 captured " +
-                "under a test filter in its build script all look like this"
-        }
-        refuseAndRecord(test, mapDir, observing, fromBuildScript, age.kind, age.reason, cause, clears = true)
-        return
-    }
-    val widened = (age as MapAge.Known).base
-    val against = widened.ref
-    val stamp = age.stamp
-    // Union only: the snapshot adds what `git diff` from the stamp cannot see (a reverted
-    // dirty edit, an ignored fixture). A tree git could not list is no change set at all.
-    // The diff from the capture commit too: a map captured off this history (another branch, a
-    // reset) recorded content the widened base may share with the tree.
-    val paths = listOfNotNull(against, stamp)
-        .map { ChangeDetection.changedPaths(project.providers, project.rootDir, it, buildMemo) }
-        .takeUnless { null in it }?.flatMap { it.orEmpty() }
-        ?.let { tracked -> (drift as? WorkingTree.Drift.Moved)?.let { (tracked + it.paths).distinct() } }
-    if (paths == null) {
-        refuse(test, RefusalKind.NO_CHANGE_SET,
-            "git could not report changes against $against, so there is no change set to " +
-                "select from")
-        val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
-        test.doFirst {
-            if (refusedAtExecution(test)) return@doFirst
-            SelectingStep.withoutChangeSet(GradleSelectingHost(test, refusalJacoco, mapDir), mapDir, observing, against)
-        }
-        return
-    }
-
-    // Before any analysis: a change this size would end in a full run, so analysing it only costs.
-    // Counted against the base the run was asked about, which the map's age cannot grow.
-    val asked = runPlan.widening.requested ?: widened
-    val sourceDirs = ForcingPaths.sourceDirs(project.rootDir, projectFacts(project, buildMemo).allSourceDirs)
-    ChangeDetection.changedPaths(project.providers, project.rootDir, asked.ref, buildMemo)?.let { askedPaths ->
-        val changed = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct()
-        val count = LargeChange.counted(
-            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(asked.ref), changed, buildMemo),
+    // Not read by a run that refuses over the map's age.
+    val sourceDirs by lazy { ForcingPaths.sourceDirs(project.rootDir, projectFacts(project, buildMemo).allSourceDirs) }
+    val settled = SelectionSetup.settle(
+        runPlan.widening!!,
+        { ChangeDetection.changedPaths(project.providers, project.rootDir, it, buildMemo) },
+        largeChange,
+    ) { base, changed ->
+        LargeChange.counted(
+            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),
         )
-        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->
+    }
+    val (widened, stamp, paths) = when (settled) {
+        is SelectionSetup.Outcome.RunEverything -> {
             refuseAndRecord(
-                test, mapDir, observing, fromBuildScript, RefusalKind.LARGE_CHANGE, reason,
-                "Analysing a change this size costs more than it saves", clears = false,
+                test, mapDir, observing, fromBuildScript, settled.kind, settled.reason, settled.cause, settled.clears,
             )
             return
         }
+        is SelectionSetup.Outcome.NoChangeSet -> {
+            refuse(test, RefusalKind.NO_CHANGE_SET, settled.reason)
+            val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+            val against = settled.against
+            test.doFirst {
+                if (refusedAtExecution(test)) return@doFirst
+                SelectingStep.withoutChangeSet(GradleSelectingHost(test, refusalJacoco, mapDir), mapDir, observing, against)
+            }
+            return
+        }
+        is SelectionSetup.Outcome.Select -> Triple(settled.widened, settled.stamp, settled.paths)
     }
+    val against = widened.ref
 
     // Resolved to plain values and providers here: a task action may not touch Project under
     // the configuration cache.
