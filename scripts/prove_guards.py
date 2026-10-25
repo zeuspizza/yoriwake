@@ -4229,8 +4229,8 @@ MUTATIONS = [
     # Surefire hands the JUnit Platform its parallel switch through its own parameters: missed there,
     # interleaved tests would blend into one another's coverage.
     ("Surefire's parameters are left out of the parallelism check", MAVEN_RECORDING,
-     "        return ParallelismDetector.detect(parameters, argLine, classpath)",
-     "        return ParallelismDetector.detect(emptyMap(), argLine, classpath)",
+     "        return ParallelismDetector.detect(parameters, arguments(resolvedArgLine(project, configuration)), classpath)",
+     "        return ParallelismDetector.detect(emptyMap(), arguments(resolvedArgLine(project, configuration)), classpath)",
      maven_suite, "parallel execution enabled for the JUnit Platform is declined and captures nothing"),
     # What reaches the JVM is the authority: an argLine without JaCoCo's agent records no coverage.
     ("a Maven argLine without JaCoCo's agent is captured", MAVEN_RECORDING,

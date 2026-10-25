@@ -190,7 +190,7 @@ internal class Recording(
             configuration.getChild("reportsDirectory")?.value?.takeUnless { it.contains("\${") }
                 ?: File(project.build.directory, if (execution.artifactId == FAILSAFE) "failsafe-reports" else "surefire-reports").path
         )
-        fingerprints(project, mapDir, configuration, classpath, host)
+        fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }))
         running[key] = Run(mapDir, undatedBy(project, execution, configuration), classpath, reports, isolated)
     }
 
@@ -284,17 +284,24 @@ internal class Recording(
      * `junit-platform.properties` on the test classpath.
      */
     private fun parallelism(project: MavenProject, configuration: Xpp3Dom, classpath: List<File>): String? {
-        val parameters = mutableMapOf<String, String?>()
+        // Surefire hands the fork the command line's -D user properties as system properties.
+        val parameters = session.userProperties.entries.associateTo(mutableMapOf<String, String?>()) { (k, v) -> k.toString() to v?.toString() }
         fun read(text: String?) = text?.let { runCatching { Properties().apply { load(java.io.StringReader(it)) } }.getOrNull() }
             ?.forEach { (k, v) -> parameters[k.toString()] = v.toString() }
         read(configuration.getChild("configurationParameters")?.value)
         configuration.getChild("properties")?.children?.forEach { child ->
-            if (child.name == "configurationParameters") read(child.value) else parameters[child.name] = child.value
+            when {
+                child.name == "configurationParameters" -> read(child.value)
+                // The `<property><name/><value/></property>` form.
+                child.name == "property" && child.getChild("name") != null -> parameters[child.getChild("name").value] = child.getChild("value")?.value
+                else -> parameters[child.name] = child.value
+            }
         }
         configuration.getChild("systemPropertyVariables")?.children?.forEach { parameters[it.name] = it.value }
-        val argLine = listOfNotNull(configuration.getChild("argLine")?.value, Declines.property(project, session, "argLine"))
-            .flatMap { it.split(Regex("\\s+")) }
-        return ParallelismDetector.detect(parameters, argLine, classpath)
+        resolved(project, configuration.getChild("systemPropertiesFile")?.value)?.let { path ->
+            runCatching { read(File(path).readText()) }
+        }
+        return ParallelismDetector.detect(parameters, arguments(resolvedArgLine(project, configuration)), classpath)
     }
 
     /**
@@ -302,25 +309,34 @@ internal class Recording(
      * on its classpath, and its JVM and environment. A selecting run compares them later; one that
      * cannot be recorded makes that run run everything.
      */
-    private fun fingerprints(project: MavenProject, mapDir: File, configuration: Xpp3Dom, classpath: List<File>, hostArgLine: String) {
+    private fun fingerprints(project: MavenProject, mapDir: File, configuration: Xpp3Dom, classpath: List<File>, hostArguments: List<String>) {
         val classpathPending = pendingClasspathFiles(mapDir)
         classpathPending.delete()
-        when (val walk = runCatching { ClasspathFiles.walk(classpath, session.allProjects.map { it.build.directory }, root) }
+        // A local repository inside the checkout holds libraries, not this build's output.
+        val repository = session.localRepository?.basedir?.let { File(it).absoluteFile }
+        val built = classpath.filterNot { entry -> repository != null && entry.absoluteFile.startsWith(repository) }
+        when (val walk = runCatching { ClasspathFiles.walk(built, session.allProjects.map { it.build.directory }, root) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Found -> runCatching { CoverageDecoder.writeClasspathFilesTo(classpathPending, walk.digests) }
             is ClasspathFiles.Walk.Refused -> log.debug("[yoriwake] ${project.artifactId}: no classpath file digests recorded (${walk.reason})")
         }
         File(mapDir, EnvironmentFingerprint.PENDING_FILE).delete()
         runCatching {
-            val jvm = configuration.getChild("jvm")?.value?.takeUnless { it.isBlank() || it.contains("\${") }
+            val jvm = resolved(project, configuration.getChild("jvm")?.value)
+            // Another JDK forks the tests, whose version nobody read here.
+            val otherJdk = jvm != null || configuration.getChild("jdkToolchain")?.childCount?.let { it > 0 } == true ||
+                project.getPlugin("org.apache.maven.plugins:maven-toolchains-plugin") != null
             val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()
                 .associate { it.name to it.value.orEmpty() }
             val view = EnvironmentFingerprint.View(
                 // Maven's own JVM forks the tests unless the POM names another, whose version nobody read.
-                if (jvm == null) System.getProperty("java.runtime.version") else null,
-                if (jvm == null) System.getProperty("java.vendor") else null,
+                if (otherJdk) null else System.getProperty("java.runtime.version"),
+                if (otherJdk) null else System.getProperty("java.vendor"),
                 jvm, System.getProperty("os.name"), System.getProperty("os.arch"),
-                hostArgLine.split(Regex("\\s+")).filter(String::isNotEmpty), environment,
+                // As Gradle's JVM arguments carry its system properties.
+                hostArguments + configuration.getChild("systemPropertyVariables")?.children.orEmpty()
+                    .map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" },
+                environment,
             )
             val rules = EnvironmentFingerprint.Rules(
                 emptyList(), emptyList(), root.path,
@@ -331,12 +347,27 @@ internal class Recording(
         }.onFailure { log.debug("[yoriwake] ${project.artifactId}: no environment fingerprint recorded ($it)") }
     }
 
-    /** Whether the argLine the fork will get, its expressions resolved, carries JaCoCo's agent. */
+    /**
+     * Whether JaCoCo's agent reaches the fork: in the argLine it will get, its expressions resolved,
+     * or in the `JAVA_TOOL_OPTIONS` every JVM reads. JaCoCo quotes an agent path holding a space.
+     */
     private fun reachesJacoco(project: MavenProject, configuration: Xpp3Dom): Boolean {
-        val raw = configuration.getChild("argLine")?.value ?: "\${argLine}"
-        val resolved = Regex("""[$@]\{([^}]+)}""").replace(raw) { Declines.property(project, session, it.groupValues[1]).orEmpty() }
-        return Regex("""-javaagent:\S*(jacocoagent|org\.jacoco\.agent)""").containsMatchIn(resolved)
+        val agent = Regex("""-javaagent:("[^"]*|\S*)(jacocoagent|org\.jacoco\.agent)""")
+        val toolOptions = configuration.getChild("environmentVariables")?.getChild("JAVA_TOOL_OPTIONS")?.value ?: System.getenv("JAVA_TOOL_OPTIONS")
+        return listOfNotNull(resolvedArgLine(project, configuration), toolOptions).any(agent::containsMatchIn)
     }
+
+    /** The argLine the fork will get, its `${x}` and `@{x}` resolved as Maven and Surefire resolve them. */
+    private fun resolvedArgLine(project: MavenProject, configuration: Xpp3Dom): String =
+        resolved(project, configuration.getChild("argLine")?.value ?: "\${argLine}").orEmpty()
+
+    private fun resolved(project: MavenProject, value: String?): String? =
+        value?.let { Regex("""[$@]\{([^}]+)}""").replace(it) { m -> Declines.property(project, session, m.groupValues[1]).orEmpty() } }
+            ?.takeIf(String::isNotBlank)
+
+    /** A command line's arguments, a double-quoted one kept whole, as Surefire splits an argLine. */
+    private fun arguments(line: String): List<String> =
+        Regex(""""([^"]*)"|(\S+)""").findAll(line).map { it.groupValues[1].ifEmpty { it.groupValues[2] } }.toList()
 
     /** `.yoriwake/`, ignored by git before anything is written into it. */
     private fun ensureHome() {

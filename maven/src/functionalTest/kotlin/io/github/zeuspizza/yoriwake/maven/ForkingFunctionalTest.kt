@@ -75,6 +75,16 @@ class ForkingFunctionalTest {
     }
 
     @Test
+    fun `parallel execution enabled on the command line is declined as well`(@TempDir dir: File) {
+        // Surefire hands the fork the command line's user properties as system properties.
+        val project = committed(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Djunit.jupiter.execution.parallel.enabled=true").succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+    }
+
+    @Test
     fun `parallel execution enabled in junit-platform properties is declined as well`(@TempDir dir: File) {
         val project = committed(dir)
         File(project, "lib/src/test/resources").mkdirs()
