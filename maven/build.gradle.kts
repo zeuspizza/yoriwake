@@ -30,6 +30,13 @@ dependencies {
     // The record format and contract names; the agent itself is bundled below, never a dependency.
     compileOnly(project(":agent"))
     implementation(kotlin("stdlib"))
+    // What core compiles against, at the versions the Gradle plugin bundles; relocated below.
+    implementation("org.jacoco:org.jacoco.core:0.8.12")
+    implementation("org.ow2.asm:asm:9.10.1")
+    constraints {
+        implementation("org.ow2.asm:asm-commons:9.10.1")
+        implementation("org.ow2.asm:asm-tree:9.10.1")
+    }
     compileOnly("org.apache.maven:maven-core:$mavenFloor")
     compileOnly("org.apache.maven:maven-plugin-api:$mavenFloor")
     compileOnly("org.apache.maven.plugin-tools:maven-plugin-annotations:3.15.1")
