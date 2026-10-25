@@ -177,6 +177,7 @@ MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenH
 MAVEN_DECLINES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Declines.kt"
 MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ChainedListener.kt"
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
+MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -559,7 +560,7 @@ def functional_suite(test_class=None):
 def maven_suite():
     """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks."""
     done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
-                   "--tests", "*ForkingFunctionalTest*", "--rerun"])
+                   "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -4397,6 +4398,21 @@ MUTATIONS = [
      "        if (nestedRuns) {\n            // A nested run reports its own class-level failures",
      "        if (false) {\n            // A nested run reports its own class-level failures",
      agent_suite, "a class-level failure inside an open test is a nested run's, and records nothing"),
+    # A selecting Maven run must tell its test JVM to select, through the run file.
+    ("a Maven selecting run runs every test", MAVEN_SELECTION,
+     '        host.property(AgentContract.SELECT_PROPERTY, "true")',
+     '        host.property(AgentContract.SELECT_PROPERTY, "false")',
+     maven_suite, "a change to one class runs the tests that reach it"),
+    # A full run asked for runs every test and records, as on Gradle.
+    ("a Maven full run asked for still selects", MAVEN_SELECTION,
+     "        if (plan.declines.isNotEmpty()) {",
+     "        if (false) {",
+     maven_suite, "a full run asked for on the command line runs everything and records the map"),
+    # A map whose capture commit git cannot relate refuses, as on Gradle.
+    ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
+     "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",
+     "            if (true) a\n            else git.run(",
+     maven_suite, "a map captured at a commit git cannot relate refuses and captures"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.

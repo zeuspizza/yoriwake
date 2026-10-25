@@ -60,7 +60,16 @@ internal class Recording(
     /** What each started execution's decode reads back; `-T` starts and ends them on several threads. */
     private val running = ConcurrentHashMap<String, Run>()
 
-    private class Run(val mapDir: File, val undatedReason: String?, val classpath: List<File>, val reports: File, val isolated: Boolean)
+    private class Run(
+        val mapDir: File,
+        val undatedReason: String?,
+        val classpath: List<File>,
+        val reports: File,
+        val isolated: Boolean,
+        val selecting: Boolean,
+    )
+
+    private val selection = Selection(session, root, log)
 
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
@@ -165,10 +174,6 @@ internal class Recording(
             setProperty(AgentContract.RECORDS_DIR_PROPERTY, recordsDir.path)
             setProperty(AgentContract.CAPTURE_ROOT_PROPERTY, root.path)
         }
-        writeAtomically(runFile, buildString {
-            properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
-            append(AgentContract.RUN_FILE_END).append('\n')
-        })
 
         val agent = agentJar()
         val ours = "-javaagent:${quoted(agent.path)} -D${AgentContract.HOST_PROPERTY}=${AgentContract.HOST_MAVEN} " +
@@ -184,14 +189,25 @@ internal class Recording(
             ?.let { it.isEmpty() || it.equals("true", ignoreCase = true) } == true
         if (isolated) child(configuration, "reuseForks").value = "false"
         child(configuration, "additionalClasspathElements").addChild(Xpp3Dom("additionalClasspathElement").apply { value = agent.path })
-        execution.configuration = configuration
 
         val reports = File(
             configuration.getChild("reportsDirectory")?.value?.takeUnless { it.contains("\${") }
                 ?: File(project.build.directory, if (execution.artifactId == FAILSAFE) "failsafe-reports" else "surefire-reports").path
         )
-        fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }))
-        running[key] = Run(mapDir, undatedBy(project, execution, configuration), classpath, reports, isolated)
+        val environment = fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }))
+        val undated = undatedBy(project, execution, configuration)
+        val selecting = selection.apply(
+            name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath),
+            environment, undated, isolated, properties,
+        )
+        // A selecting execution may leave out every test, which Surefire would otherwise fail on.
+        if (selecting) child(configuration, "failIfNoTests").value = "false"
+        execution.configuration = configuration
+        writeAtomically(runFile, buildString {
+            properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
+            append(AgentContract.RUN_FILE_END).append('\n')
+        })
+        running[key] = Run(mapDir, undated, classpath, reports, isolated, selecting)
     }
 
     private fun decode(project: MavenProject, execution: MojoExecution, key: String, run: Run) {
@@ -206,9 +222,9 @@ internal class Recording(
         DecodeRun(
             taskPath = nameOf(project, execution),
             patterns = patterns,
-            selecting = false,
+            selecting = run.selecting,
             observing = false,
-            asksSelection = false,
+            asksSelection = selection.asksSelection,
             complementing = false,
             wholeTask = false,
             loadedScope = reactorPackages,
@@ -219,22 +235,7 @@ internal class Recording(
             scheduleSet = false,
             rootDir = root,
             mapDir = run.mapDir,
-            facts = object : ClasspathView {
-                override val rootDir = root
-                override val moduleDirs = session.allProjects.associate { module ->
-                    module.basedir.relativeTo(root).invariantSeparatorsPath to module.id
-                }
-                override val buildDirs = session.allProjects.associate { it.id to it.build.directory }
-                override val ownPath: String = project.id
-                override fun classpathFiles(): Set<File> = classpath.toSet()
-                override fun testOutputFiles(): Set<File> = setOf(File(project.build.testOutputDirectory))
-                override fun compileTimeFiles(): Set<File> =
-                    runCatching { project.compileClasspathElements.map(::File).toSet() }.getOrDefault(emptySet())
-                override fun declaredModules(): Set<String>? = null
-                override fun jacocoVersion(): String? = project.getPlugin(JacocoAdoption.JACOCO)?.version.orEmpty()
-                override fun testJvm(): Int? = null
-                override fun agentCeiling(): String? = null
-            },
+            facts = view(project, classpath),
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
             loadedFlag = "-D${INTERNAL_LOADED}",
@@ -244,6 +245,24 @@ internal class Recording(
                 override fun info(message: String) = log.debug(message)
             },
         ).run()
+    }
+
+    /** What the shared rules ask of this execution's classpath, from Maven's model of the reactor. */
+    private fun view(project: MavenProject, classpath: List<File>): ClasspathView = object : ClasspathView {
+        override val rootDir = root
+        override val moduleDirs = session.allProjects.associate { module ->
+            module.basedir.relativeTo(root).invariantSeparatorsPath to module.id
+        }
+        override val buildDirs = session.allProjects.associate { it.id to it.build.directory }
+        override val ownPath: String = project.id
+        override fun classpathFiles(): Set<File> = classpath.toSet()
+        override fun testOutputFiles(): Set<File> = setOf(File(project.build.testOutputDirectory))
+        override fun compileTimeFiles(): Set<File> =
+            runCatching { project.compileClasspathElements.map(::File).toSet() }.getOrDefault(emptySet())
+        override fun declaredModules(): Set<String>? = null
+        override fun jacocoVersion(): String? = project.getPlugin(JacocoAdoption.JACOCO)?.version.orEmpty()
+        override fun testJvm(): Int? = null
+        override fun agentCeiling(): String? = null
     }
 
     /**
@@ -309,7 +328,14 @@ internal class Recording(
      * on its classpath, and its JVM and environment. A selecting run compares them later; one that
      * cannot be recorded makes that run run everything.
      */
-    private fun fingerprints(project: MavenProject, mapDir: File, configuration: Xpp3Dom, classpath: List<File>, hostArguments: List<String>) {
+    /** Records what the decode compares the next run against; returns this run's environment, null when unreadable. */
+    private fun fingerprints(
+        project: MavenProject,
+        mapDir: File,
+        configuration: Xpp3Dom,
+        classpath: List<File>,
+        hostArguments: List<String>,
+    ): Pair<EnvironmentFingerprint.View, EnvironmentFingerprint.Rules>? {
         val classpathPending = pendingClasspathFiles(mapDir)
         classpathPending.delete()
         // A local repository inside the checkout holds libraries, not this build's output.
@@ -321,7 +347,7 @@ internal class Recording(
             is ClasspathFiles.Walk.Refused -> log.debug("[yoriwake] ${project.artifactId}: no classpath file digests recorded (${walk.reason})")
         }
         File(mapDir, EnvironmentFingerprint.PENDING_FILE).delete()
-        runCatching {
+        return runCatching {
             val jvm = resolved(project, configuration.getChild("jvm")?.value)
             // Another JDK forks the tests, whose version nobody read here.
             val otherJdk = jvm != null || configuration.getChild("jdkToolchain")?.childCount?.let { it > 0 } == true ||
@@ -344,7 +370,8 @@ internal class Recording(
                 System.getProperty("user.home"),
             )
             EnvironmentFingerprint.writePending(mapDir, view, rules)
-        }.onFailure { log.debug("[yoriwake] ${project.artifactId}: no environment fingerprint recorded ($it)") }
+            view to rules
+        }.onFailure { log.debug("[yoriwake] ${project.artifactId}: no environment fingerprint recorded ($it)") }.getOrNull()
     }
 
     /**

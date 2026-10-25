@@ -121,7 +121,7 @@ releases that read it exist:
 1. Merge the ASM and JaCoCo upgrades that read it, after the build, the functional suite and the
    private mutation checks pass on them. The ASM ceiling follows ASM on its own; check its release
    notes name the new `V<n>`. Add JaCoCo's row to
-   `plugin/src/main/resources/io/github/zeuspizza/yoriwake/gradle/jacoco-java-support.tsv` from its
+   `core/src/main/resources/io/github/zeuspizza/yoriwake/gradle/jacoco-java-support.tsv` from its
    change log, official support only. `DigestGoldenTest` fails if the ASM upgrade changed class
    digests: say so in the CHANGELOG line, as every existing map then runs everything once.
 2. Add the JDK's case to `TestJvmRangeFunctionalTest` and its row to the reference's [supported
