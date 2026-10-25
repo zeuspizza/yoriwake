@@ -10,7 +10,7 @@ plugins {
     `java-gradle-plugin`
     `maven-publish`
     jacoco
-    kotlin("jvm") version "2.1.20"
+    kotlin("jvm")
     id("com.gradle.plugin-publish") version "2.2.1"
     // Relocates the plugin's own dependencies so it adds nothing unshaded to a host's buildscript
     // classpath. 9.2.x is the newest line that still runs on this build's Gradle 8.14.

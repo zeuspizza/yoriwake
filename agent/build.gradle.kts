@@ -4,7 +4,7 @@ import java.util.zip.ZipFile
 plugins {
     java
     jacoco
-    kotlin("jvm") version "2.1.20"
+    kotlin("jvm")
     // Shades ASM into the agent jar under a renamed package.
     id("com.gradleup.shadow") version "8.3.6"
     // The SBOM of what the shaded jar carries; the plugin merges it into the release's.
