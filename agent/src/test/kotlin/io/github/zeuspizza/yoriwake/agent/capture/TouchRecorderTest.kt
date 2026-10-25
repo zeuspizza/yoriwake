@@ -949,6 +949,11 @@ class TouchRecorderTest {
         val armed = TouchRecorder().apply { guards = GuardHooks(null) }
         armed.library(arrayOf<Any>(NativePlatformStandIn(File(dir, "both").apply { mkdirs() }, true, milestone30).caller, file))
         assertEquals(listOf(any), drained(armed))
+        // 0.22-milestone-29's natives, which Gradle 9.8 ships.
+        val older = TouchRecorder().apply { guards = GuardHooks(null) }
+        older.library(arrayOf<Any>(NativePlatformStandIn(File(dir, "older").apply { mkdirs() }, true,
+            "660c5614fbf4a5f2a75b1949f50a0caf5cd603558e7d8a26e50b933a0cfb79d1").caller, file))
+        assertEquals(listOf(any), drained(older))
 
         val unarmed = TouchRecorder().apply { guards = GuardHooks(null) }
         unarmed.library(arrayOf<Any>(NativePlatformStandIn(File(dir, "one").apply { mkdirs() }, false, milestone30).caller, file))

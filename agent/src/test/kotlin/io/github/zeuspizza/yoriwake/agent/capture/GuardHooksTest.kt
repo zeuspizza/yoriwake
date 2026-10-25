@@ -72,6 +72,39 @@ class GuardHooksTest {
     }
 
     @Test
+    fun `a wrapped instance native with wide arguments passes each one on in its own slots`() {
+        val wide = arrayOf("org/sqlite/core/NativeDB", "widen", "(JLjava/lang/String;D)J", "a wide call")
+        val calls = mutableListOf<List<Any?>>()
+        GuardSinkStandIn.GUARD = Consumer { calls.add((it as Array<*>).toList()) }
+        try {
+            val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+            writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, wide[0], null, "java/lang/Object", null)
+            writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null).apply {
+                visitCode()
+                visitVarInsn(Opcodes.ALOAD, 0)
+                visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+                visitInsn(Opcodes.RETURN)
+                visitMaxs(0, 0)
+                visitEnd()
+            }
+            writer.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_NATIVE, wide[1], wide[2], null, null).visitEnd()
+            writer.visitEnd()
+            val cls = defined(GuardHooks.wrapped(writer.toByteArray(), wide, holder))
+            val method = cls.getMethod(wide[1], Long::class.javaPrimitiveType, String::class.java,
+                Double::class.javaPrimitiveType)
+
+            // A wrong slot or stack size fails verification; a right one reaches the unlinked native.
+            val failure = assertFailsWith<InvocationTargetException> {
+                method.invoke(cls.getConstructor().newInstance(), 1L, "x", 2.0)
+            }
+            assertTrue(failure.targetException is UnsatisfiedLinkError, failure.targetException.toString())
+            assertEquals(listOf(listOf<Any?>(wide[3], true)), calls)
+        } finally {
+            GuardSinkStandIn.GUARD = null
+        }
+    }
+
+    @Test
     fun `the renamed native is private and synthetic, and only the wrapper has the original name`() {
         val nativeDb = defined(GuardHooks.wrapped(nativeDb(), sqlite, holder))
 
