@@ -1294,8 +1294,8 @@ MUTATIONS = [
     # capturing trades a loud failure for a blended map that outlives the run and is believed by
     # every later one.
     ("in-JVM parallelism fails the build again instead of declining", TEST_TASK_WIRING,
-     "            ) ?: return@doFirst\n",
-     "            )\n            check(source == null) { \"in-JVM parallelism\" }\n            if (source == null) return@doFirst\n",
+     "            source ?: return@doFirst\n",
+     "            check(source == null) { \"in-JVM parallelism\" }\n            if (source == null) return@doFirst\n",
      functional_suite, "in-JVM parallel execution is declined"),
     ("capture proceeds under the parallelism decline, so the map can be blended", TEST_TASK_WIRING,
      '            test.systemProperty(RECORDS_DIR_PROPERTY, "")\n'
