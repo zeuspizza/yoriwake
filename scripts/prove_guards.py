@@ -1303,7 +1303,8 @@ MUTATIONS = [
      "                jacoco?.isEnabled = false",
      "            runCatching {\n"
      "                jacoco?.isEnabled = true",
-     functional_suite, "byte-identical after it"),
+     # The agent's own read-back now keeps the map whole too; the host's JaCoCo left on is what shows.
+     functional_suite, "a run declined over in-JVM parallelism leaves no host file"),
     # The unpack, back inside configuration. Every first build after an install then configures
     # twice, which is invisible in a build log and costs every two-arm cache measurement a third arm.
     ("the agent is unpacked during configuration again", TEST_TASK_WIRING,
