@@ -106,4 +106,33 @@ class SequentialRecordingFunctionalTest : FunctionalTestSupport() {
         val after = mapDigest(dir)
         assertEquals(emptyList(), (before.keys + after.keys).filter { before[it] != after[it] }, output)
     }
+
+    @Test
+    fun `a flagged selecting run narrows with the suite's own scheduling and captures nothing`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild + "\n" + parallelSuite, oneClass, oneTest, secondClass, secondTest)
+        committed(dir)
+        runner(dir, "test", "-Pyoriwake.recordSequentially").build()
+        // Beta, which only the second test loads: the first ran before it, so it is left out.
+        File(dir, "src/main/java/dev/sample/Beta.java").writeText(
+            "package dev.sample;\npublic class Beta { public int thrice(int n) { return n + n + n; } }"
+        )
+        val before = mapDigest(dir)
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.recordSequentially").build().output
+
+        assertContains(output, "tests run in parallel as configured")
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+        assertEquals("kept-not-captured", decisionNotes(dir)["parallelism"], output)
+        val after = mapDigest(dir)
+        assertEquals(emptyList(), (before.keys + after.keys).filter { before[it] != after[it] }, output)
+
+        // Declined into a full run, it still keeps the suite's scheduling and leaves the map alone.
+        File(dir, "build/test-results").deleteRecursively()
+        val declined = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.fullRun", "-Pyoriwake.recordSequentially").build().output
+        assertContains(declined, "tests run in parallel as configured")
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), declined)
+        val afterDeclined = mapDigest(dir)
+        assertEquals(emptyList(), (before.keys + afterDeclined.keys).filter { before[it] != afterDeclined[it] }, declined)
+    }
 }
