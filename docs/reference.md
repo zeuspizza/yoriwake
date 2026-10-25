@@ -88,6 +88,8 @@ Files in the map directory that are meant to be read:
   `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists every path `pathIgnore`
   left out, with its entry and what the map says about it (`read`, `not-read` or
   `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its protection.
+  `parallelismUnconfirmed` says why the last run's test JVM recorded nothing, when it found its
+  tests may run concurrently.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
 - `observation.json`: written by an [observing run](#observing-before-you-select): what selection
   would have left out, and which of those failed.
@@ -238,7 +240,8 @@ say which forcing paths it tracks, one line counts them and `yoriwakeExplain<Tas
 Every non-class file the build produced on a test task's runtime classpath counts by content: each
 file of a resource or output directory under the root or a build directory, and each entry of one
 of your own jars (never the jar whole, so a rebuild that only moves entry timestamps changes
-nothing). The capture records them just before its tests start, and which test JVM read each one
+nothing). A copy of a tracked text file git checks out with `\r\n` counts with its line endings
+as `\n` ([Windows](#windows)). The capture records them just before its tests start, and which test JVM read each one
 and when; a selecting run compares them at the same point. A file whose content changed runs the
 tests that read it, from the first test in each test JVM that read it on, since a value read once
 can be kept for later tests (`shares-jvm-with-change`); a read through `getResource`, a file
@@ -462,6 +465,8 @@ attempt is not a load only when opening it fails.
 | zstd-jni | `com.github.luben.zstd.util.Native` | [1.5.7-20](https://github.com/luben/zstd-jni/tree/v1.5.7-20/src/main/native) | nothing |
 | lz4-java (`at.yawk.lz4`, and `org.lz4` 1.8.0) | `net.jpountz.util.Native` | [1.12.0](https://github.com/yawkat/lz4-java/tree/v1.12.0/src/jni) | nothing |
 | RocksDB | `org.rocksdb.NativeLibraryLoader` | [11.8.1](https://github.com/facebook/rocksdb/tree/v11.8.1/java/rocksjni) | the files of a database in the directories a test names, only by the names RocksDB itself writes; fixed `/proc` and `/sys` paths |
+| Gradle native-platform (conditional, below) | `net.rubygrapefruit.platform.internal.NativeLibraryLoader` | [0.22-milestone-29 and -30](https://github.com/gradle/native-platform/tree/0.22-milestone-30/native-platform/src/main/cpp) only | nothing; it lists directories and reads file metadata and link text for paths a test names, and on Linux the mount table |
+| Gradle file events | `org.gradle.fileevents.FileEvents` | [0.2.8](https://github.com/gradle/gradle-fileevents/tree/0.2.8/src/main/cpp) | nothing; it watches the directories a test names for changes |
 | SQLite JDBC (conditional, below) | `org.sqlite.SQLiteJDBCLoader` | [3.53.4.0](https://github.com/xerial/sqlite-jdbc/tree/3.53.4.0/src/main/java/org/sqlite/core) only | the database files a test names and the journal, WAL and lock files SQLite names after them; random temporary files; `/dev/urandom` |
 
 Two notes on the list:
@@ -499,6 +504,15 @@ Two notes on the list:
   loader takes the wrap; otherwise the load applies the wide rule. On Linux the driver runs `uname`
   to find its library unless `org.sqlite.lib.path` names its folder, and that child process runs
   every later test in the JVM anyway.
+- Gradle's native-platform is listed on a condition. It reads no file's content, but two of its
+  calls hide later reads from the agent: a symbolic link it creates gives a class file a name that
+  no longer says so, and a working directory it changes makes relative paths resolve elsewhere than
+  the agent records. Both end in natives of its own (`PosixFileFunctions.symlink`,
+  `PosixProcessFunctions.setWorkingDirectory`), which the agent wraps as each class is defined, so
+  either call touches every class from there. The entry counts only at the versions listed, told
+  apart by the hash of their natives the jar carries, and only when both classes in the loading
+  class's loader take the wrap; otherwise the load applies the wide rule. Its curses library is not
+  listed.
 - Only the Linux and macOS builds (`.so`, `.dylib`, `.jnilib`) were reviewed. A library's Windows
   build (`.dll`) is not on the list, so on Windows each of these applies the wide rule.
 
@@ -683,13 +697,14 @@ Three things differ:
   cannot be computed, and every selecting run is a full run that says so.
 - **Line endings, when a map or a selection record moves between Windows machines.** Under
   `core.autocrlf`, Git for Windows' default, text files check out with `\r\n`, and resources
-  copied onto the test classpath keep it. A text resource that differs only in its line endings is
-  still a different file, which a test may read, so a run against a map captured in a checkout with
-  other line endings (a developer's `autocrlf` checkout and a CI runner's without it, say) runs
-  every test and says
-  `build output on this task's classpath changed since the map was captured: <file> (changed)`; a
-  [complement run](#running-what-a-selection-skipped) does the same with a selection record. Check
-  out with the same line endings wherever a map is shared, or pin them with a `.gitattributes`.
+  copied onto the test classpath keep it. A copy of a tracked text file that git converts compares
+  by its content with line endings aside, as git's own diff does, so a map or a
+  [selection record](#running-what-a-selection-skipped) crosses a developer's `autocrlf` checkout
+  and a CI runner's without it. A generated file, a binary one, and one `.gitattributes` pins
+  (`eol=lf`, `-text`, `binary`) still compare by their bytes: one that differs only in its line
+  endings runs every test, as `classpath-files-changed`. A test that asserts a text resource's exact
+  bytes can pass in one checkout and fail in the other, and selection does not see that; pin such a
+  file with `eol=` in `.gitattributes` so every checkout writes it alike.
 - **Native libraries.** No Windows build is on the [reviewed list](#native-libraries), so on
   Windows every native library applies the wide rule.
 
@@ -780,9 +795,14 @@ Three things differ:
   full, nothing is captured, the map is left as it was, and the audit reports `in-jvm-parallelism`.
   Parallel forks (`maxParallelForks`) are fine. It is detected from the test task's system
   properties and JVM arguments, `junit-platform.properties` on the test runtime classpath, and the
-  TestNG options. Parallelism switched on any other way, such as a JUnit `@Suite`'s configuration
-  parameters or `JAVA_TOOL_OPTIONS`, is not detected: the task is not declined, and tests that
-  overlap in one JVM are recorded as unknown and always run.
+  TestNG options. The test JVM checks again before it records: when the JUnit Platform's
+  configuration still has Jupiter's or Vintage's parallel switch on, or `testng.parallel` set (by a
+  task action, a JVM argument provider or `JAVA_TOOL_OPTIONS`), it records nothing and the map is
+  left as it was. Parallelism switched on where the Platform's configuration does not show it, such
+  as a JUnit `@Suite`'s configuration parameters or Spock's and Kotest's own settings, is not
+  detected: tests that overlap in one JVM are recorded as unknown and always run. A JUnit Platform
+  suite can still be selected on by
+  [recording it one test at a time](#recording-a-parallel-suite-one-test-at-a-time).
 - **Two builds at once in one project.** Two builds running the same test task at the same time
   share one change-set file, so one build's test JVM can read the change set the other wrote.
 - **A working directory the complement stamp does not see.** The record's stamp does not include
@@ -1077,6 +1097,22 @@ either was written, so enabling a limit costs each task one full run. The cache 
 how old a restored entry may be; the schedule bounds how long a map can hide a gap. With
 `fullRunBranches`, the default branch already runs in full on every build, so the schedule fires only
 where the map is not refreshed. `yoriwakeExplain<Task>` says how far away the next scheduled full run is.
+
+### Recording a parallel suite one test at a time
+
+A JUnit Platform suite that runs its tests in parallel inside one JVM is declined, because tests
+interleaved there share one coverage agent. `-Pyoriwake.recordSequentially` (or
+`recordSequentially = true` in the `yoriwake` block) records its map anyway: a recording run turns
+Jupiter's and Vintage's parallel switches off for that run, so it takes longer, and every other run
+(selecting, observing, or one declined into a full run) keeps the suite's own scheduling and records
+nothing. Selection decides which tests run before they are scheduled, so running them in parallel
+afterwards changes nothing it relies on. Each test JVM confirms the switches are off before it
+records; one that finds them on (a task action or JVM argument provider that turns them back on)
+records nothing, the map is left as it was, and the audit names what it found. What the switches
+cannot reach, a `@Suite`'s own configuration parameters or Spock's and Kotest's settings, still
+overlaps, and those tests are recorded as unknown and always run. A failure that shows only when
+tests run in parallel is outside what a map recorded one test at a time can see. TestNG off the
+Platform is still declined.
 
 ### Recording each test class in its own JVM
 
@@ -1468,6 +1504,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.disabled` | Leave the build entirely alone: nothing scoped, injected, captured or selected. |
 | `yoriwake.narrowPlainRunners` | Let a selecting run of a plain JUnit 4 task leave out whole test classes. Overrides the build's `narrowPlainRunners`; `=false` turns it off. See [Narrowing plain JUnit 4 by class](#narrowing-plain-junit-4-by-class). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
+| `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. |
 | `yoriwake.audit.instrumentedSeconds=<s>` | With `measureToll`: a full instrumented run's duration. |
 | `yoriwake.audit.uninstrumentedSeconds=<s>` | With `measureToll`: the same run with `yoriwake.disabled`. |
@@ -1494,6 +1531,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |
 | `largeChangeThreshold` | `Int` | `5000` | Above this many changed paths, run every test without analysing the change. |
 | `narrowPlainRunners` | `Boolean` | `false` | Let a selecting run of a plain JUnit 4 task (`useJUnit()`) leave out whole test classes. |
+| `recordSequentially` | `Boolean` | `false` | Record in-JVM parallel suites one test at a time, so they can be selected on. |
 
 For example:
 

@@ -393,9 +393,17 @@ public final class TouchRecorder implements CaptureSession.Touches {
                     });
         }
         GuardHooks installed = guards;
-        String unarmed = installed == null ? "the yoriwake agent did not install the native-method guards"
-                : installed.unarmed(caller, GuardHooks.wrapFor(entry[2]));
-        return unarmed != null ? unarmed : GuardHooks.unlisted(caller, entry[2], entry[3], entry[4].split(","));
+        if (installed == null) {
+            return "the yoriwake agent did not install the native-method guards";
+        }
+        String[] guardClasses = entry[2].split(",");
+        for (String guardClass : guardClasses) {
+            String unarmed = installed.unarmed(caller, GuardHooks.wrapFor(guardClass));
+            if (unarmed != null) {
+                return unarmed;
+            }
+        }
+        return GuardHooks.unlisted(caller, guardClasses[0], entry[3], entry[4].split(","));
     }
 
     /**

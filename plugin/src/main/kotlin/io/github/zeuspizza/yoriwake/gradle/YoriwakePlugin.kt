@@ -453,6 +453,14 @@ public abstract class YoriwakeExtension {
      */
     public abstract val dependsOn: org.gradle.api.provider.ListProperty<String>
 
+    /**
+     * Records a suite that runs its tests in parallel inside one JVM by running them one at a time
+     * on a recording run, so it can be selected on: `recordSequentially = true`, or
+     * `-Pyoriwake.recordSequentially` for one invocation. Recording runs take longer; selecting runs
+     * keep the suite's own scheduling. Off by default, and such a suite is then never selected on.
+     */
+    public abstract val recordSequentially: org.gradle.api.provider.Property<Boolean>
+
     /** Declares that every test of the `Test` task [task] depends on the paths [glob] matches. */
     public fun dependsOn(task: String, glob: String) {
         dependsOn.add("$task=$glob")
@@ -477,6 +485,7 @@ public abstract class YoriwakeExtension {
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)
+        recordSequentially.convention(false)
         @Suppress("LeakingThis")
         largeChangeThreshold.convention(io.github.zeuspizza.yoriwake.gradle.change.LargeChange.DEFAULT_THRESHOLD)
         @Suppress("LeakingThis")

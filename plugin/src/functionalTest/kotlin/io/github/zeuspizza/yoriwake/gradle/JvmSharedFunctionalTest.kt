@@ -1015,6 +1015,83 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
     }
 
     /**
+     * Gradle's real native-platform and file-events libraries: a test initialises both and then runs
+     * [use], then a test that runs Tool, then one that does not. Returns what ran, and why the
+     * capture's first `all` line says every class was touched.
+     */
+    private fun nativePlatform(dir: File, use: String): Pair<Set<String>, String?> {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows"), "only the Linux and macOS builds were reviewed")
+        var why: String? = null
+        val ran = selectedAfter(
+            dir, "src/main/java/dev/sample/Tool.java", { it.replace("\"tool\"", "\"tool!\"") },
+            main("Tool", "public class Tool { public static String name() { return \"tool\"; } }"),
+            first("G"),
+            test(
+                "G1NativeTest",
+                """@Test void initialises() throws Exception {
+                    java.io.File extract = java.nio.file.Files.createTempDirectory("native").toFile();
+                    net.rubygrapefruit.platform.Native platform = net.rubygrapefruit.platform.Native.init(extract);
+                    org.gradle.fileevents.FileEvents.init(extract);
+                    java.io.File here = new java.io.File(".").getCanonicalFile();
+                    assertTrue(platform.get(net.rubygrapefruit.platform.file.PosixFiles.class).stat(here).getType()
+                        == net.rubygrapefruit.platform.file.FileInfo.Type.Directory);
+                    $use
+                }""",
+            ),
+            test("G2ToolTest", "@Test void runs() { assertTrue(Tool.name().startsWith(\"tool\")); }"),
+            test("G3LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            buildScript = orderedBuild.replace(
+                "repositories { mavenCentral() }",
+                "repositories {\n    mavenCentral()\n" +
+                    "    maven(\"https://repo.gradle.org/gradle/libs-releases\") {\n" +
+                    "        content { includeGroup(\"net.rubygrapefruit\"); includeGroup(\"org.gradle.fileevents\") }\n" +
+                    "    }\n}",
+            ).replace(
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n" +
+                    "    testImplementation(\"net.rubygrapefruit:native-platform:0.22-milestone-30\")\n" +
+                    "    testImplementation(\"org.gradle.fileevents:gradle-fileevents:0.2.8\")",
+            ),
+            editMap = { map ->
+                why = CoverageDecoder.recordsDir(map).walk().filter { it.name == AgentContract.TOUCHES_FILE }
+                    .flatMap { it.readLines().asSequence() }
+                    .map { it.split("\t") }
+                    .firstOrNull { AgentContract.TOUCH_ALL in it }
+                    ?.last()
+            },
+        )
+        return ran to why
+    }
+
+    @Test
+    fun `a test that uses Gradle's native-platform and file events narrows as on any reviewed library`(
+        @TempDir dir: File,
+    ) {
+        val (ran, why) = nativePlatform(dir, "")
+
+        assertEquals(names("G2ToolTest", "G3LaterTest"), ran, "every class touched because: $why")
+    }
+
+    @Test
+    fun `a link native-platform makes or a working directory it changes selects every later test in its JVM`(
+        @TempDir dir: File,
+    ) {
+        val uses = mapOf(
+            "native-platform created a symbolic link" to
+                "platform.get(net.rubygrapefruit.platform.file.PosixFiles.class).symlink(" +
+                "new java.io.File(extract, \"link\"), \"build.gradle.kts\");",
+            "native-platform changed the working directory" to
+                "platform.get(net.rubygrapefruit.platform.Process.class).setWorkingDirectory(here);",
+        )
+        for ((i, use) in uses.entries.withIndex()) {
+            val (ran, why) = nativePlatform(File(dir, "$i").apply { mkdirs() }, use.value)
+
+            assertEquals(names("G1NativeTest", "G2ToolTest", "G3LaterTest"), ran, use.value)
+            assertEquals(use.key, why, use.value)
+        }
+    }
+
+    /**
      * The real netty-tcnative BoringSSL build at [version], every platform's jar on the classpath:
      * a test opens a client SslContext on the OpenSSL provider, which loads it, then a test that
      * runs Tool, then one that does not.
