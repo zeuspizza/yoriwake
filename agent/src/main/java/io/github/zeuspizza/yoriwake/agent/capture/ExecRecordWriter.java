@@ -216,6 +216,16 @@ final class ExecRecordWriter implements Closeable {
         }
     }
 
+    /** See {@link AgentContract#OPEN_TESTS_FILE}. */
+    void writeOpenTests(java.util.List<String> ids) throws IOException {
+        StringBuilder text = new StringBuilder();
+        for (String id : ids) {
+            text.append(io.github.zeuspizza.yoriwake.agent.contract.Tsv.escape(id)).append('\n');
+        }
+        java.nio.file.Files.write(new File(workerDir, AgentContract.OPEN_TESTS_FILE).toPath(),
+                text.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     /** See {@link AgentContract#PLAN_COMPLETE_FILE}. */
     void markPlanComplete() throws IOException {
         File marker = new File(workerDir, AgentContract.PLAN_COMPLETE_FILE);

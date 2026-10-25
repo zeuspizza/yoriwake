@@ -1888,6 +1888,21 @@ class CoverageDecoderTest {
     }
 
     @Test
+    fun `an unfinished worker is named with up to three of the tests it left open`(@TempDir dir: File) {
+        val raw = CoverageDecoder.recordsDir(dir)
+        File(raw, "worker-1").mkdirs()
+        File(raw, "worker-2/${AgentContract.OPEN_TESTS_FILE}").apply { parentFile.mkdirs() }
+            .writeText((1..5).joinToString("") { "[class:T]/[method:m$it]\n" })
+        File(raw, "worker-3/${AgentContract.OPEN_TESTS_FILE}").apply { parentFile.mkdirs() }.writeText("[class:T]/[method:only]\n")
+
+        assertEquals(
+            "worker-1, worker-2 (open: [class:T]/[method:m1], [class:T]/[method:m2], [class:T]/[method:m3] and 2 more), " +
+                "worker-3 (open: [class:T]/[method:only])",
+            CoverageDecoder.describeUnfinished(dir, listOf("worker-1", "worker-2", "worker-3")),
+        )
+    }
+
+    @Test
     fun `the JVMs behind a run are its record directories without their plan numbers`() {
         val workers = listOf("worker-12", "worker-4711-1730000000000", "worker-4711-1730000000000-p2",
             "worker-4711-1730000000000-p3", "worker-4712-1730000000001").map(::File)

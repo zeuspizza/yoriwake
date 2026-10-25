@@ -1932,6 +1932,42 @@ def unfinished_map(checkout, module, task):
     return None
 
 
+def unfinished_workers(directory):
+    """Why a capture's workers kept the decode from merging, or None when every one finished.
+
+    A worker without `plan-complete` is not merged by design: either its JVM ended mid-run (a test
+    that exited, a kill, a crash), and `open-tests` names what was running, or it finished with
+    capture failures, which `overhead.txt` counts. Only when every worker finished is a capture left
+    unmerged a defect of this tool.
+    """
+    reasons = []
+    for worker in sorted(glob.glob(os.path.join(directory, "raw", "worker-*"))):
+        if os.path.isfile(os.path.join(worker, "plan-complete")):
+            continue
+        name = os.path.basename(worker)
+        failures = 0
+        try:
+            with open(os.path.join(worker, "overhead.txt"), encoding="utf-8") as handle:
+                found = re.search(r"failures=(\d+)", handle.read())
+                failures = int(found.group(1)) if found else 0
+        except OSError:
+            pass
+        if failures:
+            reasons.append(f"{name} finished with {failures} capture failure(s)")
+            continue
+        try:
+            with open(os.path.join(worker, "open-tests"), encoding="utf-8") as handle:
+                open_tests = [line.strip() for line in handle if line.strip()]
+        except OSError:
+            open_tests = []
+        reason = f"{name} did not finish its run, so the decode kept nothing by design"
+        if open_tests:
+            reason += " (open: " + ", ".join(open_tests[:3]) + (
+                f" and {len(open_tests) - 3} more" if len(open_tests) > 3 else "") + ")"
+        reasons.append(reason)
+    return "; ".join(reasons) or None
+
+
 def record_without_map(recording, capture_map, capture_log, module, task_path=None, unfinished=None):
     """Why a recording run must stop after a capture that left no map, or None.
 
@@ -5181,7 +5217,11 @@ def main():
         # WHICH OF THE TWO, because they are different findings with different owners. A capture
         # that never ran is usually the guest's; a capture that ran and was never merged is ours.
         unfinished = unfinished_map(checkout, module, task_name)
-        if unfinished:
+        workers = unfinished_workers(unfinished) if unfinished else None
+        if workers:
+            print(f"  the map at {unfinished} was not merged: {workers}. Selection will force every "
+                  f"run until a capture finishes.", flush=True)
+        elif unfinished:
             records = len(glob.glob(os.path.join(unfinished, "raw", "*", "*")))
             print(f"  the map at {unfinished} was CAPTURED BUT NEVER MERGED: {records} raw record "
                   f"file(s) and no coverage.tsv, so the decode did not finish. Selection will force "

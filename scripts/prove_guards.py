@@ -2793,6 +2793,20 @@ MUTATIONS = [
      "        if (FilterRule.engineRunsEverything(id)) {\n            run.countComplementRan();",
      "        if (false) {\n            run.countComplementRan();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # A test an engine starts and never finishes is closed not known to pass, so the rest of the
+    # capture can date the map; at JVM shutdown nothing is closed.
+    ("a finished container leaves the tests beneath it open", CAPTURE_SESSION,
+     '                closeOpen(container + "/");',
+     '                if (false) closeOpen(container + "/");',
+     agent_suite, "a test left open is closed not known to pass when its container finishes, and the next keeps its outcome"),
+    ("a late finish of a test closed early takes the next test's window", CAPTURE_SESSION,
+     "            if (!ended && !closedEarly.remove(id)) {",
+     "            if (!ended) {",
+     agent_suite, "a finish that comes after its container closed the test takes nothing from the next test"),
+    ("the run's end leaves the tests still open", CAPTURE_SESSION,
+     '                closeOpen("");',
+     '                if (false) closeOpen("");',
+     agent_suite, "a test still open when the plan finishes is closed not known to pass, and the worker completes"),
     # Under Maven the run file alone answers: Surefire lets a user property override a system one.
     ("the Maven host answers from system properties", MAVEN_HOST,
      "            read = read(runFile);\n",
@@ -3185,10 +3199,10 @@ MUTATIONS = [
     # A container that fails reports none of the tests it did not reach, and one that fails after
     # them leaves them passed; either way the class still fails.
     ("a failed container leaves its tests without a failed record", PLATFORM_EVENTS,
-     "        } else if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {\n"
+     "        if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {\n"
      "            failedBeneath(capture, identifier);\n"
      "        }\n",
-     "        }\n",
+     "",
      agent_suite, "a class container that fails records every test beneath it as failed"),
     # A test template whose argument source throws, or a test factory that throws, fails with no
     # invocation beneath it; its older SUCCESSFUL invocations then read as known to pass.

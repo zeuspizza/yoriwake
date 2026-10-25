@@ -206,6 +206,8 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(complete, captureStamp(dir), "a capture whose JVM exited mid-run dated the map")
         assertContains(output, "did not finish its run")
+        // The test that was running when the JVM exited.
+        assertContains(output, "(open: [engine:junit4]/[class:dev.sample.ZExitTest]/[method:exits])")
     }
 
     /** A clean full capture on this build dates the map, and every worker says it finished. */
