@@ -35,7 +35,9 @@ test_task = "testDebugUnitTest"
 # kapt and ksp phases a mutation can fail in. Read from this project's own build logs, as
 # duckduckgo-android's is.
 test_classes_task = "compileDebugUnitTestJavaWithJavac"
-flags = ["-Pyoriwake.internal.classSelection"]
+# Whole plain JUnit 4 classes may be left out; Robolectric's runner is not one this reviewed, so
+# its classes run whole.
+flags = ["-Pyoriwake.narrowPlainRunners"]
 # The CODE under test is in :library; the TESTS that cover it are in :library:test.
 sources = ["library/src/main/java"]
 daemon_jvmargs = "-Xmx4g"
