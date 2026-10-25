@@ -695,6 +695,12 @@ class TouchRecorderTest {
                 "sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.so",
                 "sqlite-unknown-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsqlitejdbc.dylib", "libsqlitejdbc.jnilib",
             ),
+            "net.rubygrapefruit.platform.internal.NativeLibraryLoader" to listOf(
+                "libnative-platform.dylib", "libnative-platform.so",
+            ),
+            "org.gradle.fileevents.FileEvents" to listOf(
+                "libgradle-fileevents.dylib", "libgradle-fileevents.so",
+            ),
         )
         for ((loader, files) in reviewed) {
             for (file in files) {
@@ -717,6 +723,15 @@ class TouchRecorderTest {
         for (file in listOf("sqlite-3.53.4.0-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-sqlitejdbc.dll", "libacme.so")) {
             assertFalse(ReviewedLibraries.reviewed("org.sqlite.SQLiteJDBCLoader", file), file)
         }
+        // Nor its Windows build, nor the curses library, which reads whatever terminal database the
+        // environment names.
+        for (file in listOf("native-platform.dll", "libnative-platform-curses.dylib", "libnative-platform-curses.so")) {
+            assertFalse(ReviewedLibraries.reviewed("net.rubygrapefruit.platform.internal.NativeLibraryLoader", file), file)
+        }
+        // The file-events library loads itself; the native-platform loader handing it out is not reviewed.
+        assertFalse(ReviewedLibraries.reviewed("net.rubygrapefruit.platform.internal.NativeLibraryLoader",
+            "libgradle-fileevents.dylib"))
+        assertFalse(ReviewedLibraries.reviewed("org.gradle.fileevents.FileEvents", "gradle-fileevents.dll"))
     }
 
     @Test
@@ -890,6 +905,84 @@ class TouchRecorderTest {
             listOf(AgentContract.TOUCH_ALL to "a reviewed native library was loaded without its condition: "
                 + sqliteFile.substringAfterLast('/') + ", since its version 3.53.5.0 is not one reviewed"),
             drained(recorder),
+        )
+    }
+
+    /**
+     * native-platform's loading class, its two guard classes, with [withWorkingDirectory] saying
+     * whether the second declares its native, and its natives' hash, in a loader over [dir].
+     */
+    private class NativePlatformStandIn(dir: File, withWorkingDirectory: Boolean, version: String) :
+        java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), TouchRecorderTest::class.java.classLoader) {
+        init {
+            val jni = "net/rubygrapefruit/platform/internal/jni/"
+            fun write(name: String, native: Pair<String, String>?, constant: String? = null) {
+                val bytes = org.objectweb.asm.ClassWriter(0).run {
+                    visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, jni + name, null,
+                        "java/lang/Object", null)
+                    native?.let {
+                        visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC or org.objectweb.asm.Opcodes.ACC_STATIC
+                            or org.objectweb.asm.Opcodes.ACC_NATIVE, it.first, it.second, null, null).visitEnd()
+                    }
+                    constant?.let {
+                        visitField(org.objectweb.asm.Opcodes.ACC_PUBLIC or org.objectweb.asm.Opcodes.ACC_STATIC
+                            or org.objectweb.asm.Opcodes.ACC_FINAL, "VERSION", "Ljava/lang/String;", null, it).visitEnd()
+                    }
+                    visitEnd()
+                    toByteArray()
+                }
+                File(dir, "$jni$name.class").apply { parentFile.mkdirs() }.writeBytes(bytes)
+            }
+            val symlink = GuardHooks.wrapFor(jni + "PosixFileFunctions")!!
+            val workingDirectory = GuardHooks.wrapFor(jni + "PosixProcessFunctions")!!
+            write("PosixFileFunctions", symlink[1] to symlink[2])
+            write("PosixProcessFunctions", if (withWorkingDirectory) workingDirectory[1] to workingDirectory[2] else null)
+            write("NativeVersion", null, version)
+        }
+
+        val caller: Class<*> by lazy {
+            val bytes = org.objectweb.asm.ClassWriter(0).run {
+                visit(org.objectweb.asm.Opcodes.V11, org.objectweb.asm.Opcodes.ACC_PUBLIC,
+                    "net/rubygrapefruit/platform/internal/NativeLibraryLoader", null, "java/lang/Object", null)
+                visitEnd()
+                toByteArray()
+            }
+            defineClass("net.rubygrapefruit.platform.internal.NativeLibraryLoader", bytes, 0, bytes.size)
+        }
+    }
+
+    private val milestone30 = "6f2b8059d26491bb262815fb44547f418c8258d5d0a14091d1a14ff26d0373f0"
+
+    @Test
+    fun `native-platform counts as reviewed only while both its link and its working-directory natives are guarded`(
+        @TempDir dir: File,
+    ) {
+        val file = "/tmp/native/$milestone30/osx-aarch64/libnative-platform.dylib"
+        val armed = TouchRecorder().apply { guards = GuardHooks(null) }
+        armed.library(arrayOf<Any>(NativePlatformStandIn(File(dir, "both").apply { mkdirs() }, true, milestone30).caller, file))
+        assertEquals(listOf(any), drained(armed))
+        // 0.22-milestone-29's natives, which Gradle 9.8 ships.
+        val older = TouchRecorder().apply { guards = GuardHooks(null) }
+        older.library(arrayOf<Any>(NativePlatformStandIn(File(dir, "older").apply { mkdirs() }, true,
+            "660c5614fbf4a5f2a75b1949f50a0caf5cd603558e7d8a26e50b933a0cfb79d1").caller, file))
+        assertEquals(listOf(any), drained(older))
+
+        val unarmed = TouchRecorder().apply { guards = GuardHooks(null) }
+        unarmed.library(arrayOf<Any>(NativePlatformStandIn(File(dir, "one").apply { mkdirs() }, false, milestone30).caller, file))
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "a reviewed native library was loaded without its condition: "
+                + "libnative-platform.dylib, since net.rubygrapefruit.platform.internal.jni.PosixProcessFunctions "
+                + "declares no native setWorkingDirectory"
+                + GuardHooks.wrapFor("net/rubygrapefruit/platform/internal/jni/PosixProcessFunctions")!![2]),
+            drained(unarmed),
+        )
+
+        val other = TouchRecorder().apply { guards = GuardHooks(null) }
+        other.library(arrayOf<Any>(NativePlatformStandIn(File(dir, "other").apply { mkdirs() }, true, "1def14").caller, file))
+        assertEquals(
+            listOf(AgentContract.TOUCH_ALL to "a reviewed native library was loaded without its condition: "
+                + "libnative-platform.dylib, since its version 1def14 is not one reviewed"),
+            drained(other),
         )
     }
 
