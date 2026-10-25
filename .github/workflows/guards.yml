@@ -86,6 +86,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          # A guard that fires fails a build by design; the shard's results tell what failed.
+          add-job-summary: never
       - run: |
           mkdir -p results
           python3 scripts/prove_guards.py --mode fast --shard ${{ matrix.shard }}/8 --results results/fast.json
@@ -159,6 +162,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          # A guard that fires fails a build by design; the shard's results tell what failed.
+          add-job-summary: never
       - run: |
           mkdir -p results
           python3 scripts/prove_guards.py --mode full --shard ${{ matrix.shard }}/8 --results results/full.json
@@ -197,6 +203,25 @@ jobs:
         run: |
           python3 scripts/prove_guards.py --mode full --list-selection full.json
           python3 .github/guard_shards.py check full.json shards --count 8 --file full.json
+
+  # The run's one summary: each job's result, the guards each shard proved and what failed
+  # (.github/run_summary.py). It reports and gates nothing, so no required check is on it.
+  run-summary:
+    name: run summary
+    needs: [changes, fast-shard, fast, full-shard, full]
+    if: always() && needs.changes.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: guards-*
+          path: results
+      # Through the environment, never spliced into the script.
+      - name: write the run's summary
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/run_summary.py .github/workflows/guards.yml results
 
   report-failure:
     needs: [changes, full-shard, full]
