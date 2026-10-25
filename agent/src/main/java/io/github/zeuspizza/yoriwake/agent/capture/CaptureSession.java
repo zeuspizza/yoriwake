@@ -243,6 +243,16 @@ public final class CaptureSession implements TestEvents {
      * not marked complete.
      */
     public synchronized void failedByContainer(String container, Supplier<? extends Iterable<String>> tests) {
+        if (nestedRuns) {
+            // A nested run reports its own class-level failures through these same events, from
+            // inside the test that runs it; its tests belong to that test's window, not to records.
+            Thread thread = Thread.currentThread();
+            for (Open test : open) {
+                if (test.thread == thread) {
+                    return;
+                }
+            }
+        }
         try {
             if (!ended) {
                 for (String id : tests.get()) {
