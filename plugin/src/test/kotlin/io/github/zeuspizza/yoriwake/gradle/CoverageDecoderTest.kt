@@ -1868,4 +1868,19 @@ class CoverageDecoderTest {
         assertEquals(0, CoverageDecoder.carryFailures(dir))
         assertEquals(before, File(dir, AgentContract.COVERAGE_FILE).readText())
     }
+
+    @Test
+    fun `an unfinished worker is named with up to three of the tests it left open`(@TempDir dir: File) {
+        val raw = CoverageDecoder.recordsDir(dir)
+        File(raw, "worker-1").mkdirs()
+        File(raw, "worker-2/${AgentContract.OPEN_TESTS_FILE}").apply { parentFile.mkdirs() }
+            .writeText((1..5).joinToString("") { "[class:T]/[method:m$it]\n" })
+        File(raw, "worker-3/${AgentContract.OPEN_TESTS_FILE}").apply { parentFile.mkdirs() }.writeText("[class:T]/[method:only]\n")
+
+        assertEquals(
+            "worker-1, worker-2 (open: [class:T]/[method:m1], [class:T]/[method:m2], [class:T]/[method:m3] and 2 more), " +
+                "worker-3 (open: [class:T]/[method:only])",
+            CoverageDecoder.describeUnfinished(dir, listOf("worker-1", "worker-2", "worker-3")),
+        )
+    }
 }

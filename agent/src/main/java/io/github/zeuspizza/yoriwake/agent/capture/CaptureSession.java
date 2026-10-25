@@ -252,6 +252,37 @@ public final class CaptureSession implements TestEvents {
         }
     }
 
+    /**
+     * Closes, not known to pass, every test still open beneath {@code container}, which the engine
+     * reports finished: an engine can start a test and never finish it (kotest, when a container's
+     * timeout fires), and a test left open makes every later one overlap it. Its window holds
+     * whatever ran until now, the container's own teardown included.
+     */
+    public synchronized void containerFinished(String container) {
+        try {
+            if (!ended) {
+                closeOpen(container + "/");
+            }
+        } catch (Throwable t) {
+            recordFailure("the tests left open beneath " + container + ": " + t);
+        }
+    }
+
+    /** Closes every open test whose id starts with {@code prefix} as {@link #OUTCOME_UNKNOWN}. */
+    private void closeOpen(String prefix) {
+        for (Open test : new ArrayList<>(open)) {
+            if (!open.contains(test) || !test.id.startsWith(prefix)) {
+                continue;
+            }
+            if (test.nested) {
+                open.remove(test);
+                continue;
+            }
+            unattributable.add(test.id);
+            close(test.id, OUTCOME_UNKNOWN);
+        }
+    }
+
     @Override
     public synchronized void runFinished() {
         if (open.isEmpty()) {
@@ -264,6 +295,15 @@ public final class CaptureSession implements TestEvents {
      * belongs to that class.
      */
     public synchronized void endRun() {
+        // The engine has reported every test it will run: one it never finished is not known to
+        // pass, and runs on every selecting run, so the rest of the capture can date the map.
+        try {
+            if (!ended) {
+                closeOpen("");
+            }
+        } catch (Throwable t) {
+            recordFailure("the tests left open at the end of the run: " + t);
+        }
         runFinished();
         end(true);
     }
@@ -337,6 +377,18 @@ public final class CaptureSession implements TestEvents {
             recordFailure("Could not close the record index: " + e);
         }
         boolean complete = runFinished && open.isEmpty();
+        if (!open.isEmpty()) {
+            // Only the shutdown path leaves any: the test that was running when the JVM exited.
+            try {
+                List<String> ids = new ArrayList<>();
+                for (Open test : open) {
+                    ids.add(test.id);
+                }
+                writer.writeOpenTests(ids);
+            } catch (IOException e) {
+                recordFailure("Could not name the tests left open: " + e);
+            }
+        }
         // After the close, and only for a clean capture: after a failure a missing record would let
         // the older one it supersedes survive the merge looking current.
         if (complete && failures == 0) {

@@ -136,7 +136,11 @@ public class PlatformEvents implements TestExecutionListener {
         }
         if (identifier.isTest()) {
             capture.finished(identifier.getUniqueId(), outcomeOf(result));
-        } else if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {
+            return;
+        }
+        // Before the failures beneath it, so their rows land after the tests it closes.
+        capture.containerFinished(identifier.getUniqueId());
+        if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {
             failedBeneath(capture, identifier);
         }
     }

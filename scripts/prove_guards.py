@@ -2747,6 +2747,16 @@ MUTATIONS = [
      "        if (FilterRule.engineRunsEverything(id)) {\n            complementRan.incrementAndGet();",
      "        if (false) {\n            complementRan.incrementAndGet();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # A test an engine starts and never finishes is closed not known to pass, so the rest of the
+    # capture can date the map; at JVM shutdown nothing is closed.
+    ("a finished container leaves the tests beneath it open", CAPTURE_SESSION,
+     '                closeOpen(container + "/");',
+     '                if (false) closeOpen(container + "/");',
+     agent_suite, "a test left open is closed not known to pass when its container finishes, and the next keeps its outcome"),
+    ("the run's end leaves the tests still open", CAPTURE_SESSION,
+     '                closeOpen("");',
+     '                if (false) closeOpen("");',
+     agent_suite, "a test still open when the plan finishes is closed not known to pass, and the worker completes"),
     ("a launcher a test started records its tests as the task's", PLATFORM_EVENTS,
      "        outermost = EXECUTING.incrementAndGet() == 1;",
      "        outermost = EXECUTING.incrementAndGet() > 0;",

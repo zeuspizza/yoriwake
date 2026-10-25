@@ -460,6 +460,12 @@ public final class AgentContract {
      */
     public static final String PLAN_COMPLETE_FILE = "plan-complete";
 
+    /**
+     * The tests still open when a worker's run ended without finishing, one id per line, escaped
+     * as {@link Tsv} escapes: what was running when its JVM exited. Absent when none was open.
+     */
+    public static final String OPEN_TESTS_FILE = "open-tests";
+
 
     /** Each worker's list is {@code loaded-<worker>.txt}. */
     public static final String LOADED_WORKER_PREFIX = "loaded-";

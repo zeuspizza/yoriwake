@@ -111,6 +111,7 @@ is written as it is.
 | `ENV_READS_FILE` | `env-reads.tsv` | The environment variables the JVM read, one name per line, escaped as a field; never a value. Written when every read was observed. The decode writes the union of a capture's workers beside the map under the same name, only when every worker wrote one; `yoriwakeExplain<Task>` reads it and nothing selects by it |
 | `RAW_SCHEMA_VERSION_FILE` | `raw-schema-version` | The raw version, one integer. Written before the first record |
 | `PLAN_COMPLETE_FILE` | `plan-complete` | Empty. Written only when the worker's whole run ended normally |
+| `OPEN_TESTS_FILE` | `open-tests` | The tests still open when the worker's run ended without finishing, one escaped id per line. Absent when none was |
 
 ### First touches
 

@@ -65,6 +65,69 @@ class CaptureSessionTest {
         assertEquals(listOf("SUCCESSFUL" to alpha, "FAILED" to beta), recorded().filter { it.first != "NONE" })
     }
 
+    // An engine that starts a test and never finishes it, as kotest does under a container timeout.
+
+    private val container = "[engine:kotest]/[spec:TimeoutSpec]/[test:context]"
+    private val leftOpen = "$container/[test:timeout a]"
+    private val later = "[engine:kotest]/[spec:LaterSpec]/[test:runs]"
+
+    private fun complete() = File(records, "worker-0/${AgentContract.PLAN_COMPLETE_FILE}").isFile
+
+    @Test
+    fun `a test left open is closed not known to pass when its container finishes, and the next keeps its outcome`() {
+        val session = session(nestedRuns = false)
+        session.started(leftOpen)
+        session.containerFinished(container)
+        session.started(later)
+        session.finished(later, null)
+        session.endRun()
+
+        assertEquals(listOf("UNKNOWN" to leftOpen, "SUCCESSFUL" to later), recorded().filter { it.first != "NONE" })
+        assertTrue(complete(), "the worker was not marked complete")
+    }
+
+    @Test
+    fun `a test still open when the plan finishes is closed not known to pass, and the worker completes`() {
+        val session = session(nestedRuns = false)
+        session.started(leftOpen)
+        session.endRun()
+
+        assertEquals(listOf("UNKNOWN" to leftOpen), recorded().filter { it.first != "NONE" })
+        assertTrue(complete(), "the worker was not marked complete")
+    }
+
+    @Test
+    fun `a test still open at JVM shutdown leaves the worker incomplete`() {
+        val session = session(nestedRuns = false)
+        session.started(leftOpen)
+        session.endAtShutdown(true)
+
+        assertFalse(complete(), "a JVM that ended mid-test was marked complete")
+    }
+
+    @Test
+    fun `a container finishing with nothing open beneath it records nothing`() {
+        val session = session(nestedRuns = false)
+        session.started(later)
+        session.containerFinished(container)
+        session.finished(later, null)
+        session.endRun()
+
+        assertEquals(listOf("SUCCESSFUL" to later), recorded().filter { it.first != "NONE" })
+    }
+
+    @Test
+    fun `two tests overlapping, one never finished, are both not known to pass and the worker completes`() {
+        val session = session(nestedRuns = false)
+        session.started(leftOpen)
+        session.started(later)
+        session.finished(later, null)
+        session.endRun()
+
+        assertEquals(setOf("UNKNOWN" to leftOpen, "UNKNOWN" to later), recorded().filter { it.first != "NONE" }.toSet())
+        assertTrue(complete(), "the worker was not marked complete")
+    }
+
     @Test
     fun `a test that runs another test inside itself keeps its own window`() {
         // A test that hands a class to JUnitCore fires nested notifications; reading them flatly

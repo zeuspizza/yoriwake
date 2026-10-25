@@ -1065,6 +1065,27 @@ def case_a_capture_that_was_never_merged_is_not_a_missing_map():
         if run.unfinished_map(root, "other", "test") is not None:
             print("  FAIL: a module with no map directory reported an unfinished capture")
             failures += 1
+
+        # Why it was not merged: a worker that did not finish is by design, not a defect.
+        os.remove(os.path.join(unmerged, "coverage.tsv"))
+        worker = os.path.join(unmerged, "raw", "worker-1")
+        with open(os.path.join(worker, "open-tests"), "w") as handle:
+            handle.write("[class:T]/[method:a]\n")
+        said = run.unfinished_workers(unmerged) or ""
+        if "did not finish its run" not in said or "[class:T]/[method:a]" not in said:
+            print(f"  FAIL: an unfinished worker was not named with its open test: {said!r}")
+            failures += 1
+        os.remove(os.path.join(worker, "open-tests"))
+        with open(os.path.join(worker, "overhead.txt"), "w") as handle:
+            handle.write("records=3 windows=4 failures=2\n")
+        said = run.unfinished_workers(unmerged) or ""
+        if "finished with 2 capture failure(s)" not in said or "did not finish" in said:
+            print(f"  FAIL: a worker with capture failures was reported as unfinished: {said!r}")
+            failures += 1
+        open(os.path.join(worker, "plan-complete"), "w").close()
+        if run.unfinished_workers(unmerged) is not None:
+            print("  FAIL: a capture whose workers all finished was given a by-design reason")
+            failures += 1
     finally:
         shutil.rmtree(root, ignore_errors=True)
     return failures
