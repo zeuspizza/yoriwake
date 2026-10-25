@@ -320,7 +320,7 @@ jobs:
     name: run summary
     needs: [candidate, cell, capture, select, summary, report-failure]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The script and this file as this run has them, not the candidate's: a candidate older
       # than the script has none.
