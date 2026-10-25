@@ -1,0 +1,25 @@
+/*
+ * Harness only: raises every test task's maxHeapSize to `yoriwake.harness.testHeap` (a JVM size,
+ * such as 3g), for a guest whose own test heap is too small to finish on a CI runner.
+ *
+ * It only raises: a task already given more keeps its own. Passed in a project's `flags`, so every
+ * build of both arms carries it and the results file records it.
+ *
+ * Set when the task graph is ready, after every build script's own `configureEach`, for the same
+ * reason as guest-selection-off.init.gradle.
+ */
+def heap = System.getProperty('yoriwake.harness.testHeap')
+if (heap != null) {
+    def bytes = { String size ->
+        def units = [k: 1L << 10, m: 1L << 20, g: 1L << 30]
+        def unit = units[size[-1].toLowerCase()]
+        unit == null ? size as long : (size[0..-2] as long) * unit
+    }
+    gradle.taskGraph.whenReady { graph ->
+        graph.allTasks.findAll { it instanceof Test }.each { task ->
+            if (task.maxHeapSize == null || bytes(task.maxHeapSize) < bytes(heap)) {
+                task.maxHeapSize = heap
+            }
+        }
+    }
+}
