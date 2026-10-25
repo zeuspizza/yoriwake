@@ -1937,7 +1937,7 @@ def case_capture_openers_still_match_the_plugin():
     """
     failures = 0
     root = run.SOURCE
-    source = os.path.join(root, "plugin", "src", "main", "kotlin", "io", "github", "zeuspizza", "yoriwake", "gradle",
+    source = os.path.join(root, "core", "src", "main", "kotlin", "io", "github", "zeuspizza", "yoriwake", "gradle",
                           "capture", "CaptureDecision.kt")
     try:
         with open(source, encoding="utf-8") as handle:
