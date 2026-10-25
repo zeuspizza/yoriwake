@@ -165,6 +165,7 @@ JAR_IDENTITY = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/J
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
+PARALLEL_READ_BACK = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/ParallelReadBack.java"
 MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
@@ -710,6 +711,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "FullRunRequestFunctionalTest": 101,
     "GeneratedClasspathFilesFunctionalTest": 120,
     "HostCoverageFunctionalTest": 60,
+    # Estimated from its local time (21s for eight builds) doubled for a runner, until an
+    # every-guard run measures it.
+    "InJvmParallelismCharacterizationTest": 45,
     "InitScriptFunctionalTest": 54,
     "IsolatedCaptureFunctionalTest": 71,
     "JvmSharedFunctionalTest": 172,
@@ -732,6 +736,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "RevertAfterUndatedCaptureFunctionalTest": 224,
     "ScheduledFullRunFunctionalTest": 72,
     "SelectionFunctionalTest": 197,
+    # Estimated from its local time (27s for nine tests) doubled for a runner, until an
+    # every-guard run measures it.
+    "SequentialRecordingFunctionalTest": 55,
     "TestLauncherFunctionalTest": 42,
     "TestRetryFunctionalTest": 79,
     "TestWrittenFilesFunctionalTest": 104,
@@ -1299,8 +1306,8 @@ MUTATIONS = [
     # capturing trades a loud failure for a blended map that outlives the run and is believed by
     # every later one.
     ("in-JVM parallelism fails the build again instead of declining", TEST_TASK_WIRING,
-     "            ) ?: return@doFirst\n",
-     "            )\n            check(source == null) { \"in-JVM parallelism\" }\n            if (source == null) return@doFirst\n",
+     "            source ?: return@doFirst\n",
+     "            check(source == null) { \"in-JVM parallelism\" }\n            if (source == null) return@doFirst\n",
      functional_suite, "in-JVM parallel execution is declined"),
     ("capture proceeds under the parallelism decline, so the map can be blended", TEST_TASK_WIRING,
      '            test.systemProperty(RECORDS_DIR_PROPERTY, "")\n'
@@ -1308,7 +1315,8 @@ MUTATIONS = [
      "                jacoco?.isEnabled = false",
      "            runCatching {\n"
      "                jacoco?.isEnabled = true",
-     functional_suite, "byte-identical after it"),
+     # The agent's own read-back now keeps the map whole too; the host's JaCoCo left on is what shows.
+     functional_suite, "a run declined over in-JVM parallelism leaves no host file"),
     # The unpack, back inside configuration. Every first build after an install then configures
     # twice, which is invisible in a build log and costs every two-arm cache measurement a third arm.
     ("the agent is unpacked during configuration again", TEST_TASK_WIRING,
@@ -2790,6 +2798,53 @@ MUTATIONS = [
      "        if (FilterRule.engineRunsEverything(id)) {\n            run.countComplementRan();",
      "        if (false) {\n            run.countComplementRan();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # The test JVM has the last word on whether its tests run one at a time: a setting the plugin
+    # did not see must still keep interleaved tests out of the map.
+    ("a test JVM that sees parallel execution captures", PLATFORM_EVENTS,
+     "        if (concurrent != null) {",
+     "        if (false && concurrent != null) {",
+     agent_suite, "a test JVM whose tests may run concurrently captures nothing and says why"),
+    ("a worker that captured nothing over parallelism lets the decode go on", DECODE_TASK,
+     "        if (unconfirmed.isNotEmpty()) {",
+     "        if (false) {",
+     functional_suite, "parallel execution a host's doFirst turns on records nothing"),
+    # A flagged recording run turns the engines' parallel switches off, and only then captures.
+    ("a flagged recording run leaves parallel execution on", TEST_TASK_WIRING,
+     '                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "false") }',
+     '                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "true") }',
+     functional_suite, "a flagged recording run of a parallel suite records it one test at a time"),
+    ("a flagged selecting run of a parallel suite is declined", TEST_TASK_WIRING,
+     "            if (recordSequentially && platform) {\n                keepParallelism(",
+     "            if (false) {\n                keepParallelism(",
+     functional_suite, "a flagged selecting run narrows with the suite's own scheduling and captures nothing"),
+    ("recordSequentially is always on", TEST_TASK_WIRING,
+     "        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)",
+     "        val recordSequentially = true",
+     functional_suite, "the extension property alone records sequentially, and the command line turns it off"),
+    ("the read-back ignores the vintage engine's switch", PARALLEL_READ_BACK,
+     "        if (enabled(parameters.apply(VINTAGE))) {",
+     "        if (false) {",
+     agent_suite, "the vintage engine's switch on is unconfirmed, naming it"),
+    ("a flagged selecting run overrides parallelism and captures", TEST_TASK_WIRING,
+     "            if (recordSequentially && platform && recording) {",
+     "            if (recordSequentially && platform) {",
+     functional_suite, "a flagged selecting run on a map of unknown age keeps the suite's scheduling and records nothing"),
+    ("a flagged TestNG task takes the JUnit Platform override", TEST_TASK_WIRING,
+     "            val platform = test.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions\n",
+     "            val platform = true\n",
+     functional_suite, "the flag leaves a parallel TestNG suite declined, and says it covers the JUnit Platform only"),
+    ("a run that kept its parallel scheduling is not counted by the schedule", DECODE_TASK,
+     "            if (marker.delete()) recordSchedule(taskPath, fullRun = datesTheMap && (!selecting || fullRunMarker.delete()))\n",
+     "            marker.delete()\n",
+     functional_suite, "flagged selecting runs count toward the scheduled full run"),
+    ("the build's recordSequentially is ignored", TEST_TASK_WIRING,
+     "        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)",
+     "        val recordSequentially = settings.recordSequentially ?: false",
+     functional_suite, "the extension property alone records sequentially, and the command line turns it off"),
+    ("the decision record keeps the plugin's word over the test JVM's", SELECTION_RUN,
+     "            String parallelism = Concurrency.unconfirmed() != null",
+     "            String parallelism = false",
+     functional_suite, "a flagged run whose host turns parallel execution back on records nothing"),
     # A test an engine starts and never finishes is closed not known to pass, so the rest of the
     # capture can date the map; at JVM shutdown nothing is closed.
     ("a finished container leaves the tests beneath it open", CAPTURE_SESSION,
