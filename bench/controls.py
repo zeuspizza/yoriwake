@@ -118,7 +118,7 @@ NO_FORCE_RULES = (
      "    if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this",
      "    if (verdict is ClasspathFilesVerdict.Moved || verdict == ClasspathFilesVerdict.Unchanged "
      "|| forces) return this"),
-    ("plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt",
+    ("core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/EnvironmentRefusal.kt",
      "    is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to "
      "verdict.reason",
      "    is EnvironmentFingerprint.Verdict.Changed -> null"),
