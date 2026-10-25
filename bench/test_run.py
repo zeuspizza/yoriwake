@@ -2019,14 +2019,21 @@ def case_non_force_markers_still_match_the_plugin():
     """
     failures = 0
     root = run.SOURCE
-    source = os.path.join(root, "plugin", "src", "main", "kotlin", "io", "github", "zeuspizza", "yoriwake", "gradle",
-                          "wiring", "SelectionWiring.kt")
-    try:
-        with open(source, encoding="utf-8") as handle:
-            text = handle.read()
-    except OSError as problem:
-        print(f"  FAIL: could not read the plugin source that defines the contract ({problem})")
-        return 1
+    # The plugin's wiring, and the selecting step it shares with every front end.
+    sources = (
+        os.path.join(root, "plugin", "src", "main", "kotlin", "io", "github", "zeuspizza", "yoriwake", "gradle",
+                     "wiring", "SelectionWiring.kt"),
+        os.path.join(root, "core", "src", "main", "kotlin", "io", "github", "zeuspizza", "yoriwake", "gradle",
+                     "change", "SelectingStep.kt"),
+    )
+    text = ""
+    for source in sources:
+        try:
+            with open(source, encoding="utf-8") as handle:
+                text += handle.read()
+        except OSError as problem:
+            print(f"  FAIL: could not read the plugin source that defines the contract ({problem})")
+            return 1
     for marker in run.NON_FORCE_REASON_MARKERS:
         if marker not in text:
             print(f"  FAIL: the plugin no longer prints {marker!r}; a row carrying it would be "
