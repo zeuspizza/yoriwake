@@ -14,17 +14,17 @@ import java.io.File
  * providers only, because capturing a Project fails the build under the configuration cache.
  */
 internal data class ClasspathFacts(
-    val rootDir: File,
+    override val rootDir: File,
     /** Repository-relative module directory to Gradle path, for every module in the build. */
-    val moduleDirs: Map<String, String>,
+    override val moduleDirs: Map<String, String>,
     /** Gradle path to build directory, so a classpath entry can be traced back to its module. */
-    val buildDirs: Map<String, String>,
+    override val buildDirs: Map<String, String>,
     /** Modules Gradle's resolution names; null means "could not be asked", not "none". */
     val declared: org.gradle.api.provider.Provider<Set<String>?>,
     /** Compile and annotation-processor classpaths, which the test runtime classpath omits. */
     val compileTime: org.gradle.api.file.FileCollection,
     /** The module under test, which is present whether or not it has produced output yet. */
-    val ownPath: String,
+    override val ownPath: String,
     /** This task's own compiled test classes, for the rule about changed test classes. */
     val testOutputs: org.gradle.api.file.FileCollection,
     /** The runtime classpath, held here because a Task reference cannot be configuration-cached. */
@@ -38,7 +38,25 @@ internal data class ClasspathFacts(
     val testJvm: org.gradle.api.provider.Provider<Int>? = null,
     /** A lower agent ceiling the task hands its test JVM, for tests on installed JDKs; else absent. */
     val agentCeiling: org.gradle.api.provider.Provider<String>? = null,
-)
+) : ClasspathView {
+    override fun classpathFiles(): Set<File> = classpath.files
+
+    override fun testOutputFiles(): Set<File> = testOutputs.files
+
+    override fun compileTimeFiles(): Set<File> = compileTime.files
+
+    override fun declaredModules(): Set<String>? = declared.getOrNull()
+
+    override fun jacocoVersion(): String? = jacocoVersion?.let { it.readOrNull() ?: "" }
+
+    override fun testJvm(): Int? = testJvm.readOrNull()
+
+    override fun agentCeiling(): String? = agentCeiling.readOrNull()
+}
+
+/** A provider's value, or null when it is absent, unset or throws. */
+private fun <T : Any> org.gradle.api.provider.Provider<T>?.readOrNull(): T? =
+    this?.let { runCatching { it.orNull }.getOrNull() }
 
 /**
  * Whether the change set touches anything this module does not own.
@@ -122,37 +140,6 @@ internal fun classpathFacts(
         project.provider { properties[io.github.zeuspizza.yoriwake.agent.contract.AgentContract.AGENT_ASM_CEILING_PROPERTY]?.toString() }
     },
     )
-}
-
-/**
- * The modules whose output is reachable from this task, by Gradle path: dependency resolution and
- * file matching unioned, over runtime, compile and annotation-processor classpaths. Empty when
- * nothing could be established, which the caller reads as "drop nothing".
- */
-internal fun modulesOnClasspath(facts: ClasspathFacts): Set<String> {
-    val reachable = runCatching {
-        facts.classpath.files + facts.compileTime.files
-    }.getOrElse { return emptySet() }
-    if (reachable.isEmpty()) {
-        return emptySet()
-    }
-    // Konsist reads every module's `src/` from the filesystem, so an off-classpath sibling is still
-    // in its view. Drop nothing.
-    if (reachable.any { it.name.startsWith("konsist") }) {
-        return emptySet()
-    }
-    // "Could not be asked" answers the empty set, which ClasspathScope.restrict reads as "drop
-    // nothing".
-    val declared = facts.declared.getOrNull() ?: return emptySet()
-    val present = mutableSetOf<String>()
-    present += declared
-    facts.buildDirs.forEach { (path, buildDir) ->
-        if (reachable.any { it.absolutePath.startsWith(buildDir + File.separator) }) {
-            present += path
-        }
-    }
-    present += facts.ownPath
-    return present
 }
 
 /**

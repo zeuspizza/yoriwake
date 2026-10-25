@@ -54,7 +54,7 @@ def case_a_change_to_the_tests_that_prove_a_guard_selects_it():
 
 def case_a_build_file_selects_every_gradle_suite_guard_and_no_python_one():
     failures = 0
-    gradle = guard(path="plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt", suite=pg.unit_suite)
+    gradle = guard(path="core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt", suite=pg.unit_suite)
     python = guard()
     if not pg.why_affected(gradle, {"gradle/libs.versions.toml"}, unchanged(gradle)):
         failures += fail("a changed build file did not select a Gradle-suite guard")
@@ -76,7 +76,7 @@ def case_a_new_or_edited_guard_is_selected_even_when_nothing_else_moved():
 
 
 def case_an_edited_suite_runner_selects_its_guards():
-    m = guard(path="plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt", suite=pg.unit_suite)
+    m = guard(path="core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt", suite=pg.unit_suite)
     before = unchanged(m)
     before[None] = {"unit"}
     return 0 if pg.why_affected(m, set(), before) else \
@@ -203,7 +203,7 @@ def case_each_mutation_path_resolves_into_the_tree_under_test():
     """Product sources and the harness's own sit in one tree, so every path is relative to it."""
     failures = 0
     home = pg.yoriwake_checkout.root()
-    for path in ("plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt",
+    for path in ("core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt",
                  "scripts/yoriwake.init.gradle.kts", "bench/run.py", "bench/projects/caffeine.toml"):
         if pg.source(path) != os.path.join(home, path):
             failures += fail(f"{path} did not resolve into the tree at {home}: {pg.source(path)}")

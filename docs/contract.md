@@ -382,7 +382,7 @@ different things in two categories. A test checks this table against the code, b
 | capture-mode | `isolated`, `mixed`, `shared` | `jvm-mode.tsv` (`isolated`, `shared`); `yoriwakeExplain<Task>`, for the whole map |
 | class-runs-whole | `junit4-not-filterable`, `junit4-runner`, `junit4-shape` | `decisions.tsv` (`class-runs-whole`), as its keys |
 | console-tally | `engine-runs-everything`, `full-run`, `not-in-map`, `not-known-to-pass`, `reaches-change`, `shares-jvm-with-change`, `skipped` | the `of N tests discovered` console line, as its keys |
-| decline-kind | `gradle-too-old`, `includes-rejected`, `isolated-projects`, `jacoco-disabled`, `kotlin-multiplatform`, `no-host-plugin`, `no-jacoco-extension`, `no-jacoco-plugin`, `no-packages-derived` | the console line of a task the plugin declines |
+| decline-kind | `gradle-too-old`, `includes-rejected`, `isolated-projects`, `jacoco-disabled`, `kotlin-multiplatform`, `maven-version`, `no-host-plugin`, `no-jacoco-extension`, `no-jacoco-plugin`, `no-packages-derived`, `surefire-in-process`, `surefire-legacy-provider`, `surefire-version` | the console line of a task the plugin declines |
 | digest-silence | `digest-table-absent`, `digest-walk-budget-spent`, `digest-walk-nothing-to-scan`, `digest-walk-unaccounted-output`, `digest-walk-unreadable` | `explain.json` (`digestSilence`): why the compiled-bytes rule compared nothing |
 | filter-verdict | `no`, `yes` | the configuring console line, as `unfiltered=` |
 | forcing-path-origin | `generated-in-sources`, `untracked`, `written-during-capture` | `explain.json` (`forcingPathOrigins`) and the console |

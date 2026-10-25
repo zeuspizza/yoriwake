@@ -23,7 +23,7 @@ class RunPlanTest {
     private fun settings(vararg flags: String) = Settings { name -> if (name in flags) "" else null }
 
     private fun resolve(settings: Settings, widening: RunPlan.Widening = known, scan: CommitScan = clean) =
-        RunPlan.resolve(settings, { widening }, { scan })
+        runPlan(settings, { widening }, { scan })
 
     @Test
     fun `a run records unless selection is asked for`() {
@@ -41,7 +41,7 @@ class RunPlanTest {
 
     @Test
     fun `a recording run asks for neither the base nor the commit messages`() {
-        val plan = RunPlan.resolve(settings(Settings.FULL_RUN), { error("asked for the base") }, { error("scanned") })
+        val plan = runPlan(settings(Settings.FULL_RUN), { error("asked for the base") }, { error("scanned") })
 
         assertEquals(RunPlan.Kind.RECORD, plan.kind)
         assertEquals(emptyList(), plan.declines)
@@ -76,7 +76,7 @@ class RunPlanTest {
 
     @Test
     fun `a map of unknown age reads no message, and the flag still declines`() {
-        val plan = RunPlan.resolve(settings(Settings.SELECT, Settings.FULL_RUN), { unknown }, { error("scanned") })
+        val plan = runPlan(settings(Settings.SELECT, Settings.FULL_RUN), { unknown }, { error("scanned") })
 
         assertEquals(listOf(RefusalKind.FULL_RUN_REQUESTED), plan.declines.map { it.kind })
     }
@@ -84,7 +84,7 @@ class RunPlanTest {
     @Test
     fun `with no map yet the run records anyway, so no message is read`() {
         val noMap = RunPlan.Widening(MapAge.Known(ChangeDetection.Base("HEAD", "test")), null)
-        val plan = RunPlan.resolve(settings(Settings.SELECT), { noMap }, { error("scanned") })
+        val plan = runPlan(settings(Settings.SELECT), { noMap }, { error("scanned") })
 
         assertEquals(emptyList(), plan.declines)
     }
@@ -111,7 +111,7 @@ class RunPlanTest {
 
     @Test
     fun `-Pyoriwake_observe=false is a recording run`() {
-        val plan = RunPlan.resolve(
+        val plan = runPlan(
             Settings { if (it == Settings.OBSERVE) "false" else null }, { error("asked for the base") }, { error("scanned") },
         )
 
@@ -129,7 +129,7 @@ class RunPlanTest {
     @Test
     fun `observing and selecting together fail, naming both flags`() {
         val failure = assertThrows<InvalidUserDataException> {
-            RunPlan.resolve(settings(Settings.SELECT, Settings.OBSERVE), { error("asked for the base") }, { error("scanned") })
+            runPlan(settings(Settings.SELECT, Settings.OBSERVE), { error("asked for the base") }, { error("scanned") })
         }
 
         assertTrue(Settings.SELECT in failure.message.orEmpty(), failure.message)
@@ -151,7 +151,7 @@ class RunPlanTest {
 
     @Test
     fun `-Pyoriwake_complement=false is a recording run`() {
-        val plan = RunPlan.resolve(
+        val plan = runPlan(
             Settings { if (it == Settings.COMPLEMENT) "false" else null }, { error("asked for the base") }, { error("scanned") },
         )
 
@@ -171,7 +171,7 @@ class RunPlanTest {
     fun `a complement run beside a selecting or an observing one fails, naming both flags`() {
         listOf(Settings.SELECT, Settings.OBSERVE).forEach { other ->
             val failure = assertThrows<InvalidUserDataException> {
-                RunPlan.resolve(settings(other, Settings.COMPLEMENT), { error("asked for the base") }, { error("scanned") })
+                runPlan(settings(other, Settings.COMPLEMENT), { error("asked for the base") }, { error("scanned") })
             }
 
             assertTrue(other in failure.message.orEmpty(), failure.message)
@@ -182,7 +182,7 @@ class RunPlanTest {
     @Test
     fun `nothing but the run plan reads the selection and observation flags`() {
         val readers = File("src/main/kotlin").walkTopDown()
-            .filter { it.extension == "kt" && it.name != "RunPlan.kt" && it.name != "Settings.kt" }
+            .filter { it.extension == "kt" && it.name != "RunPlanGradle.kt" && it.name != "Settings.kt" }
             .filter { Regex("""\bsettings\.(select|observe|complement)\b""").containsMatchIn(it.readText()) }
             .map { it.name }
             .toList()
@@ -195,7 +195,7 @@ class RunPlanTest {
         vararg listed: String,
         flags: Array<String> = arrayOf(Settings.SELECT),
         scan: CommitScan = clean,
-    ) = RunPlan.resolve(settings(*flags), { known }, { scan }, listed.toList(), { head })
+    ) = runPlan(settings(*flags), { known }, { scan }, listed.toList(), { head })
 
     @Test
     fun `on a listed branch a selecting run declines, naming the branch, and records`() {
@@ -259,7 +259,7 @@ class RunPlanTest {
     @Test
     fun `with no listed branch the branch is never asked for`() {
         var asked = 0
-        val plan = RunPlan.resolve(settings(Settings.SELECT), { known }, { clean }, emptyList(), {
+        val plan = runPlan(settings(Settings.SELECT), { known }, { clean }, emptyList(), {
             asked++
             CheckedOut.Branch("main")
         })
@@ -271,7 +271,7 @@ class RunPlanTest {
 
     @Test
     fun `a recording run never asks for the branch`() {
-        val plan = RunPlan.resolve(settings(), { error("asked for the base") }, { error("scanned") }, listOf("main"), {
+        val plan = runPlan(settings(), { error("asked for the base") }, { error("scanned") }, listOf("main"), {
             error("asked for the branch")
         })
 
@@ -294,29 +294,29 @@ class RunPlanTest {
     @Test
     fun `an empty entry, or a star alone, fails naming the property`() {
         listOf("  ", "*", "**").forEach { entry ->
-            val refused = assertThrows<InvalidUserDataException> { RunPlan.fullRunBranches(listOf("main", entry), ":") }
+            val refused = assertThrows<InvalidUserDataException> { fullRunBranches(listOf("main", entry), ":") }
             assertTrue("fullRunBranches" in refused.message.orEmpty(), refused.message)
         }
-        assertEquals(listOf("main", "release/*"), RunPlan.fullRunBranches(listOf(" main ", "release/*"), ":"))
+        assertEquals(listOf("main", "release/*"), fullRunBranches(listOf(" main ", "release/*"), ":"))
     }
 
     @Test
     fun `a scheduled full run that is due declines after a marked commit, and is asked only when selecting`() {
         val due = "20 builds since the last full run (limit 20)"
 
-        val plan = RunPlan.resolve(settings(Settings.SELECT), { known }, { marked }, scheduled = { due })
+        val plan = runPlan(settings(Settings.SELECT), { known }, { marked }, scheduled = { due })
         assertEquals(RunPlan.Kind.RECORD, plan.kind)
         assertEquals(listOf(RefusalKind.FULL_RUN_COMMIT, RefusalKind.FULL_RUN_SCHEDULED), plan.declines.map { it.kind })
         assertTrue(RefusalKind.FULL_RUN_SCHEDULED.requested)
         assertEquals(due, plan.declines.last().reason)
 
-        assertEquals(RunPlan.Kind.SELECT, RunPlan.resolve(settings(Settings.SELECT), { known }, { clean }, scheduled = { null }).kind)
-        assertEquals(RunPlan.Kind.RECORD, RunPlan.resolve(settings(), { error("asked for the base") }, { error("scanned") }, scheduled = { error("asked the schedule") }).kind)
+        assertEquals(RunPlan.Kind.SELECT, runPlan(settings(Settings.SELECT), { known }, { clean }, scheduled = { null }).kind)
+        assertEquals(RunPlan.Kind.RECORD, runPlan(settings(), { error("asked for the base") }, { error("scanned") }, scheduled = { error("asked the schedule") }).kind)
     }
 
     @Test
     fun `an observing run stays observing when the schedule is due`() {
-        val plan = RunPlan.resolve(settings(Settings.OBSERVE), { known }, { clean }, scheduled = { "due" })
+        val plan = runPlan(settings(Settings.OBSERVE), { known }, { clean }, scheduled = { "due" })
 
         assertEquals(RunPlan.Kind.OBSERVE, plan.kind)
         assertEquals(RefusalKind.FULL_RUN_SCHEDULED, plan.declines.single().kind)

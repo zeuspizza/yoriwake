@@ -17,6 +17,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- README: the SLSA Build Level 2 badge, linking to how to verify a release. Map: left alone.
 - `narrowPlainRunners` lets a selecting run of a plain JUnit 4 task leave out whole test classes. Map: left alone.
 - `recordSequentially` records an in-JVM parallel suite one test at a time, so it can be selected. Map: left alone.
 - Kover's default agent is tested beside yoriwake; the reference says what its reports show on narrowed runs. Map: left alone.
@@ -49,6 +50,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A test JVM that finds parallelism the plugin missed records nothing. Map: left alone.
 - A test the engine starts and never finishes runs every time and no longer discards the capture. Map: left alone.
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
+- A plain JUnit 4 class whose `@BeforeClass`, `@AfterClass` or class rule fails runs again on the next selecting run. Map: left alone.
 
 ## [0.3.0] - 2026-10-22
 

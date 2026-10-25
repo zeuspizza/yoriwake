@@ -57,6 +57,9 @@ dependencies {
         implementation("org.ow2.asm:asm-tree:$asmVersion")
     }
 
+    // The shared daemon-side logic, bundled into the plugin jar by shadowJar like the libraries above.
+    implementation(project(":core"))
+
     // compileOnly: the daemon calls Selector before the test JVM starts, but an `implementation`
     // dependency would put the agent in the published POM. unpackAgentClasses bundles it instead.
     compileOnly(project(":agent"))
@@ -340,7 +343,9 @@ val mergeSbom by tasks.registering {
                     "name" to "yoriwake-gradle-plugin", "version" to v, "purl" to purl("yoriwake-gradle-plugin"),
                 ),
             ),
-            "components" to components(pluginBom.get().asFile).map { library(it, pluginRelocations) } + agent,
+            // The core module is the plugin's own code, compiled into its jar, not a library it bundles.
+            "components" to components(pluginBom.get().asFile).filterNot { "project_path=" in it["purl"] as String }
+                .map { library(it, pluginRelocations) } + agent,
         )
         // GitHub's attestation refuses a CycloneDX document without a serial number. A random one
         // would make two builds of one commit differ, so it is derived from the document itself.
@@ -454,7 +459,7 @@ tasks.test {
     inputs.files(rootProject.file("docs/reference.md"), rootProject.file("docs/contract.md"))
         .withPropertyName("checkedDocs")
         .withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs.files(layout.projectDirectory.dir("src/main"), rootProject.file("agent/src/main"))
+    inputs.files(layout.projectDirectory.dir("src/main"), rootProject.file("core/src/main"), rootProject.file("agent/src/main"))
         .withPropertyName("mainSources")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 }
@@ -516,16 +521,35 @@ dependencies {
 
 val instrumentedPluginClasses = layout.buildDirectory.dir("coverage/instrumented-classes")
 
+// The shared core's compiled classes and jar: measured and instrumented with the plugin's own, and
+// the jar kept off the daemons' classpath when its instrumented copy stands in for it.
+val coreProject = project(":core")
+val coreClasses = coreProject.tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin")
+    .flatMap { it.destinationDirectory }
+val coreJar = coreProject.tasks.named<Jar>("jar").flatMap { it.archiveFile }
+
+// Core's declarations stay `internal`, so they add nothing to the plugin's public surface: every
+// compilation here reads them as its own module's, as a test compilation reads main's.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach { friendPaths.from(coreClasses, coreJar) }
+
+// The published sources cover every class the jar carries, core's included.
+tasks.withType<Jar>().matching { it.name == "sourcesJar" }.configureEach { from(coreProject.layout.projectDirectory.dir("src/main/kotlin")) }
+
 val instrumentPluginClasses by tasks.registering(JavaExec::class) {
     description = "Instruments the plugin's classes for coverage in the functional suite's TestKit daemons."
     val compiled = tasks.compileKotlin.flatMap { it.destinationDirectory }
+    val core = coreClasses
     val instrumented = instrumentedPluginClasses
     inputs.dir(compiled)
+    inputs.dir(core)
     outputs.dir(instrumented)
     classpath(coverageInstrumenter)
     mainClass = "org.jacoco.cli.internal.Main"
     argumentProviders += CommandLineArgumentProvider {
-        listOf("instrument", compiled.get().asFile.path, "--dest", instrumented.get().asFile.path, "--quiet")
+        listOf(
+            "instrument", compiled.get().asFile.path, core.get().asFile.path,
+            "--dest", instrumented.get().asFile.path, "--quiet",
+        )
     }
     // A class whose source was deleted must not linger in the copy.
     doFirst { instrumented.get().asFile.deleteRecursively() }
@@ -534,7 +558,11 @@ val instrumentPluginClasses by tasks.registering(JavaExec::class) {
 if (functionalCoverage) {
     tasks.pluginUnderTestMetadata {
         val compiled = tasks.compileKotlin.get().destinationDirectory.get().asFile
-        pluginClasspath.setFrom(instrumentPluginClasses, sourceSets.main.get().runtimeClasspath.filter { it != compiled })
+        val core = coreJar.get().asFile
+        pluginClasspath.setFrom(
+            instrumentPluginClasses,
+            sourceSets.main.get().runtimeClasspath.filter { it != compiled && it != core },
+        )
     }
 }
 
@@ -668,7 +696,8 @@ gradlePlugin {
 }
 
 // One report and one gate over the unit tests and both functional suites, measured over this
-// module's own compiled Kotlin: the bundled agent and relocated ASM would swamp the number.
+// module's own compiled Kotlin and the shared core's: the bundled agent and relocated ASM would
+// swamp the number.
 // Coverage finds code no test executes; the guards, not coverage, prove the safety rules.
 val gatedFunctionalTasks = listOf("functionalTest", "functionalTestGradle9")
 // CI runs each functional suite in shards, in jobs of their own, and gates in a later job on the
@@ -677,7 +706,7 @@ val coverageData = providers.gradleProperty("yoriwake.coverage.data").orNull?.le
 
 listOf(tasks.jacocoTestReport, tasks.jacocoTestCoverageVerification).forEach { coverageTask ->
     coverageTask.configure {
-        classDirectories.setFrom(tasks.compileKotlin.flatMap { it.destinationDirectory })
+        classDirectories.setFrom(tasks.compileKotlin.flatMap { it.destinationDirectory }, coreClasses)
         executionData.setFrom()
         if (coverageData != null) {
             executionData.from(fileTree(coverageData) { include("**/*.exec") })

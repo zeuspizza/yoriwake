@@ -2,18 +2,19 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore.Protection
+import io.github.zeuspizza.yoriwake.gradle.change.validated
 import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
-import org.gradle.api.InvalidUserDataException
-import org.gradle.testfixtures.ProjectBuilder
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
-import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.gradle.api.InvalidUserDataException
+import org.gradle.testfixtures.ProjectBuilder
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.io.TempDir
 
 class PathIgnoreTest {
 

@@ -2,9 +2,11 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
+import io.github.zeuspizza.yoriwake.gradle.change.cachedRawGit
+import io.github.zeuspizza.yoriwake.gradle.change.changedPaths
+import io.github.zeuspizza.yoriwake.gradle.change.configuredListing
+import io.github.zeuspizza.yoriwake.gradle.change.head
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
-import org.gradle.testfixtures.ProjectBuilder
-import org.junit.jupiter.api.Test
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -12,6 +14,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import org.gradle.testfixtures.ProjectBuilder
+import org.junit.jupiter.api.Test
 
 // Asks git once per build rather than once per `Test` task. These tests check provider identity,
 // not answers: git returns the same answer however often it is asked.

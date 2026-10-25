@@ -123,7 +123,7 @@ CLASS_VERDICTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/
 JUNIT4_SELECTION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Selection.java"
 LOADED_CLASS_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/LoadedClassRecorder.java"
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
-CHANGE_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
+CHANGE_DETECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
 FILTER_RULE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/FilterRule.java"
 RULES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Rules.java"
@@ -134,27 +134,33 @@ TEST_TASK_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/w
 JACOCO_SCOPING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/JacocoScoping.kt"
 AUDIT_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/AuditTask.kt"
 DECODE_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/DecodeTask.kt"
+DECODE_RUN = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/DecodeRun.kt"
 AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contract/AgentContract.java"
 # ChangeSelection.kt was split by responsibility; each anchor followed its function, unchanged.
-SELECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
-CLASSPATH_SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
-NOT_READ = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
-PATH_IGNORE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
+SELECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
+CLASSPATH_SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
+NOT_READ = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
+PATH_IGNORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
+SELECTING_STEP = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/SelectingStep.kt"
+SELECTION_SETUP = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/SelectionSetup.kt"
 PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
-CLASSPATH_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
-TRACKED_TEXT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/TrackedText.kt"
-WORKING_TREE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
-MAP_PROVENANCE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/MapProvenance.kt"
+CLASSPATH_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
+WORKING_TREE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
+WORKING_TREE_GRADLE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTreeGradle.kt"
+PATH_IGNORE_VALIDATION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnoreValidation.kt"
+MAP_PROVENANCE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/MapProvenance.kt"
+TRACKED_TEXT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/TrackedText.kt"
 DEVELOCITY_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/DevelocityDetection.kt"
-FORCING_PATHS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ForcingPaths.kt"
+FORCING_PATHS = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ForcingPaths.kt"
 PROJECT_FACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ProjectFacts.kt"
 CLASSPATH_FACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ClasspathFacts.kt"
-COVERAGE_DECODER = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CoverageDecoder.kt"
+COVERAGE_DECODER = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CoverageDecoder.kt"
 SETTINGS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/Settings.kt"
-RUN_PLAN = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/RunPlan.kt"
+RUN_PLAN = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/RunPlan.kt"
 CAPTURE_SESSION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureSession.java"
+JUNIT4_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Events.java"
 TESTNG_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/TestNgEvents.java"
 TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/TouchRecorder.java"
 # Whether a class is the JDK's own, judged by the runtime image rather than by the loader alone.
@@ -168,30 +174,33 @@ CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
 PARALLEL_READ_BACK = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/ParallelReadBack.java"
 MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
+MAVEN_DECLINES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Declines.kt"
+MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ChainedListener.kt"
+MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
-SELECTION_RECORD = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
-CAPTURE_DECISION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CaptureDecision.kt"
+SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
+CAPTURE_DECISION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CaptureDecision.kt"
 EXPLAIN_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/ExplainTask.kt"
-ENVIRONMENT_FINGERPRINT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
-JVM_ARG_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
-CLASS_FILE_CEILING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
-SCHEDULE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/Schedule.kt"
+ENVIRONMENT_FINGERPRINT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
+JVM_ARG_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
+CLASS_FILE_CEILING = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
+SCHEDULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/Schedule.kt"
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
 # with it, four columns left: the functions were members of `object Audit` and are now top level.
-AUDIT_COMPUTE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
-AUDIT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt"
+AUDIT_COMPUTE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
+AUDIT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt"
 # The payback engine moved out of Audit.kt; its mutation anchors moved with it, which is the
 # check that the move changed no behaviour -- an anchor left behind refuses before any suite runs.
-PAYBACK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
-SCOPE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InstrumentationScope.kt"
+PAYBACK = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
+SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InstrumentationScope.kt"
 CAFFEINE_PROJECT = "bench/projects/caffeine.toml"
 QUALIFY_SRC = "bench/qualify.py"
 CONFIG_COST = "bench/config_cost.py"
-TASK_ARTIFACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/TaskArtifacts.kt"
-DIGEST_VISITOR = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/DigestVisitor.kt"
-RECORDABILITY = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/Recordability.kt"
-ABSENCE_EVIDENCE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/AbsenceEvidence.kt"
+TASK_ARTIFACTS = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/TaskArtifacts.kt"
+DIGEST_VISITOR = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/DigestVisitor.kt"
+RECORDABILITY = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/Recordability.kt"
+ABSENCE_EVIDENCE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/AbsenceEvidence.kt"
 PY_ISOLATION = "bench/isolation.py"
 TARGET_ORDERING = "bench/target_ordering.py"
 MUTATIONS_SRC = "bench/mutations.py"
@@ -547,6 +556,21 @@ def functional_suite(test_class=None):
     return named
 
 
+def maven_suite():
+    """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks."""
+    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
+                   "--tests", "*ForkingFunctionalTest*", "--rerun"])
+    if done.returncode == 0:
+        return []
+    lines = (done.stdout + done.stderr).splitlines()
+    named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
+    if not named:
+        compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
+            if compile_errors else ["the Maven suite failed without naming a test"]
+    return named
+
+
 def decoder_suite():
     """The decoder's own tests, where a map that parses and means something else is caught."""
     done = gradle([":plugin:test", "--tests", "*CoverageDecoderTest*", "--rerun"])
@@ -677,6 +701,9 @@ SUITES = [
     ("configuration guards", guard_suite, 17),
     ("python", python_suite, 33),
     ("functional", functional_suite, 68),
+    # An estimate: the three classes' twenty-seven tests, about 8s each warm on an Apple M1 Max, plus
+    # the plugin's publish, until a guard run measures it.
+    ("maven", maven_suite, 230),
     # 50s wall for one unmutated run, the plugin and agent compiled from
     # scratch in a fresh worktree; its eight tests took 39s of it.
     ("break", break_suite, 50),
@@ -721,7 +748,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from HostCoverageFunctionalTest by local run time (40 s to its 15 s), until an
     # every-guard run measures it.
     "KoverFunctionalTest": 160,
-    "MapDatingFunctionalTest": 229,
+    # Plus 8 s measured locally for the two plain JUnit 4 class-failure tests, until an every-guard
+    # run measures it again.
+    "MapDatingFunctionalTest": 237,
     "MapProvenanceFunctionalTest": 98,
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
     # every-guard run measures it.
@@ -1269,7 +1298,7 @@ MUTATIONS = [
      "        if (declaresChangedPath(descriptor)) {",
      "        if (false) {",
      agent_suite, "a test whose declared dependency matches a changed path is selected"),
-    ("a task's declared dependency no longer runs it in full", SELECTION_WIRING,
+    ("a task's declared dependency no longer runs it in full", SELECTING_STEP,
      "        if (declaredHit != null && !widening.forces) {",
      "        if (false && declaredHit != null && !widening.forces) {",
      functional_suite, "a path the build declares for a task runs that task in full"),
@@ -1525,15 +1554,15 @@ MUTATIONS = [
     # And the build files the old pathspec covered. Dropping them was the review's sharpest find:
     # `agent/build.gradle.kts` pins the ASM version the agent instruments with.
     ("the digest stops covering the plugin and agent build files", PY_SRC,
-     'SELECTOR_SOURCE_FILES = ("plugin/build.gradle.kts", "agent/build.gradle.kts")',
+     'SELECTOR_SOURCE_FILES = ("plugin/build.gradle.kts", "core/build.gradle.kts", "agent/build.gradle.kts")',
      'SELECTOR_SOURCE_FILES = ()',
      python_suite, "did not move the digest"),
     # THE SELECTOR DIGEST. It decides whether a results file still describes the
     # selector in the tree, so getting it wrong publishes rows measured by a different selector as
     # current evidence -- the exact failure the stale check exists to prevent, wearing its name.
     ("the digest stops covering the agent, so agent-only changes read fresh", PY_SRC,
-     'SELECTOR_SOURCE_DIRS = ("plugin/src/main", "agent/src/main")',
-     'SELECTOR_SOURCE_DIRS = ("plugin/src/main",)',
+     'SELECTOR_SOURCE_DIRS = ("plugin/src/main", "core/src/main", "agent/src/main")',
+     'SELECTOR_SOURCE_DIRS = ("plugin/src/main", "core/src/main")',
      python_suite, "did NOT move the digest"),
     # And the absent-digest REASON. Note what this guard does NOT claim: with the branch removed
     # the verdict is still stale, because `None != current` is also true -- so safety does not
@@ -1646,9 +1675,11 @@ MUTATIONS = [
     # An SBOM that drifts from the jar it describes is worse than none, and nothing a user runs would
     # notice: the check on every build is what notices, so each way of drifting must trip it.
     ("the SBOM drops a library the plugin jar bundles", PLUGIN_BUILD,
-     '"components" to components(pluginBom.get().asFile).map { library(it, pluginRelocations) } + agent,',
-     '"components" to components(pluginBom.get().asFile).filter { it["name"] != "asm-tree" }'
-     '.map { library(it, pluginRelocations) } + agent,',
+     '.filterNot { "project_path=" in it["purl"] as String }',
+     '.filterNot { "project_path=" in it["purl"] as String }.filter { it["name"] != "asm-tree" }',
+     sbom_suite, "the SBOM lists"),
+    ("the SBOM lists the core module as a library the plugin jar bundles", PLUGIN_BUILD,
+     '.filterNot { "project_path=" in it["purl"] as String }', '',
      sbom_suite, "the SBOM lists"),
     ("the SBOM stops naming where ASM was relocated", PLUGIN_BUILD,
      'val packageOf = mapOf("org.jacoco:org.jacoco.core" to "org.jacoco.core", "org.ow2.asm" to "org.objectweb.asm")',
@@ -1678,7 +1709,7 @@ MUTATIONS = [
      "                add(byTest, test.testId(), Rule.OWN_CLASS_CHANGED);",
      "",
      agent_suite, "an edited test class names own-class-changed on its tests"),
-    ("the plugin stops handing changed bytes to the test JVM", SELECTION_WIRING,
+    ("the plugin stops handing changed bytes to the test JVM", SELECTING_STEP,
      "                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,",
      "                CHANGED_BYTES_PROPERTY to emptySet<String>(),",
      functional_suite, "a class rewritten after compilation selects the tests that recorded it"),
@@ -1696,19 +1727,19 @@ MUTATIONS = [
     # A selecting run filters the working tree once per build while configuring, memoised by build
     # root and excluded directories. Keyed without the root, a build sharing the memo would be
     # handed another's listing and miss its own new ignored files.
-    ("one build's working-tree listing is handed to another", WORKING_TREE,
-     '        val key = YoriwakePlugin.WORKTREE_KEY + rootDir.path + "\\u0000" +',
-     '        val key = YoriwakePlugin.WORKTREE_KEY +',
+    ("one build's working-tree listing is handed to another", WORKING_TREE_GRADLE,
+     '    val key = YoriwakePlugin.WORKTREE_KEY + rootDir.path + "\\u0000" +',
+     '    val key = YoriwakePlugin.WORKTREE_KEY +',
      unit_suite, "two builds in one memo each get their own working-tree listing"),
     # Filtered once per `Test` task, the listing took minutes on spring-boot's 527 tasks.
-    ("the working tree is filtered once per Test task again", WORKING_TREE,
-     "        return memo.value(key) { memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered) }",
-     "        return memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered)",
+    ("the working tree is filtered once per Test task again", WORKING_TREE_GRADLE,
+     "    return memo.value(key) { memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered) }",
+     "    return memo.time(YoriwakePlugin.WORKTREE_LISTING_COUNTER, filtered)",
      guard_suite, "the git command set does not grow with the number of projects"),
-    ("the unmappable paths are passed on the test JVM's command line again", SELECTION_WIRING,
-     "        writeChangeSet(\n            test, changeSetFile,",
-     "        test.systemProperty(UNMAPPABLE_PATHS_PROPERTY, scoped.change.unmappablePaths.sorted().joinToString(\",\"))\n"
-     "        writeChangeSet(\n            test, changeSetFile,",
+    ("the unmappable paths are passed on the test JVM's command line again", SELECTING_STEP,
+     "        writeChangeSet(\n            host, changeSetFile,",
+     "        host.property(UNMAPPABLE_PATHS_PROPERTY, scoped.change.unmappablePaths.sorted().joinToString(\",\"))\n"
+     "        writeChangeSet(\n            host, changeSetFile,",
      functional_suite, "a change set longer than a command line still starts the test JVM"),
     # The change set left the test JVM's command line, and with it the task's inputs: Gradle then
     # found a task whose change had grown to a forcing one up to date, and ran nothing.
@@ -1734,9 +1765,9 @@ MUTATIONS = [
     # The base was widened only to the common ancestor with the capture stamp. A map captured on
     # another branch, then used on one forked before that branch's commit, recorded a resource the
     # ancestor shares with the tree, and the test that reads it was skipped.
-    ("a map captured off this history selects without the capture commit's diff", SELECTION_WIRING,
-     "    val stamp = age.stamp\n",
-     "    val stamp: String? = null\n",
+    ("a map captured off this history selects without the capture commit's diff", SELECTION_SETUP,
+     "        val stamp = age.stamp\n",
+     "        val stamp: String? = null\n",
      functional_suite, "a map captured on another branch counts what differs from its capture commit"),
     # The comparison left out every path under build output or Gradle's state, tracked ones too, so
     # an edit to a committed TestKit fixture under a `build/` selected on the configured change set.
@@ -1751,9 +1782,9 @@ MUTATIONS = [
      functional_suite, "a change set git cannot compute again when the task runs"),
     # Fallbacks never overwrite a map recorded in isolation. The run git could not report changes
     # for kept capture as configured, so its decode merged shared-JVM records into that map.
-    ("a run git cannot report changes for rewrites an isolated map", SELECTION_WIRING,
-     "            applyCaptureDecision(\n                test, mapDir, refusalJacoco, observing,\n                decideCapture(",
-     "            if (false) applyCaptureDecision(\n                test, mapDir, refusalJacoco, observing,\n                decideCapture(",
+    ("a run git cannot report changes for rewrites an isolated map", SELECTING_STEP,
+     '        // left as it is, as by every other fallback.\n        applyCapture(\n',
+     '        // left as it is, as by every other fallback.\n        if (false) applyCapture(\n',
      functional_suite, "a selecting run git cannot report changes for leaves an isolated map alone"),
     ("a change-set file that cannot be read narrows as an empty change set", FILTER_RULE,
      "            if (AgentContract.REFUSED_PROPERTY.equals(name)) {\n                return refusal;",
@@ -2466,34 +2497,34 @@ MUTATIONS = [
      functional_suite, "the init script declines Isolated Projects"),
     # A capture that cannot date the map leaves it as it was: merged undated, its records would
     # describe a commit no diff covers, and a revert would hide the difference.
-    ("a capture that cannot date the map still merges its records", DECODE_TASK,
+    ("a capture that cannot date the map still merges its records", DECODE_RUN,
      "        if (!datesMap && hasWorkerRecords) {",
      "        if (false) {",
      # A capture whose fork halted, not a filtered run: since a build-script filter dates the map like
      # `--tests`, a filtered run's next run already refuses, and the gate is not what decides there.
      functional_suite, "a revert after a capture whose fork halted runs the test it hid"),
-    ("a capture that cannot date the map still merges its records, fail-fast", DECODE_TASK,
+    ("a capture that cannot date the map still merges its records, fail-fast", DECODE_RUN,
      "        if (!datesMap && hasWorkerRecords) {",
      "        if (false) {",
      functional_suite, "a fail-fast capture leaves the map byte-identical"),
-    ("a HEAD that moved during a capture is trusted", DECODE_TASK,
+    ("a HEAD that moved during a capture is trusted", DECODE_RUN,
      "        val headMoved = startHead != headNow",
      "        val headMoved = false",
      functional_suite, "a commit during a capture in a repository without reflogs leaves the map as it was"),
-    ("a reflog that changed during a capture is ignored", DECODE_TASK,
+    ("a reflog that changed during a capture is ignored", DECODE_RUN,
      "        val reflogMoved = startReflogs != reflogsNow",
      "        val reflogMoved = false",
      functional_suite, "a checkout to another branch and back during a capture leaves the map as it was"),
     # What a discarded capture still keeps: a failure only ever runs a test, and without it a test
     # that failed under a filter would be skipped on its older passing record.
     # Re-anchored: the decode also passes the classes Gradle's report saw fail.
-    ("a discarded capture forgets the failures it saw", DECODE_TASK,
+    ("a discarded capture forgets the failures it saw", DECODE_RUN,
      "            val failures = runCatching { CoverageDecoder.carryFailures(mapDir, reported) }.getOrElse { problem ->",
      "            val failures = runCatching { 0 }.getOrElse { problem ->",
      functional_suite, "a class whose teardown fails after its tests passed still runs on the next unrelated change"),
     # The other half of what a discarded capture keeps: a failure only Gradle's report holds, from a
     # test JVM stopped before its records were written.
-    ("a discarded capture forgets the failures only Gradle's report saw", DECODE_TASK,
+    ("a discarded capture forgets the failures only Gradle's report saw", DECODE_RUN,
      "                JUnitXmlFailures.classes(junitXml) { report, problem ->",
      "                JUnitXmlFailures.classes(null) { report, problem ->",
      functional_suite, "a failure only Gradle's report kept still runs on the next unrelated change"),
@@ -2503,7 +2534,7 @@ MUTATIONS = [
      functional_suite, "a failure only Gradle's report kept still runs on the next unrelated change"),
     # A path touched during a dating capture stays in the change set until the next one.
     # Anchored on the decode handing the whole re-observation through.
-    ("a tree that moved during a capture is trusted", DECODE_TASK,
+    ("a tree that moved during a capture is trusted", DECODE_RUN,
      "                        WorkingTree.readStart(startStats, pending?.statsId),\n                    )\n",
      "                        WorkingTree.readStart(startStats, pending?.statsId),\n                    )?.let { "
      "WorkingTree.Reobserved(WorkingTree.readStart(datedSnapshot, pending?.snapshotId) ?: it.undated, it.moved) }\n",
@@ -2520,7 +2551,7 @@ MUTATIONS = [
     # A forced run names where each untracked forcing path came from, and only says so: the
     # classification never reaches the change set, and only a path the capture saw move is offered
     # the build-directory remedy.
-    ("test-written files leave the change set", SELECTION_WIRING,
+    ("test-written files leave the change set", SELECTING_STEP,
      "                UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,",
      "                UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths.filterNot { "
      "forcing.origins[it] == ForcingPaths.Origin.WRITTEN_DURING_CAPTURE },",
@@ -2635,7 +2666,7 @@ MUTATIONS = [
     ("a read of an entry stops counting as a read of the moved file holding it", SELECTOR,
      'file.startsWith(path + "!/") || path.startsWith(file + "!/")', 'file.startsWith(path + "!/")',
      agent_suite, "a read of an entry of a moved file reads it"),
-    ("the decode writes reads without the root", DECODE_TASK,
+    ("the decode writes reads without the root", DECODE_RUN,
      "                rootDir = rootDir,",
      "                rootDir = null,",
      functional_suite, "a build time stamped into a sibling jar's manifest that no test reads runs nothing more"),
@@ -2683,7 +2714,7 @@ MUTATIONS = [
      "        declineUnderDevelocity(project, test, mapDir, agent)\n",
      "",
      functional_suite, "a test task with Test Distribution enabled declines and leaves the map byte-identical"),
-    ("a declined run's records are decoded", DECODE_TASK,
+    ("a declined run's records are decoded", DECODE_RUN,
      "        if (develocityDeclined.delete()) {",
      "        if (false) {",
      functional_suite, "a declined run's decode reports the decline and nothing else"),
@@ -2707,8 +2738,8 @@ MUTATIONS = [
      "",
      functional_suite, "a declined run with in-JVM parallelism keeps its token and the host's JaCoCo"),
     ("the unknown-age fallback captures on a declined run", SELECTION_WIRING,
-     "    test.doFirst { task ->\n        if (refusedAtExecution(test)) return@doFirst\n        // A map recorded in isolation",
-     "    test.doFirst { task ->\n        // A map recorded in isolation",
+     '    test.doFirst {\n        if (refusedAtExecution(test)) return@doFirst\n        // Read here, where',
+     '    test.doFirst {\n        // Read here, where',
      functional_suite, "a declined selecting run on a map of unknown age writes nothing"),
     # Tests named with `--tests` all run on a selecting run: selection used to drop a named
     # test the change did not reach, and the build failed on "No tests found".
@@ -2777,7 +2808,7 @@ MUTATIONS = [
      functional_suite, "an observing run executes every test and records what selection would have left out"),
     # ...and captures as a recording run does: taking a selecting run's capture decision leaves a
     # narrowed observation's map uncaptured, and the map it reports against stops refreshing.
-    ("an observing run takes a selecting run's capture decision", SELECTION_WIRING,
+    ("an observing run takes a selecting run's capture decision", SELECTING_STEP,
      "    val decision = if (observing) OBSERVING_CAPTURE else decided\n",
      "    val decision = if (false) OBSERVING_CAPTURE else decided\n",
      functional_suite, "an observing run writes the map a recording run writes on the same state"),
@@ -2862,7 +2893,7 @@ MUTATIONS = [
      "        if (concurrent != null) {",
      "        if (false && concurrent != null) {",
      agent_suite, "a test JVM whose tests may run concurrently captures nothing and says why"),
-    ("a worker that captured nothing over parallelism lets the decode go on", DECODE_TASK,
+    ("a worker that captured nothing over parallelism lets the decode go on", DECODE_RUN,
      "        if (unconfirmed.isNotEmpty()) {",
      "        if (false) {",
      functional_suite, "parallel execution a host's doFirst turns on records nothing"),
@@ -2891,7 +2922,7 @@ MUTATIONS = [
      "            val platform = test.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions\n",
      "            val platform = true\n",
      functional_suite, "the flag leaves a parallel TestNG suite declined, and says it covers the JUnit Platform only"),
-    ("a run that kept its parallel scheduling is not counted by the schedule", DECODE_TASK,
+    ("a run that kept its parallel scheduling is not counted by the schedule", DECODE_RUN,
      "            if (marker.delete()) recordSchedule(taskPath, fullRun = datesTheMap && (!selecting || fullRunMarker.delete()))\n",
      "            marker.delete()\n",
      functional_suite, "flagged selecting runs count toward the scheduled full run"),
@@ -2951,8 +2982,8 @@ MUTATIONS = [
      "        File(mapDir, AgentContract.SELECTION_FILE).delete()\n        return Outcome.Removed(reason)",
      "        return Outcome.Removed(reason)",
      unit_suite, "a selecting run that did not narrow removes the record"),
-    ("the decode never removes an earlier selection record", DECODE_TASK,
-     "        if (asksSelection.getOrElse(false) && marker.isFile) {",
+    ("the decode never removes an earlier selection record", DECODE_RUN,
+     "        if (asksSelection && marker.isFile) {",
      "        if (false) {",
      functional_suite, "a selecting run that runs everything removes an earlier run's record"),
     ("a new selection record is not a complement run's input", SELECTION_WIRING,
@@ -2991,8 +3022,8 @@ MUTATIONS = [
      functional_suite, "a record that cannot be read runs every test, as having no record"),
     # Not a way to skip a test: a complement run that captured nothing on purpose is decoded as one
     # whose listener never loaded, and warns that it recorded no coverage.
-    ("a complement run's decode reads it as a capture", DECODE_TASK,
-     "        if (complementing.getOrElse(false) && complemented.isFile) {",
+    ("a complement run's decode reads it as a capture", DECODE_RUN,
+     "        if (complementing && complemented.isFile) {",
      "        if (false) {",
      functional_suite, "a selecting run and its complement at one commit run every test exactly once"),
     ("a planned undetermined decline skips the parallelism refusal", SELECTION_WIRING,
@@ -3038,17 +3069,17 @@ MUTATIONS = [
      functional_suite, "a map that differs from its trusted digest runs every test"),
     # A change above the large-change threshold runs everything without its analysis; counted
     # against the requested base, or an aging map would turn every small change into a full run.
-    ("a change above the large-change threshold is analysed", SELECTION_WIRING,
-     "        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->",
-     "        LargeChange.refusal(count, Int.MAX_VALUE, asked.ref)?.let { reason ->",
+    ("a change above the large-change threshold is analysed", SELECTION_SETUP,
+     "            LargeChange.refusal(counted(asked.ref, changed), largeChange, asked.ref)?.let { reason ->",
+     "            LargeChange.refusal(counted(asked.ref, changed), Int.MAX_VALUE, asked.ref)?.let { reason ->",
      functional_suite, "more changed paths than the threshold run everything and record the map"),
-    ("the large-change threshold counts the change widened to the map's age", SELECTION_WIRING,
-     "    val asked = runPlan.widening.requested ?: widened\n",
-     "    val asked = widened\n",
+    ("the large-change threshold counts the change widened to the map's age", SELECTION_SETUP,
+     "        val asked = widening.requested ?: widened\n",
+     "        val asked = widened\n",
      functional_suite, "an old map does not push a small change over the threshold"),
     ("the large-change threshold counts paths pathIgnore takes out", SELECTION_WIRING,
-     "            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(asked.ref), changed, buildMemo),",
-     "            changed, pathIgnoreDeclaration(project, emptyList(), sourceDirs, listOf(asked.ref), changed, buildMemo),",
+     "            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),",
+     "            changed, pathIgnoreDeclaration(project, emptyList(), sourceDirs, listOf(base), changed, buildMemo),",
      functional_suite, "paths pathIgnore takes out are not counted"),
     ("the provenance check is not registered", SELECTION_WIRING,
      "        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)\n",
@@ -3086,7 +3117,7 @@ MUTATIONS = [
     # The divisor, end to end. The unit-suite mutation beside this one proves the audit REFUSES an
     # unknown worker count; this one proves the count that arrives is the one that really forked,
     # which no test asserted until a two-class fixture existed to fork over.
-    ("the decode finalizer stops recording the real worker count", DECODE_TASK,
+    ("the decode finalizer stops recording the real worker count", DECODE_RUN,
      "Audit.TaskFacts.recordWorkers(mapDir, decoded.workers)",
      "Audit.TaskFacts.recordWorkers(mapDir, 1)", functional_suite,
      "parallel forks are not refused"),
@@ -3254,9 +3285,9 @@ MUTATIONS = [
      "    val keepsIsolation = mode != MODE_SHARED",
      '    val keepsIsolation = mode == "isolated"',
      unit_suite, "a full run over a map recorded in isolation, wholly or in part, does not instrument"),
-    ("a run refused over the map's age captures over a map recorded in isolation", SELECTION_WIRING,
-     "        ).takeUnless { it.capture }\n        // Read here, where",
-     "        ).takeUnless { true }\n        // Read here, where",
+    ("a run refused over the map's age captures over a map recorded in isolation", SELECTING_STEP,
+     '        ).takeUnless { it.capture }\n',
+     '        ).takeUnless { true }\n',
      functional_suite, "a selecting run that refuses over the map's age leaves an isolated map alone"),
     # Cost, not safety: a map selection cannot read holds nothing isolation could keep.
     ("an unusable map labelled isolated is never rebuilt", CAPTURE_DECISION,
@@ -3751,9 +3782,9 @@ MUTATIONS = [
      functional_suite, "a changed file notReadByTests lists is no change"),
     # PATHIGNORE. A declared path leaves the change set; what compiles or what the build reads
     # never does, every use is named, and a read the map recorded runs the tests after it.
-    ("an entry outside pathIgnore's grammar is accepted", PATH_IGNORE,
-     "        problem(entry)?.let { why ->",
-     "        problem(entry)?.takeIf { false }?.let { why ->",
+    ("an entry outside pathIgnore's grammar is accepted", PATH_IGNORE_VALIDATION,
+     "    problem(entry)?.let { why ->",
+     "    problem(entry)?.takeIf { false }?.let { why ->",
      unit_suite, "entries written for another dialect fail the build naming pathIgnore and the entry"),
     ("a pathIgnore star crosses directories", PATH_IGNORE,
      '        if (pattern[p] == "**") return (s..segments.size).any { matchFrom(pattern, p + 1, segments, it) }',
@@ -3783,7 +3814,7 @@ MUTATIONS = [
      "        if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),",
      "        emptySet(),",
      functional_suite, "a declared path outside a build below the repository root stays in the change set"),
-    ("a change set pathIgnore emptied is not accounted for", SELECTION_WIRING,
+    ("a change set pathIgnore emptied is not accounted for", SELECTING_STEP,
      "            accountedFor(paths, scoped).toString(),",
      "            accountedFor(scoped.ignore.kept, scoped).toString(),",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
@@ -3935,9 +3966,9 @@ MUTATIONS = [
      "    if (false) refuseAChangedEnvironment(test, mapDir, environment, jacoco, changeSetFile, observing)",
      functional_suite, "another value of a system property runs everything, and no value is printed or stored"),
     # Without it the old fingerprint stays, and every later selecting run refuses again.
-    ("a refusal over the environment calls the map current and records nothing", SELECTION_WIRING,
-     "                ageKnown = false,\n            ),\n        )\n    }\n}\n\n/** [EnvironmentFingerprint.check], with",
-     "                ageKnown = true,\n            ),\n        )\n    }\n}\n\n/** [EnvironmentFingerprint.check], with",
+    ("a refusal over the environment calls the map current and records nothing", SELECTING_STEP,
+     "                ageKnown = false,\n            ),\n        )\n    }\n\n    /**\n     * Hands the list-valued",
+     "                ageKnown = true,\n            ),\n        )\n    }\n\n    /**\n     * Hands the list-valued",
      functional_suite, "a map recorded on another JDK runs everything, names both, and records this one"),
     ("environmentInclude adds no variable to the comparison", TEST_TASK_WIRING,
      '            validNames(extension.environmentInclude.getOrElse(emptyList()), "environmentInclude", project.path),',
@@ -4271,8 +4302,8 @@ MUTATIONS = [
      "| `yoriwake.base=<ref>` |", "| `yoriwake.baseRef=<ref>` |", reference_suite,
      "every property the table lists is read"),
     ("Settings reads a flag the reference's Properties table does not list", SETTINGS,
-     '        const val BASE = "yoriwake.base"\n',
-     '        const val BASE = "yoriwake.base"\n        const val BASE_REF = "yoriwake.baseRef"\n',
+     '        const val BASE = SettingNames.BASE\n',
+     '        const val BASE = SettingNames.BASE\n        const val BASE_REF = "yoriwake.baseRef"\n',
      reference_suite, "every flag the plugin reads is listed"),
     ("the reference names a -P flag Settings does not read", REFERENCE_DOC,
      "**`-Pyoriwake.fullRun`**", "**`-Pyoriwake.fullrun`**", reference_suite,
@@ -4321,6 +4352,51 @@ MUTATIONS = [
     ("the reference quotes a printed line the code does not print", REFERENCE_DOC,
      "`:test map updated: N records captured, M known`", "`:test map refreshed: N records captured, M known`",
      reference_suite, "every printed line is printed"),
+    # forkCount=0 runs Surefire inside Maven's own JVM, which no agent joins: it must be declined
+    # by name rather than wired and silently capture nothing.
+    ("forkCount 0 is not declined", MAVEN_DECLINES,
+     "        if (forkCount != null && forks(forkCount) == 0) {",
+     "        if (false) {",
+     maven_suite, "forkCount 0 runs Surefire inside Maven's own JVM and is declined"),
+    # Surefire fails its mojo when a test fails, and the decode must run then too, as Gradle's
+    # finalizer does: otherwise a failing capture never reaches the map.
+    ("the Maven decode does not run after a failed test", MAVEN_LISTENER,
+     "    override fun mojoFailed(event: ExecutionEvent) {\n        recording.ended(event, succeeded = false)\n",
+     "    override fun mojoFailed(event: ExecutionEvent) {\n",
+     maven_suite, "a run with a failing test still decodes and dates the map"),
+    # Classes this session did not compile cannot be vouched for, so their run captures nothing.
+    ("a Maven run that compiled nothing captures", MAVEN_RECORDING,
+     "        if (!compiledHere(project)) {",
+     "        if (false) {",
+     maven_suite, "a goal typed on its own did not compile the classes and captures nothing"),
+    # A reactor module this invocation did not build came from a repository: its bytes are not the
+    # checkout's, so the run must not stamp them at HEAD.
+    ("a Maven run against a module from a repository captures", MAVEN_RECORDING,
+     "        if (outside.isNotEmpty()) {",
+     "        if (false) {",
+     maven_suite, "a module built against a reactor module from a repository captures nothing"),
+    # Surefire hands the JUnit Platform its parallel switch through its own parameters: missed there,
+    # interleaved tests would blend into one another's coverage.
+    ("Surefire's parameters are left out of the parallelism check", MAVEN_RECORDING,
+     "        return ParallelismDetector.detect(parameters, arguments(resolvedArgLine(project, configuration)), classpath)",
+     "        return ParallelismDetector.detect(emptyMap(), arguments(resolvedArgLine(project, configuration)), classpath)",
+     maven_suite, "parallel execution enabled for the JUnit Platform is declined and captures nothing"),
+    # What reaches the JVM is the authority: an argLine without JaCoCo's agent records no coverage.
+    ("a Maven argLine without JaCoCo's agent is captured", MAVEN_RECORDING,
+     "        if (!reachesJacoco(project, configuration)) {",
+     "        if (false) {",
+     maven_suite, "an argLine that drops JaCoCo's agent captures nothing"),
+    # JUnit 4 reports a failing @BeforeClass, @AfterClass or @ClassRule against the class: each
+    # test beneath it is recorded failed, so a capture that dates the map leaves none known to pass.
+    ("a JUnit 4 class-level failure is dropped", JUNIT4_EVENTS,
+     "            } else if (classNameOf(description) != null) {",
+     "            } else if (false) {",
+     functional_suite, "a plain JUnit 4 class whose teardown fails after its tests passed still runs"),
+    # A runner test's fixture class failing inside JUnitCore is that nested run's, not a test of the run.
+    ("a nested run's class-level failure is recorded", CAPTURE_SESSION,
+     "        if (nestedRuns) {\n            // A nested run reports its own class-level failures",
+     "        if (false) {\n            // A nested run reports its own class-level failures",
+     agent_suite, "a class-level failure inside an open test is a nested run's, and records nothing"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
@@ -4351,10 +4427,11 @@ SUITE_TESTS = {
     "python": ("bench/test_run.py",),
     "functional": ("plugin/src/functionalTest/",),
     "break": ("plugin/src/functionalTest/",),
+    "maven": ("maven/src/functionalTest/", "samples/demo-maven/"),
 }
 # A change to how the Gradle suites are BUILT can break any of them, so it selects all of them.
 GRADLE_SUITES = {"decoder", "agent", "jdk identity", "unit", "configuration guards", "functional",
-                 "replay", "break", "sbom", "portal", "reference"}
+                 "replay", "break", "sbom", "portal", "reference", "maven"}
 # Run with NOTHING beside them. The functional suite has failed unmutated in a worker while only
 # Python suites ran next to it, and passed alone in the same tree: its TestKit builds compare
 # file timestamps, and load moves them. Its guards run after the parallel phase, one at a time. The
@@ -4403,7 +4480,7 @@ def _locked(name):
     """Whether a suite's runs take the Gradle lock: every Gradle suite not named safe without it."""
     return name in GRADLE_SUITES and name not in UNLOCKED_SUITES
 BUILD_FILES = ("build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradle/",
-               "agent/build.gradle.kts", "plugin/build.gradle.kts")
+               "agent/build.gradle.kts", "plugin/build.gradle.kts", "core/build.gradle.kts", "maven/build.gradle.kts")
 
 
 def _under(path, prefixes):
@@ -4563,6 +4640,7 @@ WARM_UP = {
     "functional": ":plugin:functionalTestClasses",
     "configuration guards": ":plugin:functionalTestClasses",
     "break": ":plugin:functionalTestClasses",
+    "maven": ":maven:functionalTestClasses",
 }
 
 

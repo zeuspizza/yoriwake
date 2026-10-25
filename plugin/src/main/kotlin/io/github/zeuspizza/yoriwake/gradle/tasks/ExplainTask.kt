@@ -7,31 +7,34 @@ import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
-import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
+import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
-import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
-import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
-import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
+import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.change.changeSet
+import io.github.zeuspizza.yoriwake.gradle.change.changedPaths
+import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
+import io.github.zeuspizza.yoriwake.gradle.change.defaultBase
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
 import io.github.zeuspizza.yoriwake.gradle.change.establish
+import io.github.zeuspizza.yoriwake.gradle.change.outsideRoot
 import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
 import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
-import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
+import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
+import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
@@ -47,6 +50,7 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.environmentRefusal
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentView
 import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
+import java.io.File
 import org.gradle.api.DefaultTask
 import org.gradle.api.Project
 import org.gradle.api.file.RegularFileProperty
@@ -59,7 +63,6 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.UntrackedTask
 import org.gradle.api.tasks.testing.Test
-import java.io.File
 
 /**
  * `yoriwakeExplain<Task>`: what selection would do here, without running a single test,
@@ -248,6 +251,7 @@ internal abstract class ExplainTask : DefaultTask() {
             unknown ?: age,
             { since -> ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(rootDir, it) }, since) },
             { scheduled() },
+            fullRunFlag = "-P${Settings.FULL_RUN}",
         )
         notes.forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (declines.isEmpty() && (fullRunEveryBuilds.isPresent || fullRunEveryDays.isPresent)) {

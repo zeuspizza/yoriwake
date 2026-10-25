@@ -55,14 +55,14 @@ internal class Settings(lookup: (String) -> String?) {
     val forcedShare: String? = lookup(FORCED_SHARE)
 
     companion object {
-        const val SELECT = "yoriwake.select"
-        const val OBSERVE = "yoriwake.observe"
-        const val COMPLEMENT = "yoriwake.complement"
-        const val FULL_RUN = "yoriwake.fullRun"
-        const val BASE = "yoriwake.base"
+        const val SELECT = SettingNames.SELECT
+        const val OBSERVE = SettingNames.OBSERVE
+        const val COMPLEMENT = SettingNames.COMPLEMENT
+        const val FULL_RUN = SettingNames.FULL_RUN
+        const val BASE = SettingNames.BASE
         const val DISABLED = "yoriwake.disabled"
-        const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
-        const val RECORD_SEQUENTIALLY = "yoriwake.recordSequentially"
+        const val ISOLATED_CAPTURE = SettingNames.ISOLATED_CAPTURE
+        const val RECORD_SEQUENTIALLY = SettingNames.RECORD_SEQUENTIALLY
         const val ALWAYS_RUN = "yoriwake.alwaysRun"
         const val NARROW_PLAIN_RUNNERS = "yoriwake.narrowPlainRunners"
         const val TRUSTED_MAPS = "yoriwake.trustedMaps"

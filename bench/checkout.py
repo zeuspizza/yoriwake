@@ -27,7 +27,7 @@ ROOT = root()
 
 # The paths that exist only in the checkout. A caller that mutates files in both trees needs to
 # know which tree a relative path belongs to; everything not named here is this repository's.
-SOURCES = ("plugin/", "agent/", "samples/", "fixtures/", "gradle/", "gradlew", "gradlew.bat",
+SOURCES = ("plugin/", "agent/", "core/", "samples/", "fixtures/", "gradle/", "gradlew", "gradlew.bat",
            "gradle.properties", "settings.gradle.kts",
            "scripts/yoriwake.init.gradle.kts", "scripts/junit-vintage.init.gradle.kts",
            "scripts/measure-toll.sh", "scripts/gitcount/")

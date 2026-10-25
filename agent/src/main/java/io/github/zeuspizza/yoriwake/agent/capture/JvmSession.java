@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.agent.capture;
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import java.io.File;
+import java.util.function.Supplier;
 
 /**
  * One {@link CaptureSession} for the whole JVM, for runners that give no plan start or end
@@ -37,6 +38,14 @@ public final class JvmSession implements TestEvents {
         CaptureSession capture = ready();
         if (capture != null) {
             capture.failed(id);
+        }
+    }
+
+    /** As {@link CaptureSession#failedByContainer}: each of {@code tests} failed with its container. */
+    public void failedByContainer(String container, Supplier<? extends Iterable<String>> tests) {
+        CaptureSession capture = ready();
+        if (capture != null) {
+            capture.failedByContainer(container, tests);
         }
     }
 
