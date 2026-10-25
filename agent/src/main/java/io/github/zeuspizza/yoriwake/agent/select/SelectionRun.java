@@ -14,6 +14,9 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVED_OUTCOME_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_NOTE;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_OVERRIDE_UNCONFIRMED;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSAL_KIND_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_COMPLEMENTED;
@@ -25,6 +28,7 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_P
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
+import io.github.zeuspizza.yoriwake.agent.platform.Concurrency;
 import io.github.zeuspizza.yoriwake.agent.platform.DecisionRecord;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -134,6 +138,13 @@ public final class SelectionRun {
             if (!ignored.isEmpty()) {
                 // Whatever the outcome: a build reading why a run narrowed sees what was not compared.
                 decisions.note(FINGERPRINT_IGNORED_NOTE, ignored);
+            }
+            // Whatever the outcome too: what the test JVM found outranks what the plugin asked for.
+            String parallelism = Concurrency.unconfirmed() != null
+                    ? PARALLELISM_OVERRIDE_UNCONFIRMED
+                    : orEmpty(inputs().apply(PARALLELISM_PROPERTY));
+            if (!parallelism.isEmpty()) {
+                decisions.note(PARALLELISM_NOTE, parallelism);
             }
             // Whatever the outcome too: a wrong declaration is found by reading what it took out.
             int pathsIgnored = FilterRule.ignoredPaths(orEmpty(inputs().apply(AgentContract.IGNORED_PATHS_PROPERTY))).size();

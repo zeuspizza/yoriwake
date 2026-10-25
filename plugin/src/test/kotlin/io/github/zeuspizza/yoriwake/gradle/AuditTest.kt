@@ -873,6 +873,30 @@ class AuditTest {
     }
 
     @Test
+    fun `in-JVM parallelism on the Platform names the flag that records it, and recorded so it is no blocker`() {
+        val declined = Audit.blockers(Audit.TaskFacts(Audit.TaskFacts.PLATFORM, "a JVM argument (-Dx=true)"))
+            .single { it.token == "in-jvm-parallelism" }
+        assertContains(assertNotNull(declined.remedy), "-Pyoriwake.recordSequentially")
+
+        val recorded = Audit.TaskFacts(Audit.TaskFacts.PLATFORM, "a JVM argument (-Dx=true)", parallelismOverride = "recorded-sequentially")
+        assertTrue(Audit.blockers(recorded).none { it.token == "in-jvm-parallelism" })
+
+        val testng = Audit.blockers(Audit.TaskFacts("TestNG", "TestNG's parallel mode ('methods')"))
+            .single { it.token == "in-jvm-parallelism" }
+        assertContains(assertNotNull(testng.remedy), "no remedy")
+    }
+
+    @Test
+    fun `parallelism a test JVM found is a blocker naming what it found`() {
+        val facts = Audit.TaskFacts(Audit.TaskFacts.PLATFORM, null, parallelismUnconfirmed = "JUnit Jupiter's parallel execution is on in the test JVM")
+
+        val blocker = Audit.blockers(facts).single { it.token == "in-jvm-parallelism" }
+
+        assertContains(blocker.detail, "JUnit Jupiter's parallel execution is on in the test JVM")
+        assertContains(assertNotNull(blocker.remedy), "task action")
+    }
+
+    @Test
     fun `a capture that recorded nothing is a blocker, not a suggestion to capture again`() {
         // Advising another capture would never terminate: capturing again records nothing again.
         val blocker = Audit.blockers(Audit.TaskFacts(Audit.TaskFacts.PLATFORM, null, recordedCoverage = false))

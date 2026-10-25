@@ -29,6 +29,8 @@ internal fun writeExplanation(
     branch: String? = null,
     /** What the map says about each path `pathIgnore` left out. */
     ignoredEvidence: Map<String, PathIgnore.Evidence> = emptyMap(),
+    /** Why the last run's test JVM captured nothing over in-JVM parallelism, or null. */
+    parallelismUnconfirmed: String? = null,
 ) {
     val known = decision.knownTests()
     val selected = if (decision.isFullRun) known else decision.selectedCount()
@@ -89,6 +91,7 @@ internal fun writeExplanation(
             .append(Json.string(widening.refusalDetail))
             .append(',').append('\n')
         branch?.let { append("""  "branch": ${Json.string(it)},""").append('\n') }
+        append("""  "parallelismUnconfirmed": ${Json.string(parallelismUnconfirmed)},""").append('\n')
         append("""  "capture": ${capture?.capture ?: false},""").append('\n')
         append("""  "mapCurrent": ${capture?.mapCurrent ?: false},""").append('\n')
         append("""  "captureReason": ${Json.string(capture?.reason)},""")
