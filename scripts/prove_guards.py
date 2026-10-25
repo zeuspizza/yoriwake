@@ -551,8 +551,9 @@ def functional_suite(test_class=None):
 
 
 def maven_suite():
-    """Real Maven builds over the Maven plugin's fixtures: the declines and the capture."""
-    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*", "--rerun"])
+    """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks."""
+    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
+                   "--tests", "*ForkingFunctionalTest*", "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -694,9 +695,9 @@ SUITES = [
     ("configuration guards", guard_suite, 17),
     ("python", python_suite, 33),
     ("functional", functional_suite, 68),
-    # An estimate: the two classes' fourteen tests, about 8s each warm on an Apple M1 Max, plus the
-    # plugin's publish, until a guard run measures it.
-    ("maven", maven_suite, 130),
+    # An estimate: the three classes' twenty-seven tests, about 8s each warm on an Apple M1 Max, plus
+    # the plugin's publish, until a guard run measures it.
+    ("maven", maven_suite, 230),
     # 50s wall for one unmutated run, the plugin and agent compiled from
     # scratch in a fresh worktree; its eight tests took 39s of it.
     ("break", break_suite, 50),
@@ -4225,6 +4226,17 @@ MUTATIONS = [
      "        if (outside.isNotEmpty()) {",
      "        if (false) {",
      maven_suite, "a module built against a reactor module from a repository captures nothing"),
+    # Surefire hands the JUnit Platform its parallel switch through its own parameters: missed there,
+    # interleaved tests would blend into one another's coverage.
+    ("Surefire's parameters are left out of the parallelism check", MAVEN_RECORDING,
+     "        return ParallelismDetector.detect(parameters, argLine, classpath)",
+     "        return ParallelismDetector.detect(emptyMap(), argLine, classpath)",
+     maven_suite, "parallel execution enabled for the JUnit Platform is declined and captures nothing"),
+    # What reaches the JVM is the authority: an argLine without JaCoCo's agent records no coverage.
+    ("a Maven argLine without JaCoCo's agent is captured", MAVEN_RECORDING,
+     "        if (!reachesJacoco(project, configuration)) {",
+     "        if (false) {",
+     maven_suite, "an argLine that drops JaCoCo's agent captures nothing"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.

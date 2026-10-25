@@ -57,7 +57,8 @@ object FunctionalMaven {
 
     /** As [run], without allowing a Maven that is not released. */
     fun runPlain(version: String, project: File, vararg arguments: String): Result {
-        val home = File(project.parentFile, "home").apply { mkdirs() }
+        // Outside the fixture's own path, which may hold a space that MAVEN_OPTS would split on.
+        val home = Files.createTempDirectory("maven-home").toFile()
         val settings = File(home, "settings.xml").apply { writeText(settingsXml()) }
         val windows = System.getProperty("os.name").startsWith("Windows")
         val mvn = File(distribution(version), if (windows) "bin/mvn.cmd" else "bin/mvn")

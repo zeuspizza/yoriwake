@@ -11,6 +11,12 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
+import io.github.zeuspizza.yoriwake.gradle.SettingNames
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
+import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
+import io.github.zeuspizza.yoriwake.gradle.wiring.ParallelismDetector
+import io.github.zeuspizza.yoriwake.gradle.wiring.pendingClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
 import io.github.zeuspizza.yoriwake.gradle.wiring.ranMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.undatedRunMarker
@@ -54,7 +60,7 @@ internal class Recording(
     /** What each started execution's decode reads back; `-T` starts and ends them on several threads. */
     private val running = ConcurrentHashMap<String, Run>()
 
-    private class Run(val mapDir: File, val undatedReason: String?, val classpath: List<File>, val reports: File)
+    private class Run(val mapDir: File, val undatedReason: String?, val classpath: List<File>, val reports: File, val isolated: Boolean)
 
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
@@ -126,6 +132,27 @@ internal class Recording(
             )
             return
         }
+        val classpath = runCatching { project.testClasspathElements.map(::File) }.getOrDefault(emptyList())
+        // Tests interleaved in one JVM share its one JaCoCo agent, and their coverage would blend.
+        parallelism(project, configuration, classpath)?.let { where ->
+            log.warn(
+                "[yoriwake] $name declined, ${RefusalKind.IN_JVM_PARALLELISM.token}: its tests may run concurrently in one JVM " +
+                    "($where); every test runs and nothing is captured"
+            )
+            return
+        }
+        // What reaches the JVM is the authority: an argLine that drops the JaCoCo agent's property
+        // records no coverage, whatever the agent's configuration says.
+        if (!reachesJacoco(project, configuration)) {
+            log.warn(
+                "[yoriwake] $name declined, ${ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN.token}: the JaCoCo agent does not reach " +
+                    "the test JVM's argLine; every test runs and nothing is captured"
+            )
+            return
+        }
+        configuration.getChild("parallel")?.value?.takeIf { it.isNotBlank() && !it.startsWith("\${") }?.let {
+            log.info("[yoriwake] $name: Surefire's parallel=$it applies to its JUnit 4.7 and TestNG providers only, and is ignored on the JUnit Platform")
+        }
         ensureHome()
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         discardPrevious(mapDir, recordsDir, name)
@@ -152,6 +179,10 @@ internal class Recording(
         val host = (configuration.getChild("argLine")?.value?.trim() ?: if (defined) "@{argLine}" else "")
             .let { if (defined) it else it.replace("\${argLine}", "").replace("@{argLine}", "").trim() }
         child(configuration, "argLine").value = listOf(host, ours).filter(String::isNotEmpty).joinToString(" ")
+        // A JVM per test class, as Gradle's forkEvery=1: a static a class built is never seen by the next.
+        val isolated = Declines.property(project, session, SettingNames.ISOLATED_CAPTURE)
+            ?.let { it.isEmpty() || it.equals("true", ignoreCase = true) } == true
+        if (isolated) child(configuration, "reuseForks").value = "false"
         child(configuration, "additionalClasspathElements").addChild(Xpp3Dom("additionalClasspathElement").apply { value = agent.path })
         execution.configuration = configuration
 
@@ -159,8 +190,8 @@ internal class Recording(
             configuration.getChild("reportsDirectory")?.value?.takeUnless { it.contains("\${") }
                 ?: File(project.build.directory, if (execution.artifactId == FAILSAFE) "failsafe-reports" else "surefire-reports").path
         )
-        val classpath = runCatching { project.testClasspathElements.map(::File) }.getOrDefault(emptyList())
-        running[key] = Run(mapDir, undatedBy(project, execution, configuration), classpath, reports)
+        fingerprints(project, mapDir, configuration, classpath, host)
+        running[key] = Run(mapDir, undatedBy(project, execution, configuration), classpath, reports, isolated)
     }
 
     private fun decode(project: MavenProject, execution: MojoExecution, key: String, run: Run) {
@@ -184,7 +215,7 @@ internal class Recording(
             datesTheMap = run.undatedReason == null,
             undatedReason = run.undatedReason.orEmpty(),
             effectiveScope = null,
-            isolated = false,
+            isolated = run.isolated,
             scheduleSet = false,
             rootDir = root,
             mapDir = run.mapDir,
@@ -245,6 +276,66 @@ internal class Recording(
         }
         mapDir.mkdirs()
         ranMarker(recordsDir).writeText("ran")
+    }
+
+    /**
+     * Where the JUnit Platform was told to run tests in parallel inside one JVM, or null: Surefire's
+     * `configurationParameters`, its `properties` and `systemPropertyVariables`, the `argLine`, and a
+     * `junit-platform.properties` on the test classpath.
+     */
+    private fun parallelism(project: MavenProject, configuration: Xpp3Dom, classpath: List<File>): String? {
+        val parameters = mutableMapOf<String, String?>()
+        fun read(text: String?) = text?.let { runCatching { Properties().apply { load(java.io.StringReader(it)) } }.getOrNull() }
+            ?.forEach { (k, v) -> parameters[k.toString()] = v.toString() }
+        read(configuration.getChild("configurationParameters")?.value)
+        configuration.getChild("properties")?.children?.forEach { child ->
+            if (child.name == "configurationParameters") read(child.value) else parameters[child.name] = child.value
+        }
+        configuration.getChild("systemPropertyVariables")?.children?.forEach { parameters[it.name] = it.value }
+        val argLine = listOfNotNull(configuration.getChild("argLine")?.value, Declines.property(project, session, "argLine"))
+            .flatMap { it.split(Regex("\\s+")) }
+        return ParallelismDetector.detect(parameters, argLine, classpath)
+    }
+
+    /**
+     * What the test JVM will see, recorded for the decode to keep beside the map: the build's own files
+     * on its classpath, and its JVM and environment. A selecting run compares them later; one that
+     * cannot be recorded makes that run run everything.
+     */
+    private fun fingerprints(project: MavenProject, mapDir: File, configuration: Xpp3Dom, classpath: List<File>, hostArgLine: String) {
+        val classpathPending = pendingClasspathFiles(mapDir)
+        classpathPending.delete()
+        when (val walk = runCatching { ClasspathFiles.walk(classpath, session.allProjects.map { it.build.directory }, root) }
+            .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
+            is ClasspathFiles.Walk.Found -> runCatching { CoverageDecoder.writeClasspathFilesTo(classpathPending, walk.digests) }
+            is ClasspathFiles.Walk.Refused -> log.debug("[yoriwake] ${project.artifactId}: no classpath file digests recorded (${walk.reason})")
+        }
+        File(mapDir, EnvironmentFingerprint.PENDING_FILE).delete()
+        runCatching {
+            val jvm = configuration.getChild("jvm")?.value?.takeUnless { it.isBlank() || it.contains("\${") }
+            val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()
+                .associate { it.name to it.value.orEmpty() }
+            val view = EnvironmentFingerprint.View(
+                // Maven's own JVM forks the tests unless the POM names another, whose version nobody read.
+                if (jvm == null) System.getProperty("java.runtime.version") else null,
+                if (jvm == null) System.getProperty("java.vendor") else null,
+                jvm, System.getProperty("os.name"), System.getProperty("os.arch"),
+                hostArgLine.split(Regex("\\s+")).filter(String::isNotEmpty), environment,
+            )
+            val rules = EnvironmentFingerprint.Rules(
+                emptyList(), emptyList(), root.path,
+                session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path,
+                System.getProperty("user.home"),
+            )
+            EnvironmentFingerprint.writePending(mapDir, view, rules)
+        }.onFailure { log.debug("[yoriwake] ${project.artifactId}: no environment fingerprint recorded ($it)") }
+    }
+
+    /** Whether the argLine the fork will get, its expressions resolved, carries JaCoCo's agent. */
+    private fun reachesJacoco(project: MavenProject, configuration: Xpp3Dom): Boolean {
+        val raw = configuration.getChild("argLine")?.value ?: "\${argLine}"
+        val resolved = Regex("""[$@]\{([^}]+)}""").replace(raw) { Declines.property(project, session, it.groupValues[1]).orEmpty() }
+        return Regex("""-javaagent:\S*(jacocoagent|org\.jacoco\.agent)""").containsMatchIn(resolved)
     }
 
     /** `.yoriwake/`, ignored by git before anything is written into it. */
