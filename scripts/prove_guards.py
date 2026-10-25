@@ -140,6 +140,7 @@ SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/w
 PATH_GLOB = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/PathGlob.java"
 LAST_LOOK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/LastLook.kt"
 CLASSPATH_FILES = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathFiles.kt"
+TRACKED_TEXT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/TrackedText.kt"
 WORKING_TREE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/WorkingTree.kt"
 MAP_PROVENANCE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/MapProvenance.kt"
 DEVELOCITY_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/DevelocityDetection.kt"
@@ -2473,6 +2474,25 @@ MUTATIONS = [
     # the map records which tests read it, and a map that records no such files forces once and
     # captures them: a file generated from git state or the clock reaches a test through no tracked
     # path.
+    # A copy of a tracked text file git writes with CRLF compares by its LF form, and nothing else
+    # does: not a generated file, not one pinned to eol=lf.
+    ("a copy of a tracked text file compares by its bytes", CLASSPATH_FILES,
+     "        return runCatching { text.digest(bytes, relative) }.getOrNull() ?: sha256(ByteArrayInputStream(bytes))",
+     "        return sha256(ByteArrayInputStream(bytes))",
+     unit_suite, "a copy of a tracked text file digests the same whatever its line endings"),
+    ("every file with CRLF compares by its LF form", TRACKED_TEXT,
+     "        val paths = index?.get(blobId(lf)) ?: return null\n",
+     "        if (true) return hex(MessageDigest.getInstance(\"SHA-256\").digest(lf))\n"
+     "        val paths = index?.get(blobId(lf)) ?: return null\n",
+     unit_suite, "a file no tracked blob matches, or matched at another path, keeps its bytes digest"),
+    ("a copy matches a tracked file at any path", TRACKED_TEXT,
+     '            (path == relative || path.endsWith("/$relative")) &&',
+     '            true &&',
+     unit_suite, "a file no tracked blob matches, or matched at another path, keeps its bytes digest"),
+    ("a copy need not match what git checked out", TRACKED_TEXT,
+     "                runCatching { File(rootDir, path).readBytes().contentEquals(bytes) }.getOrDefault(false)",
+     "                true",
+     unit_suite, "a copy with carriage returns git did not write keeps its bytes digest"),
     ("a moved classpath file is ignored", SELECTION,
      "    if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this",
      "    if (verdict is ClasspathFilesVerdict.Moved || verdict == ClasspathFilesVerdict.Unchanged || forces) return this",

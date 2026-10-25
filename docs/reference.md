@@ -238,7 +238,8 @@ say which forcing paths it tracks, one line counts them and `yoriwakeExplain<Tas
 Every non-class file the build produced on a test task's runtime classpath counts by content: each
 file of a resource or output directory under the root or a build directory, and each entry of one
 of your own jars (never the jar whole, so a rebuild that only moves entry timestamps changes
-nothing). The capture records them just before its tests start, and which test JVM read each one
+nothing). A copy of a tracked text file git checks out with `\r\n` counts with its line endings
+as `\n` ([Windows](#windows)). The capture records them just before its tests start, and which test JVM read each one
 and when; a selecting run compares them at the same point. A file whose content changed runs the
 tests that read it, from the first test in each test JVM that read it on, since a value read once
 can be kept for later tests (`shares-jvm-with-change`); a read through `getResource`, a file
@@ -676,13 +677,14 @@ Three things differ:
   cannot be computed, and every selecting run is a full run that says so.
 - **Line endings, when a map or a selection record moves between Windows machines.** Under
   `core.autocrlf`, Git for Windows' default, text files check out with `\r\n`, and resources
-  copied onto the test classpath keep it. A text resource that differs only in its line endings is
-  still a different file, which a test may read, so a run against a map captured in a checkout with
-  other line endings (a developer's `autocrlf` checkout and a CI runner's without it, say) runs
-  every test and says
-  `build output on this task's classpath changed since the map was captured: <file> (changed)`; a
-  [complement run](#running-what-a-selection-skipped) does the same with a selection record. Check
-  out with the same line endings wherever a map is shared, or pin them with a `.gitattributes`.
+  copied onto the test classpath keep it. A copy of a tracked text file that git converts compares
+  by its content with line endings aside, as git's own diff does, so a map or a
+  [selection record](#running-what-a-selection-skipped) crosses a developer's `autocrlf` checkout
+  and a CI runner's without it. A generated file, a binary one, and one `.gitattributes` pins
+  (`eol=lf`, `-text`, `binary`) still compare by their bytes: one that differs only in its line
+  endings runs every test, as `classpath-files-changed`. A test that asserts a text resource's exact
+  bytes can pass in one checkout and fail in the other, and selection does not see that; pin such a
+  file with `eol=` in `.gitattributes` so every checkout writes it alike.
 - **Native libraries.** No Windows build is on the [reviewed list](#native-libraries), so on
   Windows every native library applies the wide rule.
 
