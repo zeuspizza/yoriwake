@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.capture;
 
+import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import java.io.File;
 import java.io.IOException;
@@ -103,7 +104,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             }
             installed = true;
         }
-        roots = rootsOf(System.getProperty(AgentContract.CAPTURE_ROOT_PROPERTY));
+        roots = rootsOf(HostBuild.current().property(AgentContract.CAPTURE_ROOT_PROPERTY));
         if (!roots.isEmpty()) {
             touch(AgentContract.TOUCH_RESOURCES_RECORDED, roots.get(0));
         }
@@ -119,7 +120,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             // JDK classes the agent's ASM cannot read take no hooks; said here, under its own name.
             unsupported = ClassFileSupport.testJvmUnsupported(
                     System.getProperty("java.specification.version"),
-                    System.getProperty(AgentContract.AGENT_ASM_CEILING_PROPERTY));
+                    HostBuild.current().property(AgentContract.AGENT_ASM_CEILING_PROPERTY));
             if (unsupported != null) {
                 lookupsIncomplete = unsupported;
                 environmentIncomplete = unsupported;

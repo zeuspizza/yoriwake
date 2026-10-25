@@ -41,6 +41,12 @@ public final class GradleHost implements HostBuild {
         return worker == null || worker.isEmpty() ? String.valueOf(ProcessHandle.current().pid()) : worker;
     }
 
+    /** Gradle hands the plugin's properties to the test JVM as system properties. */
+    @Override
+    public String property(String name) {
+        return System.getProperty(name);
+    }
+
     @Override
     public boolean runFinished() {
         return Boolean.getBoolean(RUN_FINISHED_PROPERTY);

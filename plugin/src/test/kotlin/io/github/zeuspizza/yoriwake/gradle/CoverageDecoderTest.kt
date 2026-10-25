@@ -1868,4 +1868,12 @@ class CoverageDecoderTest {
         assertEquals(0, CoverageDecoder.carryFailures(dir))
         assertEquals(before, File(dir, AgentContract.COVERAGE_FILE).readText())
     }
+
+    @Test
+    fun `the JVMs behind a run are its record directories without their plan numbers`() {
+        val workers = listOf("worker-12", "worker-4711-1730000000000", "worker-4711-1730000000000-p2",
+            "worker-4711-1730000000000-p3", "worker-4712-1730000000001").map(::File)
+
+        assertEquals(3, CoverageDecoder.jvmCount(workers))
+    }
 }

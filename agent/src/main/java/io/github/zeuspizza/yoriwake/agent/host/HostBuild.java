@@ -18,8 +18,14 @@ public interface HostBuild {
      */
     boolean runFinished();
 
+    /**
+     * A contract property, as the host hands it to this JVM, or null when it does not. Every
+     * contract read goes through here, so a host can keep a user's own property from answering.
+     */
+    String property(String name);
+
     /** The host this agent runs under. */
     static HostBuild current() {
-        return GradleHost.INSTANCE;
+        return HostChoice.current();
     }
 }
