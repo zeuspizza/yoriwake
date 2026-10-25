@@ -37,10 +37,21 @@ final class GuardHooks {
     /** What the JVM strips from a native's name to find its symbol. */
     static final String PREFIX = "$yoriwake$";
 
-    /** Guard class, its native method and descriptor, and what turning it on means. */
+    /**
+     * Guard class, its native method and descriptor, and what turning it on means. A native whose
+     * first argument is a boolean turns it on when that is true; any other turns it on with every call.
+     */
     static final String[][] NATIVE_WRAPS = {
         {"org/sqlite/core/NativeDB", "enable_load_extension", "(Z)I",
             "SQLite extension loading was enabled on a connection"},
+        // A link the JDK's createSymbolicLink would have recorded the target of.
+        {"net/rubygrapefruit/platform/internal/jni/PosixFileFunctions", "symlink",
+            "(Ljava/lang/String;Ljava/lang/String;Lnet/rubygrapefruit/platform/internal/FunctionResult;)V",
+            "native-platform created a symbolic link"},
+        // Relative paths then resolve against a directory the agent's absolute paths do not know.
+        {"net/rubygrapefruit/platform/internal/jni/PosixProcessFunctions", "setWorkingDirectory",
+            "(Ljava/lang/String;Lnet/rubygrapefruit/platform/internal/FunctionResult;)V",
+            "native-platform changed the working directory"},
     };
 
     /**
@@ -133,10 +144,12 @@ final class GuardHooks {
     }
 
     /**
-     * Null when the library's version, read from {@code pom} in the code source that holds the
-     * guard class beside {@code caller}, is one of {@code versions}; otherwise why not.
+     * Null when the library's version, read from {@code versionFile} in the code source that holds
+     * the guard class beside {@code caller}, is one of {@code versions}; otherwise why not. The file
+     * is a properties file with a {@code version}, or {@code <class file>#<field>}, a class whose
+     * string constant of that name is the version, for a library that ships no properties file.
      */
-    static String unlisted(Class<?> caller, String guardClass, String pom, String[] versions) {
+    static String unlisted(Class<?> caller, String guardClass, String versionFile, String[] versions) {
         ClassLoader loader = caller.getClassLoader();
         String file = guardClass + ".class";
         try {
@@ -145,11 +158,19 @@ final class GuardHooks {
                 return guardClass.replace('/', '.') + " is not found beside " + caller.getName();
             }
             String spec = url.toString();
-            Properties properties = new Properties();
-            try (InputStream in = new URL(spec.substring(0, spec.length() - file.length()) + pom).openStream()) {
-                properties.load(in);
+            String base = spec.substring(0, spec.length() - file.length());
+            int field = versionFile.indexOf('#');
+            String version;
+            try (InputStream in = new URL(base + (field < 0 ? versionFile : versionFile.substring(0, field)))
+                    .openStream()) {
+                if (field < 0) {
+                    Properties properties = new Properties();
+                    properties.load(in);
+                    version = properties.getProperty("version");
+                } else {
+                    version = constant(new ClassReader(in), versionFile.substring(field + 1));
+                }
             }
-            String version = properties.getProperty("version");
             for (String listed : versions) {
                 if (listed.equals(version)) {
                     return null;
@@ -159,6 +180,22 @@ final class GuardHooks {
         } catch (Throwable t) {
             return "its version could not be read: " + t;
         }
+    }
+
+    /** The value of the class's string constant {@code name}, or null when it declares none. */
+    private static String constant(ClassReader reader, String name) {
+        String[] value = {null};
+        reader.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public org.objectweb.asm.FieldVisitor visitField(int access, String field, String descriptor,
+                    String signature, Object constant) {
+                if (field.equals(name) && constant instanceof String) {
+                    value[0] = (String) constant;
+                }
+                return null;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return value[0];
     }
 
     /** The class of that internal name the loader already holds, or null when none or unknown. */
@@ -275,8 +312,9 @@ final class GuardHooks {
     }
 
     /**
-     * {@code Consumer s = GUARD; if (s != null) s.accept(new Object[] {why, Boolean.valueOf(on)});}
-     * then the renamed native, for a {@code (Z)I} method, static or not.
+     * {@code Consumer s = GUARD; if (s != null) s.accept(new Object[] {why, on});} then the renamed
+     * native with every argument, static or not. {@code on} is the first argument when it is a
+     * boolean, otherwise {@code Boolean.TRUE}.
      */
     private static void writeWrapper(MethodVisitor body, String holder, String owner, int access, String name,
             String descriptor, String why) {
@@ -301,22 +339,31 @@ final class GuardHooks {
         body.visitInsn(Opcodes.AASTORE);
         body.visitInsn(Opcodes.DUP);
         body.visitInsn(Opcodes.ICONST_1);
-        body.visitVarInsn(Opcodes.ILOAD, argument);
-        body.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
+        Type[] arguments = Type.getArgumentTypes(descriptor);
+        if (arguments.length > 0 && arguments[0].getSort() == Type.BOOLEAN) {
+            body.visitVarInsn(Opcodes.ILOAD, argument);
+            body.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;",
+                    false);
+        } else {
+            body.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/Boolean", "TRUE", "Ljava/lang/Boolean;");
+        }
         body.visitInsn(Opcodes.AASTORE);
         body.visitMethodInsn(Opcodes.INVOKEINTERFACE, consumer, "accept", "(Ljava/lang/Object;)V", true);
         body.visitLabel(done);
         body.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
-        if (isStatic) {
-            body.visitVarInsn(Opcodes.ILOAD, 0);
-            body.visitMethodInsn(Opcodes.INVOKESTATIC, owner, PREFIX + name, descriptor, false);
-        } else {
+        int slot = 0;
+        if (!isStatic) {
             body.visitVarInsn(Opcodes.ALOAD, 0);
-            body.visitVarInsn(Opcodes.ILOAD, 1);
-            body.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, PREFIX + name, descriptor, false);
+            slot = 1;
         }
+        for (Type type : arguments) {
+            body.visitVarInsn(type.getOpcode(Opcodes.ILOAD), slot);
+            slot += type.getSize();
+        }
+        body.visitMethodInsn(isStatic ? Opcodes.INVOKESTATIC : Opcodes.INVOKESPECIAL, owner, PREFIX + name,
+                descriptor, false);
         body.visitInsn(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN));
-        body.visitMaxs(6, argument + 1);
+        body.visitMaxs(Math.max(6, slot), slot);
         body.visitEnd();
     }
 

@@ -73,6 +73,15 @@ class SettingsTest {
     }
 
     @Test
+    fun `narrowPlainRunners is unset unless passed, so the build's own answers`() {
+        assertNull(settings().narrowPlainRunners)
+        assertEquals(true, settings(Settings.NARROW_PLAIN_RUNNERS to "").narrowPlainRunners)
+        assertEquals(false, settings(Settings.NARROW_PLAIN_RUNNERS to "false").narrowPlainRunners)
+        val failure = assertFailsWith<InvalidUserDataException> { settings(Settings.NARROW_PLAIN_RUNNERS to "yes") }
+        assertContains(failure.message!!, Settings.NARROW_PLAIN_RUNNERS)
+    }
+
+    @Test
     fun `isolatedCapture is a switch like the others`() {
         assertFalse(settings().isolatedCapture)
         assertTrue(settings(Settings.ISOLATED_CAPTURE to "").isolatedCapture)
