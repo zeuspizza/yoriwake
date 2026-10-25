@@ -563,6 +563,9 @@ testing {
                     testTask.configure {
                         // TestKit builds are slow; give them room rather than letting them fail as flakes.
                         maxHeapSize = "1g"
+                        // TestKit's client loads Gradle's native library; JDK 25 warns about that call
+                        // and says a later release will block it. Accepted silently from JDK 17 on.
+                        jvmArgs("--enable-native-access=ALL-UNNAMED")
                         // A CI log is all a failed run leaves: print each failure's message, not only its class.
                         testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
                         systemProperty("yoriwake.functional.gradleVersion", functionalGradleVersions.getValue(name))
