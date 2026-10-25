@@ -6,7 +6,6 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection.CheckedOut
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection.CommitScan
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
-import org.gradle.api.InvalidUserDataException
 
 /**
  * What kind of run one test task makes: the single answer every wiring site reads, so no two of
@@ -33,7 +32,7 @@ internal class RunPlan(
     val branch: String? = null,
     /**
      * Where a complement run reads its selection record: empty for this build's own map directories,
-     * else a directory holding a saved copy of a build's `.gradle/yoriwake`. Null on any other run.
+     * else a directory holding a saved copy of a build's map directories. Null on any other run.
      */
     val complementFrom: String? = null,
 ) {
@@ -75,6 +74,18 @@ internal class RunPlan(
         val requested: io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection.Base? = null,
     )
 
+    /** The flags a run was given: at most one of [select], [observe] and [complement]. */
+    class Asked(
+        val select: Boolean,
+        val observe: Boolean,
+        /** Empty for this build's own map directories, else where a saved copy is; null when not asked. */
+        val complement: String?,
+        val fullRun: Boolean,
+    )
+
+    /** What the build asked for cannot be carried out; the message says what to change. */
+    class Rejected(message: String) : IllegalArgumentException(message)
+
     val selecting: Boolean get() = kind == Kind.SELECT
 
     val observing: Boolean get() = kind == Kind.OBSERVE
@@ -83,12 +94,16 @@ internal class RunPlan(
 
     companion object {
         /**
+         * What the invocation asked for, as [asked] holds it, with each flag named in a message as
+         * [flag] spells it on this host's command line. [Rejected] when it asked for two kinds at once.
+         *
          * [widening], [scan] and [checkedOut] are asked only for a run asked to select or observe, and
          * [checkedOut] only when [fullRunBranches] lists a branch, so a recording run asks git
          * nothing more than it did.
          */
         fun resolve(
-            settings: Settings,
+            asked: Asked,
+            flag: (String) -> String,
             widening: () -> Widening,
             scan: (String) -> CommitScan,
             fullRunBranches: List<String> = emptyList(),
@@ -97,43 +112,47 @@ internal class RunPlan(
             scheduled: () -> String? = { null },
         ): RunPlan {
             val set = listOfNotNull(
-                Settings.SELECT.takeIf { settings.select },
-                Settings.OBSERVE.takeIf { settings.observe },
-                Settings.COMPLEMENT.takeIf { settings.complement != null },
+                SettingNames.SELECT.takeIf { asked.select },
+                SettingNames.OBSERVE.takeIf { asked.observe },
+                SettingNames.COMPLEMENT.takeIf { asked.complement != null },
             )
             if (set.size > 1) {
-                throw InvalidUserDataException(
-                    "[yoriwake] ${set.joinToString(" and ") { "-P$it" }} were set together. A run selects, " +
+                throw Rejected(
+                    "[yoriwake] ${set.joinToString(" and ") { flag(it) }} were set together. A run selects, " +
                         "observes what selection would do, or runs what a selecting run left out; pass one of them."
                 )
             }
-            val asked = when {
-                settings.select -> Kind.SELECT
-                settings.observe -> Kind.OBSERVE
-                settings.complement != null -> Kind.COMPLEMENT
+            val kindAsked = when {
+                asked.select -> Kind.SELECT
+                asked.observe -> Kind.OBSERVE
+                asked.complement != null -> Kind.COMPLEMENT
                 else -> return RunPlan(Kind.RECORD, Kind.RECORD, widening = null)
             }
             val widened = widening()
-            val (declines, notes, branch) = declines(settings.fullRun, fullRunBranches, checkedOut, widened.age, scan, scheduled)
+            val (declines, notes, branch) = declines(
+                asked.fullRun, fullRunBranches, checkedOut, widened.age, scan, scheduled,
+                fullRunFlag = flag(SettingNames.FULL_RUN),
+            )
             // An observing run already records; a decline applies only to the selection it observes.
-            val kind = if (declines.isEmpty() || asked == Kind.OBSERVE) asked else Kind.RECORD
+            val kind = if (declines.isEmpty() || kindAsked == Kind.OBSERVE) kindAsked else Kind.RECORD
             return RunPlan(
-                kind, asked, widened, declines, notes, branch,
-                complementFrom = settings.complement.takeIf { kind == Kind.COMPLEMENT },
+                kind, kindAsked, widened, declines, notes, branch,
+                complementFrom = asked.complement.takeIf { kind == Kind.COMPLEMENT },
             )
         }
 
         /**
          * The build's `fullRunBranches`, trimmed. An empty entry names no branch, and a star alone
-         * would switch selection off on every branch while CI still asks for it: both fail the build.
+         * would switch selection off on every branch while CI still asks for it: both are [Rejected],
+         * with [example] showing how this host's build lists a branch.
          */
-        fun fullRunBranches(declared: List<String>, owner: String): List<String> =
+        fun fullRunBranches(declared: List<String>, owner: String, example: String): List<String> =
             declared.map(String::trim).onEach { entry ->
                 if (entry.isEmpty() || entry.all { it == '*' }) {
-                    throw InvalidUserDataException(
+                    throw Rejected(
                         "[yoriwake] $owner: fullRunBranches holds '$entry', which " +
                             (if (entry.isEmpty()) "names no branch" else "matches every branch, so no run would ever select") +
-                            ". List the branch names that should always run in full, such as fullRunBranches.add(\"main\")."
+                            ". List the branch names that should always run in full, such as $example."
                     )
                 }
             }
@@ -155,11 +174,13 @@ internal class RunPlan(
             age: MapAge,
             scan: (String) -> CommitScan,
             scheduled: () -> String? = { null },
+            /** The full-run flag as this host's command line spells it. */
+            fullRunFlag: String,
         ): Declines {
             val declines = mutableListOf<Decline>()
             val notes = mutableListOf<String>()
             if (fullRun) {
-                declines += Decline(RefusalKind.FULL_RUN_REQUESTED, "a full run was requested with -P${Settings.FULL_RUN}")
+                declines += Decline(RefusalKind.FULL_RUN_REQUESTED, "a full run was requested with $fullRunFlag")
             }
             var branch: String? = null
             if (fullRunBranches.isNotEmpty()) {
