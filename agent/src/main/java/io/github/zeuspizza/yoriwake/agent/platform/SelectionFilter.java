@@ -77,7 +77,9 @@ public class SelectionFilter implements PostDiscoveryFilter {
             run.installRecordHook();
             return decideFor(descriptor);
         } catch (Throwable failure) {
-            run.reportOnce("selection failed, so everything runs: " + failure);
+            if (run != null) {
+                run.reportOnce("selection failed, so everything runs: " + failure);
+            }
             record(descriptor, Verdict.SELECTION_FAILED);
             return FilterResult.included("selection failed");
         }

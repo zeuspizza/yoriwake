@@ -45,6 +45,8 @@ public final class JUnit4Selection {
             "org.junit.internal.runners.JUnit38ClassRunner"));
 
     private static final String IGNORE = "org.junit.Ignore";
+    /** JUnit 3's runner, which runs a method whatever {@code @Ignore} it carries. */
+    private static final String JUNIT3_RUNNER = "org.junit.internal.runners.JUnit38ClassRunner";
     private static final String FILTERABLE = "org.junit.runner.manipulation.Filterable";
 
     /** Set at install, on a run that narrows plain JUnit 4; null elsewhere, which runs every class. */
@@ -110,8 +112,8 @@ public final class JUnit4Selection {
         Map<String, String> names = new LinkedHashMap<>();
         for (Object leaf : leaves) {
             // An ignored test never runs and the capture never records it, so judging it would keep
-            // its class on every run as never seen.
-            if (ignored(leaf)) {
+            // its class on every run as never seen. JUnit 3 runs it anyway, so there it is judged.
+            if (!JUNIT3_RUNNER.equals(runner.getClass().getName()) && ignored(leaf)) {
                 continue;
             }
             String id = JUnit4Events.idOf(leaf);

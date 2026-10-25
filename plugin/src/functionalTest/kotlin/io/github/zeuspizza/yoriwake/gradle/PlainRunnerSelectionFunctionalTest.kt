@@ -59,6 +59,14 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
                 public void testTwice() { assertEquals(6, new Alpha().twice(3)); }
             }
         """.trimIndent(),
+        // JUnit 3 runs a method whatever @Ignore it carries, so this one reaches Beta's change.
+        "src/test/java/dev/sample/AlphaLegacyIgnoredTest.java" to """
+            package dev.sample;
+            public class AlphaLegacyIgnoredTest extends junit.framework.TestCase {
+                public void testTwice() { assertEquals(6, new Alpha().twice(3)); }
+                @org.junit.Ignore public void testThrice() { assertEquals(3, new Beta().thrice(1)); }
+            }
+        """.trimIndent(),
         test("ParameterizedAlphaTest",
             """
             @org.junit.runners.Parameterized.Parameters public static java.util.List<Object[]> data() {
@@ -78,6 +86,11 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
     private fun decisions(dir: File) =
         File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
             .resolve(AgentContract.DECISIONS_FILE).readLines()
+
+    private val everyClass = setOf(
+        "dev.sample.AlphaTest", "dev.sample.BetaTest", "dev.sample.AlphaMockitoTest", "dev.sample.AlphaLegacyTest",
+        "dev.sample.AlphaLegacyIgnoredTest", "dev.sample.ParameterizedAlphaTest", "dev.sample.AllIgnoredTest",
+    )
 
     private fun captured(dir: File) {
         build(dir, "build.gradle.kts" to build, *sources)
@@ -101,7 +114,10 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
         // judge, run.
         val lines = decisions(dir)
         assertEquals(
-            setOf("dev.sample.BetaTest", "dev.sample.ParameterizedAlphaTest", "dev.sample.AllIgnoredTest"),
+            setOf(
+                "dev.sample.BetaTest", "dev.sample.AlphaLegacyIgnoredTest", "dev.sample.ParameterizedAlphaTest",
+                "dev.sample.AllIgnoredTest",
+            ),
             ranTests(dir),
             lines.joinToString("\n"),
         )
@@ -115,6 +131,7 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
         assertEquals("CLASS_RUNS_WHOLE", rows["[engine:junit4]/[class:dev.sample.ParameterizedAlphaTest]/[method:p[0]]"])
         // An ignored test is never judged: it never runs, and the map never records it.
         assertEquals(null, rows["[engine:junit4]/[class:dev.sample.AlphaTest]/[method:ignored]"])
+        assertEquals("REACHES_CHANGE", rows["[engine:junit4]/[class:dev.sample.AlphaLegacyIgnoredTest]/[method:testThrice]"])
         assertContains(output, "plain JUnit 4 selects whole classes: 3 left out")
     }
 
@@ -124,13 +141,16 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
 
         runner(dir, "test", "-Pyoriwake.select").build()
 
-        assertEquals(
-            setOf(
-                "dev.sample.AlphaTest", "dev.sample.BetaTest", "dev.sample.AlphaMockitoTest", "dev.sample.AlphaLegacyTest",
-                "dev.sample.ParameterizedAlphaTest", "dev.sample.AllIgnoredTest",
-            ),
-            ranTests(dir),
-        )
+        assertEquals(everyClass, ranTests(dir))
+    }
+
+    @Test
+    fun `an observing run records what it would leave out and leaves out nothing`(@TempDir dir: File) {
+        captured(dir)
+
+        runner(dir, "test", "-Pyoriwake.observe", "-Pnarrow").build()
+
+        assertEquals(everyClass, ranTests(dir))
     }
 
     @Test
@@ -139,7 +159,7 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
 
         runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.fullRun", "-Pnarrow").build()
 
-        assertEquals(6, ranTests(dir).size, ranTests(dir).toString())
+        assertEquals(everyClass, ranTests(dir))
         val rows = decisions(dir).filter { !it.startsWith("#") }.map { it.split("\t")[2] }.toSet()
         assertEquals(setOf("DAEMON_REFUSED"), rows)
     }

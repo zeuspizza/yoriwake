@@ -50,7 +50,7 @@ public final class ClassVerdicts {
             verdicts.put(id, verdict);
             allSkipped &= verdict == Verdict.SKIPPED;
         }
-        if (allSkipped) {
+        if (allSkipped && keepReason == null) {
             return new ClassVerdicts(true, verdicts);
         }
         // Rounding up to the class only ever includes, so it cannot lose a failure.

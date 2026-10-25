@@ -139,6 +139,7 @@ public final class JUnit4Hook {
         @Override
         public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
             before();
+            unexpected();
             super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
             afterGetRunner = opcode == Opcodes.INVOKEVIRTUAL && "org/junit/runner/Request".equals(owner)
                     && "getRunner".equals(name);
@@ -151,6 +152,7 @@ public final class JUnit4Hook {
         @Override
         public void visitVarInsn(int opcode, int var) {
             before();
+            unexpected();
             super.visitVarInsn(opcode, var);
             if (afterGetRunner && opcode == Opcodes.ASTORE && runner < 0) {
                 runner = var;
@@ -166,8 +168,8 @@ public final class JUnit4Hook {
             if (state == 1 && opcode == Opcodes.IFEQ) {
                 resumeAt = label;
                 state = 2;
-            } else if (state == 1) {
-                state = 5;
+            } else {
+                unexpected();
             }
         }
 
@@ -178,8 +180,8 @@ public final class JUnit4Hook {
             afterGetRunner = false;
             if (state == 2 && opcode == returnType.getOpcode(Opcodes.IRETURN)) {
                 state = 3;
-            } else if (state == 2 && opcode != Opcodes.ACONST_NULL) {
-                state = 5;
+            } else if (state != 2 || opcode != Opcodes.ACONST_NULL || returnType.getSort() == Type.VOID) {
+                unexpected();
             }
         }
 
@@ -194,6 +196,7 @@ public final class JUnit4Hook {
         @Override
         public void visitIntInsn(int opcode, int operand) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitIntInsn(opcode, operand);
         }
@@ -201,6 +204,7 @@ public final class JUnit4Hook {
         @Override
         public void visitTypeInsn(int opcode, String type) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitTypeInsn(opcode, type);
         }
@@ -208,6 +212,7 @@ public final class JUnit4Hook {
         @Override
         public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitFieldInsn(opcode, owner, name, descriptor);
         }
@@ -216,6 +221,7 @@ public final class JUnit4Hook {
         public void visitInvokeDynamicInsn(String name, String descriptor, org.objectweb.asm.Handle handle,
                 Object... arguments) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitInvokeDynamicInsn(name, descriptor, handle, arguments);
         }
@@ -223,6 +229,7 @@ public final class JUnit4Hook {
         @Override
         public void visitLdcInsn(Object value) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitLdcInsn(value);
         }
@@ -230,6 +237,7 @@ public final class JUnit4Hook {
         @Override
         public void visitIincInsn(int var, int increment) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitIincInsn(var, increment);
         }
@@ -237,6 +245,7 @@ public final class JUnit4Hook {
         @Override
         public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitTableSwitchInsn(min, max, dflt, labels);
         }
@@ -244,6 +253,7 @@ public final class JUnit4Hook {
         @Override
         public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitLookupSwitchInsn(dflt, keys, labels);
         }
@@ -251,6 +261,7 @@ public final class JUnit4Hook {
         @Override
         public void visitMultiANewArrayInsn(String descriptor, int numDimensions) {
             before();
+            unexpected();
             afterGetRunner = false;
             super.visitMultiANewArrayInsn(descriptor, numDimensions);
         }
@@ -258,6 +269,16 @@ public final class JUnit4Hook {
         @Override
         public void visitMaxs(int maxStack, int maxLocals) {
             super.visitMaxs(Math.max(maxStack, 6), maxLocals);
+        }
+
+        /**
+         * Between the check and its return only the jump and the return may come: anything else is
+         * a shape this was not written for, which is left as it was.
+         */
+        private void unexpected() {
+            if (state == 1 || state == 2) {
+                state = 5;
+            }
         }
 
         /** At the resume label, before its first instruction: the call, once. */
