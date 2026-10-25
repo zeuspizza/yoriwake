@@ -118,6 +118,8 @@ CORPUS_SRC = "bench/corpus_state.py"
 CONTROLS_SRC = "bench/controls.py"
 COST_SRC = "bench/cost.py"
 SELECTION_FILTER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/SelectionFilter.java"
+SELECTION_RUN = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRun.java"
+CLASS_VERDICTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/ClassVerdicts.java"
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
 CHANGE_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
@@ -1258,7 +1260,7 @@ MUTATIONS = [
      "            for (int next = s; next <= segments.length; next++) {",
      "            for (int next = s + 1; next <= Math.min(s + 1, segments.length); next++) {",
      agent_suite, "a star stays within a directory, a double star crosses any number"),
-    ("class granularity becomes the default nobody asked for", SELECTION_FILTER,
+    ("class granularity becomes the default nobody asked for", SELECTION_RUN,
      'Boolean.parseBoolean(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
      '!"false".equals(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
      agent_suite, "without the flag the same test is still excluded"),
@@ -2671,7 +2673,7 @@ MUTATIONS = [
     # An observing run decides as a selecting run does and runs every test anyway: the filter
     # returning the selecting verdict skips the tests the report exists to show failing.
     ("an observing run leaves out what selection would leave out", SELECTION_FILTER,
-     "        if (observing()) {\n"
+     "        if (run.observing()) {\n"
      "            return FilterResult.included(\"the run observes selection\");\n"
      "        }\n",
      "",
@@ -2725,7 +2727,7 @@ MUTATIONS = [
      "            if (test.failFast) {",
      "            if (false) {",
      functional_suite, "a fail-fast selecting run leaves no record"),
-    ("a complement run takes a record from another test JVM", SELECTION_FILTER,
+    ("a complement run takes a record from another test JVM", SELECTION_RUN,
      "            if (!here.equals(recorded)) {",
      "            if (false) {",
      agent_suite, "a complement run on another Java runtime than the record's runs everything"),
@@ -2754,8 +2756,8 @@ MUTATIONS = [
      "        if (read.ran.containsKey(id)) {",
      agent_suite, "a complement run runs a leaf container whatever the record lists"),
     ("a complement run leaves out a test of an engine that runs everything", SELECTION_FILTER,
-     "        if (FilterRule.engineRunsEverything(id)) {\n            complementRan.incrementAndGet();",
-     "        if (false) {\n            complementRan.incrementAndGet();",
+     "        if (FilterRule.engineRunsEverything(id)) {\n            run.countComplementRan();",
+     "        if (false) {\n            run.countComplementRan();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
     # Under Maven the run file alone answers: Surefire lets a user property override a system one.
     ("the Maven host answers from system properties", MAVEN_HOST,
@@ -3027,7 +3029,7 @@ MUTATIONS = [
     ("the decision record stops writing its rule lines", DECISION_RECORD,
      "        if (rules != null && rules.computed()) {", "        if (false) {",
      agent_suite, "every rule behind each row follows the rows, and leaves the rows as they were"),
-    ("the test JVM stops handing its rules to the decision record", SELECTION_FILTER,
+    ("the test JVM stops handing its rules to the decision record", SELECTION_RUN,
      "                decisions.writeTo(mapDir(), current == null ? null : current.rules());",
      "                decisions.writeTo(mapDir(), null);",
      functional_suite, "a test two rules select records both, and the row keeps the one that decided it"),
@@ -3038,8 +3040,8 @@ MUTATIONS = [
      "    elif rule_lines != found:", "    elif False:",
      python_suite, "a torn rule block was read as the rules"),
     ("the coverage-only selection counts a shared JVM as coverage", PY_SRC,
-     "    return any(not token.startswith(SHARES_JVM_RULE_PREFIX) and token != CLASS_GRANULARITY_RULE",
-     "    return any(token != CLASS_GRANULARITY_RULE",
+     "    return any(not token.startswith(SHARES_JVM_RULE_PREFIX)\n               and token not in (",
+     "    return any(token not in (",
      python_suite, "the selection beneath the refusal is not coverage alone's"),
     ("a part without rules is merged into the task's rules", PY_SRC,
      '    if all(record.get("rules") is not None for record in records if record["decided"]):',
@@ -3065,8 +3067,8 @@ MUTATIONS = [
      "        outermost = EXECUTING.incrementAndGet() == 1;\n", "        outermost = EXECUTING.get() == 0;\n",
      agent_suite, "a filter created while a test plan executes serves a nested launcher and includes everything"),
     ("a nested launcher's filter is counted as one of the task's writers", SELECTION_FILTER,
-     "        this.decisions = nested ? null : new DecisionRecord();",
-     "        this.decisions = new DecisionRecord();",
+     "        this.run = nested ? null : new SelectionRun();",
+     "        this.run = new SelectionRun();",
      functional_suite, "the decision record is the outer launcher's alone, whole and single-writer"),
     ("a copy of the decision record writes under the attached copy's names", DECISION_RECORD,
      "        if (dir == null || !ATTACHED) {", "        if (dir == null) {",
@@ -3635,7 +3637,29 @@ MUTATIONS = [
      "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), ignore)",
      "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), null)",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
-    ("a forced run leaves no paths-ignored note", SELECTION_FILTER,
+    # A class a framework can only run or skip whole is left out only when it holds a test and
+    # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.
+    ("a class with no test is left out", CLASS_VERDICTS,
+     "        boolean allSkipped = !ids.isEmpty();",
+     "        boolean allSkipped = true;",
+     agent_suite, "a class with no test runs"),
+    ("a class is left out when any one of its tests is skipped", CLASS_VERDICTS,
+     "            allSkipped &= verdict == Verdict.SKIPPED;",
+     "            allSkipped |= verdict == Verdict.SKIPPED;",
+     agent_suite, "one test reaching the change keeps the class"),
+    ("a kept class's skipped tests are recorded as skipped", CLASS_VERDICTS,
+     "                entry.setValue(Verdict.CLASS_GRANULARITY);",
+     "                entry.getValue();",
+     agent_suite, "one test reaching the change keeps the class, and the rest are rounded up to it"),
+    ("a pinned test no longer keeps its class", CLASS_VERDICTS,
+     "        if (pinned.test(id)) {",
+     "        if (false) {",
+     agent_suite, "a pinned test keeps its class"),
+    ("a reason to run a class whole leaves its tests to the selector", CLASS_VERDICTS,
+     "        return keepReason != null ? Verdict.CLASS_RUNS_WHOLE : verdict;",
+     "        return verdict;",
+     agent_suite, "a keep reason keeps the class"),
+    ("a forced run leaves no paths-ignored note", SELECTION_RUN,
      "            if (pathsIgnored > 0) {",
      "            if (pathsIgnored > 0 && daemonRefusal() == null && decision != null && !decision.isFullRun()) {",
      functional_suite, "a forced run still names what it left out"),

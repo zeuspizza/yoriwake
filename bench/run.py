@@ -2583,6 +2583,7 @@ DECISION_FORCING_KINDS_NOTE = "forcing-kinds"
 # coverage alone makes -- the one beneath a refusal, and the one a looser mode would start from.
 SHARES_JVM_RULE_PREFIX = "shares-jvm-"
 CLASS_GRANULARITY_RULE = "class-granularity"
+CLASS_RUNS_WHOLE_RULE = "class-runs-whole"
 # The `rules` note values under which rule lines are written, AgentContract's RULES_COMPLETE and
 # RULES_FROM_REFUSED_INPUTS. Any other value says why there are none.
 RULES_COMPUTED = ("complete", "from-refused-inputs")
@@ -3091,9 +3092,10 @@ def decision_fields(decisions, selected_distinct):
 
 
 def coverage_only(tokens):
-    """Whether a row's rules include one coverage alone applies: not a shared JVM, not class rounding."""
-    return any(not token.startswith(SHARES_JVM_RULE_PREFIX) and token != CLASS_GRANULARITY_RULE
-               and token not in (RULE_NONE, RULE_UNKNOWN) for token in tokens)
+    """Whether a row's rules include one coverage alone applies: not a shared JVM, not a whole class."""
+    return any(not token.startswith(SHARES_JVM_RULE_PREFIX)
+               and token not in (CLASS_GRANULARITY_RULE, CLASS_RUNS_WHOLE_RULE, RULE_NONE, RULE_UNKNOWN)
+               for token in tokens)
 
 
 def rule_fields(rules, notes):

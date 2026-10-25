@@ -26,6 +26,8 @@ public enum Verdict {
     ENGINE_RUNS_EVERYTHING,
     /** Excluded on its own, included because another test in its class is selected. */
     CLASS_GRANULARITY,
+    /** Its class uses a runner or construct selection does not leave out, so the whole class runs. */
+    CLASS_RUNS_WHOLE,
     /** See {@link Selector.Decision.Reason#FULL_RUN}. */
     FULL_RUN,
     /** See {@link Selector.Decision.Reason#REACHES_CHANGE}. */

@@ -50,6 +50,15 @@ public final class AgentContract {
      */
     public static final String CLASS_GRANULARITY_PROPERTY = "yoriwake.select.classGranularity";
 
+    /**
+     * Names the framework outside the JUnit Platform whose test classes a selecting run may leave out
+     * whole: {@link #NARROW_PLAIN_JUNIT4}. Unset, such a framework's tests all run.
+     */
+    public static final String NARROW_PLAIN_RUNNERS_PROPERTY = "yoriwake.plainRunners.narrow";
+
+    /** {@link #NARROW_PLAIN_RUNNERS_PROPERTY}'s value for plain JUnit 4. */
+    public static final String NARROW_PLAIN_JUNIT4 = "junit4";
+
     /** The changed classes, comma-separated. */
     public static final String CHANGED_CLASSES_PROPERTY = "yoriwake.change.classes";
 
@@ -609,6 +618,37 @@ public final class AgentContract {
     /** On a complement run: {@code leftOut \t ran}, the tests this writer left out and included. */
     public static final String COMPLEMENT_NOTE = "complement";
 
+    /**
+     * On a run that narrows a plain framework: whether its executor took the hook that leaves a
+     * class out, as {@link #PLAIN_FILTER_HOOKED}, {@link #PLAIN_FILTER_UNHOOKED} or
+     * {@link #PLAIN_FILTER_UNSUPPORTED}.
+     */
+    public static final String PLAIN_FILTER_NOTE = "plain-filter";
+
+    /** The executor took the hook. */
+    public static final String PLAIN_FILTER_HOOKED = "hooked";
+
+    /** The executor's shape was not one the hook knows, so every class ran. */
+    public static final String PLAIN_FILTER_UNHOOKED = "unhooked";
+
+    /** The hook could not reach the judgement, or the judgement threw, so every class ran. */
+    public static final String PLAIN_FILTER_UNSUPPORTED = "unsupported";
+
+    /**
+     * {@code <token>=<count>}, comma-separated: how many classes ran whole because of a runner or
+     * shape selection does not judge, by the closed tokens below.
+     */
+    public static final String CLASS_RUNS_WHOLE_NOTE = "class-runs-whole";
+
+    /** A JUnit 4 class whose runner is not on the allow-list. */
+    public static final String CLASS_RUNS_WHOLE_JUNIT4_RUNNER = "junit4-runner";
+
+    /** A JUnit 4 class whose tests' descriptions name another class, no method, or none at all. */
+    public static final String CLASS_RUNS_WHOLE_JUNIT4_SHAPE = "junit4-shape";
+
+    /** A JUnit 4 class whose runner cannot be filtered. */
+    public static final String CLASS_RUNS_WHOLE_JUNIT4_NOT_FILTERABLE = "junit4-not-filterable";
+
     /** Discovery never asked, so there is no decision to describe. */
     public static final String RUN_NOT_DECIDED = "not-decided";
 
@@ -741,4 +781,7 @@ public final class AgentContract {
 
     /** Rounded up to its class because another test there is selected. */
     public static final String RULE_CLASS_GRANULARITY = "class-granularity";
+
+    /** Its class uses a runner or construct selection does not leave out, so the whole class runs. */
+    public static final String RULE_CLASS_RUNS_WHOLE = "class-runs-whole";
 }
