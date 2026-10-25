@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.platform;
 
+import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISIONS_FILE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISIONS_PART_SUFFIX;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DECISIONS_VERSION;
@@ -159,7 +160,7 @@ public final class DecisionRecord {
                 .append(writerId).append(" of ").append(WRITERS.get()).append('\n');
         // Which run wrote this, and on which runtime: a record of what ran is used only by a later run
         // that matches both.
-        String token = System.getProperty(RUN_TOKEN_PROPERTY);
+        String token = HostBuild.current().property(RUN_TOKEN_PROPERTY);
         if (token != null && !token.isEmpty()) {
             out.append(NOTE_PREFIX).append(Tsv.join(RUN_TOKEN_NOTE, token)).append('\n');
             for (String property : JVM_IDENTITY_PROPERTIES.split(",")) {

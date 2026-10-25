@@ -664,11 +664,17 @@ class TouchRecorderTest {
 
     @Test
     fun `every reviewed entry matches the names its loader gives the file, and nothing else`() {
-        val reviewed = mapOf(
+        // Pairs, not a map: a second entry of one class must not replace the first.
+        val reviewed = listOf(
             "io.netty.util.internal.NativeLibraryUtil" to listOf(
                 "libnetty_transport_native_epoll_x86_64.so", "libnetty_transport_native_epoll_aarch_64123456789.so",
                 "libnetty_transport_native_kqueue_aarch_648123456.dylib", "libnetty_transport_native_kqueue_x86_64.jnilib",
                 "libnetty_transport_native_io_uring_x86_64998877.so",
+                "libnetty_resolver_dns_native_macos_aarch_64.jnilib", "libnetty_resolver_dns_native_macos_x86_64123456.dylib",
+                "libnetty_resolver_dns_native_macos.dylib",
+            ),
+            "com.amazon.corretto.crypto.provider.Loader" to listOf(
+                "libamazonCorrettoCryptoProvider.so", "libamazonCorrettoCryptoProvider.dylib",
             ),
             "org.xerial.snappy.SnappyLoader" to listOf(
                 "snappy-1.1.10.8-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsnappyjava.so", "libsnappyjava.jnilib",
@@ -699,8 +705,12 @@ class TouchRecorderTest {
         for (file in listOf(
             // netty-tcnative's BoringSSL and OpenSSL builds share this name; not reviewed.
             "libnetty_tcnative_osx_aarch_64.jnilib", "libacme.so", "libshaded_netty_transport_native_epoll_x86_64.so",
+            "libnetty_resolver_dns_native_macos_evil.dylib", "libshaded_netty_resolver_dns_native_macos_aarch_64.jnilib",
         )) {
             assertFalse(ReviewedLibraries.reviewed("io.netty.util.internal.NativeLibraryUtil", file), file)
+        }
+        for (file in listOf("libamazonCorrettoCryptoProvider123.so", "amazonCorrettoCryptoProvider.dll", "libshaded_amazonCorrettoCryptoProvider.so")) {
+            assertFalse(ReviewedLibraries.reviewed("com.amazon.corretto.crypto.provider.Loader", file), file)
         }
         // A system library of that bare name need not be the build that was reviewed.
         assertFalse(ReviewedLibraries.reviewed("org.conscrypt.NativeLibraryUtil", "libconscrypt.so"))

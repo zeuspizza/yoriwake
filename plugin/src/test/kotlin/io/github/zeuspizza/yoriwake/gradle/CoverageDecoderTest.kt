@@ -1077,6 +1077,24 @@ class CoverageDecoderTest {
     }
 
     @Test
+    fun `a JVM's later test plan is taken as having seen every class from its start`(@TempDir dir: File) {
+        // Classes its first plan loaded are loaded already, so the second plan's touches never show them.
+        records(dir, "4711-1", a)
+        touches(
+            dir, "4711-1", "1\t${AgentContract.TOUCH_PLAN_STARTED}\t", "1\t${AgentContract.TOUCH_LOADED}\tcom.acme.Point",
+            AgentContract.TOUCHES_COMPLETE,
+        )
+        records(dir, "4711-1${AgentContract.PLAN_DIR_SUFFIX}2", b)
+        touches(dir, "4711-1${AgentContract.PLAN_DIR_SUFFIX}2", "1\t${AgentContract.TOUCH_PLAN_STARTED}\t", AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        val rows = File(dir, AgentContract.FIRST_TOUCH_FILE).readLines().filter(String::isNotBlank).map(Tsv::split)
+        assertEquals(listOf("0"), rows.filter { it[0].endsWith("${AgentContract.PLAN_DIR_SUFFIX}2") && it[2] == AgentContract.FIRST_TOUCH_ANY }.map { it[1] }, rows.toString())
+        assertEquals(emptyList(), rows.filter { !it[0].endsWith("${AgentContract.PLAN_DIR_SUFFIX}2") && it[2] == AgentContract.FIRST_TOUCH_ANY }, rows.toString())
+    }
+
+    @Test
     fun `a load or a class-file read before a record dates the class at that record`(@TempDir dir: File) {
         records(dir, "1", a, b)
         touches(
@@ -1882,5 +1900,13 @@ class CoverageDecoderTest {
                 "worker-3 (open: [class:T]/[method:only])",
             CoverageDecoder.describeUnfinished(dir, listOf("worker-1", "worker-2", "worker-3")),
         )
+    }
+
+    @Test
+    fun `the JVMs behind a run are its record directories without their plan numbers`() {
+        val workers = listOf("worker-12", "worker-4711-1730000000000", "worker-4711-1730000000000-p2",
+            "worker-4711-1730000000000-p3", "worker-4712-1730000000001").map(::File)
+
+        assertEquals(3, CoverageDecoder.jvmCount(workers))
     }
 }
