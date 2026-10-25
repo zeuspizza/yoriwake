@@ -3135,10 +3135,10 @@ MUTATIONS = [
     # A container that fails reports none of the tests it did not reach, and one that fails after
     # them leaves them passed; either way the class still fails.
     ("a failed container leaves its tests without a failed record", PLATFORM_EVENTS,
-     "        } else if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {\n"
+     "        if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {\n"
      "            failedBeneath(capture, identifier);\n"
      "        }\n",
-     "        }\n",
+     "",
      agent_suite, "a class container that fails records every test beneath it as failed"),
     # A test template whose argument source throws, or a test factory that throws, fails with no
     # invocation beneath it; its older SUCCESSFUL invocations then read as known to pass.
