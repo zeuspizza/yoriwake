@@ -59,6 +59,20 @@ object TestIdentifiers {
         return Triple(plan, classId, plan.getChildren(classId).sortedBy { it.uniqueId })
     }
 
+    /** A plan with no tests whose configuration holds [parameters], as the launcher was given them. */
+    fun emptyPlan(vararg parameters: Pair<String, String>): TestPlan = TestPlan.from(
+        listOf<TestDescriptor>(EngineDescriptor(UniqueId.forEngine("junit-jupiter"), "junit-jupiter")),
+        Parameters(parameters.toMap()),
+    )
+
+    private class Parameters(private val values: Map<String, String>) : ConfigurationParameters {
+        override fun get(key: String): Optional<String> = Optional.ofNullable(values[key])
+        override fun getBoolean(key: String): Optional<Boolean> = get(key).map { it.toBoolean() }
+        @Deprecated("required by the interface")
+        override fun size() = values.size
+        override fun keySet(): Set<String> = values.keys
+    }
+
     private object NoParameters : ConfigurationParameters {
         override fun get(key: String): Optional<String> = Optional.empty()
         override fun getBoolean(key: String): Optional<Boolean> = Optional.empty()

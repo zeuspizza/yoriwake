@@ -45,6 +45,7 @@ the run as `change-set-unreadable`.
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
 | `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `full-run-scheduled`, `tests-named`, `decline-undetermined` |
+| `PARALLELISM_OVERRIDE_PROPERTY` | `yoriwake.parallelism.override` | plugin → agent | The plugin asked for tests one at a time; capture waits for the test JVM to confirm it |
 | `FINGERPRINT_IGNORED_PROPERTY` | `yoriwake.fingerprint.ignored` | plugin → agent | The system properties `systemPropertyIgnore` left out of a selecting run's environment comparison, comma-separated. Set only when it left one out; the agent copies it into `decisions.tsv` as the `fingerprint-ignored` note |
 | `RUN_TOKEN_PROPERTY` | `yoriwake.run.token` | plugin → agent | A fresh value per selecting run of the task. Each decision record notes it, so the plugin merges only this run's |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |
@@ -110,6 +111,7 @@ is written as it is.
 | `OVERHEAD_FILE` | `overhead.txt` | One line: what capture cost this JVM |
 | `ENV_READS_FILE` | `env-reads.tsv` | The environment variables the JVM read, one name per line, escaped as a field; never a value. Written when every read was observed. The decode writes the union of a capture's workers beside the map under the same name, only when every worker wrote one; `yoriwakeExplain<Task>` reads it and nothing selects by it |
 | `RAW_SCHEMA_VERSION_FILE` | `raw-schema-version` | The raw version, one integer. Written before the first record |
+| `PARALLEL_UNCONFIRMED_FILE` | `parallel-unconfirmed` | Why the worker captured nothing: its tests may run concurrently. Any one leaves the map as it was |
 | `PLAN_COMPLETE_FILE` | `plan-complete` | Empty. Written only when the worker's whole run ended normally |
 
 ### First touches

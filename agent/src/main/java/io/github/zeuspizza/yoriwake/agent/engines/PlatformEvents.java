@@ -1,7 +1,10 @@
 package io.github.zeuspizza.yoriwake.agent.engines;
 
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_UNKNOWN;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_OVERRIDE_PROPERTY;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLEL_UNCONFIRMED_FILE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY;
+import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WORKER_DIR_PREFIX;
 
 import io.github.zeuspizza.yoriwake.agent.capture.AgentLookup;
 import io.github.zeuspizza.yoriwake.agent.capture.CaptureClaim;
@@ -14,6 +17,8 @@ import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import io.github.zeuspizza.yoriwake.agent.platform.RanTests;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -101,6 +106,12 @@ public class PlatformEvents implements TestExecutionListener {
             releaseCapture();
             return;
         }
+        String concurrent = ParallelReadBack.unconfirmed(testPlan, armed());
+        if (concurrent != null) {
+            markUnconfirmed(concurrent);
+            releaseCapture();
+            return;
+        }
         try {
             session = CaptureSession.open(agent, outputDir, HostBuild.current().workerId(), false);
         } catch (IOException e) {
@@ -114,6 +125,26 @@ public class PlatformEvents implements TestExecutionListener {
         // Everything loaded during JVM and test-plan startup, taken before any other take so
         // nothing is reset away first.
         session.startupEnded();
+    }
+
+    private static boolean armed() {
+        String override = System.getProperty(PARALLELISM_OVERRIDE_PROPERTY);
+        return override != null && !override.isEmpty();
+    }
+
+    /**
+     * Leaves the reason in this worker's records directory, where the decode finds it and leaves
+     * the map alone. A marker that cannot be written still captures nothing.
+     */
+    private void markUnconfirmed(String reason) {
+        File workerDir = new File(outputDir, WORKER_DIR_PREFIX + HostBuild.current().workerId());
+        try {
+            Files.createDirectories(workerDir.toPath());
+            Files.write(new File(workerDir, PARALLEL_UNCONFIRMED_FILE).toPath(),
+                (reason + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException e) {
+            reporter.report(ProbeResult.failed("Could not record why nothing was captured (" + reason + "): " + e));
+        }
     }
 
     @Override
