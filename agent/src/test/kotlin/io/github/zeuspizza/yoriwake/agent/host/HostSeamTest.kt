@@ -18,6 +18,8 @@ class HostSeamTest {
         val naming = sources.walk().filter { it.isFile && it.name.endsWith(".java") }.filter { file ->
             val code = file.readText().replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
                 .replace(Regex("//[^\n]*"), "")
+                // A library Gradle publishes for any JVM to use, reviewed as any other native library.
+                .replace("org.gradle.fileevents.", "")
             "org.gradle." in code || "org/gradle/" in code
         }.map { it.relativeTo(sources).invariantSeparatorsPath }.toList()
         assertEquals(listOf("host/GradleHost.java"), naming)

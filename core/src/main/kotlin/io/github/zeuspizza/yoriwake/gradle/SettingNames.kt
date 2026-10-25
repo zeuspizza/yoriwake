@@ -8,4 +8,5 @@ internal object SettingNames {
     const val FULL_RUN = "yoriwake.fullRun"
     const val BASE = "yoriwake.base"
     const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
+    const val RECORD_SEQUENTIALLY = "yoriwake.recordSequentially"
 }
