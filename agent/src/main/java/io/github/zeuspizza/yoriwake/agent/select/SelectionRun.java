@@ -57,6 +57,9 @@ public final class SelectionRun {
 
     private volatile boolean recordHookInstalled;
 
+    // A framework's own notes, added just before the record is written.
+    private final Runnable beforeWrite;
+
     // Pins are counted apart from the tally: a pin is selection told not to apply, not an outcome.
     private final AlwaysRun alwaysRun = AlwaysRun.from(orEmpty(HostBuild.current().property(AgentContract.ALWAYS_RUN_PROPERTY)));
 
@@ -83,6 +86,12 @@ public final class SelectionRun {
 
     /** A run whose record is written at JVM exit. */
     public SelectionRun() {
+        this(() -> { });
+    }
+
+    /** A run whose record is written at JVM exit, after {@code beforeWrite} has added its notes. */
+    public SelectionRun(Runnable beforeWrite) {
+        this.beforeWrite = beforeWrite;
         // Installed at construction: a run that judges no tests must still record why.
         installRecordHook();
     }
@@ -98,6 +107,11 @@ public final class SelectionRun {
             }
             recordHookInstalled = true;
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    beforeWrite.run();
+                } catch (Throwable ignored) {
+                    // A framework's note that cannot be written must not cost the record.
+                }
                 noteOutcome();
                 Selector.Decision current = decision;
                 decisions.writeTo(mapDir(), current == null ? null : current.rules());

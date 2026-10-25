@@ -120,6 +120,8 @@ COST_SRC = "bench/cost.py"
 SELECTION_FILTER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/SelectionFilter.java"
 SELECTION_RUN = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRun.java"
 CLASS_VERDICTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/ClassVerdicts.java"
+JUNIT4_SELECTION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Selection.java"
+LOADED_CLASS_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/LoadedClassRecorder.java"
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
 CHANGE_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
@@ -714,6 +716,8 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
     # every-guard run measures it.
     "PathIgnoreFunctionalTest": 61,
+    # An estimate: 46 s locally for its 3 tests on both Gradle versions, scaled as SelectionFunctionalTest.
+    "PlainRunnerSelectionFunctionalTest": 60,
     "MultiProjectFunctionalTest": 36,
     "MultiplatformFunctionalTest": 140,
     "NamedTestsFunctionalTest": 111,
@@ -3639,6 +3643,29 @@ MUTATIONS = [
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
     # A class a framework can only run or skip whole is left out only when it holds a test and
     # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.
+    # Plain JUnit 4: a class is left out only through Gradle's own early return, only when the run
+    # asked for it, only for runners that run exactly the class's own methods, ignored tests unjudged.
+    ("the agent's answer to leave a JUnit 4 class out is not taken", JUNIT4_SELECTION,
+     "            return current.judge(runner);",
+     "            current.judge(runner);\n            return false;",
+     functional_suite, "a class whose tests a change cannot reach is left out when its runner is judged"),
+    ("a JUnit 4 runner off the allow-list is judged", JUNIT4_SELECTION,
+     "        if (!ALLOWED_RUNNERS.contains(runner.getClass().getName())) {",
+     "        if (false) {",
+     agent_suite, "a runner that generates tests, or any runner not on the list, keeps its class"),
+    ("a JUnit 4 test named for another class is judged as the class's own", JUNIT4_SELECTION,
+     "            if (!className.equals(invoke(leaf, \"getClassName\")) || invoke(leaf, \"getMethodName\") == null) {",
+     "            if (invoke(leaf, \"getMethodName\") == null) {",
+     agent_suite, "JUnit 3's runner over another class's tests keeps its class"),
+    ("an ignored JUnit 4 test is judged", JUNIT4_SELECTION,
+     "            if (ignored(leaf)) {",
+     "            if (false) {",
+     functional_suite, "a class whose tests a change cannot reach is left out when its runner is judged"),
+    ("Gradle's JUnit 4 executor is rewritten on every run", LOADED_CLASS_RECORDER,
+     "            if (AgentContract.NARROW_PLAIN_JUNIT4.equals(\n"
+     "                    System.getProperty(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {",
+     "            if (true) {",
+     functional_suite, "without the agent told to judge plain JUnit 4, every class runs"),
     ("a class with no test is left out", CLASS_VERDICTS,
      "        boolean allSkipped = !ids.isEmpty();",
      "        boolean allSkipped = true;",
