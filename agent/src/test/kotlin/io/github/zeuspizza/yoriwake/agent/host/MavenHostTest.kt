@@ -57,7 +57,7 @@ class MavenHostTest {
 
     @Test
     fun `no contract property is read outside the host`() {
-        val allowed = setOf("\"java.specification.version\"", "property", "DRY_RUN_PROPERTY")
+        val allowed = setOf("\"java.specification.version\"", "\"os.name\"", "property", "DRY_RUN_PROPERTY")
         val read = Regex("""(?:System\.getProperty|Boolean\.getBoolean)\(\s*([^,)]+)""")
         val offenders = File("src/main/java").walk()
             .filter { it.isFile && it.extension == "java" && "/host/" !in it.invariantSeparatorsPath }

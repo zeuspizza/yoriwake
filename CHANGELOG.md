@@ -43,6 +43,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A test the engine starts and never finishes runs every time and no longer discards the capture. Map: left alone.
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
 
 ## [0.3.0] - 2026-10-22

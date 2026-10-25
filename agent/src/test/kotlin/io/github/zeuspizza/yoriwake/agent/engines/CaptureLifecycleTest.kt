@@ -265,6 +265,25 @@ class CaptureLifecycleTest {
     }
 
     @Test
+    fun `a test the engine starts and never finishes is not known to pass, and the plan still completes`(@TempDir dir: File) {
+        // Kotest under a container timeout: the child starts, its container finishes, the child never does.
+        val (plan, container, tests) = TestIdentifiers.plan("TimeoutSpec", "timeout a", "later")
+        val (leftOpen, later) = tests
+        val l = listener(ScriptedAgent(), dir, Sink())
+        l.testPlanExecutionStarted(plan)
+        l.executionStarted(container)
+        l.executionStarted(leftOpen)
+        l.executionFinished(container, TestExecutionResult.successful())
+        runTest(l, later)
+        l.testPlanExecutionFinished(plan)
+
+        val rows = File(dir.listFiles()!!.single(), "index.tsv").readLines().map { it.split('\t') }
+            .filter { it[3] != "NONE" }.map { it[3] to it[4] }
+        assertEquals(listOf("UNKNOWN" to leftOpen.uniqueId, "SUCCESSFUL" to later.uniqueId), rows)
+        assertTrue(completionMarker(dir).isFile, "the plan's finish did not mark the worker complete")
+    }
+
+    @Test
     fun `a plan abandoned mid-run leaves no completion marker`(@TempDir dir: File) {
         // What a test calling System.exit, an OOM kill or a crash looks like from here: records
         // flushed, and the plan's end never reached. Its map must not be dated.
