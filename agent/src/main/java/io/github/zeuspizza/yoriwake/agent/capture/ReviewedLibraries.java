@@ -53,6 +53,12 @@ final class ReviewedLibraries {
         {"com.github.luben.zstd.util.Native", "libzstd-jni-[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.(so|dylib)"},
         {"net.jpountz.util.Native", "liblz4-java(-[0-9]+)?\\.(so|dylib)"},
         {"org.rocksdb.NativeLibraryLoader", "librocksdbjni(-[a-z0-9_-]+)?[0-9]*\\.(so|dylib|jnilib)"},
+        // The host's compression libraries RocksDB loads by name before its own, each at a version
+        // reviewed, as the JDK resolves it: Ubuntu 22.04's and 24.04's, and Homebrew's. Any other
+        // version, a name without one (macOS's own libz.dylib), and bzip2 run wide.
+        {"org.rocksdb.RocksDB", "libz\\.so\\.1\\.(2\\.11|3)|libsnappy\\.so\\.1\\.1\\.(8|10)|liblz4\\.so\\.1\\.9\\.[34]"
+            + "|libzstd\\.so\\.1\\.(4\\.8|5\\.5)"
+            + "|libz\\.1\\.3\\.2\\.dylib|libsnappy\\.1\\.3\\.1\\.dylib|liblz4\\.1\\.10\\.0\\.dylib|libzstd\\.1\\.5\\.7\\.dylib"},
         // Safe unless a connection enables extension loading, which lets SQL load any library.
         {"org.sqlite.SQLiteJDBCLoader",
             "(sqlite-([0-9.]+|unknown)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)?"

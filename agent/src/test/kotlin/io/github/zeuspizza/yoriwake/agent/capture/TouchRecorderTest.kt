@@ -793,6 +793,25 @@ class TouchRecorderTest {
             "libnetty_tcnative_osx_aarch_648123456789.jnilib, since "), why)
     }
 
+    @Test
+    fun `the host's compression libraries RocksDB loads count only at a version reviewed, by RocksDB itself`() {
+        val reviewed = listOf(
+            "libz.so.1.2.11", "libz.so.1.3", "libsnappy.so.1.1.8", "libsnappy.so.1.1.10", "liblz4.so.1.9.3",
+            "liblz4.so.1.9.4", "libzstd.so.1.4.8", "libzstd.so.1.5.5",
+            "libz.1.3.2.dylib", "libsnappy.1.3.1.dylib", "liblz4.1.10.0.dylib", "libzstd.1.5.7.dylib",
+        )
+        for (file in reviewed) {
+            assertTrue(ReviewedLibraries.reviewed("org.rocksdb.RocksDB", file), file)
+            assertFalse(ReviewedLibraries.reviewed("com.acme.Loader", file), file)
+        }
+        // Another version, no version, a name only the -dev package links, bzip2, RocksDB's other codecs.
+        for (file in listOf("libz.so.1.3.1", "libz.so.1", "libz.so", "libz.dylib", "libz.1.dylib", "libsnappy.so.1",
+            "libzstd.so.1.5.6", "libbz2.so.1.0.4", "libbzip2.so", "liblz4hc.so", "libxpress.so", "libzjni.so",
+            "libz-evil.so", "libz.so.1.3.so")) {
+            assertFalse(ReviewedLibraries.reviewed("org.rocksdb.RocksDB", file), file)
+        }
+    }
+
     /**
      * sqlite-jdbc's loading class and NativeDB, the guard class, in a loader of their own over [dir],
      * with the version file the driver's jar carries.

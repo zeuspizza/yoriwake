@@ -2095,6 +2095,11 @@ MUTATIONS = [
      "\"libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\\\.(so|dylib|jnilib)\",\n            \"identity:io.netty\", \"netty-tcnative-boringssl-static\", \"2.0.84.Final\"},",
      "\"libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\\\.(so|dylib|jnilib)\"},",
      agent_suite, "netty-tcnative not identified as the BoringSSL build by its bytes touches every class from its load"),
+    # The host's compression libraries count for RocksDB only at a version reviewed.
+    ("a host compression library counts at any version", REVIEWED_LIBRARIES,
+     "\"libz\\\\.so\\\\.1\\\\.(2\\\\.11|3)|",
+     "\"libz\\\\.so(\\\\.[0-9.]+)?|",
+     agent_suite, "the host's compression libraries RocksDB loads count only at a version reviewed, by RocksDB itself"),
     ("a library the JDK resolved and opened is not judged", TOUCH_RECORDER,
      "    void resolved(Object loaded) {\n        judgeLoad(loaded);\n",
      "    void resolved(Object loaded) {\n",

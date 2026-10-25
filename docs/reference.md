@@ -465,8 +465,12 @@ attempt is not a load only when opening it fails.
 Two notes on the list:
 
 - `RocksDB.loadLibrary`, which RocksDB calls for itself, first tries to load the system's
-  compression libraries by name (`snappy`, `z`, `bzip2`, `lz4`, `zstd`). Those are not reviewed, so
-  a JVM that loads RocksDB that way applies the wide rule from there.
+  compression libraries by name (`snappy`, `z`, `bzip2`, `lz4`, `zstd`); an attempt that finds no
+  file is no load. Found, one counts as reviewed only when RocksDB loads it at a version reviewed,
+  read from the file the JDK resolved: zlib 1.2.11 and 1.3, snappy 1.1.8 and 1.1.10, lz4 1.9.3 and
+  1.9.4, zstd 1.4.8 and 1.5.5 (Ubuntu 22.04 and 24.04), and Homebrew's zlib 1.3.2, snappy 1.3.1,
+  lz4 1.10.0 and zstd 1.5.7. Any other version, macOS's own `libz.dylib`, whose name carries none,
+  and bzip2 apply the wide rule.
 - Netty's io_uring transport is listed on a condition. Its public API lets any caller hand the
   kernel an operation, a file open among them. Every operation reaches the ring through one Java
   method, `SubmissionQueue.enqueueSqe`, which the agent checks as it is entered: one of the 19
