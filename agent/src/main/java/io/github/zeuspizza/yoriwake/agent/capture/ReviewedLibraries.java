@@ -45,7 +45,11 @@ final class ReviewedLibraries {
         // loaded bytes against the resource of the jar that declares the artifact.
         {"io.netty.util.internal.NativeLibraryUtil", "libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\.(so|dylib|jnilib)",
             "identity:io.netty", "netty-tcnative-boringssl-static", "2.0.84.Final"},
+        {"io.netty.util.internal.NativeLibraryUtil",
+            "libnetty_resolver_dns_native_macos(_(x86_64|aarch_64))?[0-9]*\\.(dylib|jnilib)"},
         {"org.conscrypt.NativeLibraryUtil", "libconscrypt_openjdk_jni(-[a-z]+-[a-z0-9_]+)?[0-9]*\\.(so|dylib|jnilib)"},
+        // Amazon Corretto Crypto Provider: the random part of its extracted copy is in the directory.
+        {"com.amazon.corretto.crypto.provider.Loader", "libamazonCorrettoCryptoProvider\\.(so|dylib)"},
         {"org.xerial.snappy.SnappyLoader",
             "(snappy-[0-9A-Za-z.]*-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)?"
                 + "libsnappyjava\\.(so|dylib|jnilib)"},
