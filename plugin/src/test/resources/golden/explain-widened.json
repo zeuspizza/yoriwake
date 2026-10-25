@@ -19,6 +19,7 @@
   "inlineScanExhausted": false,
   "refusalKind": null,
   "refusalDetail": null,
+  "parallelismUnconfirmed": null,
   "capture": false,
   "mapCurrent": false,
   "captureReason": null,

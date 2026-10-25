@@ -19,6 +19,7 @@
   "inlineScanExhausted": true,
   "refusalKind": "constant-changed",
   "refusalDetail": "com.acme.Thing.LIMIT",
+  "parallelismUnconfirmed": null,
   "capture": true,
   "mapCurrent": false,
   "captureReason": "running everything",

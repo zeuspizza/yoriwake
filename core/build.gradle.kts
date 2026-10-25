@@ -12,9 +12,10 @@ repositories {
 }
 
 dependencies {
-    // The versions the plugin bundles and relocates; see its build for why each is pinned.
-    implementation("org.jacoco:org.jacoco.core:0.8.12")
-    implementation("org.ow2.asm:asm:9.10.1")
+    // Compiled against only: each front end pins the versions it bundles and relocates, so the
+    // plugin's own pin is the one that ships. See its build for why each is pinned.
+    compileOnly("org.jacoco:org.jacoco.core:0.8.12")
+    compileOnly("org.ow2.asm:asm:9.10.1")
     // The host supplies the stdlib, as for the plugin.
     compileOnly(kotlin("stdlib"))
     // The selector and the record formats; bundled by the front end, never published.
