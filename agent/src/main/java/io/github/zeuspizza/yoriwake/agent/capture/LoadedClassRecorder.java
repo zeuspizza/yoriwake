@@ -47,6 +47,11 @@ public final class LoadedClassRecorder {
             if (Boolean.parseBoolean(HostBuild.current().property(AgentContract.JUNIT4_HOOK_PROPERTY))) {
                 JUnit4Hook.install(instrumentation);
             }
+            // Only on a run that narrows plain JUnit 4: any other keeps Gradle's executor as it is.
+            if (AgentContract.NARROW_PLAIN_JUNIT4.equals(
+                    HostBuild.current().property(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {
+                JUnit4Hook.installExecutorRewrite(instrumentation);
+            }
 
             String output = HostBuild.current().property(AgentContract.LOADED_DIR_PROPERTY);
             if (output == null || output.isEmpty()) {
