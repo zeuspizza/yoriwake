@@ -1,9 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import org.gradle.testkit.runner.TaskOutcome
-import org.jacoco.core.data.ExecutionDataReader
-import org.jacoco.core.data.ExecutionDataStore
-import org.jacoco.core.data.SessionInfoStore
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -176,8 +173,6 @@ class HostCoverageFunctionalTest : FunctionalTestSupport() {
         )
     }
 
-    private fun hostFile(dir: File) = File(dir, "build/jacoco/test.exec")
-
     /** The XML report without its session list, which names each JVM and when it ran. */
     private fun report(dir: File) =
         File(dir, "build/reports/jacoco/test/jacocoTestReport.xml").readText().replace(Regex("<sessioninfo[^>]*/>"), "")
@@ -195,23 +190,7 @@ class HostCoverageFunctionalTest : FunctionalTestSupport() {
     }
 
     /** The fixture's main classes with any probe hit, over every given file. */
-    private fun mainClassesIn(vararg files: File): Set<String> =
-        read(*files).first.contents.filter { it.hasHits() }.map { it.name }.filter { it in mainClasses }.toSet()
+    private fun mainClassesIn(vararg files: File): Set<String> = classesHitIn(mainClasses, *files)
 
-    private fun sessionsIn(file: File): Int = read(file).second.infos.size
-
-    private fun read(vararg files: File): Pair<ExecutionDataStore, SessionInfoStore> {
-        val store = ExecutionDataStore()
-        val sessions = SessionInfoStore()
-        files.forEach { file ->
-            file.inputStream().buffered().use { input ->
-                ExecutionDataReader(input).apply {
-                    setExecutionDataVisitor(store)
-                    setSessionInfoVisitor(sessions)
-                    read()
-                }
-            }
-        }
-        return store to sessions
-    }
+    private fun sessionsIn(file: File): Int = executionData(file).second.infos.size
 }

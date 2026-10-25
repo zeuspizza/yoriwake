@@ -706,6 +706,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "InitScriptFunctionalTest": 54,
     "IsolatedCaptureFunctionalTest": 71,
     "JvmSharedFunctionalTest": 172,
+    # Estimated from HostCoverageFunctionalTest by local run time (40 s to its 15 s), until an
+    # every-guard run measures it.
+    "KoverFunctionalTest": 160,
     "MapDatingFunctionalTest": 229,
     "MapProvenanceFunctionalTest": 98,
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
