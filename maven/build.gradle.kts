@@ -27,6 +27,8 @@ val mavenFloor = "3.9.0"
 
 dependencies {
     implementation(project(":core"))
+    // The record format and contract names; the agent itself is bundled below, never a dependency.
+    compileOnly(project(":agent"))
     implementation(kotlin("stdlib"))
     compileOnly("org.apache.maven:maven-core:$mavenFloor")
     compileOnly("org.apache.maven:maven-plugin-api:$mavenFloor")
@@ -88,8 +90,19 @@ val bundleAgent by tasks.registering(Copy::class) {
     rename { "yoriwake-agent.jar" }
 }
 
+// The agent's classes as well as its jar: the jar goes to the test JVM, the classes let the decode
+// read the records the agent writes, as in the Gradle plugin.
+val unpackAgentClasses by tasks.registering(Sync::class) {
+    inputs.files(agentJar)
+    from({ agentJar.map { zipTree(it) } })
+    into(layout.buildDirectory.dir("agent-classes"))
+    // Its service registrations would put its listener on Maven's own class path.
+    exclude { it.path.startsWith("META-INF/") && !it.path.startsWith("META-INF/licenses/") }
+}
+
 sourceSets.main {
     output.dir(mapOf("builtBy" to bundleAgent), layout.buildDirectory.dir("bundled-agent"))
+    output.dir(mapOf("builtBy" to unpackAgentClasses), layout.buildDirectory.dir("agent-classes"))
 }
 
 // Every package bundled from a dependency moves under the plugin's own, so nothing of it can meet

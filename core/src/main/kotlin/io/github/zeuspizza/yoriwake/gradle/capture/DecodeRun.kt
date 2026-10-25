@@ -232,7 +232,7 @@ internal class DecodeRun(
                     logger.warn("[yoriwake] $taskPath could not read $report for failures ($problem)")
                 }
             }.getOrElse { problem ->
-                logger.warn("[yoriwake] $taskPath could not read Gradle's test report for failures ($problem)")
+                logger.warn("[yoriwake] $taskPath could not read the run's JUnit XML report for failures ($problem)")
                 emptySet()
             }
             val failures = runCatching { CoverageDecoder.carryFailures(mapDir, reported) }.getOrElse { problem ->

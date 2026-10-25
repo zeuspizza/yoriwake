@@ -37,6 +37,7 @@ internal class YoriwakeLifecycle @Inject constructor(
         log.info("[yoriwake] attached to Maven $version")
 
         val facts = ReactorFacts(session)
+        val wired = mutableMapOf<String, ScopeOutcome>()
         for (project in session.projects) {
             val runs = TEST_PLUGINS.flatMap { (key, testGoal, ownGoal) ->
                 val plugin = project.getPlugin(key) ?: return@flatMap emptyList()
@@ -44,7 +45,10 @@ internal class YoriwakeLifecycle @Inject constructor(
                 val agentGoal = ownGoal.takeIf { JacocoAdoption.executions(project, it).isNotEmpty() } ?: JacocoAdoption.PREPARE_AGENT
                 plugin.executions.filter { testGoal in it.goals }.map { execution ->
                     val name = "${project.artifactId} ${plugin.artifactId.removePrefix("maven-").removeSuffix("-plugin")}:$testGoal (${execution.id})"
-                    Run(name, agentGoal, Declines.of(project, plugin, execution, session) ?: JacocoAdoption.decline(project, agentGoal, session))
+                    Run(
+                        name, "${project.groupId}:${project.artifactId}:${plugin.artifactId}:${execution.id}", agentGoal,
+                        Declines.of(project, plugin, execution, session) ?: JacocoAdoption.decline(project, agentGoal, session),
+                    )
                 }
             }
             for ((agentGoal, sharing) in runs.groupBy(Run::agentGoal)) {
@@ -65,6 +69,7 @@ internal class YoriwakeLifecycle @Inject constructor(
                             )
                         }
                         ?: requireNotNull(scoped)
+                    wired[run.key] = outcome
                     if (outcome is ScopeOutcome.NotApplied) {
                         log.warn("[yoriwake] ${run.name} declined, ${outcome.kind.token}: ${outcome.detail}; every test runs and nothing is captured")
                     } else {
@@ -73,10 +78,14 @@ internal class YoriwakeLifecycle @Inject constructor(
                 }
             }
         }
+        if (wired.values.any { it !is ScopeOutcome.NotApplied }) {
+            val packages = facts.scope.orEmpty().map { it.removeSuffix("*").removeSuffix(".") }.filter(String::isNotEmpty)
+            session.request.executionListener = ChainedListener(session.request.executionListener, Recording(session, wired, packages))
+        }
     }
 
     /** A test execution, the JaCoCo goal whose agent reaches its JVMs, and why it is declined, if it is. */
-    private class Run(val name: String, val agentGoal: String, val decline: ScopeOutcome.NotApplied?)
+    private class Run(val name: String, val key: String, val agentGoal: String, val decline: ScopeOutcome.NotApplied?)
 
     /** For the functional suite, which runs Maven 4 before its release. */
     private fun allowsPreRelease(session: MavenSession) =
