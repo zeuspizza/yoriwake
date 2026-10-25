@@ -141,6 +141,10 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val excluded: ListProperty<String>
 
+    /** Whether the test task is plain JUnit 4 with `narrowPlainRunners` on, so whole classes may be left out. */
+    @get:Input
+    abstract val narrowsPlainJUnit4: Property<Boolean>
+
     @get:Internal("where git runs, not a set of files this task reads")
     lateinit var rootDir: File
 
@@ -455,6 +459,15 @@ internal abstract class ExplainTask : DefaultTask() {
                 "[yoriwake] $taskPath would run $selected of $known known tests " +
                     selectionShare(selected, known)
             )
+            if (narrowsPlainJUnit4.getOrElse(false)) {
+                val (leftOut, classes) = plainClassesLeftOut(map, decision)
+                logger.lifecycle(
+                    "[yoriwake] $taskPath runs plain JUnit 4, which leaves out whole classes: " +
+                        "${leftOut.size} of $classes known classes" +
+                        leftOut.sorted().take(REPORTED_REFUSALS).joinToString("") { "\n[yoriwake]     $it" } +
+                        "\n[yoriwake]   Each class's runner is judged when its tests run, so the run may keep more."
+                )
+            }
         }
         logger.lifecycle("[yoriwake] $taskPath: ${capture.reason}")
     }
@@ -476,6 +489,7 @@ internal abstract class ExplainTask : DefaultTask() {
             pathIgnore: List<String>,
             environment: EnvironmentFingerprint.Rules,
             largeChange: Int,
+            narrowPlainRunners: Boolean,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -488,6 +502,10 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.mapDir = mapDir
                 // Before the declined return: a required input left unset fails the task's validation.
                 task.largeChangeThreshold.set(largeChange)
+                // Read when the entry is stored, after the build script chose the framework.
+                task.narrowsPlainJUnit4.set(project.provider {
+                    narrowPlainRunners && test.options is org.gradle.api.tasks.testing.junit.JUnitOptions
+                })
                 if (scope is ScopeOutcome.NotApplied) {
                     task.declined = scope.detail
                     return@register
@@ -535,6 +553,22 @@ internal abstract class ExplainTask : DefaultTask() {
 
 /** Whether a map is there to have recorded the variables its tests read. */
 private fun mapPresent(mapDir: File) = File(mapDir, AgentContract.MAP_SCHEMA_VERSION_FILE).isFile
+
+/**
+ * The plain JUnit 4 classes a selecting run would leave out, by name, and how many the map knows:
+ * those whose every recorded test is skipped. Their runners are not known here.
+ */
+internal fun plainClassesLeftOut(
+    map: io.github.zeuspizza.yoriwake.agent.select.MapReader.Result,
+    decision: io.github.zeuspizza.yoriwake.agent.select.Selector.Decision,
+): Pair<List<String>, Int> {
+    val prefix = "[engine:junit4]/[class:"
+    val byClass = map.entries().map { it.testId() }.filter { it.startsWith(prefix) }
+        .groupBy { it.substring(prefix.length, it.indexOf(']', prefix.length)) }
+    val skipped = io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.Reason.SKIPPED
+    val leftOut = byClass.filterValues { ids -> ids.all { decision.reasonForTest(it) == skipped } }.keys
+    return leftOut.toList() to byClass.size
+}
 
 /** Enough to see the pattern; a 300-class refactor should not print 300 lines. */
 private const val REPORTED_REFUSALS = 12

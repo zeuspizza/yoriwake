@@ -107,12 +107,17 @@ internal object Audit {
         val decodeRefused: String? = null,
         /** The token of the last run's decline under Develocity, or null when it did not decline. */
         val develocity: String? = null,
+        /** Whether the last selecting run had `narrowPlainRunners` on, or null when none has run. */
+        val plainNarrowed: Boolean? = null,
     ) {
         companion object {
             const val FILE = "task-facts"
 
             /** Names the JUnit Platform, which is the only framework this tool can deselect within. */
             const val PLATFORM = "junit-platform"
+
+            /** Names plain JUnit 4, whose whole classes `narrowPlainRunners` can leave out. */
+            const val JUNIT4 = "JUnit 4, off the Platform"
 
             fun read(mapDir: File): TaskFacts {
                 val file = File(mapDir, FILE)
@@ -133,13 +138,24 @@ internal object Audit {
                     workers = fields["workers"]?.toIntOrNull()?.takeIf { it > 0 },
                     decodeRefused = fields["decodeRefused"]?.takeIf { it.isNotEmpty() },
                     develocity = fields["develocity"]?.takeIf { it.isNotEmpty() },
+                    plainNarrowed = fields["plainNarrowed"]?.toBooleanStrictOrNull(),
                 )
             }
 
-            fun write(mapDir: File, framework: String, parallelism: String?, develocity: String? = null) {
+            /** [plainNarrowed] is null on a run that does not select, which keeps the last one's. */
+            fun write(
+                mapDir: File,
+                framework: String,
+                parallelism: String?,
+                develocity: String? = null,
+                plainNarrowed: Boolean? = null,
+            ) {
                 update(mapDir) { previous ->
                     // Carried forward: written in `doFirst`, before this run records anything.
-                    previous.copy(framework = framework, parallelism = parallelism, develocity = develocity)
+                    previous.copy(
+                        framework = framework, parallelism = parallelism, develocity = develocity,
+                        plainNarrowed = plainNarrowed ?: previous.plainNarrowed,
+                    )
                 }
             }
 
@@ -176,7 +192,8 @@ internal object Audit {
                             "workers=${next.workers?.toString().orEmpty()}\n" +
                             // One line: the file is `key=value` per line.
                             "decodeRefused=${next.decodeRefused.orEmpty().replace('\n', ' ')}\n" +
-                            "develocity=${next.develocity.orEmpty()}\n",
+                            "develocity=${next.develocity.orEmpty()}\n" +
+                            "plainNarrowed=${next.plainNarrowed?.toString().orEmpty()}\n",
                     )
                 }
             }

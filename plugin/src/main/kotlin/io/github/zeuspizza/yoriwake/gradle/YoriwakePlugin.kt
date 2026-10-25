@@ -465,10 +465,21 @@ public abstract class YoriwakeExtension {
      */
     public abstract val largeChangeThreshold: org.gradle.api.provider.Property<Int>
 
+    /**
+     * Lets a selecting run of a plain JUnit 4 task (`useJUnit()`) leave out whole test classes:
+     * `narrowPlainRunners = true`, or `-Pyoriwake.narrowPlainRunners` for one invocation. A class is
+     * left out only when its runner runs exactly its own methods and none of them can reach the
+     * change. Off by default, and such a task then runs every test when it selects. TestNG is not
+     * covered yet.
+     */
+    public abstract val narrowPlainRunners: org.gradle.api.provider.Property<Boolean>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)
         @Suppress("LeakingThis")
         largeChangeThreshold.convention(io.github.zeuspizza.yoriwake.gradle.change.LargeChange.DEFAULT_THRESHOLD)
+        @Suppress("LeakingThis")
+        narrowPlainRunners.convention(false)
     }
 }

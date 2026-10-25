@@ -17,6 +17,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- `narrowPlainRunners` lets a selecting run of a plain JUnit 4 task leave out whole test classes. Map: left alone.
 - A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
 - `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
 - `largeChangeThreshold` (5,000 paths): a larger change runs everything without analysing it. Map: left alone.
