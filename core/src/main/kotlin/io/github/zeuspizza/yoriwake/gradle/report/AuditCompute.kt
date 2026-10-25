@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle.report
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.select.MapReader
+import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.bytecode.InlineScan
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.change.CeilingRefusal
@@ -371,8 +372,8 @@ internal fun Audit.blockers(
             )
         )
     }
-    when (facts.framework) {
-        null -> add(
+    when {
+        facts.framework == null -> add(
             Blocker(
                 Audit.BlockerKind.FRAMEWORK_UNKNOWN,
                 "no run of this task has recorded which test framework it uses",
@@ -380,13 +381,21 @@ internal fun Audit.blockers(
                     "applied, so it is recorded by the run rather than read from the build.",
             )
         )
-        TaskFacts.PLATFORM -> Unit
+        facts.framework == TaskFacts.PLATFORM -> Unit
+        // Its last selecting run left out whole classes, so the Platform is not what it lacks.
+        facts.framework == TaskFacts.JUNIT4 && facts.plainNarrowed == true -> Unit
         else -> add(
             Blocker(
                 Audit.BlockerKind.NOT_ON_JUNIT_PLATFORM,
                 "this task runs on ${facts.framework}, so the JUnit Platform's " +
                     "PostDiscoveryFilter is never consulted and no test can be deselected " +
                     "through it",
+                (if (facts.framework == TaskFacts.JUNIT4) {
+                    "set `narrowPlainRunners = true` (or `-Pyoriwake.narrowPlainRunners`), which leaves out " +
+                        "whole classes whose runner runs only their own methods; or "
+                } else {
+                    ""
+                }) +
                 "run JUnit 4 through the vintage engine -- " +
                     "`scripts/junit-vintage.init.gradle.kts` does this without editing the " +
                     "build. A vintage run is only honest evidence about the suite it " +
@@ -436,15 +445,30 @@ internal fun Audit.blockers(
             )
         }
     }
-    facts.parallelism?.let { source ->
+    facts.parallelismUnconfirmed?.let { reason ->
+        add(
+            Blocker(
+                Audit.BlockerKind.IN_JVM_PARALLELISM,
+                "the last run's test JVM found that $reason, so it captured nothing",
+                "find what turns it on after the build script (a task action, a JVM argument provider, " +
+                    "JAVA_TOOL_OPTIONS) and turn it off for recording runs",
+            )
+        )
+    } ?: facts.parallelism?.takeIf { facts.parallelismOverride == null }?.let { source ->
         add(
             Blocker(
                 Audit.BlockerKind.IN_JVM_PARALLELISM,
                 "in-JVM parallel execution is enabled via $source, and the plugin refuses to " +
                     "capture under it",
-                "no remedy: tests interleaved inside one JVM share a single coverage agent, " +
-                    "so per-test attribution would silently blend them. Parallel FORKS " +
-                    "(maxParallelForks) are unaffected and remain safe.",
+                if (facts.framework == TaskFacts.PLATFORM) {
+                    "record the map one test at a time with -P${SettingNames.RECORD_SEQUENTIALLY} (or " +
+                        "`recordSequentially = true`); selecting runs keep the parallel scheduling. " +
+                        "Parallel FORKS (maxParallelForks) are unaffected and remain safe."
+                } else {
+                    "no remedy: tests interleaved inside one JVM share a single coverage agent, " +
+                        "so per-test attribution would silently blend them. Parallel FORKS " +
+                        "(maxParallelForks) are unaffected and remain safe."
+                },
             )
         )
     }

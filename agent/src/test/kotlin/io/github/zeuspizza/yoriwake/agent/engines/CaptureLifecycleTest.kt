@@ -69,7 +69,7 @@ class CaptureLifecycleTest {
     fun `takes execution data once before and once after each test`(@TempDir dir: File) {
         val agent = ScriptedAgent()
         val l = listener(agent, dir, Sink())
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         agent.takes.clear() // the plan-start capture of pre-test coverage already happened
 
         runTest(l, identifier("a"))
@@ -84,11 +84,27 @@ class CaptureLifecycleTest {
     }
 
     @Test
+    fun `a test JVM whose tests may run concurrently captures nothing and says why`(@TempDir dir: File) {
+        val agent = ScriptedAgent()
+        val l = listener(agent, dir, Sink())
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan(ParallelReadBack.JUPITER to "true"))
+        val takes = agent.takes.size
+
+        runTest(l, identifier("a"))
+        l.testPlanExecutionFinished(null)
+
+        assertEquals(takes, agent.takes.size, "a test was captured")
+        val markers = dir.walk().filter { it.name == AgentContract.PARALLEL_UNCONFIRMED_FILE }.toList()
+        assertContains(markers.single().readText(), "JUnit Jupiter")
+        assertFalse(dir.walk().any { it.name == AgentContract.PLAN_COMPLETE_FILE }, "the worker was marked complete")
+    }
+
+    @Test
     fun `writes one record per test`(@TempDir dir: File) {
         val agent = ScriptedAgent()
         val sink = Sink()
         val l = listener(agent, dir, sink)
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
 
         runTest(l, identifier("a"))
         runTest(l, identifier("b"))
@@ -107,7 +123,7 @@ class CaptureLifecycleTest {
         val agent = ScriptedAgent()
         val sink = Sink()
         val l = listener(agent, dir, sink)
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
 
         val container = identifier("SomeTest", isTest = false)
         l.executionStarted(container)
@@ -125,7 +141,7 @@ class CaptureLifecycleTest {
         val agent = ScriptedAgent()
         val sink = Sink()
         val l = listener(agent, dir, sink)
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
 
         val skipped = identifier("skipped")
         l.executionSkipped(skipped, "disabled")
@@ -212,7 +228,7 @@ class CaptureLifecycleTest {
         val agent = ScriptedAgent()
         val sink = Sink()
         val l = listener(agent, dir, sink)
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
 
         l.executionSkipped(identifier("SomeSpec", isTest = false), "disabled")
         l.testPlanExecutionFinished(null)
@@ -227,7 +243,7 @@ class CaptureLifecycleTest {
         val agent = ScriptedAgent()
         val sink = Sink()
         val l = listener(agent, null, sink)
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         agent.takes.clear()
 
         runTest(l, identifier("a"))
@@ -241,7 +257,7 @@ class CaptureLifecycleTest {
         val agent = ScriptedAgent().apply { failAfter = 2 }
         val sink = Sink()
         val l = listener(agent, dir, sink)
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
 
         runTest(l, identifier("a"))
         runTest(l, identifier("b"))
@@ -257,7 +273,7 @@ class CaptureLifecycleTest {
     @Test
     fun `a plan that runs to its end marks its worker complete`(@TempDir dir: File) {
         val l = listener(ScriptedAgent(), dir, Sink())
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         runTest(l, identifier("a"))
         l.testPlanExecutionFinished(null)
 
@@ -288,7 +304,7 @@ class CaptureLifecycleTest {
         // What a test calling System.exit, an OOM kill or a crash looks like from here: records
         // flushed, and the plan's end never reached. Its map must not be dated.
         val l = listener(ScriptedAgent(), dir, Sink())
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         runTest(l, identifier("a"))
         l.executionStarted(identifier("b"))
 
@@ -302,7 +318,7 @@ class CaptureLifecycleTest {
     fun `a plan that finished with capture failures is not marked complete`(@TempDir dir: File) {
         // A record it failed to write leaves the older one standing in the merge, looking current.
         val l = listener(ScriptedAgent().apply { failAfter = 2 }, dir, Sink())
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         runTest(l, identifier("a"))
         runTest(l, identifier("b"))
         l.testPlanExecutionFinished(null)
@@ -320,7 +336,7 @@ class CaptureLifecycleTest {
         }
         val l = PlatformEvents(unreachable, sink, dir)
 
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         runTest(l, identifier("a"))
         l.testPlanExecutionFinished(null)
 
@@ -334,14 +350,14 @@ class CaptureLifecycleTest {
         // would wipe the outer test's coverage, and its writer would reopen the same index.
         val agent = ScriptedAgent()
         val outer = listener(agent, dir, Sink())
-        outer.testPlanExecutionStarted(null)
+        outer.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         val test = identifier("outer")
         outer.executionStarted(test)
         agent.takes.clear()
 
         val nestedSink = Sink()
         val nested = listener(agent, dir, nestedSink)
-        nested.testPlanExecutionStarted(null)
+        nested.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         runTest(nested, identifier("inner"))
         nested.testPlanExecutionFinished(null)
 
@@ -366,7 +382,7 @@ class CaptureLifecycleTest {
         val agent = ScriptedAgent()
         val l = listener(agent, records, Sink())
 
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         runTest(l, identifier("a"))
         l.testPlanExecutionFinished(null)
 
@@ -394,7 +410,7 @@ class CaptureLifecycleTest {
     fun `records a duration for each test`(@TempDir dir: File) {
         val agent = ScriptedAgent()
         val l = listener(agent, dir, Sink())
-        l.testPlanExecutionStarted(null)
+        l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
 
         val id = identifier("a")
         l.executionStarted(id)
@@ -437,7 +453,7 @@ class UnattributedAttributionTest {
 
     private fun run(tests: Int, dir: java.io.File): List<String> {
         val listener = PlatformEvents({ AgentLookup.Result.found(CountingAgent()) }, Sink(), dir)
-        listener.testPlanExecutionStarted(null)
+        listener.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         repeat(tests) { i ->
             val id = TestIdentifiers.leaf("t$i")
             listener.executionStarted(id)
@@ -493,7 +509,7 @@ class UnattributedAttributionTest {
             override fun takeExecutionData() = ByteArray(0)
         }
         val listener = PlatformEvents({ AgentLookup.Result.found(emptyAgent) }, Sink(), dir)
-        listener.testPlanExecutionStarted(null)
+        listener.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         val id = TestIdentifiers.leaf("only")
         listener.executionStarted(id)
         listener.executionFinished(id, org.junit.platform.engine.TestExecutionResult.successful())
@@ -525,7 +541,7 @@ class UnknownNextScopeTest {
         // In a mixed jupiter+vintage worker, blaming the preceding jupiter class would mean the
         // vintage test that ran the code is never selected.
         val listener = PlatformEvents({ AgentLookup.Result.found(CountingAgent()) }, Sink(), dir)
-        listener.testPlanExecutionStarted(null)
+        listener.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
 
         val jupiter = TestIdentifiers.leaf("t", inClass = "AlphaSpec")
         listener.executionStarted(jupiter)

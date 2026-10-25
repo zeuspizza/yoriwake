@@ -5,4 +5,5 @@ internal object SettingNames {
     const val SELECT = "yoriwake.select"
     const val BASE = "yoriwake.base"
     const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
+    const val RECORD_SEQUENTIALLY = "yoriwake.recordSequentially"
 }
