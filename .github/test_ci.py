@@ -32,6 +32,7 @@ import ci  # noqa: E402
 import functional_shards  # noqa: E402
 import guard_shards  # noqa: E402
 import matrix_check  # noqa: E402
+import run_summary  # noqa: E402
 
 
 def fail(message):
@@ -323,6 +324,13 @@ def unpinned_uses(text):
     return found
 
 
+def moving_runner_labels(text):
+    """Each line naming `ubuntu-latest`: the label moves to a new image without a commit here, so
+    CI changes underneath every job without anyone reviewing it."""
+    return [f"line {number}: {line.strip()}" for number, line in enumerate(text.splitlines(), start=1)
+            if "ubuntu-latest" in line]
+
+
 def unexplained_uploads(text):
     """Each `upload-artifact` step without `retention-days` in its block, or without a `#` comment
     on the line above it: an artifact nobody sized is kept 90 days, and one nobody named a reader
@@ -457,6 +465,22 @@ def case_a_sha_without_its_version_comment_is_reported():
     return problems
 
 
+def case_no_workflow_names_a_moving_linux_runner():
+    problems = 0
+    for text, expected in (
+        ("    runs-on: ubuntu-latest\n", 1),
+        ("        runner: [ubuntu-latest, windows-latest]\n", 1),
+        ("    runs-on: ubuntu-24.04\n        os: windows-latest\n", 0),
+    ):
+        if len(moving_runner_labels(text)) != expected:
+            problems += fail(f"moving_runner_labels({text!r}) should report {expected} line(s)")
+    for name in sorted(name for name in os.listdir(WORKFLOWS) if name.endswith((".yml", ".yaml"))):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in moving_runner_labels(handle.read()):
+                problems += fail(f"{name} {problem}")
+    return problems
+
+
 def case_every_workflow_pins_its_actions_by_sha():
     problems = 0
     names = sorted(name for name in os.listdir(WORKFLOWS) if name.endswith((".yml", ".yaml")))
@@ -524,8 +548,9 @@ def matrix_schedule_problems(text):
     if text.count("inputs.candidate") != 1 or \
             "${{ github.event_name == 'schedule' && github.sha || inputs.candidate }}" not in text:
         problems.append("a job reads the input itself, or a dispatch can fall back to the branch head")
-    # Every checkout but the candidate job's own, which checks out the branch to test ancestry on.
-    if text.count("ref: ${{ needs.candidate.outputs.sha }}") != text.count("uses: actions/checkout@") - 1 or \
+    # Every checkout but the candidate job's own, which checks out the branch to test ancestry on,
+    # and the run summary's, which reads only this run's own script and workflow.
+    if text.count("ref: ${{ needs.candidate.outputs.sha }}") != text.count("uses: actions/checkout@") - 2 or \
             '--candidate "$CANDIDATE"' not in text:
         problems.append("the jobs do not all test the candidate the first job checked")
     report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", text, re.M)
@@ -2334,6 +2359,271 @@ def case_a_record_job_archives_the_checkout_the_plan_names():
     return problems
 
 
+def job_summary_problems(text):
+    """Each setup-gradle step that would write its summary on a passing job.
+
+    The action writes one by default for every job, so a run of many jobs buries the run's own
+    summary under them; `on-failure` keeps the one that explains a failed build, and `never` is for
+    jobs whose builds fail by design, where a failed build says nothing.
+    """
+    lines = text.splitlines()
+    problems = []
+    for number, line in enumerate(lines):
+        if "gradle/actions/setup-gradle@" not in line:
+            continue
+        indent = len(line) - len(line.lstrip())
+        step = []
+        for later in lines[number + 1:]:
+            if later.strip() and len(later) - len(later.lstrip()) <= indent:
+                break
+            step.append(later.strip())
+        if not any(entry in ("add-job-summary: on-failure", "add-job-summary: never") for entry in step):
+            problems.append(f"line {number + 1}: setup-gradle does not set add-job-summary to on-failure or never")
+    return problems
+
+
+def case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure():
+    problems = 0
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in job_summary_problems(handle.read()):
+                problems += fail(f"{name} {problem}")
+    return problems
+
+
+def case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported():
+    problems = 0
+    setup = "      - uses: gradle/actions/setup-gradle@0123456789012345678901234567890123456789 # v6.4.0\n"
+    after = "      - run: ./gradlew build\n        with:\n          add-job-summary: never\n"
+    for setting in ("on-failure", "never"):
+        text = setup + f"        with:\n          cache-read-only: true\n          add-job-summary: {setting}\n"
+        if job_summary_problems(text + after):
+            problems += fail(f"a step set to {setting} was reported: {job_summary_problems(text + after)}")
+    for label, text in (("no input", setup), ("always", setup + "        with:\n          add-job-summary: always\n")):
+        found = job_summary_problems("jobs:\n" + text + after)
+        if found != ["line 2: setup-gradle does not set add-job-summary to on-failure or never"]:
+            problems += fail(f"a step with {label} gave {found}")
+    if job_summary_problems("jobs:\n  scan:\n    steps:\n      - run: true\n"):
+        problems += fail("a workflow that sets no Gradle up was reported")
+    return problems
+
+
+def _junit(root, artifact, cases, name="TEST-a.xml"):
+    """One artifact's JUnit file: `cases` maps a test name to None (passed), "skipped", or a
+    failure message."""
+    path = os.path.join(root, artifact)
+    os.makedirs(path, exist_ok=True)
+    body = ""
+    for test, outcome in cases.items():
+        inner = ("<skipped/>" if outcome == "skipped"
+                 else f'<failure message="{outcome}">trace</failure>' if outcome else "")
+        body += f'<testcase classname="dev.demo.{test.split(".")[0]}" name="{test.split(".")[1]}">{inner}</testcase>'
+    with open(os.path.join(path, name), "w", encoding="utf-8") as handle:
+        handle.write(f'<?xml version="1.0"?><testsuite name="s">{body}</testsuite>')
+
+
+SUMMARY_WORKFLOW = """name: verify
+on: push
+jobs:
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+  functional-shard:
+    name: functional (shard ${{ matrix.shard }}/2)
+    needs: changes
+  functional:
+    name: functional
+    needs: [changes, functional-shard]
+"""
+
+
+def _summary(root, results, run_url=None, artifacts="results"):
+    needs = {job: {"result": result, "outputs": {}} for job, result in results.items()}
+    return run_summary.summary(SUMMARY_WORKFLOW, needs, os.path.join(root, artifacts), run_url)
+
+
+GREEN = {"changes": "success", "functional-shard": "success", "functional": "success"}
+
+
+def case_a_green_run_summarises_every_job_and_each_suites_shards():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        _junit(os.path.join(root, "results"), "functional-linux-functionalTest-1-of-2",
+               {"AlphaTest.one": None, "AlphaTest.two": "skipped"})
+        _junit(os.path.join(root, "results"), "functional-linux-functionalTest-2-of-2", {"BetaTest.one": None})
+        text = _summary(root, GREEN, "https://example.org/run/1")
+    for expected in ("## verify: success", "[The run](https://example.org/run/1)", "| what changed | success |",
+                     "| functional (shard */2) | success |", "| functional | success |",
+                     "| functional-linux-functionalTest | 2/2 | 3 | 0 | 1 |"):
+        if expected not in text:
+            problems += fail(f"a green run's summary lacks {expected!r}:\n{text}")
+    if "What failed" in text:
+        problems += fail(f"a green run's summary has a failure section:\n{text}")
+    return problems
+
+
+def case_a_failed_run_names_the_job_the_test_and_the_shard_that_left_nothing():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        _junit(os.path.join(root, "results"), "functional-linux-functionalTest-1-of-2",
+               {"AlphaTest.one": "expected &lt;1&gt; | got 2&#10;at line 3", "AlphaTest.two": None})
+        text = _summary(root, {**GREEN, "functional-shard": "failure", "functional": "failure"})
+    for expected in ("## verify: failure", "| functional (shard */2) | failure |",
+                     "| functional-linux-functionalTest | 1/2 | 2 | 1 | 0 |", "- job functional: failure",
+                     "- functional-linux-functionalTest: shard 2 of 2 left no results",
+                     "- functional-linux-functionalTest: AlphaTest.one: expected &lt;1&gt; \\| got 2\n"):
+        if expected not in text:
+            problems += fail(f"a failed run's summary lacks {expected!r}:\n{text}")
+    if "at line 3" in text:
+        problems += fail("a failure message's later lines were listed")
+    return problems
+
+
+def case_a_guard_that_did_not_fire_is_counted_and_listed():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        _guard_shard(root, 1, 2, {"a": "fired", "b": "nothing caught"}, 3)
+        _guard_shard(root, 2, 2, {"c": "fired"}, 3)
+        text = _summary(root, GREEN, artifacts="shards")
+    for expected in ("| guards-pr: changed | unit | 2/2 | 2 | 1 |",
+                     "- guards-pr: changed, shard 1/2: b: nothing caught"):
+        if expected not in text:
+            problems += fail(f"a guard run's summary lacks {expected!r}:\n{text}")
+    return problems
+
+
+def case_failure_detail_stops_at_twenty_lines_and_counts_the_rest():
+    with tempfile.TemporaryDirectory() as root:
+        _junit(os.path.join(root, "results"), "cell-linux-8.14-21", {f"T.t{n}": "boom" for n in range(25)})
+        text = _summary(root, GREEN)
+    listed = [line for line in text.splitlines() if line.startswith("- cell-linux-8.14-21: T.")]
+    if len(listed) != 20 or "- and 5 more" not in text:
+        return fail(f"25 failing cases gave {len(listed)} listed:\n{text}")
+    return 0
+
+
+def case_an_unreadable_file_is_a_line_not_an_exit_code():
+    import contextlib
+    import io
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        _junit(os.path.join(root, "results"), "functional-linux-functionalTest-1-of-1", {"AlphaTest.one": None})
+        with open(os.path.join(root, "results", "functional-linux-functionalTest-1-of-1", "TEST-b.xml"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("<testsuite><testcase")
+        workflow = os.path.join(root, "verify.yml")
+        with open(workflow, "w", encoding="utf-8") as handle:
+            handle.write(SUMMARY_WORKFLOW)
+        out = io.StringIO()
+        saved = {name: os.environ.pop(name, None) for name in ("GITHUB_STEP_SUMMARY", "NEEDS")}
+        try:
+            os.environ["NEEDS"] = json.dumps({"changes": {"result": "success"}})
+            with contextlib.redirect_stdout(out):
+                code = run_summary.main([workflow, os.path.join(root, "results")])
+            target = os.path.join(root, "summary.md")
+            os.environ["GITHUB_STEP_SUMMARY"] = target
+            with contextlib.redirect_stdout(io.StringIO()) as quiet:
+                run_summary.main([workflow, os.path.join(root, "results")])
+            with open(target, encoding="utf-8") as handle:
+                written = handle.read()
+        finally:
+            for name, value in saved.items():
+                os.environ.pop(name, None)
+                if value is not None:
+                    os.environ[name] = value
+    if code != 0:
+        problems += fail(f"a malformed results file made the summary exit {code}")
+    if "functional-linux-functionalTest-1-of-1/TEST-b.xml: not read" not in out.getvalue():
+        problems += fail(f"the malformed file is not named:\n{out.getvalue()}")
+    if "## verify: success" not in written or quiet.getvalue():
+        problems += fail("with GITHUB_STEP_SUMMARY set, the summary was not written there alone")
+    return problems
+
+
+def case_skipped_and_cancelled_jobs_and_no_results_are_said_as_such():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        text = _summary(root, {"changes": "success", "functional-shard": "cancelled", "functional": "skipped",
+                               "elsewhere": "success"})
+    for expected in ("## verify: cancelled", "| functional (shard */2) | cancelled |", "| functional | skipped |",
+                     "| elsewhere | success |", "No test or guard results", "- job functional (shard */2): cancelled"):
+        if expected not in text:
+            problems += fail(f"the summary lacks {expected!r}:\n{text}")
+    return problems
+
+
+# What branch protection requires on main; the run summary must never be one of them.
+REQUIRED_CHECKS = (
+    "unit and agent suites", "unit and agent suites on windows", "functional on Gradle 8.14",
+    "functional on Gradle 9", "functional on Gradle 8.14 on windows", "functional on Gradle 9 on windows",
+    "select on another machine", "select on windows, against a map captured on linux",
+    "select on windows, against a map captured on windows", "select on linux, against a map captured on windows",
+    "coverage gate", "guards, fast and the change's own", "guards, every one", "no private references",
+    "no guard weakened",
+)
+# The workflows that end in one summary, and the jobs it need not wait for.
+RUN_SUMMARIES = {"verify.yml": (), "guards.yml": ("report-failure",), "matrix.yml": ()}
+
+
+def run_summary_problems(text, exempt=()):
+    """What keeps a workflow's `run-summary` job from summing up every job, or makes it gate one."""
+    block = _job_block(text, "run-summary")
+    if block is None:
+        return ["no run-summary job"]
+    problems = []
+    jobs = re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[1], re.M)
+    listed = re.search(r"^    needs: \[([^\]]*)\]", block, re.M)
+    needs = {job.strip() for job in listed.group(1).split(",")} if listed else set()
+    for job in jobs:
+        if job != "run-summary" and job not in exempt and job not in needs:
+            problems.append(f"run-summary does not wait for {job}")
+    if not re.search(r"^    if: always\(\)", block, re.M):
+        problems.append("run-summary does not run when a job failed (if: always())")
+    name = re.search(r"^    name: (.+)$", block, re.M)
+    if not name or name.group(1) in REQUIRED_CHECKS:
+        problems.append(f"run-summary is named {name.group(1) if name else None!r}, a required check or none")
+    if "python3 .github/run_summary.py" not in block or "NEEDS: ${{ toJSON(needs) }}" not in block:
+        problems.append("run-summary does not hand the job results to .github/run_summary.py")
+    return problems
+
+
+def case_each_run_ends_in_one_summary_that_waits_for_every_job_and_gates_nothing():
+    problems = 0
+    for name, exempt in RUN_SUMMARIES.items():
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            text = handle.read()
+        for problem in run_summary_problems(text, exempt):
+            problems += fail(f"{name}: {problem}")
+        if f"run_summary.py .github/workflows/{name} " not in text:
+            problems += fail(f"{name}: run-summary reads another workflow's jobs")
+    return problems
+
+
+def case_a_run_summary_that_misses_a_job_or_gates_is_reported():
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for edited, expected in (
+        (text.replace("needs: [changes, fast-shard, fast, full-shard, full]",
+                      "needs: [changes, fast-shard, fast, full-shard]"), "does not wait for full"),
+        (text.replace("    name: run summary\n", "    name: guards, every one\n"), "a required check"),
+        (text.replace("    if: always() && needs.changes.outputs.code != 'false'\n    runs-on: ubuntu-latest\n    steps:\n"
+                      "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+                      "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n"
+                      "        with:\n          pattern: guards-*",
+                      "    if: needs.changes.outputs.code != 'false'\n    runs-on: ubuntu-latest\n    steps:\n"
+                      "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+                      "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n"
+                      "        with:\n          pattern: guards-*"), "if: always()"),
+    ):
+        found = run_summary_problems(edited, RUN_SUMMARIES["guards.yml"])
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to guards.yml")
+        elif not any(expected in problem for problem in found):
+            problems += fail(f"an edited guards.yml was not reported for {expected!r}: {found}")
+    return problems
+
+
 CASES = (
     case_every_functional_shard_keeps_its_evidence_when_it_fails,
     case_a_shard_that_drops_its_evidence_is_reported,
@@ -2390,6 +2680,7 @@ CASES = (
     case_a_tag_pin_is_reported,
     case_a_sha_without_its_version_comment_is_reported,
     case_every_workflow_pins_its_actions_by_sha,
+    case_no_workflow_names_a_moving_linux_runner,
     case_an_upload_without_a_retention_or_a_reader_is_reported,
     case_every_upload_names_its_retention_and_its_reader,
     case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
@@ -2426,6 +2717,16 @@ CASES = (
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
     case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
     case_every_measuring_step_samples_the_machine_until_it_ends,
+    case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure,
+    case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported,
+    case_a_green_run_summarises_every_job_and_each_suites_shards,
+    case_a_failed_run_names_the_job_the_test_and_the_shard_that_left_nothing,
+    case_a_guard_that_did_not_fire_is_counted_and_listed,
+    case_failure_detail_stops_at_twenty_lines_and_counts_the_rest,
+    case_an_unreadable_file_is_a_line_not_an_exit_code,
+    case_skipped_and_cancelled_jobs_and_no_results_are_said_as_such,
+    case_each_run_ends_in_one_summary_that_waits_for_every_job_and_gates_nothing,
+    case_a_run_summary_that_misses_a_job_or_gates_is_reported,
 )
 
 

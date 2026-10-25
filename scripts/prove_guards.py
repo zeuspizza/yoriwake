@@ -157,9 +157,11 @@ JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCo
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
 REVIEWED_LIBRARIES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedLibraries.java"
 GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/GuardHooks.java"
+JAR_IDENTITY = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JarIdentity.java"
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
+MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -706,6 +708,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "InitScriptFunctionalTest": 54,
     "IsolatedCaptureFunctionalTest": 71,
     "JvmSharedFunctionalTest": 172,
+    # Estimated from HostCoverageFunctionalTest by local run time (40 s to its 15 s), until an
+    # every-guard run measures it.
+    "KoverFunctionalTest": 160,
     "MapDatingFunctionalTest": 229,
     "MapProvenanceFunctionalTest": 98,
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
@@ -1258,8 +1263,8 @@ MUTATIONS = [
      "            for (int next = s + 1; next <= Math.min(s + 1, segments.length); next++) {",
      agent_suite, "a star stays within a directory, a double star crosses any number"),
     ("class granularity becomes the default nobody asked for", SELECTION_FILTER,
-     'System.getProperty(CLASS_GRANULARITY_PROPERTY, "false")',
-     'System.getProperty(CLASS_GRANULARITY_PROPERTY, "true")',
+     'Boolean.parseBoolean(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
+     '!"false".equals(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
      agent_suite, "without the flag the same test is still excluded"),
     # And the nested-class specification, which is the half a reader would get wrong: rounding to
     # the INNERMOST class leaves the enclosing class's other tests skipped, which is the shared
@@ -2072,6 +2077,28 @@ MUTATIONS = [
      agent_suite, "a native library that is not on the reviewed list touches every class from its load"),
     # A native load is judged by what the JDK opened: a by-name attempt that found no file is
     # not one, and a library the JDK did open always is.
+    # netty-tcnative's BoringSSL build counts only by its bytes, against the resource of the one
+    # jar that declares that artifact at a version reviewed; its OpenSSL build shares its names.
+    ("a tcnative library is identified without comparing its bytes", JAR_IDENTITY,
+     "                    if (x != y) {\n                        return \"\";",
+     "                    if (false) {\n                        return \"\";",
+     agent_suite, "a library whose bytes differ, or that no jar holds, is not identified"),
+    ("the jar holding the bytes may be any artifact", JAR_IDENTITY,
+     "            if (!artifact.equals(declared)) {",
+     "            if (false) {",
+     agent_suite, "the same bytes in a jar of the OpenSSL build or of two artifacts are not identified"),
+    ("a jar declaring two artifacts identifies the library", JAR_IDENTITY,
+     "                if (declared != null) {\n                    return jar.getName() + \" declares more",
+     "                if (false) {\n                    return jar.getName() + \" declares more",
+     agent_suite, "the same bytes in a jar of the OpenSSL build or of two artifacts are not identified"),
+    ("any version of the BoringSSL build is identified", JAR_IDENTITY,
+     "            return artifact + \" \" + version + \" is not a version reviewed\";",
+     "            return null;",
+     functional_suite, "netty-tcnative's BoringSSL build at a version nobody reviewed selects every later test"),
+    ("netty-tcnative is listed by its name alone", REVIEWED_LIBRARIES,
+     "\"libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\\\.(so|dylib|jnilib)\",\n            \"identity:io.netty\", \"netty-tcnative-boringssl-static\", \"2.0.84.Final\"},",
+     "\"libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\\\.(so|dylib|jnilib)\"},",
+     agent_suite, "netty-tcnative not identified as the BoringSSL build by its bytes touches every class from its load"),
     # The host's compression libraries count for RocksDB only at a version reviewed.
     ("a host compression library counts at any version", REVIEWED_LIBRARIES,
      "\"libz\\\\.so\\\\.1\\\\.(2\\\\.11|3)|",
@@ -2794,6 +2821,24 @@ MUTATIONS = [
      "        if (FilterRule.engineRunsEverything(id)) {\n            complementRan.incrementAndGet();",
      "        if (false) {\n            complementRan.incrementAndGet();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # Under Maven the run file alone answers: Surefire lets a user property override a system one.
+    ("the Maven host answers from system properties", MAVEN_HOST,
+     "            read = read(runFile);\n",
+     "            read = new HashMap<>();\n            for (String key : System.getProperties().stringPropertyNames()) {\n                read.put(key, System.getProperty(key));\n            }\n",
+     agent_suite, "the run file answers, never a system property of the same name"),
+    ("a run file cut short answers nothing, not a refusal", MAVEN_HOST,
+     "            answers.clear();\n",
+     "            answers.clear();\n            if (answers.isEmpty()) return answers;\n",
+     agent_suite, "a run file cut short refuses the run and names only the map directory"),
+    # A JVM that runs several test plans records each into its own directory.
+    ("a JVM's later test plan is decoded as if it started the JVM", COVERAGE_DECODER,
+     "        if (PLAN_SUFFIX.containsMatchIn(worker.name)) {",
+     "        if (false) {",
+     decoder_suite, "a JVM's later test plan is taken as having seen every class from its start"),
+    ("every test plan records into the JVM's one directory", PLATFORM_EVENTS,
+     "                captured == 1 ? worker : worker + AgentContract.PLAN_DIR_SUFFIX + captured, false);",
+     "                worker, false);",
+     agent_suite, "each test plan a JVM runs records into a directory of its own, each complete on its own"),
     ("a launcher a test started records its tests as the task's", PLATFORM_EVENTS,
      "        outermost = EXECUTING.incrementAndGet() == 1;",
      "        outermost = EXECUTING.incrementAndGet() > 0;",

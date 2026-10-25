@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.agent.capture;
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import io.github.zeuspizza.yoriwake.agent.engines.JUnit4Hook;
 import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
+import io.github.zeuspizza.yoriwake.agent.host.HostChoice;
 import java.io.File;
 import java.io.IOException;
 import java.io.Writer;
@@ -35,18 +36,19 @@ public final class LoadedClassRecorder {
     public static void premain(String argument, Instrumentation instrumentation) {
         try {
             // Only a capturing JVM: a selecting one writes no records for touches to date.
-            String records = System.getProperty(AgentContract.RECORDS_DIR_PROPERTY);
+            HostChoice.decide();
+            String records = HostBuild.current().property(AgentContract.RECORDS_DIR_PROPERTY);
             if (records != null && !records.isEmpty()) {
                 TouchRecorder.install(instrumentation);
             }
             // Only where no Platform listener runs. The vintage engine also drives RunNotifier, so
             // an unconditional install would race two capture paths on one dump-and-reset and
             // produce records that cover nothing, which lets a covering test be skipped.
-            if (Boolean.getBoolean(AgentContract.JUNIT4_HOOK_PROPERTY)) {
+            if (Boolean.parseBoolean(HostBuild.current().property(AgentContract.JUNIT4_HOOK_PROPERTY))) {
                 JUnit4Hook.install(instrumentation);
             }
 
-            String output = System.getProperty(AgentContract.LOADED_DIR_PROPERTY);
+            String output = HostBuild.current().property(AgentContract.LOADED_DIR_PROPERTY);
             if (output == null || output.isEmpty()) {
                 return;
             }
@@ -96,13 +98,29 @@ public final class LoadedClassRecorder {
     }
 
     /**
+     * Unmarks this worker's run at the start of a test plan: a JVM that runs another plan after one
+     * completed has not completed until that plan does.
+     */
+    public static void planStarted() {
+        String output = HostBuild.current().property(AgentContract.LOADED_DIR_PROPERTY);
+        if (output == null || output.isEmpty()) {
+            return;
+        }
+        try {
+            new File(output, AgentContract.LOADED_WORKER_PREFIX + HostBuild.current().workerId() + AgentContract.COMPLETE_SUFFIX).delete();
+        } catch (Throwable ignored) {
+            // A marker left in place is the next plan's to clear or to rewrite.
+        }
+    }
+
+    /**
      * Marks this worker's run as one that reached its end.
      *
      * <p>Shared by every capture path: a union or a map from a run that was killed part-way is not
      * evidence, and the decoder counts this marker to tell the two apart.
      */
     static void markComplete() {
-        String output = System.getProperty(AgentContract.LOADED_DIR_PROPERTY);
+        String output = HostBuild.current().property(AgentContract.LOADED_DIR_PROPERTY);
         if (output == null || output.isEmpty()) {
             return;
         }

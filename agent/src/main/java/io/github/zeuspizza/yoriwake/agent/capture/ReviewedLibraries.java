@@ -23,7 +23,8 @@ final class ReviewedLibraries {
 
     /**
      * Loading class, then the file name; for a conditional entry, then the guard classes, the
-     * version file beside the first, and the versions reviewed, each list comma-separated.
+     * version file beside the first, and the versions reviewed, each list comma-separated. For an
+     * entry identified by its bytes, {@code identity:<group>}, the artifact, and the versions reviewed.
      */
     private static final String[][] REVIEWED = {
         // Netty's loader defines this helper into the transport's class loader and loads through it.
@@ -39,6 +40,11 @@ final class ReviewedLibraries {
             "4.2.18.Final,4.2.19.Final"},
         // The incubator's transport.
         {"io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_io_uring_[a-z0-9_]+\\.so"},
+        // netty-tcnative's BoringSSL build only: its OpenSSL build ships files of the same names and
+        // reads a configuration file and modules from paths the environment names. Told apart by the
+        // loaded bytes against the resource of the jar that declares the artifact.
+        {"io.netty.util.internal.NativeLibraryUtil", "libnetty_tcnative(_[a-z0-9_]+)?[0-9]*\\.(so|dylib|jnilib)",
+            "identity:io.netty", "netty-tcnative-boringssl-static", "2.0.84.Final"},
         {"io.netty.util.internal.NativeLibraryUtil",
             "libnetty_resolver_dns_native_macos(_(x86_64|aarch_64))?[0-9]*\\.(dylib|jnilib)"},
         {"org.conscrypt.NativeLibraryUtil", "libconscrypt_openjdk_jni(-[a-z]+-[a-z0-9_]+)?[0-9]*\\.(so|dylib|jnilib)"},

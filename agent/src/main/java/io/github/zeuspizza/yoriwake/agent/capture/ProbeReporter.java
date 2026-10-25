@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.capture;
 
+import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -26,7 +27,7 @@ public interface ProbeReporter {
         }
 
         private static File configuredTarget() {
-            String configured = System.getProperty(TARGET_PROPERTY);
+            String configured = HostBuild.current().property(TARGET_PROPERTY);
             return configured == null || configured.isEmpty() ? null : new File(configured);
         }
 

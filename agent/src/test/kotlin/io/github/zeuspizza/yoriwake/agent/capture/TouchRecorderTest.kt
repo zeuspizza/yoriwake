@@ -709,8 +709,7 @@ class TouchRecorderTest {
             }
         }
         for (file in listOf(
-            // netty-tcnative's BoringSSL and OpenSSL builds share this name; not reviewed.
-            "libnetty_tcnative_osx_aarch_64.jnilib", "libacme.so", "libshaded_netty_transport_native_epoll_x86_64.so",
+            "libacme.so", "libshaded_netty_transport_native_epoll_x86_64.so",
             "libnetty_resolver_dns_native_macos_evil.dylib", "libshaded_netty_resolver_dns_native_macos_aarch_64.jnilib",
         )) {
             assertFalse(ReviewedLibraries.reviewed("io.netty.util.internal.NativeLibraryUtil", file), file)
@@ -804,6 +803,19 @@ class TouchRecorderTest {
                 + ioUringFile.substringAfterLast('/') + ", since its version 4.2.20.Final is not one reviewed"),
             drained(recorder),
         )
+    }
+
+    @Test
+    fun `netty-tcnative not identified as the BoringSSL build by its bytes touches every class from its load`() {
+        val recorder = TouchRecorder()
+        // Its BoringSSL and OpenSSL builds share this name; only the jar holding the bytes can tell.
+        recorder.library(arrayOf<Any>(classNamed("io.netty.util.internal.NativeLibraryUtil"),
+            "/tmp/libnetty_tcnative_osx_aarch_648123456789.jnilib"))
+
+        val (kind, why) = drained(recorder).single()
+        assertEquals(AgentContract.TOUCH_ALL, kind)
+        kotlin.test.assertTrue(why.startsWith("a reviewed native library was loaded without its condition: " +
+            "libnetty_tcnative_osx_aarch_648123456789.jnilib, since "), why)
     }
 
     @Test

@@ -249,7 +249,7 @@ internal object CoverageDecoder {
             carriesOlderRecords = retained.isNotEmpty(),
             fullCapture = datesTheMap,
         )
-        val unionDiscarded = writeLoaded(mapDir, selecting, wholeTask, workers.size, loadedScope)
+        val unionDiscarded = writeLoaded(mapDir, selecting, wholeTask, jvmCount(workers), loadedScope)
         writeCaptureCommit(mapDir, captureCommit, datesTheMap)
         writeConstants(mapDir, constants, datesTheMap)
         writeDigestTable(File(mapDir, CLASS_DIGESTS_FILE), classDigests, datesTheMap)
@@ -286,9 +286,18 @@ internal object CoverageDecoder {
                 parts.size >= 4 && parts[2].isBlank()
             },
             mapTests = mapTestRecords.size,
-            workers = workers.size,
+            workers = jvmCount(workers),
         )
     }
+
+    /**
+     * The JVMs behind these record directories: a JVM that ran several test plans has one
+     * directory per plan, and one loaded-class list and completion marker for all of them.
+     */
+    internal fun jvmCount(workers: List<File>): Int =
+        workers.map { it.name.replace(PLAN_SUFFIX, "") }.distinct().size
+
+    private val PLAN_SUFFIX = Regex("""${Regex.escape(AgentContract.PLAN_DIR_SUFFIX)}[0-9]+$""")
 
     /**
      * What a capture that does not date the map keeps of its records: the outcome of every test it
@@ -742,6 +751,13 @@ internal object CoverageDecoder {
             discovery.touched.forEach { touchNamed(it, 0) }
         }
         if (unknownEngine) touchNamed(FIRST_TOUCH_ANY, 0)
+        // A JVM's later test plan: what its earlier plans loaded and read is not in these touches, so
+        // it is taken as having seen every class and file from its start.
+        if (PLAN_SUFFIX.containsMatchIn(worker.name)) {
+            touch(FIRST_TOUCH_ANY, 0)
+            touchNamed(FIRST_TOUCH_ANY, 0)
+            resource(RESOURCE_READ, FIRST_TOUCH_ANY, 0)
+        }
         val rows = { touches: Map<String, Int> ->
             touches.entries.sortedBy { it.key }.map { (name, sequence) -> Tsv.join(jvm, sequence.toString(), name) }
         }

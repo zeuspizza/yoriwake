@@ -1091,6 +1091,51 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         }
     }
 
+    /**
+     * The real netty-tcnative BoringSSL build at [version], every platform's jar on the classpath:
+     * a test opens a client SslContext on the OpenSSL provider, which loads it, then a test that
+     * runs Tool, then one that does not.
+     */
+    private fun tcnative(dir: File, prefix: String, version: String): Set<String> {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows"), "only the Linux and macOS builds were reviewed")
+        return selectedAfter(
+            dir, "src/main/java/dev/sample/Tool.java", { it.replace("\"tool\"", "\"tool!\"") },
+            main("Tool", "public class Tool { public static String name() { return \"tool\"; } }"),
+            first(prefix),
+            test(
+                "${prefix}1TlsTest",
+                """@Test void opens() throws Exception {
+                    io.netty.handler.ssl.SslContextBuilder.forClient()
+                        .sslProvider(io.netty.handler.ssl.SslProvider.OPENSSL).build();
+                    assertTrue(io.netty.handler.ssl.OpenSsl.isAvailable());
+                }""",
+            ),
+            test("${prefix}2ToolTest", "@Test void runs() { assertTrue(Tool.name().startsWith(\"tool\")); }"),
+            test("${prefix}3LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            buildScript = orderedBuild.replace(
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n" +
+                    "    testImplementation(\"io.netty:netty-handler:4.2.19.Final\")\n" +
+                    "    testRuntimeOnly(\"io.netty:netty-tcnative-boringssl-static:$version\")\n" +
+                    // The platform's jar, which holds the library: Gradle does not read the profiles
+                    // that would add it.
+                    "    testRuntimeOnly(\"io.netty:netty-tcnative-boringssl-static:$version:\" + " +
+                    "(if (System.getProperty(\"os.name\").startsWith(\"Mac\")) \"osx\" else \"linux\") + \"-\" + " +
+                    "(if (System.getProperty(\"os.arch\") in setOf(\"aarch64\", \"arm64\")) \"aarch_64\" else \"x86_64\"))",
+            ),
+        )
+    }
+
+    @Test
+    fun `netty-tcnative's BoringSSL build at the reviewed version, told by its bytes, narrows`(@TempDir dir: File) {
+        assertEquals(names("T2ToolTest", "T3LaterTest"), tcnative(dir, "T", "2.0.84.Final"))
+    }
+
+    @Test
+    fun `netty-tcnative's BoringSSL build at a version nobody reviewed selects every later test`(@TempDir dir: File) {
+        assertEquals(names("W1TlsTest", "W2ToolTest", "W3LaterTest"), tcnative(dir, "W", "2.0.83.Final"))
+    }
+
     @Test
     fun `a native library a JDK module on the platform loader loads narrows as before`(@TempDir dir: File) {
         val ran = selectedAfter(
