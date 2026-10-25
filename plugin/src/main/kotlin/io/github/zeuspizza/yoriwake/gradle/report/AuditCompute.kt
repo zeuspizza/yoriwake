@@ -354,8 +354,8 @@ internal fun Audit.blockers(
             )
         )
     }
-    when (facts.framework) {
-        null -> add(
+    when {
+        facts.framework == null -> add(
             Blocker(
                 Audit.BlockerKind.FRAMEWORK_UNKNOWN,
                 "no run of this task has recorded which test framework it uses",
@@ -363,13 +363,21 @@ internal fun Audit.blockers(
                     "applied, so it is recorded by the run rather than read from the build.",
             )
         )
-        TaskFacts.PLATFORM -> Unit
+        facts.framework == TaskFacts.PLATFORM -> Unit
+        // Its last selecting run left out whole classes, so the Platform is not what it lacks.
+        facts.framework == TaskFacts.JUNIT4 && facts.plainNarrowed == true -> Unit
         else -> add(
             Blocker(
                 Audit.BlockerKind.NOT_ON_JUNIT_PLATFORM,
                 "this task runs on ${facts.framework}, so the JUnit Platform's " +
                     "PostDiscoveryFilter is never consulted and no test can be deselected " +
                     "through it",
+                (if (facts.framework == TaskFacts.JUNIT4) {
+                    "set `narrowPlainRunners = true` (or `-Pyoriwake.narrowPlainRunners`), which leaves out " +
+                        "whole classes whose runner runs only their own methods; or "
+                } else {
+                    ""
+                }) +
                 "run JUnit 4 through the vintage engine -- " +
                     "`scripts/junit-vintage.init.gradle.kts` does this without editing the " +
                     "build. A vintage run is only honest evidence about the suite it " +

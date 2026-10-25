@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.report
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
@@ -107,12 +108,20 @@ internal object Audit {
         val decodeRefused: String? = null,
         /** The token of the last run's decline under Develocity, or null when it did not decline. */
         val develocity: String? = null,
+        /**
+         * Whether the last selecting run's test JVMs left out plain JUnit 4 classes through Gradle's
+         * executor, each saying `plain-filter hooked`; null when no selecting run has been decoded.
+         */
+        val plainNarrowed: Boolean? = null,
     ) {
         companion object {
             const val FILE = "task-facts"
 
             /** Names the JUnit Platform, which is the only framework this tool can deselect within. */
             const val PLATFORM = "junit-platform"
+
+            /** Names plain JUnit 4, whose whole classes `narrowPlainRunners` can leave out. */
+            const val JUNIT4 = "JUnit 4, off the Platform"
 
             fun read(mapDir: File): TaskFacts {
                 val file = File(mapDir, FILE)
@@ -133,6 +142,7 @@ internal object Audit {
                     workers = fields["workers"]?.toIntOrNull()?.takeIf { it > 0 },
                     decodeRefused = fields["decodeRefused"]?.takeIf { it.isNotEmpty() },
                     develocity = fields["develocity"]?.takeIf { it.isNotEmpty() },
+                    plainNarrowed = fields["plainNarrowed"]?.toBooleanStrictOrNull(),
                 )
             }
 
@@ -140,6 +150,22 @@ internal object Audit {
                 update(mapDir) { previous ->
                     // Carried forward: written in `doFirst`, before this run records anything.
                     previous.copy(framework = framework, parallelism = parallelism, develocity = develocity)
+                }
+            }
+
+            /**
+             * Recorded by the decode of a selecting run, from the `plain-filter` notes its test JVMs
+             * wrote: true only when there is one and every one says the executor took the hook.
+             */
+            fun recordPlainNarrowed(mapDir: File) {
+                val notes = runCatching {
+                    mapDir.listFiles { file -> file.name.startsWith(AgentContract.DECISIONS_FILE) }.orEmpty()
+                        .flatMap { it.readLines() }
+                        .filter { it.startsWith(AgentContract.NOTE_PREFIX + AgentContract.PLAIN_FILTER_NOTE + "\t") }
+                        .map { it.substringAfter('\t') }
+                }.getOrDefault(emptyList())
+                update(mapDir) {
+                    it.copy(plainNarrowed = notes.isNotEmpty() && notes.all { note -> note == AgentContract.PLAIN_FILTER_HOOKED })
                 }
             }
 
@@ -176,7 +202,8 @@ internal object Audit {
                             "workers=${next.workers?.toString().orEmpty()}\n" +
                             // One line: the file is `key=value` per line.
                             "decodeRefused=${next.decodeRefused.orEmpty().replace('\n', ' ')}\n" +
-                            "develocity=${next.develocity.orEmpty()}\n",
+                            "develocity=${next.develocity.orEmpty()}\n" +
+                            "plainNarrowed=${next.plainNarrowed?.toString().orEmpty()}\n",
                     )
                 }
             }

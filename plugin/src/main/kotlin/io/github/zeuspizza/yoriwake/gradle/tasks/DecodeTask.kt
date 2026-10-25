@@ -130,6 +130,7 @@ internal abstract class DecodeTask : DefaultTask() {
         afterTest.runIfPending(taskPath, logger)
         val patterns = patterns.get()
         val selecting = selecting.get()
+        if (selecting) Audit.TaskFacts.recordPlainNarrowed(mapDir)
         val marker = ranMarker(CoverageDecoder.recordsDir(mapDir))
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
         val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
