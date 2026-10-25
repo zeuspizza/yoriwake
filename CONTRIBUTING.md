@@ -18,6 +18,12 @@ against what that Gradle offers; the 9.x line is tested through TestKit and the 
 The wrapper moves with that floor, and is revisited when Gradle 10 ends fixes for 8.x. CI turns off
 setup-gradle's build capture, whose only effect here was a notice that 8.14 is out of date.
 
+Linux jobs run `ubuntu-24.04` by name; they move to 26.04 after a `verify` and a `matrix` run on
+it. setup-gradle's enhanced caching is used on purpose (free for public repositories, a cache entry
+per job), so its log line is expected. Two Node deprecation notices stay until the release that
+fixes each: DEP0005 from `actions/download-artifact` (actions/download-artifact#484) and DEP0040
+from the setup-java that `oracle-actions/setup-java` v1.5.0 runs inside it.
+
 ```bash
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin
 python3 .github/test_ci.py   # the CI helper scripts' own tests
