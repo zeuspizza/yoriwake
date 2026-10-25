@@ -134,6 +134,7 @@ internal abstract class DecodeTask : DefaultTask() {
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
         val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         val develocityDeclined = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
+        val unconfirmed = CoverageDecoder.unconfirmedWorkers(mapDir)
         val datedSnapshot = pendingSnapshot(mapDir)
         val startStats = pendingStats(mapDir)
         // Read once and removed, so a later run never mistakes this run's walk for its own.
@@ -161,6 +162,7 @@ internal abstract class DecodeTask : DefaultTask() {
             observe(taskPath, pending, when {
                 develocityDeclined.isFile -> "Develocity declined this run"
                 parallelRefused.isFile -> "in-JVM parallel execution is enabled, so nothing was captured"
+                unconfirmed.isNotEmpty() -> "a test JVM found its tests may run concurrently, so nothing was captured"
                 !marker.isFile -> "the test task did no work"
                 else -> null
             })
@@ -186,6 +188,17 @@ internal abstract class DecodeTask : DefaultTask() {
             logger.lifecycle(
                 "[yoriwake] $taskPath: declined over in-JVM parallelism, so the map is left " +
                     "exactly as it was."
+            )
+            return
+        }
+        // As above, found by the test JVM itself: a setting the plugin did not see, such as one a
+        // task action made, turned parallel execution on.
+        if (unconfirmed.isNotEmpty()) {
+            marker.delete()
+            fullRunMarker.delete()
+            logger.warn(
+                "[yoriwake] $taskPath: ${unconfirmed.values.first()}, so nothing was captured and the map is " +
+                    "left exactly as it was. Tests interleaved inside one JVM would blend their coverage."
             )
             return
         }

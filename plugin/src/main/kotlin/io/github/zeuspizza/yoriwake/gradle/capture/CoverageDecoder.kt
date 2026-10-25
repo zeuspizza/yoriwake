@@ -48,6 +48,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_READ
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_RESOURCE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_RESOURCES_RECORDED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNATTRIBUTED_RECORD_ID
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLEL_UNCONFIRMED_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WORKER_DIR_PREFIX
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
@@ -117,6 +118,23 @@ internal object CoverageDecoder {
 
     /** The commit the map was last captured at; see [AgentContract.CAPTURE_COMMIT_FILE]. */
     const val CAPTURE_COMMIT_FILE = AgentContract.CAPTURE_COMMIT_FILE
+
+    /**
+     * Why each worker whose tests may have run concurrently captured nothing, by its record
+     * directory, sorted. Any one leaves the map exactly as it was: a map missing one JVM's tests
+     * would keep their older records.
+     */
+    fun unconfirmedWorkers(mapDir: File): Map<String, String> =
+        recordsDir(mapDir)
+            .listFiles { f: File -> f.isDirectory && f.name.startsWith(WORKER_DIR_PREFIX) }
+            .orEmpty()
+            .mapNotNull { dir ->
+                File(dir, PARALLEL_UNCONFIRMED_FILE).takeIf(File::isFile)?.let {
+                    dir.name to runCatching { it.readText().trim() }.getOrDefault("")
+                }
+            }
+            .sortedBy { it.first }
+            .toMap()
 
     /**
      * Record directories of workers whose test JVM did not finish, sorted. Flushed or not, such a

@@ -723,6 +723,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "RevertAfterUndatedCaptureFunctionalTest": 224,
     "ScheduledFullRunFunctionalTest": 72,
     "SelectionFunctionalTest": 197,
+    # Estimated from InJvmParallelismCharacterizationTest, builds of the same shape, until an
+    # every-guard run measures it.
+    "SequentialRecordingFunctionalTest": 30,
     "TestLauncherFunctionalTest": 42,
     "TestRetryFunctionalTest": 79,
     "TestWrittenFilesFunctionalTest": 104,
@@ -2750,6 +2753,16 @@ MUTATIONS = [
      "        if (FilterRule.engineRunsEverything(id)) {\n            complementRan.incrementAndGet();",
      "        if (false) {\n            complementRan.incrementAndGet();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # The test JVM has the last word on whether its tests run one at a time: a setting the plugin
+    # did not see must still keep interleaved tests out of the map.
+    ("a test JVM that sees parallel execution captures", PLATFORM_EVENTS,
+     "        if (concurrent != null) {",
+     "        if (false && concurrent != null) {",
+     agent_suite, "a test JVM whose tests may run concurrently captures nothing and says why"),
+    ("a worker that captured nothing over parallelism lets the decode go on", DECODE_TASK,
+     "        if (unconfirmed.isNotEmpty()) {",
+     "        if (false) {",
+     functional_suite, "parallel execution a host's doFirst turns on records nothing"),
     ("a launcher a test started records its tests as the task's", PLATFORM_EVENTS,
      "        outermost = EXECUTING.incrementAndGet() == 1;",
      "        outermost = EXECUTING.incrementAndGet() > 0;",
