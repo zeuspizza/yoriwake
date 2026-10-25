@@ -81,6 +81,8 @@ public final class CaptureSession implements TestEvents {
     private final List<Open> open = new ArrayList<>();
     private final Set<String> unattributable = new HashSet<>();
     private final Set<String> failed = new HashSet<>();
+    /** Tests closed before the engine finished them: a finish that still comes owns no window. */
+    private final Set<String> closedEarly = new HashSet<>();
 
     /** The class scope of the test that last opened a window, so a between-tests window names both sides. */
     private String previousScope;
@@ -183,7 +185,7 @@ public final class CaptureSession implements TestEvents {
     @Override
     public synchronized void finished(String id, String outcome) {
         try {
-            if (!ended) {
+            if (!ended && !closedEarly.remove(id)) {
                 close(id, outcome);
             }
         } catch (Throwable t) {
@@ -279,6 +281,7 @@ public final class CaptureSession implements TestEvents {
                 continue;
             }
             unattributable.add(test.id);
+            closedEarly.add(test.id);
             close(test.id, OUTCOME_UNKNOWN);
         }
     }

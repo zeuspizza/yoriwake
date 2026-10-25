@@ -87,6 +87,30 @@ class CaptureSessionTest {
     }
 
     @Test
+    fun `a finish that comes after its container closed the test takes nothing from the next test`() {
+        val session = session(nestedRuns = false)
+        session.started(leftOpen)
+        session.containerFinished(container)
+        session.started(later)
+        session.finished(leftOpen, null)
+        session.finished(later, null)
+        session.endRun()
+
+        assertEquals(listOf("UNKNOWN" to leftOpen, "SUCCESSFUL" to later), recorded().filter { it.first != "NONE" })
+    }
+
+    @Test
+    fun `a failed container over a test left open records it not known to pass, then failed`() {
+        val session = session(nestedRuns = false)
+        session.started(leftOpen)
+        session.containerFinished(container)
+        session.failedByContainer(container) { listOf(leftOpen) }
+        session.endRun()
+
+        assertEquals(listOf("UNKNOWN" to leftOpen, "FAILED" to leftOpen), recorded().filter { it.first != "NONE" })
+    }
+
+    @Test
     fun `a test still open when the plan finishes is closed not known to pass, and the worker completes`() {
         val session = session(nestedRuns = false)
         session.started(leftOpen)
