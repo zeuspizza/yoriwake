@@ -117,6 +117,27 @@ public final class AgentContract {
     public static final String CHANGE_SET_FILE_PROPERTY = "yoriwake.change.file";
 
     /**
+     * Which build forked this JVM: {@link #HOST_MAVEN}, or Gradle when absent. Read once, when the
+     * agent starts, so a property a test runner applies later cannot change it.
+     */
+    public static final String HOST_PROPERTY = "yoriwake.host";
+
+    /** The host name of Maven, whose contract properties come from {@link #RUN_FILE_PROPERTY}. */
+    public static final String HOST_MAVEN = "maven";
+
+    /**
+     * Under Maven, the run file holding every contract property in {@code java.util.Properties}
+     * form and ending with {@link #RUN_FILE_END}. One that cannot be read whole refuses the run.
+     */
+    public static final String RUN_FILE_PROPERTY = "yoriwake.run.file";
+
+    /** The run file's name, beside the map. */
+    public static final String RUN_FILE = "run.properties";
+
+    /** The run file's last line, so a file cut short is not read as a smaller run. */
+    public static final String RUN_FILE_END = "#end";
+
+    /**
      * Why the daemon refused this run, as prose. Its presence forces a full run and is checked
      * before {@link #SELECT_PROPERTY}, so a refusal always wins.
      */
@@ -363,6 +384,13 @@ public final class AgentContract {
 
     /** One directory per test JVM, {@code worker-<id>}, so two workers never share a sequence. */
     public static final String WORKER_DIR_PREFIX = "worker-";
+
+    /**
+     * Before the plan's number in a record directory for a JVM's second and later test plans,
+     * {@code worker-<id>-p<n>}: Surefire can run several plans in one JVM, and each plan's records
+     * are complete or not on their own.
+     */
+    public static final String PLAN_DIR_SUFFIX = "-p";
 
     /** {@code sequence \t durationNanos \t byteCount \t outcome \t testId} per record. */
     public static final String INDEX_FILE = "index.tsv";

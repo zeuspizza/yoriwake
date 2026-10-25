@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.agent.platform;
 
+import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_GRANULARITY_PROPERTY;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_NOTE;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND;
@@ -88,7 +89,7 @@ public class SelectionFilter implements PostDiscoveryFilter {
 
     // Pins are counted apart from the tally: a pin is selection told not to apply, not an outcome.
     private final AlwaysRun alwaysRun =
-            AlwaysRun.from(System.getProperty(AgentContract.ALWAYS_RUN_PROPERTY, ""));
+            AlwaysRun.from(orEmpty(HostBuild.current().property(AgentContract.ALWAYS_RUN_PROPERTY)));
     /** Memo for {@link #anySiblingSelects}: outermost class id -> does anything in it select. */
     private final Map<String, Boolean> classSelects = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -492,7 +493,7 @@ public class SelectionFilter implements PostDiscoveryFilter {
     /** The complement record, read once; any doubt about it leaves out nothing. */
     private synchronized Complement complementRecord() {
         if (complement == null) {
-            complement = readComplement(System.getProperty(COMPLEMENT_RECORD_PROPERTY));
+            complement = readComplement(HostBuild.current().property(COMPLEMENT_RECORD_PROPERTY));
         }
         return complement;
     }
@@ -583,23 +584,23 @@ public class SelectionFilter implements PostDiscoveryFilter {
 
     // A capture-only run must not deselect, or the map would only describe tests it already knew.
     private boolean selectionRequested() {
-        return Boolean.parseBoolean(System.getProperty(SELECT_PROPERTY, "false"));
+        return Boolean.parseBoolean(HostBuild.current().property(SELECT_PROPERTY));
     }
 
     /** Whether this run leaves out what a selecting run's record lists as ran. */
     private boolean complementing() {
-        String path = System.getProperty(COMPLEMENT_RECORD_PROPERTY);
+        String path = HostBuild.current().property(COMPLEMENT_RECORD_PROPERTY);
         return path != null && !path.isEmpty();
     }
 
     /** Whether this run includes everything and records what selection would have done. */
     private boolean observing() {
-        return Boolean.parseBoolean(System.getProperty(OBSERVE_PROPERTY, "false"));
+        return Boolean.parseBoolean(HostBuild.current().property(OBSERVE_PROPERTY));
     }
 
     /** Whether a selection is rounded up to whole classes. See {@link AgentContract#CLASS_GRANULARITY_PROPERTY}. */
     private boolean classGranularity() {
-        return Boolean.parseBoolean(System.getProperty(CLASS_GRANULARITY_PROPERTY, "false"));
+        return Boolean.parseBoolean(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY));
     }
 
     // Outermost, not innermost: a @Nested class shares static state with its enclosing class.
@@ -654,7 +655,7 @@ public class SelectionFilter implements PostDiscoveryFilter {
         if (resolved == null) {
             synchronized (this) {
                 if (inputs == null) {
-                    inputs = FilterRule.resolveInputs(System::getProperty);
+                    inputs = FilterRule.resolveInputs(HostBuild.current()::property);
                 }
                 resolved = inputs;
             }
@@ -667,7 +668,7 @@ public class SelectionFilter implements PostDiscoveryFilter {
     }
 
     private static File mapDir() {
-        String configured = System.getProperty(MAP_DIR_PROPERTY);
+        String configured = HostBuild.current().property(MAP_DIR_PROPERTY);
         return configured == null || configured.isEmpty() ? null : new File(configured);
     }
 

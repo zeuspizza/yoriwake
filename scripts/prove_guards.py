@@ -160,6 +160,7 @@ GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/Gu
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
+MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -1258,8 +1259,8 @@ MUTATIONS = [
      "            for (int next = s + 1; next <= Math.min(s + 1, segments.length); next++) {",
      agent_suite, "a star stays within a directory, a double star crosses any number"),
     ("class granularity becomes the default nobody asked for", SELECTION_FILTER,
-     'System.getProperty(CLASS_GRANULARITY_PROPERTY, "false")',
-     'System.getProperty(CLASS_GRANULARITY_PROPERTY, "true")',
+     'Boolean.parseBoolean(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
+     '!"false".equals(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
      agent_suite, "without the flag the same test is still excluded"),
     # And the nested-class specification, which is the half a reader would get wrong: rounding to
     # the INNERMOST class leaves the enclosing class's other tests skipped, which is the shared
@@ -2756,6 +2757,24 @@ MUTATIONS = [
      "        if (FilterRule.engineRunsEverything(id)) {\n            complementRan.incrementAndGet();",
      "        if (false) {\n            complementRan.incrementAndGet();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # Under Maven the run file alone answers: Surefire lets a user property override a system one.
+    ("the Maven host answers from system properties", MAVEN_HOST,
+     "            read = read(runFile);\n",
+     "            read = new HashMap<>();\n            for (String key : System.getProperties().stringPropertyNames()) {\n                read.put(key, System.getProperty(key));\n            }\n",
+     agent_suite, "the run file answers, never a system property of the same name"),
+    ("a run file cut short answers nothing, not a refusal", MAVEN_HOST,
+     "            answers.clear();\n",
+     "            answers.clear();\n            if (answers.isEmpty()) return answers;\n",
+     agent_suite, "a run file cut short refuses the run and names only the map directory"),
+    # A JVM that runs several test plans records each into its own directory.
+    ("a JVM's later test plan is decoded as if it started the JVM", COVERAGE_DECODER,
+     "        if (PLAN_SUFFIX.containsMatchIn(worker.name)) {",
+     "        if (false) {",
+     decoder_suite, "a JVM's later test plan is taken as having seen every class from its start"),
+    ("every test plan records into the JVM's one directory", PLATFORM_EVENTS,
+     "                captured == 1 ? worker : worker + AgentContract.PLAN_DIR_SUFFIX + captured, false);",
+     "                worker, false);",
+     agent_suite, "each test plan a JVM runs records into a directory of its own, each complete on its own"),
     ("a launcher a test started records its tests as the task's", PLATFORM_EVENTS,
      "        outermost = EXECUTING.incrementAndGet() == 1;",
      "        outermost = EXECUTING.incrementAndGet() > 0;",

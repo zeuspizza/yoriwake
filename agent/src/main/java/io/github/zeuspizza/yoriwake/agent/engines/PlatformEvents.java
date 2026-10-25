@@ -7,8 +7,10 @@ import io.github.zeuspizza.yoriwake.agent.capture.AgentLookup;
 import io.github.zeuspizza.yoriwake.agent.capture.CaptureClaim;
 import io.github.zeuspizza.yoriwake.agent.capture.CaptureSession;
 import io.github.zeuspizza.yoriwake.agent.capture.JacocoAgent;
+import io.github.zeuspizza.yoriwake.agent.capture.LoadedClassRecorder;
 import io.github.zeuspizza.yoriwake.agent.capture.ProbeReporter;
 import io.github.zeuspizza.yoriwake.agent.capture.ProbeResult;
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import io.github.zeuspizza.yoriwake.agent.host.AttachedLoader;
 import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import io.github.zeuspizza.yoriwake.agent.platform.RanTests;
@@ -37,6 +39,9 @@ public class PlatformEvents implements TestExecutionListener {
 
     // Test plans executing in this JVM right now, whichever launcher runs them.
     private static final AtomicInteger EXECUTING = new AtomicInteger();
+
+    // Test plans this JVM has captured, so each records into a directory of its own.
+    private static final AtomicInteger CAPTURED = new AtomicInteger();
 
     /**
      * Whether a test plan is executing in this JVM: a launcher created now was created by a test,
@@ -75,7 +80,7 @@ public class PlatformEvents implements TestExecutionListener {
     }
 
     private static File configuredOutputDir() {
-        String configured = System.getProperty(RECORDS_DIR_PROPERTY);
+        String configured = HostBuild.current().property(RECORDS_DIR_PROPERTY);
         return configured == null || configured.isEmpty() ? null : new File(configured);
     }
 
@@ -102,7 +107,12 @@ public class PlatformEvents implements TestExecutionListener {
             return;
         }
         try {
-            session = CaptureSession.open(agent, outputDir, HostBuild.current().workerId(), false);
+            String worker = HostBuild.current().workerId();
+            int captured = CAPTURED.incrementAndGet();
+            // Only a complete end of this plan marks the JVM complete again.
+            LoadedClassRecorder.planStarted();
+            session = CaptureSession.open(agent, outputDir,
+                captured == 1 ? worker : worker + AgentContract.PLAN_DIR_SUFFIX + captured, false);
         } catch (IOException e) {
             // Every take is a JVM-global reset: with nowhere to record, taking one would only
             // throw coverage away.
