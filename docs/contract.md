@@ -30,7 +30,7 @@ the run as `change-set-unreadable`.
 | `SELECT_PROPERTY` | `yoriwake.select` | plugin → agent | `true` to narrow; anything else runs everything |
 | `OBSERVE_PROPERTY` | `yoriwake.observe` | plugin → agent | `true` on an observing run: every test runs, and each row's selecting verdict is recorded as an observation line. Set beside `yoriwake.select`, which still decides that verdict |
 | `CLASS_GRANULARITY_PROPERTY` | `yoriwake.select.classGranularity` | plugin → agent | `true` rounds a selection up to whole classes |
-| `NARROW_PLAIN_RUNNERS_PROPERTY` | `yoriwake.plainRunners.narrow` | plugin → agent | The framework outside the JUnit Platform whose test classes a selecting run may leave out whole. Unset, its tests all run |
+| `NARROW_PLAIN_RUNNERS_PROPERTY` | `yoriwake.plainRunners.narrow` | plugin → agent | The framework outside the JUnit Platform whose test classes a selecting run may leave out whole; an observing run records what it would leave out. Unset, its tests all run |
 | `NARROW_PLAIN_JUNIT4` | `junit4` | plugin → agent | `yoriwake.plainRunners.narrow`'s value for plain JUnit 4 |
 | `CHANGED_CLASSES_PROPERTY` | `yoriwake.change.classes` | plugin → agent | Changed classes |
 | `UNMAPPABLE_PATHS_PROPERTY` | `yoriwake.change.unmappable` | plugin → agent | Changed paths no class was derived from; any one forces |

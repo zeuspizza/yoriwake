@@ -573,7 +573,7 @@ everything as `environment-changed` ([The environment fingerprint](#the-environm
 - **Not in the table, so not tested on a release:** Android hosts (below), and Kotlin Multiplatform
   until a release's matrix run has run its functional test; Kotest and TestNG, which the suite runs
   in every cell but which are captured and always run in full rather than narrowed, and plain
-  JUnit 4, which narrows only by whole class
+  JUnit 4, which with `narrowPlainRunners` narrows only by whole class
   ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
 
 ### New JDKs
@@ -820,8 +820,8 @@ With `narrowPlainRunners = true` (or `-Pyoriwake.narrowPlainRunners`), a selecti
 `useJUnit()` task leaves out whole test classes. Each class is judged in the test JVM, after
 Gradle's own filters, with the runner JUnit picked for it:
 
-- A class is left out only when its runner is on the list below and every test it holds now is one
-  selection would skip. A class with one test that can reach the change, one the map has never
+- A class is left out only when its runner is on the list below, it holds at least one test, and
+  every test it holds now is one selection would skip. A class with one test that can reach the change, one the map has never
   seen or one not known to pass runs whole; its other tests are recorded `CLASS_GRANULARITY`.
 - Runners on the list run exactly the class's own methods, one test each: JUnit 4's own
   (`BlockJUnit4ClassRunner`, `JUnit4`), Mockito's `MockitoJUnitRunner` and its `Silent`, `Strict`
@@ -859,8 +859,8 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
 
 - Check that the suite runs the same tests under vintage before trusting a selection on it: the
   test runtime gained an engine.
-- It does not make a custom `Runner` that bypasses the Platform selectable. Where it does not
-  apply, the run forces.
+- It does not make JUnit 3 `TestCase`s, or a custom `Runner` that bypasses the Platform,
+  selectable. Where it does not apply, the run forces.
 - Robolectric suites are unverified. On some projects their classes fail Platform discovery, and
   the vintage engine cannot help them; on others they are discovered and run through it.
   Selection is as safe there as anywhere, but how far it narrows has not been measured.
@@ -1444,7 +1444,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.alwaysRun=<glob>[,<glob>…]` | Tests that may never be skipped, for this run. |
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |
 | `yoriwake.disabled` | Leave the build entirely alone: nothing scoped, injected, captured or selected. |
-| `yoriwake.narrowPlainRunners` | Let a selecting run of a plain JUnit 4 task leave out whole test classes. Overrides the build's `narrowPlainRunners`; `=false` turns it off. See [JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine). |
+| `yoriwake.narrowPlainRunners` | Let a selecting run of a plain JUnit 4 task leave out whole test classes. Overrides the build's `narrowPlainRunners`; `=false` turns it off. See [Narrowing plain JUnit 4 by class](#narrowing-plain-junit-4-by-class). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. |
 | `yoriwake.audit.instrumentedSeconds=<s>` | With `measureToll`: a full instrumented run's duration. |

@@ -152,6 +152,8 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
         runner(dir, "test", "-Pyoriwake.observe", "-Pyoriwake.narrowPlainRunners").build()
 
         assertEquals(everyClass, ranTests(dir))
+        // The agent judged every class, as a selecting run would have.
+        assertContains(decisions(dir), "#!${AgentContract.PLAIN_FILTER_NOTE}\t${AgentContract.PLAIN_FILTER_HOOKED}")
     }
 
     @Test
@@ -223,6 +225,7 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
         val output = runner(dir, "yoriwakeExplainTest", "-Pyoriwake.narrowPlainRunners").build().output
 
         assertContains(output, "leaves out whole classes: 4 of 6 known classes")
+        assertContains(output, "Every test of a class kept runs")
         leftOut.forEach { assertContains(output, it) }
         assertContains(output, "may keep more")
     }

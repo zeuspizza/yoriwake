@@ -177,6 +177,7 @@ SCHEDULE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/S
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
 # with it, four columns left: the functions were members of `object Audit` and are now top level.
 AUDIT_COMPUTE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
+AUDIT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt"
 # The payback engine moved out of Audit.kt; its mutation anchors moved with it, which is the
 # check that the move changed no behaviour -- an anchor left behind refuses before any suite runs.
 PAYBACK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
@@ -3655,6 +3656,14 @@ MUTATIONS = [
      "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
      "            if (narrowPlainRunners && junit4) {",
      functional_suite, "a recording run with the flag hands the agent nothing to judge"),
+    ("an observing run hands narrowPlainRunners to no agent", TEST_TASK_WIRING,
+     "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
+     "            if (narrowPlainRunners && junit4 && selecting) {",
+     functional_suite, "an observing run records what it would leave out and leaves out nothing"),
+    ("the audit takes the flag for the agent's hook", AUDIT,
+     "                    it.copy(plainNarrowed = notes.isNotEmpty() && notes.all { note -> note == AgentContract.PLAIN_FILTER_HOOKED })",
+     "                    it.copy(plainNarrowed = true)",
+     functional_suite, "the audit stops asking for the JUnit Platform once a selecting run narrowed plain JUnit 4"),
     ("narrowPlainRunners is not a task input", TEST_TASK_WIRING,
      "            test.inputs.property(NARROW_PLAIN_RUNNERS_PROPERTY, true)\n",
      "",

@@ -461,11 +461,14 @@ internal abstract class ExplainTask : DefaultTask() {
             )
             if (narrowsPlainJUnit4.getOrElse(false)) {
                 val (leftOut, classes) = plainClassesLeftOut(map, decision)
+                val named = leftOut.sorted()
                 logger.lifecycle(
                     "[yoriwake] $taskPath runs plain JUnit 4, which leaves out whole classes: " +
                         "${leftOut.size} of $classes known classes" +
-                        leftOut.sorted().take(REPORTED_REFUSALS).joinToString("") { "\n[yoriwake]     $it" } +
-                        "\n[yoriwake]   Each class's runner is judged when its tests run, so the run may keep more."
+                        named.take(REPORTED_REFUSALS).joinToString("") { "\n[yoriwake]     $it" } +
+                        (if (named.size > REPORTED_REFUSALS) "\n[yoriwake]     and ${named.size - REPORTED_REFUSALS} more" else "") +
+                        "\n[yoriwake]   Every test of a class kept runs, so the run runs more than the count above; " +
+                        "runners, new tests and pins are judged when the tests run, so it may keep more classes too."
                 )
             }
         }

@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.report
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
@@ -107,7 +108,10 @@ internal object Audit {
         val decodeRefused: String? = null,
         /** The token of the last run's decline under Develocity, or null when it did not decline. */
         val develocity: String? = null,
-        /** Whether the last selecting run had `narrowPlainRunners` on, or null when none has run. */
+        /**
+         * Whether the last selecting run's test JVMs left out plain JUnit 4 classes through Gradle's
+         * executor, each saying `plain-filter hooked`; null when no selecting run has been decoded.
+         */
         val plainNarrowed: Boolean? = null,
     ) {
         companion object {
@@ -142,20 +146,26 @@ internal object Audit {
                 )
             }
 
-            /** [plainNarrowed] is null on a run that does not select, which keeps the last one's. */
-            fun write(
-                mapDir: File,
-                framework: String,
-                parallelism: String?,
-                develocity: String? = null,
-                plainNarrowed: Boolean? = null,
-            ) {
+            fun write(mapDir: File, framework: String, parallelism: String?, develocity: String? = null) {
                 update(mapDir) { previous ->
                     // Carried forward: written in `doFirst`, before this run records anything.
-                    previous.copy(
-                        framework = framework, parallelism = parallelism, develocity = develocity,
-                        plainNarrowed = plainNarrowed ?: previous.plainNarrowed,
-                    )
+                    previous.copy(framework = framework, parallelism = parallelism, develocity = develocity)
+                }
+            }
+
+            /**
+             * Recorded by the decode of a selecting run, from the `plain-filter` notes its test JVMs
+             * wrote: true only when there is one and every one says the executor took the hook.
+             */
+            fun recordPlainNarrowed(mapDir: File) {
+                val notes = runCatching {
+                    mapDir.listFiles { file -> file.name.startsWith(AgentContract.DECISIONS_FILE) }.orEmpty()
+                        .flatMap { it.readLines() }
+                        .filter { it.startsWith(AgentContract.NOTE_PREFIX + AgentContract.PLAIN_FILTER_NOTE + "\t") }
+                        .map { it.substringAfter('\t') }
+                }.getOrDefault(emptyList())
+                update(mapDir) {
+                    it.copy(plainNarrowed = notes.isNotEmpty() && notes.all { note -> note == AgentContract.PLAIN_FILTER_HOOKED })
                 }
             }
 

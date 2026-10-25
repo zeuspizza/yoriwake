@@ -339,7 +339,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // that check, which may switch capture off.
         isolateWhileCapturing(test, runPlan)
         refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing)
-        recordTaskFacts(test, mapDir, if (selecting) narrowPlainRunners else null)
+        recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
             // Registered before the marker's deletion, so it runs after it and may write one.
             if (runPlan.complementing) configureComplement(project, test, mapDir, runPlan, agent, buildMemo)
@@ -700,7 +700,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
      * Writes the test framework and parallelism beside the map for `yoriwakeAudit`; both settle too
      * late for configuration time. Registered after [refuseInJvmParallelism] so it runs first.
      */
-    private fun recordTaskFacts(test: Test, mapDir: java.io.File, plainNarrowed: Boolean?) {
+    private fun recordTaskFacts(test: Test, mapDir: java.io.File) {
         test.doFirst { task ->
             task as Test
             val framework = when (task.options) {
@@ -724,7 +724,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 // Set by the decline, which runs before this action.
                 develocity = task.systemProperties[REFUSED_KIND_PROPERTY]?.toString()
                     ?.takeIf { declinedUnderDevelocity(task) },
-                plainNarrowed = plainNarrowed,
             )
         }
     }
@@ -914,7 +913,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             if (narrowPlainRunners && junit4 && (selecting || observing)) {
                 // The test JVM judges each class with its runner; nothing is decided here.
                 task.systemProperty(NARROW_PLAIN_RUNNERS_PROPERTY, NARROW_PLAIN_JUNIT4)
-                if (selecting) {
+                if (selecting && task.systemProperties[REFUSED_PROPERTY] == null) {
                     task.logger.lifecycle(
                         "[yoriwake] ${task.path} runs plain JUnit 4, so selection leaves out whole classes, and only " +
                             "those whose runner runs exactly the class's own methods."
