@@ -134,6 +134,7 @@ TEST_TASK_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/w
 JACOCO_SCOPING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/JacocoScoping.kt"
 AUDIT_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/AuditTask.kt"
 DECODE_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/DecodeTask.kt"
+DECODE_RUN = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/DecodeRun.kt"
 AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contract/AgentContract.java"
 # ChangeSelection.kt was split by responsibility; each anchor followed its function, unchanged.
 SELECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
@@ -2440,34 +2441,34 @@ MUTATIONS = [
      functional_suite, "the init script declines Isolated Projects"),
     # A capture that cannot date the map leaves it as it was: merged undated, its records would
     # describe a commit no diff covers, and a revert would hide the difference.
-    ("a capture that cannot date the map still merges its records", DECODE_TASK,
+    ("a capture that cannot date the map still merges its records", DECODE_RUN,
      "        if (!datesMap && hasWorkerRecords) {",
      "        if (false) {",
      # A capture whose fork halted, not a filtered run: since a build-script filter dates the map like
      # `--tests`, a filtered run's next run already refuses, and the gate is not what decides there.
      functional_suite, "a revert after a capture whose fork halted runs the test it hid"),
-    ("a capture that cannot date the map still merges its records, fail-fast", DECODE_TASK,
+    ("a capture that cannot date the map still merges its records, fail-fast", DECODE_RUN,
      "        if (!datesMap && hasWorkerRecords) {",
      "        if (false) {",
      functional_suite, "a fail-fast capture leaves the map byte-identical"),
-    ("a HEAD that moved during a capture is trusted", DECODE_TASK,
+    ("a HEAD that moved during a capture is trusted", DECODE_RUN,
      "        val headMoved = startHead != headNow",
      "        val headMoved = false",
      functional_suite, "a commit during a capture in a repository without reflogs leaves the map as it was"),
-    ("a reflog that changed during a capture is ignored", DECODE_TASK,
+    ("a reflog that changed during a capture is ignored", DECODE_RUN,
      "        val reflogMoved = startReflogs != reflogsNow",
      "        val reflogMoved = false",
      functional_suite, "a checkout to another branch and back during a capture leaves the map as it was"),
     # What a discarded capture still keeps: a failure only ever runs a test, and without it a test
     # that failed under a filter would be skipped on its older passing record.
     # Re-anchored: the decode also passes the classes Gradle's report saw fail.
-    ("a discarded capture forgets the failures it saw", DECODE_TASK,
+    ("a discarded capture forgets the failures it saw", DECODE_RUN,
      "            val failures = runCatching { CoverageDecoder.carryFailures(mapDir, reported) }.getOrElse { problem ->",
      "            val failures = runCatching { 0 }.getOrElse { problem ->",
      functional_suite, "a class whose teardown fails after its tests passed still runs on the next unrelated change"),
     # The other half of what a discarded capture keeps: a failure only Gradle's report holds, from a
     # test JVM stopped before its records were written.
-    ("a discarded capture forgets the failures only Gradle's report saw", DECODE_TASK,
+    ("a discarded capture forgets the failures only Gradle's report saw", DECODE_RUN,
      "                JUnitXmlFailures.classes(junitXml) { report, problem ->",
      "                JUnitXmlFailures.classes(null) { report, problem ->",
      functional_suite, "a failure only Gradle's report kept still runs on the next unrelated change"),
@@ -2477,7 +2478,7 @@ MUTATIONS = [
      functional_suite, "a failure only Gradle's report kept still runs on the next unrelated change"),
     # A path touched during a dating capture stays in the change set until the next one.
     # Anchored on the decode handing the whole re-observation through.
-    ("a tree that moved during a capture is trusted", DECODE_TASK,
+    ("a tree that moved during a capture is trusted", DECODE_RUN,
      "                        WorkingTree.readStart(startStats, pending?.statsId),\n                    )\n",
      "                        WorkingTree.readStart(startStats, pending?.statsId),\n                    )?.let { "
      "WorkingTree.Reobserved(WorkingTree.readStart(datedSnapshot, pending?.snapshotId) ?: it.undated, it.moved) }\n",
@@ -2590,7 +2591,7 @@ MUTATIONS = [
     ("a read of an entry stops counting as a read of the moved file holding it", SELECTOR,
      'file.startsWith(path + "!/") || path.startsWith(file + "!/")', 'file.startsWith(path + "!/")',
      agent_suite, "a read of an entry of a moved file reads it"),
-    ("the decode writes reads without the root", DECODE_TASK,
+    ("the decode writes reads without the root", DECODE_RUN,
      "                rootDir = rootDir,",
      "                rootDir = null,",
      functional_suite, "a build time stamped into a sibling jar's manifest that no test reads runs nothing more"),
@@ -2638,7 +2639,7 @@ MUTATIONS = [
      "        declineUnderDevelocity(project, test, mapDir, agent)\n",
      "",
      functional_suite, "a test task with Test Distribution enabled declines and leaves the map byte-identical"),
-    ("a declined run's records are decoded", DECODE_TASK,
+    ("a declined run's records are decoded", DECODE_RUN,
      "        if (develocityDeclined.delete()) {",
      "        if (false) {",
      functional_suite, "a declined run's decode reports the decline and nothing else"),
@@ -2859,8 +2860,8 @@ MUTATIONS = [
      "        File(mapDir, AgentContract.SELECTION_FILE).delete()\n        return Outcome.Removed(reason)",
      "        return Outcome.Removed(reason)",
      unit_suite, "a selecting run that did not narrow removes the record"),
-    ("the decode never removes an earlier selection record", DECODE_TASK,
-     "        if (asksSelection.getOrElse(false) && marker.isFile) {",
+    ("the decode never removes an earlier selection record", DECODE_RUN,
+     "        if (asksSelection && marker.isFile) {",
      "        if (false) {",
      functional_suite, "a selecting run that runs everything removes an earlier run's record"),
     ("a new selection record is not a complement run's input", SELECTION_WIRING,
@@ -2899,8 +2900,8 @@ MUTATIONS = [
      functional_suite, "a record that cannot be read runs every test, as having no record"),
     # Not a way to skip a test: a complement run that captured nothing on purpose is decoded as one
     # whose listener never loaded, and warns that it recorded no coverage.
-    ("a complement run's decode reads it as a capture", DECODE_TASK,
-     "        if (complementing.getOrElse(false) && complemented.isFile) {",
+    ("a complement run's decode reads it as a capture", DECODE_RUN,
+     "        if (complementing && complemented.isFile) {",
      "        if (false) {",
      functional_suite, "a selecting run and its complement at one commit run every test exactly once"),
     ("a planned undetermined decline skips the parallelism refusal", SELECTION_WIRING,
@@ -2994,7 +2995,7 @@ MUTATIONS = [
     # The divisor, end to end. The unit-suite mutation beside this one proves the audit REFUSES an
     # unknown worker count; this one proves the count that arrives is the one that really forked,
     # which no test asserted until a two-class fixture existed to fork over.
-    ("the decode finalizer stops recording the real worker count", DECODE_TASK,
+    ("the decode finalizer stops recording the real worker count", DECODE_RUN,
      "Audit.TaskFacts.recordWorkers(mapDir, decoded.workers)",
      "Audit.TaskFacts.recordWorkers(mapDir, 1)", functional_suite,
      "parallel forks are not refused"),
