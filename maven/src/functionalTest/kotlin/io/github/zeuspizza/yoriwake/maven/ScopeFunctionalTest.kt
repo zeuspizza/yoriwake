@@ -3,6 +3,8 @@ package io.github.zeuspizza.yoriwake.maven
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.w3c.dom.Element
 import java.io.File
 import java.nio.file.Files
@@ -22,9 +24,9 @@ class ScopeFunctionalTest {
     private fun File.edit(transform: (String) -> String) = writeText(transform(readText()))
 
     /** The `prepare-agent` configuration of [module] as Maven built it, after yoriwake read the reactor. */
-    private fun agentConfiguration(project: File, module: String, vararg arguments: String): Element {
+    private fun agentConfiguration(project: File, module: String, vararg arguments: String, version: String = maven): Element {
         val out = File(project, "effective.xml")
-        FunctionalMaven.run(maven, project, *arguments, "help:effective-pom", "-Doutput=${out.path}").succeeded()
+        FunctionalMaven.run(version, project, *arguments, "help:effective-pom", "-Doutput=${out.path}").succeeded()
         val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(out)
         val projects = document.getElementsByTagName("project").let { list -> (0 until list.length).map { list.item(it) as Element } }
         val target = projects.single { child(it, "artifactId")?.textContent == module }
@@ -42,11 +44,12 @@ class ScopeFunctionalTest {
     private fun includes(configuration: Element) =
         child(configuration, "includes")?.let { elements(it, "include").map(Element::getTextContent) }
 
-    @Test
-    fun `with no includes of its own, the agent is scoped to every package the reactor declares`(@TempDir dir: File) {
+    @ParameterizedTest(name = "Maven {0}")
+    @ValueSource(strings = ["3.9.16", "4.0.0-rc-7"])
+    fun `with no includes of its own, the agent is scoped to every package the reactor declares`(version: String, @TempDir dir: File) {
         val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
 
-        val configuration = agentConfiguration(project, "lib")
+        val configuration = agentConfiguration(project, "lib", version = version)
 
         assertEquals(REACTOR, includes(configuration))
         assertEquals("true", child(configuration, "inclNoLocationClasses")?.textContent)

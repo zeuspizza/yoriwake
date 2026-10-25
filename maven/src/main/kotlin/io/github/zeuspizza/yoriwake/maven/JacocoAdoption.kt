@@ -23,24 +23,31 @@ internal object JacocoAdoption {
     private const val DEFAULT_EXCLUDED_LOADER = "sun.reflect.DelegatingClassLoader"
     private val REFLECTION_ACCESSOR_CLASSLOADERS = listOf(DEFAULT_EXCLUDED_LOADER, "jdk.internal.reflect.DelegatingClassLoader")
 
-    /** The execution of [goal] in [project], with its configuration as the POM merged it. */
-    fun execution(project: MavenProject, goal: String): PluginExecution? =
-        project.getPlugin(JACOCO)?.executions?.firstOrNull { goal in it.goals }
+    /**
+     * The executions of [goal] in [project], with their configuration as the POM merged it; one
+     * bound to phase `none` never runs.
+     */
+    fun executions(project: MavenProject, goal: String): List<PluginExecution> =
+        project.getPlugin(JACOCO)?.executions.orEmpty().filter { goal in it.goals && it.phase != "none" }
 
     /**
      * Whether [project]'s agent for [goal] can reach a test JVM at all, as a decline; null when it
      * can. Asked before anything is changed.
      */
     fun decline(project: MavenProject, goal: String, session: MavenSession): ScopeOutcome.NotApplied? {
-        val execution = execution(project, goal) ?: return ScopeOutcome.NotApplied(
-            "${project.artifactId} has no jacoco-maven-plugin $goal execution, so no coverage is recorded at all",
-            ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN,
-        )
-        val configured = (execution.configuration as? Xpp3Dom)?.getChild("skip")?.value?.trim()
-        val skip = configured?.takeUnless { it.startsWith("\${") }
-            ?: session.userProperties.getProperty("jacoco.skip")
-            ?: project.properties.getProperty("jacoco.skip")
-        if (skip.equals("true", ignoreCase = true)) {
+        val executions = executions(project, goal)
+        if (executions.isEmpty()) {
+            return ScopeOutcome.NotApplied(
+                "${project.artifactId} has no jacoco-maven-plugin $goal execution, so no coverage is recorded at all",
+                ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN,
+            )
+        }
+        val skipped = executions.any { execution ->
+            val configured = (execution.configuration as? Xpp3Dom)?.getChild("skip")?.value?.trim()
+            val skip = configured?.takeUnless { it.startsWith("\${") } ?: Declines.property(project, session, "jacoco.skip")
+            skip.equals("true", ignoreCase = true)
+        }
+        if (skipped) {
             return ScopeOutcome.NotApplied(
                 "${project.artifactId}'s jacoco-maven-plugin $goal is skipped, so no coverage agent reaches the test JVM",
                 ScopeOutcome.NotApplied.Kind.JACOCO_DISABLED,
@@ -49,11 +56,26 @@ internal object JacocoAdoption {
         return null
     }
 
-    /** Scopes [project]'s agent for [goal]; [decline] has said it reaches a test JVM. */
+    /**
+     * Scopes every execution of [project]'s agent for [goal]; [decline] has said it reaches a test
+     * JVM. The outcome is the host's includes when any execution names its own.
+     */
     fun adopt(project: MavenProject, goal: String, derived: List<String>?): ScopeOutcome {
-        val execution = requireNotNull(execution(project, goal))
-        val configuration = (execution.configuration as? Xpp3Dom) ?: Xpp3Dom("configuration").also { execution.configuration = it }
+        val outcomes = executions(project, goal).map { adopt(it, derived) }
+        return outcomes.firstOrNull { it is ScopeOutcome.AdoptedFromHost } ?: outcomes.first()
+    }
 
+    private fun adopt(execution: PluginExecution, derived: List<String>?): ScopeOutcome {
+        val configuration = (execution.configuration as? Xpp3Dom) ?: Xpp3Dom("configuration")
+        // Set back after every edit: Maven 4 hands out a copy of the model's configuration.
+        try {
+            return scope(configuration, derived)
+        } finally {
+            execution.configuration = configuration
+        }
+    }
+
+    private fun scope(configuration: Xpp3Dom, derived: List<String>?): ScopeOutcome {
         // Before either early return below, as on Gradle: a build with its own includes would
         // otherwise keep classes with no location out of every record.
         val excluded = configuration.getChild("exclClassLoaders")?.value?.split(':')?.filter(String::isNotBlank)

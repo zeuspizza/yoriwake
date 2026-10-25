@@ -36,6 +36,41 @@ class DeclineFunctionalTest {
     }
 
     @Test
+    fun `forkCount 0 as a project property is declined as well`(@TempDir dir: File) {
+        val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
+        File(project, "lib/pom.xml").edit {
+            it.replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <properties><forkCount>0</forkCount></properties>")
+        }
+
+        val output = declined(project, "-pl", "lib")
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, surefire-in-process: forkCount=0")
+    }
+
+    @Test
+    fun `an execution that shares its agent with a declined one keeps the agent as configured`(@TempDir dir: File) {
+        // Failsafe takes prepare-agent's argLine too: scoping it for Surefire would change what the
+        // declined Failsafe records.
+        val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId>\n  <build><plugins><plugin><artifactId>maven-failsafe-plugin</artifactId>" +
+                    "<version>2.22.2</version><executions><execution><goals><goal>integration-test</goal></goals>" +
+                    "</execution></executions></plugin></plugins></build>",
+            )
+        }
+
+        val output = declined(project, "-pl", "lib")
+
+        assertContains(output, "[yoriwake] lib failsafe:integration-test (default) declined, surefire-version")
+        assertContains(
+            output,
+            "[yoriwake] lib surefire:test (default-test) declined, surefire-version: its JaCoCo agent also reaches lib failsafe:integration-test (default)",
+        )
+    }
+
+    @Test
     fun `a Surefire older than 3_0_0 is declined`(@TempDir dir: File) {
         val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
         File(project, "pom.xml").edit {

@@ -4288,7 +4288,7 @@ def _locked(name):
     """Whether a suite's runs take the Gradle lock: every Gradle suite not named safe without it."""
     return name in GRADLE_SUITES and name not in UNLOCKED_SUITES
 BUILD_FILES = ("build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradle/",
-               "agent/build.gradle.kts", "plugin/build.gradle.kts", "core/build.gradle.kts")
+               "agent/build.gradle.kts", "plugin/build.gradle.kts", "core/build.gradle.kts", "maven/build.gradle.kts")
 
 
 def _under(path, prefixes):

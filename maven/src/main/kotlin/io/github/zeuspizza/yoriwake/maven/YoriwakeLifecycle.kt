@@ -38,25 +38,45 @@ internal class YoriwakeLifecycle @Inject constructor(
 
         val facts = ReactorFacts(session)
         for (project in session.projects) {
-            val outcomes = mutableMapOf<String, ScopeOutcome>()
-            for ((key, testGoal, ownGoal) in TEST_PLUGINS) {
-                val plugin = project.getPlugin(key) ?: continue
+            val runs = TEST_PLUGINS.flatMap { (key, testGoal, ownGoal) ->
+                val plugin = project.getPlugin(key) ?: return@flatMap emptyList()
                 // Failsafe's JVMs take `prepare-agent`'s argLine when the build has no integration goal.
-                val agentGoal = ownGoal.takeIf { JacocoAdoption.execution(project, it) != null } ?: JacocoAdoption.PREPARE_AGENT
-                for (execution in plugin.executions.filter { testGoal in it.goals }) {
+                val agentGoal = ownGoal.takeIf { JacocoAdoption.executions(project, it).isNotEmpty() } ?: JacocoAdoption.PREPARE_AGENT
+                plugin.executions.filter { testGoal in it.goals }.map { execution ->
                     val name = "${project.artifactId} ${plugin.artifactId.removePrefix("maven-").removeSuffix("-plugin")}:$testGoal (${execution.id})"
-                    val outcome = Declines.of(plugin, execution, session)
-                        ?: JacocoAdoption.decline(project, agentGoal, session)
-                        ?: outcomes.getOrPut(agentGoal) { JacocoAdoption.adopt(project, agentGoal, facts.scope) }
+                    Run(name, agentGoal, Declines.of(project, plugin, execution, session) ?: JacocoAdoption.decline(project, agentGoal, session))
+                }
+            }
+            for ((agentGoal, sharing) in runs.groupBy(Run::agentGoal)) {
+                // A declined execution keeps the agent its host configured, and so does every other
+                // execution that agent reaches. In-process ones are reached by no agent.
+                val blocking = sharing.firstOrNull { it.decline != null && it.decline.kind != ScopeOutcome.NotApplied.Kind.SUREFIRE_IN_PROCESS }
+                val scoped = if (blocking == null && sharing.any { it.decline == null }) {
+                    JacocoAdoption.adopt(project, agentGoal, facts.scope)
+                } else {
+                    null
+                }
+                for (run in sharing) {
+                    val outcome = run.decline
+                        ?: blocking?.let {
+                            ScopeOutcome.NotApplied(
+                                "its JaCoCo agent also reaches ${it.name}, which is declined, so it is left as configured",
+                                requireNotNull(it.decline).kind,
+                            )
+                        }
+                        ?: requireNotNull(scoped)
                     if (outcome is ScopeOutcome.NotApplied) {
-                        log.warn("[yoriwake] $name declined, ${outcome.kind.token}: ${outcome.detail}; every test runs and nothing is captured")
+                        log.warn("[yoriwake] ${run.name} declined, ${outcome.kind.token}: ${outcome.detail}; every test runs and nothing is captured")
                     } else {
-                        log.debug("[yoriwake] $name: scope $outcome")
+                        log.debug("[yoriwake] ${run.name}: scope $outcome")
                     }
                 }
             }
         }
     }
+
+    /** A test execution, the JaCoCo goal whose agent reaches its JVMs, and why it is declined, if it is. */
+    private class Run(val name: String, val agentGoal: String, val decline: ScopeOutcome.NotApplied?)
 
     /** For the functional suite, which runs Maven 4 before its release. */
     private fun allowsPreRelease(session: MavenSession) =
