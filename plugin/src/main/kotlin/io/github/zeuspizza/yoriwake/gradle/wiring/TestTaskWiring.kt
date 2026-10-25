@@ -10,6 +10,8 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NARROW_PLAIN_RU
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LOADED_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_OVERRIDE_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
@@ -113,6 +115,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     "a path forcing when it is a build file, a source, named in compiled classes or read by a test."
             )
         }
+        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)
         val pathIgnore = PathIgnore.validated(extension.pathIgnore.getOrElse(emptyList()), project.path)
         val largeChange = extension.largeChangeThreshold.getOrElse(LargeChange.DEFAULT_THRESHOLD).also {
             if (it < 1) {
@@ -156,7 +159,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, narrowPlainRunners) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, narrowPlainRunners, recordSequentially) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -217,6 +220,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         declarations: List<Declarations.Declaration>,
         largeChange: Int,
         narrowPlainRunners: Boolean,
+        recordSequentially: Boolean,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
         val scopeOutcome = applyJacocoIncludes(project, test, scope)
@@ -299,7 +303,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // First, so its action runs last: after the selecting action has decided whether this run
         // captures, and with nothing between it and the test JVM.
         recordClasspathFiles(project, test, mapDir, selecting, buildMemo)
-        recordEnvironment(test, mapDir, selecting, environment)
         observeWorkingTree(project, test, mapDir, selecting, buildMemo, startReading(project, buildMemo))
         discardPreviousRecords(test, recordsDir)
         recordWhetherTheRunDates(test, recordsDir, fromBuildScript)
@@ -338,7 +341,13 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
         // that check, which may switch capture off.
         isolateWhileCapturing(test, runPlan)
-        refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing)
+        refuseInJvmParallelism(
+            test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing,
+            recordSequentially, recording = runPlan.asked == RunPlan.Kind.RECORD,
+        )
+        // After it, so its action runs before the parallelism action turns the engines' switches
+        // off: a selecting run compares the host's own values, which it keeps.
+        recordEnvironment(test, mapDir, selecting, environment)
         recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
             // Registered before the marker's deletion, so it runs after it and may write one.
@@ -731,9 +740,19 @@ internal class TestTaskWiring(internal val settings: Settings) {
     /**
      * Refuses in-JVM parallel test execution while capturing: it interleaves tests under one agent
      * and blends their attributions. Parallel forks are fine. An [observing] run captures with tests
-     * named too, so it is refused then as well.
+     * named too, so it is refused then as well. Under [recordSequentially] on the JUnit Platform, a
+     * run asked only to record ([recording]) turns the engines' parallel switches off instead, and
+     * its test JVMs capture only once they confirm it; any other run keeps the suite's scheduling,
+     * selects as usual, and captures nothing.
      */
-    private fun refuseInJvmParallelism(test: Test, mapDir: File, planned: RefusalKind?, observing: Boolean) {
+    private fun refuseInJvmParallelism(
+        test: Test,
+        mapDir: File,
+        planned: RefusalKind?,
+        observing: Boolean,
+        recordSequentially: Boolean,
+        recording: Boolean,
+    ) {
         // Resolved here, not in the action: `Task.extensions` at execution time violates the
         // configuration cache.
         val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -748,7 +767,32 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 testRuntimeFiles = test.classpath.files,
                 testngParallel = testng?.parallel,
                 testngThreadCount = testng?.threadCount,
-            ) ?: return@doFirst
+            )
+            // Whether or not a route was found: one the detector cannot read (a JVM argument
+            // provider, JAVA_TOOL_OPTIONS) is switched off too, or refused by the test JVM.
+            val platform = test.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions
+            if (recordSequentially && platform && recording) {
+                // A system property outranks a junit-platform.properties file and comes after the
+                // task's JVM arguments on the command line, where the last one wins.
+                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "false") }
+                test.systemProperty(PARALLELISM_OVERRIDE_PROPERTY, "true")
+                test.systemProperty(PARALLELISM_PROPERTY, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
+                Audit.TaskFacts.recordParallelismOverride(mapDir, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
+                source?.let {
+                    test.logger.lifecycle(
+                        "[yoriwake] ${test.path}: recording one test at a time (-P${Settings.RECORD_SEQUENTIALLY}): " +
+                            "parallel execution via $it is turned off for this run, and each test JVM confirms it before recording"
+                    )
+                }
+                return@doFirst
+            }
+            source ?: return@doFirst
+            // Selection filters at discovery, whatever the scheduling after it; only capturing would
+            // blend tests. A run that would capture, the unknown-age fallback included, does not.
+            if (recordSequentially && platform) {
+                keepParallelism(test, mapDir, jacoco, source)
+                return@doFirst
+            }
 
             // Declines rather than throwing, so the suite still runs, and suppresses capture too:
             // a blended map would be believed by every later run.
@@ -785,9 +829,38 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     "JVM share a single coverage agent, so per-test attribution would blend them. " +
                     "Parallel FORKS (maxParallelForks) are unaffected and remain safe. " +
                     "`yoriwakeAudit${test.name.replaceFirstChar(Char::uppercase)}` reports this as " +
-                    "`in-jvm-parallelism`."
+                    "`in-jvm-parallelism`." +
+                    (if (recordSequentially && !platform) {
+                        " -P${Settings.RECORD_SEQUENTIALLY} covers JUnit Jupiter and Vintage on the JUnit Platform only."
+                    } else "")
             )
         }
+    }
+
+    /**
+     * Runs a flagged suite's tests with its own parallel scheduling and captures nothing: the
+     * records directory is emptied and JaCoCo switched off, and the marker the decode returns on
+     * leaves the map exactly as it was.
+     */
+    private fun keepParallelism(test: Test, mapDir: File, jacoco: JacocoTaskExtension?, source: String) {
+        val marker = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
+        runCatching {
+            marker.parentFile.mkdirs()
+            marker.writeText("$source\n")
+        }.onFailure {
+            test.logger.warn(
+                "[yoriwake] ${test.path}: could not record that this run captures nothing ($it). Nothing " +
+                    "is captured either way; the map is untouched because no records exist."
+            )
+        }
+        test.systemProperty(RECORDS_DIR_PROPERTY, "")
+        test.systemProperty(PARALLELISM_PROPERTY, AgentContract.PARALLELISM_KEPT_NOT_CAPTURED)
+        Audit.TaskFacts.recordParallelismOverride(mapDir, AgentContract.PARALLELISM_KEPT_NOT_CAPTURED)
+        runCatching { jacoco?.isEnabled = false }
+        test.logger.lifecycle(
+            "[yoriwake] ${test.path}: tests run in parallel as configured (via $source), so this run " +
+                "captures nothing; only a recording run records the map, one test at a time."
+        )
     }
 
     /**

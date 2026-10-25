@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.gradle.tasks
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
+import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
@@ -438,9 +439,14 @@ internal abstract class ExplainTask : DefaultTask() {
             learnable = scoped.change.classPrefixes,
             ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
         )
+        // The last run's, since only a test JVM can see it: the next recording run meets it again.
+        val unconfirmed = Audit.TaskFacts.read(mapDir).parallelismUnconfirmed?.also {
+            logger.lifecycle("[yoriwake] $taskPath: the last run captured nothing: its test JVM found that $it")
+        }
         writeExplanation(
             mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing, branch,
             PathIgnoreReport.evidence(scoped.ignore, mapDir),
+            unconfirmed,
         )
         ForcingPaths.lines(taskPath, forcing).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (decision.isFullRun) {

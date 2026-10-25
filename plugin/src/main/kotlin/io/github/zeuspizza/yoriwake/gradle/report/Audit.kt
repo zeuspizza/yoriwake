@@ -113,6 +113,10 @@ internal object Audit {
          * executor, each saying `plain-filter hooked`; null when no selecting run has been decoded.
          */
         val plainNarrowed: Boolean? = null,
+        /** How the last run treated in-JVM parallelism under `recordSequentially`, or null. */
+        val parallelismOverride: String? = null,
+        /** Why the last run's test JVM found its tests may run concurrently and captured nothing, or null. */
+        val parallelismUnconfirmed: String? = null,
     ) {
         companion object {
             const val FILE = "task-facts"
@@ -143,13 +147,19 @@ internal object Audit {
                     decodeRefused = fields["decodeRefused"]?.takeIf { it.isNotEmpty() },
                     develocity = fields["develocity"]?.takeIf { it.isNotEmpty() },
                     plainNarrowed = fields["plainNarrowed"]?.toBooleanStrictOrNull(),
+                    parallelismOverride = fields["parallelismOverride"]?.takeIf { it.isNotEmpty() },
+                    parallelismUnconfirmed = fields["parallelismUnconfirmed"]?.takeIf { it.isNotEmpty() },
                 )
             }
 
             fun write(mapDir: File, framework: String, parallelism: String?, develocity: String? = null) {
                 update(mapDir) { previous ->
                     // Carried forward: written in `doFirst`, before this run records anything.
-                    previous.copy(framework = framework, parallelism = parallelism, develocity = develocity)
+                    previous.copy(
+                        framework = framework, parallelism = parallelism, develocity = develocity,
+                        // This run's own, set by the parallelism action and the decode after this.
+                        parallelismOverride = null, parallelismUnconfirmed = null,
+                    )
                 }
             }
 
@@ -167,6 +177,16 @@ internal object Audit {
                 update(mapDir) {
                     it.copy(plainNarrowed = notes.isNotEmpty() && notes.all { note -> note == AgentContract.PLAIN_FILTER_HOOKED })
                 }
+            }
+
+            /** Recorded by the parallelism action, which runs after [write]. */
+            fun recordParallelismOverride(mapDir: File, value: String) {
+                update(mapDir) { it.copy(parallelismOverride = value) }
+            }
+
+            /** Recorded by the decode, which finds the test JVMs' markers. */
+            fun recordParallelismUnconfirmed(mapDir: File, reason: String) {
+                update(mapDir) { it.copy(parallelismUnconfirmed = reason.lines().firstOrNull()?.trim()) }
             }
 
             /** Recorded by the capture path once it knows, which is after the run. */
@@ -203,7 +223,9 @@ internal object Audit {
                             // One line: the file is `key=value` per line.
                             "decodeRefused=${next.decodeRefused.orEmpty().replace('\n', ' ')}\n" +
                             "develocity=${next.develocity.orEmpty()}\n" +
-                            "plainNarrowed=${next.plainNarrowed?.toString().orEmpty()}\n",
+                            "plainNarrowed=${next.plainNarrowed?.toString().orEmpty()}\n" +
+                            "parallelismOverride=${next.parallelismOverride.orEmpty()}\n" +
+                            "parallelismUnconfirmed=${next.parallelismUnconfirmed.orEmpty().replace('\n', ' ')}\n",
                     )
                 }
             }
