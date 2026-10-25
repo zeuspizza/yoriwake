@@ -35,7 +35,7 @@ jobs:
   # neither may share a machine with.
   verify:
     name: build and test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -117,7 +117,7 @@ jobs:
   attest:
     name: attest
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
@@ -150,7 +150,7 @@ jobs:
     name: publish to the Gradle Plugin Portal
     needs: attest
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     steps:
       # Pinned to commit SHAs rather than tags, because this job holds secrets. No token is left
@@ -206,7 +206,7 @@ jobs:
     name: github release
     needs: publish
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

@@ -33,7 +33,7 @@ env:
 jobs:
   candidate:
     name: the candidate is on this branch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.check.outputs.sha }}
     steps:
@@ -75,9 +75,9 @@ jobs:
       fail-fast: false
       matrix:
         cell:
-          - { os: linux, runner: ubuntu-latest, gradle: '8.14', task: functionalTest, jdk: '21' }
-          - { os: linux, runner: ubuntu-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '21' }
-          - { os: linux, runner: ubuntu-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '25' }
+          - { os: linux, runner: ubuntu-24.04, gradle: '8.14', task: functionalTest, jdk: '21' }
+          - { os: linux, runner: ubuntu-24.04, gradle: '9.8.0', task: functionalTestGradle9, jdk: '21' }
+          - { os: linux, runner: ubuntu-24.04, gradle: '9.8.0', task: functionalTestGradle9, jdk: '25' }
           - { os: macos, runner: macos-latest, gradle: '8.14', task: functionalTest, jdk: '21' }
           - { os: macos, runner: macos-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '21' }
           - { os: macos, runner: macos-latest, gradle: '9.8.0', task: functionalTestGradle9, jdk: '25' }
@@ -147,7 +147,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: linux, runner: ubuntu-latest }
+          - { os: linux, runner: ubuntu-24.04 }
           - { os: macos, runner: macos-latest }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -203,9 +203,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { from: linux, os: linux, runner: ubuntu-latest }
+          - { from: linux, os: linux, runner: ubuntu-24.04 }
           - { from: linux, os: macos, runner: macos-latest }
-          - { from: macos, os: linux, runner: ubuntu-latest }
+          - { from: macos, os: linux, runner: ubuntu-24.04 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -260,7 +260,7 @@ jobs:
     name: every cell ran what its label says
     needs: [candidate, cell, select]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every job succeeded
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
@@ -282,7 +282,7 @@ jobs:
   report-failure:
     needs: [candidate, cell, capture, select, summary]
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       issues: write
