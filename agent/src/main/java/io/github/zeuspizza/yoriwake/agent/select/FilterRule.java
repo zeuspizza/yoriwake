@@ -49,6 +49,7 @@ public final class FilterRule {
             AgentContract.REFUSED_KIND_PROPERTY,
             AgentContract.CLASS_GRANULARITY_PROPERTY,
             AgentContract.ALWAYS_RUN_PROPERTY,
+            AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY,
     };
 
     /**

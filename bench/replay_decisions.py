@@ -41,7 +41,7 @@ import run  # noqa: E402  (the decision-record reader lives with the writer's ot
 
 AGENT_JAR = os.path.join(run.SOURCE, "agent", "build", "libs", "agent.jar")
 REPLAY_SOURCE = os.path.join(HERE, "Replay.java")
-# Written by the agent beside its other notes: `#!input.<system property>`. See SelectionFilter.
+# Written by the agent beside its other notes: `#!input.<system property>`. See SelectionRun.
 INPUT_NOTE_PREFIX = "input."
 # A leaf container -- a test template or a dynamic-test factory -- is judged by its subtree, not as a
 # test. The record does not carry the descriptor's type, so it is read from the id's last segment.

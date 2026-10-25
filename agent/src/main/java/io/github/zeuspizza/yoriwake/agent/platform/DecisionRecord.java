@@ -83,7 +83,7 @@ public final class DecisionRecord {
     // Facts about the whole run, such as why it ran everything, which no per-test row can carry.
     private final List<String> notes = Collections.synchronizedList(new ArrayList<String>());
 
-    void add(String testId, Verdict verdict) {
+    public void add(String testId, Verdict verdict) {
         rows.add(new Row(testId, verdict, null));
     }
 
@@ -91,12 +91,12 @@ public final class DecisionRecord {
      * Records a test an observing run includes whatever selection decided: its row says it ran, and
      * an observation line holds {@code wouldBe}, the verdict a selecting run would have given.
      */
-    void observe(String testId, Verdict wouldBe) {
+    public void observe(String testId, Verdict wouldBe) {
         rows.add(new Row(testId, Verdict.OBSERVING, wouldBe));
     }
 
     /** As {@link #note}, with several tab-separated fields; trailing null or empty ones are dropped. */
-    void noteFields(String key, String... fields) {
+    public void noteFields(String key, String... fields) {
         int kept = fields.length;
         while (kept > 0 && (fields[kept - 1] == null || fields[kept - 1].isEmpty())) {
             kept--;
@@ -116,7 +116,7 @@ public final class DecisionRecord {
      * Records one whole-run fact. A null or empty value is dropped rather than written as blank,
      * because absent and empty must not share a spelling.
      */
-    void note(String key, String value) {
+    public void note(String key, String value) {
         if (key == null || key.isEmpty() || value == null || value.isEmpty()) {
             return;
         }
@@ -140,7 +140,7 @@ public final class DecisionRecord {
      * notes, then one rule line per row after the rows.
      */
     // Synchronized so two writes of one record never interleave.
-    synchronized void writeTo(File dir, Rules rules) {
+    public synchronized void writeTo(File dir, Rules rules) {
         if (dir == null || !ATTACHED) {
             return;
         }

@@ -118,6 +118,10 @@ CORPUS_SRC = "bench/corpus_state.py"
 CONTROLS_SRC = "bench/controls.py"
 COST_SRC = "bench/cost.py"
 SELECTION_FILTER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/SelectionFilter.java"
+SELECTION_RUN = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRun.java"
+CLASS_VERDICTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/ClassVerdicts.java"
+JUNIT4_SELECTION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Selection.java"
+LOADED_CLASS_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/LoadedClassRecorder.java"
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
 CHANGE_DETECTION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
@@ -716,6 +720,8 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
     # every-guard run measures it.
     "PathIgnoreFunctionalTest": 61,
+    # An estimate: 46 s locally for its 3 tests on both Gradle versions, scaled as SelectionFunctionalTest.
+    "PlainRunnerSelectionFunctionalTest": 60,
     "MultiProjectFunctionalTest": 36,
     "MultiplatformFunctionalTest": 140,
     "NamedTestsFunctionalTest": 111,
@@ -1262,7 +1268,7 @@ MUTATIONS = [
      "            for (int next = s; next <= segments.length; next++) {",
      "            for (int next = s + 1; next <= Math.min(s + 1, segments.length); next++) {",
      agent_suite, "a star stays within a directory, a double star crosses any number"),
-    ("class granularity becomes the default nobody asked for", SELECTION_FILTER,
+    ("class granularity becomes the default nobody asked for", SELECTION_RUN,
      'Boolean.parseBoolean(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
      '!"false".equals(HostBuild.current().property(CLASS_GRANULARITY_PROPERTY))',
      agent_suite, "without the flag the same test is still excluded"),
@@ -2735,7 +2741,7 @@ MUTATIONS = [
     # An observing run decides as a selecting run does and runs every test anyway: the filter
     # returning the selecting verdict skips the tests the report exists to show failing.
     ("an observing run leaves out what selection would leave out", SELECTION_FILTER,
-     "        if (observing()) {\n"
+     "        if (run.observing()) {\n"
      "            return FilterResult.included(\"the run observes selection\");\n"
      "        }\n",
      "",
@@ -2789,7 +2795,7 @@ MUTATIONS = [
      "            if (test.failFast) {",
      "            if (false) {",
      functional_suite, "a fail-fast selecting run leaves no record"),
-    ("a complement run takes a record from another test JVM", SELECTION_FILTER,
+    ("a complement run takes a record from another test JVM", SELECTION_RUN,
      "            if (!here.equals(recorded)) {",
      "            if (false) {",
      agent_suite, "a complement run on another Java runtime than the record's runs everything"),
@@ -2818,9 +2824,23 @@ MUTATIONS = [
      "        if (read.ran.containsKey(id)) {",
      agent_suite, "a complement run runs a leaf container whatever the record lists"),
     ("a complement run leaves out a test of an engine that runs everything", SELECTION_FILTER,
-     "        if (FilterRule.engineRunsEverything(id)) {\n            complementRan.incrementAndGet();",
-     "        if (false) {\n            complementRan.incrementAndGet();",
+     "        if (FilterRule.engineRunsEverything(id)) {\n            run.countComplementRan();",
+     "        if (false) {\n            run.countComplementRan();",
      agent_suite, "a complement run runs every test of an engine that runs everything"),
+    # A test an engine starts and never finishes is closed not known to pass, so the rest of the
+    # capture can date the map; at JVM shutdown nothing is closed.
+    ("a finished container leaves the tests beneath it open", CAPTURE_SESSION,
+     '                closeOpen(container + "/");',
+     '                if (false) closeOpen(container + "/");',
+     agent_suite, "a test left open is closed not known to pass when its container finishes, and the next keeps its outcome"),
+    ("a late finish of a test closed early takes the next test's window", CAPTURE_SESSION,
+     "            if (!ended && !closedEarly.remove(id)) {",
+     "            if (!ended) {",
+     agent_suite, "a finish that comes after its container closed the test takes nothing from the next test"),
+    ("the run's end leaves the tests still open", CAPTURE_SESSION,
+     '                closeOpen("");',
+     '                if (false) closeOpen("");',
+     agent_suite, "a test still open when the plan finishes is closed not known to pass, and the worker completes"),
     # Under Maven the run file alone answers: Surefire lets a user property override a system one.
     ("the Maven host answers from system properties", MAVEN_HOST,
      "            read = read(runFile);\n",
@@ -3091,7 +3111,7 @@ MUTATIONS = [
     ("the decision record stops writing its rule lines", DECISION_RECORD,
      "        if (rules != null && rules.computed()) {", "        if (false) {",
      agent_suite, "every rule behind each row follows the rows, and leaves the rows as they were"),
-    ("the test JVM stops handing its rules to the decision record", SELECTION_FILTER,
+    ("the test JVM stops handing its rules to the decision record", SELECTION_RUN,
      "                decisions.writeTo(mapDir(), current == null ? null : current.rules());",
      "                decisions.writeTo(mapDir(), null);",
      functional_suite, "a test two rules select records both, and the row keeps the one that decided it"),
@@ -3102,8 +3122,8 @@ MUTATIONS = [
      "    elif rule_lines != found:", "    elif False:",
      python_suite, "a torn rule block was read as the rules"),
     ("the coverage-only selection counts a shared JVM as coverage", PY_SRC,
-     "    return any(not token.startswith(SHARES_JVM_RULE_PREFIX) and token != CLASS_GRANULARITY_RULE",
-     "    return any(token != CLASS_GRANULARITY_RULE",
+     "    return any(not token.startswith(SHARES_JVM_RULE_PREFIX)\n               and token not in (",
+     "    return any(token not in (",
      python_suite, "the selection beneath the refusal is not coverage alone's"),
     ("a part without rules is merged into the task's rules", PY_SRC,
      '    if all(record.get("rules") is not None for record in records if record["decided"]):',
@@ -3129,8 +3149,8 @@ MUTATIONS = [
      "        outermost = EXECUTING.incrementAndGet() == 1;\n", "        outermost = EXECUTING.get() == 0;\n",
      agent_suite, "a filter created while a test plan executes serves a nested launcher and includes everything"),
     ("a nested launcher's filter is counted as one of the task's writers", SELECTION_FILTER,
-     "        this.decisions = nested ? null : new DecisionRecord();",
-     "        this.decisions = new DecisionRecord();",
+     "        this.run = nested ? null : new SelectionRun();",
+     "        this.run = new SelectionRun();",
      functional_suite, "the decision record is the outer launcher's alone, whole and single-writer"),
     ("a copy of the decision record writes under the attached copy's names", DECISION_RECORD,
      "        if (dir == null || !ATTACHED) {", "        if (dir == null) {",
@@ -3213,10 +3233,10 @@ MUTATIONS = [
     # A container that fails reports none of the tests it did not reach, and one that fails after
     # them leaves them passed; either way the class still fails.
     ("a failed container leaves its tests without a failed record", PLATFORM_EVENTS,
-     "        } else if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {\n"
+     "        if (result == null || result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {\n"
      "            failedBeneath(capture, identifier);\n"
      "        }\n",
-     "        }\n",
+     "",
      agent_suite, "a class container that fails records every test beneath it as failed"),
     # A test template whose argument source throws, or a test factory that throws, fails with no
     # invocation beneath it; its older SUCCESSFUL invocations then read as known to pass.
@@ -3699,7 +3719,60 @@ MUTATIONS = [
      "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), ignore)",
      "        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), null)",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
-    ("a forced run leaves no paths-ignored note", SELECTION_FILTER,
+    # A class a framework can only run or skip whole is left out only when it holds a test and
+    # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.
+    # Plain JUnit 4: a class is left out only through Gradle's own early return, only when the run
+    # asked for it, only for runners that run exactly the class's own methods, ignored tests unjudged.
+    ("the agent's answer to leave a JUnit 4 class out is not taken", JUNIT4_SELECTION,
+     "            return current.judge(runner);",
+     "            current.judge(runner);\n            return false;",
+     functional_suite, "a class whose tests a change cannot reach is left out when its runner is judged"),
+    ("a JUnit 4 runner off the allow-list is judged", JUNIT4_SELECTION,
+     "        if (!ALLOWED_RUNNERS.contains(runner.getClass().getName())) {",
+     "        if (false) {",
+     agent_suite, "a runner that generates tests, or any runner not on the list, keeps its class"),
+    ("a JUnit 4 test named for another class is judged as the class's own", JUNIT4_SELECTION,
+     "            if (!className.equals(invoke(leaf, \"getClassName\")) || invoke(leaf, \"getMethodName\") == null) {",
+     "            if (invoke(leaf, \"getMethodName\") == null) {",
+     agent_suite, "JUnit 3's runner over another class's tests keeps its class"),
+    ("an ignored JUnit 3 test, which runs anyway, is not judged", JUNIT4_SELECTION,
+     "            if (!JUNIT3_RUNNER.equals(runner.getClass().getName()) && ignored(leaf)) {",
+     "            if (ignored(leaf)) {",
+     functional_suite, "a class whose tests a change cannot reach is left out when its runner is judged"),
+    ("an observing run leaves a plain JUnit 4 class out", JUNIT4_SELECTION,
+     "        if (run.observing() || !judged.leaveOut()) {",
+     "        if (!judged.leaveOut()) {",
+     functional_suite, "an observing run records what it would leave out and leaves out nothing"),
+    ("an ignored JUnit 4 test is judged", JUNIT4_SELECTION,
+     "            if (!JUNIT3_RUNNER.equals(runner.getClass().getName()) && ignored(leaf)) {",
+     "            if (false) {",
+     functional_suite, "a class whose tests a change cannot reach is left out when its runner is judged"),
+    ("Gradle's JUnit 4 executor is rewritten on every run", LOADED_CLASS_RECORDER,
+     "            if (AgentContract.NARROW_PLAIN_JUNIT4.equals(\n"
+     "                    HostBuild.current().property(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {",
+     "            if (true) {",
+     functional_suite, "without the agent told to judge plain JUnit 4, every class runs"),
+    ("a class with no test is left out", CLASS_VERDICTS,
+     "        boolean allSkipped = !ids.isEmpty();",
+     "        boolean allSkipped = true;",
+     agent_suite, "a class with no test runs"),
+    ("a class is left out when any one of its tests is skipped", CLASS_VERDICTS,
+     "            allSkipped &= verdict == Verdict.SKIPPED;",
+     "            allSkipped |= verdict == Verdict.SKIPPED;",
+     agent_suite, "one test reaching the change keeps the class"),
+    ("a kept class's skipped tests are recorded as skipped", CLASS_VERDICTS,
+     "                entry.setValue(Verdict.CLASS_GRANULARITY);",
+     "                entry.getValue();",
+     agent_suite, "one test reaching the change keeps the class, and the rest are rounded up to it"),
+    ("a pinned test no longer keeps its class", CLASS_VERDICTS,
+     "        if (pinned.test(id)) {",
+     "        if (false) {",
+     agent_suite, "a pinned test keeps its class"),
+    ("a reason to run a class whole leaves its tests to the selector", CLASS_VERDICTS,
+     "        return keepReason != null ? Verdict.CLASS_RUNS_WHOLE : verdict;",
+     "        return verdict;",
+     agent_suite, "a keep reason keeps the class"),
+    ("a forced run leaves no paths-ignored note", SELECTION_RUN,
      "            if (pathsIgnored > 0) {",
      "            if (pathsIgnored > 0 && daemonRefusal() == null && decision != null && !decision.isFullRun()) {",
      functional_suite, "a forced run still names what it left out"),

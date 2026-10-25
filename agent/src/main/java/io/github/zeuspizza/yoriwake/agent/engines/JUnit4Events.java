@@ -59,9 +59,10 @@ public final class JUnit4Events {
      * A stable id for a JUnit 4 test.
      *
      * <p>Shaped like the Platform's unique ids so one map format serves every runner, under its own
-     * engine name so a project migrating to the Platform sees new tests and runs them.
+     * engine name so a project migrating to the Platform sees new tests and runs them. Selection
+     * judges a test by the same id, so a record and a judgement cannot disagree on its shape.
      */
-    private static String idOf(Object description) throws Exception {
+    public static String idOf(Object description) throws Exception {
         Class<?> type = description.getClass();
         Object className = type.getMethod("getClassName").invoke(description);
         Object methodName = type.getMethod("getMethodName").invoke(description);

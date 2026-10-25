@@ -2607,11 +2607,11 @@ def case_a_run_summary_that_misses_a_job_or_gates_is_reported():
         (text.replace("needs: [changes, fast-shard, fast, full-shard, full]",
                       "needs: [changes, fast-shard, fast, full-shard]"), "does not wait for full"),
         (text.replace("    name: run summary\n", "    name: guards, every one\n"), "a required check"),
-        (text.replace("    if: always() && needs.changes.outputs.code != 'false'\n    runs-on: ubuntu-latest\n    steps:\n"
+        (text.replace("    if: always() && needs.changes.outputs.code != 'false'\n    runs-on: ubuntu-24.04\n    steps:\n"
                       "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
                       "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n"
                       "        with:\n          pattern: guards-*",
-                      "    if: needs.changes.outputs.code != 'false'\n    runs-on: ubuntu-latest\n    steps:\n"
+                      "    if: needs.changes.outputs.code != 'false'\n    runs-on: ubuntu-24.04\n    steps:\n"
                       "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
                       "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n"
                       "        with:\n          pattern: guards-*"), "if: always()"),

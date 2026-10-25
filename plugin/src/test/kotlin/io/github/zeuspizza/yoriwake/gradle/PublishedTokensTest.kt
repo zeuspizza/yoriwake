@@ -53,6 +53,17 @@ class PublishedTokensTest {
                 AgentContract.RUN_NOT_DECIDED, AgentContract.RUN_COMPLEMENTED,
             ),
         )
+        add(
+            "plain-filter",
+            listOf(AgentContract.PLAIN_FILTER_HOOKED, AgentContract.PLAIN_FILTER_UNHOOKED, AgentContract.PLAIN_FILTER_UNSUPPORTED),
+        )
+        add(
+            "class-runs-whole",
+            listOf(
+                AgentContract.CLASS_RUNS_WHOLE_JUNIT4_RUNNER, AgentContract.CLASS_RUNS_WHOLE_JUNIT4_SHAPE,
+                AgentContract.CLASS_RUNS_WHOLE_JUNIT4_NOT_FILTERABLE,
+            ),
+        )
         add("refusal-kind", RefusalKind.entries.map { it.token })
         add("decline-kind", ScopeOutcome.NotApplied.Kind.entries.map { it.token })
         add("audit-blocker", Audit.BlockerKind.entries.map { it.token })

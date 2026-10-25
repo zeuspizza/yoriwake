@@ -26,6 +26,9 @@ audit-state	WORTH IT
 capture-mode	isolated
 capture-mode	mixed
 capture-mode	shared
+class-runs-whole	junit4-not-filterable
+class-runs-whole	junit4-runner
+class-runs-whole	junit4-shape
 console-tally	engine-runs-everything
 console-tally	full-run
 console-tally	not-in-map
@@ -74,6 +77,9 @@ path-ignore-protection	git-quoted
 path-ignore-protection	named-in-classes
 path-ignore-protection	outside-root
 path-ignore-protection	source-set
+plain-filter	hooked
+plain-filter	unhooked
+plain-filter	unsupported
 refusal-kind	annotations-changed
 refusal-kind	annotations-unrecorded
 refusal-kind	bytes-unrecorded
@@ -116,6 +122,7 @@ refusals-key	(inline widening)
 row-reason	ALREADY_RAN
 row-reason	ALWAYS_RUN
 row-reason	CLASS_GRANULARITY
+row-reason	CLASS_RUNS_WHOLE
 row-reason	DAEMON_REFUSED
 row-reason	DECLARES_CHANGED_PATH
 row-reason	ENGINE_RUNS_EVERYTHING
@@ -132,6 +139,7 @@ row-reason	SKIPPED
 row-rule	always-run
 row-rule	changed-bytes
 row-rule	class-granularity
+row-rule	class-runs-whole
 row-rule	class-setup
 row-rule	declares-changed-path
 row-rule	engine-runs-everything
