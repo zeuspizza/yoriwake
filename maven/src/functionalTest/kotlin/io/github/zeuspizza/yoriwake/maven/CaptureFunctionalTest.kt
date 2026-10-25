@@ -2,6 +2,8 @@ package io.github.zeuspizza.yoriwake.maven
 
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -38,11 +40,12 @@ class CaptureFunctionalTest {
 
     private fun captureCommit(project: File): String? = libMap(project)?.let { File(it, "capture-commit") }?.takeIf(File::isFile)?.readText()?.trim()
 
-    @Test
-    fun `a full run captures each module and dates its map`(@TempDir dir: File) {
+    @ParameterizedTest(name = "Maven {0}")
+    @ValueSource(strings = ["3.9.16", "4.0.0-rc-7"])
+    fun `a full run captures each module and dates its map`(version: String, @TempDir dir: File) {
         val project = committed(dir)
 
-        val output = FunctionalMaven.run(maven, project, "verify").succeeded().output
+        val output = FunctionalMaven.run(version, project, "verify").succeeded().output
 
         assertContains(output, "[yoriwake] lib surefire:test (default-test) map updated: ")
         assertContains(output, "[yoriwake] app surefire:test (default-test) map updated")
@@ -98,12 +101,26 @@ class CaptureFunctionalTest {
     }
 
     @Test
-    fun `skipping the tests writes nothing`(@TempDir dir: File) {
+    fun `skipping the tests leaves the last capture as it was`(@TempDir dir: File) {
         val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+        val dated = assertNotNull(captureCommit(project))
 
-        FunctionalMaven.run(maven, project, "verify", "-DskipTests").succeeded()
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-DskipTests").succeeded().output
 
-        assertNull(libMap(project)?.let { File(it, "capture-commit") }?.takeIf(File::isFile))
+        assertFalse("[yoriwake] lib" in output, output)
+        assertEquals(dated, captureCommit(project))
+    }
+
+    @Test
+    fun `a module built against a reactor module from a repository captures nothing`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "install", "-pl", ":demo-maven,:lib", "-DskipTests").succeeded()
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "app").succeeded().output
+
+        assertContains(output, "[yoriwake] app surefire:test (default-test): lib come(s) from a repository, not this build (add -am)")
+        assertFalse("app surefire:test (default-test) map updated" in output, output)
     }
 
     @Test

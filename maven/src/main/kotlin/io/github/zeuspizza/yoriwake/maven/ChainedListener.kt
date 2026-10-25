@@ -15,13 +15,13 @@ internal class ChainedListener(private val delegate: ExecutionListener?, private
     }
 
     override fun mojoSucceeded(event: ExecutionEvent) {
-        recording.ended(event)
+        recording.ended(event, succeeded = true)
         delegate?.mojoSucceeded(event)
     }
 
     // Surefire fails its mojo when a test fails: the decode runs here too, as Gradle's finalizer does.
     override fun mojoFailed(event: ExecutionEvent) {
-        recording.ended(event)
+        recording.ended(event, succeeded = false)
         delegate?.mojoFailed(event)
     }
 

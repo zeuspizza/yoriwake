@@ -21,8 +21,11 @@ import org.apache.maven.project.MavenProject
 import org.codehaus.plexus.util.xml.Xpp3Dom
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Properties
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A recording run on Maven: the wiring Gradle does at configuration and in its test task's `doFirst`,
@@ -46,15 +49,23 @@ internal class Recording(
     private val start: String? = runCatching { CaptureStart.read(root).encode() }.getOrNull()
 
     /** Per module, the phases this session ran: an execution needs `compile` and `test-compile` (KTD8). */
-    private val compiled = mutableMapOf<String, MutableSet<String>>()
+    private val compiled = ConcurrentHashMap<String, MutableSet<String>>()
 
-    /** What each started execution's decode reads back. */
-    private val running = mutableMapOf<String, Run>()
+    /** What each started execution's decode reads back; `-T` starts and ends them on several threads. */
+    private val running = ConcurrentHashMap<String, Run>()
 
     private class Run(val mapDir: File, val undatedReason: String?, val classpath: List<File>, val reports: File)
 
     init {
-        if (start != null && wired.isNotEmpty()) startTree()
+        if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
+    }
+
+    /**
+     * Whether this invocation can run a test execution at all: a lifecycle phase from `test` on, or a
+     * Surefire or Failsafe goal. Anything else (`mvn compile`, `mvn clean`) leaves no file here.
+     */
+    private fun reachesTests(): Boolean = session.goals.any { goal ->
+        goal in TEST_PHASES || goal.contains("surefire") || goal.contains("failsafe")
     }
 
     fun started(event: ExecutionEvent) {
@@ -78,11 +89,14 @@ internal class Recording(
         }
     }
 
-    fun ended(event: ExecutionEvent) {
+    fun ended(event: ExecutionEvent, succeeded: Boolean) {
         val execution = event.mojoExecution ?: return
         val phase = execution.lifecyclePhase
         if (phase == "compile" || phase == "test-compile") {
-            if (!skipped(execution)) compiled.getOrPut(event.project.id) { mutableSetOf() } += phase
+            // A compile that failed built nothing to vouch for, even when `-fn` goes on.
+            if (succeeded && !skipped(event.project, execution)) {
+                compiled.computeIfAbsent(event.project.id) { ConcurrentHashMap.newKeySet() } += phase
+            }
             return
         }
         val key = keyOf(event.project, execution)
@@ -97,8 +111,22 @@ internal class Recording(
             log.warn("[yoriwake] $name: ${notCompiled(project)}")
             return
         }
-        home.mkdirs()
-        File(home, ".gitignore").takeUnless(File::isFile)?.writeText("*\n")
+        val configuration = execution.configuration ?: Xpp3Dom("configuration")
+        // Nothing runs, so nothing of the last run's is cleared and the map is not touched.
+        if (skipsTests(project, execution, configuration)) return
+        // A module of this reactor that this invocation did not build comes from a repository, as
+        // whatever was installed last: its bytes are not the checkout's (KTD7).
+        val reactor = session.allProjects.associateBy { "${it.groupId}:${it.artifactId}" }
+        val built = session.projects.map { it.id }.toSet()
+        val outside = project.artifacts.mapNotNull { reactor["${it.groupId}:${it.artifactId}"] }.filter { it.id !in built }
+        if (outside.isNotEmpty()) {
+            log.warn(
+                "[yoriwake] $name: ${outside.joinToString { it.artifactId }} come(s) from a repository, not this build " +
+                    "(add -am), so nothing is captured and the map is left as it was"
+            )
+            return
+        }
+        ensureHome()
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         discardPrevious(mapDir, recordsDir, name)
         undatedRunMarker(recordsDir).delete()
@@ -116,16 +144,14 @@ internal class Recording(
         })
 
         val agent = agentJar()
-        val configuration = execution.configuration ?: Xpp3Dom("configuration")
         val ours = "-javaagent:${quoted(agent.path)} -D${AgentContract.HOST_PROPERTY}=${AgentContract.HOST_MAVEN} " +
             quoted("-D${AgentContract.RUN_FILE_PROPERTY}=${runFile.path}")
-        val argLine = configuration.getChild("argLine")
-        when {
-            argLine?.value != null -> argLine.value = argLine.value.trim() + " " + ours
-            // The host's JaCoCo hands its agent through the `argLine` property when the POM names no argLine.
-            project.properties.getProperty("argLine") != null -> child(configuration, "argLine").value = "@{argLine} $ours"
-            else -> child(configuration, "argLine").value = ours
-        }
+        // The host's JaCoCo hands its agent through the `argLine` property; an expression naming a
+        // property nobody set would reach the JVM as its literal text.
+        val defined = Declines.property(project, session, "argLine") != null
+        val host = (configuration.getChild("argLine")?.value?.trim() ?: if (defined) "@{argLine}" else "")
+            .let { if (defined) it else it.replace("\${argLine}", "").replace("@{argLine}", "").trim() }
+        child(configuration, "argLine").value = listOf(host, ours).filter(String::isNotEmpty).joinToString(" ")
         child(configuration, "additionalClasspathElements").addChild(Xpp3Dom("additionalClasspathElement").apply { value = agent.path })
         execution.configuration = configuration
 
@@ -221,8 +247,24 @@ internal class Recording(
         ranMarker(recordsDir).writeText("ran")
     }
 
+    /** `.yoriwake/`, ignored by git before anything is written into it. */
+    private fun ensureHome() {
+        home.mkdirs()
+        File(home, ".gitignore").takeUnless(File::isFile)?.writeText("*\n")
+    }
+
+    /** Whether Surefire or Failsafe will run no test at all this time. */
+    private fun skipsTests(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom): Boolean {
+        fun flag(name: String, property: String) =
+            (configuration.getChild(name)?.value?.trim()?.takeUnless { it.startsWith("\${") } ?: Declines.property(project, session, property))
+                ?.let { it.isEmpty() || it.equals("true", ignoreCase = true) } == true
+        return flag("skip", "maven.test.skip") || flag("skipTests", "skipTests") || flag("skipExec", "maven.test.skip.exec") ||
+            (execution.artifactId == FAILSAFE && flag("skipITs", "skipITs"))
+    }
+
     /** The tree where every capture of this session starts, read once, before anything compiled. */
     private fun startTree() = runCatching {
+        ensureHome()
         val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + MAPS_HOME
         val listed = WorkingTree.listing(root, excluded)
         val snapshot = File(home, WorkingTree.SNAPSHOT_PENDING_FILE)
@@ -257,9 +299,11 @@ internal class Recording(
         val jar = File(File(home, "agent"), "yoriwake-agent-$digest.jar")
         if (!jar.isFile || jar.length() != bytes.size.toLong()) {
             jar.parentFile.mkdirs()
-            val partial = File(jar.parentFile, jar.name + ".part")
-            partial.writeBytes(bytes)
-            check(partial.renameTo(jar) || jar.isFile) { "could not write $jar" }
+            // One file per writer, moved into place whole: another module's thread or another build of
+            // this checkout may be writing the same jar.
+            val partial = Files.createTempFile(jar.parentFile.toPath(), jar.name, ".part")
+            Files.write(partial, bytes)
+            Files.move(partial, jar.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         }
         return jar
     }
@@ -274,18 +318,18 @@ internal class Recording(
             (execution.artifactId == FAILSAFE && execution.goal == "integration-test")
 
     /** A compiler execution that skipped its work did not build the classes (`maven.main.skip`, `maven.test.skip`). */
-    private fun skipped(execution: MojoExecution): Boolean {
+    private fun skipped(project: MavenProject, execution: MojoExecution): Boolean {
         if (execution.artifactId != "maven-compiler-plugin") return false
         val name = if (execution.goal == "testCompile") "skip" else "skipMain"
         val property = if (execution.goal == "testCompile") "maven.test.skip" else "maven.main.skip"
         val value = execution.configuration?.getChild(name)?.value?.trim()?.takeUnless { it.startsWith("\${") }
-            ?: session.userProperties.getProperty(property) ?: session.systemProperties.getProperty(property)
+            ?: Declines.property(project, session, property)
         return value.equals("true", ignoreCase = true) || value == ""
     }
 
     private fun child(parent: Xpp3Dom, name: String): Xpp3Dom = parent.getChild(name) ?: Xpp3Dom(name).also(parent::addChild)
 
-    private fun quoted(value: String) = if (value.any(Char::isWhitespace)) "\"$value\"" else value
+    private fun quoted(value: String) = if (value.any { it.isWhitespace() || it == '\'' }) "\"$value\"" else value
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\n", "\\n").replace("=", "\\=").replace(":", "\\:")
 
@@ -294,6 +338,11 @@ internal class Recording(
         const val MAPS_HOME = ".yoriwake"
         const val FAILSAFE = "maven-failsafe-plugin"
         const val INTERNAL_LOADED = "yoriwake.internal.loaded"
+        /** The lifecycle phases that run Surefire or Failsafe, or come after them. */
+        private val TEST_PHASES = setOf(
+            "test", "prepare-package", "package", "pre-integration-test", "integration-test", "post-integration-test",
+            "verify", "install", "deploy",
+        )
         private const val AGENT_RESOURCE = "yoriwake-agent.jar"
         private val log = LoggerFactory.getLogger(Recording::class.java)
 

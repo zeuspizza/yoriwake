@@ -4219,6 +4219,12 @@ MUTATIONS = [
      "        if (!compiledHere(project)) {",
      "        if (false) {",
      maven_suite, "a goal typed on its own did not compile the classes and captures nothing"),
+    # A reactor module this invocation did not build came from a repository: its bytes are not the
+    # checkout's, so the run must not stamp them at HEAD.
+    ("a Maven run against a module from a repository captures", MAVEN_RECORDING,
+     "        if (outside.isNotEmpty()) {",
+     "        if (false) {",
+     maven_suite, "a module built against a reactor module from a repository captures nothing"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
