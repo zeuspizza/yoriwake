@@ -357,6 +357,63 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
     }
 
     /**
+     * A plain JUnit 4 AlphaTest whose class-level [hook] reads Alpha, captured, then broken by a
+     * change to Alpha in a capture that dates the map, and run under selection with plain JUnit 4
+     * narrowed after a change it does not reach. JUnit 4 reports the failure against the class, not
+     * a test, so its test must not be left in the map as known to pass.
+     */
+    private fun junit4ClassFailsAtADatedCapture(dir: File, hook: String) {
+        build(
+            dir, "build.gradle.kts" to junit4Build, oneClass, betaClass, junit4Tests[1],
+            "src/test/java/dev/sample/AlphaTest.java" to """
+                package dev.sample;
+                import org.junit.*;
+                import static org.junit.Assert.assertEquals;
+                public class AlphaTest {
+                    @$hook public static void classLevel() {
+                        if (new Alpha().twice(1) != 2) throw new IllegalStateException("broken");
+                    }
+                    @Test public void passes() { assertEquals(2, 1 + 1); }
+                }
+            """.trimIndent(),
+        )
+        committed(dir)
+        // Each class in a JVM of its own, so no class shares a JVM with Beta's first load.
+        runner(dir, "test", "-Pyoriwake.isolatedCapture").build()
+
+        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
+            """
+            package dev.sample;
+            public class Alpha { public int twice(int n) { return n * 3; } }
+            """.trimIndent()
+        )
+        commit(dir, "breaks AlphaTest's $hook")
+        runner(dir, "test", "-Pyoriwake.isolatedCapture").buildAndFail()
+        assertEquals(head(dir), captureStamp(dir), "the capture that saw the failure dates the map")
+
+        changeBeta(dir)
+        commit(dir, "a change AlphaTest does not reach")
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.narrowPlainRunners").buildAndFail()
+
+        assertContains(ranTests(dir), "dev.sample.AlphaTest", "a plain JUnit 4 class that still fails was skipped")
+    }
+
+    @Test
+    fun `a plain JUnit 4 class whose setup fails at a dated capture still runs on the next unrelated change`(
+        @TempDir dir: File,
+    ) {
+        junit4ClassFailsAtADatedCapture(dir, "BeforeClass")
+    }
+
+    @Test
+    fun `a plain JUnit 4 class whose teardown fails after its tests passed still runs on the next unrelated change`(
+        @TempDir dir: File,
+    ) {
+        junit4ClassFailsAtADatedCapture(dir, "AfterClass")
+    }
+
+    /**
      * A captured sample whose AlphaTest breaks only under `-Pbroken`, run once broken on its own by
      * `--tests` (which does not date the map), and then under selection after a change it does not
      * reach. What it failed with must make it run again.

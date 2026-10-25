@@ -27,8 +27,9 @@ def build(ref, version, into):
     if version:
         command.append(f"-PreleaseVersion={version}")
     subprocess.run(command, cwd=into, check=True)
-    jars = [jar for jar in glob.glob(os.path.join(into, "plugin", "build", "libs", "yoriwake-gradle-plugin-*.jar"))
-            if not jar.endswith(("-sources.jar", "-javadoc.jar", "-plain.jar"))]
+    # The shadow jar the release publishes as yoriwake-gradle-plugin-<version>.jar; `-main` is unshaded.
+    jars = [jar for jar in glob.glob(os.path.join(into, "plugin", "build", "libs", "plugin-*.jar"))
+            if not jar.endswith(("-sources.jar", "-javadoc.jar", "-main.jar"))]
     if len(jars) != 1:
         sys.exit(f"expected one plugin jar in {into}, found {jars}")
     with open(jars[0], "rb") as plugin:

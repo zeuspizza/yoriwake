@@ -460,8 +460,7 @@ class RecordabilityTest {
 
     private fun digestOf(source: String, className: String = "Subject"): String {
         val digest = Recordability.classDigest(javac(source, className))
-        assertNotNull(digest.value, "refused: ${digest.reason}")
-        return digest.value
+        return assertNotNull(digest.value, "refused: ${digest.reason}")
     }
 
     private val subject = """
@@ -558,8 +557,7 @@ class RecordabilityTest {
     // The annotation digest: what a framework's scan or reflective read can see of a class.
     private fun annotationsOf(source: String): String {
         val digest = Recordability.annotationDigest(javac(source, "Service"))
-        assertNotNull(digest.value, "refused: ${digest.reason}")
-        return digest.value
+        return assertNotNull(digest.value, "refused: ${digest.reason}")
     }
 
     private val service = """

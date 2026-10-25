@@ -98,7 +98,7 @@ NO_FORCE_PATHS = {
     "dependency-revert": r"\.versions\.toml$|\.gradle(\.kts)?$|(^|/)gradle\.properties$",
     "groovy-body": r"\.groovy$",
 }
-SCOPED_CHANGE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
+SCOPED_CHANGE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 NO_FORCE_ANCHOR = "    val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }"
 
 
@@ -118,7 +118,7 @@ NO_FORCE_RULES = (
      "    if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this",
      "    if (verdict is ClasspathFilesVerdict.Moved || verdict == ClasspathFilesVerdict.Unchanged "
      "|| forces) return this"),
-    ("plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt",
+    ("core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/EnvironmentRefusal.kt",
      "    is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to "
      "verdict.reason",
      "    is EnvironmentFingerprint.Verdict.Changed -> null"),

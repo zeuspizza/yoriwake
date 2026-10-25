@@ -2210,16 +2210,16 @@ def rejection_rate_refuses(rejected, accepted, ceiling=MUTATION_REJECTION_CEILIN
 
 
 # THE SOURCE THAT CAN CHANGE A DECISION. Named here rather than implied, so a reader can check the
-# claim this digest makes instead of trusting it: everything under these two trees is hashed, and
-# nothing outside them is.
-SELECTOR_SOURCE_DIRS = ("plugin/src/main", "agent/src/main")
+# claim this digest makes instead of trusting it: everything under these trees is hashed, and
+# nothing outside them is. The plugin's shared core is half of what the plugin was.
+SELECTOR_SOURCE_DIRS = ("plugin/src/main", "core/src/main", "agent/src/main")
 
-# AND THE TWO BUILD FILES, because the old `git log -- plugin agent` check covered them and this
+# AND THE BUILD FILES, because the old `git log -- plugin agent` check covered them and this
 # one must not lose coverage the rule it replaces had. They are not decoration: `agent/build.gradle
 # .kts` pins `org.ow2.asm:asm:9.8`, and an ASM version floor is exactly what stops the selector
 # working on geode -- a dependency bump here changes what the agent can instrument without touching
 # one line of `src/main`.
-SELECTOR_SOURCE_FILES = ("plugin/build.gradle.kts", "agent/build.gradle.kts")
+SELECTOR_SOURCE_FILES = ("plugin/build.gradle.kts", "core/build.gradle.kts", "agent/build.gradle.kts")
 
 
 def selector_digest(root=None):
@@ -2245,7 +2245,7 @@ def selector_digest(root=None):
     Sorted by path, with the path hashed alongside the content, so a file that moves changes the
     digest and two files swapping contents do not collide.
 
-    WHAT IT COVERS: every file under `SELECTOR_SOURCE_DIRS`, dotfiles included, plus the two build
+    WHAT IT COVERS: every file under `SELECTOR_SOURCE_DIRS`, dotfiles included, plus the build
     files in `SELECTOR_SOURCE_FILES`. The build files are in because the check this replaces
     covered them and one of them pins the ASM version the agent instruments with.
 

@@ -55,7 +55,8 @@ same files are attested, signed and uploaded. You can check, for a version `<ver
      --source-ref "refs/tags/v$v" --deny-self-hosted-runners
    ```
 
-   It prints `✓ Verification succeeded!`. Without `--signer-workflow` and `--source-ref` it would
+   It prints `✓ Verification succeeded!` on a terminal; in a script it prints nothing and exits
+   with status 0. Without `--signer-workflow` and `--source-ref` it would
    accept an attestation from any workflow of this repository, on any ref. The release workflow
    also attests the rehearsal it runs on each candidate, of version `0.0.0-rehearsal` and from a
    branch; `--source-ref "refs/tags/v$v"` rejects those.
@@ -109,5 +110,3 @@ this group. Gradle looks keys up on keys.openpgp.org:
 
 The plugin marker (`io.github.zeuspizza.yoriwake.gradle.plugin`) is not signed on the Portal, for
 any plugin; verification records it by checksum.
-
-Nobody outside the project has followed these steps yet.

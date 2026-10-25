@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tier  # noqa: E402
 
 AGENT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent"
-PLUGIN = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle"
+CORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle"
 
 
 def fail(message):
@@ -33,10 +33,10 @@ def case_selection_logic_alone_is_replayed_and_ages_the_published_figures():
 
 
 def case_change_detection_scope_and_capture_need_a_reduced_sweep():
-    return (_expect([f"{PLUGIN}/change/ChangeDetection.kt"], "reduced", True)
-            + _expect([f"{PLUGIN}/bytecode/InstrumentationScope.kt"], "reduced", True)
+    return (_expect([f"{CORE}/change/ChangeDetection.kt"], "reduced", True)
+            + _expect([f"{CORE}/bytecode/InstrumentationScope.kt"], "reduced", True)
             + _expect([f"{AGENT}/capture/TouchRecorder.java"], "reduced", True)
-            + _expect([f"{AGENT}/select/Selector.java", f"{PLUGIN}/capture/Schedule.kt"],
+            + _expect([f"{AGENT}/select/Selector.java", f"{CORE}/capture/Schedule.kt"],
                       "reduced", True)
             + _expect(["agent/build.gradle.kts"], "reduced", True))
 

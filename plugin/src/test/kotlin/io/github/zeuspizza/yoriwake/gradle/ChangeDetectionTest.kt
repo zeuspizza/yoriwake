@@ -1,16 +1,19 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
-import org.gradle.api.provider.ProviderFactory
-import org.gradle.testfixtures.ProjectBuilder
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import io.github.zeuspizza.yoriwake.gradle.change.changedPaths
+import io.github.zeuspizza.yoriwake.gradle.change.defaultBase
+import io.github.zeuspizza.yoriwake.gradle.change.trackedPaths
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.gradle.api.provider.ProviderFactory
+import org.gradle.testfixtures.ProjectBuilder
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
 /**
  * The split between what the coverage map can reason about and what it cannot.

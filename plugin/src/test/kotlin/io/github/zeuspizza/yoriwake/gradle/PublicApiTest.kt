@@ -24,25 +24,33 @@ class PublicApiTest {
 
     @Test
     fun `only the plugin, its extension and what the init script reads are public`() {
-        val root = File(YoriwakePlugin::class.java.protectionDomain.codeSource.location.toURI())
-        val pkg = File(root, "io/github/zeuspizza/yoriwake/gradle")
-        assertTrue(pkg.isDirectory, "expected the main classes as a directory at $root")
-
         val classes = mutableMapOf<String, Visibility>()
         val topLevel = mutableListOf<String>()
-        pkg.walk().filter { it.isFile && it.extension == "class" }.forEach { file ->
-            val name = file.relativeTo(root).path.removeSuffix(".class").replace(File.separatorChar, '.')
-            val metadata = Class.forName(name, false, javaClass.classLoader)
-                .getAnnotation(Metadata::class.java) ?: return@forEach
-            when (val read = KotlinClassMetadata.readStrict(metadata)) {
-                is KotlinClassMetadata.Class -> classes[read.kmClass.name] = read.kmClass.visibility
-                is KotlinClassMetadata.FileFacade -> {
-                    val pkgMembers = read.kmPackage
-                    topLevel += pkgMembers.functions.filter { it.visibility.exposed() }.map { it.name }
-                    topLevel += pkgMembers.properties.filter { it.visibility.exposed() }.map { it.name }
-                    topLevel += pkgMembers.typeAliases.filter { it.visibility.exposed() }.map { it.name }
+        // The core module's classes ship in the plugin jar too, so they are as reachable as its own.
+        val roots = listOf(YoriwakePlugin::class, SettingNames::class).map { File(it.java.protectionDomain.codeSource.location.toURI()) }
+        for (root in roots) {
+            // A classes directory, or the jar a module's classes reach the tests as.
+            val paths = if (root.isDirectory) {
+                root.walk().filter { it.isFile }.map { it.relativeTo(root).invariantSeparatorsPath }.toList()
+            } else {
+                java.util.zip.ZipFile(root).use { zip -> zip.entries().toList().map { it.name } }
+            }
+            val inPackage = paths.filter { it.startsWith("io/github/zeuspizza/yoriwake/gradle/") && it.endsWith(".class") }
+            assertTrue(inPackage.isNotEmpty(), "expected the main classes at $root")
+            inPackage.forEach { path ->
+                val name = path.removeSuffix(".class").replace('/', '.')
+                val metadata = Class.forName(name, false, javaClass.classLoader)
+                    .getAnnotation(Metadata::class.java) ?: return@forEach
+                when (val read = KotlinClassMetadata.readStrict(metadata)) {
+                    is KotlinClassMetadata.Class -> classes[read.kmClass.name] = read.kmClass.visibility
+                    is KotlinClassMetadata.FileFacade -> {
+                        val pkgMembers = read.kmPackage
+                        topLevel += pkgMembers.functions.filter { it.visibility.exposed() }.map { it.name }
+                        topLevel += pkgMembers.properties.filter { it.visibility.exposed() }.map { it.name }
+                        topLevel += pkgMembers.typeAliases.filter { it.visibility.exposed() }.map { it.name }
+                    }
+                    else -> Unit
                 }
-                else -> Unit
             }
         }
 

@@ -101,7 +101,8 @@ release waits for every one.
   `-Pyoriwake.observe` and once with `-Pyoriwake.select`.
 - The jar the Portal serves for `<version>` matches the release's `SHA256SUMS` and passes
   `gh attestation verify` as [SECURITY.md](SECURITY.md#verifying-a-release) describes. Run by the
-  maintainer, locally; no Actions minutes.
+  maintainer, locally; no Actions minutes. A release whose Portal jar does not verify removes the
+  README's SLSA badge in the same pull request that records it.
 - The tag, checked out and built with `-PreleaseVersion=<version>` on Temurin 21, gives the plugin
   jar and the nested `yoriwake-agent.jar` that the release's `SHA256SUMS` lists.
 - The GitHub Action ([zeuspizza/yoriwake-action](https://github.com/zeuspizza/yoriwake-action)) is

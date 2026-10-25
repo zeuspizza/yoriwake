@@ -33,8 +33,8 @@ class ReferenceTest {
         dirs.flatMap { dir -> File(root, dir).walk().filter { it.isFile && it.extension in setOf("kt", "java") } }
             .associate { it.relativeTo(root).invariantSeparatorsPath to it.readText() }
 
-    private val pluginSources = sources("plugin/src/main")
-    private val mainText = sources("plugin/src/main", "agent/src/main").values.joinToString("\n")
+    private val pluginSources = sources("plugin/src/main", "core/src/main")
+    private val mainText = sources("plugin/src/main", "core/src/main", "agent/src/main").values.joinToString("\n")
 
     /** The published tokens, as (category, token). */
     private val golden: List<Pair<String, String>> =
