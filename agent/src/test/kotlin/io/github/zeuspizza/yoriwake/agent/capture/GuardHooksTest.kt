@@ -51,6 +51,27 @@ class GuardHooksTest {
     }
 
     @Test
+    fun `a wrapped native without a boolean first argument reports every call and passes each argument on`() {
+        val listed = GuardHooks.wrapFor("net/rubygrapefruit/platform/internal/jni/PosixFileFunctions")!!
+        // The library's result type stands as Object, so no library class is needed to call it.
+        val symlink = arrayOf(listed[0], listed[1], listed[2].replace("Lnet/rubygrapefruit/platform/internal/FunctionResult;",
+            "Ljava/lang/Object;"), listed[3])
+        val calls = mutableListOf<List<Any?>>()
+        GuardSinkStandIn.GUARD = Consumer { calls.add((it as Array<*>).toList()) }
+        try {
+            val functions = defined(GuardHooks.wrapped(posixFileFunctions(), symlink, holder), symlink[0])
+            val method = functions.getMethod("symlink", String::class.java, String::class.java, Any::class.java)
+
+            // Linked to nothing, so it fails once it reaches the native; the verifier accepted the wrapper.
+            val failure = assertFailsWith<InvocationTargetException> { method.invoke(null, "link", "Target.class", null) }
+            assertTrue(failure.targetException is UnsatisfiedLinkError, failure.targetException.toString())
+            assertEquals(listOf(listOf<Any?>(symlink[3], true)), calls)
+        } finally {
+            GuardSinkStandIn.GUARD = null
+        }
+    }
+
+    @Test
     fun `the renamed native is private and synthetic, and only the wrapper has the original name`() {
         val nativeDb = defined(GuardHooks.wrapped(nativeDb(), sqlite, holder))
 
@@ -120,6 +141,29 @@ class GuardHooksTest {
         assertContains(unlisted(null)!!, "its version could not be read")
     }
 
+    @Test
+    fun `a version read from a class's string constant is listed only when it is one reviewed`(@TempDir dir: File) {
+        fun unlisted(version: String?): String? {
+            val root = File(dir, version ?: "none")
+            val loader = jarDir(root, nativeDb())
+            if (version != null) {
+                val writer = ClassWriter(0)
+                writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT,
+                    "org/sqlite/core/NativeVersion", null, "java/lang/Object", null)
+                writer.visitField(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL, "VERSION",
+                    "Ljava/lang/String;", null, version).visitEnd()
+                writer.visitEnd()
+                File(root, "org/sqlite/core/NativeVersion.class").writeBytes(writer.toByteArray())
+            }
+            return GuardHooks.unlisted(loader.caller, sqlite[0], "org/sqlite/core/NativeVersion.class#VERSION",
+                arrayOf("abc", "def"))
+        }
+
+        assertNull(unlisted("def"))
+        assertEquals("its version 123 is not one reviewed", unlisted("123"))
+        assertContains(unlisted(null)!!, "its version could not be read")
+    }
+
     /** A loader over [dir], as a library's jar, that defines a stand-in for the library's own loading class. */
     private class StandInLoader(dir: File) : URLClassLoader(arrayOf(dir.toURI().toURL()), GuardHooksTest::class.java.classLoader) {
         val caller: Class<*> by lazy {
@@ -137,9 +181,21 @@ class GuardHooksTest {
         return StandInLoader(dir)
     }
 
-    private fun defined(bytes: ByteArray): Class<*> = object : ClassLoader(javaClass.classLoader) {
-        val defined: Class<*> = defineClass("org.sqlite.core.NativeDB", bytes, 0, bytes.size)
-    }.defined
+    private fun defined(bytes: ByteArray, name: String = "org/sqlite/core/NativeDB"): Class<*> =
+        object : ClassLoader(javaClass.classLoader) {
+            val defined: Class<*> = defineClass(name.replace('/', '.'), bytes, 0, bytes.size)
+        }.defined
+
+    /** native-platform's PosixFileFunctions as far as the guard needs it: its static native symlink. */
+    private fun posixFileFunctions(): ByteArray {
+        val writer = ClassWriter(0)
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER,
+            "net/rubygrapefruit/platform/internal/jni/PosixFileFunctions", null, "java/lang/Object", null)
+        writer.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_NATIVE, "symlink",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Object;)V", null, null).visitEnd()
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
 
     /** sqlite-jdbc's NativeDB as far as the guard needs it: a public synchronized native (Z)I. */
     private fun nativeDb(withNative: Boolean = true): ByteArray {

@@ -22,8 +22,8 @@ import java.util.regex.Pattern;
 final class ReviewedLibraries {
 
     /**
-     * Loading class, then the file name; for a conditional entry, then the guard class, the
-     * version file beside it, and the versions reviewed, comma-separated.
+     * Loading class, then the file name; for a conditional entry, then the guard classes, the
+     * version file beside the first, and the versions reviewed, each list comma-separated.
      */
     private static final String[][] REVIEWED = {
         // Netty's loader defines this helper into the transport's class loader and loads through it.
@@ -62,6 +62,17 @@ final class ReviewedLibraries {
             "(sqlite-([0-9.]+|unknown)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)?"
                 + "libsqlitejdbc\\.(so|dylib|jnilib)",
             "org/sqlite/core/NativeDB", "META-INF/maven/org.xerial/sqlite-jdbc/pom.properties", "3.53.4.0"},
+        // Gradle's native-platform reads no file's content, but a link it makes and a working
+        // directory it changes hide later reads: safe while both calls are guarded. Its jar has no
+        // version file; the hash of its natives tells 0.22-milestone-29 and -30 apart from the rest.
+        {"net.rubygrapefruit.platform.internal.NativeLibraryLoader", "libnative-platform\\.(so|dylib)",
+            "net/rubygrapefruit/platform/internal/jni/PosixFileFunctions,"
+                + "net/rubygrapefruit/platform/internal/jni/PosixProcessFunctions",
+            "net/rubygrapefruit/platform/internal/jni/NativeVersion.class#VERSION",
+            "660c5614fbf4a5f2a75b1949f50a0caf5cd603558e7d8a26e50b933a0cfb79d1,"
+                + "6f2b8059d26491bb262815fb44547f418c8258d5d0a14091d1a14ff26d0373f0"},
+        // Its file-watching library, which only watches directories it is given.
+        {"org.gradle.fileevents.FileEvents", "libgradle-fileevents\\.(so|dylib)"},
     };
 
     private static final Pattern[] PATTERNS = new Pattern[REVIEWED.length];
