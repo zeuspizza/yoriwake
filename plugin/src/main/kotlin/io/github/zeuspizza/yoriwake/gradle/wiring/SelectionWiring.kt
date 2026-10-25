@@ -42,6 +42,8 @@ import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.NotRead
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
+import io.github.zeuspizza.yoriwake.gradle.change.SelectingStep
+import io.github.zeuspizza.yoriwake.gradle.change.SelectionSetup
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTreeDriftSource
 import io.github.zeuspizza.yoriwake.gradle.change.accountedFor
@@ -142,75 +144,37 @@ internal fun TestTaskWiring.configureSelection(
     // Read before any refusal below, so a list that cannot be read fails every selecting run alike.
     val trusted = trustedDigest(project, settings, mapDir)
 
-    val age = runPlan.widening!!.age
-    val drift = runPlan.widening.drift
-    if (age is MapAge.Unknown) {
-        val cause = if (age.kind == RefusalKind.SNAPSHOT_ABSENT) {
-            "A map captured before snapshots were recorded looks like this"
-        } else {
-            "A rebase, a force-push, a map cached from a different history, or one 0.1.0 captured " +
-                "under a test filter in its build script all look like this"
-        }
-        refuseAndRecord(test, mapDir, observing, fromBuildScript, age.kind, age.reason, cause, clears = true)
-        return
-    }
-    val widened = (age as MapAge.Known).base
-    val against = widened.ref
-    val stamp = age.stamp
-    // Union only: the snapshot adds what `git diff` from the stamp cannot see (a reverted
-    // dirty edit, an ignored fixture). A tree git could not list is no change set at all.
-    // The diff from the capture commit too: a map captured off this history (another branch, a
-    // reset) recorded content the widened base may share with the tree.
-    val paths = listOfNotNull(against, stamp)
-        .map { ChangeDetection.changedPaths(project.providers, project.rootDir, it, buildMemo) }
-        .takeUnless { null in it }?.flatMap { it.orEmpty() }
-        ?.let { tracked -> (drift as? WorkingTree.Drift.Moved)?.let { (tracked + it.paths).distinct() } }
-    if (paths == null) {
-        refuse(test, RefusalKind.NO_CHANGE_SET,
-            "git could not report changes against $against, so there is no change set to " +
-                "select from")
-        val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
-        test.doFirst {
-            if (refusedAtExecution(test)) return@doFirst
-            test.logger.lifecycle(
-                "[yoriwake] ${test.path}: git could not report changes against $against, so the " +
-                    "whole suite runs. Selection needs a change set it can trust."
-            )
-            // Captures and dates a shared map like any full run; a map recorded in isolation is
-            // left as it is, as by every other fallback.
-            applyCaptureDecision(
-                test, mapDir, refusalJacoco, observing,
-                decideCapture(
-                    mapDir,
-                    mapUsable = runCatching {
-                        io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
-                    }.getOrDefault(false),
-                    fullRun = true,
-                    learnable = emptySet(),
-                    ageKnown = false,
-                ),
-            )
-        }
-        return
-    }
-
-    // Before any analysis: a change this size would end in a full run, so analysing it only costs.
-    // Counted against the base the run was asked about, which the map's age cannot grow.
-    val asked = runPlan.widening.requested ?: widened
-    val sourceDirs = ForcingPaths.sourceDirs(project.rootDir, projectFacts(project, buildMemo).allSourceDirs)
-    ChangeDetection.changedPaths(project.providers, project.rootDir, asked.ref, buildMemo)?.let { askedPaths ->
-        val changed = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct()
-        val count = LargeChange.counted(
-            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(asked.ref), changed, buildMemo),
+    // Not read by a run that refuses over the map's age.
+    val sourceDirs by lazy { ForcingPaths.sourceDirs(project.rootDir, projectFacts(project, buildMemo).allSourceDirs) }
+    val settled = SelectionSetup.settle(
+        runPlan.widening!!,
+        { ChangeDetection.changedPaths(project.providers, project.rootDir, it, buildMemo) },
+        largeChange,
+    ) { base, changed ->
+        LargeChange.counted(
+            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),
         )
-        LargeChange.refusal(count, largeChange, asked.ref)?.let { reason ->
+    }
+    val (widened, stamp, paths) = when (settled) {
+        is SelectionSetup.Outcome.RunEverything -> {
             refuseAndRecord(
-                test, mapDir, observing, fromBuildScript, RefusalKind.LARGE_CHANGE, reason,
-                "Analysing a change this size costs more than it saves", clears = false,
+                test, mapDir, observing, fromBuildScript, settled.kind, settled.reason, settled.cause, settled.clears,
             )
             return
         }
+        is SelectionSetup.Outcome.NoChangeSet -> {
+            refuse(test, RefusalKind.NO_CHANGE_SET, settled.reason)
+            val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+            val against = settled.against
+            test.doFirst {
+                if (refusedAtExecution(test)) return@doFirst
+                SelectingStep.withoutChangeSet(GradleSelectingHost(test, refusalJacoco, mapDir), mapDir, observing, against)
+            }
+            return
+        }
+        is SelectionSetup.Outcome.Select -> Triple(settled.widened, settled.stamp, settled.paths)
     }
+    val against = widened.ref
 
     // Resolved to plain values and providers here: a task action may not touch Project under
     // the configuration cache.
@@ -244,138 +208,19 @@ internal fun TestTaskWiring.configureSelection(
 
     // Re-derived at execution, when the classpath is resolvable. Every doFirst runs before the
     // test JVM launches, so these properties are ones the JVM starts with.
+    val declared = declarations.map { it.resolved to it.glob }
     test.doFirst {
         // Decided by a check below, which runs before this action and captures.
         if (refusedAtExecution(test)) {
             return@doFirst
         }
-        val scoped = scopedChange(paths, classpathFacts, notReadByTests, ignore)
-        PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
-        val established = establish(
-            { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") },
-            mapDir, scoped.change, classpathFacts,
-        )
-
-        // A file the build generated onto the classpath from something git does not track moves
-        // with no change behind it; read now, after the test task's inputs are built, and again by
-        // the last look, after the build's own doFirst actions.
-        val lastLook = LastLook.handOver(mapDir)
-        runCatching { lastLook.delete() }
-        var handedOver = true
-        val classpathFiles = classpathFilesRule(mapDir, classpathFacts) { compared ->
-            handedOver = runCatching {
-                LastLook.write(mapDir, rootDir, classpathFacts.buildDirs.values, classes = false, compared)
-            }.isSuccess
-        }.let { verdict ->
-            // Nothing for the last look to compare against, so nothing vouches for what the build's
-            // own doFirst actions write.
-            if (handedOver || verdict != ClasspathFilesVerdict.Unchanged) verdict
-            else ClasspathFilesVerdict.Unrecorded("the classpath files could not be handed to ${lastLook.name}")
-        }
-        jacocoCeilingNote(classpathFacts)?.let { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
-        // An inline function's body is compiled into its call sites, so coverage cannot link
-        // them; Kotlin's SMAP records the edge, and the consumers count as changed.
-        val widening = widenForInlining(
-            scoped.change.classPrefixes, classpathFacts, CoverageDecoder.readConstants(mapDir),
-            scoped.change.inlinableSourceChanged,
-            digestRule(mapDir, bytesAreFresh = true),
-            recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
-            ownTestClasses = established.testClasses,
-        ).withClasspathFiles(
-            classpathFiles,
-            forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
-        ) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
-        reportDigest(widening) { message -> test.logger.lifecycle("[yoriwake] ${test.path}: $message") }
-
-        // The build declared that every test of this task depends on such a path, which coverage cannot see.
-        val declaredHit = paths.firstOrNull { path -> declarations.any { PathGlob.matches(it.resolved, path) } }
-        if (declaredHit != null && !widening.forces) {
-            val entry = declarations.first { PathGlob.matches(it.resolved, declaredHit) }
-            val why = "$declaredHit changed, which dependsOn declares every test of this task depends on (${entry.glob})"
-            test.logger.lifecycle("[yoriwake] ${test.path}: $why")
-            refuse(test, RefusalKind.DECLARED_PATH_CHANGED, why)
-        }
-        val changed = if (widening.forces) {
-            // Unknown, not "nothing": selection is switched off and everything executes, as
-            // SelectionFilter does for a missing select flag.
-            test.logger.lifecycle("[yoriwake] ${test.path}: ${widening.refusal}")
-            refuse(test, widening.refusalKind ?: RefusalKind.UNNAMED, widening.refusal.orEmpty())
-            scoped.change.classPrefixes
-        } else {
-            if (widening.inliners.isNotEmpty()) {
-                test.logger.lifecycle(
-                    "[yoriwake] ${test.path}: ${widening.inliners.size} class(es) inlined the changed " +
-                        "sources and are selected with them"
-                )
-            }
-            widening.prefixes
-        }
-
-        // Says the empty change set was arrived at (every path a class source off the classpath,
-        // an IDE's state, or one notReadByTests lists) rather than reported by git, which would
-        // force a full run.
-        test.systemProperty(
-            ACCOUNTED_PROPERTY,
-            accountedFor(paths, scoped).toString(),
-        )
-        // From a copy, before the change set is written and printed after it: it only explains
-        // the run, and never changes what the test JVM is handed.
-        val forcing = ForcingPaths.classify(
-            rootDir, mapDir, scoped.change.unmappablePaths, sourceDirs, against,
-        )
-        writeChangeSet(
-            test, changeSetFile,
-            mapOf(
-                CHANGED_CLASSES_PROPERTY to changed,
-                // Its own property: the change set is also the selector's anchor set for nested
-                // classes.
-                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,
-                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles,
-                UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,
-                // Every changed path, before any is dropped, for the tests that declare a dependency on one.
-                CHANGED_PATHS_PROPERTY to paths,
-                ABSENCE_PROVABLE_PROPERTY to established.provable,
-                // Separate property: a test class that has ever run is in the loaded-class union by
-                // definition, so the absence rule would never fire for it.
-                OWN_TEST_CLASSES_PROPERTY to established.testClasses,
-                EXEMPT_TEST_CLASSES_PROPERTY to established.exemptTestClasses,
-            ) + (
-                // Only when there is one, so a build without a declaration hands over what it did.
-                if (scoped.ignore.ignored.isEmpty()) emptyMap()
-                else mapOf(IGNORED_PATHS_PROPERTY to scoped.ignore.ignored.map(PathIgnore::encode))
+        runCatching { LastLook.handOver(mapDir).delete() }
+        SelectingStep.run(
+            SelectingStep.Inputs(
+                mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
+                notReadByTests, ignore, declared, observing,
             ),
-        )
-        if (established.testClasses.isNotEmpty()) {
-            test.logger.lifecycle(
-                "[yoriwake] ${test.path}: ${established.testClasses.size} changed test classes " +
-                    "discovery already runs"
-            )
-        }
-        test.logger.lifecycle(
-            "[yoriwake] ${test.path} selecting against ${widened.ref} (${widened.origin}): " +
-                "${scoped.change.classPrefixes.size} changed classes, " +
-                "${scoped.change.unmappablePaths.size} paths coverage cannot see" +
-                (if (scoped.dropped == 0) "" else
-                    ", ${scoped.dropped} in modules that are not on this task's classpath") +
-                (if (scoped.ideState == 0) "" else ", ${scoped.ideState} an IDE's state") +
-                (if (scoped.notReadByTests == 0) "" else ", ${scoped.notReadByTests} notReadByTests lists")
-        )
-        ForcingPaths.lines(test.path, forcing).forEach { test.logger.lifecycle("[yoriwake] ${test.path}: $it") }
-
-        val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths)
-        // The un-widened change set on purpose: an unchanged inline consumer teaches the map
-        // nothing, and widening would re-capture the suite on every inline change.
-        applyCaptureDecision(
-            test, mapDir, jacoco, observing,
-            decideCapture(
-                mapDir,
-                mapUsable = outlook.mapUsable,
-                fullRun = outlook.fullRun,
-                learnable = scoped.change.classPrefixes,
-                // A map whose classpath files moved, or that records none, is not current: the run
-                // forces, and its capture records them as they are now.
-                ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
-            ),
+            GradleSelectingHost(test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values),
         )
     }
 
@@ -403,42 +248,12 @@ private fun refuseAndRecord(
 ) {
     refuse(test, kind, reason)
     val refusalJacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
-    test.doFirst { task ->
+    test.doFirst {
         if (refusedAtExecution(test)) return@doFirst
-        // A map recorded in isolation is left as it is, as by every other fallback.
-        val leftAlone = decideCapture(
-            mapDir,
-            mapUsable = runCatching {
-                io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
-            }.getOrDefault(false),
-            fullRun = true,
-            learnable = emptySet(),
-            ageKnown = false,
-        ).takeUnless { it.capture }
         // Read here, where `--fail-fast` and the filter are final: a run that cannot date the
         // map must not promise that its capture clears the refusal.
         val undated = readFilterVerdict(test, fromBuildScript).undatedBy(test.failFast)
-        task.logger.lifecycle(
-            "[yoriwake] ${task.path}: $reason, and the whole suite runs. $cause" + if (!clears) "." else "; " +
-                when {
-                    leftAlone != null -> "the next recording run clears it."
-                    undated != null -> "this run's capture cannot clear it ($undated); a run without that does."
-                    else -> "this run's capture clears it."
-                }
-        )
-        // Running everything, so it captures and dates the map; otherwise a build that
-        // always selects would refuse forever. An isolated map waits for its recording run.
-        applyCaptureDecision(
-            test, mapDir, refusalJacoco, observing,
-            leftAlone ?: CaptureDecision(
-                capture = true, fullRun = true, mapCurrent = false,
-                reason = if (undated == null) {
-                    "running everything, so this run also captures and dates the map."
-                } else {
-                    "running everything."
-                },
-            ),
-        )
+        SelectingStep.runEverything(GradleSelectingHost(test, refusalJacoco, mapDir), mapDir, observing, reason, cause, clears, undated)
     }
 }
 
@@ -511,26 +326,7 @@ internal fun TestTaskWiring.declineSelection(test: Test, mapDir: File, runPlan: 
             return@doFirst
         }
         val flag = if (runPlan.asked == RunPlan.Kind.COMPLEMENT) Settings.COMPLEMENT else Settings.SELECT
-        test.logger.lifecycle(
-            "[yoriwake] ${test.path}: ${reasons.joinToString("; ")}, so selection is declined and every " +
-                "test runs as on a run without -P$flag."
-        )
-        val decision = decideCapture(
-            mapDir,
-            mapUsable = runCatching {
-                io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
-            }.getOrDefault(false),
-            fullRun = true,
-            learnable = emptySet(),
-            ageKnown = false,
-        )
-        if (isolatedCapture || decision.capture) return@doFirst
-        applyCaptureDecision(test, mapDir, jacoco, observing = false, decision)
-        // The decode reads it: this run captured nothing on purpose.
-        runCatching {
-            leftAlone.parentFile.mkdirs()
-            leftAlone.writeText(decision.reason + "\n")
-        }
+        SelectingStep.declined(GradleSelectingHost(test, jacoco, mapDir), mapDir, reasons, flag, isolatedCapture)
     }
 }
 
@@ -663,11 +459,6 @@ private fun namedTestsLeftAlone(test: Test, leftAlone: File): Boolean {
 private fun complementDigest(text: String): String =
     java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
-
-private val OBSERVING_CAPTURE = CaptureDecision(
-    capture = true, fullRun = true, mapCurrent = false,
-    reason = "observing selection, so this run captures the map as a recording run does.",
-)
 
 private const val NAMED_TESTS_LEFT_ALONE =
     "only the named tests run, so nothing is instrumented and the map is left alone."
@@ -812,42 +603,10 @@ private fun TestTaskWiring.refuseAChangedEnvironment(
 ) {
     test.doFirst {
         if (refusedAtExecution(test)) return@doFirst
-        val check = checkEnvironment(mapDir, environmentView(test), rules)
-        if (check.ignored.isNotEmpty()) {
-            test.systemProperty(AgentContract.FINGERPRINT_IGNORED_PROPERTY, check.ignored.joinToString(","))
-        }
-        val (kind, reason) = environmentRefusal(check.verdict) ?: return@doFirst
-        test.logger.lifecycle("[yoriwake] ${test.path}: $reason, so the whole suite runs.")
-        refuse(test, kind, reason)
-        // Never read under a refusal; deleted so a previous run's file is not mistaken for this one's.
-        runCatching { changeSetFile.delete() }
-        // A map that is not current: with no changed class the decision would otherwise call it
-        // current and not capture, and the old fingerprint would refuse every later run.
-        applyCaptureDecision(
-            test, mapDir, jacoco, observing,
-            decideCapture(
-                mapDir,
-                mapUsable = runCatching {
-                    io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).isUsable
-                }.getOrDefault(false),
-                fullRun = true,
-                learnable = emptySet(),
-                ageKnown = false,
-            ),
+        SelectingStep.refuseAChangedEnvironment(
+            GradleSelectingHost(test, jacoco, mapDir), mapDir, environmentView(test), rules, changeSetFile, observing,
         )
     }
-}
-
-/** [EnvironmentFingerprint.check], with a comparison that failed read as no fingerprint. */
-internal fun checkEnvironment(mapDir: File, view: EnvironmentFingerprint.View, rules: EnvironmentFingerprint.Rules) =
-    runCatching { EnvironmentFingerprint.check(mapDir, view, rules) }
-        .getOrElse { EnvironmentFingerprint.Check(EnvironmentFingerprint.Verdict.Unrecorded("the environment could not be compared ($it)")) }
-
-/** The refusal a verdict makes a selecting run take, or null when the environments match. */
-internal fun environmentRefusal(verdict: EnvironmentFingerprint.Verdict): Pair<RefusalKind, String>? = when (verdict) {
-    EnvironmentFingerprint.Verdict.Matches -> null
-    is EnvironmentFingerprint.Verdict.Changed -> RefusalKind.ENVIRONMENT_CHANGED to verdict.reason
-    is EnvironmentFingerprint.Verdict.Unrecorded -> RefusalKind.ENVIRONMENT_UNRECORDED to verdict.reason
 }
 
 /**
@@ -1001,28 +760,6 @@ private fun changeSetDigest(change: ChangeDetection.Change): String {
 }
 
 /**
- * Hands the list-valued change-set properties to the test JVM through [file] (see
- * [CHANGE_SET_FILE_PROPERTY]): as system properties, a large change set is a command line the OS
- * refuses to start. A file that cannot be written refuses the run instead.
- */
-private fun TestTaskWiring.writeChangeSet(test: Test, file: File, lists: Map<String, Collection<String>>) {
-    val properties = java.util.Properties()
-    lists.forEach { (name, values) -> properties.setProperty(name, values.sorted().joinToString(",")) }
-    val text = java.io.StringWriter().also { properties.store(it, null) }.toString() +
-        AgentContract.CHANGE_SET_END + "\n"
-    runCatching {
-        file.parentFile.mkdirs()
-        io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically(file, text)
-    }.onFailure { failure ->
-        // A stale file must not stand in for this run's; the refusal wins over it either way.
-        runCatching { file.delete() }
-        val reason = "the change set could not be written to $file ($failure)"
-        test.logger.lifecycle("[yoriwake] ${test.path}: $reason, so the whole suite runs.")
-        refuse(test, RefusalKind.CHANGE_SET_UNREADABLE, reason)
-    }
-}
-
-/**
  * Applies [decideCapture] to this run: instrument, or make instrumenting impossible by clearing
  * the records directory. Turning JaCoCo off with the listener on would record every test as
  * covering nothing.
@@ -1036,43 +773,47 @@ private fun applyCaptureDecision(
     jacoco: JacocoTaskExtension?,
     observing: Boolean,
     decided: CaptureDecision,
-) {
-    val decision = if (observing) OBSERVING_CAPTURE else decided
-    // Written only when this run executes everything and captures, deleted otherwise, so a
-    // stale marker never dates a map.
-    val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
-    runCatching {
-        if (decision.capture) {
-            fullRunMarker.parentFile.mkdirs()
-            fullRunMarker.writeText("full")
-        } else {
-            fullRunMarker.delete()
+) = SelectingStep.applyCapture(GradleSelectingHost(test, jacoco, mapDir), mapDir, observing, decided)
+
+/**
+ * A selecting run's answers on a Gradle `Test` task: its console, its system properties, and its own
+ * JaCoCo extension, held from configuration time as the configuration cache requires.
+ */
+private class GradleSelectingHost(
+    private val test: Test,
+    private val jacoco: JacocoTaskExtension?,
+    private val mapDir: File,
+    private val rootDir: File? = null,
+    private val buildDirs: Collection<String> = emptyList(),
+) : SelectingStep.Host {
+    override val name: String get() = test.path
+
+    override fun lifecycle(line: String) = test.logger.lifecycle(line)
+
+    override fun warn(line: String) = test.logger.warn(line)
+
+    override fun refuse(kind: RefusalKind, reason: String) = refuse(test, kind, reason)
+
+    override fun property(name: String, value: String) {
+        test.systemProperty(name, value)
+    }
+
+    // The build's own doFirst actions run after this one: the last look compares again.
+    override fun handOver(compared: Map<String, String>): Boolean =
+        runCatching { LastLook.write(mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared) }.isSuccess
+
+    override fun captureNothing() {
+        test.systemProperty(RECORDS_DIR_PROPERTY, "")
+        runCatching {
+            jacoco?.isEnabled = false
+        }.onFailure {
+            // Costs speed, not correctness. `warn`, because Gradle hides `info`.
+            test.logger.warn(
+                "[yoriwake] ${test.path}: could not switch instrumentation off ($it), so this run still " +
+                    "pays the instrumentation toll while capturing nothing."
+            )
         }
-    }.onFailure {
-        // Costs a map refresh, but a map whose age never resets forces forever.
-        test.logger.warn(
-            "[yoriwake] ${test.path}: could not record that this run executed the whole suite " +
-                "($it), so the map keeps the age it had and the next run selects against a " +
-                "wider base than it needs to."
-        )
     }
-
-    if (decision.capture) {
-        test.logger.lifecycle("[yoriwake] ${test.path}: ${decision.reason}")
-        return
-    }
-
-    test.systemProperty(RECORDS_DIR_PROPERTY, "")
-    runCatching {
-        jacoco?.isEnabled = false
-    }.onFailure {
-        // Costs speed, not correctness. `warn`, because Gradle hides `info`.
-        test.logger.warn(
-            "[yoriwake] ${test.path}: could not switch instrumentation off ($it), so this run still " +
-                "pays the instrumentation toll while capturing nothing."
-        )
-    }
-    test.logger.lifecycle("[yoriwake] ${test.path}: ${decision.reason}")
 }
 
 /** [WorkingTree.drift] through a value source; one that could not be obtained is unlisted. */

@@ -56,9 +56,9 @@ internal class Settings(lookup: (String) -> String?) {
 
     companion object {
         const val SELECT = SettingNames.SELECT
-        const val OBSERVE = "yoriwake.observe"
-        const val COMPLEMENT = "yoriwake.complement"
-        const val FULL_RUN = "yoriwake.fullRun"
+        const val OBSERVE = SettingNames.OBSERVE
+        const val COMPLEMENT = SettingNames.COMPLEMENT
+        const val FULL_RUN = SettingNames.FULL_RUN
         const val BASE = SettingNames.BASE
         const val DISABLED = "yoriwake.disabled"
         const val ISOLATED_CAPTURE = SettingNames.ISOLATED_CAPTURE
