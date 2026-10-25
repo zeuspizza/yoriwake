@@ -170,6 +170,8 @@ CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
 MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
 MAVEN_DECLINES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Declines.kt"
+MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ChainedListener.kt"
+MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -549,8 +551,8 @@ def functional_suite(test_class=None):
 
 
 def maven_suite():
-    """Real Maven builds over the Maven plugin's fixtures: the declines, the class a guard names."""
-    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--rerun"])
+    """Real Maven builds over the Maven plugin's fixtures: the declines and the capture."""
+    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*", "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -692,9 +694,9 @@ SUITES = [
     ("configuration guards", guard_suite, 17),
     ("python", python_suite, 33),
     ("functional", functional_suite, 68),
-    # An estimate: five Maven builds of the demo reactor, about 8s each warm on an Apple M1 Max, plus
-    # the plugin's publish, until a guard run measures it.
-    ("maven", maven_suite, 60),
+    # An estimate: the two classes' fourteen tests, about 8s each warm on an Apple M1 Max, plus the
+    # plugin's publish, until a guard run measures it.
+    ("maven", maven_suite, 130),
     # 50s wall for one unmutated run, the plugin and agent compiled from
     # scratch in a fresh worktree; its eight tests took 39s of it.
     ("break", break_suite, 50),
@@ -4206,6 +4208,17 @@ MUTATIONS = [
      "        if (forkCount != null && forks(forkCount) == 0) {",
      "        if (false) {",
      maven_suite, "forkCount 0 runs Surefire inside Maven's own JVM and is declined"),
+    # Surefire fails its mojo when a test fails, and the decode must run then too, as Gradle's
+    # finalizer does: otherwise a failing capture never reaches the map.
+    ("the Maven decode does not run after a failed test", MAVEN_LISTENER,
+     "    override fun mojoFailed(event: ExecutionEvent) {\n        recording.ended(event)\n",
+     "    override fun mojoFailed(event: ExecutionEvent) {\n",
+     maven_suite, "a run with a failing test still decodes and dates the map"),
+    # Classes this session did not compile cannot be vouched for, so their run captures nothing.
+    ("a Maven run that compiled nothing captures", MAVEN_RECORDING,
+     "        if (!compiledHere(project)) {",
+     "        if (false) {",
+     maven_suite, "a goal typed on its own did not compile the classes and captures nothing"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.

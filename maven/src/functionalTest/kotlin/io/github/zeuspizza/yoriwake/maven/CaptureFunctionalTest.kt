@@ -122,9 +122,10 @@ class CaptureFunctionalTest {
         val project = committed(dir)
         FunctionalMaven.run(maven, project, "test-compile", "-pl", "lib").succeeded()
 
-        val output = FunctionalMaven.run(maven, project, "surefire:test", "-pl", "lib").succeeded().output
+        // The declared execution by name: run outside the lifecycle, no compile phase ran this session.
+        val output = FunctionalMaven.run(maven, project, "surefire:test@default-test", "-pl", "lib").succeeded().output
 
-        assertContains(output, "[yoriwake] lib surefire:test (default-cli): this session did not compile lib's classes and tests, so nothing is captured")
+        assertContains(output, "[yoriwake] lib surefire:test (default-test): this session did not compile lib's classes and tests, so nothing is captured")
         assertFalse("map updated" in output, output)
         assertTrue(libMap(project) == null || captureCommit(project) == null)
     }
