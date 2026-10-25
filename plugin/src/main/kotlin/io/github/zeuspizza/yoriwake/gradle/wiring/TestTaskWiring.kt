@@ -773,6 +773,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "false") }
                 test.systemProperty(PARALLELISM_OVERRIDE_PROPERTY, "true")
                 test.systemProperty(PARALLELISM_PROPERTY, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
+                Audit.TaskFacts.recordParallelismOverride(mapDir, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
                 source?.let {
                     test.logger.lifecycle(
                         "[yoriwake] ${test.path}: recording one test at a time (-P${Settings.RECORD_SEQUENTIALLY}); " +
@@ -847,6 +848,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         test.systemProperty(RECORDS_DIR_PROPERTY, "")
         test.systemProperty(PARALLELISM_PROPERTY, AgentContract.PARALLELISM_KEPT_NOT_CAPTURED)
+        Audit.TaskFacts.recordParallelismOverride(mapDir, AgentContract.PARALLELISM_KEPT_NOT_CAPTURED)
         runCatching { jacoco?.isEnabled = false }
         test.logger.lifecycle(
             "[yoriwake] ${test.path}: tests run in parallel as configured (via $source), so this run " +

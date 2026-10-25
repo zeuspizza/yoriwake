@@ -88,6 +88,8 @@ Files in the map directory that are meant to be read:
   `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists every path `pathIgnore`
   left out, with its entry and what the map says about it (`read`, `not-read` or
   `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its protection.
+  `parallelismUnconfirmed` says why the last run's test JVM recorded nothing, when it found its
+  tests may run concurrently.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
 - `observation.json`: written by an [observing run](#observing-before-you-select): what selection
   would have left out, and which of those failed.
@@ -755,9 +757,14 @@ Three things differ:
   full, nothing is captured, the map is left as it was, and the audit reports `in-jvm-parallelism`.
   Parallel forks (`maxParallelForks`) are fine. It is detected from the test task's system
   properties and JVM arguments, `junit-platform.properties` on the test runtime classpath, and the
-  TestNG options. Parallelism switched on any other way, such as a JUnit `@Suite`'s configuration
-  parameters or `JAVA_TOOL_OPTIONS`, is not detected: the task is not declined, and tests that
-  overlap in one JVM are recorded as unknown and always run.
+  TestNG options. The test JVM checks again before it records: when the JUnit Platform's
+  configuration still has Jupiter's or Vintage's parallel switch on, or `testng.parallel` set (by a
+  task action, a JVM argument provider or `JAVA_TOOL_OPTIONS`), it records nothing and the map is
+  left as it was. Parallelism switched on where the Platform's configuration does not show it, such
+  as a JUnit `@Suite`'s configuration parameters or Spock's and Kotest's own settings, is not
+  detected: tests that overlap in one JVM are recorded as unknown and always run. A JUnit Platform
+  suite can still be selected on by
+  [recording it one test at a time](#recording-a-parallel-suite-one-test-at-a-time).
 - **Two builds at once in one project.** Two builds running the same test task at the same time
   share one change-set file, so one build's test JVM can read the change set the other wrote.
 - **A working directory the complement stamp does not see.** The record's stamp does not include
@@ -1021,6 +1028,22 @@ either was written, so enabling a limit costs each task one full run. The cache 
 how old a restored entry may be; the schedule bounds how long a map can hide a gap. With
 `fullRunBranches`, the default branch already runs in full on every build, so the schedule fires only
 where the map is not refreshed. `yoriwakeExplain<Task>` says how far away the next scheduled full run is.
+
+### Recording a parallel suite one test at a time
+
+A JUnit Platform suite that runs its tests in parallel inside one JVM is declined, because tests
+interleaved there share one coverage agent. `-Pyoriwake.recordSequentially` (or
+`recordSequentially = true` in the `yoriwake` block) records its map anyway: a recording run turns
+Jupiter's and Vintage's parallel switches off for that run, so it takes longer, and every other run
+(selecting, observing, or one declined into a full run) keeps the suite's own scheduling and records
+nothing. Selection decides which tests run before they are scheduled, so running them in parallel
+afterwards changes nothing it relies on. Each test JVM confirms the switches are off before it
+records; one that finds them on (a task action or JVM argument provider that turns them back on)
+records nothing, the map is left as it was, and the audit names what it found. What the switches
+cannot reach, a `@Suite`'s own configuration parameters or Spock's and Kotest's settings, still
+overlaps, and those tests are recorded as unknown and always run. A failure that shows only when
+tests run in parallel is outside what a map recorded one test at a time can see. TestNG off the
+Platform is still declined.
 
 ### Recording each test class in its own JVM
 

@@ -46,6 +46,12 @@ class SequentialRecordingFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
         val after = mapDigest(dir)
         assertEquals(emptyList(), (before.keys + after.keys).filter { before[it] != after[it] }, output)
+
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertContains(runner(dir, "yoriwakeExplainTest").build().output, "the last run captured nothing")
+        assertContains(File(mapDir, "explain.json").readText(), "\"parallelismUnconfirmed\": \"JUnit Jupiter's")
+        runner(dir, "yoriwakeAuditTest").build()
+        assertContains(File(mapDir, "audit.json").readText(), "in-jvm-parallelism")
     }
 
     private val parallelSuite = """

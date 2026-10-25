@@ -17,6 +17,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- `recordSequentially` records an in-JVM parallel suite one test at a time, so it can be selected. Map: left alone.
 - A test declares paths it depends on beyond coverage with `@Tag("yoriwake-depends-on:<glob>")`, a task with `dependsOn`. Map: left alone.
 - `pathIgnore` lists paths no test reads: changing only those runs nothing extra, and each run names them. Map: left alone.
 - `largeChangeThreshold` (5,000 paths): a larger change runs everything without analysing it. Map: left alone.
@@ -39,6 +40,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A test JVM that finds parallelism the plugin missed records nothing. Map: left alone.
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
 
 ## [0.3.0] - 2026-10-22

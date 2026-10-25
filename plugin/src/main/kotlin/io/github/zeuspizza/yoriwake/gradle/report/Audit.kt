@@ -107,6 +107,10 @@ internal object Audit {
         val decodeRefused: String? = null,
         /** The token of the last run's decline under Develocity, or null when it did not decline. */
         val develocity: String? = null,
+        /** How the last run treated in-JVM parallelism under `recordSequentially`, or null. */
+        val parallelismOverride: String? = null,
+        /** Why the last run's test JVM found its tests may run concurrently and captured nothing, or null. */
+        val parallelismUnconfirmed: String? = null,
     ) {
         companion object {
             const val FILE = "task-facts"
@@ -133,14 +137,30 @@ internal object Audit {
                     workers = fields["workers"]?.toIntOrNull()?.takeIf { it > 0 },
                     decodeRefused = fields["decodeRefused"]?.takeIf { it.isNotEmpty() },
                     develocity = fields["develocity"]?.takeIf { it.isNotEmpty() },
+                    parallelismOverride = fields["parallelismOverride"]?.takeIf { it.isNotEmpty() },
+                    parallelismUnconfirmed = fields["parallelismUnconfirmed"]?.takeIf { it.isNotEmpty() },
                 )
             }
 
             fun write(mapDir: File, framework: String, parallelism: String?, develocity: String? = null) {
                 update(mapDir) { previous ->
                     // Carried forward: written in `doFirst`, before this run records anything.
-                    previous.copy(framework = framework, parallelism = parallelism, develocity = develocity)
+                    previous.copy(
+                        framework = framework, parallelism = parallelism, develocity = develocity,
+                        // This run's own, set by the parallelism action and the decode after this.
+                        parallelismOverride = null, parallelismUnconfirmed = null,
+                    )
                 }
+            }
+
+            /** Recorded by the parallelism action, which runs after [write]. */
+            fun recordParallelismOverride(mapDir: File, value: String) {
+                update(mapDir) { it.copy(parallelismOverride = value) }
+            }
+
+            /** Recorded by the decode, which finds the test JVMs' markers. */
+            fun recordParallelismUnconfirmed(mapDir: File, reason: String) {
+                update(mapDir) { it.copy(parallelismUnconfirmed = reason.lines().firstOrNull()?.trim()) }
             }
 
             /** Recorded by the capture path once it knows, which is after the run. */
@@ -176,7 +196,9 @@ internal object Audit {
                             "workers=${next.workers?.toString().orEmpty()}\n" +
                             // One line: the file is `key=value` per line.
                             "decodeRefused=${next.decodeRefused.orEmpty().replace('\n', ' ')}\n" +
-                            "develocity=${next.develocity.orEmpty()}\n",
+                            "develocity=${next.develocity.orEmpty()}\n" +
+                            "parallelismOverride=${next.parallelismOverride.orEmpty()}\n" +
+                            "parallelismUnconfirmed=${next.parallelismUnconfirmed.orEmpty().replace('\n', ' ')}\n",
                     )
                 }
             }

@@ -196,6 +196,7 @@ internal abstract class DecodeTask : DefaultTask() {
         if (unconfirmed.isNotEmpty()) {
             marker.delete()
             fullRunMarker.delete()
+            Audit.TaskFacts.recordParallelismUnconfirmed(mapDir, unconfirmed.values.first())
             logger.warn(
                 "[yoriwake] $taskPath: ${unconfirmed.values.first()}, so nothing was captured and the map is " +
                     "left exactly as it was. Tests interleaved inside one JVM would blend their coverage."

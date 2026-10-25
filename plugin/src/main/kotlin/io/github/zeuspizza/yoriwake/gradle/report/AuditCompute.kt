@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle.report
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.select.MapReader
+import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.bytecode.InlineScan
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.change.CeilingRefusal
@@ -419,15 +420,30 @@ internal fun Audit.blockers(
             )
         }
     }
-    facts.parallelism?.let { source ->
+    facts.parallelismUnconfirmed?.let { reason ->
+        add(
+            Blocker(
+                Audit.BlockerKind.IN_JVM_PARALLELISM,
+                "the last run's test JVM found that $reason, so it captured nothing",
+                "find what turns it on after the build script (a task action, a JVM argument provider, " +
+                    "JAVA_TOOL_OPTIONS) and turn it off for recording runs",
+            )
+        )
+    } ?: facts.parallelism?.takeIf { facts.parallelismOverride == null }?.let { source ->
         add(
             Blocker(
                 Audit.BlockerKind.IN_JVM_PARALLELISM,
                 "in-JVM parallel execution is enabled via $source, and the plugin refuses to " +
                     "capture under it",
-                "no remedy: tests interleaved inside one JVM share a single coverage agent, " +
-                    "so per-test attribution would silently blend them. Parallel FORKS " +
-                    "(maxParallelForks) are unaffected and remain safe.",
+                if (facts.framework == TaskFacts.PLATFORM) {
+                    "record the map one test at a time with -P${Settings.RECORD_SEQUENTIALLY} (or " +
+                        "`recordSequentially = true`); selecting runs keep the parallel scheduling. " +
+                        "Parallel FORKS (maxParallelForks) are unaffected and remain safe."
+                } else {
+                    "no remedy: tests interleaved inside one JVM share a single coverage agent, " +
+                        "so per-test attribution would silently blend them. Parallel FORKS " +
+                        "(maxParallelForks) are unaffected and remain safe."
+                },
             )
         )
     }
