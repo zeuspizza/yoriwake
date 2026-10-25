@@ -669,6 +669,11 @@ class TouchRecorderTest {
                 "libnetty_transport_native_epoll_x86_64.so", "libnetty_transport_native_epoll_aarch_64123456789.so",
                 "libnetty_transport_native_kqueue_aarch_648123456.dylib", "libnetty_transport_native_kqueue_x86_64.jnilib",
                 "libnetty_transport_native_io_uring_x86_64998877.so",
+                "libnetty_resolver_dns_native_macos_aarch_64.jnilib", "libnetty_resolver_dns_native_macos_x86_64123456.dylib",
+                "libnetty_resolver_dns_native_macos.dylib",
+            ),
+            "com.amazon.corretto.crypto.provider.Loader" to listOf(
+                "libamazonCorrettoCryptoProvider.so", "libamazonCorrettoCryptoProvider.dylib",
             ),
             "org.xerial.snappy.SnappyLoader" to listOf(
                 "snappy-1.1.10.8-2f9b1c3a-5d4e-4f60-9a7b-0c1d2e3f4a5b-libsnappyjava.so", "libsnappyjava.jnilib",

@@ -39,7 +39,11 @@ final class ReviewedLibraries {
             "4.2.18.Final,4.2.19.Final"},
         // The incubator's transport.
         {"io.netty.util.internal.NativeLibraryUtil", "libnetty_transport_native_io_uring_[a-z0-9_]+\\.so"},
+        {"io.netty.util.internal.NativeLibraryUtil",
+            "libnetty_resolver_dns_native_macos(_[a-z0-9_]+)?[0-9]*\\.(dylib|jnilib)"},
         {"org.conscrypt.NativeLibraryUtil", "libconscrypt_openjdk_jni(-[a-z]+-[a-z0-9_]+)?[0-9]*\\.(so|dylib|jnilib)"},
+        // Amazon Corretto Crypto Provider: the random part of its extracted copy is in the directory.
+        {"com.amazon.corretto.crypto.provider.Loader", "libamazonCorrettoCryptoProvider\\.(so|dylib)"},
         {"org.xerial.snappy.SnappyLoader",
             "(snappy-[0-9A-Za-z.]*-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)?"
                 + "libsnappyjava\\.(so|dylib|jnilib)"},

@@ -873,6 +873,18 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
         assertEquals(names("Q2ToolTest", "Q3LaterTest"), ran)
     }
 
+    @Test
+    fun `Netty's macOS DNS resolver and Amazon Corretto Crypto Provider narrow as reviewed libraries`(@TempDir dir: File) {
+        val dns = nativeLoad(
+            File(dir, "dns").apply { mkdirs() }, "D", "io.netty.util.internal.NativeLibraryUtil",
+            "libnetty_resolver_dns_native_macos_aarch_644281.dylib",
+        )
+        val accp = nativeLoad(File(dir, "accp").apply { mkdirs() }, "C", "com.amazon.corretto.crypto.provider.Loader", "libamazonCorrettoCryptoProvider.dylib")
+
+        assertEquals(names("D2ToolTest", "D3LaterTest"), dns)
+        assertEquals(names("C2ToolTest", "C3LaterTest"), accp)
+    }
+
     /** The build with Netty's io_uring classes at [version] on the test classpath, nothing they depend on. */
     private fun withIoUringClasses(version: String) = orderedBuild.replace(
         "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
