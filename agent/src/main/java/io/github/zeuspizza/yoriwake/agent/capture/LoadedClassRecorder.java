@@ -49,7 +49,7 @@ public final class LoadedClassRecorder {
             }
             // Only on a run that narrows plain JUnit 4: any other keeps Gradle's executor as it is.
             if (AgentContract.NARROW_PLAIN_JUNIT4.equals(
-                    System.getProperty(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {
+                    HostBuild.current().property(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {
                 JUnit4Hook.installExecutorRewrite(instrumentation);
             }
 

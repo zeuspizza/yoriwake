@@ -3671,7 +3671,7 @@ MUTATIONS = [
      functional_suite, "a class whose tests a change cannot reach is left out when its runner is judged"),
     ("Gradle's JUnit 4 executor is rewritten on every run", LOADED_CLASS_RECORDER,
      "            if (AgentContract.NARROW_PLAIN_JUNIT4.equals(\n"
-     "                    System.getProperty(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {",
+     "                    HostBuild.current().property(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {",
      "            if (true) {",
      functional_suite, "without the agent told to judge plain JUnit 4, every class runs"),
     ("a class with no test is left out", CLASS_VERDICTS,
