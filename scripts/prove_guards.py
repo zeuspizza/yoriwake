@@ -703,6 +703,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "FullRunRequestFunctionalTest": 101,
     "GeneratedClasspathFilesFunctionalTest": 120,
     "HostCoverageFunctionalTest": 60,
+    # Estimated from its local time (21s for eight builds) doubled for a runner, until an
+    # every-guard run measures it.
+    "InJvmParallelismCharacterizationTest": 45,
     "InitScriptFunctionalTest": 54,
     "IsolatedCaptureFunctionalTest": 71,
     "JvmSharedFunctionalTest": 172,
