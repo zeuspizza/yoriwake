@@ -160,6 +160,7 @@ GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/Gu
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
+PARALLEL_READ_BACK = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/ParallelReadBack.java"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -723,9 +724,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "RevertAfterUndatedCaptureFunctionalTest": 224,
     "ScheduledFullRunFunctionalTest": 72,
     "SelectionFunctionalTest": 197,
-    # Estimated from its local time (12s for nine builds) doubled for a runner, until an
+    # Estimated from its local time (27s for nine tests) doubled for a runner, until an
     # every-guard run measures it.
-    "SequentialRecordingFunctionalTest": 25,
+    "SequentialRecordingFunctionalTest": 55,
     "TestLauncherFunctionalTest": 42,
     "TestRetryFunctionalTest": 79,
     "TestWrittenFilesFunctionalTest": 104,
@@ -2772,6 +2773,26 @@ MUTATIONS = [
      "            if (recordSequentially && platform) {\n                keepParallelism(",
      "            if (false) {\n                keepParallelism(",
      functional_suite, "a flagged selecting run narrows with the suite's own scheduling and captures nothing"),
+    ("recordSequentially is always on", TEST_TASK_WIRING,
+     "        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)",
+     "        val recordSequentially = true",
+     functional_suite, "the extension property alone records sequentially, and the command line turns it off"),
+    ("the read-back ignores the vintage engine's switch", PARALLEL_READ_BACK,
+     "        if (enabled(parameters.apply(VINTAGE))) {",
+     "        if (false) {",
+     agent_suite, "the vintage engine's switch on is unconfirmed, naming it"),
+    ("a flagged selecting run overrides parallelism and captures", TEST_TASK_WIRING,
+     "            if (recordSequentially && platform && recording) {",
+     "            if (recordSequentially && platform) {",
+     functional_suite, "a flagged selecting run on a map of unknown age keeps the suite's scheduling and records nothing"),
+    ("a flagged TestNG task takes the JUnit Platform override", TEST_TASK_WIRING,
+     "            val platform = test.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions\n",
+     "            val platform = true\n",
+     functional_suite, "the flag leaves a parallel TestNG suite declined, and says it covers the JUnit Platform only"),
+    ("a run that kept its parallel scheduling is not counted by the schedule", DECODE_TASK,
+     "            if (marker.delete()) recordSchedule(taskPath, fullRun = datesTheMap && (!selecting || fullRunMarker.delete()))\n",
+     "            marker.delete()\n",
+     functional_suite, "flagged selecting runs count toward the scheduled full run"),
     ("the build's recordSequentially is ignored", TEST_TASK_WIRING,
      "        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)",
      "        val recordSequentially = settings.recordSequentially ?: false",

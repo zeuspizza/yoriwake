@@ -134,7 +134,8 @@ internal abstract class DecodeTask : DefaultTask() {
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))
         val parallelRefused = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         val develocityDeclined = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
-        val unconfirmed = CoverageDecoder.unconfirmedWorkers(mapDir)
+        // Only this run's: a task that did no work leaves the last run's markers in place.
+        val unconfirmed = if (marker.isFile) CoverageDecoder.unconfirmedWorkers(mapDir) else emptyMap()
         val datedSnapshot = pendingSnapshot(mapDir)
         val startStats = pendingStats(mapDir)
         // Read once and removed, so a later run never mistakes this run's walk for its own.
@@ -184,7 +185,9 @@ internal abstract class DecodeTask : DefaultTask() {
         // Before the ran-marker check: this run did work but declined to capture, and a
         // decode would merge older records into a map it must not touch.
         if (parallelRefused.delete()) {
-            marker.delete()
+            // It ran tests, which the schedule counts: a flagged parallel suite selects through here.
+            // As the main path below counts it: unfiltered, and every test when it selected.
+            if (marker.delete()) recordSchedule(taskPath, fullRun = datesTheMap && (!selecting || fullRunMarker.delete()))
             logger.lifecycle(
                 "[yoriwake] $taskPath: declined over in-JVM parallelism, so the map is left " +
                     "exactly as it was."
@@ -195,7 +198,7 @@ internal abstract class DecodeTask : DefaultTask() {
         // task action made, turned parallel execution on.
         if (unconfirmed.isNotEmpty()) {
             marker.delete()
-            fullRunMarker.delete()
+            recordSchedule(taskPath, fullRun = datesTheMap && (!selecting || fullRunMarker.delete()))
             Audit.TaskFacts.recordParallelismUnconfirmed(mapDir, unconfirmed.values.first())
             logger.warn(
                 "[yoriwake] $taskPath: ${unconfirmed.values.first()}, so nothing was captured and the map is " +

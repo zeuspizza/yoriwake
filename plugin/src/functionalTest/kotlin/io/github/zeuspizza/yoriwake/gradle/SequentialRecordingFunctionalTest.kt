@@ -6,6 +6,8 @@ import java.io.File
 import java.security.MessageDigest
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * A test JVM records only once it has confirmed its tests run one at a time: parallel execution
@@ -140,5 +142,97 @@ class SequentialRecordingFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), declined)
         val afterDeclined = mapDigest(dir)
         assertEquals(emptyList(), (before.keys + afterDeclined.keys).filter { before[it] != afterDeclined[it] }, declined)
+    }
+
+    @Test
+    fun `parallelism a JVM argument provider turns on outlasts the override and records nothing`(@TempDir dir: File) {
+        build(
+            dir,
+            "build.gradle.kts" to minimalBuild + "\n" +
+                "tasks.test { jvmArgumentProviders.add(CommandLineArgumentProvider { listOf(\"-D$switch=true\") }) }\n",
+            oneClass, oneTest, secondClass, secondTest,
+        )
+        committed(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.recordSequentially").build().output
+
+        // A provider's arguments come after the task's system properties, so the last -D is the host's.
+        assertEquals("override-unconfirmed", decisionNotes(dir)["parallelism"], output)
+        assertContains(output, "the map is left exactly as it was")
+    }
+
+    private fun mapDirOf(dir: File) = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+
+    @Test
+    fun `a flagged selecting run on a map of unknown age keeps the suite's scheduling and records nothing`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild + "\n" + parallelSuite, oneClass, oneTest, secondClass, secondTest)
+        committed(dir)
+        runner(dir, "test", "-Pyoriwake.recordSequentially").build()
+        // With no stamp the map's age is unknown, and a selecting run would refresh it by running everything.
+        assertTrue(File(mapDirOf(dir), "capture-commit").delete())
+        File(dir, "src/main/java/dev/sample/Beta.java").appendText("\n")
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.recordSequentially").build().output
+
+        assertContains(output, "tests run in parallel as configured")
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
+        assertEquals("kept-not-captured", decisionNotes(dir)["parallelism"], output)
+        assertFalse(File(mapDirOf(dir), "capture-commit").exists(), "the map was refreshed from a parallel run")
+    }
+
+    @Test
+    fun `flagged selecting runs count toward the scheduled full run`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to minimalBuild + "\n" + parallelSuite + "\nyoriwake { fullRunEveryBuilds = 2 }\n",
+            oneClass, oneTest, secondClass, secondTest,
+        )
+        committed(dir)
+        runner(dir, "test", "-Pyoriwake.recordSequentially").build()
+
+        val kinds = (1..3).map { n ->
+            File(dir, "src/main/java/dev/sample/Beta.java").writeText(
+                "package dev.sample;\npublic class Beta { public int thrice(int n) { int k = $n; return n * 3; } }"
+            )
+            commit(dir, "change $n")
+            val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.recordSequentially", "-P${Settings.BASE}=HEAD~1").build().output
+            decisionNotes(dir)["refusal-kind"] to output
+        }
+
+        assertTrue(kinds.any { it.first == "full-run-scheduled" }, kinds.joinToString("\n") { it.second })
+    }
+
+    @Test
+    fun `the flag leaves a parallel TestNG suite declined, and says it covers the JUnit Platform only`(@TempDir dir: File) {
+        build(
+            dir,
+            "build.gradle.kts" to """
+                plugins {
+                    java
+                    jacoco
+                    id("io.github.zeuspizza.yoriwake")
+                }
+                repositories { mavenCentral() }
+                dependencies { testImplementation("org.testng:testng:7.10.2") }
+                tasks.test { useTestNG { parallel = "methods"; threadCount = 2 } }
+            """.trimIndent(),
+            oneClass,
+            "src/test/java/dev/sample/AlphaTest.java" to """
+                package dev.sample;
+                import org.testng.annotations.Test;
+                import static org.testng.Assert.assertEquals;
+                public class AlphaTest {
+                    @Test public void passes() { assertEquals(new Alpha().twice(1), 2); }
+                }
+            """.trimIndent(),
+        )
+        committed(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.recordSequentially").build().output
+
+        assertContains(output, "predictive test selection is declined here")
+        assertContains(output, "covers JUnit Jupiter and Vintage on the JUnit Platform only")
+        assertFalse("recording one test at a time" in output, output)
+        assertFalse(File(dir, "build/jacoco/test.exec").exists(), "JaCoCo instrumented the run")
     }
 }

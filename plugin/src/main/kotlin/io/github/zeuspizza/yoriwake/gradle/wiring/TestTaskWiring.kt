@@ -776,8 +776,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 Audit.TaskFacts.recordParallelismOverride(mapDir, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
                 source?.let {
                     test.logger.lifecycle(
-                        "[yoriwake] ${test.path}: recording one test at a time (-P${Settings.RECORD_SEQUENTIALLY}); " +
-                            "parallel execution via $it is off for this run"
+                        "[yoriwake] ${test.path}: recording one test at a time (-P${Settings.RECORD_SEQUENTIALLY}): " +
+                            "parallel execution via $it is turned off for this run, and each test JVM confirms it before recording"
                     )
                 }
                 return@doFirst
@@ -825,7 +825,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     "JVM share a single coverage agent, so per-test attribution would blend them. " +
                     "Parallel FORKS (maxParallelForks) are unaffected and remain safe. " +
                     "`yoriwakeAudit${test.name.replaceFirstChar(Char::uppercase)}` reports this as " +
-                    "`in-jvm-parallelism`."
+                    "`in-jvm-parallelism`." +
+                    (if (recordSequentially && !platform) {
+                        " -P${Settings.RECORD_SEQUENTIALLY} covers JUnit Jupiter and Vintage on the JUnit Platform only."
+                    } else "")
             )
         }
     }
