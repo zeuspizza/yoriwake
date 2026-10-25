@@ -46,6 +46,7 @@ the run as `change-set-unreadable`.
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
 | `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `full-run-scheduled`, `tests-named`, `decline-undetermined` |
 | `PARALLELISM_OVERRIDE_PROPERTY` | `yoriwake.parallelism.override` | plugin → agent | The plugin asked for tests one at a time; capture waits for the test JVM to confirm it |
+| `PARALLELISM_PROPERTY` | `yoriwake.parallelism` | plugin → agent | How the run treats in-JVM parallelism, one of the `PARALLELISM_` values; unset otherwise |
 | `FINGERPRINT_IGNORED_PROPERTY` | `yoriwake.fingerprint.ignored` | plugin → agent | The system properties `systemPropertyIgnore` left out of a selecting run's environment comparison, comma-separated. Set only when it left one out; the agent copies it into `decisions.tsv` as the `fingerprint-ignored` note |
 | `RUN_TOKEN_PROPERTY` | `yoriwake.run.token` | plugin → agent | A fresh value per selecting run of the task. Each decision record notes it, so the plugin merges only this run's |
 | `ALWAYS_RUN_PROPERTY` | `yoriwake.alwaysRun` | plugin → agent | Test-id globs that are never skipped |
@@ -227,6 +228,10 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
 | `DECLINES_NOTE` | `declines` | Every decline that held, as `yoriwake.declines` carried it. Absent when none did |
 | `FINGERPRINT_IGNORED_NOTE` | `fingerprint-ignored` | The system properties `systemPropertyIgnore` left out of the environment comparison, as `yoriwake.fingerprint.ignored` carried it. Absent when it left none out |
+| `PARALLELISM_NOTE` | `parallelism` | How the run treated in-JVM parallelism, one of the three values below. Absent when the run did nothing about it |
+| `PARALLELISM_RECORDED_SEQUENTIALLY` | `recorded-sequentially` | Parallelism: a recording run turned the engines' parallel switches off, and its test JVM confirmed it |
+| `PARALLELISM_KEPT_NOT_CAPTURED` | `kept-not-captured` | Parallelism: a selecting run kept the suite's parallel scheduling and captured nothing |
+| `PARALLELISM_OVERRIDE_UNCONFIRMED` | `override-unconfirmed` | Parallelism: the test JVM found its tests may run concurrently, so it captured nothing and the map was left as it was |
 | `PATHS_IGNORED_NOTE` | `paths-ignored` | How many changed paths `pathIgnore` took out of the change set, as `yoriwake.change.ignored` carried them, whatever the outcome. Absent when it took out none |
 | `OBSERVED_OUTCOME_NOTE` | `observed-outcome` | On an observing run, the outcome a selecting run of the same inputs would have noted: `outcome`, then its `full-run-kind` and `refusal-kind` when it has them, tab-separated. `outcome` says what ran, `full-run` |
 | `RUN_TOKEN_NOTE` | `run-token` | The run's `yoriwake.run.token`. Noted only when the run was given one |

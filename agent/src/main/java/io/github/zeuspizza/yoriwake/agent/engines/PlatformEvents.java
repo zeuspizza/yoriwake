@@ -14,6 +14,7 @@ import io.github.zeuspizza.yoriwake.agent.capture.ProbeReporter;
 import io.github.zeuspizza.yoriwake.agent.capture.ProbeResult;
 import io.github.zeuspizza.yoriwake.agent.host.AttachedLoader;
 import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
+import io.github.zeuspizza.yoriwake.agent.platform.Concurrency;
 import io.github.zeuspizza.yoriwake.agent.platform.RanTests;
 import java.io.File;
 import java.io.IOException;
@@ -108,6 +109,7 @@ public class PlatformEvents implements TestExecutionListener {
         }
         String concurrent = ParallelReadBack.unconfirmed(testPlan, armed());
         if (concurrent != null) {
+            Concurrency.unconfirmed(concurrent);
             markUnconfirmed(concurrent);
             releaseCapture();
             return;

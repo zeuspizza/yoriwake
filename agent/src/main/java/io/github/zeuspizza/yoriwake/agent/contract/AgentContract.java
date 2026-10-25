@@ -460,6 +460,21 @@ public final class AgentContract {
      */
     public static final String PARALLELISM_OVERRIDE_PROPERTY = "yoriwake.parallelism.override";
 
+    /** How this run treats in-JVM parallelism, one of the {@code PARALLELISM_} values; unset when it does not. */
+    public static final String PARALLELISM_PROPERTY = "yoriwake.parallelism";
+
+    /** The decision record's note carrying {@link #PARALLELISM_PROPERTY}, or what the test JVM found. */
+    public static final String PARALLELISM_NOTE = "parallelism";
+
+    /** A recording run that turned the engines' parallel switches off, and the test JVM confirmed it. */
+    public static final String PARALLELISM_RECORDED_SEQUENTIALLY = "recorded-sequentially";
+
+    /** A selecting run that kept the suite's parallel scheduling and captured nothing. */
+    public static final String PARALLELISM_KEPT_NOT_CAPTURED = "kept-not-captured";
+
+    /** The test JVM found its tests may run concurrently, so it captured nothing. */
+    public static final String PARALLELISM_OVERRIDE_UNCONFIRMED = "override-unconfirmed";
+
     /**
      * Written by a worker that captured nothing because its tests may run concurrently, holding
      * why. One in any worker leaves the map exactly as it was.

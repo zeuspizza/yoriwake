@@ -723,9 +723,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "RevertAfterUndatedCaptureFunctionalTest": 224,
     "ScheduledFullRunFunctionalTest": 72,
     "SelectionFunctionalTest": 197,
-    # Estimated from InJvmParallelismCharacterizationTest, builds of the same shape, until an
+    # Estimated from its local time (12s for nine builds) doubled for a runner, until an
     # every-guard run measures it.
-    "SequentialRecordingFunctionalTest": 30,
+    "SequentialRecordingFunctionalTest": 25,
     "TestLauncherFunctionalTest": 42,
     "TestRetryFunctionalTest": 79,
     "TestWrittenFilesFunctionalTest": 104,
@@ -2763,6 +2763,19 @@ MUTATIONS = [
      "        if (unconfirmed.isNotEmpty()) {",
      "        if (false) {",
      functional_suite, "parallel execution a host's doFirst turns on records nothing"),
+    # A flagged recording run turns the engines' parallel switches off, and only then captures.
+    ("a flagged recording run leaves parallel execution on", TEST_TASK_WIRING,
+     '                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "false") }',
+     '                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "true") }',
+     functional_suite, "a flagged recording run of a parallel suite records it one test at a time"),
+    ("the build's recordSequentially is ignored", TEST_TASK_WIRING,
+     "        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)",
+     "        val recordSequentially = settings.recordSequentially ?: false",
+     functional_suite, "the extension property alone records sequentially, and the command line turns it off"),
+    ("the decision record keeps the plugin's word over the test JVM's", SELECTION_FILTER,
+     "            String parallelism = Concurrency.unconfirmed() != null",
+     "            String parallelism = false",
+     functional_suite, "a flagged run whose host turns parallel execution back on records nothing"),
     ("a launcher a test started records its tests as the task's", PLATFORM_EVENTS,
      "        outermost = EXECUTING.incrementAndGet() == 1;",
      "        outermost = EXECUTING.incrementAndGet() > 0;",

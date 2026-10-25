@@ -8,6 +8,8 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.JUNIT4_HOOK_PRO
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LOADED_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_OVERRIDE_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RECORDS_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
@@ -110,6 +112,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     "a path forcing when it is a build file, a source, named in compiled classes or read by a test."
             )
         }
+        val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)
         val pathIgnore = PathIgnore.validated(extension.pathIgnore.getOrElse(emptyList()), project.path)
         val largeChange = extension.largeChangeThreshold.getOrElse(LargeChange.DEFAULT_THRESHOLD).also {
             if (it < 1) {
@@ -153,7 +156,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, recordSequentially) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -213,6 +216,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         projectDir: String,
         declarations: List<Declarations.Declaration>,
         largeChange: Int,
+        recordSequentially: Boolean,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
         val scopeOutcome = applyJacocoIncludes(project, test, scope)
@@ -334,7 +338,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
         // that check, which may switch capture off.
         isolateWhileCapturing(test, runPlan)
-        refuseInJvmParallelism(test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing)
+        refuseInJvmParallelism(
+            test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing,
+            sequential = recordSequentially && runPlan.kind == RunPlan.Kind.RECORD,
+        )
         recordTaskFacts(test, mapDir)
         if (runPlan.declines.isEmpty()) {
             // Registered before the marker's deletion, so it runs after it and may write one.
@@ -727,9 +734,11 @@ internal class TestTaskWiring(internal val settings: Settings) {
     /**
      * Refuses in-JVM parallel test execution while capturing: it interleaves tests under one agent
      * and blends their attributions. Parallel forks are fine. An [observing] run captures with tests
-     * named too, so it is refused then as well.
+     * named too, so it is refused then as well. A [sequential] recording run on the JUnit Platform
+     * turns the engines' parallel switches off instead, and its test JVMs capture only once they
+     * confirm it.
      */
-    private fun refuseInJvmParallelism(test: Test, mapDir: File, planned: RefusalKind?, observing: Boolean) {
+    private fun refuseInJvmParallelism(test: Test, mapDir: File, planned: RefusalKind?, observing: Boolean, sequential: Boolean) {
         // Resolved here, not in the action: `Task.extensions` at execution time violates the
         // configuration cache.
         val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -744,7 +753,24 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 testRuntimeFiles = test.classpath.files,
                 testngParallel = testng?.parallel,
                 testngThreadCount = testng?.threadCount,
-            ) ?: return@doFirst
+            )
+            // Whether or not a route was found: one the detector cannot read (a JVM argument
+            // provider, JAVA_TOOL_OPTIONS) is switched off too, or refused by the test JVM.
+            if (sequential && test.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions) {
+                // A system property outranks a junit-platform.properties file and comes after the
+                // task's JVM arguments on the command line, where the last one wins.
+                ParallelismDetector.SWITCHES.forEach { test.systemProperty(it, "false") }
+                test.systemProperty(PARALLELISM_OVERRIDE_PROPERTY, "true")
+                test.systemProperty(PARALLELISM_PROPERTY, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
+                source?.let {
+                    test.logger.lifecycle(
+                        "[yoriwake] ${test.path}: recording one test at a time (-P${Settings.RECORD_SEQUENTIALLY}); " +
+                            "parallel execution via $it is off for this run"
+                    )
+                }
+                return@doFirst
+            }
+            source ?: return@doFirst
 
             // Declines rather than throwing, so the suite still runs, and suppresses capture too:
             // a blended map would be believed by every later run.

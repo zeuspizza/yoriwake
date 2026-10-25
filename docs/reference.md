@@ -1411,6 +1411,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |
 | `yoriwake.disabled` | Leave the build entirely alone: nothing scoped, injected, captured or selected. |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
+| `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. |
 | `yoriwake.audit.instrumentedSeconds=<s>` | With `measureToll`: a full instrumented run's duration. |
 | `yoriwake.audit.uninstrumentedSeconds=<s>` | With `measureToll`: the same run with `yoriwake.disabled`. |
@@ -1436,6 +1437,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
 | `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |
 | `largeChangeThreshold` | `Int` | `5000` | Above this many changed paths, run every test without analysing the change. |
+| `recordSequentially` | `Boolean` | `false` | Record in-JVM parallel suites one test at a time, so they can be selected on. |
 
 For example:
 

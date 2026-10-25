@@ -47,4 +47,63 @@ class SequentialRecordingFunctionalTest : FunctionalTestSupport() {
         val after = mapDigest(dir)
         assertEquals(emptyList(), (before.keys + after.keys).filter { before[it] != after[it] }, output)
     }
+
+    private val parallelSuite = """
+        tasks.test {
+            systemProperty("$switch", "true")
+            systemProperty("junit.jupiter.execution.parallel.mode.default", "concurrent")
+        }
+    """.trimIndent()
+
+    @Test
+    fun `a flagged recording run of a parallel suite records it one test at a time`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild + "\n" + parallelSuite, oneClass, oneTest, secondClass, secondTest)
+        committed(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.recordSequentially").build().output
+
+        assertContains(output, "recording one test at a time")
+        assertContains(output, "in the test task's system properties")
+        assertEquals("recorded-sequentially", decisionNotes(dir)["parallelism"], output)
+        val coverage = File(File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory), "coverage.tsv").readText()
+        assertContains(coverage, "AlphaTest")
+        assertContains(coverage, "BetaTest")
+    }
+
+    @Test
+    fun `the extension property alone records sequentially, and the command line turns it off`(@TempDir dir: File) {
+        build(
+            dir, "build.gradle.kts" to minimalBuild + "\n" + parallelSuite + "\nyoriwake { recordSequentially = true }\n",
+            oneClass, oneTest, secondClass, secondTest,
+        )
+        committed(dir)
+
+        assertContains(runner(dir, "test").build().output, "recording one test at a time")
+        File(dir, "build/test-results").deleteRecursively()
+        assertContains(
+            runner(dir, "test", "-Pyoriwake.recordSequentially=false", "--rerun-tasks").build().output,
+            "predictive test selection is declined here",
+        )
+    }
+
+    @Test
+    fun `a flagged run whose host turns parallel execution back on records nothing`(@TempDir dir: File) {
+        build(
+            dir,
+            "build.gradle.kts" to minimalBuild + "\nif (providers.gradleProperty(\"late\").isPresent) {\n" +
+                "tasks.test { doFirst { systemProperty(\"$switch\", \"true\") } }\n}\n",
+            oneClass, oneTest, secondClass, secondTest,
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        val before = mapDigest(dir)
+        File(dir, "src/main/java/dev/sample/Alpha.java").appendText("\n")
+
+        val output = runner(dir, "test", "-Plate", "-Pyoriwake.recordSequentially").build().output
+
+        assertContains(output, "the map is left exactly as it was")
+        assertEquals("override-unconfirmed", decisionNotes(dir)["parallelism"], output)
+        val after = mapDigest(dir)
+        assertEquals(emptyList(), (before.keys + after.keys).filter { before[it] != after[it] }, output)
+    }
 }
