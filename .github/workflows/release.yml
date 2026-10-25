@@ -35,7 +35,7 @@ jobs:
   # neither may share a machine with.
   verify:
     name: build and test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -75,7 +75,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       # Read-only, so the tests' code cannot write a cache the later jobs restore.
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
       # Before anything is attested or published: the release notes are this section, and the last
@@ -117,7 +117,7 @@ jobs:
   attest:
     name: attest
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
@@ -150,7 +150,7 @@ jobs:
     name: publish to the Gradle Plugin Portal
     needs: attest
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     steps:
       # Pinned to commit SHAs rather than tags, because this job holds secrets. No token is left
@@ -164,7 +164,7 @@ jobs:
           java-version: '21'
       # No cache at all: this job holds the keys, and any cache could have been written by a build
       # that ran other code.
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-disabled: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -206,7 +206,7 @@ jobs:
     name: github release
     needs: publish
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

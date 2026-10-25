@@ -44,7 +44,7 @@ jobs:
   # that failed or said nothing runs everything: a wrong "docs only" would skip every check.
   changes:
     name: what changed
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.decide.outputs.code }}
     steps:
@@ -68,7 +68,7 @@ jobs:
     name: unit and agent suites
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -108,7 +108,7 @@ jobs:
     name: functional on Gradle 8.14 (shard ${{ matrix.shard }}/2)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -171,7 +171,7 @@ jobs:
     name: functional on Gradle 8.14
     needs: [changes, functional-shard]
     if: always() && needs.changes.outputs.code != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every shard succeeded
         if: needs.functional-shard.result != 'success'
@@ -190,7 +190,7 @@ jobs:
     name: functional on Gradle 9 (shard ${{ matrix.shard }}/2)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -253,7 +253,7 @@ jobs:
     name: functional on Gradle 9
     needs: [changes, functional-gradle9-shard]
     if: always() && needs.changes.outputs.code != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every shard succeeded
         if: needs.functional-gradle9-shard.result != 'success'
@@ -275,7 +275,7 @@ jobs:
     name: coverage gate
     needs: [changes, build, functional-shard, functional-gradle9-shard]
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -327,7 +327,7 @@ jobs:
     name: build a map
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -372,7 +372,7 @@ jobs:
     name: select on another machine
     needs: [changes, capture]
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # A fresh checkout on a different runner, with no build outputs and no map of its own. This is
       # the CI shape: restore the map, change something, run only what the change can reach.
@@ -598,7 +598,7 @@ jobs:
     name: select on linux, against a map captured on windows
     needs: [changes, capture-on-windows]
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -727,7 +727,7 @@ jobs:
     name: functional on Gradle 8.14 on windows
     needs: [changes, functional-windows-shard]
     if: always() && needs.changes.outputs.code != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every shard succeeded
         if: needs.functional-windows-shard.result != 'success'
@@ -803,7 +803,7 @@ jobs:
     name: functional on Gradle 9 on windows
     needs: [changes, functional-gradle9-windows-shard]
     if: always() && needs.changes.outputs.code != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every shard succeeded
         if: needs.functional-gradle9-windows-shard.result != 'success'

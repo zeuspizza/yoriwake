@@ -39,7 +39,7 @@ jobs:
   # every shard and check selects the change's guards from, so all of them select the same ones.
   changes:
     name: what changed
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.decide.outputs.code }}
       product: ${{ steps.decide.outputs.product }}
@@ -70,7 +70,7 @@ jobs:
     name: guards, fast and the change's own (shard ${{ matrix.shard }}/8)
     needs: changes
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # As long as a shard of every guard: `--changed` selects every guard when a change edits all of them.
     timeout-minutes: 120
     strategy:
@@ -116,7 +116,7 @@ jobs:
     name: guards, fast and the change's own
     needs: [changes, fast-shard]
     if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every shard succeeded
         if: needs.fast-shard.result != 'success'
@@ -146,7 +146,7 @@ jobs:
     name: guards, every one (shard ${{ matrix.shard }}/8)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -181,7 +181,7 @@ jobs:
     name: guards, every one
     needs: [changes, full-shard]
     if: always() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every shard succeeded
         if: needs.full-shard.result != 'success'
@@ -201,7 +201,7 @@ jobs:
   report-failure:
     needs: [changes, full-shard, full]
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       issues: write
     steps:

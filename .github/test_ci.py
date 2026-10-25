@@ -323,6 +323,13 @@ def unpinned_uses(text):
     return found
 
 
+def moving_runner_labels(text):
+    """Each line naming `ubuntu-latest`: the label moves to a new image without a commit here, so
+    CI changes underneath every job without anyone reviewing it."""
+    return [f"line {number}: {line.strip()}" for number, line in enumerate(text.splitlines(), start=1)
+            if "ubuntu-latest" in line]
+
+
 def unexplained_uploads(text):
     """Each `upload-artifact` step without `retention-days` in its block, or without a `#` comment
     on the line above it: an artifact nobody sized is kept 90 days, and one nobody named a reader
@@ -454,6 +461,22 @@ def case_a_sha_without_its_version_comment_is_reported():
         problems += fail("a SHA pin without a `# vX.Y.Z` comment passed the pin check")
     if unpinned_uses(line.rstrip("\n") + " # v7.0.1\n"):
         problems += fail("a SHA pin with its version comment was reported")
+    return problems
+
+
+def case_no_workflow_names_a_moving_linux_runner():
+    problems = 0
+    for text, expected in (
+        ("    runs-on: ubuntu-latest\n", 1),
+        ("        runner: [ubuntu-latest, windows-latest]\n", 1),
+        ("    runs-on: ubuntu-24.04\n        os: windows-latest\n", 0),
+    ):
+        if len(moving_runner_labels(text)) != expected:
+            problems += fail(f"moving_runner_labels({text!r}) should report {expected} line(s)")
+    for name in sorted(name for name in os.listdir(WORKFLOWS) if name.endswith((".yml", ".yaml"))):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in moving_runner_labels(handle.read()):
+                problems += fail(f"{name} {problem}")
     return problems
 
 
@@ -2390,6 +2413,7 @@ CASES = (
     case_a_tag_pin_is_reported,
     case_a_sha_without_its_version_comment_is_reported,
     case_every_workflow_pins_its_actions_by_sha,
+    case_no_workflow_names_a_moving_linux_runner,
     case_an_upload_without_a_retention_or_a_reader_is_reported,
     case_every_upload_names_its_retention_and_its_reader,
     case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
