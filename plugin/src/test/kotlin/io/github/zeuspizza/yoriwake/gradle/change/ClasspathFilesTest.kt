@@ -380,4 +380,120 @@ class ClasspathFilesTest {
             moved.named(),
         )
     }
+
+    private fun git(dir: File, vararg args: String) {
+        val exit = ProcessBuilder(listOf("git", "-c", "user.email=t@example.com", "-c", "user.name=t") + args)
+            .directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
+        assertEquals(0, exit, "git ${args.joinToString(" ")}")
+    }
+
+    /**
+     * A repository at [root] with `src/test/resources/a.txt` committed with `\n` and [attributes] as
+     * `.gitattributes` when given, then checked out again under `core.autocrlf` as [autocrlf].
+     */
+    private fun repository(root: File, autocrlf: String = "true", attributes: String? = null): File {
+        git(root, "init", "-q")
+        git(root, "config", "core.autocrlf", "false")
+        file(root, "src/test/resources/a.txt", "one\ntwo\n")
+        attributes?.let { file(root, ".gitattributes", it) }
+        git(root, "add", ".")
+        git(root, "commit", "-q", "-m", "base")
+        git(root, "config", "core.autocrlf", autocrlf)
+        File(root, "src/test/resources/a.txt").delete()
+        git(root, "checkout", "--", "src/test/resources/a.txt")
+        return root
+    }
+
+    /** The digest the walk records for a copy of a.txt under build/resources/test with [content]. */
+    private fun copyDigest(root: File, content: String, name: String = "a.txt"): String? {
+        val resources = File(root, "build/resources/test")
+        resources.deleteRecursively()
+        file(resources, name, content)
+        return found(ClasspathFiles.walk(listOf(resources), listOf(), root))["build/resources/test/$name"]
+    }
+
+    @Test
+    fun `a copy of a tracked text file digests the same whatever its line endings`(@TempDir root: File) {
+        repository(root)
+
+        assertEquals(copyDigest(root, "one\ntwo\n"), copyDigest(root, "one\r\ntwo\r\n"))
+    }
+
+    @Test
+    fun `the same holds for the copy inside an own jar`(@TempDir root: File) {
+        repository(root)
+        fun jarDigest(content: String) = found(
+            ClasspathFiles.walk(listOf(jar(File(root, "build/libs/x.jar"), 0L, "a.txt" to content)), listOf(), root)
+        )["build/libs/x.jar!/a.txt"]
+
+        assertEquals(jarDigest("one\ntwo\n"), jarDigest("one\r\ntwo\r\n"))
+    }
+
+    @Test
+    fun `a file without a carriage return digests by its bytes, as before`(@TempDir root: File) {
+        repository(root)
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest("one\ntwo\n".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+        assertEquals(bytes, copyDigest(root, "one\ntwo\n"))
+    }
+
+    @Test
+    fun `a pinned, unset or binary path keeps its bytes digest`(@TempDir dir: File) {
+        for (attributes in listOf("*.txt eol=lf\n", "*.txt -text\n", "*.txt binary\n")) {
+            val root = File(dir, attributes.filter(Char::isLetter)).apply { mkdirs() }
+            repository(root, attributes = attributes)
+
+            assertNotEquals(copyDigest(root, "one\ntwo\n"), copyDigest(root, "one\r\ntwo\r\n"), attributes)
+        }
+    }
+
+    @Test
+    fun `a file no tracked blob matches, or matched at another path, keeps its bytes digest`(@TempDir root: File) {
+        repository(root)
+
+        // Generated: its content is no tracked file's.
+        assertNotEquals(copyDigest(root, "gen\n"), copyDigest(root, "gen\r\n"))
+        // a.txt's content under another name is not a copy of a.txt.
+        assertNotEquals(copyDigest(root, "one\ntwo\n", "b.txt"), copyDigest(root, "one\r\ntwo\r\n", "b.txt"))
+    }
+
+    @Test
+    fun `a file committed with carriage returns keeps its bytes digest`(@TempDir root: File) {
+        git(root, "init", "-q")
+        git(root, "config", "core.autocrlf", "false")
+        file(root, "src/test/resources/a.txt", "one\r\ntwo\r\n")
+        git(root, "add", ".")
+        git(root, "commit", "-q", "-m", "base")
+        git(root, "config", "core.autocrlf", "true")
+
+        assertNotEquals(copyDigest(root, "one\ntwo\n"), copyDigest(root, "one\r\ntwo\r\n"))
+    }
+
+    @Test
+    fun `a copy with carriage returns git did not write keeps its bytes digest`(@TempDir root: File) {
+        // Checked out with '\n': the '\r\n' in the copy came from the build, not from git.
+        repository(root, autocrlf = "false")
+
+        assertNotEquals(copyDigest(root, "one\ntwo\n"), copyDigest(root, "one\r\ntwo\r\n"))
+    }
+
+    @Test
+    fun `the working tree's file decides, whatever setting put its carriage returns there`(@TempDir root: File) {
+        // `* text eol=crlf`, with core.autocrlf off: git still writes '\r\n'.
+        repository(root, autocrlf = "false", attributes = "*.txt text eol=crlf\n")
+
+        assertEquals(copyDigest(root, "one\ntwo\n"), copyDigest(root, "one\r\ntwo\r\n"))
+    }
+
+    @Test
+    fun `outside a git work tree, or when git fails, every file keeps its bytes digest`(@TempDir root: File) {
+        assertNotEquals(copyDigest(root, "one\ntwo\n"), copyDigest(root, "one\r\ntwo\r\n"))
+
+        repository(root)
+        val resources = File(root, "build/resources/test").apply { deleteRecursively() }
+        file(resources, "a.txt", "one\r\ntwo\r\n")
+        val failing = found(ClasspathFiles.walk(listOf(resources), listOf(), root, text = TrackedText(root) { null }))
+        assertNotEquals(copyDigest(root, "one\ntwo\n"), failing["build/resources/test/a.txt"])
+    }
 }
