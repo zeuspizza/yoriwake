@@ -45,7 +45,9 @@ import io.github.zeuspizza.yoriwake.gradle.change.head
 import io.github.zeuspizza.yoriwake.gradle.change.validated
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
+import io.github.zeuspizza.yoriwake.gradle.fullRunBranches
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
+import io.github.zeuspizza.yoriwake.gradle.runPlan
 import io.github.zeuspizza.yoriwake.gradle.tasks.AuditTask
 import io.github.zeuspizza.yoriwake.gradle.tasks.DecodeTask
 import io.github.zeuspizza.yoriwake.gradle.tasks.ExplainTask
@@ -103,7 +105,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         // Read with `enabled`, for the same reason.
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
-        val fullRunBranches = RunPlan.fullRunBranches(extension.fullRunBranches.getOrElse(emptyList()), project.path)
+        val fullRunBranches = fullRunBranches(extension.fullRunBranches.getOrElse(emptyList()), project.path)
         val schedule = Schedule.Limits(
             atLeastOne(extension.fullRunEveryBuilds.orNull, "fullRunEveryBuilds", project.path),
             atLeastOne(extension.fullRunEveryDays.orNull, "fullRunEveryDays", project.path),
@@ -264,7 +266,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
 
         test.systemProperty(MAP_DIR_PROPERTY, mapDir.absolutePath)
         // Raw records stay beneath the map, inspectable after a run; the decoder writes the map.
-        val runPlan = RunPlan.resolve(
+        val runPlan = runPlan(
             settings,
             { selectionWidening(project, settings, mapDir, buildMemo) },
             { since ->

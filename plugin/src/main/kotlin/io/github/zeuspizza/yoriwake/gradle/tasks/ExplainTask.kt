@@ -246,6 +246,7 @@ internal abstract class ExplainTask : DefaultTask() {
             unknown ?: age,
             { since -> ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(rootDir, it) }, since) },
             { scheduled() },
+            fullRunFlag = "-P${Settings.FULL_RUN}",
         )
         notes.forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (declines.isEmpty() && (fullRunEveryBuilds.isPresent || fullRunEveryDays.isPresent)) {
