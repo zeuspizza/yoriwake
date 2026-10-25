@@ -4211,7 +4211,7 @@ MUTATIONS = [
     # Surefire fails its mojo when a test fails, and the decode must run then too, as Gradle's
     # finalizer does: otherwise a failing capture never reaches the map.
     ("the Maven decode does not run after a failed test", MAVEN_LISTENER,
-     "    override fun mojoFailed(event: ExecutionEvent) {\n        recording.ended(event)\n",
+     "    override fun mojoFailed(event: ExecutionEvent) {\n        recording.ended(event, succeeded = false)\n",
      "    override fun mojoFailed(event: ExecutionEvent) {\n",
      maven_suite, "a run with a failing test still decodes and dates the map"),
     # Classes this session did not compile cannot be vouched for, so their run captures nothing.
