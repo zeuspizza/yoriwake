@@ -28,9 +28,10 @@ url = "https://github.com/mockito/mockito.git"
 commit = "5a676bcd9ef9a10db46e1dc34e190eb46faa2687"
 module = "mockito-core"
 
-# DELIBERATELY EMPTY, and that is the whole point of this file. `mockito.toml` carries
-# `["-I", "{yoriwake}/scripts/junit-vintage.init.gradle.kts"]` here.
-flags = []
+# No Vintage script, which is the whole point of this file (`mockito.toml` carries
+# `["-I", "{yoriwake}/scripts/junit-vintage.init.gradle.kts"]` here). `narrowPlainRunners` lets a
+# selecting run leave out whole plain JUnit 4 classes; it is inert on a recording run.
+flags = ["-Pyoriwake.narrowPlainRunners"]
 
 sources = ["mockito-core/src/main/java/org/mockito/internal/stubbing"]
 
