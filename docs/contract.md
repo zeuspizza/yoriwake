@@ -119,6 +119,7 @@ is written as it is.
 | `RUN_FILE` | `run.properties` | Under Maven, every contract property for the test JVM, `java.util.Properties` form, beside the map |
 | `RUN_FILE_END` | `#end` | The run file's last line |
 | `PLAN_COMPLETE_FILE` | `plan-complete` | Empty. Written only when the worker's whole run ended normally |
+| `OPEN_TESTS_FILE` | `open-tests` | The tests still open when the worker's run ended without finishing, one escaped id per line. Absent when none was |
 
 ### First touches
 
