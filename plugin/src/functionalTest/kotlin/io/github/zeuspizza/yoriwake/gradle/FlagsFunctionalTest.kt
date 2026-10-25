@@ -157,4 +157,44 @@ class FlagsFunctionalTest : FunctionalTestSupport() {
     fun `a retired internal flag no longer narrows a plain TestNG build`(@TempDir dir: File) {
         retiredFlagRunsEverything(dir, testngBuild, *testngTests)
     }
+
+    // Plain JUnit 4 and TestNG as 0.2 left them, pinned before a flag lets plain JUnit 4 narrow.
+
+    private fun offPlatformSelectingRunsEverything(dir: File, buildScript: String, vararg tests: Pair<String, String>) {
+        capturedWithAlphaChanged(dir, buildScript, *tests)
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
+        assertContains(output, ":test does not run on the JUnit Platform, so selection runs every test.")
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertFalse(File(mapDir, "decisions.tsv").exists(), "a plain runner wrote a decision record")
+    }
+
+    @Test
+    fun `a selecting run on plain JUnit 4 runs every test and records no decisions`(@TempDir dir: File) {
+        offPlatformSelectingRunsEverything(dir, junit4Build, *junit4Tests)
+    }
+
+    @Test
+    fun `a selecting run on plain TestNG runs every test and records no decisions`(@TempDir dir: File) {
+        offPlatformSelectingRunsEverything(dir, testngBuild, *testngTests)
+    }
+
+    /**
+     * What Gradle reports for a class that reaches the JUnit 4 executor and whose methods a
+     * method-level pattern empties: the baseline a class left out of a run must look like.
+     */
+    @Test
+    fun `a plain JUnit 4 class a method pattern empties is reported as Gradle reports it`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to junit4Build, oneClass, secondClass, *junit4Tests)
+
+        val result = runner(dir, "test", "--tests", "dev.sample.AlphaTest", "--tests", "dev.sample.BetaTest.noSuchMethod").build()
+
+        assertEquals(setOf("dev.sample.AlphaTest"), ranTests(dir), result.output)
+        assertEquals(TaskOutcome.SUCCESS, result.task(":test")?.outcome)
+        // On Gradle 8.14 and 9.8 alike: no report entry, no failure, no initializationError.
+        assertFalse(File(dir, "build/test-results/test/TEST-dev.sample.BetaTest.xml").exists(), result.output)
+    }
 }
