@@ -465,6 +465,8 @@ attempt is not a load only when opening it fails.
 | zstd-jni | `com.github.luben.zstd.util.Native` | [1.5.7-20](https://github.com/luben/zstd-jni/tree/v1.5.7-20/src/main/native) | nothing |
 | lz4-java (`at.yawk.lz4`, and `org.lz4` 1.8.0) | `net.jpountz.util.Native` | [1.12.0](https://github.com/yawkat/lz4-java/tree/v1.12.0/src/jni) | nothing |
 | RocksDB | `org.rocksdb.NativeLibraryLoader` | [11.8.1](https://github.com/facebook/rocksdb/tree/v11.8.1/java/rocksjni) | the files of a database in the directories a test names, only by the names RocksDB itself writes; fixed `/proc` and `/sys` paths |
+| Gradle native-platform (conditional, below) | `net.rubygrapefruit.platform.internal.NativeLibraryLoader` | [0.22-milestone-29 and -30](https://github.com/gradle/native-platform/tree/0.22-milestone-30/native-platform/src/main/cpp) only | nothing; it lists directories and reads file metadata and link text for paths a test names, and on Linux the mount table |
+| Gradle file events | `org.gradle.fileevents.FileEvents` | [0.2.8](https://github.com/gradle/gradle-fileevents/tree/0.2.8/src/main/cpp) | nothing; it watches the directories a test names for changes |
 | SQLite JDBC (conditional, below) | `org.sqlite.SQLiteJDBCLoader` | [3.53.4.0](https://github.com/xerial/sqlite-jdbc/tree/3.53.4.0/src/main/java/org/sqlite/core) only | the database files a test names and the journal, WAL and lock files SQLite names after them; random temporary files; `/dev/urandom` |
 
 Two notes on the list:
@@ -502,6 +504,15 @@ Two notes on the list:
   loader takes the wrap; otherwise the load applies the wide rule. On Linux the driver runs `uname`
   to find its library unless `org.sqlite.lib.path` names its folder, and that child process runs
   every later test in the JVM anyway.
+- Gradle's native-platform is listed on a condition. It reads no file's content, but two of its
+  calls hide later reads from the agent: a symbolic link it creates gives a class file a name that
+  no longer says so, and a working directory it changes makes relative paths resolve elsewhere than
+  the agent records. Both end in natives of its own (`PosixFileFunctions.symlink`,
+  `PosixProcessFunctions.setWorkingDirectory`), which the agent wraps as each class is defined, so
+  either call touches every class from there. The entry counts only at the versions listed, told
+  apart by the hash of their natives the jar carries, and only when both classes in the loading
+  class's loader take the wrap; otherwise the load applies the wide rule. Its curses library is not
+  listed.
 - Only the Linux and macOS builds (`.so`, `.dylib`, `.jnilib`) were reviewed. A library's Windows
   build (`.dll`) is not on the list, so on Windows each of these applies the wide rule.
 

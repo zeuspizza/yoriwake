@@ -10,3 +10,5 @@ JvmSharedFunctionalTest.a SQLite connection that enables extension loading selec
 JvmSharedFunctionalTest.SQLite at a version nobody reviewed selects every later test in its JVM | windows/*/* | only the Linux and macOS builds of SQLite's native library were reviewed
 JvmSharedFunctionalTest.netty-tcnative's BoringSSL build at the reviewed version, told by its bytes, narrows | windows/*/* | only the Linux and macOS builds of netty-tcnative were reviewed
 JvmSharedFunctionalTest.netty-tcnative's BoringSSL build at a version nobody reviewed selects every later test | windows/*/* | only the Linux and macOS builds of netty-tcnative were reviewed
+JvmSharedFunctionalTest.a test that uses Gradle's native-platform and file events narrows as on any reviewed library | windows/*/* | only the Linux and macOS builds of native-platform and file events were reviewed
+JvmSharedFunctionalTest.a link native-platform makes or a working directory it changes selects every later test in its JVM | windows/*/* | only the Linux and macOS builds of native-platform and file events were reviewed
