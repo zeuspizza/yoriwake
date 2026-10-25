@@ -70,7 +70,8 @@ final class MavenHost implements HostBuild {
             answers.clear();
             answers.put(AgentContract.REFUSED_PROPERTY, "the run file " + runFile + " could not be read whole (" + e + ")");
             answers.put(AgentContract.REFUSED_KIND_PROPERTY, AgentContract.CHANGE_SET_UNREADABLE_KIND);
-            File parent = runFile.getAbsoluteFile().getParentFile();
+            // With no file named there is no map to write the refusal beside.
+            File parent = runFile.getPath().isEmpty() ? null : runFile.getAbsoluteFile().getParentFile();
             if (parent != null) {
                 answers.put(AgentContract.MAP_DIR_PROPERTY, parent.getPath());
             }

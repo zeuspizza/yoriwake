@@ -751,6 +751,13 @@ internal object CoverageDecoder {
             discovery.touched.forEach { touchNamed(it, 0) }
         }
         if (unknownEngine) touchNamed(FIRST_TOUCH_ANY, 0)
+        // A JVM's later test plan: what its earlier plans loaded and read is not in these touches, so
+        // it is taken as having seen every class and file from its start.
+        if (PLAN_SUFFIX.containsMatchIn(worker.name)) {
+            touch(FIRST_TOUCH_ANY, 0)
+            touchNamed(FIRST_TOUCH_ANY, 0)
+            resource(RESOURCE_READ, FIRST_TOUCH_ANY, 0)
+        }
         val rows = { touches: Map<String, Int> ->
             touches.entries.sortedBy { it.key }.map { (name, sequence) -> Tsv.join(jvm, sequence.toString(), name) }
         }

@@ -2758,6 +2758,10 @@ MUTATIONS = [
      "            answers.clear();\n            if (answers.isEmpty()) return answers;\n",
      agent_suite, "a run file cut short refuses the run and names only the map directory"),
     # A JVM that runs several test plans records each into its own directory.
+    ("a JVM's later test plan is decoded as if it started the JVM", COVERAGE_DECODER,
+     "        if (PLAN_SUFFIX.containsMatchIn(worker.name)) {",
+     "        if (false) {",
+     decoder_suite, "a JVM's later test plan is taken as having seen every class from its start"),
     ("every test plan records into the JVM's one directory", PLATFORM_EVENTS,
      "                captured == 1 ? worker : worker + AgentContract.PLAN_DIR_SUFFIX + captured, false);",
      "                worker, false);",
