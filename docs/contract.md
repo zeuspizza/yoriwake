@@ -42,6 +42,9 @@ the run as `change-set-unreadable`.
 | `MOVED_FILES_PROPERTY` | `yoriwake.change.movedFiles` | plugin → agent | Build-produced non-class files on the classpath whose content differs from the capture's, by their `resource-touch.tsv` path. Each runs the tests from its first read on in every JVM that read it; a JVM whose reads were not recorded runs whole |
 | `IGNORED_PATHS_PROPERTY` | `yoriwake.change.ignored` | plugin → agent | Changed paths `pathIgnore` took out of the change set, comma-separated, each as `<path>` tab `<entry>` with `%` and `,` written `%25` and `%2C`. Each runs the tests from its first read on in every JVM whose reads the map recorded; the agent copies the count into `decisions.tsv` as the `paths-ignored` note |
 | `CHANGE_SET_FILE_PROPERTY` | `yoriwake.change.file` | plugin → agent | The file holding the list-valued change-set properties. Set means that file alone answers for them |
+| `HOST_PROPERTY` | `yoriwake.host` | plugin → agent | Which build forked the test JVM: `maven`, or Gradle when absent. Read once when the agent starts |
+| `HOST_MAVEN` | `maven` | plugin → agent | The value of `yoriwake.host` under Maven |
+| `RUN_FILE_PROPERTY` | `yoriwake.run.file` | plugin → agent | Under Maven, the file holding every contract property; one that cannot be read whole refuses the run as `change-set-unreadable` |
 | `REFUSED_PROPERTY` | `yoriwake.refused` | plugin → agent | Why the plugin refused to select, as prose. Present means run everything, whatever `yoriwake.select` says |
 | `REFUSED_KIND_PROPERTY` | `yoriwake.refused.kind` | plugin → agent | Which refusal, as a token |
 | `DECLINES_PROPERTY` | `yoriwake.declines` | plugin → agent | Every decline that held, as refusal tokens, comma-separated: `full-run-requested`, `full-run-branch`, `full-run-commit`, `full-run-scheduled`, `tests-named`, `decline-undetermined` |
@@ -106,6 +109,7 @@ is written as it is.
 | Constant | Name | Format |
 |---|---|---|
 | `WORKER_DIR_PREFIX` | `worker-` | Ends in the Gradle worker id |
+| `PLAN_DIR_SUFFIX` | `-p` | A JVM's second and later test plans record into `worker-<id>-p<n>`; the JVMs behind a run are its directory names without it |
 | `INDEX_FILE` | `index.tsv` | `sequence \t durationNanos \t byteCount \t outcome \t record-id` |
 | `EXEC_FILE_FORMAT` | `%06d.exec` | One JaCoCo execution-data blob per record, named by its sequence |
 | `TOUCHES_FILE` | `touches.tsv` | `sequence \t kind \t value`: what the JVM loaded or read for the first time before the record with that sequence was taken. Ends with `#complete` when observation ended normally |
@@ -113,6 +117,8 @@ is written as it is.
 | `ENV_READS_FILE` | `env-reads.tsv` | The environment variables the JVM read, one name per line, escaped as a field; never a value. Written when every read was observed. The decode writes the union of a capture's workers beside the map under the same name, only when every worker wrote one; `yoriwakeExplain<Task>` reads it and nothing selects by it |
 | `RAW_SCHEMA_VERSION_FILE` | `raw-schema-version` | The raw version, one integer. Written before the first record |
 | `PARALLEL_UNCONFIRMED_FILE` | `parallel-unconfirmed` | Why the worker captured nothing: its tests may run concurrently. Any one leaves the map as it was |
+| `RUN_FILE` | `run.properties` | Under Maven, every contract property for the test JVM, `java.util.Properties` form, beside the map |
+| `RUN_FILE_END` | `#end` | The run file's last line |
 | `PLAN_COMPLETE_FILE` | `plan-complete` | Empty. Written only when the worker's whole run ended normally |
 
 ### First touches

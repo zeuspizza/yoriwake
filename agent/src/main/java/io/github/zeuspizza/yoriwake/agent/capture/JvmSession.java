@@ -81,7 +81,7 @@ public final class JvmSession implements TestEvents {
         // host test.
         String output = null;
         try {
-            output = System.getProperty(AgentContract.RECORDS_DIR_PROPERTY);
+            output = HostBuild.current().property(AgentContract.RECORDS_DIR_PROPERTY);
             if (output == null || output.isEmpty()) {
                 return null;
             }

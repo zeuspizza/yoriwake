@@ -358,12 +358,10 @@ class CaptureLifecycleTest {
     @Test
     fun `a record directory that cannot be opened takes nothing and throws nothing`(@TempDir dir: File) {
         // Every take is a JVM-global reset, so with nowhere to write one it only destroys coverage.
-        val worker = File(dir, "worker-" + System.getProperty("org.gradle.test.worker",
-            ProcessHandle.current().pid().toString()))
-        worker.mkdirs()
-        File(worker, "index.tsv").writeText("an earlier capture\n")
+        // A file where the records directory should be, whichever plan of this JVM opens it.
+        val records = File(dir, "raw").apply { writeText("not a directory\n") }
         val agent = ScriptedAgent()
-        val l = listener(agent, dir, Sink())
+        val l = listener(agent, records, Sink())
 
         l.testPlanExecutionStarted(TestIdentifiers.emptyPlan())
         runTest(l, identifier("a"))
@@ -371,6 +369,22 @@ class CaptureLifecycleTest {
 
         assertTrue(agent.takes.isEmpty(), "a listener with no writer reset coverage: ${agent.takes}")
         assertEquals(null, System.getProperty(CaptureClaim.PROPERTY))
+    }
+
+    @Test
+    fun `each test plan a JVM runs records into a directory of its own, each complete on its own`(@TempDir dir: File) {
+        repeat(2) {
+            val l = listener(ScriptedAgent(), dir, Sink())
+            l.testPlanExecutionStarted(null)
+            runTest(l, identifier("t$it"))
+            l.testPlanExecutionFinished(null)
+        }
+
+        val workers = dir.listFiles { f -> f.isDirectory && f.name.startsWith(AgentContract.WORKER_DIR_PREFIX) }!!
+        assertEquals(2, workers.size, workers.joinToString { it.name })
+        workers.forEach { assertTrue(File(it, AgentContract.PLAN_COMPLETE_FILE).isFile, "${it.name} is not complete") }
+        val jvm = AgentContract.WORKER_DIR_PREFIX + io.github.zeuspizza.yoriwake.agent.host.HostBuild.current().workerId()
+        workers.forEach { assertTrue(it.name == jvm || it.name.startsWith(jvm + AgentContract.PLAN_DIR_SUFFIX), it.name) }
     }
 
     @Test
