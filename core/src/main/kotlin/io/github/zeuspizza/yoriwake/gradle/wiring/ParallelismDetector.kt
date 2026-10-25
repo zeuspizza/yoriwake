@@ -14,6 +14,9 @@ internal object ParallelismDetector {
     const val PROPERTY = "junit.jupiter.execution.parallel.enabled"
     const val CONFIG_FILE = "junit-platform.properties"
 
+    /** The engines' own parallel switches, which a recording run one test at a time turns off. */
+    val SWITCHES = listOf(PROPERTY, "junit.vintage.execution.parallel.enabled")
+
     /**
      * Where parallelism was enabled, or null when it is not. A description rather than a boolean,
      * because each route needs a different remedy.

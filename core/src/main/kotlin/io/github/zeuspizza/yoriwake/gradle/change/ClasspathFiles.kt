@@ -57,6 +57,10 @@ internal object ClasspathFiles {
      * What a walked jar's manifest `Class-Path` names is on the test JVM's class path too, and on no
      * classpath Gradle lists: it is walked wherever it lies, but in Gradle's module cache, whose paths
      * name their content, and with its class files, which the class-digest rule never reads.
+     *
+     * A copy of a tracked text file that git writes with `\r\n` in this checkout is digested with
+     * its line endings as `\n` ([TrackedText]), so a checkout with other line-ending settings
+     * records the same digest. Every other file is digested by its bytes.
      */
     fun walk(
         classpath: Collection<File>,
@@ -64,6 +68,7 @@ internal object ClasspathFiles {
         rootDir: File,
         maxFiles: Int = MAX_FILES,
         classes: Boolean = false,
+        text: TrackedText = TrackedText(rootDir),
     ): Walk {
         val roots = buildDirs.map { File(it).absoluteFile } + rootDir.absoluteFile
         // Gradle's and the plugin's own state, such as the agent jar, is not the build's output.
@@ -95,8 +100,9 @@ internal object ClasspathFiles {
                             }
                             if (!withClasses && file.name.endsWith(".class")) continue
                             if (++files > maxFiles) return budgetSpent(maxFiles)
-                            digests[pathOf(rootDir, file)] =
-                                runCatching { file.inputStream().use(::sha256) }.getOrDefault(UNREADABLE)
+                            digests[pathOf(rootDir, file)] = runCatching {
+                                digestOf(file::inputStream, pathOf(entry, file), text)
+                            }.getOrDefault(UNREADABLE)
                         }
                     }
                 }
@@ -114,8 +120,9 @@ internal object ClasspathFiles {
                                     digests[key + EXPOSED_SUFFIX] = bytes?.let(::exposed) ?: UNREADABLE
                                     continue
                                 }
-                                digests[key] =
-                                    runCatching { zip.getInputStream(zipped).use(::sha256) }.getOrDefault(UNREADABLE)
+                                digests[key] = runCatching {
+                                    digestOf({ zip.getInputStream(zipped) }, zipped.name, text)
+                                }.getOrDefault(UNREADABLE)
                             }
                             val classPath = zip.manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH).orEmpty()
                             for (token in classPath.split(' ', '\t', '\n', '\r', '\u000c').filter(String::isNotEmpty)) {
@@ -136,8 +143,9 @@ internal object ClasspathFiles {
                 }
                 entry.isFile -> {
                     if (++files > maxFiles) return budgetSpent(maxFiles)
-                    digests[pathOf(rootDir, entry)] =
-                        runCatching { entry.inputStream().use(::sha256) }.getOrDefault(UNREADABLE)
+                    digests[pathOf(rootDir, entry)] = runCatching {
+                        digestOf(entry::inputStream, entry.name, text)
+                    }.getOrDefault(UNREADABLE)
                 }
                 // An entry that does not exist (a resource directory with nothing in it) holds nothing.
             }
@@ -281,6 +289,19 @@ internal object ClasspathFiles {
             .getOrDefault(file.absolutePath)
             .replace(File.separatorChar, '/')
 
+    /**
+     * The digest of what [open] reads: its `\n` form when [text] vouches for it as a copy of a
+     * tracked file at a path ending with [relative], else its bytes. A class file, or one too large
+     * to hold, is only ever digested by its bytes.
+     */
+    private fun digestOf(open: () -> java.io.InputStream, relative: String, text: TrackedText): String {
+        if (relative.endsWith(".class")) return open().use(::sha256)
+        val bytes = open().use { it.readNBytes(TEXT_CAP + 1) }
+        if (bytes.size > TEXT_CAP) return open().use(::sha256)
+        // A lookup that fails only costs the exemption, never the file's digest.
+        return runCatching { text.digest(bytes, relative) }.getOrNull() ?: sha256(ByteArrayInputStream(bytes))
+    }
+
     private fun sha256(input: java.io.InputStream): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(64 * 1024)
@@ -295,4 +316,7 @@ internal object ClasspathFiles {
     private const val NAMED = 5
 
     private const val MAX_FILES = 200_000
+
+    /** The largest file read whole to look for line endings to normalise. */
+    private const val TEXT_CAP = 8 * 1024 * 1024
 }

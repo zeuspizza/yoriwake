@@ -49,9 +49,23 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
         val dir = File(root, "select")
         val other = File(root, "complement")
         selected(dir)
-        // Checked out byte for byte as the fixture wrote it. Under autocrlf the clone's resources
-        // gain '\r', which is another build, and the complement rightly runs everything.
+        // Checked out byte for byte as the fixture wrote it; the next test takes the autocrlf case.
         git(root, "clone", "-q", "-c", "core.autocrlf=false", dir.absolutePath, other.absolutePath)
+        val saved = File(root, "saved").apply { File(dir, ".gradle/yoriwake").copyRecursively(this) }
+
+        val output = runner(other, "test", "-Pyoriwake.complement=${saved.absolutePath}").build().output
+
+        assertEquals(early, ranTests(other), output)
+        assertContains(output, "2 tests left out as already run, 4 run")
+    }
+
+    @Test
+    fun `a complement in an autocrlf clone of the same commit leaves out what the selecting run ran`(@TempDir root: File) {
+        val dir = File(root, "select")
+        val other = File(root, "complement")
+        selected(dir)
+        // Its tracked text resources are checked out with '\r\n', which compares as the same content.
+        git(root, "clone", "-q", "-c", "core.autocrlf=true", dir.absolutePath, other.absolutePath)
         val saved = File(root, "saved").apply { File(dir, ".gradle/yoriwake").copyRecursively(this) }
 
         val output = runner(other, "test", "-Pyoriwake.complement=${saved.absolutePath}").build().output
