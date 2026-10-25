@@ -75,7 +75,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       # Read-only, so the tests' code cannot write a cache the later jobs restore.
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
       # Before anything is attested or published: the release notes are this section, and the last
@@ -164,7 +164,7 @@ jobs:
           java-version: '21'
       # No cache at all: this job holds the keys, and any cache could have been written by a build
       # that ran other code.
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-disabled: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
