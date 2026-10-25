@@ -5,6 +5,8 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ALWAYS_RUN_PROP
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CAPTURE_ROOT_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGE_SET_FILE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.JUNIT4_HOOK_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NARROW_PLAIN_JUNIT4
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LOADED_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERTY
@@ -97,6 +99,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         // Read with `enabled`, for the same reason.
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
+        val narrowPlainRunners = settings.narrowPlainRunners ?: extension.narrowPlainRunners.getOrElse(false)
         val fullRunBranches = RunPlan.fullRunBranches(extension.fullRunBranches.getOrElse(emptyList()), project.path)
         val schedule = Schedule.Limits(
             atLeastOne(extension.fullRunEveryBuilds.orNull, "fullRunEveryBuilds", project.path),
@@ -156,7 +159,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, recordSequentially) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, narrowPlainRunners, recordSequentially) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -173,7 +176,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, largeChange) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, largeChange, narrowPlainRunners) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -216,6 +219,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         projectDir: String,
         declarations: List<Declarations.Declaration>,
         largeChange: Int,
+        narrowPlainRunners: Boolean,
         recordSequentially: Boolean,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
@@ -322,7 +326,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             agent?.let { test.jvmArgs("-javaagent:" + it.absolutePath) }
             test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)
         }
-        configureNonPlatformRunner(test, agent, recording, selecting)
+        configureNonPlatformRunner(test, agent, recording, selecting, runPlan.observing, narrowPlainRunners)
 
         // Carried as serialized text: a plain String round-trips through the configuration cache
         // unchanged. Typed explicitly because Kotlin 2.0 infers `Provider<String?>` here.
@@ -711,7 +715,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             val framework = when (task.options) {
                 is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions ->
                     Audit.TaskFacts.PLATFORM
-                is org.gradle.api.tasks.testing.junit.JUnitOptions -> "JUnit 4, off the Platform"
+                is org.gradle.api.tasks.testing.junit.JUnitOptions -> Audit.TaskFacts.JUNIT4
                 is org.gradle.api.tasks.testing.testng.TestNGOptions -> "TestNG"
                 else -> task.options.javaClass.simpleName
             }
@@ -953,8 +957,15 @@ internal class TestTaskWiring(internal val settings: Settings) {
         agent: java.io.File?,
         alreadyAttached: Boolean,
         selecting: Boolean,
+        observing: Boolean,
+        narrowPlainRunners: Boolean,
     ) {
         val path = agent?.absolutePath
+        // An input, though passed at execution: a run with the flag must not reuse one without it,
+        // nor the reverse. Only when on, so a run without it keeps the cache key it had.
+        if (narrowPlainRunners && (selecting || observing)) {
+            test.inputs.property(NARROW_PLAIN_RUNNERS_PROPERTY, true)
+        }
         test.doFirst { task ->
             if (declinedUnderDevelocity(task as Test)) return@doFirst
             // Every framework: only the attached agent sees what a test JVM loads and reads, which
@@ -966,13 +977,30 @@ internal class TestTaskWiring(internal val settings: Settings) {
             if ((task as Test).options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions) {
                 return@doFirst
             }
-            if (task.options is org.gradle.api.tasks.testing.junit.JUnitOptions) {
+            val junit4 = task.options is org.gradle.api.tasks.testing.junit.JUnitOptions
+            if (junit4) {
                 // Tells the agent that rewriting RunNotifier is the capture path. On a
                 // vintage-engine JVM both paths would steal each other's coverage windows.
                 task.systemProperty(JUNIT4_HOOK_PROPERTY, "true")
             }
+            if (narrowPlainRunners && junit4 && (selecting || observing)) {
+                // The test JVM judges each class with its runner; nothing is decided here.
+                task.systemProperty(NARROW_PLAIN_RUNNERS_PROPERTY, NARROW_PLAIN_JUNIT4)
+                if (selecting && task.systemProperties[REFUSED_PROPERTY] == null) {
+                    task.logger.lifecycle(
+                        "[yoriwake] ${task.path} runs plain JUnit 4, so selection leaves out whole classes, and only " +
+                            "those whose runner runs exactly the class's own methods."
+                    )
+                }
+                return@doFirst
+            }
             // Only the Platform's in-JVM filter deselects, so a task off it runs everything.
-            if (selecting) {
+            if (selecting && narrowPlainRunners && task.options is org.gradle.api.tasks.testing.testng.TestNGOptions) {
+                task.logger.lifecycle(
+                    "[yoriwake] ${task.path} runs TestNG, which narrowPlainRunners does not cover in this release, " +
+                        "so selection runs every test."
+                )
+            } else if (selecting) {
                 task.logger.lifecycle(
                     "[yoriwake] ${task.path} does not run on the JUnit Platform, so selection runs every test."
                 )

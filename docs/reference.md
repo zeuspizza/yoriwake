@@ -595,8 +595,9 @@ everything as `environment-changed` ([The environment fingerprint](#the-environm
 - **Test JVM JDK.** The agent is compiled with `release = 11`, so 11 is the floor. A test JVM on 25
   is tested with Gradle 9.8.0 only: Gradle runs Java 25 toolchains from 9.1.
 - **Not in the table, so not tested on a release:** Android hosts (below), and Kotlin Multiplatform
-  until a release's matrix run has run its functional test; Kotest, plain JUnit 4 and TestNG, which the
-  suite runs in every cell but which are captured and always run in full rather than narrowed
+  until a release's matrix run has run its functional test; Kotest and TestNG, which the suite runs
+  in every cell but which are captured and always run in full rather than narrowed, and plain
+  JUnit 4, which with `narrowPlainRunners` narrows only by whole class
   ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
 
 ### New JDKs
@@ -810,7 +811,8 @@ Three things differ:
   with Test Distribution run locally; what a remote Test Distribution agent does with the agent jar
   on the classpath is not yet investigated. To use yoriwake on such a task, turn the feature off
   for it; how the two could compose is not yet investigated.
-- **Plain JUnit 4 and TestNG selection.** Captured, never narrowed; see the next section.
+- **Plain TestNG selection.** Captured, never narrowed. Plain JUnit 4 narrows by whole class with
+  `narrowPlainRunners`; see the next section.
 - **Changes coverage cannot see.** Resources, build scripts and version catalogs force a full run by
   design.
 - **Tests that commit, check out or stash.** A capture during which HEAD or its reflog moves is not
@@ -841,7 +843,37 @@ is still captured (the agent hooks JUnit 4's `RunNotifier`; TestNG through a lis
 its map current, but it runs its whole suite and says so on every selecting run. The audit reports
 it as `not-on-junit-platform`.
 
-The fix is the JUnit team's own supported path: run JUnit 4 tests through the vintage engine.
+### Narrowing plain JUnit 4 by class
+
+With `narrowPlainRunners = true` (or `-Pyoriwake.narrowPlainRunners`), a selecting run of a
+`useJUnit()` task leaves out whole test classes. Each class is judged in the test JVM, after
+Gradle's own filters, with the runner JUnit picked for it:
+
+- A class is left out only when its runner is on the list below, it holds at least one test, and
+  every test it holds now is one selection would skip. A class with one test that can reach the change, one the map has never
+  seen or one not known to pass runs whole; its other tests are recorded `CLASS_GRANULARITY`.
+- Runners on the list run exactly the class's own methods, one test each: JUnit 4's own
+  (`BlockJUnit4ClassRunner`, `JUnit4`), Mockito's `MockitoJUnitRunner` and its `Silent`, `Strict`
+  and `StrictStubs` variants, and JUnit 3's runner for a `TestCase`. Any other runner, a subclass
+  of one of these, or a class whose tests name another class runs whole, recorded
+  `CLASS_RUNS_WHOLE`, counted under `junit4-runner`, `junit4-shape` or `junit4-not-filterable`.
+- An `@Ignore`d test is not judged, since it never runs and the map never records it. A JUnit 3
+  `TestCase` runs its methods whatever `@Ignore` says, so there every method is judged.
+- A class left out takes the same way out Gradle takes for a class its own filter empties: it
+  leaves no entry in the test report.
+- Mockito's default mock maker and member accessor attach an agent to the test JVM, and a JVM an
+  agent was attached to runs every later test. A suite on those defaults keeps running its classes.
+- `--tests` declines selection as on the Platform. TestNG is not covered yet: with the flag a
+  `useTestNG()` task runs every test and says so.
+- `yoriwakeExplain<Task>` names the classes it expects left out; each runner is judged only when
+  the tests run, so the run may keep more.
+
+Map: left alone. Turning the flag off runs every test again.
+
+### The vintage engine
+
+Without the flag, or for runners the flag runs whole, the JUnit team's own supported path is to
+run JUnit 4 tests through the vintage engine.
 
 ```kotlin
 dependencies {
@@ -1457,6 +1489,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.alwaysRun=<glob>[,<glob>…]` | Tests that may never be skipped, for this run. |
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |
 | `yoriwake.disabled` | Leave the build entirely alone: nothing scoped, injected, captured or selected. |
+| `yoriwake.narrowPlainRunners` | Let a selecting run of a plain JUnit 4 task leave out whole test classes. Overrides the build's `narrowPlainRunners`; `=false` turns it off. See [Narrowing plain JUnit 4 by class](#narrowing-plain-junit-4-by-class). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. |
@@ -1484,6 +1517,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
 | `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |
 | `largeChangeThreshold` | `Int` | `5000` | Above this many changed paths, run every test without analysing the change. |
+| `narrowPlainRunners` | `Boolean` | `false` | Let a selecting run of a plain JUnit 4 task (`useJUnit()`) leave out whole test classes. |
 | `recordSequentially` | `Boolean` | `false` | Record in-JVM parallel suites one test at a time, so they can be selected on. |
 
 For example:

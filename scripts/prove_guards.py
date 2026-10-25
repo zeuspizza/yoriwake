@@ -179,6 +179,7 @@ SCHEDULE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/S
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
 # with it, four columns left: the functions were members of `object Audit` and are now top level.
 AUDIT_COMPUTE = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
+AUDIT = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.kt"
 # The payback engine moved out of Audit.kt; its mutation anchors moved with it, which is the
 # check that the move changed no behaviour -- an anchor left behind refuses before any suite runs.
 PAYBACK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
@@ -724,8 +725,8 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
     # every-guard run measures it.
     "PathIgnoreFunctionalTest": 61,
-    # An estimate: 46 s locally for its 3 tests on both Gradle versions, scaled as SelectionFunctionalTest.
-    "PlainRunnerSelectionFunctionalTest": 60,
+    # An estimate: 46-48 s locally per Gradle version for its 10 tests, scaled as SelectionFunctionalTest.
+    "PlainRunnerSelectionFunctionalTest": 90,
     "MultiProjectFunctionalTest": 36,
     "MultiplatformFunctionalTest": 140,
     "NamedTestsFunctionalTest": 111,
@@ -3740,6 +3741,36 @@ MUTATIONS = [
     # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.
     # Plain JUnit 4: a class is left out only through Gradle's own early return, only when the run
     # asked for it, only for runners that run exactly the class's own methods, ignored tests unjudged.
+    # narrowPlainRunners reaches the test JVM only on a selecting or observing run of a JUnit 4
+    # task, is a task input there, and only a run that had it clears the audit's blocker.
+    ("plain JUnit 4 is narrowed without narrowPlainRunners", TEST_TASK_WIRING,
+     "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
+     "            if (junit4 && (selecting || observing)) {",
+     functional_suite, "without narrowPlainRunners, every class runs"),
+    ("a recording run hands narrowPlainRunners to the agent", TEST_TASK_WIRING,
+     "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
+     "            if (narrowPlainRunners && junit4) {",
+     functional_suite, "a recording run with the flag hands the agent nothing to judge"),
+    ("an observing run hands narrowPlainRunners to no agent", TEST_TASK_WIRING,
+     "            if (narrowPlainRunners && junit4 && (selecting || observing)) {",
+     "            if (narrowPlainRunners && junit4 && selecting) {",
+     functional_suite, "an observing run records what it would leave out and leaves out nothing"),
+    ("the audit takes the flag for the agent's hook", AUDIT,
+     "                    it.copy(plainNarrowed = notes.isNotEmpty() && notes.all { note -> note == AgentContract.PLAIN_FILTER_HOOKED })",
+     "                    it.copy(plainNarrowed = true)",
+     functional_suite, "the audit stops asking for the JUnit Platform once a selecting run narrowed plain JUnit 4"),
+    ("narrowPlainRunners is not a task input", TEST_TASK_WIRING,
+     "            test.inputs.property(NARROW_PLAIN_RUNNERS_PROPERTY, true)\n",
+     "",
+     functional_suite, "the audit stops asking for the JUnit Platform once a selecting run narrowed plain JUnit 4"),
+    ("the audit drops the Platform blocker for any plain JUnit 4 task", AUDIT_COMPUTE,
+     "        facts.framework == TaskFacts.JUNIT4 && facts.plainNarrowed == true -> Unit",
+     "        facts.framework == TaskFacts.JUNIT4 -> Unit",
+     functional_suite, "the audit stops asking for the JUnit Platform once a selecting run narrowed plain JUnit 4"),
+    ("the build's narrowPlainRunners is ignored", TEST_TASK_WIRING,
+     "        val narrowPlainRunners = settings.narrowPlainRunners ?: extension.narrowPlainRunners.getOrElse(false)",
+     "        val narrowPlainRunners = settings.narrowPlainRunners ?: false",
+     functional_suite, "the build's narrowPlainRunners alone narrows"),
     ("the agent's answer to leave a JUnit 4 class out is not taken", JUNIT4_SELECTION,
      "            return current.judge(runner);",
      "            current.judge(runner);\n            return false;",
@@ -3768,7 +3799,7 @@ MUTATIONS = [
      "            if (AgentContract.NARROW_PLAIN_JUNIT4.equals(\n"
      "                    HostBuild.current().property(AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY))) {",
      "            if (true) {",
-     functional_suite, "without the agent told to judge plain JUnit 4, every class runs"),
+     functional_suite, "without narrowPlainRunners, every class runs"),
     ("a class with no test is left out", CLASS_VERDICTS,
      "        boolean allSkipped = !ids.isEmpty();",
      "        boolean allSkipped = true;",
