@@ -85,7 +85,7 @@ def case_the_tokens_the_gate_classifies_on_are_the_ones_the_agent_writes():
     # a note the agent stopped writing is as silent as one it renamed.
     failures = 0
     contract = _read(os.path.join(AGENT, "contract", "AgentContract.java"))
-    selection = _read(os.path.join(AGENT, "platform", "SelectionFilter.java"))
+    selection = _read(os.path.join(AGENT, "select", "SelectionRun.java"))
     reader = _read(os.path.join(HERE, "run.py"))
     sweep = _read(os.path.join(HERE, "sweep_corpus.py"))
     values = {name: _java_constant(contract, name) for name in (
@@ -130,6 +130,7 @@ def case_the_rule_names_run_py_reads_are_the_ones_the_agent_writes():
         ("RULES_NOTE", run.DECISION_RULES_NOTE),
         ("FORCING_KINDS_NOTE", run.DECISION_FORCING_KINDS_NOTE),
         ("RULE_CLASS_GRANULARITY", run.CLASS_GRANULARITY_RULE),
+        ("RULE_CLASS_RUNS_WHOLE", run.CLASS_RUNS_WHOLE_RULE),
         ("RULE_NONE", run.RULE_NONE),
         ("RULE_UNKNOWN", run.RULE_UNKNOWN),
     ):

@@ -244,7 +244,7 @@ internal abstract class DecodeTask : DefaultTask() {
         val observedEverything = datesTheMap && (!selecting || executedEverything)
         if (observedEverything && unfinished.isNotEmpty()) {
             logger.warn(
-                "[yoriwake] $taskPath: ${unfinished.joinToString()} did not finish its run (a test " +
+                "[yoriwake] $taskPath: ${CoverageDecoder.describeUnfinished(mapDir, unfinished)} did not finish its run (a test " +
                     "that exited the JVM, or a worker that was killed or crashed), so the map " +
                     "is not dated: the tests it never reached keep records from an older " +
                     "capture, and selection widens across every commit since the last " +
@@ -264,7 +264,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 // A narrowed selecting run is not a capture; it never meant to write the map.
                 selecting && !executedEverything -> null
                 !datesTheMap -> undatedReason.ifEmpty { "the run was filtered" }
-                unfinished.isNotEmpty() -> "${unfinished.joinToString()} did not finish"
+                unfinished.isNotEmpty() -> "${CoverageDecoder.describeUnfinished(mapDir, unfinished)} did not finish"
                 headMoved -> "HEAD moved from ${startHead ?: "nothing"} to ${headNow ?: "something unreadable"} during the run"
                 startReflogs.first != reflogsNow.first -> "HEAD's reflog changed during the run"
                 startReflogs.second != reflogsNow.second -> "the stash's reflog changed during the run"

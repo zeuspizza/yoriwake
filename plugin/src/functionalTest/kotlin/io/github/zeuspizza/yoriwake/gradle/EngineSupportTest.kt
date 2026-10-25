@@ -270,7 +270,7 @@ class EngineSupportTest {
     }
 
     /** Two Kotest specs, each reaching only its own subject; returns a writer of a subject's source. */
-    private fun kotestProject(dir: File, testConfig: String = ""): (String, String) -> Pair<String, String> {
+    private fun kotestProject(dir: File, testConfig: String = "", kotest: String = "5.9.1"): (String, String) -> Pair<String, String> {
         // Kotest ships its own JUnit Platform engine rather than running on Jupiter.
         File(dir, "settings.gradle.kts").writeText("""rootProject.name = "engine"""")
         File(dir, "build.gradle.kts").writeText(
@@ -282,7 +282,7 @@ class EngineSupportTest {
             }
             repositories { mavenCentral() }
             dependencies {
-                testImplementation("io.kotest:kotest-runner-junit5:5.9.1")
+                testImplementation("io.kotest:kotest-runner-junit5:$kotest")
                 testRuntimeOnly("org.junit.platform:junit-platform-launcher")
             }
             kotlin { jvmToolchain(21) }
@@ -320,6 +320,45 @@ class EngineSupportTest {
                 )
         }
         return subject
+    }
+
+    @Test
+    fun `a Kotest test its container's timeout leaves unfinished does not discard the capture`(@TempDir dir: File) {
+        // Kotest 5.9.1 reports neither the container nor the test here; the release the issue's
+        // capture used starts the test and never finishes it.
+        kotestProject(dir, kotest = "6.2.6")
+        File(dir, "src/test/kotlin/dev/engine/TimeoutSpec.kt").writeText(
+            """
+            package dev.engine
+
+            import io.kotest.core.spec.style.ShouldSpec
+            import io.kotest.engine.test.TestResult
+            import kotlinx.coroutines.delay
+            import kotlin.time.Duration.Companion.milliseconds
+
+            // As kotest's own timeout tests do: a timeout turned into a success, so the container
+            // finishes successfully while the engine never finishes the test inside it.
+            class TimeoutSpec : ShouldSpec() {
+                init {
+                    extension { (testCase, execute) ->
+                        execute(testCase)
+                        TestResult.Success(0.milliseconds)
+                    }
+                    context("times out").config(timeout = 10.milliseconds) {
+                        should("never finish") { delay(1_000) }
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+
+        val output = runner(dir, "test").build().output
+
+        kotlin.test.assertFalse("did not finish" in output, output)
+        assertContains(output, "map updated:")
+        val map = dir.walkTopDown().first { it.name == "coverage.tsv" }.readLines()
+        val row = map.singleOrNull { "never finish" in it } ?: error(map.filter { "Timeout" in it }.joinToString("\n") + "\n" + output)
+        assertTrue(row.startsWith("UNKNOWN\t"), row)
     }
 
     @Test
