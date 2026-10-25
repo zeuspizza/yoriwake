@@ -28,5 +28,5 @@ private fun <T> invalidUserData(block: () -> T): T =
     try {
         block()
     } catch (rejected: RunPlan.Rejected) {
-        throw InvalidUserDataException(rejected.message.orEmpty(), rejected)
+        throw InvalidUserDataException(rejected.message.orEmpty())
     }
