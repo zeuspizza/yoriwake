@@ -44,6 +44,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Fixed
 
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
+- A plain JUnit 4 class whose `@BeforeClass`, `@AfterClass` or class rule fails runs again on the next selecting run. Map: left alone.
 
 ## [0.3.0] - 2026-10-22
 

@@ -154,6 +154,7 @@ COVERAGE_DECODER = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/c
 SETTINGS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/Settings.kt"
 RUN_PLAN = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/RunPlan.kt"
 CAPTURE_SESSION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureSession.java"
+JUNIT4_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Events.java"
 TESTNG_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/TestNgEvents.java"
 TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/TouchRecorder.java"
 # Whether a class is the JDK's own, judged by the runtime image rather than by the loader alone.
@@ -716,7 +717,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from HostCoverageFunctionalTest by local run time (40 s to its 15 s), until an
     # every-guard run measures it.
     "KoverFunctionalTest": 160,
-    "MapDatingFunctionalTest": 229,
+    # Plus 8 s measured locally for the two plain JUnit 4 class-failure tests, until an every-guard
+    # run measures it again.
+    "MapDatingFunctionalTest": 237,
     "MapProvenanceFunctionalTest": 98,
     # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
     # every-guard run measures it.
@@ -4194,6 +4197,17 @@ MUTATIONS = [
     ("the reference quotes a printed line the code does not print", REFERENCE_DOC,
      "`:test map updated: N records captured, M known`", "`:test map refreshed: N records captured, M known`",
      reference_suite, "every printed line is printed"),
+    # JUnit 4 reports a failing @BeforeClass, @AfterClass or @ClassRule against the class: each
+    # test beneath it is recorded failed, so a capture that dates the map leaves none known to pass.
+    ("a JUnit 4 class-level failure is dropped", JUNIT4_EVENTS,
+     "            } else if (classNameOf(description) != null) {",
+     "            } else if (false) {",
+     functional_suite, "a plain JUnit 4 class whose teardown fails after its tests passed still runs"),
+    # A runner test's fixture class failing inside JUnitCore is that nested run's, not a test of the run.
+    ("a nested run's class-level failure is recorded", CAPTURE_SESSION,
+     "        if (nestedRuns) {\n            // A nested run reports its own class-level failures",
+     "        if (false) {\n            // A nested run reports its own class-level failures",
+     agent_suite, "a class-level failure inside an open test is a nested run's, and records nothing"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.

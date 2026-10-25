@@ -284,6 +284,32 @@ class CaptureSessionTest {
     }
 
     @Test
+    fun `a class-level failure with no test open records every test beneath it failed`() {
+        // A teardown that throws after its tests passed: each is now known not to pass.
+        val session = session()
+        session.started(alpha)
+        session.finished(alpha, null)
+        session.failedByContainer("[engine:junit4]/[class:com.acme.AlphaTest]") { listOf(alpha, beta) }
+
+        assertEquals(
+            listOf("FAILED" to alpha, "FAILED" to beta),
+            recorded().filter { it.first == "FAILED" },
+        )
+    }
+
+    @Test
+    fun `a class-level failure inside an open test is a nested run's, and records nothing`() {
+        // A runner test that hands a fixture class with a failing teardown to JUnitCore.
+        val session = session()
+        session.started(alpha)
+        session.failedByContainer("[engine:junit4]/[class:com.acme.Fixture]") { listOf(beta) }
+        session.finished(alpha, null)
+        session.endAtShutdown(false)
+
+        assertEquals(listOf("SUCCESSFUL" to alpha), recorded().filter { it.first != "NONE" })
+    }
+
+    @Test
     fun `a test that starts after the run said it finished makes it unfinished again`() {
         val session = session()
         session.started(alpha)

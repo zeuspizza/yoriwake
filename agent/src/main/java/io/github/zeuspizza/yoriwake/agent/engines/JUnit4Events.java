@@ -2,6 +2,8 @@ package io.github.zeuspizza.yoriwake.agent.engines;
 
 import io.github.zeuspizza.yoriwake.agent.capture.JvmSession;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Where the instrumented {@code RunNotifier} calls back to.
@@ -41,17 +43,51 @@ public final class JUnit4Events {
     /**
      * Called at the head of {@code RunNotifier.fireTestFailure}, which takes a {@code Failure}.
      *
-     * <p>Recorded because a test not known to have passed is always re-run.
+     * <p>Recorded because a test not known to have passed is always re-run. A class or a suite
+     * fails against its own description when its {@code @BeforeClass}, {@code @AfterClass} or a
+     * {@code @ClassRule} throws: before its tests, which then report nothing, or after they passed.
+     * Every test beneath it is recorded failed, so none reads as known to pass.
      */
     public static void failed(Object failure) {
         try {
             Method getDescription = failure.getClass().getMethod("getDescription");
-            String id = idOf(getDescription.invoke(failure));
+            Object description = getDescription.invoke(failure);
+            String id = idOf(description);
             if (id != null) {
                 JvmSession.EVENTS.failed(id);
+            } else if (classNameOf(description) != null) {
+                // Read inside the supplier: a description that cannot be listed counts as a capture
+                // failure, and a worker with one is never marked complete.
+                JvmSession.EVENTS.failedByContainer(
+                        "[engine:junit4]/[class:" + classNameOf(description) + "]", () -> testsBeneath(description));
             }
         } catch (Throwable ignored) {
             // Left as an unknown outcome, which the selector resolves toward running the test.
+        }
+    }
+
+    private static Object classNameOf(Object description) throws Exception {
+        return description.getClass().getMethod("getClassName").invoke(description);
+    }
+
+    /** The ids of every test beneath {@code description}, a suite's classes' tests included. */
+    static List<String> testsBeneath(Object description) {
+        List<String> into = new ArrayList<>();
+        collect(description, into);
+        return into;
+    }
+
+    private static void collect(Object description, List<String> into) {
+        try {
+            String id = idOf(description);
+            if (id != null) {
+                into.add(id);
+            }
+            for (Object child : (Iterable<?>) description.getClass().getMethod("getChildren").invoke(description)) {
+                collect(child, into);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("listing the tests beneath " + description, e);
         }
     }
 
