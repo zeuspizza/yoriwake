@@ -41,10 +41,14 @@ decline-kind	includes-rejected
 decline-kind	isolated-projects
 decline-kind	jacoco-disabled
 decline-kind	kotlin-multiplatform
+decline-kind	maven-version
 decline-kind	no-host-plugin
 decline-kind	no-jacoco-extension
 decline-kind	no-jacoco-plugin
 decline-kind	no-packages-derived
+decline-kind	surefire-in-process
+decline-kind	surefire-legacy-provider
+decline-kind	surefire-version
 digest-silence	digest-table-absent
 digest-silence	digest-walk-budget-spent
 digest-silence	digest-walk-nothing-to-scan

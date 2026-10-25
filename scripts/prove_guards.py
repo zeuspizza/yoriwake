@@ -168,6 +168,7 @@ ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/A
 CAPTURE_CLAIM = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureClaim.java"
 PLATFORM_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/PlatformEvents.java"
 MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenHost.java"
+MAVEN_DECLINES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Declines.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -546,6 +547,20 @@ def functional_suite(test_class=None):
     return named
 
 
+def maven_suite():
+    """Real Maven builds over the Maven plugin's fixtures: the declines, the class a guard names."""
+    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--rerun"])
+    if done.returncode == 0:
+        return []
+    lines = (done.stdout + done.stderr).splitlines()
+    named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
+    if not named:
+        compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
+            if compile_errors else ["the Maven suite failed without naming a test"]
+    return named
+
+
 def decoder_suite():
     """The decoder's own tests, where a map that parses and means something else is caught."""
     done = gradle([":plugin:test", "--tests", "*CoverageDecoderTest*", "--rerun"])
@@ -676,6 +691,9 @@ SUITES = [
     ("configuration guards", guard_suite, 17),
     ("python", python_suite, 33),
     ("functional", functional_suite, 68),
+    # An estimate: five Maven builds of the demo reactor, about 8s each warm on an Apple M1 Max, plus
+    # the plugin's publish, until a guard run measures it.
+    ("maven", maven_suite, 60),
     # 50s wall for one unmutated run, the plugin and agent compiled from
     # scratch in a fresh worktree; its eight tests took 39s of it.
     ("break", break_suite, 50),
@@ -4181,6 +4199,12 @@ MUTATIONS = [
     ("the reference quotes a printed line the code does not print", REFERENCE_DOC,
      "`:test map updated: N records captured, M known`", "`:test map refreshed: N records captured, M known`",
      reference_suite, "every printed line is printed"),
+    # forkCount=0 runs Surefire inside Maven's own JVM, which no agent joins: it must be declined
+    # by name rather than wired and silently capture nothing.
+    ("forkCount 0 is not declined", MAVEN_DECLINES,
+     "        if (forkCount != null && forks(forkCount) == 0) {",
+     "        if (false) {",
+     maven_suite, "forkCount 0 runs Surefire inside Maven's own JVM and is declined"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
@@ -4211,10 +4235,11 @@ SUITE_TESTS = {
     "python": ("bench/test_run.py",),
     "functional": ("plugin/src/functionalTest/",),
     "break": ("plugin/src/functionalTest/",),
+    "maven": ("maven/src/functionalTest/", "samples/demo-maven/"),
 }
 # A change to how the Gradle suites are BUILT can break any of them, so it selects all of them.
 GRADLE_SUITES = {"decoder", "agent", "jdk identity", "unit", "configuration guards", "functional",
-                 "replay", "break", "sbom", "portal", "reference"}
+                 "replay", "break", "sbom", "portal", "reference", "maven"}
 # Run with NOTHING beside them. The functional suite has failed unmutated in a worker while only
 # Python suites ran next to it, and passed alone in the same tree: its TestKit builds compare
 # file timestamps, and load moves them. Its guards run after the parallel phase, one at a time. The
@@ -4423,6 +4448,7 @@ WARM_UP = {
     "functional": ":plugin:functionalTestClasses",
     "configuration guards": ":plugin:functionalTestClasses",
     "break": ":plugin:functionalTestClasses",
+    "maven": ":maven:functionalTestClasses",
 }
 
 

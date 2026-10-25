@@ -49,6 +49,18 @@ internal sealed class ScopeOutcome(val detail: String) {
 
             /** A Kotlin Multiplatform module that cannot be scoped. */
             KOTLIN_MULTIPLATFORM("kotlin-multiplatform"),
+
+            /** The running Maven is older than the oldest this plugin supports, or not a release. */
+            MAVEN_VERSION("maven-version"),
+
+            /** The Surefire or Failsafe plugin is older than the oldest this plugin supports. */
+            SUREFIRE_VERSION("surefire-version"),
+
+            /** `forkCount=0`: the tests run inside Maven's own JVM, which no agent can join. */
+            SUREFIRE_IN_PROCESS("surefire-in-process"),
+
+            /** A Surefire provider other than the JUnit Platform's, where no filter can select. */
+            SUREFIRE_LEGACY_PROVIDER("surefire-legacy-provider"),
         }
     }
 }

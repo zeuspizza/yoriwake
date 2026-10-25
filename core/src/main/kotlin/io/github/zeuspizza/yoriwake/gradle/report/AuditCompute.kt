@@ -348,6 +348,23 @@ internal fun Audit.blockers(
                             "through a convention plugin, for example behind a project " +
                             "property, so check yours and enable it for the runs you want " +
                             "selected. Nothing is captured until you do."
+                    ScopeOutcome.NotApplied.Kind.MAVEN_VERSION ->
+                        "run the build on a released Maven, 3.9.0 or newer. Below it, or on a " +
+                            "release candidate, the plugin declines rather than rely on hooks it " +
+                            "has not been proven against, and every run is a full run."
+                    ScopeOutcome.NotApplied.Kind.SUREFIRE_VERSION ->
+                        "use maven-surefire-plugin and maven-failsafe-plugin 3.0.0 or newer. " +
+                            "Older ones are not supported, so the execution is declined and " +
+                            "runs every test."
+                    ScopeOutcome.NotApplied.Kind.SUREFIRE_IN_PROCESS ->
+                        "set `forkCount` to 1 or more. With 0 the tests run inside Maven's own " +
+                            "JVM, which neither the JaCoCo agent nor yoriwake's can join, so " +
+                            "nothing is captured and every test runs."
+                    ScopeOutcome.NotApplied.Kind.SUREFIRE_LEGACY_PROVIDER ->
+                        "run the suite on the JUnit Platform: remove the legacy provider from " +
+                            "the plugin's dependencies, and add the Vintage or TestNG engine for " +
+                            "JUnit 4 or TestNG tests. Selection happens in the Platform's " +
+                            "discovery, which a legacy provider never reaches."
                     ScopeOutcome.NotApplied.Kind.NO_JACOCO_EXTENSION,
                     ScopeOutcome.NotApplied.Kind.INCLUDES_REJECTED -> null
                 },
