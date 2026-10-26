@@ -30,8 +30,10 @@ test_task = "testPlayDebugUnitTest"
 # duckduckgo-android's is.
 test_classes_task = "compilePlayDebugUnitTestJavaWithJavac"
 
-# Bounds every Kotlin compile daemon the build starts; see the memory note below.
-flags = ["-Pkotlin.daemon.jvmargs=-Xmx2g"]
+# Bounds every Kotlin compile daemon the build starts; see the memory note below. Its unit tests
+# run in parallel inside each JVM, which a recording run declines unless it records them one at a
+# time: `recordSequentially` does, so the capture leaves a map.
+flags = ["-Pkotlin.daemon.jvmargs=-Xmx2g", "-Pyoriwake.recordSequentially"]
 sources = ["AnkiDroid/src/main/java"]
 
 # MEMORY, for the 16 GB CI runner, which was shut down mid-recording in every full run on it,

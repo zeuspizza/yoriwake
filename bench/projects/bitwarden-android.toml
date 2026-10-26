@@ -53,7 +53,12 @@ test_task = "testStandardDebugUnitTest"
 # kapt and ksp phases a mutation can fail in. Read from this project's own build logs, as
 # duckduckgo-android's is.
 test_classes_task = "compileStandardDebugUnitTestJavaWithJavac"
-flags = []
+# The guest's own 2 GB test heap fills on a CI runner and ends in back-to-back full collections,
+# with and without yoriwake (the agent adds 10-35 MB of live heap), until the build is killed for
+# silence. Every build of both arms gets 3 GB, on 2 forks so they fit the 16 GB runner beside the
+# 4 GB daemon.
+flags = ["-I", "{yoriwake}/bench/test-heap.init.gradle", "-Dyoriwake.harness.testHeap=3g"]
+max_parallel_forks = 2
 # The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
 # every commit, which is the opposite of what this key is for, and the replay refuses it.
 sources = ["app/src/main/kotlin"]
