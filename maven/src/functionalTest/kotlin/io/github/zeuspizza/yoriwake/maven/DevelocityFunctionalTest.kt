@@ -80,6 +80,24 @@ class DevelocityFunctionalTest {
     }
 
     @Test
+    fun `a setting that cannot be read as true or false declines`(@TempDir dir: File) {
+        val project = withDevelocity(dir, "<predictiveSelection><enabled>\${nobody.sets.this}</enabled></predictiveSelection>")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Ddevelocity.testing.fallbackToRegularExecutionOnMissingPrerequisites=true").output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, develocity-undetermined: ")
+    }
+
+    @Test
+    fun `explain reports a declined execution as running everything`(@TempDir dir: File) {
+        val project = withDevelocity(dir, "<predictiveSelection><enabled>true</enabled></predictiveSelection>")
+
+        val output = FunctionalMaven.run(maven, project, "test-compile", "yoriwake:explain", "-pl", "lib").output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) would run everything: declined, develocity-test-selection")
+    }
+
+    @Test
     fun `with Develocity loaded and neither feature on the execution captures`(@TempDir dir: File) {
         val project = withDevelocity(dir)
 

@@ -59,11 +59,18 @@ internal object BuildCache {
                     })
                 }
                 val root = if (artifactId.startsWith("develocity")) "develocity" else "gradleEnterprise"
-                management.addPlugin(Plugin().apply {
-                    groupId = "com.gradle"
-                    this.artifactId = artifactId
-                    configuration = Xpp3Dom("configuration").apply { addChild(Xpp3Dom(root).apply { addChild(plugins) }) }
-                })
+                val ours = Xpp3Dom("configuration").apply { addChild(Xpp3Dom(root).apply { addChild(plugins) }) }
+                // Into the build's own entry when it has one, so a second entry cannot shadow either.
+                val existing = management.plugins.firstOrNull { it.groupId == "com.gradle" && it.artifactId == artifactId }
+                if (existing != null) {
+                    existing.configuration = Xpp3Dom.mergeXpp3Dom(ours, existing.configuration as? Xpp3Dom)
+                } else {
+                    management.addPlugin(Plugin().apply {
+                        groupId = "com.gradle"
+                        this.artifactId = artifactId
+                        configuration = ours
+                    })
+                }
             }
         }
     }

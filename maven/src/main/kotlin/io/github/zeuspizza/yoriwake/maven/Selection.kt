@@ -63,6 +63,11 @@ internal class Selection(private val session: MavenSession, private val root: Fi
 
     /** Reads what can fail the build, so it fails when the build starts rather than at a test goal. */
     fun validate() {
+        try {
+            RunPlan.check(asked) { "-D$it" }
+        } catch (rejected: RunPlan.Rejected) {
+            throw MavenExecutionException(rejected.message, null as Throwable?)
+        }
         trusted
     }
 
@@ -113,6 +118,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
          * out, with the base it compared against, to [worked].
          */
         explaining: Boolean = false,
+        /** The map's name in a trusted-map list; differs from [mapDir]'s when explaining on a copy. */
+        listedName: String = mapDir.name,
         worked: (SelectingStep.Worked, String) -> Unit = { _, _ -> },
     ): RunPlan.Kind {
         val host = Host(name, properties)
@@ -140,22 +147,18 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         val observing = plan.observing
         // Beside the selecting properties below, or a decline's refusal.
         if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")
-        if (plan.declines.isNotEmpty() && observing) {
-            val first = plan.declines.first()
-            host.refuse(first.kind, first.reason)
-            host.property(AgentContract.DECLINES_PROPERTY, plan.declines.joinToString(",") { it.kind.token })
-            declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir)).delete()
-            host.lifecycle(
-                "[yoriwake] $name: ${plan.declines.joinToString("; ") { it.reason }}, so a selecting run would run " +
-                    "every test, and that is what this run observes."
-            )
-            return RunPlan.Kind.OBSERVE
-        }
         if (plan.declines.isNotEmpty()) {
             val first = plan.declines.first()
             host.refuse(first.kind, first.reason)
             host.property(AgentContract.DECLINES_PROPERTY, plan.declines.joinToString(",") { it.kind.token })
             declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir)).delete()
+            if (observing) {
+                host.lifecycle(
+                    "[yoriwake] $name: ${plan.declines.joinToString("; ") { it.reason }}, so a selecting run would run " +
+                        "every test, and that is what this run observes."
+                )
+                return RunPlan.Kind.OBSERVE
+            }
             SelectingStep.declined(host, mapDir, plan.declines.map { it.reason }, SettingNames.SELECT, isolatedCapture)
             return RunPlan.Kind.RECORD
         }
@@ -185,7 +188,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         }
         // First of the checks a selecting run makes once it has a change set, as on Gradle.
         trusted?.let { listed ->
-            MapProvenance.verify(mapDir, listed[mapDir.name]).refusal?.let { (refusal, reason) ->
+            MapProvenance.verify(mapDir, listed[listedName]).refusal?.let { (refusal, reason) ->
                 host.lifecycle(
                     "[yoriwake] ${host.name}: $reason, so the whole suite runs and records a new map. A map " +
                         "narrows here only when -D${SettingNames.TRUSTED_MAPS} names its digest, as a run on the " +

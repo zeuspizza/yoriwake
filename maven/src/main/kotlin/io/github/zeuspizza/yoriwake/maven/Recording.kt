@@ -128,6 +128,10 @@ internal class Recording(
             log.warn("[yoriwake] $name: ${notCompiled(project)}")
             return
         }
+        // Before the configuration is touched: a wiring that fails part-way must leave no earlier run's
+        // file for the test JVM to read, which then refuses and runs every test.
+        File(mapDir, AgentContract.RUN_FILE).delete()
+        File(mapDir, AgentContract.CHANGE_SET_FILE).delete()
         val configuration = execution.configuration ?: Xpp3Dom("configuration")
         // Nothing runs, so nothing of the last run's is cleared and the map is not touched.
         if (skipsTests(project, execution, configuration)) return
@@ -260,11 +264,6 @@ internal class Recording(
 
     private fun view(project: MavenProject, classpath: List<File>): ClasspathView = classpathView(session, root, project, classpath)
 
-    /**
-     * Why this execution cannot date the map, or null when it can: tests named on the command line
-     * or in a file narrow the run, and stopping after a failure leaves later tests unobserved. The
-     * JUnit Platform's own filters (`groups`, engines) still date it, as Gradle's do.
-     */
     /** A Surefire or Failsafe parameter as this execution resolves it: its POM value, else its user property. */
     private fun parameter(project: MavenProject, configuration: Xpp3Dom, name: String, property: String): String? =
         configuration.getChild(name)?.value?.trim()?.takeUnless { it.isEmpty() || it.startsWith("\${") }
@@ -285,13 +284,22 @@ internal class Recording(
             configuration.getChild("systemPropertyVariables")?.children.orEmpty()
                 .associate { it.name to resolved(project, it.value).orEmpty() },
         hostArguments,
-        listOf("includes", "excludes").flatMap { group ->
-            configuration.getChild(group)?.children.orEmpty().map { "$group ${it.value.orEmpty().trim()}" }
-        } + listOf("groups", "excludedGroups", "test").mapNotNull { name ->
+        // Surefire's own classpath changes too: a profile can add or exclude entries Maven's model does not show.
+        listOf("includes", "excludes", "additionalClasspathElements", "classpathDependencyExcludes").flatMap { group ->
+            configuration.getChild(group)?.children.orEmpty().map { it.value.orEmpty().trim() }
+                // yoriwake's own agent, which wiring adds by an absolute path another machine does not share.
+                .filterNot { File(it).parentFile == File(home, "agent") }
+                .map { "$group $it" }
+        } + listOf("groups", "excludedGroups", "test", "classpathDependencyScopeExclude").mapNotNull { name ->
             parameter(project, configuration, name, name)?.let { "$name $it" }
         },
     )
 
+    /**
+     * Why this execution cannot date the map, or null when it can: tests named on the command line
+     * or in a file narrow the run, and stopping after a failure leaves later tests unobserved. The
+     * JUnit Platform's own filters (`groups`, engines) still date it, as Gradle's do.
+     */
     private fun undatedBy(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom): String? {
         fun parameter(name: String, property: String): String? = parameter(project, configuration, name, property)
         val failsafe = execution.artifactId == FAILSAFE

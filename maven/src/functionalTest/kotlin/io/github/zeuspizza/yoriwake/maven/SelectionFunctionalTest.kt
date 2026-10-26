@@ -181,6 +181,27 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `two run kinds asked together fail the build before any test runs`(@TempDir dir: File) {
+        val project = captured(dir)
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.observe")
+
+        assertContains(result.output, "-Dyoriwake.select and -Dyoriwake.observe were set together")
+        assertFalse("Tests run:" in result.output, result.output)
+        assertTrue(result.exitCode != 0, result.output)
+    }
+
+    @Test
+    fun `a complement run with no selecting run before it runs everything`(@TempDir dir: File) {
+        val project = captured(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "no selection.tsv for lib surefire:test (default-test) in this build's map directory")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
     fun `an empty change set runs every test`(@TempDir dir: File) {
         val project = captured(dir)
 

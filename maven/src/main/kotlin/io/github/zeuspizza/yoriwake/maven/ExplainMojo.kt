@@ -52,6 +52,19 @@ class ExplainMojo : AbstractMojo() {
 
     private fun explain(each: TestExecutions.Found, mapDir: File, root: File, classpath: List<File>, selection: Selection) {
         val name = each.name
+        // Declined as the build would decline it, in the same order, before any selection step.
+        val agentGoal = each.ownAgentGoal.takeIf { JacocoAdoption.executions(project, it).isNotEmpty() }
+            ?: JacocoAdoption.PREPARE_AGENT
+        val declined = DevelocityDetection.decline(project, each.execution, session)
+            ?: Declines.of(project, each.plugin, each.execution, session)
+            ?: BuildCache.decline(session)
+            ?: JacocoAdoption.decline(project, agentGoal, session)
+        if (declined != null) {
+            val reason = "declined, ${declined.kind.token}: ${declined.detail}"
+            consoleLog.info("[yoriwake] $name would run everything: $reason")
+            writeUnanswered(mapDir, name, "", Selector.Decision.FullRunKind.DAEMON_REFUSED, reason, refusalKind = declined.kind.token)
+            return
+        }
         // The selecting steps write the change set and the capture markers beside the map they read.
         val copy = Files.createTempDirectory("yoriwake-explain").toFile()
         try {
@@ -66,6 +79,7 @@ class ExplainMojo : AbstractMojo() {
                 stopsAfterFailure = true,
                 properties = properties,
                 explaining = true,
+                listedName = mapDir.name,
                 worked = { done, base -> worked = done to base },
             )
             val refused = properties.getProperty(AgentContract.REFUSED_PROPERTY)

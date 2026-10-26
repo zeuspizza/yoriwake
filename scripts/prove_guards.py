@@ -4461,8 +4461,8 @@ MUTATIONS = [
      maven_suite, "explain says what a selecting run would run and writes its file"),
     # With a trusted-map list, a map it does not vouch for never narrows.
     ("the Maven provenance check refuses nothing", MAVEN_SELECTION,
-     "            MapProvenance.verify(mapDir, listed[mapDir.name]).refusal?.let { (refusal, reason) ->",
-     "            MapProvenance.verify(mapDir, listed[mapDir.name]).refusal?.takeIf { false }?.let { (refusal, reason) ->",
+     "            MapProvenance.verify(mapDir, listed[listedName]).refusal?.let { (refusal, reason) ->",
+     "            MapProvenance.verify(mapDir, listed[listedName]).refusal?.takeIf { false }?.let { (refusal, reason) ->",
      maven_suite, "a map the list does not name runs every test and records a new map"),
     # The Apache build cache restores an execution without starting it, so nothing could select it.
     ("the Apache build cache is ignored", MAVEN_BUILD_CACHE,
@@ -4478,6 +4478,21 @@ MUTATIONS = [
      "            distribution == true -> ScopeOutcome.NotApplied(",
      "            false && distribution == true -> ScopeOutcome.NotApplied(",
      maven_suite, "Test Distribution on an execution declines it"),
+    # Two run kinds together must fail the build before any execution is wired.
+    ("Maven run kinds asked together only warn", MAVEN_SELECTION,
+     '            RunPlan.check(asked) { "-D$it" }\n',
+     "",
+     maven_suite, "two run kinds asked together fail the build before any test runs"),
+    # Explain says what the build would do, declines included.
+    ("Maven explain ignores the declines", MAVEN_EXPLAIN,
+     "        if (declined != null) {",
+     "        if (false) {",
+     maven_suite, "explain reports a declined execution as running everything"),
+    # Develocity loaded and its settings unreadable: doubt declines.
+    ("Develocity's unreadable settings are read as off", MAVEN_DEVELOCITY,
+     "            distribution == null || selection == null -> ScopeOutcome.NotApplied(",
+     "            false -> ScopeOutcome.NotApplied(",
+     maven_suite, "a setting that cannot be read as true or false declines"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",
