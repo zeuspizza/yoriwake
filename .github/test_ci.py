@@ -1770,7 +1770,7 @@ def release_problems(text):
     if found:
         return found
     allowed = {
-        "verify": [["build"]],
+        "verify": [["build", ":maven:functionalTest"]],
         "publish": [[":plugin:signReleaseRepository"], [":plugin:publishReleaseRepository"]],
         "attest": [],
         "publish-maven": [],
@@ -1901,6 +1901,7 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
             "      - name: the Maven Central bundle is complete\n", "      - name: nothing\n        if: false\n", 1).replace(
             "python3 scripts/central_bundle.py release/repository io.github.zeuspizza yoriwake-maven-plugin\n          \"$VERSION\"",
             "true\n          \"$VERSION\"", 1),
+        "the release skips the Maven suite": text.replace(" :maven:functionalTest -PreleaseVersion", " -PreleaseVersion", 1),
         "a rehearsal runs anywhere": text.replace("            main|release/*) ;;\n", "", 1),
         "a rehearsal runs any commit": text.replace('[ "$CANDIDATE" = "$GITHUB_SHA" ] ||', "true ||", 1),
     }
