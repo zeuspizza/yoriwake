@@ -16,8 +16,8 @@
   Run only the tests your change can affect.
 </p>
 
-**yoriwake** (選り分け, *yo-ri-wa-ke*, Japanese for sorting out) is a Gradle plugin that records
-which code each test executes, then on later runs skips the tests a change cannot reach. When it
+**yoriwake** (選り分け, *yo-ri-wa-ke*, Japanese for sorting out) is a Gradle plugin that records which
+code each test executes, then on later runs skips the tests your change does not affect. When it
 cannot prove that skipping is safe, it runs the whole suite and tells you why. It runs locally,
 inside your build: no service, no account.
 
@@ -26,7 +26,8 @@ inside your build: no service, no account.
 Gradle reruns a test task whenever any of its inputs changed, and then it runs all of it. On a
 suite that takes minutes, most of those tests have nothing to do with the line you just edited.
 yoriwake adds test selection inside the task, decided from recorded per-test coverage rather than
-from build history, so the answer is a rule you can check, not a prediction.
+from build history, so the answer is a rule you can check, not a prediction, unlike predictive test
+selection.
 
 It is meant for:
 
