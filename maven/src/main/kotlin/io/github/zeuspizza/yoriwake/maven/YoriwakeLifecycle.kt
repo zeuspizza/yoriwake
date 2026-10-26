@@ -38,6 +38,8 @@ internal class YoriwakeLifecycle @Inject constructor(
 
         val facts = ReactorFacts(session)
         val wired = mutableMapOf<String, ScopeOutcome>()
+        val cached = BuildCache.decline(session)
+        BuildCache.optOutDevelocity(session)
         for (project in session.projects) {
             val runs = TestExecutions.of(session, listOf(project)).map { found ->
                 // Failsafe's JVMs take `prepare-agent`'s argLine when the build has no integration goal.
@@ -45,7 +47,9 @@ internal class YoriwakeLifecycle @Inject constructor(
                     ?: JacocoAdoption.PREPARE_AGENT
                 Run(
                     found.name, found.key, agentGoal,
-                    Declines.of(project, found.plugin, found.execution, session) ?: JacocoAdoption.decline(project, agentGoal, session),
+                    DevelocityDetection.decline(project, found.execution, session)
+                        ?: Declines.of(project, found.plugin, found.execution, session) ?: cached
+                        ?: JacocoAdoption.decline(project, agentGoal, session),
                 )
             }
             for ((agentGoal, sharing) in runs.groupBy(Run::agentGoal)) {

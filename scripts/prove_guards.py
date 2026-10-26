@@ -179,6 +179,8 @@ MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Chain
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
 MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
+MAVEN_BUILD_CACHE = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/BuildCache.kt"
+MAVEN_DEVELOCITY = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/DevelocityDetection.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -562,7 +564,9 @@ def maven_suite():
     """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks."""
     done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
                    "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--tests", "*FailsafeFunctionalTest*",
-                   "--tests", "*AuditAndExplainFunctionalTest*", "--rerun"])
+                   "--tests", "*AuditAndExplainFunctionalTest*",
+                   "--tests", "*MapProvenanceFunctionalTest*", "--tests", "*BuildCacheFunctionalTest*",
+                   "--tests", "*DevelocityFunctionalTest*", "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -706,7 +710,7 @@ SUITES = [
     ("functional", functional_suite, 68),
     # An estimate: the three classes' twenty-seven tests, about 8s each warm on an Apple M1 Max, plus
     # the plugin's publish, until a guard run measures it.
-    ("maven", maven_suite, 230),
+    ("maven", maven_suite, 420),
     # 50s wall for one unmutated run, the plugin and agent compiled from
     # scratch in a fresh worktree; its eight tests took 39s of it.
     ("break", break_suite, 50),
@@ -4455,6 +4459,25 @@ MUTATIONS = [
      "                name, copy, project.basedir",
      "                name, mapDir, project.basedir",
      maven_suite, "explain says what a selecting run would run and writes its file"),
+    # With a trusted-map list, a map it does not vouch for never narrows.
+    ("the Maven provenance check refuses nothing", MAVEN_SELECTION,
+     "            MapProvenance.verify(mapDir, listed[mapDir.name]).refusal?.let { (refusal, reason) ->",
+     "            MapProvenance.verify(mapDir, listed[mapDir.name]).refusal?.takeIf { false }?.let { (refusal, reason) ->",
+     maven_suite, "a map the list does not name runs every test and records a new map"),
+    # The Apache build cache restores an execution without starting it, so nothing could select it.
+    ("the Apache build cache is ignored", MAVEN_BUILD_CACHE,
+     "        if (!loaded || property.equals(\"false\", ignoreCase = true)) return null",
+     "        if (true) return null",
+     maven_suite, "with the Apache build cache on every execution declines"),
+    # Develocity chooses or distributes these tests where yoriwake cannot see them.
+    ("Develocity's Predictive Test Selection is ignored", MAVEN_DEVELOCITY,
+     "            selection == true -> ScopeOutcome.NotApplied(",
+     "            false && selection == true -> ScopeOutcome.NotApplied(",
+     maven_suite, "Predictive Test Selection on an execution declines it"),
+    ("Develocity's Test Distribution is ignored", MAVEN_DEVELOCITY,
+     "            distribution == true -> ScopeOutcome.NotApplied(",
+     "            false && distribution == true -> ScopeOutcome.NotApplied(",
+     maven_suite, "Test Distribution on an execution declines it"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",

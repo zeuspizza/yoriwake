@@ -59,6 +59,21 @@ internal sealed class ScopeOutcome(val detail: String) {
             /** `forkCount=0`: the tests run inside Maven's own JVM, which no agent can join. */
             SUREFIRE_IN_PROCESS("surefire-in-process"),
 
+            /**
+             * The Apache Maven build cache is on: a hit restores the execution without starting it,
+             * so nothing could capture or select it.
+             */
+            MAVEN_BUILD_CACHE("maven-build-cache"),
+
+            /** Develocity distributes the execution's tests to other machines, where no agent of ours runs. */
+            DEVELOCITY_TEST_DISTRIBUTION("develocity-test-distribution"),
+
+            /** Develocity's Predictive Test Selection chooses the execution's tests itself. */
+            DEVELOCITY_TEST_SELECTION("develocity-test-selection"),
+
+            /** Develocity is loaded and whether it acts on the execution could not be read. */
+            DEVELOCITY_UNDETERMINED("develocity-undetermined"),
+
             /** A Surefire provider other than the JUnit Platform's, where no filter can select. */
             SUREFIRE_LEGACY_PROVIDER("surefire-legacy-provider"),
         }

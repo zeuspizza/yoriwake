@@ -366,6 +366,17 @@ internal fun Audit.blockers(
                             "the plugin's dependencies, and add the Vintage or TestNG engine for " +
                             "JUnit 4 or TestNG tests. Selection happens in the Platform's " +
                             "discovery, which a legacy provider never reaches."
+                    ScopeOutcome.NotApplied.Kind.MAVEN_BUILD_CACHE ->
+                        "pass -Dmaven.build.cache.enabled=false on the runs you want captured or " +
+                            "selected. The Apache build cache can restore an execution without " +
+                            "starting it, so nothing could record or select its tests."
+                    ScopeOutcome.NotApplied.Kind.DEVELOCITY_TEST_DISTRIBUTION,
+                    ScopeOutcome.NotApplied.Kind.DEVELOCITY_TEST_SELECTION ->
+                        "no remedy while Develocity runs or chooses these tests: it acts where this " +
+                            "tool cannot see. Turn the feature off for the runs you want selected."
+                    ScopeOutcome.NotApplied.Kind.DEVELOCITY_UNDETERMINED ->
+                        "make the execution's `distribution` and `predictiveSelection` settings " +
+                            "readable as true or false, so whether Develocity acts on it is known."
                     ScopeOutcome.NotApplied.Kind.NO_JACOCO_EXTENSION,
                     ScopeOutcome.NotApplied.Kind.INCLUDES_REJECTED -> null
                 },

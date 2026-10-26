@@ -65,7 +65,7 @@ internal class Settings(lookup: (String) -> String?) {
         const val RECORD_SEQUENTIALLY = SettingNames.RECORD_SEQUENTIALLY
         const val ALWAYS_RUN = "yoriwake.alwaysRun"
         const val NARROW_PLAIN_RUNNERS = "yoriwake.narrowPlainRunners"
-        const val TRUSTED_MAPS = "yoriwake.trustedMaps"
+        const val TRUSTED_MAPS = SettingNames.TRUSTED_MAPS
         const val MEASURE_TOLL = "yoriwake.audit.measureToll"
         const val INSTRUMENTED_SECONDS = "yoriwake.audit.instrumentedSeconds"
         const val UNINSTRUMENTED_SECONDS = "yoriwake.audit.uninstrumentedSeconds"

@@ -7,6 +7,8 @@ import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
+import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
+import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
@@ -39,6 +41,30 @@ internal class Selection(private val session: MavenSession, private val root: Fi
     private val git = ChangeDetection.directRunner(root)
 
     private val settings by lazy { Settings.of(session) }
+
+    /**
+     * `-Dyoriwake.trustedMaps=<file>`'s digests by map directory name, or null when it is not set:
+     * with a list, a map narrows only when the list names its digest. A list that cannot be read or
+     * holds a malformed line fails the build, as on Gradle.
+     */
+    private val trusted: Map<String, String>? by lazy {
+        val path = session.userProperties.getProperty(SettingNames.TRUSTED_MAPS) ?: return@lazy null
+        val flag = "-D${SettingNames.TRUSTED_MAPS}=$path"
+        val file = File(path).let { if (it.isAbsolute) it else File(root, path) }
+        val text = runCatching { file.readText() }.getOrElse {
+            throw MavenExecutionException("[yoriwake] $flag: $file cannot be read.", null as Throwable?)
+        }
+        try {
+            MapProvenance.parseTrustedList(text, flag)
+        } catch (malformed: IllegalArgumentException) {
+            throw MavenExecutionException(malformed.message, null as Throwable?)
+        }
+    }
+
+    /** Reads what can fail the build, so it fails when the build starts rather than at a test goal. */
+    fun validate() {
+        trusted
+    }
 
     /** Whether the POM schedules full runs, so the decode counts the builds since the last one. */
     val schedules: Boolean get() = settings.schedule.set
@@ -156,6 +182,25 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 return kind
             }
             is SelectionSetup.Outcome.Select -> settled.widened to settled.paths
+        }
+        // First of the checks a selecting run makes once it has a change set, as on Gradle.
+        trusted?.let { listed ->
+            MapProvenance.verify(mapDir, listed[mapDir.name]).refusal?.let { (refusal, reason) ->
+                host.lifecycle(
+                    "[yoriwake] ${host.name}: $reason, so the whole suite runs and records a new map. A map " +
+                        "narrows here only when -D${SettingNames.TRUSTED_MAPS} names its digest, as a run on the " +
+                        "default branch recorded it."
+                )
+                host.refuse(refusal, reason)
+                if (!explaining) {
+                    MapProvenance.clear(mapDir)
+                    SelectingStep.applyCapture(
+                        host, mapDir, observing,
+                        decideCapture(mapDir, mapUsable = false, fullRun = true, learnable = emptySet()),
+                    )
+                }
+                return kind
+            }
         }
         // Written by the selecting step; a file it could not write reads as a refusal in the test JVM.
         host.property(AgentContract.CHANGE_SET_FILE_PROPERTY, File(mapDir, AgentContract.CHANGE_SET_FILE).absolutePath)

@@ -70,7 +70,7 @@ internal class Recording(
         val kind: RunPlan.Kind,
     )
 
-    private val selection = Selection(session, root, log)
+    private val selection = Selection(session, root, log).also { it.validate() }
 
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()

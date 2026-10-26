@@ -1486,6 +1486,38 @@ What it cannot see:
 - environment variables, which are in no stamp: a test that reads one runs with whatever the
   complement run has.
 
+## Maven
+
+yoriwake also runs in Maven builds, for Surefire's `test` and Failsafe's `integration-test`. It is a
+build extension: one entry in the root POM turns it on, and it needs JaCoCo's `prepare-agent` (and
+`prepare-agent-integration` for Failsafe) as Gradle needs the JaCoCo plugin.
+
+```xml
+<plugin>
+  <groupId>io.github.zeuspizza</groupId>
+  <artifactId>yoriwake-maven-plugin</artifactId>
+  <version>VERSION</version>
+  <extensions>true</extensions>
+</plugin>
+```
+
+- **Flags** are user properties with the Gradle names: `-Dyoriwake.select`, `-Dyoriwake.observe`,
+  `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.trustedMaps`,
+  `-Dyoriwake.isolatedCapture`. Settings without a flag on Gradle stay in the POM here too, in the
+  plugin's `<configuration>`: `fullRunBranches`, `largeChangeThreshold`, `fullRunEveryBuilds`,
+  `fullRunEveryDays`.
+- **Maps** live under `.yoriwake/` at the reactor root, one per execution, and survive `mvn clean`.
+  Surefire and Failsafe executions of a module keep separate maps.
+- **`-pl` and `-am`**: a module built against a module of the same reactor that this invocation
+  did not build gets its bytes from a repository, not the checkout, so it neither captures nor
+  selects (`reactor-module-from-repository`). Build it with `-am`.
+- **Goals**: `mvn yoriwake:audit` and `mvn test-compile yoriwake:explain` are `yoriwakeAuditTest`
+  and `yoriwakeExplain`; `-Dyoriwake.execution=<id>` picks one execution.
+- **Declined**: an execution Develocity distributes or selects for (`develocity-test-distribution`,
+  `develocity-test-selection`, `develocity-undetermined`), and every execution while the Apache
+  build cache extension is on (`maven-build-cache`; `-Dmaven.build.cache.enabled=false` turns it off
+  for a run). With Develocity loaded, its build cache is told not to restore the test goals.
+
 ## Properties and tasks
 
 Every property is a Gradle project property: `-P<name>` on the command line or in
