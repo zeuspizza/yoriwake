@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -249,5 +250,85 @@ class SelectionFunctionalTest {
 
         assertContains(output, "captured at a commit git cannot relate to")
         assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    /** `lib`'s decision record, each test's verdict and reason by the row's test id; observing rows unprefixed. */
+    private fun libDecisions(project: File): Map<String, List<String>> {
+        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty()
+            .single { it.name.startsWith("dev.demo-lib-maven-surefire-plugin-default-test-") }
+        return File(map, "decisions.tsv").readLines()
+            .map { it.removePrefix("#?") }
+            .filter { it.isNotBlank() && !it.startsWith("#") }
+            .map { it.split("\t") }
+            .associate { it[0] to listOf(it[1], it[2]) }
+    }
+
+    private fun counterDecision(project: File): List<String>? =
+        libDecisions(project).entries.singleOrNull { "CounterTest" in it.key }?.value
+
+    private fun editGreeter(project: File) {
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+    }
+
+    @Test
+    fun `a test alwaysRun names runs though the change cannot reach it`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+            "-Dyoriwake.alwaysRun=dev.demo.lib.CounterTest",
+        ).succeeded().output
+
+        val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+        assertContains(selecting, "in dev.demo.lib.CounterTest")
+        assertEquals(listOf("included", "ALWAYS_RUN"), counterDecision(project), output)
+    }
+
+    @Test
+    fun `a module's own alwaysRun pins its test in a full reactor run`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId><build><plugins><plugin><groupId>io.github.zeuspizza</groupId>" +
+                    "<artifactId>yoriwake-maven-plugin</artifactId><configuration><alwaysRun>" +
+                    "<pattern>dev.demo.lib.CounterTest</pattern></alwaysRun></configuration></plugin></plugins></build>",
+            )
+        }
+        git(project, "commit", "-q", "-am", "pin a test in lib")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1").succeeded().output
+
+        assertEquals(listOf("included", "ALWAYS_RUN"), counterDecision(project), output)
+    }
+
+    @Test
+    fun `an observing run records a pinned test as always-run`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.observe", "-Dyoriwake.base=HEAD~1",
+            "-Dyoriwake.alwaysRun=dev.demo.lib.CounterTest",
+        ).succeeded().output
+
+        assertEquals(listOf("included", "ALWAYS_RUN"), counterDecision(project), output)
+    }
+
+    @Test
+    fun `a pattern alwaysRun cannot read fails the build naming it and where it came from`(@TempDir dir: File) {
+        val project = committed(dir)
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.alwaysRun=**")
+
+        assertTrue(result.exitCode != 0, result.output)
+        assertContains(result.output, "-Dyoriwake.alwaysRun")
+        assertContains(result.output, "'**' as an always-run pattern")
+        assertContains(result.output, "-Dyoriwake.enabled=false")
+        assertFalse("Tests run:" in result.output, result.output)
     }
 }

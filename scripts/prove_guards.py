@@ -4454,6 +4454,21 @@ MUTATIONS = [
      '        if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
      '        if (false) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
      maven_suite, "an observing run runs every test and reports what selection would have done"),
+    # A test the build pins must reach the Maven test JVM, which reads its contract from the run file.
+    ("a Maven alwaysRun never reaches the test JVM", MAVEN_SELECTION,
+     '        if (alwaysRun.isNotEmpty()) host.property(AgentContract.ALWAYS_RUN_PROPERTY, alwaysRun.joinToString(","))',
+     '        if (false) host.property(AgentContract.ALWAYS_RUN_PROPERTY, alwaysRun.joinToString(","))',
+     maven_suite, "a test alwaysRun names runs though the change cannot reach it"),
+    # Every run kind carries the pin, as on Gradle: an observing run must report it as always-run.
+    ("a Maven observing run drops the pins", MAVEN_SELECTION,
+     '        if (alwaysRun.isNotEmpty()) host.property(AgentContract.ALWAYS_RUN_PROPERTY, alwaysRun.joinToString(","))',
+     '        if (alwaysRun.isNotEmpty() && !asked.observe) host.property(AgentContract.ALWAYS_RUN_PROPERTY, alwaysRun.joinToString(","))',
+     maven_suite, "an observing run records a pinned test as always-run"),
+    # A module's own <alwaysRun> counts in a full reactor run, not only the first module's.
+    ("a Maven execution reads the reactor's first module's pins", MAVEN_RECORDING,
+     "    private val pins = session.projects.associate { it.id to Settings.alwaysRunOf(it, session) }",
+     "    private val pins = session.projects.associate { it.id to Settings.alwaysRunOf(session.projects.first(), session) }",
+     maven_suite, "a module's own alwaysRun pins its test in a full reactor run"),
     # A branch the POM lists runs everything and records, so the default branch's map refreshes.
     ("a Maven branch fullRunBranches lists still selects", MAVEN_SELECTION,
      "                settings.fullRunBranches,\n",

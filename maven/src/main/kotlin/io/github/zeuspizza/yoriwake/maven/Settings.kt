@@ -1,10 +1,12 @@
 package io.github.zeuspizza.yoriwake.maven
 
+import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import org.apache.maven.MavenExecutionException
 import org.apache.maven.execution.MavenSession
+import org.apache.maven.project.MavenProject
 import org.codehaus.plexus.util.xml.Xpp3Dom
 
 /**
@@ -14,7 +16,6 @@ import org.codehaus.plexus.util.xml.Xpp3Dom
  */
 internal class Settings(
     val enabled: Boolean,
-    val alwaysRun: List<String>,
     /** Branches on which a selecting run runs everything, from `<fullRunBranches>`; no `-D` form, as on Gradle. */
     val fullRunBranches: List<String> = emptyList(),
     /** How many changed paths make a selecting run run everything without analysing them. */
@@ -33,9 +34,6 @@ internal class Settings(
             val enabled = session.userProperties.getProperty(ENABLED)?.let { parseFlag(ENABLED, it) }
                 ?: configuration?.getChild("enabled")?.value?.let { parseFlag("<enabled>", it.trim()) }
                 ?: true
-            val alwaysRun = session.userProperties.getProperty(ALWAYS_RUN)?.split(',')
-                ?: configuration?.getChild("alwaysRun")?.children?.map { it.value.orEmpty() }
-                ?: emptyList()
             val owner = "the yoriwake plugin's <configuration>"
             val fullRunBranches = try {
                 RunPlan.fullRunBranches(
@@ -60,7 +58,33 @@ internal class Settings(
                 )
             }
             val schedule = Schedule.Limits(atLeastOne("fullRunEveryBuilds"), atLeastOne("fullRunEveryDays"))
-            return Settings(enabled, alwaysRun.map(String::trim).filter(String::isNotEmpty), fullRunBranches, largeChange, schedule)
+            return Settings(enabled, fullRunBranches, largeChange, schedule)
+        }
+
+        /**
+         * The tests [project]'s executions always run: `-Dyoriwake.alwaysRun` and the module's own
+         * `<alwaysRun>`, read per module since the reactor-wide settings come from its first module. A
+         * pattern that would pin every test fails the build, as on Gradle.
+         */
+        fun alwaysRunOf(project: MavenProject, session: MavenSession): List<String> {
+            val configuration = project.getPlugin(PLUGIN_KEY)?.configuration as? Xpp3Dom
+            return checked(session.userProperties.getProperty(ALWAYS_RUN)?.split(',').orEmpty(), "-D$ALWAYS_RUN") +
+                checked(
+                    configuration?.getChild("alwaysRun")?.children?.map { it.value.orEmpty() }.orEmpty(),
+                    "${project.artifactId}'s <alwaysRun>",
+                )
+        }
+
+        private fun checked(patterns: List<String>, source: String): List<String> {
+            val kept = patterns.map(String::trim).filter(String::isNotEmpty)
+            try {
+                AlwaysRun.from(kept.joinToString(","))
+            } catch (refused: IllegalArgumentException) {
+                // The agent's advice names Gradle's switch; Maven's is the enabled property.
+                val message = refused.message.orEmpty().replace("-Pyoriwake.disabled", "-D$ENABLED=false")
+                throw MavenExecutionException("[yoriwake] $source: $message", null as Throwable?)
+            }
+            return kept
         }
 
         /** As the Gradle plugin's: the bare property is true, anything but true or false fails the build. */

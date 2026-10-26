@@ -112,6 +112,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         /** Whether Surefire stops after a failure, so a record could list a test whose outcome nobody saw. */
         stopsAfterFailure: Boolean,
         properties: Properties,
+        /** The tests this execution always runs, from [Settings.alwaysRunOf]. */
+        alwaysRun: List<String> = emptyList(),
         /**
          * Explaining, not running: asks to select whatever the invocation asked, leaves no selection
          * record, compares no environment it was not given, and hands what the selecting step worked
@@ -123,6 +125,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         worked: (SelectingStep.Worked, String) -> Unit = { _, _ -> },
     ): RunPlan.Kind {
         val host = Host(name, properties)
+        // Whatever the run kind, as on Gradle: an observing or complement run reports the pin too.
+        if (alwaysRun.isNotEmpty()) host.property(AgentContract.ALWAYS_RUN_PROPERTY, alwaysRun.joinToString(","))
         val plan = try {
             RunPlan.resolve(
                 if (explaining) RunPlan.Asked(select = true, observe = false, complement = null, fullRun = asked.fullRun) else asked,
