@@ -1,8 +1,9 @@
 name: release
 
-# Publishes to the Gradle Plugin Portal from a version tag, and only from one. The Portal key and the
-# signing key live in the `release` environment, which requires a maintainer's approval and accepts
-# only `v*` tags, so a workflow on any other ref cannot reach them.
+# Publishes to the Gradle Plugin Portal and Maven Central from a version tag, and only from one. The
+# Portal key, the Central token and the signing key live in the `release` environment, which
+# requires a maintainer's approval and accepts only `v*` tags, so a workflow on any other ref cannot
+# reach them.
 #
 # What ships is what was tested: `verify` builds and tests once and hands its files on; no later job
 # builds anything. `attest` vouches for those files, `publish` signs and uploads them, and `github
@@ -94,6 +95,7 @@ jobs:
           version="$VERSION"
           mkdir release
           cp -R plugin/build/local-repository release/repository
+          cp -R maven/build/local-repository/. release/repository/
           cp "plugin/build/sbom/yoriwake-gradle-plugin-$version.cdx.json" release/
           cp plugin/build/bundled-agent/yoriwake-agent.jar release/
           cd release
@@ -104,6 +106,12 @@ jobs:
           xargs sha256sum < files > SHA256SUMS
           rm files
           cat SHA256SUMS
+      # Central refuses a bundle only after the upload, which then follows the Portal's: checked
+      # here, unsigned, so a tag never reaches a refusal the rehearsal could have shown.
+      - name: the Maven Central bundle is complete
+        run: >-
+          python3 scripts/central_bundle.py release/repository io.github.zeuspizza yoriwake-maven-plugin
+          "$VERSION" "$RUNNER_TEMP/central-bundle.zip"
       # attest, publish and github-release read it, and any re-run of them: after an approval
       # wait, or a failed github-release once the Portal has the version. Both end within
       # GitHub's 30-day re-run limit.
@@ -202,11 +210,74 @@ jobs:
           -PreleaseVersion="${GITHUB_REF_NAME#v}" -Pyoriwake.sign
           -Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository" --console=plain
 
-  # Made after the Portal has the version, so it never advertises a release that does not exist, and
-  # on a runner that holds neither key.
+  # After the Portal, on the files `publish` signed: a Central refusal leaves the Portal's version
+  # standing, and this job alone re-runs. It holds the Central token, never the signing key.
+  publish-maven:
+    name: publish to Maven Central
+    needs: publish
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-signatures
+          path: release/repository
+      - name: check the files against their checksums
+        run: cd release && sha256sum -c SHA256SUMS
+      - name: bundle
+        run: >-
+          python3 scripts/central_bundle.py release/repository io.github.zeuspizza yoriwake-maven-plugin
+          "${GITHUB_REF_NAME#v}" central-bundle.zip --signed
+      # Published without a manual release in the Portal's UI; the status is read until Central says
+      # PUBLISHED or FAILED, so the job's colour is Central's verdict. A re-run finds a version
+      # Central already published and stops there: Central refuses the same version twice. A status
+      # read that fails is read again; only Central's own FAILED, or an hour, ends the wait red.
+      - name: upload
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+        run: |
+          test -n "$CENTRAL_USERNAME" && test -n "$CENTRAL_PASSWORD" ||
+            { echo "the release environment has no CENTRAL_USERNAME and CENTRAL_PASSWORD"; exit 1; }
+          token=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
+          echo "::add-mask::$token"
+          api=https://central.sonatype.com/api/v1/publisher
+          version="${GITHUB_REF_NAME#v}"
+          published=$(curl --fail-with-body -sS --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
+            -H "Authorization: Bearer $token" \
+            "$api/published?namespace=io.github.zeuspizza&name=yoriwake-maven-plugin&version=$version" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["published"])')
+          if [ "$published" = True ]; then echo "Central already has $version"; exit 0; fi
+          id=$(curl --fail-with-body -sS --connect-timeout 20 --max-time 300 -X POST -H "Authorization: Bearer $token" \
+            -F bundle=@central-bundle.zip "$api/upload?publishingType=AUTOMATIC&name=yoriwake-maven-plugin-$version")
+          echo "deployment $id"
+          for _ in $(seq 1 120); do
+            sleep 30
+            state=$(curl --fail-with-body -sS --connect-timeout 20 --max-time 60 -X POST -H "Authorization: Bearer $token" \
+              "$api/status?id=$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["deploymentState"])') ||
+              state="unreadable, reading again"
+            echo "$state"
+            case "$state" in
+              PUBLISHED) exit 0 ;;
+              FAILED) curl -sS --max-time 60 -X POST -H "Authorization: Bearer $token" "$api/status?id=$id"; exit 1 ;;
+            esac
+          done
+          echo "Central did not publish deployment $id within an hour"; exit 1
+
+  # Made after the Portal and Central have the version, so it never advertises a release that does
+  # not exist, and on a runner that holds no key.
   github-release:
     name: github release
-    needs: publish
+    needs: [publish, publish-maven]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
@@ -231,9 +302,10 @@ jobs:
           awk -v v="$version" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
           test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
           jar="release/repository/io/github/zeuspizza/yoriwake-gradle-plugin/$version/yoriwake-gradle-plugin-$version.jar"
+          maven="release/repository/io/github/zeuspizza/yoriwake-maven-plugin/$version/yoriwake-maven-plugin-$version.jar"
           # Latest only if no newer version exists: a patch to an older line must not take its place.
           newest=$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||' | sort -V | tail -1)
           latest=$([ "$newest" = "$GITHUB_REF_NAME" ] && echo true || echo false)
           gh release create "$GITHUB_REF_NAME" --verify-tag --latest="$latest" --title "yoriwake $version" --notes-file notes.md \
-            "$jar" "$jar.asc" release/yoriwake-agent.jar "release/yoriwake-gradle-plugin-$version.cdx.json" \
+            "$jar" "$jar.asc" "$maven" "$maven.asc" release/yoriwake-agent.jar "release/yoriwake-gradle-plugin-$version.cdx.json" \
             release/SHA256SUMS

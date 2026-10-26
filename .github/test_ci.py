@@ -1764,7 +1764,7 @@ def release_problems(text):
     elif not re.search(r"^  push:\n    tags: \['v\*'\]\n(?!    )", triggers.group(1), re.MULTILINE):
         found.append("a push other than of a `v*` tag starts it")
     jobs = release_jobs(text)
-    for name in ("verify", "attest", "publish", "github-release"):
+    for name in ("verify", "attest", "publish", "publish-maven", "github-release"):
         if name not in jobs:
             found.append(f"no `{name}` job")
     if found:
@@ -1773,23 +1773,31 @@ def release_problems(text):
         "verify": [["build"]],
         "publish": [[":plugin:signReleaseRepository"], [":plugin:publishReleaseRepository"]],
         "attest": [],
+        "publish-maven": [],
         "github-release": [],
     }
+    # Each key on the one job that uses it: Central's token never beside the signing key.
+    keys = {"publish": {"SIGNING_KEY", "SIGNING_PASSWORD", "GRADLE_PUBLISH_KEY", "GRADLE_PUBLISH_SECRET"},
+            "publish-maven": {"CENTRAL_USERNAME", "CENTRAL_PASSWORD"}}
     for name, job in jobs.items():
         if gradle_tasks(job) != allowed.get(name, []):
             found.append(f"`{name}` runs Gradle tasks {gradle_tasks(job)}; expected {allowed.get(name, [])}")
-        if name != "publish" and re.search(r"secrets\.(?!GITHUB_TOKEN)", job):
-            found.append(f"`{name}` reads a secret; only `publish` holds keys")
+        read = set(re.findall(r"secrets\.(?!GITHUB_TOKEN)(\w+)", job))
+        if read and (name not in keys or not read <= keys[name]):
+            found.append(f"`{name}` reads {sorted(read)}; only `publish` holds keys, and `publish-maven` "
+                         "only Central's token")
         if name != "attest" and re.search(r"id-token:\s*write|attestations:\s*write", job):
             found.append(f"`{name}` can attest; only `attest` may")
         if name != "github-release" and re.search(r"contents:\s*write", job):
             found.append(f"`{name}` can write the repository; only `github-release` may")
         if name not in ("verify", "publish") and "setup-gradle" in job:
             found.append(f"`{name}` sets up Gradle, and with it a cache; it runs no build")
-    for name, needs in (("attest", "verify"), ("publish", "attest"), ("github-release", "publish")):
-        if not re.search(rf"^    needs: {needs}$", jobs[name], re.MULTILINE):
+    for name, needs in (("attest", "verify"), ("publish", "attest"), ("publish-maven", "publish"),
+                        ("github-release", "publish"), ("github-release", "publish-maven")):
+        line = re.search(r"^    needs: (.*)$", jobs[name], re.MULTILINE)
+        if not line or needs not in re.findall(r"[\w-]+", line.group(1)):
             found.append(f"`{name}` does not wait for `{needs}`")
-    for name in ("publish", "github-release"):
+    for name in ("publish", "publish-maven", "github-release"):
         if not re.search(r"^    if: github\.event_name == 'push'$", jobs[name], re.MULTILINE):
             found.append(f"`{name}` is not limited to a tag push, so a rehearsal can reach it")
     verify = jobs["verify"]
@@ -1813,6 +1821,15 @@ def release_problems(text):
             found.append(f"`publish` lacks `{needed}`")
     if publish.find("name: release-signatures") > publish.find(":plugin:publishReleaseRepository"):
         found.append("`publish` saves the signatures only after the upload that cannot be taken back")
+    central = jobs["publish-maven"]
+    if "environment: release" not in central:
+        found.append("`publish-maven` is not bound to the `release` environment")
+    for needed in ("sha256sum -c SHA256SUMS", "name: release-signatures", "central_bundle.py", "--signed"):
+        if needed not in central:
+            found.append(f"`publish-maven` lacks `{needed}`, so it could upload files nobody signed or checked")
+    if not re.search(r"      - name: the Maven Central bundle is complete\n        run: >-\n"
+                     r"          python3 scripts/central_bundle\.py release/repository ", jobs["verify"]):
+        found.append("`verify` does not check the Maven Central bundle, so a tag finds a refusal first")
     if "sha256sum -c SHA256SUMS" not in jobs["attest"] or "subject-checksums: release/SHA256SUMS" not in jobs["attest"]:
         found.append("`attest` does not check and attest the files `verify` listed")
     if "CHANGELOG.md" not in jobs["verify"]:
@@ -1863,8 +1880,27 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
         "a rehearsal on a tag ref publishes": text.replace(
             "    needs: attest\n    if: github.event_name == 'push'\n",
             "    needs: attest\n    if: startsWith(github.ref, 'refs/tags/v')\n", 1),
-        "a rehearsal makes a GitHub release": text.replace(
+        "a rehearsal uploads to Central": text.replace(
             "    needs: publish\n    if: github.event_name == 'push'\n", "    needs: publish\n", 1),
+        "a rehearsal makes a GitHub release": text.replace(
+            "    needs: [publish, publish-maven]\n    if: github.event_name == 'push'\n",
+            "    needs: [publish, publish-maven]\n", 1),
+        "the GitHub release skips Central": text.replace(
+            "    needs: [publish, publish-maven]\n", "    needs: publish\n", 1),
+        "Central's job holds the signing key": text.replace(
+            "          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}\n",
+            "          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}\n          K: ${{ secrets.SIGNING_KEY }}\n", 1),
+        "the Portal's job holds Central's token": text.replace(
+            "          GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}\n",
+            "          GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}\n          C: ${{ secrets.CENTRAL_PASSWORD }}\n", 1),
+        "the rehearsal's bundle check is switched off": text.replace(
+            "      - name: the Maven Central bundle is complete\n",
+            "      - name: the Maven Central bundle is complete\n        if: false\n", 1),
+        "Central gets an unsigned bundle": text.replace(" central-bundle.zip --signed", " central-bundle.zip", 1),
+        "the rehearsal skips the Central bundle": text.replace(
+            "      - name: the Maven Central bundle is complete\n", "      - name: nothing\n        if: false\n", 1).replace(
+            "python3 scripts/central_bundle.py release/repository io.github.zeuspizza yoriwake-maven-plugin\n          \"$VERSION\"",
+            "true\n          \"$VERSION\"", 1),
         "a rehearsal runs anywhere": text.replace("            main|release/*) ;;\n", "", 1),
         "a rehearsal runs any commit": text.replace('[ "$CANDIDATE" = "$GITHUB_SHA" ] ||', "true ||", 1),
     }
