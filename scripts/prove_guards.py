@@ -178,6 +178,7 @@ MAVEN_DECLINES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Decli
 MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ChainedListener.kt"
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
+MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -560,7 +561,8 @@ def functional_suite(test_class=None):
 def maven_suite():
     """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks."""
     done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
-                   "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--rerun"])
+                   "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--tests", "*FailsafeFunctionalTest*",
+                   "--tests", "*AuditAndExplainFunctionalTest*", "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -4438,6 +4440,21 @@ MUTATIONS = [
      "        session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +\n",
      "        emptyMap<String, String>() +\n",
      maven_suite, "a complement run with another user property runs everything and names the configuration"),
+    # Surefire and Failsafe executions of one module keep their own maps, keyed by the plugin too.
+    ("a Maven map key leaves out the plugin", MAVEN_RECORDING,
+     '            "${project.groupId}:${project.artifactId}:${execution.artifactId}:${execution.executionId}"',
+     '            "${project.groupId}:${project.artifactId}:${execution.executionId}"',
+     maven_suite, "integration tests are captured into their own map"),
+    # Failsafe's verify shares the execution; wiring it breaks its configuration.
+    ("Failsafe's verify goal is wired", MAVEN_RECORDING,
+     "        if (outcome is ScopeOutcome.NotApplied || !isTestGoal(execution)) return\n",
+     "        if (outcome is ScopeOutcome.NotApplied) return\n",
+     maven_suite, "integration tests are captured into their own map"),
+    # Explain works on a copy: the selecting steps write the change set and capture markers.
+    ("Maven explain writes into the map it explains", MAVEN_EXPLAIN,
+     "                name, copy, project.basedir",
+     "                name, mapDir, project.basedir",
+     maven_suite, "explain says what a selecting run would run and writes its file"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",
