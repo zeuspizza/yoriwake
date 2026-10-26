@@ -4486,7 +4486,7 @@ MUTATIONS = [
     # Explain says what the build would do, declines included.
     ("Maven explain ignores the declines", MAVEN_EXPLAIN,
      "        if (declined != null) {",
-     "        if (false) {",
+     "        if (declined != null && false) {",
      maven_suite, "explain reports a declined execution as running everything"),
     # Develocity loaded and its settings unreadable: doubt declines.
     ("Develocity's unreadable settings are read as off", MAVEN_DEVELOCITY,
