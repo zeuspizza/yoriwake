@@ -1491,6 +1491,7 @@ What it cannot see:
 yoriwake also runs in Maven builds, for Surefire's `test` and Failsafe's `integration-test`. It is a
 build extension: one entry in the root POM turns it on, and it needs JaCoCo's `prepare-agent` (and
 `prepare-agent-integration` for Failsafe) as Gradle needs the JaCoCo plugin.
+The plugin is on Maven Central from 0.4.0, signed with the same key as the Gradle plugin.
 
 ```xml
 <plugin>

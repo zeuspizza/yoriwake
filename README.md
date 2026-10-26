@@ -73,6 +73,23 @@ Then:
 ./gradlew test -Pyoriwake.select    # runs only the tests the change reaches
 ```
 
+On Maven (from 0.4.0, on Maven Central), it is a build extension in the root POM, beside JaCoCo's
+`prepare-agent`; the flags are the same names as `-D` properties:
+
+```xml
+<plugin>
+  <groupId>io.github.zeuspizza</groupId>
+  <artifactId>yoriwake-maven-plugin</artifactId>
+  <version>0.4.0</version>
+  <extensions>true</extensions>
+</plugin>
+```
+
+```bash
+mvn verify                          # runs everything and records a coverage map
+mvn verify -Dyoriwake.select        # runs only the tests the change reaches
+```
+
 Run the audit first. Most of its answers are refusals rather than low numbers: it is built to tell
 you not to bother when selection would not pay on your suite.
 

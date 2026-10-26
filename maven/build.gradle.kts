@@ -162,15 +162,48 @@ tasks.assemble { dependsOn(tasks.shadowJar) }
 
 val functionalRepository = layout.buildDirectory.dir("functional-repo")
 
+// Maven Central takes a version only with sources and javadoc beside the jar. The javadoc jar is
+// empty: the plugin's API is its configuration, which docs/reference.md documents.
+val sourcesJar by tasks.registering(Jar::class) {
+    archiveClassifier = "sources"
+    from(sourceSets.main.map { it.allSource })
+}
+val javadocJar by tasks.registering(Jar::class) {
+    archiveClassifier = "javadoc"
+}
+
+// What the release ships: the release workflow copies it beside the Gradle plugin's repository.
+val localRepository = layout.buildDirectory.dir("local-repository")
+
 publishing {
     publications {
         create<MavenPublication>("mavenPlugin") {
             artifactId = "yoriwake-maven-plugin"
             artifact(tasks.shadowJar)
+            artifact(sourcesJar)
+            artifact(javadocJar)
             pom {
                 packaging = "maven-plugin"
                 name = "yoriwake"
                 description = "Predictive test selection for Maven builds."
+                url = "https://github.com/zeuspizza/yoriwake"
+                licenses {
+                    license {
+                        name = "The Apache License, Version 2.0"
+                        url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                    }
+                }
+                scm {
+                    url = "https://github.com/zeuspizza/yoriwake"
+                    connection = "scm:git:https://github.com/zeuspizza/yoriwake.git"
+                }
+                // Names the project rather than a person, as the Gradle plugin's POM does.
+                developers {
+                    developer {
+                        id = "zeuspizza"
+                        name = "The yoriwake authors"
+                    }
+                }
             }
         }
     }
@@ -179,8 +212,17 @@ publishing {
             name = "functional"
             url = uri(functionalRepository)
         }
+        maven {
+            name = "buildLocal"
+            url = uri(localRepository)
+        }
     }
 }
+
+val cleanLocalRepository by tasks.registering(Delete::class) { delete(localRepository) }
+tasks.named("publishMavenPluginPublicationToBuildLocalRepository") { dependsOn(cleanLocalRepository) }
+// Part of `build`, so the release's one build leaves the Maven plugin as Central takes it.
+tasks.build { dependsOn("publishMavenPluginPublicationToBuildLocalRepository") }
 
 // Real Maven distributions over the fixtures: one fixture copy per test, one distribution per
 // entry of the supported matrix, downloaded once into the Gradle user home and checked against

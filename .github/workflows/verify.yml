@@ -83,6 +83,14 @@ jobs:
       # coverage job gates on this job's unit-test data and theirs. The Maven suite runs here, once.
       - run: ./gradlew build :agent:jacocoTestReport :maven:functionalTest -x :plugin:functionalTest -x :plugin:functionalTestGradle9 -Pyoriwake.functional.coverage=false --console=plain
       - run: python3 .github/test_ci.py
+      - run: python3 scripts/test_central_bundle.py
+      # The bundle the release would upload: a POM or jar Central refuses shows here, not first at a
+      # tag. At a release-shaped version, since a snapshot's files are named by their timestamp.
+      - name: the Maven Central bundle is complete
+        run: |
+          ./gradlew :maven:publishMavenPluginPublicationToBuildLocalRepository -PreleaseVersion=0.0.0-check --console=plain
+          python3 scripts/central_bundle.py maven/build/local-repository io.github.zeuspizza yoriwake-maven-plugin \
+            0.0.0-check "$RUNNER_TEMP/central-bundle.zip"
       - name: the release's signing and upload refusal work
         run: .github/check_release_signing.sh
       # The coverage job reads it; kept a day: a re-run after a day needs "Re-run all jobs".
