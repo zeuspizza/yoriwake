@@ -4408,6 +4408,11 @@ MUTATIONS = [
      "        if (plan.declines.isNotEmpty()) {",
      "        if (false) {",
      maven_suite, "a full run asked for on the command line runs everything and records the map"),
+    # An observing Maven run must tell its test JVM to record what selection would leave out.
+    ("a Maven observing run observes nothing", MAVEN_SELECTION,
+     '        if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
+     '        if (false) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
+     maven_suite, "an observing run runs every test and reports what selection would have done"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",

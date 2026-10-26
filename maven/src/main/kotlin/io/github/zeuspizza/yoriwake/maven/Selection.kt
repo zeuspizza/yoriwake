@@ -37,19 +37,20 @@ internal class Selection(private val session: MavenSession, private val root: Fi
     private val asked: RunPlan.Asked by lazy {
         RunPlan.Asked(
             select = flag(SettingNames.SELECT),
-            observe = false,
+            observe = flag(SettingNames.OBSERVE),
             complement = null,
             fullRun = flag(SettingNames.FULL_RUN),
         )
     }
 
-    /** Whether this invocation asked to select at all; a recording run asks git nothing more. */
+    /** Whether this invocation asked to select; a recording run asks git nothing more. */
     val asksSelection: Boolean get() = asked.select
 
     /**
-     * Settles one execution's run and writes what its test JVM needs into [properties]; true when
-     * the run selects, so its decode keeps no records unless it ran everything. [undated] is why this
-     * execution cannot date the map, or null.
+     * Settles one execution's run and writes what its test JVM needs into [properties]. Returns what
+     * the run is: [RunPlan.Kind.SELECT] keeps no records unless it ran everything, and an
+     * [RunPlan.Kind.OBSERVE] run records as a recording run does while its test JVM decides as a
+     * selecting run would. [undated] is why this execution cannot date the map, or null.
      */
     fun apply(
         name: String,
@@ -60,7 +61,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         undated: String?,
         isolatedCapture: Boolean,
         properties: Properties,
-    ): Boolean {
+    ): RunPlan.Kind {
         val host = Host(name, properties)
         val plan = try {
             RunPlan.resolve(
@@ -73,15 +74,30 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             throw MavenExecutionException(rejected.message, null as Throwable?)
         }
         plan.notes.forEach { host.lifecycle("[yoriwake] $name: $it") }
+        val observing = plan.observing
+        // Beside the selecting properties below, or a decline's refusal.
+        if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")
+        if (plan.declines.isNotEmpty() && observing) {
+            val first = plan.declines.first()
+            host.refuse(first.kind, first.reason)
+            host.property(AgentContract.DECLINES_PROPERTY, plan.declines.joinToString(",") { it.kind.token })
+            declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir)).delete()
+            host.lifecycle(
+                "[yoriwake] $name: ${plan.declines.joinToString("; ") { it.reason }}, so a selecting run would run " +
+                    "every test, and that is what this run observes."
+            )
+            return RunPlan.Kind.OBSERVE
+        }
         if (plan.declines.isNotEmpty()) {
             val first = plan.declines.first()
             host.refuse(first.kind, first.reason)
             host.property(AgentContract.DECLINES_PROPERTY, plan.declines.joinToString(",") { it.kind.token })
             declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir)).delete()
             SelectingStep.declined(host, mapDir, plan.declines.map { it.reason }, SettingNames.SELECT, isolatedCapture)
-            return false
+            return RunPlan.Kind.RECORD
         }
-        if (!plan.selecting) return false
+        if (!plan.selecting && !observing) return RunPlan.Kind.RECORD
+        val kind = plan.kind
 
         val settled = SelectionSetup.settle(
             plan.widening!!,
@@ -92,14 +108,14 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             is SelectionSetup.Outcome.RunEverything -> {
                 host.refuse(settled.kind, settled.reason)
                 SelectingStep.runEverything(
-                    host, mapDir, observing = false, settled.reason, settled.cause, settled.clears, undated,
+                    host, mapDir, observing = observing, settled.reason, settled.cause, settled.clears, undated,
                 )
-                return true
+                return kind
             }
             is SelectionSetup.Outcome.NoChangeSet -> {
                 host.refuse(RefusalKind.NO_CHANGE_SET, settled.reason)
-                SelectingStep.withoutChangeSet(host, mapDir, observing = false, settled.against)
-                return true
+                SelectingStep.withoutChangeSet(host, mapDir, observing = observing, settled.against)
+                return kind
             }
             is SelectionSetup.Outcome.Select -> settled.widened to settled.paths
         }
@@ -112,15 +128,15 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         if (environment == null) {
             host.refuse(RefusalKind.ENVIRONMENT_UNRECORDED, "the test JVM's environment could not be read")
             SelectingStep.runEverything(
-                host, mapDir, observing = false, "the test JVM's environment could not be read",
+                host, mapDir, observing = observing, "the test JVM's environment could not be read",
                 "A JVM nobody could describe cannot be compared with the one the map was recorded in", clears = true, undated,
             )
-            return true
+            return kind
         }
         SelectingStep.refuseAChangedEnvironment(
-            host, mapDir, environment.first, environment.second, File(mapDir, AgentContract.CHANGE_SET_FILE), observing = false,
+            host, mapDir, environment.first, environment.second, File(mapDir, AgentContract.CHANGE_SET_FILE), observing = observing,
         )
-        if (host.refused) return true
+        if (host.refused) return kind
         val sourceDirs = ForcingPaths.sourceDirs(
             root,
             session.allProjects.flatMap { module -> (module.compileSourceRoots + module.testCompileSourceRoots).map(::File) },
@@ -128,11 +144,11 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         SelectingStep.run(
             SelectingStep.Inputs(
                 mapDir, root, paths, widened.ref, widened.origin, sourceDirs, view,
-                notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = false,
+                notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing,
             ),
             host,
         )
-        return true
+        return kind
     }
 
     /** The base, from `-Dyoriwake.base` or git, widened to the map's age, and the tree's drift since the capture. */

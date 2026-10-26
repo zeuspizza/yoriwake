@@ -11,6 +11,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
+import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
@@ -66,7 +67,7 @@ internal class Recording(
         val classpath: List<File>,
         val reports: File,
         val isolated: Boolean,
-        val selecting: Boolean,
+        val kind: RunPlan.Kind,
     )
 
     private val selection = Selection(session, root, log)
@@ -196,18 +197,18 @@ internal class Recording(
         )
         val environment = fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }))
         val undated = undatedBy(project, execution, configuration)
-        val selecting = selection.apply(
+        val kind = selection.apply(
             name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath),
             environment, undated, isolated, properties,
         )
         // A selecting execution may leave out every test, which Surefire would otherwise fail on.
-        if (selecting) child(configuration, "failIfNoTests").value = "false"
+        if (kind == RunPlan.Kind.SELECT) child(configuration, "failIfNoTests").value = "false"
         execution.configuration = configuration
         writeAtomically(runFile, buildString {
             properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
             append(AgentContract.RUN_FILE_END).append('\n')
         })
-        running[key] = Run(mapDir, undated, classpath, reports, isolated, selecting)
+        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind)
     }
 
     private fun decode(project: MavenProject, execution: MojoExecution, key: String, run: Run) {
@@ -222,8 +223,8 @@ internal class Recording(
         DecodeRun(
             taskPath = nameOf(project, execution),
             patterns = patterns,
-            selecting = run.selecting,
-            observing = false,
+            selecting = run.kind == RunPlan.Kind.SELECT,
+            observing = run.kind == RunPlan.Kind.OBSERVE,
             asksSelection = selection.asksSelection,
             complementing = false,
             wholeTask = false,

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** A selecting run on Maven (`-Dyoriwake.select`) runs what a change reaches, and refuses where Gradle refuses. */
 class SelectionFunctionalTest {
@@ -53,6 +54,21 @@ class SelectionFunctionalTest {
         val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
         assertContains(selecting, "in dev.demo.lib.GreeterTest")
         assertFalse("in dev.demo.lib.CounterTest" in selecting, output)
+    }
+
+    @Test
+    fun `an observing run runs every test and reports what selection would have done`(@TempDir dir: File) {
+        val project = captured(dir)
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.observe", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(output, "Tests run: 2, Failures: 0")
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) observed: selection would have narrowed; no test failed; 0 would-be misses; 1 tests would have been skipped")
+        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-lib-") }
+        assertTrue(File(map, "observation.json").isFile, "no observation.json in $map")
     }
 
     @Test
