@@ -137,8 +137,9 @@ internal class Recording(
         val outside = project.artifacts.mapNotNull { reactor["${it.groupId}:${it.artifactId}"] }.filter { it.id !in built }
         if (outside.isNotEmpty()) {
             log.warn(
-                "[yoriwake] $name: ${outside.joinToString { it.artifactId }} come(s) from a repository, not this build " +
-                    "(add -am), so nothing is captured and the map is left as it was"
+                "[yoriwake] $name declined, ${RefusalKind.REACTOR_MODULE_FROM_REPOSITORY.token}: " +
+                    "${outside.joinToString { it.artifactId }} come(s) from a repository, not this build (add -am); " +
+                    "every test runs, nothing is captured and the map is left as it was"
             )
             return
         }

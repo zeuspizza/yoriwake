@@ -120,6 +120,18 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a selecting run against a reactor module from a repository runs every test`(@TempDir dir: File) {
+        val project = captured(dir)
+        FunctionalMaven.run(maven, project, "install", "-pl", ":demo-maven,:lib", "-DskipTests").succeeded()
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "app", "-Dyoriwake.select", "-Dyoriwake.base=HEAD")
+            .succeeded().output
+
+        assertContains(output, "[yoriwake] app surefire:test (default-test) declined, reactor-module-from-repository: lib")
+        assertFalse("app surefire:test (default-test) selecting against" in output, output)
+    }
+
+    @Test
     fun `an empty change set runs every test`(@TempDir dir: File) {
         val project = captured(dir)
 
