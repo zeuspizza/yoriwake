@@ -119,7 +119,7 @@ class CaptureFunctionalTest {
 
         val output = FunctionalMaven.run(maven, project, "verify", "-pl", "app").succeeded().output
 
-        assertContains(output, "[yoriwake] app surefire:test (default-test): lib come(s) from a repository, not this build (add -am)")
+        assertContains(output, "[yoriwake] app surefire:test (default-test) declined, reactor-module-from-repository: lib come(s) from a repository, not this build (add -am)")
         assertFalse("app surefire:test (default-test) map updated" in output, output)
     }
 

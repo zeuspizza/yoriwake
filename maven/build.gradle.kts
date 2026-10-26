@@ -81,6 +81,12 @@ mavenPlugin {
     goalPrefix = "yoriwake"
 }
 
+// The goals are Kotlin classes; the descriptor scans only Java's output by default.
+tasks.named<org.gradlex.maven.plugin.development.task.GenerateMavenPluginDescriptorTask>("generateMavenPluginDescriptor") {
+    classesDirs.setFrom(tasks.compileKotlin.flatMap { it.destinationDirectory })
+    sourcesDirs.setFrom(layout.projectDirectory.dir("src/main/kotlin"))
+}
+
 // The agent jar ships inside the plugin jar, as in the Gradle plugin, so a POM never names it.
 val agentJar: Configuration by configurations.creating {
     isCanBeConsumed = false

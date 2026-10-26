@@ -7,6 +7,7 @@ internal object SettingNames {
     const val COMPLEMENT = "yoriwake.complement"
     const val FULL_RUN = "yoriwake.fullRun"
     const val BASE = "yoriwake.base"
+    const val TRUSTED_MAPS = "yoriwake.trustedMaps"
     const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
     const val RECORD_SEQUENTIALLY = "yoriwake.recordSequentially"
 }

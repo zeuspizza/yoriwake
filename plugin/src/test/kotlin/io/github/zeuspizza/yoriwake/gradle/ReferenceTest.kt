@@ -34,7 +34,8 @@ class ReferenceTest {
             .associate { it.relativeTo(root).invariantSeparatorsPath to it.readText() }
 
     private val pluginSources = sources("plugin/src/main", "core/src/main")
-    private val mainText = sources("plugin/src/main", "core/src/main", "agent/src/main").values.joinToString("\n")
+    private val mavenText = sources("maven/src/main").values.joinToString("\n")
+    private val mainText = sources("plugin/src/main", "core/src/main", "agent/src/main").values.joinToString("\n") + "\n" + mavenText
 
     /** The published tokens, as (category, token). */
     private val golden: List<Pair<String, String>> =
@@ -110,7 +111,8 @@ class ReferenceTest {
 
     @Test
     fun `every -D flag the reference names is in the code`() {
-        val pluginText = pluginSources.values.joinToString("\n")
+        // The Maven plugin's flags are user properties, so its sources count too.
+        val pluginText = pluginSources.values.joinToString("\n") + "\n" + mavenText
         // Named whole, in a string or as `-D<name>` in a message: Develocity's `pts.enabled` is read
         // through Develocity's own extension, and the decline names it.
         val unknown = Regex("(?<![A-Za-z0-9])-D([A-Za-z][A-Za-z0-9._]*)").findAll(reference)

@@ -21,6 +21,12 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     /** git could not report a change set at all -- distinct from reporting an empty one. */
     NO_CHANGE_SET("no-change-set"),
 
+    /**
+     * Maven: the execution's classpath holds a module of this reactor that this invocation did not
+     * build, so its bytes came from a repository and are not the checkout's. Built with `-am`, it runs.
+     */
+    REACTOR_MODULE_FROM_REPOSITORY("reactor-module-from-repository"),
+
     /** A refusal that named no kind. Recorded rather than dropped, so the gate still sees it. */
     UNNAMED("unnamed"),
 
