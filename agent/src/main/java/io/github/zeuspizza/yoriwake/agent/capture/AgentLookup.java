@@ -34,17 +34,25 @@ public final class AgentLookup {
     public static Result find() {
         Instrumentation held = instrumentation;
         Result result = find(AgentLookup.class.getClassLoader());
-        // A JaCoCo runtime on the test classpath comes before the -javaagent's jar, so RT can name
-        // a copy whose agent never started while the -javaagent's one holds the coverage.
-        if (result.isFound() || held == null || !result.reason().rtAgentNotStarted) {
+        if (held == null || !(result.isFound() || result.reason().rtAgentNotStarted)) {
             return result;
         }
-        return startedAmong(held::getAllLoadedClasses, result.reason());
+        // A JaCoCo runtime on the test classpath comes before the -javaagent's jar, so RT can name
+        // a copy whose agent never started while the -javaagent's one holds the coverage, or one
+        // that offline-instrumented classes started beside it. Either way the started agents decide.
+        // Unobserved: the whole loaded set is a lookup of every class when a test asks for it.
+        Supplier<Class<?>[]> loaded = () -> TouchRecorder.JVM.unobserved(held::getAllLoadedClasses);
+        if (result.isFound() && startedAgents(loaded.get()).isEmpty()) {
+            // A JaCoCo whose agent class is named differently: RT's answer is all there is.
+            return result;
+        }
+        return startedAmong(loaded, result.isFound() ? null : result.reason());
     }
 
     /**
      * The one started JaCoCo agent among [loaded]; missing, with [rtReason] kept, when there is none,
-     * and refused when several have started, since coverage would split between them.
+     * and refused when several have started, since coverage would split between them. [rtReason] is
+     * null only where RT found a started agent, which is then among them.
      */
     static Result startedAmong(Supplier<Class<?>[]> loaded, Unavailable rtReason) {
         List<Object> started = startedAgents(loaded.get());

@@ -1923,9 +1923,14 @@ MUTATIONS = [
     # A JaCoCo runtime on the test classpath names an agent that never started; the one that did
     # holds the coverage.
     ("a capture behind another JaCoCo runtime records nothing", AGENT_LOOKUP,
-     "        if (result.isFound() || held == null || !result.reason().rtAgentNotStarted) {",
+     "        if (held == null || !(result.isFound() || result.reason().rtAgentNotStarted)) {",
      "        if (true) {",
      functional_suite, "a capture behind another JaCoCo runtime records a map and a selecting run narrows on it"),
+    # The lookup's own scan of the loaded classes is not a test looking up every class.
+    ("the agent's own scan of the loaded classes widens every selection", AGENT_LOOKUP,
+     "() -> TouchRecorder.JVM.unobserved(held::getAllLoadedClasses);",
+     "held::getAllLoadedClasses;",
+     functional_suite, "a test that loads a native library not on the reviewed list selects every later test in its JVM"),
     # Two started agents split the coverage: either one alone leaves classes out of the map.
     ("a capture uses one of two started JaCoCo agents", AGENT_LOOKUP,
      "        if (started.size() > 1) {",
