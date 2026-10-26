@@ -36,8 +36,15 @@ class AuditMojo : AbstractMojo() {
         }
         for (each in audited) {
             val mapDir = MapLocation.forTask(home, each.key)
-            val blockers = Audit.blockers(Audit.TaskFacts.read(mapDir))
-            val result = Audit.audit(mapDir, each.name, "mvn verify", blockers = blockers)
+            // Declined as a run would decline it, so the audit gives the decline's remedy.
+            val agentGoal = each.ownAgentGoal.takeIf { JacocoAdoption.executions(each.project, it).isNotEmpty() }
+                ?: JacocoAdoption.PREPARE_AGENT
+            val declined = DevelocityDetection.decline(each.project, each.execution, session)
+                ?: Declines.of(each.project, each.plugin, each.execution, session)
+                ?: BuildCache.decline(session)
+                ?: JacocoAdoption.decline(each.project, agentGoal, session)
+            val blockers = Audit.blockers(Audit.TaskFacts.read(mapDir), scopeRefusal = declined, maven = true)
+            val result = Audit.audit(mapDir, each.name, "mvn verify", blockers = blockers, tollScript = false)
             Audit.write(mapDir, result)
             log.info("[yoriwake] ${each.name}: ${result.state.token} -- ${result.headline}")
             result.lines.forEach { log.info("[yoriwake]   $it") }

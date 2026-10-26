@@ -715,6 +715,90 @@ class AuditTest {
     }
 
     @Test
+    fun `on Maven no blocker's remedy is a Gradle setting, flag or script`() {
+        val junit4 = Audit.blockers(Audit.TaskFacts(Audit.TaskFacts.JUNIT4, null), maven = true)
+            .single { it.token == "not-on-junit-platform" }
+        val parallel = Audit.blockers(
+            Audit.TaskFacts(Audit.TaskFacts.PLATFORM, null, parallelismUnconfirmed = "JUnit Jupiter's parallel execution is on in the test JVM"),
+            maven = true,
+        ).single { it.token == "in-jvm-parallelism" }
+        val unknown = Audit.blockers(Audit.TaskFacts(null, null), maven = true).single { it.token == "framework-unknown" }
+
+        assertContains(assertNotNull(junit4.remedy), "junit-vintage-engine")
+        assertContains(assertNotNull(junit4.remedy), "only honest evidence about the suite it")
+        assertContains(assertNotNull(parallel.remedy), "systemPropertyVariables")
+        for (remedy in listOf(junit4, parallel, unknown).map { assertNotNull(it.remedy) }) {
+            for (gradle in listOf("narrowPlainRunners", "-P", "init.gradle", "Gradle", "task action")) {
+                assertFalse(gradle in remedy, remedy)
+            }
+        }
+    }
+
+    @Test
+    fun `on Maven a declined execution names its decline, not a framework no run of it records`() {
+        val declined = ScopeOutcome.NotApplied(
+            "the POM gives maven-surefire-plugin the surefire-junit4 provider, which runs no JUnit Platform discovery",
+            ScopeOutcome.NotApplied.Kind.SUREFIRE_LEGACY_PROVIDER,
+        )
+
+        val maven = Audit.blockers(Audit.TaskFacts(null, null), scopeRefusal = declined, maven = true)
+        val gradle = Audit.blockers(Audit.TaskFacts(null, null), scopeRefusal = declined)
+
+        assertEquals(listOf("scope-not-applied"), maven.map { it.token })
+        assertContains(assertNotNull(maven.single().remedy), "remove the legacy provider")
+        assertEquals(listOf("scope-not-applied", "framework-unknown"), gradle.map { it.token })
+    }
+
+    @Test
+    fun `on Maven the JaCoCo declines and in-JVM parallelism name Maven's settings`() {
+        fun remedy(kind: ScopeOutcome.NotApplied.Kind) = assertNotNull(
+            Audit.blockers(Audit.TaskFacts(null, null), scopeRefusal = ScopeOutcome.NotApplied("declined", kind), maven = true)
+                .single().remedy
+        )
+        val parallel = assertNotNull(
+            Audit.blockers(Audit.TaskFacts(Audit.TaskFacts.PLATFORM, "junit.jupiter.execution.parallel.enabled"), maven = true)
+                .single { it.token == "in-jvm-parallelism" }.remedy
+        )
+        val argLine = Audit.blockers(Audit.TaskFacts(Audit.TaskFacts.PLATFORM, null, agentNotOnArgLine = true), maven = true)
+            .single { it.token == "scope-not-applied" }
+
+        assertContains(remedy(ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN), "jacoco-maven-plugin execution of its `prepare-agent` goal")
+        assertContains(remedy(ScopeOutcome.NotApplied.Kind.JACOCO_DISABLED), "`jacoco.skip`")
+        assertContains(parallel, "`forkCount`")
+        assertContains(assertNotNull(argLine.remedy), "`@{argLine}`")
+        for (each in listOf(
+            remedy(ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN), remedy(ScopeOutcome.NotApplied.Kind.JACOCO_DISABLED), parallel,
+        )) {
+            for (gradle in listOf("`jacoco` plugin", "jacoco extension", "convention plugin", "-P", "maxParallelForks")) {
+                assertFalse(gradle in each, each)
+            }
+        }
+    }
+
+    @Test
+    fun `a task's facts carry no Maven-only line unless a Maven run wrote one`(@TempDir dir: File) {
+        Audit.TaskFacts.write(dir, Audit.TaskFacts.PLATFORM, parallelism = null)
+
+        assertFalse("agentNotOnArgLine" in File(dir, Audit.TaskFacts.FILE).readText())
+
+        Audit.TaskFacts.write(dir, Audit.TaskFacts.PLATFORM, parallelism = null, agentNotOnArgLine = true)
+
+        assertEquals(true, Audit.TaskFacts.read(dir).agentNotOnArgLine)
+    }
+
+    @Test
+    fun `on Maven the unmeasured toll names no script, since the one there is runs only Gradle`(@TempDir dir: File) {
+        paybackMap(dir, tests = 10, nanosEach = 1_000_000_000, workers = 2)
+
+        val gradle = Audit.audit(dir, ":app:test", "test").text()
+        val maven = Audit.audit(dir, "lib surefire:test (default-test)", "mvn verify", tollScript = false).text()
+
+        assertContains(gradle, "run scripts/measure-toll.sh, which times `test` twice")
+        assertContains(maven, "UNMEASURED")
+        assertFalse("measure-toll.sh" in maven, maven)
+    }
+
+    @Test
     fun `a build with no SMAP is named as that, and not as a spent budget`() {
         val blockers = Audit.blockers(
             platform,

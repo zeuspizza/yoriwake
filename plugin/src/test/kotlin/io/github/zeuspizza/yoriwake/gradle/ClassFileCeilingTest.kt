@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.classFileCeiling
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
+import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.report.blockers
 import org.gradle.testfixtures.ProjectBuilder
@@ -103,6 +104,20 @@ class ClassFileCeilingTest {
         assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, widening.refusalKind)
         assertContains(widening.refusal!!, "JaCoCo 0.8.12")
         assertContains(widening.refusal!!, "jacoco.toolVersion")
+    }
+
+    @Test
+    fun `a view that sets JaCoCo's version elsewhere is refused and advised in its own setting`(@TempDir dir: File) {
+        val facts = facts(dir, jacoco = "0.8.12", classes = mapOf("com.acme.Modern" to classAt("com.acme.Modern", 69)))
+        val maven = object : ClasspathView by facts {
+            override fun jacocoSetting() = "jacoco-maven-plugin `<version>`"
+        }
+
+        val ceiling = assertNotNull(classFileCeiling(maven, TaskArtifacts(facts.classpath.files, facts.buildDirs.values)))
+
+        assertContains(ceiling.cause, "JaCoCo 0.8.12 (jacoco-maven-plugin `<version>`) officially instruments up to Java ")
+        assertContains(ceiling.remedy, "A jacoco-maven-plugin `<version>` that officially supports Java 25 lifts this.")
+        assertFalse("jacoco.toolVersion" in ceiling.cause + ceiling.remedy, ceiling.reason)
     }
 
     @Test

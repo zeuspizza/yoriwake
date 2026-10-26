@@ -117,6 +117,12 @@ public final class AgentContract {
     public static final String IGNORED_PATHS_PROPERTY = "yoriwake.change.ignored";
 
     /**
+     * The base flag as the build's command line spells it, {@code -Dyoriwake.base} on Maven, for the
+     * advice an empty change set gives. Unset, it is Gradle's {@code -Pyoriwake.base}.
+     */
+    public static final String BASE_FLAG_PROPERTY = "yoriwake.change.baseFlag";
+
+    /**
      * The file holding every list-valued change-set property, {@link #CHANGE_SET_FILE} in the map
      * directory. A change set can name tens of thousands of paths, more than one command line
      * carries, so those properties are never passed to the test JVM directly. Set means the file

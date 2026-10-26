@@ -49,6 +49,8 @@ internal data class ClasspathFacts(
 
     override fun jacocoVersion(): String? = jacocoVersion?.let { it.readOrNull() ?: "" }
 
+    override fun jacocoSetting(): String = "`jacoco.toolVersion`"
+
     override fun testJvm(): Int? = testJvm.readOrNull()
 
     override fun agentCeiling(): String? = agentCeiling.readOrNull()

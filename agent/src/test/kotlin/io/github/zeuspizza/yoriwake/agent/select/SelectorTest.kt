@@ -912,6 +912,27 @@ class SelectorTest {
         )
     }
 
+    @Test
+    fun `an empty change set names the base flag the change set file spells, and Gradle's without one`(@TempDir dir: File) {
+        val mapDir = File(dir, "map")
+        map(mapDir, test("A", "com.acme.A"))
+        // Maven's own JVM decides an explanation from this file, where no host property is set.
+        val changeSet = File(dir, AgentContract.CHANGE_SET_FILE).apply {
+            writeText("${AgentContract.BASE_FLAG_PROPERTY}=-Dyoriwake.base\n${AgentContract.CHANGE_SET_END}\n")
+        }
+        val properties = mapOf(
+            AgentContract.SELECT_PROPERTY to "true",
+            AgentContract.CHANGE_SET_FILE_PROPERTY to changeSet.path,
+        )
+
+        val maven = FilterRule.decisionFrom(FilterRule.resolveInputs { properties[it] }, mapDir)
+        val gradle = decide(MapReader.read(mapDir))
+
+        assertEquals(Selector.Decision.FullRunKind.EMPTY_CHANGE_SET, maven.fullRunKind())
+        assertContains(maven.fullRunReason(), "pass -Dyoriwake.base=<ref> to select against a specific base")
+        assertContains(gradle.fullRunReason(), "pass -Pyoriwake.base=<ref> to select against a specific base")
+    }
+
     // Code a JVM runs once is credited to the first test that triggers it, so a later test in the
     // same JVM can depend on a class without recording it.
 

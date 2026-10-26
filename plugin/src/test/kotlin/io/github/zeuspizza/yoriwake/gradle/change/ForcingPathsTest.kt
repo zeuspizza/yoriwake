@@ -119,6 +119,18 @@ class ForcingPathsTest {
     }
 
     @Test
+    fun `paths git could not tell apart point to the explain step their caller names`() {
+        val classified = ForcingPaths.classify(listOf("app/a.txt", "app/b.txt"), sourceDirs, { null }, { emptyMap() }, ::holdsTracked)
+
+        val gradle = ForcingPaths.lines(":app:test", classified).single()
+        val maven = ForcingPaths.lines("lib surefire:test (default-test)", classified, "mvn test-compile yoriwake:explain").single()
+
+        assertContains(gradle, "2 changed paths force this run and could not be told apart from tracked ones; :app:yoriwakeExplainTest lists a sample")
+        assertContains(maven, "; mvn test-compile yoriwake:explain lists a sample in explain.json.")
+        assertFalse("yoriwakeExplain" in maven, maven)
+    }
+
+    @Test
     fun `one line per origin, five paths each, then the count of the rest`() {
         val written = (1..7).map { "app/f$it.log" }
         val classified = classify(

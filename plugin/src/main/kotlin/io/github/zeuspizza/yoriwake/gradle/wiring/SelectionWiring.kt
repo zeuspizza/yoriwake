@@ -814,6 +814,10 @@ private class GradleSelectingHost(
             )
         }
     }
+
+    override fun flag(name: String) = "-P$name"
+
+    override val explain: String get() = ForcingPaths.explainTask(test.path)
 }
 
 /** [WorkingTree.drift] through a value source; one that could not be obtained is unlisted. */

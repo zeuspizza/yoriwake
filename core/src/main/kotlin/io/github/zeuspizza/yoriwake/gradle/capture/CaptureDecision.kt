@@ -30,6 +30,8 @@ internal fun decideCapture(
     learnable: Set<String>,
     /** False when the map's age could not be established, which no stamp makes current. */
     ageKnown: Boolean = true,
+    /** A setting as the host's command line passes it; Gradle's `-P` unless the host says otherwise. */
+    flag: (String) -> String = { "-P$it" },
 ): CaptureDecision {
     val stamp = readCaptureStamp(mapDir)
     // "Current" is about what the map knows, not which commit it was stamped at: the change set
@@ -47,8 +49,8 @@ internal fun decideCapture(
         keepsIsolation ->
             "running everything, but the map holds records made with a fresh test JVM per test " +
                 "class ($mode), so this selecting run leaves it alone and nothing is instrumented. " +
-                "Only a run without -P${SettingNames.SELECT} updates it; pass " +
-                "-P${SettingNames.ISOLATED_CAPTURE} there to keep it isolated."
+                "Only a run without ${flag(SettingNames.SELECT)} updates it; pass " +
+                "${flag(SettingNames.ISOLATED_CAPTURE)} there to keep it isolated."
         fullRun ->
             "running everything, but the map already covers this commit, so nothing is " +
                 "instrumented and the run costs what it always did."

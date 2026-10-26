@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.gradle.change
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ABSENCE_PROVABLE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ACCOUNTED_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.BASE_FLAG_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_BYTES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_PATHS_PROPERTY
@@ -12,6 +13,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MOVED_FILES_PRO
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNMAPPABLE_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.select.PathGlob
+import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
@@ -59,6 +61,12 @@ internal object SelectingStep {
 
         /** This run captures nothing: no records directory, and the host's coverage agent off. */
         fun captureNothing()
+
+        /** A setting as this host's command line passes it: `-P<name>` on Gradle, `-D<name>` on Maven. */
+        fun flag(name: String): String
+
+        /** What a person runs to explain this run without running it, which writes `explain.json`. */
+        val explain: String
     }
 
     /** One run's change set and what it is judged against. */
@@ -185,6 +193,12 @@ internal object SelectingStep {
                 // Only when there is one, so a build without a declaration hands over what it did.
                 if (scoped.ignore.ignored.isEmpty()) emptyMap()
                 else mapOf(IGNORED_PATHS_PROPERTY to scoped.ignore.ignored.map(PathIgnore::encode))
+            ) + (
+                // In the file rather than a property: an explanation decides in the host's own JVM,
+                // which reads this file and no property of the test JVM's. Absent, the selector
+                // names Gradle's, so a Gradle build hands over what it did.
+                if (host.flag(SettingNames.BASE) == "-P${SettingNames.BASE}") emptyMap()
+                else mapOf(BASE_FLAG_PROPERTY to listOf(host.flag(SettingNames.BASE)))
             ),
         )
         if (established.testClasses.isNotEmpty()) {
@@ -202,7 +216,7 @@ internal object SelectingStep {
                 (if (scoped.ideState == 0) "" else ", ${scoped.ideState} an IDE's state") +
                 (if (scoped.notReadByTests == 0) "" else ", ${scoped.notReadByTests} notReadByTests lists")
         )
-        ForcingPaths.lines(host.name, forcing).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
+        ForcingPaths.lines(host.name, forcing, host.explain).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
 
         val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map
@@ -215,6 +229,7 @@ internal object SelectingStep {
             // A map whose classpath files moved, or that records none, is not current: the run
             // forces, and its capture records them as they are now.
             ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
+            flag = host::flag,
         )
         applyCapture(host, mapDir, inputs.observing, capture)
         return Worked(scoped, established, widening, forcing, capture)
@@ -236,6 +251,7 @@ internal object SelectingStep {
             fullRun = true,
             learnable = emptySet(),
             ageKnown = false,
+            flag = host::flag,
         ).takeUnless { it.capture }
         host.lifecycle(
             "[yoriwake] ${host.name}: $reason, and the whole suite runs. $cause" + if (!clears) "." else "; " +
@@ -277,6 +293,7 @@ internal object SelectingStep {
                 }.getOrDefault(false),
                 fullRun = true,
                 learnable = emptySet(),
+                flag = host::flag,
                 ageKnown = false,
             ),
         )
@@ -290,7 +307,7 @@ internal object SelectingStep {
     fun declined(host: Host, mapDir: File, reasons: List<String>, flag: String, isolatedCapture: Boolean) {
         host.lifecycle(
             "[yoriwake] ${host.name}: ${reasons.joinToString("; ")}, so selection is declined and every " +
-                "test runs as on a run without -P$flag."
+                "test runs as on a run without ${host.flag(flag)}."
         )
         val decision = decideCapture(
             mapDir,
@@ -300,6 +317,7 @@ internal object SelectingStep {
             fullRun = true,
             learnable = emptySet(),
             ageKnown = false,
+            flag = host::flag,
         )
         if (isolatedCapture || decision.capture) return
         applyCapture(host, mapDir, observing = false, decision)
@@ -344,6 +362,7 @@ internal object SelectingStep {
                 }.getOrDefault(false),
                 fullRun = true,
                 learnable = emptySet(),
+                flag = host::flag,
                 ageKnown = false,
             ),
         )

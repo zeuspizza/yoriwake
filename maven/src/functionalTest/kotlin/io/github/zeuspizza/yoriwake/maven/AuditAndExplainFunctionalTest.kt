@@ -38,6 +38,101 @@ class AuditAndExplainFunctionalTest {
         assertContains(output, "[yoriwake] app surefire:test (default-test): ")
         val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-lib-") }
         assertTrue(File(map, "audit.json").isFile, "no audit.json in $map")
+        // The run recorded its framework, and no script here measures Maven's toll.
+        val lib = output.substringAfter("[yoriwake] lib surefire:test (default-test): ").substringBefore("[yoriwake] app surefire:test")
+        assertContains(lib, "UNMEASURED")
+        assertFalse("framework-unknown" in lib, lib)
+        assertFalse("measure-toll.sh" in output, output)
+    }
+
+    /** What yoriwake printed, without Maven's own lines. */
+    private fun yoriwakeLines(output: String) = output.lines().filter { "[yoriwake]" in it }.joinToString("\n")
+
+    /** No remedy a Maven user cannot follow: a Gradle setting, flag or init script. */
+    private fun assertNoGradleRemedy(output: String) {
+        val printed = yoriwakeLines(output)
+        for (gradle in listOf(
+            "framework-unknown", "narrowPlainRunners", "-Pyoriwake", "init.gradle", "`jacoco` plugin", "jacoco extension",
+            "recordSequentially",
+        )) {
+            assertFalse(gradle in printed, printed)
+        }
+    }
+
+    @Test
+    fun `an execution on JUnit 4 alone audits as off the Platform with a Maven remedy`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "pom.xml").edit {
+            it.replace(
+                Regex("""<groupId>org\.junit\.jupiter</groupId>\s*<artifactId>junit-jupiter</artifactId>"""),
+                "<groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version>",
+            )
+        }
+        File(project, "lib/src/test/java/dev/demo/lib").listFiles().orEmpty().forEach { test ->
+            test.edit {
+                it.replace("org.junit.jupiter.api.Assertions.assertEquals", "org.junit.Assert.assertEquals")
+                    .replace("org.junit.jupiter.api.Test", "org.junit.Test")
+                    .replace("\nclass ", "\npublic class ")
+                    .replace("    void ", "    public void ")
+            }
+        }
+        git(project, "commit", "-q", "-am", "JUnit 4 alone")
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+
+        val output = FunctionalMaven.run(maven, project, "yoriwake:audit", "-pl", "lib").succeeded().output
+
+        assertContains(output, "[not-on-junit-platform] this task runs on JUnit 4, off the Platform")
+        assertContains(output, "org.junit.vintage:junit-vintage-engine")
+        assertNoGradleRemedy(output)
+    }
+
+    @Test
+    fun `a legacy provider named in the POM audits with its decline's remedy`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId>\n  <build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><dependencies>" +
+                    "<dependency><groupId>org.apache.maven.surefire</groupId><artifactId>surefire-junit4</artifactId>" +
+                    "<version>3.5.6</version></dependency></dependencies></plugin></plugins></build>",
+            )
+        }
+
+        val output = FunctionalMaven.run(maven, project, "yoriwake:audit", "-pl", "lib").succeeded().output
+
+        assertContains(output, "the plugin declined to configure this task: the POM gives maven-surefire-plugin the surefire-junit4 provider")
+        assertContains(output, "remove the legacy provider from the plugin's dependencies")
+        assertNoGradleRemedy(output)
+    }
+
+    @Test
+    fun `a skipped JaCoCo agent audits with the Maven remedy`(@TempDir dir: File) {
+        val project = committed(dir)
+
+        val output = FunctionalMaven.run(maven, project, "yoriwake:audit", "-pl", "lib", "-Djacoco.skip=true").succeeded().output
+
+        assertContains(output, "the jacoco-maven-plugin `prepare-agent` execution is skipped")
+        assertNoGradleRemedy(output)
+    }
+
+    @Test
+    fun `an argLine without the JaCoCo agent audits as declined with the Maven remedy`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId>\n  <build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId>" +
+                    "<configuration><argLine>-Xmx256m</argLine></configuration></plugin></plugins></build>",
+            )
+        }
+        git(project, "commit", "-q", "-am", "an argLine without the agent")
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+
+        val output = FunctionalMaven.run(maven, project, "yoriwake:audit", "-pl", "lib").succeeded().output
+
+        assertContains(output, "the JaCoCo agent does not reach the test JVM's argLine")
+        assertContains(output, "keep `@{argLine}` in it")
+        assertNoGradleRemedy(output)
     }
 
     private fun File.edit(transform: (String) -> String) = writeText(transform(readText()))
@@ -56,6 +151,19 @@ class AuditAndExplainFunctionalTest {
         val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-lib-") }
         assertTrue(File(map, "explain.json").isFile, "no explain.json in $map")
         assertFalse(File(map, "change-set").exists() || File(map, "selection-start.pending").exists(), "explain wrote into the map")
+    }
+
+    @Test
+    fun `explain on an empty change set names Maven's base flag`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+
+        val output = FunctionalMaven.run(maven, project, "test-compile", "yoriwake:explain", "-pl", "lib", "-Dyoriwake.base=HEAD")
+            .succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) would run everything: the change set is empty")
+        assertContains(output, "pass -Dyoriwake.base=<ref> to select against a specific base")
+        assertFalse("-Pyoriwake" in output, output)
     }
 
     @Test

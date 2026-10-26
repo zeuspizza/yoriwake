@@ -90,6 +90,9 @@ class SelectionFunctionalTest {
             .succeeded().output
 
         assertContains(output, "on branch main, and fullRunBranches lists `main`, so selection is declined")
+        // Maven's flag, as the run was asked with: `-P` selects a Maven profile.
+        assertContains(output, "every test runs as on a run without -Dyoriwake.select.")
+        assertFalse("-Pyoriwake" in output, output)
         assertContains(output, "Tests run: 2, Failures: 0")
         assertContains(output, "[yoriwake] lib surefire:test (default-test) map updated: ")
     }
@@ -210,6 +213,8 @@ class SelectionFunctionalTest {
             .succeeded().output
 
         assertContains(output, "[yoriwake] running everything: the change set is empty")
+        assertContains(output, "pass -Dyoriwake.base=<ref> to select against a specific base")
+        assertFalse("-Pyoriwake" in output, output)
         assertContains(output, "Tests run: 2, Failures: 0")
     }
 

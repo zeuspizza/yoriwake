@@ -302,7 +302,8 @@ public final class Selector {
             // is absence of information, not proof that nothing needs to run.
             return Decision.fullRun(
                     "the change set is empty, which cannot be told apart from not having one;"
-                            + " pass -Pyoriwake.base=<ref> to select against a specific base",
+                            + " pass " + (change.baseFlag() == null ? "-Pyoriwake.base" : change.baseFlag())
+                            + "=<ref> to select against a specific base",
                     Decision.FullRunKind.EMPTY_CHANGE_SET, knownTestIds);
         }
 

@@ -20,6 +20,7 @@ internal fun classpathView(session: MavenSession, root: File, project: MavenProj
             runCatching { project.compileClasspathElements.map(::File).toSet() }.getOrDefault(emptySet())
         override fun declaredModules(): Set<String>? = null
         override fun jacocoVersion(): String? = project.getPlugin(JacocoAdoption.JACOCO)?.version.orEmpty()
+        override fun jacocoSetting(): String = "jacoco-maven-plugin `<version>`"
         override fun testJvm(): Int? = null
         override fun agentCeiling(): String? = null
     }

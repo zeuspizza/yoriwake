@@ -16,6 +16,7 @@ import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
+import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.ParallelismDetector
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
@@ -138,6 +139,12 @@ internal class Recording(
         val configuration = execution.configuration ?: Xpp3Dom("configuration")
         // Nothing runs, so nothing of the last run's is cleared and the map is not touched.
         if (skipsTests(project, execution, configuration)) return
+        val classpath = runCatching { project.testClasspathElements.map(::File) }.getOrDefault(emptyList())
+        val inJvm = parallelism(project, configuration, classpath)
+        val agentMissing = !reachesJacoco(project, configuration)
+        // For the audit, before the declines below, so a declined execution still says what it runs
+        // on and why it was declined. A module from a repository is this invocation's, not the build's.
+        Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })
         // A module of this reactor that this invocation did not build comes from a repository, as
         // whatever was installed last: its bytes are not the checkout's (KTD7).
         val reactor = session.allProjects.associateBy { "${it.groupId}:${it.artifactId}" }
@@ -151,9 +158,8 @@ internal class Recording(
             )
             return
         }
-        val classpath = runCatching { project.testClasspathElements.map(::File) }.getOrDefault(emptyList())
         // Tests interleaved in one JVM share its one JaCoCo agent, and their coverage would blend.
-        parallelism(project, configuration, classpath)?.let { where ->
+        inJvm?.let { where ->
             log.warn(
                 "[yoriwake] $name declined, ${RefusalKind.IN_JVM_PARALLELISM.token}: its tests may run concurrently in one JVM " +
                     "($where); every test runs and nothing is captured"
@@ -162,7 +168,7 @@ internal class Recording(
         }
         // What reaches the JVM is the authority: an argLine that drops the JaCoCo agent's property
         // records no coverage, whatever the agent's configuration says.
-        if (!reachesJacoco(project, configuration)) {
+        if (agentMissing) {
             log.warn(
                 "[yoriwake] $name declined, ${ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN.token}: the JaCoCo agent does not reach " +
                     "the test JVM's argLine; every test runs and nothing is captured"
@@ -267,6 +273,20 @@ internal class Recording(
     }
 
     private fun view(project: MavenProject, classpath: List<File>): ClasspathView = classpathView(session, root, project, classpath)
+
+    /**
+     * The framework Surefire runs [project]'s tests on, as it picks a provider from the resolved test
+     * classpath: the JUnit Platform when any of it is there, else TestNG, else JUnit 4.
+     */
+    private fun frameworkOf(project: MavenProject): String {
+        val artifacts = project.artifacts.map { "${it.groupId}:${it.artifactId}" }
+        return when {
+            artifacts.any { it.startsWith("org.junit.platform:") } -> Audit.TaskFacts.PLATFORM
+            "org.testng:testng" in artifacts -> "TestNG"
+            "junit:junit" in artifacts -> Audit.TaskFacts.JUNIT4
+            else -> "JUnit 3 or plain test classes"
+        }
+    }
 
     /** A Surefire or Failsafe parameter as this execution resolves it: its POM value, else its user property. */
     private fun parameter(project: MavenProject, configuration: Xpp3Dom, name: String, property: String): String? =

@@ -182,6 +182,7 @@ MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Sele
 MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
 MAVEN_BUILD_CACHE = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/BuildCache.kt"
 MAVEN_DEVELOCITY = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/DevelocityDetection.kt"
+MAVEN_AUDIT = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/AuditMojo.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -198,6 +199,7 @@ AUDIT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Audit.k
 # The payback engine moved out of Audit.kt; its mutation anchors moved with it, which is the
 # check that the move changed no behaviour -- an anchor left behind refuses before any suite runs.
 PAYBACK = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/Payback.kt"
+AUDIT_RENDER = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditRender.kt"
 SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InstrumentationScope.kt"
 CAFFEINE_PROJECT = "bench/projects/caffeine.toml"
 QUALIFY_SRC = "bench/qualify.py"
@@ -4040,8 +4042,8 @@ MUTATIONS = [
     # NEW JDK RELEASES. A class or test JVM newer than a reader of it must be refused by
     # name; without the check the run still forces, but as an unreadable digest or as nothing.
     ("a class above the ceiling is not refused", CLASS_FILE_CEILING,
-     "    if (versions.maxMajor > ceiling) return ceilingRefusal(versions, jacocoVersion, jacocoCeiling)",
-     "    if (false) return ceilingRefusal(versions, jacocoVersion, jacocoCeiling)",
+     "    if (versions.maxMajor > ceiling) return ceilingRefusal(versions, jacocoVersion, jacocoCeiling, facts.jacocoSetting())",
+     "    if (false) return ceilingRefusal(versions, jacocoVersion, jacocoCeiling, facts.jacocoSetting())",
      functional_suite, "a class compiled for a newer Java than the plugin reads runs every test"),
     ("the JaCoCo ceiling is ignored", CLASS_FILE_CEILING,
      "    val ceiling = minOf(ClassFileSupport.asmCeiling(), jacocoCeiling)",
@@ -4425,7 +4427,7 @@ MUTATIONS = [
      maven_suite, "parallel execution enabled for the JUnit Platform is declined and captures nothing"),
     # What reaches the JVM is the authority: an argLine without JaCoCo's agent records no coverage.
     ("a Maven argLine without JaCoCo's agent is captured", MAVEN_RECORDING,
-     "        if (!reachesJacoco(project, configuration)) {",
+     "        if (agentMissing) {",
      "        if (false) {",
      maven_suite, "an argLine that drops JaCoCo's agent captures nothing"),
     # JUnit 4 reports a failing @BeforeClass, @AfterClass or @ClassRule against the class: each
@@ -4548,6 +4550,72 @@ MUTATIONS = [
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",
      "            if (true) a\n            else git.run(",
      maven_suite, "a map captured at a commit git cannot relate refuses and captures"),
+    # MAVEN USERS READ MAVEN REMEDIES. Each line below is shared with Gradle and says a setting or a
+    # command; on Maven `-P` selects a profile and a Gradle task path names nothing.
+    # Maven records the framework its executions run on, or every audit lists `framework-unknown`,
+    # whose remedy no Maven run can clear.
+    ("Maven records no framework for the audit", MAVEN_RECORDING,
+     "        Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })\n",
+     "",
+     maven_suite, "an execution on JUnit 4 alone audits as off the Platform with a Maven remedy"),
+    # A run declined because its argLine drops the JaCoCo agent says so to the audit, which can
+    # read no argLine of its own: prepare-agent sets it only in a run.
+    ("Maven records no argLine decline for the audit", MAVEN_RECORDING,
+     "agentNotOnArgLine = agentMissing.takeIf { it })\n",
+     "agentNotOnArgLine = null)\n",
+     maven_suite, "an argLine without the JaCoCo agent audits as declined with the Maven remedy"),
+    # The JaCoCo declines reach the Maven audit too, where Gradle's `jacoco` plugin names nothing.
+    ("the Maven audit gives a skipped JaCoCo agent Gradle's remedy", AUDIT_COMPUTE,
+     "                    ScopeOutcome.NotApplied.Kind.JACOCO_DISABLED -> if (maven) {",
+     "                    ScopeOutcome.NotApplied.Kind.JACOCO_DISABLED -> if (false) {",
+     unit_suite, "on Maven the JaCoCo declines and in-JVM parallelism name Maven's settings"),
+    ("Maven records a JUnit 4 execution as on the JUnit Platform", MAVEN_RECORDING,
+     '            "junit:junit" in artifacts -> Audit.TaskFacts.JUNIT4\n',
+     '            "junit:junit" in artifacts -> Audit.TaskFacts.PLATFORM\n',
+     maven_suite, "an execution on JUnit 4 alone audits as off the Platform with a Maven remedy"),
+    # The audit takes declines from Maven's own route, so a declined execution reads its remedy.
+    ("the Maven audit leaves an execution's decline out", MAVEN_AUDIT,
+     "            val blockers = Audit.blockers(Audit.TaskFacts.read(mapDir), scopeRefusal = declined, maven = true)",
+     "            val blockers = Audit.blockers(Audit.TaskFacts.read(mapDir), scopeRefusal = null, maven = true)",
+     maven_suite, "a legacy provider named in the POM audits with its decline's remedy"),
+    ("a declined run's line names Gradle's flag on Maven", SELECTING_STEP,
+     '                "test runs as on a run without ${host.flag(flag)}."',
+     '                "test runs as on a run without -P$flag."',
+     maven_suite, "on a branch fullRunBranches lists a selecting run runs everything and records the map"),
+    # The selector's advice on an empty change set runs in the test JVM and, for an explanation, in
+    # Maven's own JVM: the host's spelling of the base flag reaches it only through the change set.
+    ("the change set names Gradle's base flag on Maven", SELECTING_STEP,
+     "                else mapOf(BASE_FLAG_PROPERTY to listOf(host.flag(SettingNames.BASE)))",
+     "                else emptyMap()",
+     maven_suite, "explain on an empty change set names Maven's base flag"),
+    ("the selector is not handed the base flag", FILTER_RULE,
+     "                .withBaseFlag(property.apply(AgentContract.BASE_FLAG_PROPERTY))\n",
+     "",
+     agent_suite, "an empty change set names the base flag the change set file spells"),
+    ("the base flag is read from the test JVM's properties, not the change set file", FILTER_RULE,
+     "                    AgentContract.IGNORED_PATHS_PROPERTY,\n                    AgentContract.BASE_FLAG_PROPERTY)));",
+     "                    AgentContract.IGNORED_PATHS_PROPERTY)));",
+     agent_suite, "an empty change set names the base flag the change set file spells"),
+    ("an isolated map's reason names Gradle's flags whatever the host", CAPTURE_DECISION,
+     '                "Only a run without ${flag(SettingNames.SELECT)} updates it; pass " +',
+     '                "Only a run without -P${SettingNames.SELECT} updates it; pass " +',
+     unit_suite, "a full run over a map recorded in isolation names the flags as the host spells them"),
+    ("a forced run points to a Gradle task to explain it whatever the host", FORCING_PATHS,
+     '"told apart from tracked ones; $explain lists a sample in explain.json."',
+     '"told apart from tracked ones; ${explainTask(task)} lists a sample in explain.json."',
+     unit_suite, "paths git could not tell apart point to the explain step their caller names"),
+    ("the Maven audit gives a JUnit 4 execution Gradle's remedy", AUDIT_COMPUTE,
+     "        maven -> add(\n",
+     "        false -> add(\n",
+     unit_suite, "on Maven no blocker's remedy is a Gradle setting, flag or script"),
+    ("the Maven audit asks a declined execution to record its framework", AUDIT_COMPUTE,
+     "        facts.framework == null && maven && scopeRefusal != null -> Unit\n",
+     "        false -> Unit\n",
+     unit_suite, "on Maven a declined execution names its decline, not a framework no run of it records"),
+    ("the Maven audit sends the user to a toll script that runs only Gradle", AUDIT_RENDER,
+     "        if (script) {\n",
+     "        if (true) {\n",
+     unit_suite, "on Maven the unmeasured toll names no script, since the one there is runs only Gradle"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
