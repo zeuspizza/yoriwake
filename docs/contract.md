@@ -367,6 +367,12 @@ it ended. A test JVM that wrote no record (killed, halted) leaves its tests out 
 | `STAMP_CLASSPATH_NOTE` | `classpath` | A SHA-256 of the test runtime classpath's files, in order, each relative to the build root or the Gradle user home when under one |
 | `STAMP_CONFIGURATION_NOTE` | `configuration` | A SHA-256 of the task's system properties and JVM arguments other than yoriwake's, its include and exclude patterns and its framework's filters |
 
+Under Maven the same notes stand for an execution: `task` is its map id, `build-root` the reactor
+root, `build-path` the module's `groupId:artifactId:packaging:version`, `classpath` relative to the
+reactor root or the local repository, and `configuration` covers the invocation's user properties
+(which Surefire promotes to the test JVM), the execution's `systemPropertyVariables`, the host's own
+`argLine` and its `includes`, `excludes`, `groups`, `excludedGroups` and `test`.
+
 A record of another version, or whose rows do not match `rows`, is unusable whole.
 
 ## Published tokens
