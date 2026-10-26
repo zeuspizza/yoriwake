@@ -1930,7 +1930,7 @@ MUTATIONS = [
     ("the agent's own scan of the loaded classes widens every selection", AGENT_LOOKUP,
      "() -> TouchRecorder.JVM.unobserved(held::getAllLoadedClasses);",
      "held::getAllLoadedClasses;",
-     functional_suite, "a test that loads a native library not on the reviewed list selects every later test in its JVM"),
+     functional_suite, "an edit to a test class nothing else names selects its own tests and the tests after them"),
     # Two started agents split the coverage: either one alone leaves classes out of the map.
     ("a capture uses one of two started JaCoCo agents", AGENT_LOOKUP,
      "        if (started.size() > 1) {",
