@@ -86,8 +86,9 @@ jobs:
         run: |
           awk -v s="$SECTION" 'index($0, s) == 1 {found = 1} END {exit !found}' CHANGELOG.md ||
             { echo "CHANGELOG.md has no section $SECTION"; exit 1; }
+      # `build` leaves the Maven plugin's own suite out; a tag publishes it only after that suite passed.
       - name: build and test
-        run: ./gradlew build -PreleaseVersion="$VERSION" --console=plain
+        run: ./gradlew build :maven:functionalTest -PreleaseVersion="$VERSION" --console=plain
       # The local repository the published-plugin test resolved the plugin from, the SBOM, and the
       # agent jar as it sits inside the plugin jar, each listed with its SHA-256.
       - name: collect the release files

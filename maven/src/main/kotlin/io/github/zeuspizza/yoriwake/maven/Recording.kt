@@ -72,6 +72,9 @@ internal class Recording(
 
     private val selection = Selection(session, root, log).also { it.validate() }
 
+    /** Each module's pinned tests, read before anything runs so that a pattern it cannot use fails the build. */
+    private val pins = session.projects.associate { it.id to Settings.alwaysRunOf(it, session) }
+
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
     }
@@ -214,6 +217,7 @@ internal class Recording(
             )
                 ?.toIntOrNull()?.let { it > 0 } == true,
             properties = properties,
+            alwaysRun = pins[project.id].orEmpty(),
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"

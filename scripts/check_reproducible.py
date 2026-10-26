@@ -1,6 +1,7 @@
 """
-Builds one commit twice, each in a fresh clone, and checks that the plugin jar and the agent jar
-nested in it come out byte for byte the same. A release that rebuilds the same is one anybody can
+Builds one commit twice, each in a fresh clone, and checks that the Gradle plugin jar, the agent jar
+nested in it, and the three jars Maven Central gets for the Maven plugin come out byte for byte the
+same. A release that rebuilds the same is one anybody can
 check against its tag.
 
 The build cache is off, so the second build compiles everything again rather than reusing the
@@ -23,7 +24,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def build(ref, version, into):
     subprocess.run(["git", "clone", "--quiet", "--no-local", ROOT, into], check=True)
     subprocess.run(["git", "-C", into, "checkout", "--quiet", "--detach", ref], check=True)
-    command = ["./gradlew", "--quiet", "--no-build-cache", "--no-configuration-cache", ":plugin:assemble"]
+    command = ["./gradlew", "--quiet", "--no-build-cache", "--no-configuration-cache", ":plugin:assemble",
+               ":maven:assemble", ":maven:sourcesJar", ":maven:javadocJar"]
     if version:
         command.append(f"-PreleaseVersion={version}")
     subprocess.run(command, cwd=into, check=True)
@@ -36,10 +38,19 @@ def build(ref, version, into):
         plugin_bytes = plugin.read()
     with zipfile.ZipFile(jars[0]) as jar:
         agent_bytes = jar.read("yoriwake-agent.jar")
-    return {
+    digests = {
         os.path.basename(jars[0]): hashlib.sha256(plugin_bytes).hexdigest(),
         "yoriwake-agent.jar": hashlib.sha256(agent_bytes).hexdigest(),
     }
+    # The shadow jar, its sources and its javadoc: what Central gets. `-plain` is never published.
+    maven = [jar for jar in glob.glob(os.path.join(into, "maven", "build", "libs", "yoriwake-maven-plugin-*.jar"))
+             if not jar.endswith("-plain.jar")]
+    if len(maven) != 3:
+        sys.exit(f"expected the Maven plugin's jar, sources jar and javadoc jar in {into}, found {maven}")
+    for jar in sorted(maven):
+        with open(jar, "rb") as handle:
+            digests[os.path.basename(jar)] = hashlib.sha256(handle.read()).hexdigest()
+    return digests
 
 
 def main(argv):

@@ -1770,7 +1770,7 @@ def release_problems(text):
     if found:
         return found
     allowed = {
-        "verify": [["build"]],
+        "verify": [["build", ":maven:functionalTest"]],
         "publish": [[":plugin:signReleaseRepository"], [":plugin:publishReleaseRepository"]],
         "attest": [],
         "publish-maven": [],
@@ -1792,6 +1792,12 @@ def release_problems(text):
             found.append(f"`{name}` can write the repository; only `github-release` may")
         if name not in ("verify", "publish") and "setup-gradle" in job:
             found.append(f"`{name}` sets up Gradle, and with it a cache; it runs no build")
+    # The tasks `verify` names gate the tag only when none is excluded again and a failure fails the job.
+    for call in re.findall(r"\./gradlew\b[^\n]*", jobs["verify"]):
+        if re.search(r"\s(?:-x|--exclude-task)\s|\|\|", call):
+            found.append(f"`verify` runs `{call.strip()}`, which excludes a task or carries on past a failure")
+    if "continue-on-error" in jobs["verify"]:
+        found.append("`verify` carries on past a failed step")
     for name, needs in (("attest", "verify"), ("publish", "attest"), ("publish-maven", "publish"),
                         ("github-release", "publish"), ("github-release", "publish-maven")):
         line = re.search(r"^    needs: (.*)$", jobs[name], re.MULTILINE)
@@ -1901,6 +1907,11 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
             "      - name: the Maven Central bundle is complete\n", "      - name: nothing\n        if: false\n", 1).replace(
             "python3 scripts/central_bundle.py release/repository io.github.zeuspizza yoriwake-maven-plugin\n          \"$VERSION\"",
             "true\n          \"$VERSION\"", 1),
+        "the release skips the Maven suite": text.replace(" :maven:functionalTest -PreleaseVersion", " -PreleaseVersion", 1),
+        "the release excludes the Maven suite again": text.replace(
+            " :maven:functionalTest -PreleaseVersion", " :maven:functionalTest -x :maven:functionalTest -PreleaseVersion", 1),
+        "the release ignores a failed build": text.replace(
+            '-PreleaseVersion="$VERSION" --console=plain\n', '-PreleaseVersion="$VERSION" --console=plain || true\n', 1),
         "a rehearsal runs anywhere": text.replace("            main|release/*) ;;\n", "", 1),
         "a rehearsal runs any commit": text.replace('[ "$CANDIDATE" = "$GITHUB_SHA" ] ||', "true ||", 1),
     }
