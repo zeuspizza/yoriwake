@@ -49,6 +49,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A capture records when a JaCoCo runtime on the test classpath (Android's `testCoverageEnabled`) hides the started agent. Map: left alone.
 - A test JVM that finds parallelism the plugin missed records nothing. Map: left alone.
 - A test the engine starts and never finishes runs every time and no longer discards the capture. Map: left alone.
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.

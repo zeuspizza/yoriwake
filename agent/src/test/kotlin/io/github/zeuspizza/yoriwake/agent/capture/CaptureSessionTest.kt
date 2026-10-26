@@ -520,4 +520,19 @@ class CaptureSessionTest {
 
         assertTrue(touchLines().contains("1\t${AgentContract.TOUCH_LOOKUP}\t${AgentContract.FIRST_TOUCH_ANY}"), "${touchLines()}")
     }
+
+    @Test
+    fun `a capture whose agent finds another started by its end is not marked complete`() {
+        val agent = object : JacocoAgent {
+            override fun version() = "stub"
+            override fun takeExecutionData() = ByteArray(1)
+            override fun anotherStarted() = "a second JaCoCo agent, internal_0c3, started during the run"
+        }
+        val session = CaptureSession.open(agent, records, "0", true).also { sessions += it }
+        session.started(alpha)
+        session.finished(alpha, null)
+        session.endRun()
+
+        assertFalse(complete(), "the worker was marked complete")
+    }
 }

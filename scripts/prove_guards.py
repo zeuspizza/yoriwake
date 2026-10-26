@@ -160,6 +160,7 @@ COVERAGE_DECODER = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/cap
 SETTINGS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/Settings.kt"
 RUN_PLAN = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/RunPlan.kt"
 CAPTURE_SESSION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureSession.java"
+AGENT_LOOKUP = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/AgentLookup.java"
 JUNIT4_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Events.java"
 TESTNG_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/TestNgEvents.java"
 TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/TouchRecorder.java"
@@ -787,6 +788,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from its local time (27s for nine tests) doubled for a runner, until an
     # every-guard run measures it.
     "SequentialRecordingFunctionalTest": 55,
+    # Measured locally (20s for one test, two builds) doubled for a runner, until an every-guard
+    # run measures it.
+    "ShadowedJacocoRuntimeFunctionalTest": 40,
     "TestLauncherFunctionalTest": 42,
     "TestRetryFunctionalTest": 79,
     "TestWrittenFilesFunctionalTest": 104,
@@ -1933,6 +1937,26 @@ MUTATIONS = [
      '            holder.getField("SINK").set(null, reads);',
      "            holder.getClass();",
      functional_suite, "a test that reads a class file is selected when the class it reads changes"),
+    # A JaCoCo runtime on the test classpath names an agent that never started; the one that did
+    # holds the coverage.
+    ("a capture behind another JaCoCo runtime records nothing", AGENT_LOOKUP,
+     "        if (held == null || !(result.isFound() || result.reason().rtAgentNotStarted)) {",
+     "        if (true) {",
+     functional_suite, "a capture behind another JaCoCo runtime records a map and a selecting run narrows on it"),
+    # The lookup's own scan of the loaded classes is not a test looking up every class.
+    ("the agent's own scan of the loaded classes widens every selection", AGENT_LOOKUP,
+     "() -> TouchRecorder.JVM.unobserved(held::getAllLoadedClasses);",
+     "held::getAllLoadedClasses;",
+     functional_suite, "an edit to a test class nothing else names selects its own tests and the tests after them"),
+    # Two started agents split the coverage: either one alone leaves classes out of the map.
+    ("a capture uses one of two started JaCoCo agents", AGENT_LOOKUP,
+     "        if (started.size() > 1) {",
+     "        if (false) {",
+     agent_suite, "two started agents are refused, since coverage would split between them"),
+    ("a capture ends complete with another JaCoCo agent started", CAPTURE_SESSION,
+     "            if (another != null) {",
+     "            if (false) {",
+     agent_suite, "a capture whose agent finds another started by its end is not marked complete"),
     ("an observation the agent could not complete is filed as complete", CAPTURE_SESSION,
      "        if (incomplete != null && !touchesIncomplete) {",
      "        if (false) {",

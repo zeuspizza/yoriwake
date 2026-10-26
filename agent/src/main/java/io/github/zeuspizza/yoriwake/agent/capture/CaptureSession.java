@@ -378,6 +378,16 @@ public final class CaptureSession implements TestEvents {
         }
         meter.recordWrite(flushStartedAt);
         meter.planFinished();
+        // At the end, not only at the lookup: a runtime that offline-instrumented classes use
+        // starts on their first use.
+        try {
+            String another = agent.anotherStarted();
+            if (another != null) {
+                recordFailure(another);
+            }
+        } catch (Throwable t) {
+            recordFailure("checking for another started JaCoCo agent: " + t);
+        }
         try {
             writer.writeOverhead(overhead());
         } catch (IOException e) {
