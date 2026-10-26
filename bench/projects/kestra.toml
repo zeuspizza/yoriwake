@@ -30,5 +30,9 @@ url = "https://github.com/kestra-io/kestra.git"
 # no map, and its sweep shards had nothing to measure against.
 commit = "bad4d5b551cd14242564ddac5db9791553871c41"
 module = "core"
-flags = []
+# `core/src/main/resources/gradle.properties` LISTED in `notReadByTests`. The build's
+# `copyGradleProperties` task copies the root `gradle.properties` there, git-ignored, on every
+# build, and a sweep stopped the project as setup-forced at its preflight on it. Tests read it only
+# as a processed resource, which the map compares on the classpath, and no row edits it.
+flags = ["-Dyoriwake.harness.notReadByTests=core/src/main/resources/gradle.properties"]
 sources = ["core/src/main/java/io/kestra/core/utils"]
