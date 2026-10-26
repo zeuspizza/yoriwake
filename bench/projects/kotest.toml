@@ -46,7 +46,11 @@ test_task = "jvmTest"
 flags = []
 # The mutation roots AND the `git log` pathspec. Never empty: an empty pathspec matches
 # every commit, which is the opposite of what this key is for, and the replay refuses it.
-sources = ["kotest-framework/kotest-framework-engine/src/jvmMain/kotlin"]
+# The engine's JVM code sits in `jvmCommonMain` and `commonMain` at this pin; `jvmMain` holds one
+# file with nothing to mutate, so a sweep of it alone drew no target and its record job stopped.
+sources = ["kotest-framework/kotest-framework-engine/src/commonMain/kotlin",
+           "kotest-framework/kotest-framework-engine/src/jvmCommonMain/kotlin",
+           "kotest-framework/kotest-framework-engine/src/jvmMain/kotlin"]
 
 # Set BEFORE the first OOM rather than after it. rxjava's capture died decoding 14,221
 # tests on the default daemon heap and left a map with no scope file, which then forced

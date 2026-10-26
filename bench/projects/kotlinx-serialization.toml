@@ -43,7 +43,10 @@ url = "https://github.com/Kotlin/kotlinx.serialization.git"
 #
 # NOT because the clone is shallow: it is not, `git clone` here passes no --depth. That claim
 # was written into eleven of these files and into a commit message before anyone checked it.
-commit = "397bb560096fcb7b2a9363741690cca3d28124ba"
+# Upstream master on Gradle 9.7.1. The previous pin, 397bb560096fcb7b2a9363741690cca3d28124ba,
+# was on Gradle 8.7, below the plugin's 8.14 floor: the plugin declined it and its record job
+# captured no map.
+commit = "6f6a2e66c3dbf4a34e86a030368ecb0f7a734d22"
 # REPOINTED, AND WHAT THIS ROW NOW MEASURES CHANGED WITH IT.
 #
 # Same shape as kotlinx-coroutines: the multiplatform verdict is true of `-core` and not of the
