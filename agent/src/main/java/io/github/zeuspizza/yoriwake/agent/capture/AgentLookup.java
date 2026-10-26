@@ -1,7 +1,12 @@
 package io.github.zeuspizza.yoriwake.agent.capture;
 
+import java.lang.instrument.Instrumentation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /**
  * Locates the running JaCoCo agent by reflection.
@@ -14,10 +19,81 @@ public final class AgentLookup {
 
     static final String RT_CLASS = "org.jacoco.agent.rt.RT";
 
+    /** Each JaCoCo build's agent class, in a package named after that build. */
+    private static final Pattern AGENT_CLASS = Pattern.compile("org\\.jacoco\\.agent\\.rt\\.internal_[0-9a-f]+\\.Agent");
+
+    /** This agent's own, from its premain; null where it was not attached. */
+    private static volatile Instrumentation instrumentation;
+
     private AgentLookup() {}
 
+    static void instrumentation(Instrumentation value) {
+        instrumentation = value;
+    }
+
     public static Result find() {
-        return find(AgentLookup.class.getClassLoader());
+        Instrumentation held = instrumentation;
+        Result result = find(AgentLookup.class.getClassLoader());
+        // A JaCoCo runtime on the test classpath comes before the -javaagent's jar, so RT can name
+        // a copy whose agent never started while the -javaagent's one holds the coverage.
+        if (result.isFound() || held == null || result.reason().rtNotStarted == null) {
+            return result;
+        }
+        return startedAmong(held::getAllLoadedClasses, result.reason());
+    }
+
+    /**
+     * The one started JaCoCo agent among [loaded]; missing, with [rtAnswer] kept, when there is none,
+     * and refused when several have started, since coverage would split between them.
+     */
+    static Result startedAmong(Supplier<Class<?>[]> loaded, Unavailable rtAnswer) {
+        List<Object> started = startedAgents(loaded.get());
+        if (started.isEmpty()) {
+            return Result.missing(Unavailable.noneStarted(rtAnswer));
+        }
+        if (started.size() > 1) {
+            return Result.missing(Unavailable.severalStarted(started.size(), describe(started)));
+        }
+        Object agent = started.get(0);
+        try {
+            return Result.found(new ReflectiveJacocoAgent(agent) {
+                @Override
+                public String anotherStarted() {
+                    List<Object> others = startedAgents(loaded.get());
+                    others.removeIf(other -> other == agent);
+                    return others.isEmpty() ? null : describe(others) + " started besides " + describe(List.of(agent))
+                            + ", so its coverage is missing from this capture";
+                }
+            });
+        } catch (ReflectiveOperationException e) {
+            return Result.missing(Unavailable.notAttached(e));
+        }
+    }
+
+    private static List<Object> startedAgents(Class<?>[] loaded) {
+        List<Object> started = new ArrayList<>();
+        for (Class<?> type : loaded) {
+            if (!AGENT_CLASS.matcher(type.getName()).matches()) {
+                continue;
+            }
+            try {
+                Object agent = type.getMethod("getInstance").invoke(null);
+                if (agent != null && !started.contains(agent)) {
+                    started.add(agent);
+                }
+            } catch (ReflectiveOperationException | LinkageError e) {
+                // Not started, or not shaped like JaCoCo's agent: either way it holds no coverage.
+            }
+        }
+        return started;
+    }
+
+    private static String describe(List<Object> agents) {
+        List<String> names = new ArrayList<>();
+        for (Object agent : agents) {
+            names.add(agent.getClass().getName());
+        }
+        return String.join(", ", names);
     }
 
     static Result find(ClassLoader classLoader) {
@@ -33,14 +109,14 @@ public final class AgentLookup {
             agent = rt.getMethod("getAgent").invoke(null);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getTargetException() != null ? e.getTargetException() : e;
-            return Result.missing(Unavailable.notAttached(cause));
+            return Result.missing(Unavailable.notStarted(cause));
         } catch (ReflectiveOperationException | LinkageError e) {
             return Result.missing(Unavailable.notAttached(e));
         }
 
         if (agent == null) {
             return Result.missing(
-                    Unavailable.notAttached(new IllegalStateException("RT.getAgent() returned null")));
+                    Unavailable.notStarted(new IllegalStateException("RT.getAgent() returned null")));
         }
 
         try {
@@ -61,8 +137,16 @@ public final class AgentLookup {
 
         private final String diagnostic;
 
+        /** Set when RT loaded and named an agent that never started, which another route may find. */
+        final Throwable rtNotStarted;
+
         private Unavailable(String diagnostic) {
+            this(diagnostic, null);
+        }
+
+        private Unavailable(String diagnostic, Throwable rtNotStarted) {
             this.diagnostic = diagnostic;
+            this.rtNotStarted = rtNotStarted;
         }
 
         static Unavailable notOnClasspath(Throwable cause) {
@@ -75,6 +159,20 @@ public final class AgentLookup {
         static Unavailable notAttached(Throwable cause) {
             return new Unavailable(
                     RT_CLASS + " is loadable but no agent is running. Cause: " + describe(cause));
+        }
+
+        static Unavailable notStarted(Throwable cause) {
+            return new Unavailable(notAttached(cause).diagnostic, cause);
+        }
+
+        static Unavailable noneStarted(Unavailable rtAnswer) {
+            return new Unavailable(rtAnswer.diagnostic + " Among the classes this JVM has loaded, no other "
+                    + "started JaCoCo agent was found.");
+        }
+
+        static Unavailable severalStarted(int count, String agents) {
+            return new Unavailable(RT_CLASS + " names no running agent, and " + count + " JaCoCo agents have "
+                    + "started in this JVM (" + agents + "): coverage would split between them.");
         }
 
         private static String describe(Throwable cause) {
@@ -124,7 +222,7 @@ public final class AgentLookup {
         }
     }
 
-    static final class ReflectiveJacocoAgent implements JacocoAgent {
+    static class ReflectiveJacocoAgent implements JacocoAgent {
 
         private final Object delegate;
         private final Method getVersion;

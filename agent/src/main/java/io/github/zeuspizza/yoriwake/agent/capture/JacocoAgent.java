@@ -12,4 +12,13 @@ public interface JacocoAgent {
 
     /** Returns execution data accumulated since the last reset, and clears it. */
     byte[] takeExecutionData();
+
+    /**
+     * Another JaCoCo agent that has started in this JVM besides this one, described, or null. Its
+     * coverage would be missing from this one's records, so a capture that ends with one is not
+     * trusted.
+     */
+    default String anotherStarted() {
+        return null;
+    }
 }

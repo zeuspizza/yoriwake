@@ -35,6 +35,7 @@ public final class LoadedClassRecorder {
      */
     public static void premain(String argument, Instrumentation instrumentation) {
         try {
+            AgentLookup.instrumentation(instrumentation);
             // Only a capturing JVM: a selecting one writes no records for touches to date.
             HostChoice.decide();
             String records = HostBuild.current().property(AgentContract.RECORDS_DIR_PROPERTY);
