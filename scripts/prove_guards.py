@@ -1923,7 +1923,7 @@ MUTATIONS = [
     # A JaCoCo runtime on the test classpath names an agent that never started; the one that did
     # holds the coverage.
     ("a capture behind another JaCoCo runtime records nothing", AGENT_LOOKUP,
-     "        if (result.isFound() || held == null || result.reason().rtNotStarted == null) {",
+     "        if (result.isFound() || held == null || !result.reason().rtAgentNotStarted) {",
      "        if (true) {",
      functional_suite, "a capture behind another JaCoCo runtime records a map and a selecting run narrows on it"),
     # Two started agents split the coverage: either one alone leaves classes out of the map.

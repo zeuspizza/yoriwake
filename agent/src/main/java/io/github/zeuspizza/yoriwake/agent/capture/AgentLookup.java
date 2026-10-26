@@ -36,35 +36,27 @@ public final class AgentLookup {
         Result result = find(AgentLookup.class.getClassLoader());
         // A JaCoCo runtime on the test classpath comes before the -javaagent's jar, so RT can name
         // a copy whose agent never started while the -javaagent's one holds the coverage.
-        if (result.isFound() || held == null || result.reason().rtNotStarted == null) {
+        if (result.isFound() || held == null || !result.reason().rtAgentNotStarted) {
             return result;
         }
         return startedAmong(held::getAllLoadedClasses, result.reason());
     }
 
     /**
-     * The one started JaCoCo agent among [loaded]; missing, with [rtAnswer] kept, when there is none,
+     * The one started JaCoCo agent among [loaded]; missing, with [rtReason] kept, when there is none,
      * and refused when several have started, since coverage would split between them.
      */
-    static Result startedAmong(Supplier<Class<?>[]> loaded, Unavailable rtAnswer) {
+    static Result startedAmong(Supplier<Class<?>[]> loaded, Unavailable rtReason) {
         List<Object> started = startedAgents(loaded.get());
         if (started.isEmpty()) {
-            return Result.missing(Unavailable.noneStarted(rtAnswer));
+            return Result.missing(Unavailable.noneStarted(rtReason));
         }
         if (started.size() > 1) {
             return Result.missing(Unavailable.severalStarted(started.size(), describe(started)));
         }
         Object agent = started.get(0);
         try {
-            return Result.found(new ReflectiveJacocoAgent(agent) {
-                @Override
-                public String anotherStarted() {
-                    List<Object> others = startedAgents(loaded.get());
-                    others.removeIf(other -> other == agent);
-                    return others.isEmpty() ? null : describe(others) + " started besides " + describe(List.of(agent))
-                            + ", so its coverage is missing from this capture";
-                }
-            });
+            return Result.found(new RescanningAgent(agent, loaded));
         } catch (ReflectiveOperationException e) {
             return Result.missing(Unavailable.notAttached(e));
         }
@@ -86,6 +78,27 @@ public final class AgentLookup {
             }
         }
         return started;
+    }
+
+    /** An agent found among the loaded classes, which looks again for others when asked. */
+    static final class RescanningAgent extends ReflectiveJacocoAgent {
+
+        private final Object agent;
+        private final Supplier<Class<?>[]> loaded;
+
+        RescanningAgent(Object agent, Supplier<Class<?>[]> loaded) throws ReflectiveOperationException {
+            super(agent);
+            this.agent = agent;
+            this.loaded = loaded;
+        }
+
+        @Override
+        public String anotherStarted() {
+            List<Object> others = startedAgents(loaded.get());
+            others.removeIf(other -> other == agent);
+            return others.isEmpty() ? null : describe(others) + " started besides " + agent.getClass().getName()
+                    + ", so its coverage is missing from this capture";
+        }
     }
 
     private static String describe(List<Object> agents) {
@@ -137,16 +150,16 @@ public final class AgentLookup {
 
         private final String diagnostic;
 
-        /** Set when RT loaded and named an agent that never started, which another route may find. */
-        final Throwable rtNotStarted;
+        /** RT loaded and named an agent that never started: another may hold the coverage. */
+        final boolean rtAgentNotStarted;
 
         private Unavailable(String diagnostic) {
-            this(diagnostic, null);
+            this(diagnostic, false);
         }
 
-        private Unavailable(String diagnostic, Throwable rtNotStarted) {
+        private Unavailable(String diagnostic, boolean rtAgentNotStarted) {
             this.diagnostic = diagnostic;
-            this.rtNotStarted = rtNotStarted;
+            this.rtAgentNotStarted = rtAgentNotStarted;
         }
 
         static Unavailable notOnClasspath(Throwable cause) {
@@ -157,16 +170,20 @@ public final class AgentLookup {
         }
 
         static Unavailable notAttached(Throwable cause) {
-            return new Unavailable(
-                    RT_CLASS + " is loadable but no agent is running. Cause: " + describe(cause));
+            return new Unavailable(notRunning(cause));
         }
 
+        /** As {@link #notAttached}, where RT's own agent answered that it never started. */
         static Unavailable notStarted(Throwable cause) {
-            return new Unavailable(notAttached(cause).diagnostic, cause);
+            return new Unavailable(notRunning(cause), true);
         }
 
-        static Unavailable noneStarted(Unavailable rtAnswer) {
-            return new Unavailable(rtAnswer.diagnostic + " Among the classes this JVM has loaded, no other "
+        private static String notRunning(Throwable cause) {
+            return RT_CLASS + " is loadable but no agent is running. Cause: " + describe(cause);
+        }
+
+        static Unavailable noneStarted(Unavailable rtReason) {
+            return new Unavailable(rtReason.diagnostic + " Among the classes this JVM has loaded, no other "
                     + "started JaCoCo agent was found.");
         }
 
