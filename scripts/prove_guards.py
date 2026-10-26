@@ -509,19 +509,20 @@ def unit_suite():
 FUNCTIONAL_FLOOR_ONLY = [":plugin:functionalTest", "-x", ":plugin:functionalTestGradle9"]
 FUNCTIONAL_FILTER = "*FunctionalTest"
 FUNCTIONAL_SOURCES = os.path.join("plugin", "src", "functionalTest")
+MAVEN_SOURCES = os.path.join("maven", "src", "functionalTest")
 _FUNCTIONAL_CLASSES = {}
 
 
-def functional_class(expect, checkout):
-    """The one class of `functional_suite`'s filter whose test names contain `expect`, else None.
+def functional_class(expect, checkout, sources=FUNCTIONAL_SOURCES):
+    """The one functional class under `sources` whose test names contain `expect`, else None.
 
     None runs the whole suite, so a renamed or moved test costs time, never a proof.
     """
-    key = (expect, checkout)
+    key = (expect, checkout, sources)
     if key not in _FUNCTIONAL_CLASSES:
         found = set()
         if expect:
-            pattern = os.path.join(checkout, FUNCTIONAL_SOURCES, "**", FUNCTIONAL_FILTER + ".kt")
+            pattern = os.path.join(checkout, sources, "**", FUNCTIONAL_FILTER + ".kt")
             for path in glob.glob(pattern, recursive=True):
                 with open(path, encoding=ENCODING) as f:
                     if any(expect in name for name in re.findall(r"fun `([^`]+)`", f.read())):
@@ -536,7 +537,11 @@ def _suite_run(suite, test_class):
 
 def _class_of(suite, expect):
     """The class a guard's suite runs alone, or None for the whole suite."""
-    return functional_class(expect, yoriwake_checkout.root()) if suite is functional_suite else None
+    if suite is functional_suite:
+        return functional_class(expect, yoriwake_checkout.root())
+    if suite is maven_suite:
+        return functional_class(expect, yoriwake_checkout.root(), MAVEN_SOURCES)
+    return None
 
 
 def functional_suite(test_class=None):
@@ -560,13 +565,19 @@ def functional_suite(test_class=None):
     return named
 
 
-def maven_suite():
-    """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks."""
-    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
-                   "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--tests", "*FailsafeFunctionalTest*",
-                   "--tests", "*AuditAndExplainFunctionalTest*",
-                   "--tests", "*MapProvenanceFunctionalTest*", "--tests", "*BuildCacheFunctionalTest*",
-                   "--tests", "*DevelocityFunctionalTest*", "--rerun"])
+def maven_suite(test_class=None):
+    """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks.
+
+    With `test_class`, that class alone, as `functional_suite`: each Maven build is minutes on a
+    runner, and every class at every guard ran a shard past its time limit.
+    """
+    filters = ["--tests", f"*.{test_class}"] if test_class else [
+        "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
+        "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--tests", "*FailsafeFunctionalTest*",
+        "--tests", "*AuditAndExplainFunctionalTest*",
+        "--tests", "*MapProvenanceFunctionalTest*", "--tests", "*BuildCacheFunctionalTest*",
+        "--tests", "*DevelocityFunctionalTest*"]
+    done = gradle([":maven:functionalTest"] + filters + ["--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -5281,9 +5292,12 @@ def _main(args, held):
     print("baseline, unmutated:")
     # A functional guard that runs one class is baselined on that class, just before its first
     # mutation; the whole suite here only if some guard falls back to it.
-    narrowed = {_class_of(m[4], m[5]) for m in selected if m[4] is functional_suite}
+    narrowed = {}
+    for m in selected:
+        if m[4] is functional_suite or m[4] is maven_suite:
+            narrowed.setdefault(m[4], set()).add(_class_of(m[4], m[5]))
     for name, suite in needed:
-        if suite is functional_suite and None not in narrowed:
+        if suite in narrowed and None not in narrowed[suite]:
             continue
         standing = suite()
         print(f"  {name:22} -> {len(standing)} failing"
