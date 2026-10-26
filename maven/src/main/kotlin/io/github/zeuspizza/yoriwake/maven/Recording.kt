@@ -11,6 +11,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
+import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
@@ -66,10 +67,10 @@ internal class Recording(
         val classpath: List<File>,
         val reports: File,
         val isolated: Boolean,
-        val selecting: Boolean,
+        val kind: RunPlan.Kind,
     )
 
-    private val selection = Selection(session, root, log)
+    private val selection = Selection(session, root, log).also { it.validate() }
 
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
@@ -98,7 +99,8 @@ internal class Recording(
             }
             return
         }
-        if (outcome is ScopeOutcome.NotApplied) return
+        // Failsafe's `verify` shares the execution, and its configuration has no argLine to wire.
+        if (outcome is ScopeOutcome.NotApplied || !isTestGoal(execution)) return
         runCatching { wire(event.project, execution, key) }.onFailure {
             log.warn("[yoriwake] ${nameOf(event.project, execution)}: could not wire the run ($it); nothing is captured and the map is left as it was")
         }
@@ -126,6 +128,10 @@ internal class Recording(
             log.warn("[yoriwake] $name: ${notCompiled(project)}")
             return
         }
+        // Before the configuration is touched: a wiring that fails part-way must leave no earlier run's
+        // file for the test JVM to read, which then refuses and runs every test.
+        File(mapDir, AgentContract.RUN_FILE).delete()
+        File(mapDir, AgentContract.CHANGE_SET_FILE).delete()
         val configuration = execution.configuration ?: Xpp3Dom("configuration")
         // Nothing runs, so nothing of the last run's is cleared and the map is not touched.
         if (skipsTests(project, execution, configuration)) return
@@ -136,8 +142,9 @@ internal class Recording(
         val outside = project.artifacts.mapNotNull { reactor["${it.groupId}:${it.artifactId}"] }.filter { it.id !in built }
         if (outside.isNotEmpty()) {
             log.warn(
-                "[yoriwake] $name: ${outside.joinToString { it.artifactId }} come(s) from a repository, not this build " +
-                    "(add -am), so nothing is captured and the map is left as it was"
+                "[yoriwake] $name declined, ${RefusalKind.REACTOR_MODULE_FROM_REPOSITORY.token}: " +
+                    "${outside.joinToString { it.artifactId }} come(s) from a repository, not this build (add -am); " +
+                    "every test runs, nothing is captured and the map is left as it was"
             )
             return
         }
@@ -196,18 +203,26 @@ internal class Recording(
         )
         val environment = fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }))
         val undated = undatedBy(project, execution, configuration)
-        val selecting = selection.apply(
+        val hostArguments = arguments(resolved(project, host).orEmpty())
+        val kind = selection.apply(
             name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath),
-            environment, undated, isolated, properties,
+            environment, undated, isolated,
+            stamp = { stampOf(project, key, configuration, classpath, hostArguments) },
+            stopsAfterFailure = parameter(
+                project, configuration, "skipAfterFailureCount",
+                if (execution.artifactId == FAILSAFE) "failsafe.skipAfterFailureCount" else "surefire.skipAfterFailureCount",
+            )
+                ?.toIntOrNull()?.let { it > 0 } == true,
+            properties = properties,
         )
-        // A selecting execution may leave out every test, which Surefire would otherwise fail on.
-        if (selecting) child(configuration, "failIfNoTests").value = "false"
+        // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
+        if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
         execution.configuration = configuration
         writeAtomically(runFile, buildString {
             properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
             append(AgentContract.RUN_FILE_END).append('\n')
         })
-        running[key] = Run(mapDir, undated, classpath, reports, isolated, selecting)
+        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind)
     }
 
     private fun decode(project: MavenProject, execution: MojoExecution, key: String, run: Run) {
@@ -222,17 +237,17 @@ internal class Recording(
         DecodeRun(
             taskPath = nameOf(project, execution),
             patterns = patterns,
-            selecting = run.selecting,
-            observing = false,
+            selecting = run.kind == RunPlan.Kind.SELECT,
+            observing = run.kind == RunPlan.Kind.OBSERVE,
             asksSelection = selection.asksSelection,
-            complementing = false,
+            complementing = run.kind == RunPlan.Kind.COMPLEMENT,
             wholeTask = false,
             loadedScope = reactorPackages,
             datesTheMap = run.undatedReason == null,
             undatedReason = run.undatedReason.orEmpty(),
             effectiveScope = null,
             isolated = run.isolated,
-            scheduleSet = false,
+            scheduleSet = selection.schedules,
             rootDir = root,
             mapDir = run.mapDir,
             facts = view(project, classpath),
@@ -247,23 +262,38 @@ internal class Recording(
         ).run()
     }
 
-    /** What the shared rules ask of this execution's classpath, from Maven's model of the reactor. */
-    private fun view(project: MavenProject, classpath: List<File>): ClasspathView = object : ClasspathView {
-        override val rootDir = root
-        override val moduleDirs = session.allProjects.associate { module ->
-            module.basedir.relativeTo(root).invariantSeparatorsPath to module.id
-        }
-        override val buildDirs = session.allProjects.associate { it.id to it.build.directory }
-        override val ownPath: String = project.id
-        override fun classpathFiles(): Set<File> = classpath.toSet()
-        override fun testOutputFiles(): Set<File> = setOf(File(project.build.testOutputDirectory))
-        override fun compileTimeFiles(): Set<File> =
-            runCatching { project.compileClasspathElements.map(::File).toSet() }.getOrDefault(emptySet())
-        override fun declaredModules(): Set<String>? = null
-        override fun jacocoVersion(): String? = project.getPlugin(JacocoAdoption.JACOCO)?.version.orEmpty()
-        override fun testJvm(): Int? = null
-        override fun agentCeiling(): String? = null
-    }
+    private fun view(project: MavenProject, classpath: List<File>): ClasspathView = classpathView(session, root, project, classpath)
+
+    /** A Surefire or Failsafe parameter as this execution resolves it: its POM value, else its user property. */
+    private fun parameter(project: MavenProject, configuration: Xpp3Dom, name: String, property: String): String? =
+        configuration.getChild(name)?.value?.trim()?.takeUnless { it.isEmpty() || it.startsWith("\${") }
+            ?: Declines.property(project, session, property)
+
+    /** This execution's selection-record stamp; see [MavenStamp]. */
+    private fun stampOf(
+        project: MavenProject,
+        key: String,
+        configuration: Xpp3Dom,
+        classpath: List<File>,
+        hostArguments: List<String>,
+    ) = MavenStamp.observe(
+        root, key, project.id, classpath,
+        File(session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path),
+        // Surefire promotes the invocation's user properties to the test JVM's system properties.
+        session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +
+            configuration.getChild("systemPropertyVariables")?.children.orEmpty()
+                .associate { it.name to resolved(project, it.value).orEmpty() },
+        hostArguments,
+        // Surefire's own classpath changes too: a profile can add or exclude entries Maven's model does not show.
+        listOf("includes", "excludes", "additionalClasspathElements", "classpathDependencyExcludes").flatMap { group ->
+            configuration.getChild(group)?.children.orEmpty().map { it.value.orEmpty().trim() }
+                // yoriwake's own agent, which wiring adds by an absolute path another machine does not share.
+                .filterNot { File(it).parentFile == File(home, "agent") }
+                .map { "$group $it" }
+        } + listOf("groups", "excludedGroups", "test", "classpathDependencyScopeExclude").mapNotNull { name ->
+            parameter(project, configuration, name, name)?.let { "$name $it" }
+        },
+    )
 
     /**
      * Why this execution cannot date the map, or null when it can: tests named on the command line
@@ -271,9 +301,7 @@ internal class Recording(
      * JUnit Platform's own filters (`groups`, engines) still date it, as Gradle's do.
      */
     private fun undatedBy(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom): String? {
-        fun parameter(name: String, property: String): String? =
-            configuration.getChild(name)?.value?.trim()?.takeUnless { it.isEmpty() || it.startsWith("\${") }
-                ?: Declines.property(project, session, property)
+        fun parameter(name: String, property: String): String? = parameter(project, configuration, name, property)
         val failsafe = execution.artifactId == FAILSAFE
         parameter("test", if (failsafe) "it.test" else "test")?.let { return "the run was filtered to $it" }
         parameter("includesFile", if (failsafe) "failsafe.includesFile" else "surefire.includesFile")?.let { return "the run was filtered by $it" }

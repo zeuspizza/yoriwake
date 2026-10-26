@@ -111,17 +111,7 @@ internal class RunPlan(
             /** Why a scheduled full run is due, or null; asked only for a run asked to select or observe. */
             scheduled: () -> String? = { null },
         ): RunPlan {
-            val set = listOfNotNull(
-                SettingNames.SELECT.takeIf { asked.select },
-                SettingNames.OBSERVE.takeIf { asked.observe },
-                SettingNames.COMPLEMENT.takeIf { asked.complement != null },
-            )
-            if (set.size > 1) {
-                throw Rejected(
-                    "[yoriwake] ${set.joinToString(" and ") { flag(it) }} were set together. A run selects, " +
-                        "observes what selection would do, or runs what a selecting run left out; pass one of them."
-                )
-            }
+            check(asked, flag)
             val kindAsked = when {
                 asked.select -> Kind.SELECT
                 asked.observe -> Kind.OBSERVE
@@ -139,6 +129,21 @@ internal class RunPlan(
                 kind, kindAsked, widened, declines, notes, branch,
                 complementFrom = asked.complement.takeIf { kind == Kind.COMPLEMENT },
             )
+        }
+
+        /** [Rejected] when [asked] holds more than one run kind, each flag named as [flag] spells it. */
+        fun check(asked: Asked, flag: (String) -> String) {
+            val set = listOfNotNull(
+                SettingNames.SELECT.takeIf { asked.select },
+                SettingNames.OBSERVE.takeIf { asked.observe },
+                SettingNames.COMPLEMENT.takeIf { asked.complement != null },
+            )
+            if (set.size > 1) {
+                throw Rejected(
+                    "[yoriwake] ${set.joinToString(" and ") { flag(it) }} were set together. A run selects, " +
+                        "observes what selection would do, or runs what a selecting run left out; pass one of them."
+                )
+            }
         }
 
         /**

@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Supplier;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -207,6 +208,22 @@ public final class TouchRecorder implements CaptureSession.Touches {
     public void planStarted() {
         synchronized (lock) {
             planStarted = true;
+        }
+    }
+
+    /**
+     * Runs the agent's own work on this thread unobserved: a class it looks up or a file it reads
+     * is not something a test depends on.
+     */
+    <T> T unobserved(Supplier<T> work) {
+        if (inside.get() != null) {
+            return work.get();
+        }
+        inside.set(Boolean.TRUE);
+        try {
+            return work.get();
+        } finally {
+            inside.remove();
         }
     }
 

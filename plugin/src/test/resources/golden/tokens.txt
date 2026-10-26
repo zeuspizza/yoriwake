@@ -36,11 +36,15 @@ console-tally	not-known-to-pass
 console-tally	reaches-change
 console-tally	shares-jvm-with-change
 console-tally	skipped
+decline-kind	develocity-test-distribution
+decline-kind	develocity-test-selection
+decline-kind	develocity-undetermined
 decline-kind	gradle-too-old
 decline-kind	includes-rejected
 decline-kind	isolated-projects
 decline-kind	jacoco-disabled
 decline-kind	kotlin-multiplatform
+decline-kind	maven-build-cache
 decline-kind	maven-version
 decline-kind	no-host-plugin
 decline-kind	no-jacoco-extension
@@ -112,6 +116,7 @@ refusal-kind	large-change
 refusal-kind	map-untrusted
 refusal-kind	map-unverified
 refusal-kind	no-change-set
+refusal-kind	reactor-module-from-repository
 refusal-kind	scan-exhausted
 refusal-kind	scan-refused
 refusal-kind	scan-threw

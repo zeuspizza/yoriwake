@@ -160,6 +160,7 @@ COVERAGE_DECODER = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/cap
 SETTINGS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/Settings.kt"
 RUN_PLAN = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/RunPlan.kt"
 CAPTURE_SESSION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureSession.java"
+AGENT_LOOKUP = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/AgentLookup.java"
 JUNIT4_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Events.java"
 TESTNG_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/TestNgEvents.java"
 TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/TouchRecorder.java"
@@ -178,6 +179,9 @@ MAVEN_DECLINES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Decli
 MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ChainedListener.kt"
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
+MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
+MAVEN_BUILD_CACHE = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/BuildCache.kt"
+MAVEN_DEVELOCITY = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/DevelocityDetection.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -506,19 +510,20 @@ def unit_suite():
 FUNCTIONAL_FLOOR_ONLY = [":plugin:functionalTest", "-x", ":plugin:functionalTestGradle9"]
 FUNCTIONAL_FILTER = "*FunctionalTest"
 FUNCTIONAL_SOURCES = os.path.join("plugin", "src", "functionalTest")
+MAVEN_SOURCES = os.path.join("maven", "src", "functionalTest")
 _FUNCTIONAL_CLASSES = {}
 
 
-def functional_class(expect, checkout):
-    """The one class of `functional_suite`'s filter whose test names contain `expect`, else None.
+def functional_class(expect, checkout, sources=FUNCTIONAL_SOURCES):
+    """The one functional class under `sources` whose test names contain `expect`, else None.
 
     None runs the whole suite, so a renamed or moved test costs time, never a proof.
     """
-    key = (expect, checkout)
+    key = (expect, checkout, sources)
     if key not in _FUNCTIONAL_CLASSES:
         found = set()
         if expect:
-            pattern = os.path.join(checkout, FUNCTIONAL_SOURCES, "**", FUNCTIONAL_FILTER + ".kt")
+            pattern = os.path.join(checkout, sources, "**", FUNCTIONAL_FILTER + ".kt")
             for path in glob.glob(pattern, recursive=True):
                 with open(path, encoding=ENCODING) as f:
                     if any(expect in name for name in re.findall(r"fun `([^`]+)`", f.read())):
@@ -533,7 +538,11 @@ def _suite_run(suite, test_class):
 
 def _class_of(suite, expect):
     """The class a guard's suite runs alone, or None for the whole suite."""
-    return functional_class(expect, yoriwake_checkout.root()) if suite is functional_suite else None
+    if suite is functional_suite:
+        return functional_class(expect, yoriwake_checkout.root())
+    if suite is maven_suite:
+        return functional_class(expect, yoriwake_checkout.root(), MAVEN_SOURCES)
+    return None
 
 
 def functional_suite(test_class=None):
@@ -557,10 +566,19 @@ def functional_suite(test_class=None):
     return named
 
 
-def maven_suite():
-    """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks."""
-    done = gradle([":maven:functionalTest", "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
-                   "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--rerun"])
+def maven_suite(test_class=None):
+    """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks.
+
+    With `test_class`, that class alone, as `functional_suite`: each Maven build is minutes on a
+    runner, and every class at every guard ran a shard past its time limit.
+    """
+    filters = ["--tests", f"*.{test_class}"] if test_class else [
+        "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
+        "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--tests", "*FailsafeFunctionalTest*",
+        "--tests", "*AuditAndExplainFunctionalTest*",
+        "--tests", "*MapProvenanceFunctionalTest*", "--tests", "*BuildCacheFunctionalTest*",
+        "--tests", "*DevelocityFunctionalTest*"]
+    done = gradle([":maven:functionalTest"] + filters + ["--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -704,7 +722,7 @@ SUITES = [
     ("functional", functional_suite, 68),
     # An estimate: the three classes' twenty-seven tests, about 8s each warm on an Apple M1 Max, plus
     # the plugin's publish, until a guard run measures it.
-    ("maven", maven_suite, 230),
+    ("maven", maven_suite, 420),
     # 50s wall for one unmutated run, the plugin and agent compiled from
     # scratch in a fresh worktree; its eight tests took 39s of it.
     ("break", break_suite, 50),
@@ -770,6 +788,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     # Estimated from its local time (27s for nine tests) doubled for a runner, until an
     # every-guard run measures it.
     "SequentialRecordingFunctionalTest": 55,
+    # Measured locally (20s for one test, two builds) doubled for a runner, until an every-guard
+    # run measures it.
+    "ShadowedJacocoRuntimeFunctionalTest": 40,
     "TestLauncherFunctionalTest": 42,
     "TestRetryFunctionalTest": 79,
     "TestWrittenFilesFunctionalTest": 104,
@@ -1916,6 +1937,26 @@ MUTATIONS = [
      '            holder.getField("SINK").set(null, reads);',
      "            holder.getClass();",
      functional_suite, "a test that reads a class file is selected when the class it reads changes"),
+    # A JaCoCo runtime on the test classpath names an agent that never started; the one that did
+    # holds the coverage.
+    ("a capture behind another JaCoCo runtime records nothing", AGENT_LOOKUP,
+     "        if (held == null || !(result.isFound() || result.reason().rtAgentNotStarted)) {",
+     "        if (true) {",
+     functional_suite, "a capture behind another JaCoCo runtime records a map and a selecting run narrows on it"),
+    # The lookup's own scan of the loaded classes is not a test looking up every class.
+    ("the agent's own scan of the loaded classes widens every selection", AGENT_LOOKUP,
+     "() -> TouchRecorder.JVM.unobserved(held::getAllLoadedClasses);",
+     "held::getAllLoadedClasses;",
+     functional_suite, "an edit to a test class nothing else names selects its own tests and the tests after them"),
+    # Two started agents split the coverage: either one alone leaves classes out of the map.
+    ("a capture uses one of two started JaCoCo agents", AGENT_LOOKUP,
+     "        if (started.size() > 1) {",
+     "        if (false) {",
+     agent_suite, "two started agents are refused, since coverage would split between them"),
+    ("a capture ends complete with another JaCoCo agent started", CAPTURE_SESSION,
+     "            if (another != null) {",
+     "            if (false) {",
+     agent_suite, "a capture whose agent finds another started by its end is not marked complete"),
     ("an observation the agent could not complete is filed as complete", CAPTURE_SESSION,
      "        if (incomplete != null && !touchesIncomplete) {",
      "        if (false) {",
@@ -4408,6 +4449,85 @@ MUTATIONS = [
      "        if (plan.declines.isNotEmpty()) {",
      "        if (false) {",
      maven_suite, "a full run asked for on the command line runs everything and records the map"),
+    # An observing Maven run must tell its test JVM to record what selection would leave out.
+    ("a Maven observing run observes nothing", MAVEN_SELECTION,
+     '        if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
+     '        if (false) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
+     maven_suite, "an observing run runs every test and reports what selection would have done"),
+    # A branch the POM lists runs everything and records, so the default branch's map refreshes.
+    ("a Maven branch fullRunBranches lists still selects", MAVEN_SELECTION,
+     "                settings.fullRunBranches,\n",
+     "                emptyList(),\n",
+     maven_suite, "on a branch fullRunBranches lists a selecting run runs everything and records the map"),
+    # A change past the threshold runs everything rather than paying to analyse it.
+    ("a Maven change above largeChangeThreshold is analysed", MAVEN_SELECTION,
+     "            settings.largeChangeThreshold,\n",
+     "            Int.MAX_VALUE,\n",
+     maven_suite, "more changed paths than largeChangeThreshold run everything"),
+    # A scheduled full run keeps the map fresh on a build that always selects.
+    ("a Maven scheduled full run never falls due", MAVEN_SELECTION,
+     "                    settings.schedule.takeIf { it.set }?.let { Schedule.dueIn(mapDir, it.builds, it.days) }\n",
+     "                    null\n",
+     maven_suite, "a scheduled full run falls due after fullRunEveryBuilds builds"),
+    # A complement run hands its test JVM the selecting run's record, or it leaves nothing out.
+    ("a Maven complement run leaves nothing out", MAVEN_SELECTION,
+     "        host.property(AgentContract.COMPLEMENT_RECORD_PROPERTY, copy.absolutePath)\n",
+     "",
+     maven_suite, "a complement run runs what the selecting run left out"),
+    # Surefire promotes user properties to the test JVM: one that changed must not match the record.
+    ("a Maven complement stamp ignores user properties", MAVEN_RECORDING,
+     "        session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +\n",
+     "        emptyMap<String, String>() +\n",
+     maven_suite, "a complement run with another user property runs everything and names the configuration"),
+    # Surefire and Failsafe executions of one module keep their own maps, keyed by the plugin too.
+    ("a Maven map key leaves out the plugin", MAVEN_RECORDING,
+     '            "${project.groupId}:${project.artifactId}:${execution.artifactId}:${execution.executionId}"',
+     '            "${project.groupId}:${project.artifactId}:${execution.executionId}"',
+     maven_suite, "integration tests are captured into their own map"),
+    # Failsafe's verify shares the execution; wiring it breaks its configuration.
+    ("Failsafe's verify goal is wired", MAVEN_RECORDING,
+     "        if (outcome is ScopeOutcome.NotApplied || !isTestGoal(execution)) return\n",
+     "        if (outcome is ScopeOutcome.NotApplied) return\n",
+     maven_suite, "integration tests are captured into their own map"),
+    # Explain works on a copy: the selecting steps write the change set and capture markers.
+    ("Maven explain writes into the map it explains", MAVEN_EXPLAIN,
+     "                name, copy, project.basedir",
+     "                name, mapDir, project.basedir",
+     maven_suite, "explain says what a selecting run would run and writes its file"),
+    # With a trusted-map list, a map it does not vouch for never narrows.
+    ("the Maven provenance check refuses nothing", MAVEN_SELECTION,
+     "            MapProvenance.verify(mapDir, listed[listedName]).refusal?.let { (refusal, reason) ->",
+     "            MapProvenance.verify(mapDir, listed[listedName]).refusal?.takeIf { false }?.let { (refusal, reason) ->",
+     maven_suite, "a map the list does not name runs every test and records a new map"),
+    # The Apache build cache restores an execution without starting it, so nothing could select it.
+    ("the Apache build cache is ignored", MAVEN_BUILD_CACHE,
+     "        if (!loaded || property.equals(\"false\", ignoreCase = true)) return null",
+     "        if (true) return null",
+     maven_suite, "with the Apache build cache on every execution declines"),
+    # Develocity chooses or distributes these tests where yoriwake cannot see them.
+    ("Develocity's Predictive Test Selection is ignored", MAVEN_DEVELOCITY,
+     "            selection == true -> ScopeOutcome.NotApplied(",
+     "            false && selection == true -> ScopeOutcome.NotApplied(",
+     maven_suite, "Predictive Test Selection on an execution declines it"),
+    ("Develocity's Test Distribution is ignored", MAVEN_DEVELOCITY,
+     "            distribution == true -> ScopeOutcome.NotApplied(",
+     "            false && distribution == true -> ScopeOutcome.NotApplied(",
+     maven_suite, "Test Distribution on an execution declines it"),
+    # Two run kinds together must fail the build before any execution is wired.
+    ("Maven run kinds asked together only warn", MAVEN_SELECTION,
+     '            RunPlan.check(asked) { "-D$it" }\n',
+     "",
+     maven_suite, "two run kinds asked together fail the build before any test runs"),
+    # Explain says what the build would do, declines included.
+    ("Maven explain ignores the declines", MAVEN_EXPLAIN,
+     "        if (declined != null) {",
+     "        if (declined != null && false) {",
+     maven_suite, "explain reports a declined execution as running everything"),
+    # Develocity loaded and its settings unreadable: doubt declines.
+    ("Develocity's unreadable settings are read as off", MAVEN_DEVELOCITY,
+     "            distribution == null || selection == null -> ScopeOutcome.NotApplied(",
+     "            false -> ScopeOutcome.NotApplied(",
+     maven_suite, "a setting that cannot be read as true or false declines"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",
@@ -5196,9 +5316,12 @@ def _main(args, held):
     print("baseline, unmutated:")
     # A functional guard that runs one class is baselined on that class, just before its first
     # mutation; the whole suite here only if some guard falls back to it.
-    narrowed = {_class_of(m[4], m[5]) for m in selected if m[4] is functional_suite}
+    narrowed = {}
+    for m in selected:
+        if m[4] is functional_suite or m[4] is maven_suite:
+            narrowed.setdefault(m[4], set()).add(_class_of(m[4], m[5]))
     for name, suite in needed:
-        if suite is functional_suite and None not in narrowed:
+        if suite in narrowed and None not in narrowed[suite]:
             continue
         standing = suite()
         print(f"  {name:22} -> {len(standing)} failing"

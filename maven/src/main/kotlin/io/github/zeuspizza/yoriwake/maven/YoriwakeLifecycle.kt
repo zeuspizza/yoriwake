@@ -38,18 +38,19 @@ internal class YoriwakeLifecycle @Inject constructor(
 
         val facts = ReactorFacts(session)
         val wired = mutableMapOf<String, ScopeOutcome>()
+        val cached = BuildCache.decline(session)
+        BuildCache.optOutDevelocity(session)
         for (project in session.projects) {
-            val runs = TEST_PLUGINS.flatMap { (key, testGoal, ownGoal) ->
-                val plugin = project.getPlugin(key) ?: return@flatMap emptyList()
+            val runs = TestExecutions.of(session, listOf(project)).map { found ->
                 // Failsafe's JVMs take `prepare-agent`'s argLine when the build has no integration goal.
-                val agentGoal = ownGoal.takeIf { JacocoAdoption.executions(project, it).isNotEmpty() } ?: JacocoAdoption.PREPARE_AGENT
-                plugin.executions.filter { testGoal in it.goals }.map { execution ->
-                    val name = "${project.artifactId} ${plugin.artifactId.removePrefix("maven-").removeSuffix("-plugin")}:$testGoal (${execution.id})"
-                    Run(
-                        name, "${project.groupId}:${project.artifactId}:${plugin.artifactId}:${execution.id}", agentGoal,
-                        Declines.of(project, plugin, execution, session) ?: JacocoAdoption.decline(project, agentGoal, session),
-                    )
-                }
+                val agentGoal = found.ownAgentGoal.takeIf { JacocoAdoption.executions(project, it).isNotEmpty() }
+                    ?: JacocoAdoption.PREPARE_AGENT
+                Run(
+                    found.name, found.key, agentGoal,
+                    DevelocityDetection.decline(project, found.execution, session)
+                        ?: Declines.of(project, found.plugin, found.execution, session) ?: cached
+                        ?: JacocoAdoption.decline(project, agentGoal, session),
+                )
             }
             for ((agentGoal, sharing) in runs.groupBy(Run::agentGoal)) {
                 // A declined execution keeps the agent its host configured, and so does every other
@@ -97,12 +98,6 @@ internal class YoriwakeLifecycle @Inject constructor(
 
         /** An alpha, beta or release candidate: a version with a qualifier after its numbers. */
         val PRE_RELEASE = Regex("""\d+(\.\d+)*-.+""")
-
-        /** Each test plugin, the goal that runs its tests, and the JaCoCo goal whose agent reaches them. */
-        val TEST_PLUGINS = listOf(
-            Triple("org.apache.maven.plugins:maven-surefire-plugin", "test", JacocoAdoption.PREPARE_AGENT),
-            Triple("org.apache.maven.plugins:maven-failsafe-plugin", "integration-test", JacocoAdoption.PREPARE_AGENT_INTEGRATION),
-        )
 
         val log = LoggerFactory.getLogger(YoriwakeLifecycle::class.java)
     }

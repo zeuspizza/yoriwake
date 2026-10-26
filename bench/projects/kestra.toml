@@ -34,5 +34,6 @@ module = "core"
 # `copyGradleProperties` task copies the root `gradle.properties` there, git-ignored, on every
 # build, and a sweep stopped the project as setup-forced at its preflight on it. Tests read it only
 # as a processed resource, which the map compares on the classpath, and no row edits it.
-flags = ["-Dyoriwake.harness.notReadByTests=core/src/main/resources/gradle.properties"]
+flags = ["-I", "{yoriwake}/bench/guest-tests.init.gradle",
+         "-Dyoriwake.harness.notReadByTests=core/src/main/resources/gradle.properties"]
 sources = ["core/src/main/java/io/kestra/core/utils"]

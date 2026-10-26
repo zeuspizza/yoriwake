@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** A selecting run on Maven (`-Dyoriwake.select`) runs what a change reaches, and refuses where Gradle refuses. */
 class SelectionFunctionalTest {
@@ -53,6 +54,151 @@ class SelectionFunctionalTest {
         val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
         assertContains(selecting, "in dev.demo.lib.GreeterTest")
         assertFalse("in dev.demo.lib.CounterTest" in selecting, output)
+    }
+
+    @Test
+    fun `an observing run runs every test and reports what selection would have done`(@TempDir dir: File) {
+        val project = captured(dir)
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.observe", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(output, "Tests run: 2, Failures: 0")
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) observed: selection would have narrowed; no test failed; 0 would-be misses; 1 tests would have been skipped")
+        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-lib-") }
+        assertTrue(File(map, "observation.json").isFile, "no observation.json in $map")
+    }
+
+    /** The plugin's `<configuration>` in the root POM, given [xml]; committed. */
+    private fun configured(project: File, xml: String) {
+        File(project, "pom.xml").edit {
+            it.replace("<extensions>true</extensions>\n      </plugin>", "<extensions>true</extensions>\n        <configuration>$xml</configuration>\n      </plugin>")
+        }
+        git(project, "commit", "-q", "-am", "configure yoriwake")
+    }
+
+    @Test
+    fun `on a branch fullRunBranches lists a selecting run runs everything and records the map`(@TempDir dir: File) {
+        val project = captured(dir)
+        git(project, "branch", "-M", "main")
+        configured(project, "<fullRunBranches><branch>main</branch></fullRunBranches>")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(output, "on branch main, and fullRunBranches lists `main`, so selection is declined")
+        assertContains(output, "Tests run: 2, Failures: 0")
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) map updated: ")
+    }
+
+    @Test
+    fun `more changed paths than largeChangeThreshold run everything`(@TempDir dir: File) {
+        val project = captured(dir)
+        configured(project, "<largeChangeThreshold>1</largeChangeThreshold>")
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        File(project, "lib/src/main/java/dev/demo/lib/Counter.java").edit { it.replace("n * 2", "n + n") }
+        git(project, "commit", "-q", "-am", "two edits")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(output, "Analysing a change this size costs more than it saves")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `a largeChangeThreshold below one fails the build`(@TempDir dir: File) {
+        val project = committed(dir)
+        configured(project, "<largeChangeThreshold>0</largeChangeThreshold>")
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib")
+
+        assertContains(result.output, "largeChangeThreshold is 0; it counts changed paths, so it must be 1 or more")
+        assertTrue(result.exitCode != 0, result.output)
+    }
+
+    @Test
+    fun `a selecting run against a reactor module from a repository runs every test`(@TempDir dir: File) {
+        val project = captured(dir)
+        FunctionalMaven.run(maven, project, "install", "-pl", ":demo-maven,:lib", "-DskipTests").succeeded()
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "app", "-Dyoriwake.select", "-Dyoriwake.base=HEAD")
+            .succeeded().output
+
+        assertContains(output, "[yoriwake] app surefire:test (default-test) declined, reactor-module-from-repository: lib")
+        assertFalse("app surefire:test (default-test) selecting against" in output, output)
+    }
+
+    @Test
+    fun `a scheduled full run falls due after fullRunEveryBuilds builds`(@TempDir dir: File) {
+        val project = committed(dir)
+        configured(project, "<fullRunEveryBuilds>2</fullRunEveryBuilds>")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+        val select = arrayOf("verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+
+        val first = FunctionalMaven.run(maven, project, *select).succeeded().output
+        val second = FunctionalMaven.run(maven, project, *select).succeeded().output
+
+        assertContains(first, "[yoriwake] lib surefire:test (default-test) selecting against ")
+        assertContains(second, "2 builds since the last full run")
+        assertContains(second, "Tests run: 2, Failures: 0")
+    }
+
+    /** A capture, a Greeter edit committed, and a selecting run that narrows and leaves its record. */
+    private fun selectedOnce(dir: File): File = captured(dir).also { project ->
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+        assertContains(output, "in dev.demo.lib.GreeterTest")
+    }
+
+    @Test
+    fun `a complement run runs what the selecting run left out`(@TempDir dir: File) {
+        val project = selectedOnce(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "leaving out the 1 tests the selecting run at ")
+        assertContains(output, "in dev.demo.lib.CounterTest")
+        assertFalse("in dev.demo.lib.GreeterTest" in output.substringAfter("leaving out the "), output)
+    }
+
+    @Test
+    fun `a complement run with another user property runs everything and names the configuration`(@TempDir dir: File) {
+        val project = selectedOnce(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", "-Ddemo.flag=on")
+            .succeeded().output
+
+        assertContains(output, "differs from this run in")
+        assertContains(output, "configuration")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `two run kinds asked together fail the build before any test runs`(@TempDir dir: File) {
+        val project = captured(dir)
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.observe")
+
+        assertContains(result.output, "-Dyoriwake.select and -Dyoriwake.observe were set together")
+        assertFalse("Tests run:" in result.output, result.output)
+        assertTrue(result.exitCode != 0, result.output)
+    }
+
+    @Test
+    fun `a complement run with no selecting run before it runs everything`(@TempDir dir: File) {
+        val project = captured(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "no selection.tsv for lib surefire:test (default-test) in this build's map directory")
+        assertContains(output, "Tests run: 2, Failures: 0")
     }
 
     @Test
