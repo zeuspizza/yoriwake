@@ -17,6 +17,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- A Maven build extension: Surefire and Failsafe record, select, observe and complement, with `yoriwake:audit` and `yoriwake:explain`. Map: new, per execution.
 - Published jars build reproducibly: the same commit gives the same bytes. Map: left alone.
 - README: the SLSA Build Level 2 badge, linking to how to verify a release. Map: left alone.
 - `narrowPlainRunners` lets a selecting run of a plain JUnit 4 task leave out whole test classes. Map: left alone.
