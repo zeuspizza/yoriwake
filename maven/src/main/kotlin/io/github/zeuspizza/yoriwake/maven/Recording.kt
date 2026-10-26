@@ -234,7 +234,7 @@ internal class Recording(
             undatedReason = run.undatedReason.orEmpty(),
             effectiveScope = null,
             isolated = run.isolated,
-            scheduleSet = false,
+            scheduleSet = selection.schedules,
             rootDir = root,
             mapDir = run.mapDir,
             facts = view(project, classpath),

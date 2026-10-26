@@ -4423,6 +4423,11 @@ MUTATIONS = [
      "            settings.largeChangeThreshold,\n",
      "            Int.MAX_VALUE,\n",
      maven_suite, "more changed paths than largeChangeThreshold run everything"),
+    # A scheduled full run keeps the map fresh on a build that always selects.
+    ("a Maven scheduled full run never falls due", MAVEN_SELECTION,
+     "                    settings.schedule.takeIf { it.set }?.let { Schedule.dueIn(mapDir, it.builds, it.days) }\n",
+     "                    null\n",
+     maven_suite, "a scheduled full run falls due after fullRunEveryBuilds builds"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",

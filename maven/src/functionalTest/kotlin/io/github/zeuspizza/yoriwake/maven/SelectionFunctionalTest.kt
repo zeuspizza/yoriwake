@@ -132,6 +132,23 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a scheduled full run falls due after fullRunEveryBuilds builds`(@TempDir dir: File) {
+        val project = committed(dir)
+        configured(project, "<fullRunEveryBuilds>2</fullRunEveryBuilds>")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+        val select = arrayOf("verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+
+        val first = FunctionalMaven.run(maven, project, *select).succeeded().output
+        val second = FunctionalMaven.run(maven, project, *select).succeeded().output
+
+        assertContains(first, "[yoriwake] lib surefire:test (default-test) selecting against ")
+        assertContains(second, "2 builds since the last full run")
+        assertContains(second, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
     fun `an empty change set runs every test`(@TempDir dir: File) {
         val project = captured(dir)
 

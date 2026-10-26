@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
+import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import org.apache.maven.MavenExecutionException
 import org.apache.maven.execution.MavenSession
@@ -18,6 +19,8 @@ internal class Settings(
     val fullRunBranches: List<String> = emptyList(),
     /** How many changed paths make a selecting run run everything without analysing them. */
     val largeChangeThreshold: Int = LargeChange.DEFAULT_THRESHOLD,
+    /** A selecting run runs everything once this many builds or days passed since the last full run. */
+    val schedule: Schedule.Limits = Schedule.Limits(null, null),
 ) {
 
     companion object {
@@ -49,7 +52,15 @@ internal class Settings(
                     null as Throwable?,
                 )
             } ?: LargeChange.DEFAULT_THRESHOLD
-            return Settings(enabled, alwaysRun.map(String::trim).filter(String::isNotEmpty), fullRunBranches, largeChange)
+            fun atLeastOne(name: String): Int? = configuration?.getChild(name)?.value?.trim()?.let { text ->
+                text.toIntOrNull()?.takeIf { it >= 1 } ?: throw MavenExecutionException(
+                    "[yoriwake] $owner: $name is $text; it counts builds or days between full runs, so it must be " +
+                        "1 or more. Leave it unset to never schedule a full run.",
+                    null as Throwable?,
+                )
+            }
+            val schedule = Schedule.Limits(atLeastOne("fullRunEveryBuilds"), atLeastOne("fullRunEveryDays"))
+            return Settings(enabled, alwaysRun.map(String::trim).filter(String::isNotEmpty), fullRunBranches, largeChange, schedule)
         }
 
         /** As the Gradle plugin's: the bare property is true, anything but true or false fails the build. */

@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
+import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
@@ -34,6 +35,9 @@ internal class Selection(private val session: MavenSession, private val root: Fi
     private val git = ChangeDetection.directRunner(root)
 
     private val settings by lazy { Settings.of(session) }
+
+    /** Whether the POM schedules full runs, so the decode counts the builds since the last one. */
+    val schedules: Boolean get() = settings.schedule.set
 
     /** Asked once per invocation: whether it selects, and the declines that hold, are the same for every execution. */
     private val asked: RunPlan.Asked by lazy {
@@ -74,6 +78,9 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 settings.fullRunBranches,
                 // Not a build-wide git failure: a branch git cannot read declines this run alone.
                 { ChangeDetection.checkedOut { ChangeDetection.rawGit(root, it) } },
+                scheduled = {
+                    settings.schedule.takeIf { it.set }?.let { Schedule.dueIn(mapDir, it.builds, it.days) }
+                },
             )
         } catch (rejected: RunPlan.Rejected) {
             throw MavenExecutionException(rejected.message, null as Throwable?)
