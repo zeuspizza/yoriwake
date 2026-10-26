@@ -4413,6 +4413,16 @@ MUTATIONS = [
      '        if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
      '        if (false) host.property(AgentContract.OBSERVE_PROPERTY, "true")',
      maven_suite, "an observing run runs every test and reports what selection would have done"),
+    # A branch the POM lists runs everything and records, so the default branch's map refreshes.
+    ("a Maven branch fullRunBranches lists still selects", MAVEN_SELECTION,
+     "                settings.fullRunBranches,\n",
+     "                emptyList(),\n",
+     maven_suite, "on a branch fullRunBranches lists a selecting run runs everything and records the map"),
+    # A change past the threshold runs everything rather than paying to analyse it.
+    ("a Maven change above largeChangeThreshold is analysed", MAVEN_SELECTION,
+     "            settings.largeChangeThreshold,\n",
+     "            Int.MAX_VALUE,\n",
+     maven_suite, "more changed paths than largeChangeThreshold run everything"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",

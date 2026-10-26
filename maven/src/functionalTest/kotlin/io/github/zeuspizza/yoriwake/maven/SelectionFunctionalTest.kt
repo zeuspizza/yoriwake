@@ -71,6 +71,54 @@ class SelectionFunctionalTest {
         assertTrue(File(map, "observation.json").isFile, "no observation.json in $map")
     }
 
+    /** The plugin's `<configuration>` in the root POM, given [xml]; committed. */
+    private fun configured(project: File, xml: String) {
+        File(project, "pom.xml").edit {
+            it.replace("<extensions>true</extensions>\n      </plugin>", "<extensions>true</extensions>\n        <configuration>$xml</configuration>\n      </plugin>")
+        }
+        git(project, "commit", "-q", "-am", "configure yoriwake")
+    }
+
+    @Test
+    fun `on a branch fullRunBranches lists a selecting run runs everything and records the map`(@TempDir dir: File) {
+        val project = captured(dir)
+        git(project, "branch", "-M", "main")
+        configured(project, "<fullRunBranches><branch>main</branch></fullRunBranches>")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(output, "on branch main, and fullRunBranches lists `main`, so selection is declined")
+        assertContains(output, "Tests run: 2, Failures: 0")
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) map updated: ")
+    }
+
+    @Test
+    fun `more changed paths than largeChangeThreshold run everything`(@TempDir dir: File) {
+        val project = captured(dir)
+        configured(project, "<largeChangeThreshold>1</largeChangeThreshold>")
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        File(project, "lib/src/main/java/dev/demo/lib/Counter.java").edit { it.replace("n * 2", "n + n") }
+        git(project, "commit", "-q", "-am", "two edits")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(output, "Analysing a change this size costs more than it saves")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `a largeChangeThreshold below one fails the build`(@TempDir dir: File) {
+        val project = committed(dir)
+        configured(project, "<largeChangeThreshold>0</largeChangeThreshold>")
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib")
+
+        assertContains(result.output, "largeChangeThreshold is 0; it counts changed paths, so it must be 1 or more")
+        assertTrue(result.exitCode != 0, result.output)
+    }
+
     @Test
     fun `an empty change set runs every test`(@TempDir dir: File) {
         val project = captured(dir)

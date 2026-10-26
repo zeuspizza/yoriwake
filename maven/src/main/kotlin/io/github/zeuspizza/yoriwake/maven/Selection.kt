@@ -33,6 +33,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
 
     private val git = ChangeDetection.directRunner(root)
 
+    private val settings by lazy { Settings.of(session) }
+
     /** Asked once per invocation: whether it selects, and the declines that hold, are the same for every execution. */
     private val asked: RunPlan.Asked by lazy {
         RunPlan.Asked(
@@ -69,6 +71,9 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 { "-D$it" },
                 { widening(mapDir) },
                 { since -> ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(root, it) }, since) },
+                settings.fullRunBranches,
+                // Not a build-wide git failure: a branch git cannot read declines this run alone.
+                { ChangeDetection.checkedOut { ChangeDetection.rawGit(root, it) } },
             )
         } catch (rejected: RunPlan.Rejected) {
             throw MavenExecutionException(rejected.message, null as Throwable?)
@@ -102,7 +107,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         val settled = SelectionSetup.settle(
             plan.widening!!,
             { ChangeDetection.changedPaths(git, root, it) },
-            LargeChange.DEFAULT_THRESHOLD,
+            settings.largeChangeThreshold,
         ) { _, changed -> LargeChange.counted(changed, null) }
         val (widened, paths) = when (settled) {
             is SelectionSetup.Outcome.RunEverything -> {
