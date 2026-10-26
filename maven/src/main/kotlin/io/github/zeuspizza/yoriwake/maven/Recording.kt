@@ -99,7 +99,8 @@ internal class Recording(
             }
             return
         }
-        if (outcome is ScopeOutcome.NotApplied) return
+        // Failsafe's `verify` shares the execution, and its configuration has no argLine to wire.
+        if (outcome is ScopeOutcome.NotApplied || !isTestGoal(execution)) return
         runCatching { wire(event.project, execution, key) }.onFailure {
             log.warn("[yoriwake] ${nameOf(event.project, execution)}: could not wire the run ($it); nothing is captured and the map is left as it was")
         }
@@ -203,7 +204,10 @@ internal class Recording(
             name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath),
             environment, undated, isolated,
             stamp = { stampOf(project, key, configuration, classpath, hostArguments) },
-            stopsAfterFailure = parameter(project, configuration, "skipAfterFailureCount", "surefire.skipAfterFailureCount")
+            stopsAfterFailure = parameter(
+                project, configuration, "skipAfterFailureCount",
+                if (execution.artifactId == FAILSAFE) "failsafe.skipAfterFailureCount" else "surefire.skipAfterFailureCount",
+            )
                 ?.toIntOrNull()?.let { it > 0 } == true,
             properties = properties,
         )
@@ -254,23 +258,7 @@ internal class Recording(
         ).run()
     }
 
-    /** What the shared rules ask of this execution's classpath, from Maven's model of the reactor. */
-    private fun view(project: MavenProject, classpath: List<File>): ClasspathView = object : ClasspathView {
-        override val rootDir = root
-        override val moduleDirs = session.allProjects.associate { module ->
-            module.basedir.relativeTo(root).invariantSeparatorsPath to module.id
-        }
-        override val buildDirs = session.allProjects.associate { it.id to it.build.directory }
-        override val ownPath: String = project.id
-        override fun classpathFiles(): Set<File> = classpath.toSet()
-        override fun testOutputFiles(): Set<File> = setOf(File(project.build.testOutputDirectory))
-        override fun compileTimeFiles(): Set<File> =
-            runCatching { project.compileClasspathElements.map(::File).toSet() }.getOrDefault(emptySet())
-        override fun declaredModules(): Set<String>? = null
-        override fun jacocoVersion(): String? = project.getPlugin(JacocoAdoption.JACOCO)?.version.orEmpty()
-        override fun testJvm(): Int? = null
-        override fun agentCeiling(): String? = null
-    }
+    private fun view(project: MavenProject, classpath: List<File>): ClasspathView = classpathView(session, root, project, classpath)
 
     /**
      * Why this execution cannot date the map, or null when it can: tests named on the command line

@@ -79,7 +79,16 @@ internal object SelectingStep {
         val observing: Boolean,
     )
 
-    fun run(inputs: Inputs, host: Host) {
+    /** What [run] worked out, for an explanation of the run to report without running it again. */
+    class Worked(
+        val scoped: ScopedChange,
+        val established: Established,
+        val widening: InlineWidening,
+        val forcing: ForcingPaths.Classified,
+        val capture: CaptureDecision,
+    )
+
+    fun run(inputs: Inputs, host: Host): Worked {
         val paths = inputs.paths
         val mapDir = inputs.mapDir
         val rootDir = inputs.rootDir
@@ -198,18 +207,17 @@ internal object SelectingStep {
         val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map
         // nothing, and widening would re-capture the suite on every inline change.
-        applyCapture(
-            host, mapDir, inputs.observing,
-            decideCapture(
-                mapDir,
-                mapUsable = outlook.mapUsable,
-                fullRun = outlook.fullRun,
-                learnable = scoped.change.classPrefixes,
-                // A map whose classpath files moved, or that records none, is not current: the run
-                // forces, and its capture records them as they are now.
-                ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
-            ),
+        val capture = decideCapture(
+            mapDir,
+            mapUsable = outlook.mapUsable,
+            fullRun = outlook.fullRun,
+            learnable = scoped.change.classPrefixes,
+            // A map whose classpath files moved, or that records none, is not current: the run
+            // forces, and its capture records them as they are now.
+            ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
         )
+        applyCapture(host, mapDir, inputs.observing, capture)
+        return Worked(scoped, established, widening, forcing, capture)
     }
 
     /**

@@ -81,11 +81,18 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         /** Whether Surefire stops after a failure, so a record could list a test whose outcome nobody saw. */
         stopsAfterFailure: Boolean,
         properties: Properties,
+        /**
+         * Explaining, not running: asks to select whatever the invocation asked, leaves no selection
+         * record, compares no environment it was not given, and hands what the selecting step worked
+         * out, with the base it compared against, to [worked].
+         */
+        explaining: Boolean = false,
+        worked: (SelectingStep.Worked, String) -> Unit = { _, _ -> },
     ): RunPlan.Kind {
         val host = Host(name, properties)
         val plan = try {
             RunPlan.resolve(
-                asked,
+                if (explaining) RunPlan.Asked(select = true, observe = false, complement = null, fullRun = asked.fullRun) else asked,
                 { "-D$it" },
                 { widening(mapDir) },
                 { since -> ChangeDetection.scanCommitMessages({ ChangeDetection.rawGit(root, it) }, since) },
@@ -128,7 +135,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         }
         if (!plan.selecting && !observing) return RunPlan.Kind.RECORD
         val kind = plan.kind
-        if (plan.selecting) startRecord(host, mapDir, stamp, stopsAfterFailure)
+        if (plan.selecting && !explaining) startRecord(host, mapDir, stamp, stopsAfterFailure)
 
         val settled = SelectionSetup.settle(
             plan.widening!!,
@@ -156,7 +163,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         // A test's declared-dependency tag is relative to its module; the agent resolves it against this.
         host.property(AgentContract.PROJECT_DIR_PROPERTY, projectDir)
         // As on Gradle, the environment is compared before the change set is looked at.
-        if (environment == null) {
+        if (environment == null && !explaining) {
             host.refuse(RefusalKind.ENVIRONMENT_UNRECORDED, "the test JVM's environment could not be read")
             SelectingStep.runEverything(
                 host, mapDir, observing = observing, "the test JVM's environment could not be read",
@@ -164,21 +171,24 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             )
             return kind
         }
-        SelectingStep.refuseAChangedEnvironment(
-            host, mapDir, environment.first, environment.second, File(mapDir, AgentContract.CHANGE_SET_FILE), observing = observing,
-        )
+        if (environment != null) {
+            SelectingStep.refuseAChangedEnvironment(
+                host, mapDir, environment.first, environment.second, File(mapDir, AgentContract.CHANGE_SET_FILE), observing = observing,
+            )
+        }
         if (host.refused) return kind
         val sourceDirs = ForcingPaths.sourceDirs(
             root,
             session.allProjects.flatMap { module -> (module.compileSourceRoots + module.testCompileSourceRoots).map(::File) },
         )
-        SelectingStep.run(
+        val done = SelectingStep.run(
             SelectingStep.Inputs(
                 mapDir, root, paths, widened.ref, widened.origin, sourceDirs, view,
                 notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing,
             ),
             host,
         )
+        worked(done, widened.ref)
         return kind
     }
 
