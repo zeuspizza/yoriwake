@@ -561,6 +561,8 @@ if (functionalCoverage) {
         val core = coreJar.get().asFile
         pluginClasspath.setFrom(
             instrumentPluginClasses,
+            // Core's resources, which its jar carried and the instrumented classes do not.
+            coreProject.tasks.named<ProcessResources>("processResources"),
             sourceSets.main.get().runtimeClasspath.filter { it != compiled && it != core },
         )
     }
