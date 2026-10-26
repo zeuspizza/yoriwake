@@ -238,7 +238,10 @@ dependencies {
     "functionalTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
 }
 
-val cleanFunctionalRepository by tasks.registering(Delete::class) { delete(functionalRepository) }
+// The suite's local repository keeps a release version once resolved; a rebuild at that version must reach it.
+val cleanFunctionalRepository by tasks.registering(Delete::class) {
+    delete(functionalRepository, layout.buildDirectory.dir("functional-m2/io/github/zeuspizza/yoriwake-maven-plugin"))
+}
 tasks.named("publishMavenPluginPublicationToFunctionalRepository") { dependsOn(cleanFunctionalRepository) }
 
 tasks.register<Test>("functionalTest") {
