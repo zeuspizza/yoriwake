@@ -4428,6 +4428,16 @@ MUTATIONS = [
      "                    settings.schedule.takeIf { it.set }?.let { Schedule.dueIn(mapDir, it.builds, it.days) }\n",
      "                    null\n",
      maven_suite, "a scheduled full run falls due after fullRunEveryBuilds builds"),
+    # A complement run hands its test JVM the selecting run's record, or it leaves nothing out.
+    ("a Maven complement run leaves nothing out", MAVEN_SELECTION,
+     "        host.property(AgentContract.COMPLEMENT_RECORD_PROPERTY, copy.absolutePath)\n",
+     "",
+     maven_suite, "a complement run runs what the selecting run left out"),
+    # Surefire promotes user properties to the test JVM: one that changed must not match the record.
+    ("a Maven complement stamp ignores user properties", MAVEN_RECORDING,
+     "        session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +\n",
+     "        emptyMap<String, String>() +\n",
+     maven_suite, "a complement run with another user property runs everything and names the configuration"),
     # A map whose capture commit git cannot relate refuses, as on Gradle.
     ("a Maven selecting run trusts a map git cannot relate", MAVEN_SELECTION,
      "            if (a.startsWith(\"-\") || b.startsWith(\"-\")) null\n            else git.run(",

@@ -3,12 +3,15 @@ package io.github.zeuspizza.yoriwake.maven
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
+import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
+import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
+import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
@@ -23,6 +26,7 @@ import org.apache.maven.execution.MavenSession
 import org.slf4j.Logger
 import java.io.File
 import java.util.Properties
+import java.util.UUID
 
 /**
  * A selecting run on Maven (`-Dyoriwake.select`): the run plan, the base widened to the map's age, the
@@ -44,7 +48,13 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         RunPlan.Asked(
             select = flag(SettingNames.SELECT),
             observe = flag(SettingNames.OBSERVE),
-            complement = null,
+            complement = session.userProperties.getProperty(SettingNames.COMPLEMENT)?.let {
+                when {
+                    it.isEmpty() || it.equals("true", ignoreCase = true) -> ""
+                    it.equals("false", ignoreCase = true) -> null
+                    else -> it
+                }
+            },
             fullRun = flag(SettingNames.FULL_RUN),
         )
     }
@@ -66,6 +76,10 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         environment: Pair<EnvironmentFingerprint.View, EnvironmentFingerprint.Rules>?,
         undated: String?,
         isolatedCapture: Boolean,
+        /** This execution's selection-record stamp, read where it starts. */
+        stamp: () -> SelectionRecord.Stamp,
+        /** Whether Surefire stops after a failure, so a record could list a test whose outcome nobody saw. */
+        stopsAfterFailure: Boolean,
         properties: Properties,
     ): RunPlan.Kind {
         val host = Host(name, properties)
@@ -86,6 +100,10 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             throw MavenExecutionException(rejected.message, null as Throwable?)
         }
         plan.notes.forEach { host.lifecycle("[yoriwake] $name: $it") }
+        // Never one of an earlier run's: a selecting run writes its own, a complement its own copy.
+        File(mapDir, SelectionRecord.START_FILE).delete()
+        File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE).delete()
+        if (plan.complementing) return complement(host, mapDir, plan.complementFrom.orEmpty(), stamp)
         val observing = plan.observing
         // Beside the selecting properties below, or a decline's refusal.
         if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")
@@ -110,6 +128,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         }
         if (!plan.selecting && !observing) return RunPlan.Kind.RECORD
         val kind = plan.kind
+        if (plan.selecting) startRecord(host, mapDir, stamp, stopsAfterFailure)
 
         val settled = SelectionSetup.settle(
             plan.widening!!,
@@ -161,6 +180,73 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             host,
         )
         return kind
+    }
+
+    /**
+     * Begins the selection record a complement run reads: the stamp and a token the test JVM writes
+     * into its decision records. The decode completes it, or removes it when it cannot vouch for it.
+     */
+    private fun startRecord(host: Host, mapDir: File, stamp: () -> SelectionRecord.Stamp, stopsAfterFailure: Boolean) {
+        if (stopsAfterFailure) {
+            log.debug("[yoriwake] ${host.name}: Surefire stops after a failure, so this run leaves no selection record")
+            return
+        }
+        val token = UUID.randomUUID().toString()
+        host.property(AgentContract.RUN_TOKEN_PROPERTY, token)
+        runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, stamp())) }
+            .onFailure { log.debug("[yoriwake] ${host.name}: the selection record's start could not be written ($it)") }
+    }
+
+    /**
+     * A complement run (`-Dyoriwake.complement`, or `=<dir>` holding a copy of `.yoriwake/`): leaves out
+     * every test the selecting run's record lists as ran, once the record's stamp equals this run's.
+     * A record that is missing or does not match makes it a recording run, named; one that matches
+     * captures nothing and leaves the map and the record as they are.
+     */
+    private fun complement(host: Host, mapDir: File, from: String, stamp: () -> SelectionRecord.Stamp): RunPlan.Kind {
+        val record = if (from.isEmpty()) {
+            File(mapDir, AgentContract.SELECTION_FILE)
+        } else {
+            File(File(from).let { if (it.isAbsolute) it else File(root, from) }, "${mapDir.name}/${AgentContract.SELECTION_FILE}")
+        }
+        val where = if (from.isEmpty()) "this build's map directory" else from
+        val text = record.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
+        val read = SelectionRecord.read(text)
+        val unusable = when {
+            text == null && record.exists() -> RefusalKind.COMPLEMENT_NO_RECORD to
+                "the ${AgentContract.SELECTION_FILE} for ${host.name} in $where cannot be read as a file"
+            text == null -> RefusalKind.COMPLEMENT_NO_RECORD to
+                "no ${AgentContract.SELECTION_FILE} for ${host.name} in $where: no selecting run that narrowed at a clean tree left one"
+            read.failure() != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to
+                "the ${AgentContract.SELECTION_FILE} for ${host.name} in $where is unusable: ${read.failure()}"
+            else -> null
+        }
+        val recorded = SelectionRecord.stampOf(read)
+        val copy = File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE)
+        val (kind, reason) = unusable
+            ?: (SelectionRecord.mismatch(recorded, stamp())
+                ?: runCatching { copy.parentFile.mkdirs(); writeAtomically(copy, text!!) }
+                    .exceptionOrNull()?.let { "its copy could not be written ($it)" })
+                ?.let {
+                    RefusalKind.COMPLEMENT_RECORD_MISMATCH to
+                        "the ${AgentContract.SELECTION_FILE} for ${host.name} in $where differs from this run in $it"
+                }
+            ?: (null to null)
+        if (kind != null) {
+            host.refuse(kind, reason!!)
+            host.lifecycle("[yoriwake] ${host.name}: $reason, so every test runs and the map is recorded.")
+            return RunPlan.Kind.RECORD
+        }
+        host.property(AgentContract.COMPLEMENT_RECORD_PROPERTY, copy.absolutePath)
+        SelectingStep.applyCapture(
+            host, mapDir, observing = false,
+            CaptureDecision(
+                capture = false, fullRun = false, mapCurrent = false,
+                reason = "leaving out the ${read.ran().size} tests the selecting run at ${recorded.commit?.take(12)} ran; " +
+                    "nothing is instrumented, and the map and ${AgentContract.SELECTION_FILE} are left as they are.",
+            ),
+        )
+        return RunPlan.Kind.COMPLEMENT
     }
 
     /** The base, from `-Dyoriwake.base` or git, widened to the map's age, and the tree's drift since the capture. */

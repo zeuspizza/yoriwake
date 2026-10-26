@@ -198,12 +198,17 @@ internal class Recording(
         )
         val environment = fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }))
         val undated = undatedBy(project, execution, configuration)
+        val hostArguments = arguments(resolved(project, host).orEmpty())
         val kind = selection.apply(
             name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath),
-            environment, undated, isolated, properties,
+            environment, undated, isolated,
+            stamp = { stampOf(project, key, configuration, classpath, hostArguments) },
+            stopsAfterFailure = parameter(project, configuration, "skipAfterFailureCount", "surefire.skipAfterFailureCount")
+                ?.toIntOrNull()?.let { it > 0 } == true,
+            properties = properties,
         )
-        // A selecting execution may leave out every test, which Surefire would otherwise fail on.
-        if (kind == RunPlan.Kind.SELECT) child(configuration, "failIfNoTests").value = "false"
+        // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
+        if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
         execution.configuration = configuration
         writeAtomically(runFile, buildString {
             properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
@@ -227,7 +232,7 @@ internal class Recording(
             selecting = run.kind == RunPlan.Kind.SELECT,
             observing = run.kind == RunPlan.Kind.OBSERVE,
             asksSelection = selection.asksSelection,
-            complementing = false,
+            complementing = run.kind == RunPlan.Kind.COMPLEMENT,
             wholeTask = false,
             loadedScope = reactorPackages,
             datesTheMap = run.undatedReason == null,
@@ -272,10 +277,35 @@ internal class Recording(
      * or in a file narrow the run, and stopping after a failure leaves later tests unobserved. The
      * JUnit Platform's own filters (`groups`, engines) still date it, as Gradle's do.
      */
+    /** A Surefire or Failsafe parameter as this execution resolves it: its POM value, else its user property. */
+    private fun parameter(project: MavenProject, configuration: Xpp3Dom, name: String, property: String): String? =
+        configuration.getChild(name)?.value?.trim()?.takeUnless { it.isEmpty() || it.startsWith("\${") }
+            ?: Declines.property(project, session, property)
+
+    /** This execution's selection-record stamp; see [MavenStamp]. */
+    private fun stampOf(
+        project: MavenProject,
+        key: String,
+        configuration: Xpp3Dom,
+        classpath: List<File>,
+        hostArguments: List<String>,
+    ) = MavenStamp.observe(
+        root, key, project.id, classpath,
+        File(session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path),
+        // Surefire promotes the invocation's user properties to the test JVM's system properties.
+        session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +
+            configuration.getChild("systemPropertyVariables")?.children.orEmpty()
+                .associate { it.name to resolved(project, it.value).orEmpty() },
+        hostArguments,
+        listOf("includes", "excludes").flatMap { group ->
+            configuration.getChild(group)?.children.orEmpty().map { "$group ${it.value.orEmpty().trim()}" }
+        } + listOf("groups", "excludedGroups", "test").mapNotNull { name ->
+            parameter(project, configuration, name, name)?.let { "$name $it" }
+        },
+    )
+
     private fun undatedBy(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom): String? {
-        fun parameter(name: String, property: String): String? =
-            configuration.getChild(name)?.value?.trim()?.takeUnless { it.isEmpty() || it.startsWith("\${") }
-                ?: Declines.property(project, session, property)
+        fun parameter(name: String, property: String): String? = parameter(project, configuration, name, property)
         val failsafe = execution.artifactId == FAILSAFE
         parameter("test", if (failsafe) "it.test" else "test")?.let { return "the run was filtered to $it" }
         parameter("includesFile", if (failsafe) "failsafe.includesFile" else "surefire.includesFile")?.let { return "the run was filtered by $it" }

@@ -148,6 +148,38 @@ class SelectionFunctionalTest {
         assertContains(second, "Tests run: 2, Failures: 0")
     }
 
+    /** A capture, a Greeter edit committed, and a selecting run that narrows and leaves its record. */
+    private fun selectedOnce(dir: File): File = captured(dir).also { project ->
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+        assertContains(output, "in dev.demo.lib.GreeterTest")
+    }
+
+    @Test
+    fun `a complement run runs what the selecting run left out`(@TempDir dir: File) {
+        val project = selectedOnce(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "leaving out the 1 tests the selecting run at ")
+        assertContains(output, "in dev.demo.lib.CounterTest")
+        assertFalse("in dev.demo.lib.GreeterTest" in output.substringAfter("leaving out the "), output)
+    }
+
+    @Test
+    fun `a complement run with another user property runs everything and names the configuration`(@TempDir dir: File) {
+        val project = selectedOnce(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", "-Ddemo.flag=on")
+            .succeeded().output
+
+        assertContains(output, "differs from this run in")
+        assertContains(output, "configuration")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
     @Test
     fun `an empty change set runs every test`(@TempDir dir: File) {
         val project = captured(dir)
