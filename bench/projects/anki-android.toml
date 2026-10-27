@@ -1,8 +1,9 @@
 # The big Android target: a real app, not a fixture.
 #
 # WHY THIS ONE, and it took a screen to find. Android projects are overwhelmingly JUnit 4, which
-# this tool structurally CANNOT deselect -- the agent is a JUnit Platform PostDiscoveryFilter, so a
-# suite running off the Platform is never even offered to it. That is the documented mockito case.
+# this tool selects only per whole class, and only with `narrowPlainRunners` -- the agent's per-test
+# selection is a JUnit Platform PostDiscoveryFilter, so a suite running off the Platform is never
+# offered to it. That is the documented mockito case.
 # Screening the largest Android repositories for `useJUnitPlatform` and `junit-jupiter` found ZERO
 # in glide (35k stars), Signal-Android (29k), nowinandroid (22k) and tivi (6.7k).
 #
@@ -63,17 +64,19 @@ max_parallel_forks = 2
 # repointed at 9.7.1: the plugin captures 24 records and narrows 11 tests to 3, so Gradle 9 is not
 # the risk here. That question cost two minutes and would have invalidated the whole target.
 
-# BLOCKED, and the refusal is CORRECT. AnkiDroid enables JUnit Jupiter's in-JVM parallel
+# UNTIL 0.4, BLOCKED, and the refusal was CORRECT. AnkiDroid enables JUnit Jupiter's in-JVM parallel
 # execution, and the plugin declines rather than blend per-test coverage attribution:
 #
 #     In-JVM parallel test execution is enabled on :AnkiDroid:testPlayDebugUnitTest
 #     (via junit.jupiter.execution.parallel.enabled) -- tests interleaved inside one JVM share a
 #     single coverage agent, so per-test attribution would silently blend them.
 #
-# That is a real, general limitation worth publishing: A PROJECT USING JUNIT 5 PARALLEL EXECUTION
-# CANNOT USE THIS TOOL as configured. Measuring it anyway would mean turning that off, which changes
-# the thing being measured more than the vintage init script does -- their suite is designed around
-# it -- so it is left blocked and documented rather than quietly reconfigured.
+# That was a real, general limitation: A PROJECT USING JUNIT 5 PARALLEL EXECUTION COULD NOT USE THIS
+# TOOL as configured. Measuring it anyway would have meant turning that off, which changes the thing
+# being measured more than the vintage init script does -- their suite is designed around it -- so
+# it was left blocked rather than quietly reconfigured. `recordSequentially` (in `flags`) lifts it
+# without reconfiguring the suite: a run asked only to record turns the parallel switches off and
+# records one test at a time, and a selecting run keeps the suite's scheduling and captures nothing.
 #
 # The first qualification ALSO exposed a defect in the screen itself: it reported "the plugin never
 # attached" about the very plugin that had just refused, because no map directory existed. A failed

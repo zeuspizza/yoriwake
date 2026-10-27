@@ -1,21 +1,18 @@
 # THE JUNIT 4 ARM OF mockito, AND IT EXISTS BECAUSE THE FLAG IS INERT WITHOUT IT.
 #
 # `mockito.toml` passes `scripts/junit-vintage.init.gradle.kts`, which calls `useJUnitPlatform()` on
-# every Test task. `excludeDeselectedClasses` -- the repository's only class-granularity path --
-# early-returns when `task.options is JUnitPlatformOptions`. So under mockito's own configuration
-# `-Pyoriwake.internal.classSelection` does nothing at all, and a sweep that passed it and came back clean would
-# be reporting on a flag that never fired. Reading an inert flag as a clean result is the failure
-# this file exists to avoid.
+# every Test task. `narrowPlainRunners` acts only on a task that runs plain JUnit 4 off the
+# Platform, so under mockito's own configuration it does nothing at all, and a sweep that passed it
+# and came back clean would be reporting on a flag that never fired. Reading an inert flag as a
+# clean result is the failure this file exists to avoid.
 #
 # So this arm is mockito WITHOUT the Vintage script: a genuine JUnit 4 suite, off the Platform,
-# where the class-granular path actually runs. It is the arm that produced the 14 missed tests,
-# and the arm that has to be re-run before anything is fixed -- the nested-run
-# attribution fix landed in `TestBoundaries.java` on the same day class selection was switched off,
-# and nothing has re-measured it since. The stale premise survives only in a `YoriwakePlugin.kt` comment.
+# where selection leaves out whole classes. It is also the arm on which an earlier class-granular
+# path, since removed, missed 14 tests.
 #
-# READ THE CONDITION BACK FROM THE RUN. The acting path prints
-#   "[yoriwake] <task> does not run on the JUnit Platform, so selection is applied at class granularity
-#    through Gradle's filter: N test classes excluded."
+# READ THE CONDITION BACK FROM THE RUN. A selecting run that acts prints
+#   "[yoriwake] <task> runs plain JUnit 4, so selection leaves out whole classes, and only those
+#    whose runner runs exactly the class's own methods."
 # If that line is absent the arm was inert and no conclusion may be drawn from it.
 #
 # A FIXTURE, NOT A CORPUS MEMBER. It measures the same upstream code as `mockito` under a different

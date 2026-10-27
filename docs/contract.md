@@ -1,9 +1,9 @@
 # The plugin–agent contract
 
-yoriwake is two programs. The plugin runs in the Gradle daemon; the agent runs inside every test
-JVM, shipped inside the plugin jar. They talk only through JVM system properties and files in the
-map directory. This page lists every name they share. It is for anyone reading a map with their own
-tooling or changing either side.
+yoriwake is two programs. The plugin runs in the Gradle daemon, or as the Maven build extension in
+Maven's own JVM; the agent runs inside every test JVM, shipped inside the plugin jar. They talk only
+through JVM system properties and files in the map directory. This page lists every name they share.
+It is for anyone reading a map with their own tooling or changing either side.
 
 The names are defined once, in
 [`AgentContract`](../agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contract/AgentContract.java).
@@ -13,12 +13,13 @@ tokens not listed here are internal and can change in any release.
 
 ## System properties
 
-All set by the plugin on the test task and read by the agent in the test JVM. List values are
-comma-separated. The seven list-valued `yoriwake.change.*` properties below (all but
-`yoriwake.change.accountedFor`) are not passed as system properties: a change set can name more
-paths than a command line carries, so the plugin writes them to `CHANGE_SET_FILE` and sets
-`yoriwake.change.file`. The agent reads them from there, and a file it cannot read whole refuses
-the run as `change-set-unreadable`.
+All set by the plugin on the test task and read by the agent in the test JVM. Under Maven the test
+JVM gets only `yoriwake.host` and `yoriwake.run.file` as system properties, and every other one
+below from `RUN_FILE`. List values are comma-separated. The nine list-valued `yoriwake.change.*`
+properties below and `yoriwake.change.baseFlag` are not passed as system properties: a change set
+can name more paths than a command line carries, so the plugin writes them to `CHANGE_SET_FILE` and
+sets `yoriwake.change.file`. The agent reads them from there, and a file it cannot read whole
+refuses the run as `change-set-unreadable`.
 
 | Constant | Property | Direction | Meaning |
 |---|---|---|---|
@@ -26,7 +27,7 @@ the run as `change-set-unreadable`.
 | `RECORDS_DIR_PROPERTY` | `yoriwake.internal.capture.outputDir` | plugin → agent | Where to write raw records. Capture is off when unset or empty |
 | `CAPTURE_ROOT_PROPERTY` | `yoriwake.internal.capture.root` | plugin → agent | The root project's directory. A capturing JVM records the non-class files it reads beneath it |
 | `LOADED_DIR_PROPERTY` | `yoriwake.loaded.out` | plugin → agent | Where to write loaded-class lists. Set only with `-Pyoriwake.internal.loaded` |
-| `JUNIT4_HOOK_PROPERTY` | `yoriwake.junit4.hook` | plugin → agent | `true` on a task not on the JUnit Platform: capture through JUnit 4's `RunNotifier` |
+| `JUNIT4_HOOK_PROPERTY` | `yoriwake.junit4.hook` | plugin → agent | `true` on a plain JUnit 4 (`useJUnit()`) task: capture through JUnit 4's `RunNotifier` |
 | `SELECT_PROPERTY` | `yoriwake.select` | plugin → agent | `true` to narrow; anything else runs everything |
 | `OBSERVE_PROPERTY` | `yoriwake.observe` | plugin → agent | `true` on an observing run: every test runs, and each row's selecting verdict is recorded as an observation line. Set beside `yoriwake.select`, which still decides that verdict |
 | `CLASS_GRANULARITY_PROPERTY` | `yoriwake.select.classGranularity` | plugin → agent | `true` rounds a selection up to whole classes |
@@ -69,7 +70,10 @@ of the contract.
 ## The map directory
 
 One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usually
-`.gradle/yoriwake/…`, which survives `clean`. Plain text, UTF-8, one entry per line unless stated.
+`.gradle/yoriwake/…`, which survives `clean`. Under Maven, one per Surefire or Failsafe execution,
+at `<reactor root>/.yoriwake/yoriwake/<execution key>-<hash>/`, the key being
+`<groupId>:<artifactId>:<plugin artifactId>:<execution id>` with each `:` written `-`. Plain text,
+UTF-8, one entry per line unless stated.
 
 | Constant | Name | Written by | Read by | Format |
 |---|---|---|---|---|
@@ -98,6 +102,8 @@ One per test task, at `<project cache dir>/yoriwake/<task path>-<hash>/`: usuall
 | `CHANGE_SET_FILE` | `change-set` | plugin | agent | The list-valued change-set properties of the last selecting run, in `java.util.Properties` format, ending with `CHANGE_SET_END` |
 | `CHANGE_SET_END` | `#end` | plugin | agent | The last line of a whole `change-set`. Without it the file is refused |
 | `RAW_DIR` | `raw` | agent | plugin, agent | Raw records, one directory per worker. Cleared before every run |
+| `RUN_FILE` | `run.properties` | plugin (Maven) | agent | Every contract property for the execution's test JVMs, `java.util.Properties` form, ending with `RUN_FILE_END` |
+| `RUN_FILE_END` | `#end` | plugin (Maven) | agent | The run file's last line |
 
 The plugin keeps other files here for its own use. They are not part of the contract.
 
@@ -111,7 +117,7 @@ is written as it is.
 
 | Constant | Name | Format |
 |---|---|---|
-| `WORKER_DIR_PREFIX` | `worker-` | Ends in the Gradle worker id |
+| `WORKER_DIR_PREFIX` | `worker-` | Ends in the worker id: Gradle's, or under Maven `<pid>-<JVM start in epoch millis>` |
 | `PLAN_DIR_SUFFIX` | `-p` | A JVM's second and later test plans record into `worker-<id>-p<n>`; the JVMs behind a run are its directory names without it |
 | `INDEX_FILE` | `index.tsv` | `sequence \t durationNanos \t byteCount \t outcome \t record-id` |
 | `EXEC_FILE_FORMAT` | `%06d.exec` | One JaCoCo execution-data blob per record, named by its sequence |
@@ -120,8 +126,6 @@ is written as it is.
 | `ENV_READS_FILE` | `env-reads.tsv` | The environment variables the JVM read, one name per line, escaped as a field; never a value. Written when every read was observed. The decode writes the union of a capture's workers beside the map under the same name, only when every worker wrote one; `yoriwakeExplain<Task>` reads it and nothing selects by it |
 | `RAW_SCHEMA_VERSION_FILE` | `raw-schema-version` | The raw version, one integer. Written before the first record |
 | `PARALLEL_UNCONFIRMED_FILE` | `parallel-unconfirmed` | Why the worker captured nothing: its tests may run concurrently. Any one leaves the map as it was |
-| `RUN_FILE` | `run.properties` | Under Maven, every contract property for the test JVM, `java.util.Properties` form, beside the map |
-| `RUN_FILE_END` | `#end` | The run file's last line |
 | `PLAN_COMPLETE_FILE` | `plan-complete` | Empty. Written only when the worker's whole run ended normally |
 | `OPEN_TESTS_FILE` | `open-tests` | The tests still open when the worker's run ended without finishing, one escaped id per line. Absent when none was |
 
@@ -240,7 +244,7 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `FINGERPRINT_IGNORED_NOTE` | `fingerprint-ignored` | The system properties `systemPropertyIgnore` left out of the environment comparison, as `yoriwake.fingerprint.ignored` carried it. Absent when it left none out |
 | `PARALLELISM_NOTE` | `parallelism` | How the run treated in-JVM parallelism, one of the three values below. Absent when the run did nothing about it |
 | `PARALLELISM_RECORDED_SEQUENTIALLY` | `recorded-sequentially` | Parallelism: a recording run turned the engines' parallel switches off, and its test JVM confirmed it |
-| `PARALLELISM_KEPT_NOT_CAPTURED` | `kept-not-captured` | Parallelism: a selecting run kept the suite's parallel scheduling and captured nothing |
+| `PARALLELISM_KEPT_NOT_CAPTURED` | `kept-not-captured` | Parallelism: a run not asked only to record (selecting, observing, complementing, or one of those declined into a full run) kept the suite's parallel scheduling and captured nothing |
 | `PARALLELISM_OVERRIDE_UNCONFIRMED` | `override-unconfirmed` | Parallelism: the test JVM found its tests may run concurrently, so it captured nothing and the map was left as it was |
 | `PATHS_IGNORED_NOTE` | `paths-ignored` | How many changed paths `pathIgnore` took out of the change set, as `yoriwake.change.ignored` carried them, whatever the outcome. Absent when it took out none |
 | `OBSERVED_OUTCOME_NOTE` | `observed-outcome` | On an observing run, the outcome a selecting run of the same inputs would have noted: `outcome`, then its `full-run-kind` and `refusal-kind` when it has them, tab-separated. `outcome` says what ran, `full-run` |
@@ -257,7 +261,7 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `PLAIN_FILTER_NOTE` | `plain-filter` | On a run that narrows a plain framework, whether its executor took the hook that leaves a class out: one of the three values below |
 | `PLAIN_FILTER_HOOKED` | `hooked` | Plain filter: the executor took the hook |
 | `PLAIN_FILTER_UNHOOKED` | `unhooked` | Plain filter: the executor's shape is not one the hook knows, so every class ran |
-| `PLAIN_FILTER_UNSUPPORTED` | `unsupported` | Plain filter: the hook could not reach the judgement, or the judgement threw, so every class ran |
+| `PLAIN_FILTER_UNSUPPORTED` | `unsupported` | Plain filter: a judgement threw, so at least the class it was judging ran; the other classes were still judged. A hook that could not load the judgement at all runs every class, and the note stays `hooked` |
 | `CLASS_RUNS_WHOLE_NOTE` | `class-runs-whole` | `<token>=<count>`, comma-separated: how many classes ran whole because of a runner or shape selection does not judge, by the tokens below |
 | `CLASS_RUNS_WHOLE_JUNIT4_RUNNER` | `junit4-runner` | Ran whole: a JUnit 4 class whose runner is not on the allow-list |
 | `CLASS_RUNS_WHOLE_JUNIT4_SHAPE` | `junit4-shape` | Ran whole: a JUnit 4 class whose tests' descriptions name another class, no method, or none at all |
@@ -372,7 +376,8 @@ Under Maven the same notes stand for an execution: `task` is its map id, `build-
 root, `build-path` the module's `groupId:artifactId:packaging:version`, `classpath` relative to the
 reactor root or the local repository, and `configuration` covers the invocation's user properties
 (which Surefire promotes to the test JVM), the execution's `systemPropertyVariables`, the host's own
-`argLine` and its `includes`, `excludes`, `groups`, `excludedGroups` and `test`.
+`argLine` and its `includes`, `excludes`, `groups`, `excludedGroups`, `test`,
+`additionalClasspathElements`, `classpathDependencyExcludes` and `classpathDependencyScopeExclude`.
 
 A record of another version, or whose rows do not match `rows`, is unusable whole.
 

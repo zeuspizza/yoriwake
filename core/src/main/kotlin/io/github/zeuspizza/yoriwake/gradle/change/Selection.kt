@@ -13,8 +13,8 @@ import java.io.File
 /**
  * What the daemon can establish about a change set, using the classpath and the compiled output.
  *
- * Nothing here may hold a reference to a `Task`: [ClasspathView] carries plain values, providers
- * and file collections so the configuration cache can serialise it.
+ * Nothing here may hold a reference to a `Task`: [ClasspathView] is the host-neutral view each
+ * front end backs (on Gradle, from `ClasspathFacts`, which the configuration cache serialises).
  */
 
 /** What the daemon could establish about a change set, for the rules that need bytecode. */

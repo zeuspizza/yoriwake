@@ -6,8 +6,10 @@ import java.io.File
 /**
  * Where a test task's coverage map lives.
  *
- * Under `.gradle/`, not `build/`: a map costs a full suite run to rebuild and must survive `clean`.
- * One directory per test task, so two tasks never share a record sequence space.
+ * Under the host's own state directory (`.gradle/` on Gradle, `.yoriwake/` on Maven), not its
+ * build output: a map costs a full suite run to rebuild and must survive `clean`. One directory
+ * per test task (on Maven, per Surefire or Failsafe execution), so two never share a record
+ * sequence space.
  */
 internal object MapLocation {
 

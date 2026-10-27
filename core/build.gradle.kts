@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 // The daemon-side logic every host's front end shares: change detection, decoding coverage into the
-// map, the audit and the explanation. It names no build tool's API, so a front end for another
-// host can use it as the Gradle plugin does, which bundles it.
+// map, the audit and the explanation. It names no build tool's API, so each front end, the Gradle
+// plugin and the Maven extension, bundles it.
 plugins {
     kotlin("jvm")
 }
@@ -12,11 +12,11 @@ repositories {
 }
 
 dependencies {
-    // Compiled against only: each front end pins the versions it bundles and relocates, so the
-    // plugin's own pin is the one that ships. See its build for why each is pinned.
+    // Compiled against only: each front end pins the versions it bundles and relocates, so each
+    // front end's own pin is the one that ships. See the plugin's build for why each is pinned.
     compileOnly("org.jacoco:org.jacoco.core:0.8.12")
     compileOnly("org.ow2.asm:asm:9.10.1")
-    // The host supplies the stdlib, as for the plugin.
+    // Gradle supplies the stdlib to the plugin; the Maven extension bundles its own.
     compileOnly(kotlin("stdlib"))
     // The selector and the record formats; bundled by the front end, never published.
     compileOnly(project(":agent"))

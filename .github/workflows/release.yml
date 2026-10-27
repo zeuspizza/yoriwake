@@ -6,12 +6,13 @@ name: release
 # reach them.
 #
 # What ships is what was tested: `verify` builds and tests once and hands its files on; no later job
-# builds anything. `attest` vouches for those files, `publish` signs and uploads them, and `github
-# release` attaches them to the GitHub release.
+# builds anything. `attest` vouches for those files, `publish` signs them and uploads the Gradle
+# plugin to the Portal, `publish-maven` uploads the Maven plugin to Central, and `github-release`
+# attaches them to the GitHub release.
 #
 # Dispatched from `main` or `release/<major>.<minor>` on the candidate, it is a rehearsal: `verify` and
 # `attest` run as a tag runs them, on version `0.0.0-rehearsal`, so a step that would break the
-# release breaks before the tag exists. Only a tag push publishes; on a dispatch the two jobs after
+# release breaks before the tag exists. Only a tag push publishes; on a dispatch the three jobs after
 # `attest` are skipped. The rehearsal's attestations name a branch, never a `v*` tag, so the
 # verification in SECURITY.md rejects them.
 on:

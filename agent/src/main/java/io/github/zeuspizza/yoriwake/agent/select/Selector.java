@@ -123,8 +123,9 @@ public final class Selector {
             /** The test's recorded coverage intersects the change, or its own test class changed. */
             REACHES_CHANGE("reaches-change"),
             /**
-             * The test ran at or after its JVM first loaded a changed class or read its file, so it
-             * may depend on what that JVM did with it once without recording anything.
+             * The test ran at or after its JVM first loaded a changed class or read its file, a moved
+             * classpath file or an ignored path, so it may depend on what that JVM did with it once
+             * without recording anything.
              */
             SHARES_JVM_WITH_CHANGE("shares-jvm-with-change"),
             /** The map does not record this test as having passed. */
@@ -703,10 +704,11 @@ public final class Selector {
 
     /**
      * Where each JVM's window for the ignored paths opens: at its first read of one of them, of a
-     * directory above one, of an archive holding one, or of every file. Only a JVM whose reads the
-     * map recorded opens one: for any other, and for a map that records no reads, the declaration
-     * stands as the build made it. Source files are the exception: a JVM whose record does not
-     * include the ones it opened (a map recorded before it did) opens at its first record.
+     * directory above one, of an entry of one that is an archive, or of every file. Only a JVM
+     * whose reads the map recorded opens one: for any other, and for a map that records no reads,
+     * the declaration stands as the build made it. Source files are the exception: a JVM whose
+     * record does not include the ones it opened (a map recorded before it did) opens at its first
+     * record.
      */
     public static Map<String, Integer> ignoredPathWindows(MapReader.Result map, Collection<String> ignored) {
         Map<String, Integer> opens = new HashMap<>();

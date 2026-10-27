@@ -43,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal class Recording(
     private val session: MavenSession,
-    /** Every execution U6 left wired, by its key, with the scope the agent records under. */
+    /** Every execution [YoriwakeLifecycle] left wired, by its key, with the scope the agent records under. */
     private val wired: Map<String, ScopeOutcome>,
     /** The packages of the whole reactor, which the loaded-class union may speak for. */
     private val reactorPackages: List<String>,
@@ -56,7 +56,7 @@ internal class Recording(
     /** HEAD and its reflogs before anything compiled; null when git could not be read. */
     private val start: String? = runCatching { CaptureStart.read(root).encode() }.getOrNull()
 
-    /** Per module, the phases this session ran: an execution needs `compile` and `test-compile` (KTD8). */
+    /** Per module, the phases this session ran: an execution needs `compile` and `test-compile`. */
     private val compiled = ConcurrentHashMap<String, MutableSet<String>>()
 
     /** What each started execution's decode reads back; `-T` starts and ends them on several threads. */
@@ -146,7 +146,7 @@ internal class Recording(
         // on and why it was declined. A module from a repository is this invocation's, not the build's.
         Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })
         // A module of this reactor that this invocation did not build comes from a repository, as
-        // whatever was installed last: its bytes are not the checkout's (KTD7).
+        // whatever was installed last: its bytes are not the checkout's.
         val reactor = session.allProjects.associateBy { "${it.groupId}:${it.artifactId}" }
         val built = session.projects.map { it.id }.toSet()
         val outside = project.artifacts.mapNotNull { reactor["${it.groupId}:${it.artifactId}"] }.filter { it.id !in built }

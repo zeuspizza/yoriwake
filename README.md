@@ -16,10 +16,10 @@
   Run only the tests your change can affect.
 </p>
 
-**yoriwake** (選り分け, *yo-ri-wa-ke*, Japanese for sorting out) is a Gradle plugin that records which
-code each test executes, then on later runs skips the tests your change does not affect. When it
-cannot prove that skipping is safe, it runs the whole suite and tells you why. It runs locally,
-inside your build: no service, no account.
+**yoriwake** (選り分け, *yo-ri-wa-ke*, Japanese for sorting out) is a Gradle plugin and a Maven build
+extension that records which code each test executes, then on later runs skips the tests your
+change does not affect. When it cannot prove that skipping is safe, it runs the whole suite and
+tells you why. It runs locally, inside your build: no service, no account.
 
 ## Why
 
@@ -47,6 +47,8 @@ It is meant for:
   and reports how much of the suite a change reaches and what blocks narrowing, each blocker with
   its remedy or a plain "no remedy".
 - **Pin what must always run.** `@Tag("yoriwake-always-run")` or `yoriwake { alwaysRun.add(...) }`.
+- **Declare what coverage cannot see.** `@Tag("yoriwake-depends-on:<glob>")` selects a test, and
+  `dependsOn` runs a task in full, when such a path changes; `pathIgnore` lists paths no test reads.
 - **An old map costs speed, never safety.** Selection widens the diff back to the commit the map
   was recorded at.
 - **Java, Kotlin and Android unit tests** on the JUnit Platform.
@@ -61,7 +63,7 @@ Apply the plugin next to `jacoco`, which it requires and scopes:
 plugins {
     java
     jacoco
-    id("io.github.zeuspizza.yoriwake") version "0.2.0"
+    id("io.github.zeuspizza.yoriwake") version "0.3.0"
 }
 ```
 
@@ -74,7 +76,9 @@ Then:
 ```
 
 On Maven (from 0.4.0, on Maven Central), it is a build extension in the root POM, beside JaCoCo's
-`prepare-agent`; the flags are the same names as `-D` properties:
+`prepare-agent`. The selection flags are `-D` properties of the same names, the off switch is
+`-Dyoriwake.enabled=false`, and some Gradle settings do not exist there:
+[Maven](docs/reference.md#maven).
 
 ```xml
 <plugin>
@@ -87,6 +91,7 @@ On Maven (from 0.4.0, on Maven Central), it is a build extension in the root POM
 
 ```bash
 mvn verify                          # runs everything and records a coverage map
+mvn yoriwake:audit                  # what selection could do on this suite, before trusting it
 mvn verify -Dyoriwake.select        # runs only the tests the change reaches
 ```
 
@@ -100,9 +105,10 @@ A selecting run says what it decided:
 [yoriwake] of 593 tests discovered: reaches-change=47 not-known-to-pass=5 skipped=541
 ```
 
-`.gradle/yoriwake/<task>-<hash>/decisions.tsv` holds one row per test with its verdict and rule.
-`yoriwakeExplainTest` tells you, for the change in front of you, what would run and which class
-forces a full run if one does.
+`.gradle/yoriwake/<task>-<hash>/decisions.tsv` (on Maven, under `.yoriwake/yoriwake/`) holds one
+row per test with its verdict and rule. `yoriwakeExplainTest` (`mvn test-compile yoriwake:explain`)
+tells you, for the change in front of you, what would run and which class forces a full run if one
+does.
 
 ## How it works
 
@@ -153,14 +159,17 @@ helps, at several times the recording cost. Every case:
 The Gradle versions, JDKs, operating systems and test engines each release is tested on are in the
 [supported matrix](docs/reference.md#supported-matrix). It also needs `git` on `PATH` and a project
 applying `java`, an Android plugin, or Kotlin Multiplatform with a JVM target
-([the shapes tested](docs/reference.md#supported-hosts)).
+([the shapes tested](docs/reference.md#supported-hosts)). On Maven: 3.9.0 or newer, Surefire or
+Failsafe 3.0.0 or newer on the JUnit Platform, and JaCoCo's `prepare-agent`
+(`prepare-agent-integration` for Failsafe).
 
 ## CI
 
 On GitHub Actions, use [yoriwake-action](https://github.com/zeuspizza/yoriwake-action): it caches
 the map, fetches the history selection needs, records on the default branch and selects on pull
-requests. Elsewhere, cache `.gradle/yoriwake` and fetch enough history to reach the diff base:
-[the CI recipe](docs/reference.md#ci). Measured entries for one test task were 0.07 to 2.76 MB:
+requests; it runs Gradle only. Elsewhere, cache `.gradle/yoriwake` (on Maven, `.yoriwake/`) and
+fetch enough history to reach the diff base: [the CI recipe](docs/reference.md#ci). Measured entries
+for one test task were 0.07 to 2.76 MB:
 [how much cache it takes](docs/reference.md#how-much-cache-it-takes).
 
 ## How well it works

@@ -26,7 +26,9 @@ from the setup-java that `oracle-actions/setup-java` v1.5.0 runs inside it.
 
 ```bash
 ./gradlew build              # compiles, runs unit and functional tests, validates the plugin
+./gradlew :maven:functionalTest   # real Maven builds over fixtures, which build leaves out
 python3 .github/test_ci.py   # the CI helper scripts' own tests
+python3 scripts/test_central_bundle.py   # the Maven Central bundle script's own tests
 python3 bench/scan_private.py --push   # before every push
 python3 scripts/prove_guards.py --changed origin/main   # the guards your change can affect
 ```
@@ -36,8 +38,8 @@ identifiers, dates and documents) in what the push adds to `bench/`, `scripts/`,
 `.github/` and this file, and in its commit messages; the `scan` workflow runs it on every pull request, its title and
 body included.
 
-`./gradlew build` is the gate a pull request must pass. It includes the coverage gates; a change
-that lowers coverage below them fails the build.
+`./gradlew build` and `./gradlew :maven:functionalTest` are the gate a pull request must pass. The
+build includes the coverage gates; a change that lowers coverage below them fails it.
 
 ### Coverage
 

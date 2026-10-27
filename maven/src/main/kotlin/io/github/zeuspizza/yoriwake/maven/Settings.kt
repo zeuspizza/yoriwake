@@ -11,14 +11,15 @@ import org.codehaus.plexus.util.xml.Xpp3Dom
 
 /**
  * What the build asks of yoriwake: the plugin's `<configuration>` in the POM, overridden by a user
- * property (`-Dyoriwake.enabled=false`). The names and the strict boolean parsing are the Gradle
- * plugin's, so one spelling works on both.
+ * property (`-Dyoriwake.enabled=false`). The configuration names and the strict boolean parsing
+ * are the Gradle plugin's, so one spelling works on both; `yoriwake.enabled` has no Gradle
+ * counterpart, which switches off with `-Pyoriwake.disabled`.
  */
 internal class Settings(
     val enabled: Boolean,
     /** Branches on which a selecting run runs everything, from `<fullRunBranches>`; no `-D` form, as on Gradle. */
     val fullRunBranches: List<String> = emptyList(),
-    /** How many changed paths make a selecting run run everything without analysing them. */
+    /** Above this many changed paths, a selecting run runs everything without analysing them. */
     val largeChangeThreshold: Int = LargeChange.DEFAULT_THRESHOLD,
     /** A selecting run runs everything once this many builds or days passed since the last full run. */
     val schedule: Schedule.Limits = Schedule.Limits(null, null),

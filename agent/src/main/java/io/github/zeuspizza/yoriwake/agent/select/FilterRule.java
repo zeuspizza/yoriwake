@@ -28,7 +28,8 @@ public final class FilterRule {
     }
 
     /**
-     * Every property the decision reads, recorded into the decision record as {@code input.<name>}.
+     * Every property the decision reads, recorded into the decision record as {@code input.<name>},
+     * except the test-only {@link AgentContract#AGENT_ASM_CEILING_PROPERTY}.
      *
      * <p>With these and the map it read, a recorded decision can be recomputed offline.
      */
@@ -170,8 +171,9 @@ public final class FilterRule {
     }
 
     /**
-     * One test's verdict, as {@link SelectionFilter} records it. Covers everything but pinned tests
-     * and class-granular rounding, which need the descriptor and can only include.
+     * One test's verdict, as {@link SelectionFilter} records it. Covers the run-wide state and the
+     * selector's own reasons; pins, declared dependencies, class rounding, whole-class runners and
+     * complement runs need the descriptor, so the caller decides them.
      */
     public static Verdict verdictFor(UnaryOperator<String> property, Selector.Decision decision,
                                      String id, boolean isTest) {

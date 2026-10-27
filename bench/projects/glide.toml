@@ -3,17 +3,17 @@
 # glide is pure JUnit 4 -- `junit = "4.13.2"`, `import org.junit.Test`, `@RunWith(JUnit4.class)`, no
 # `useJUnitPlatform` anywhere -- which is what a screen of the largest Android projects found almost
 # everywhere: Signal-Android (29k), nowinandroid (22k) and tivi (6.7k) are all the same. A suite
-# running off the JUnit Platform is never offered to the agent's PostDiscoveryFilter, so nothing can
-# be deselected however good the coverage map is.
+# running off the JUnit Platform is never offered to the agent's PostDiscoveryFilter, so off it,
+# selection works only per whole class, and only with `narrowPlainRunners`.
 #
 # `scripts/junit-vintage.init.gradle.kts` is the general escape, and it is not speculative: applied
 # to mockito -- the corpus's documented can-never-answer case -- it captured 4,639 records and
 # narrowed an ordinary class change to about 10% of a 2,356-test suite. AnkiDroid ships vintage in
 # production for the same reason.
 #
-# HONESTY: measured this way, glide is not stock upstream. Its test runtime gains an engine and
-# `useJUnitPlatform()`. Both benchmark arms share it, so savings and recall stay comparable, but any
-# claim of the form "yoriwake works on glide" carries the condition "once its tests run on the Platform".
+# HONESTY: glide is measured stock upstream, its tests off the Platform, with no Vintage engine
+# added. Any claim of the form "yoriwake works on glide" carries the condition "with
+# `narrowPlainRunners`, and Robolectric-run classes always run whole".
 name = "glide"
 
 # HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number.

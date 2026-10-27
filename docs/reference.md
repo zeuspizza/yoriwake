@@ -117,6 +117,8 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   [Paths no test reads](#paths-no-test-reads)); and a Java or Kotlin source of a module that is not
   on the task's runtime classpath, which no compiled class of the task names. The console counts
   the first two and names each of the third;
+- a changed path a `dependsOn` entry matches, for that entry's task (`declared-path-changed`); see
+  [Properties and tasks](#properties-and-tasks);
 - a changed class the map has never recorded, because uncovered and unrecordable look the same. A
   test class this task runs is the exception: discovery runs it whatever the map knows;
 - a changed class whose annotations, on the class or any member and with their values, differ from
@@ -469,7 +471,7 @@ attempt is not a load only when opening it fails.
 | Gradle file events | `org.gradle.fileevents.FileEvents` | [0.2.8](https://github.com/gradle/gradle-fileevents/tree/0.2.8/src/main/cpp) | nothing; it watches the directories a test names for changes |
 | SQLite JDBC (conditional, below) | `org.sqlite.SQLiteJDBCLoader` | [3.53.4.0](https://github.com/xerial/sqlite-jdbc/tree/3.53.4.0/src/main/java/org/sqlite/core) only | the database files a test names and the journal, WAL and lock files SQLite names after them; random temporary files; `/dev/urandom` |
 
-Two notes on the list:
+Notes on the list:
 
 - `RocksDB.loadLibrary`, which RocksDB calls for itself, first tries to load the system's
   compression libraries by name (`snappy`, `z`, `bzip2`, `lz4`, `zstd`); an attempt that finds no
@@ -611,6 +613,11 @@ everything as `environment-changed` ([The environment fingerprint](#the-environm
   in every cell but which are captured and always run in full rather than narrowed, and plain
   JUnit 4, which with `narrowPlainRunners` narrows only by whole class
   ([JUnit 4 and the vintage engine](#junit-4-and-the-vintage-engine), [Kotlin](#kotlin)).
+- **[Maven](#maven).** Not a cell of `matrix.yml`: a release runs the Maven plugin's own functional
+  suite (`:maven:functionalTest`) on the candidate, on the JDK and operating system that build runs
+  on. It attaches on Maven 3.9.0, 3.9.16, 3.10.0 and 4.0.0-rc-7, and captures and selects on
+  3.9.16, with Surefire and Failsafe 3.5.6 and JUnit Jupiter 5.11.4; capture also runs on
+  4.0.0-rc-7. Outside that suite a Maven pre-release is declined.
 
 ### New JDKs
 
@@ -627,10 +634,10 @@ header, so it holds whatever the map records. It runs every test, names the firs
 newest version (or the test JVM's Java version), each reader it is above, and what lifts it:
 
 - **`class-file-unsupported`**, from the plugin's ASM: a newer yoriwake. From JaCoCo: a
-  `jacoco.toolVersion` that officially supports that Java. A JaCoCo version yoriwake does not know
-  is held to the newest one it does, and the run says so in one line. A build that swaps the JaCoCo
-  agent artifact is judged by the `toolVersion` it sets. A multi-release jar entry counts only where
-  the test JVM would load it.
+  `jacoco.toolVersion` that officially supports that Java. A JaCoCo newer than any yoriwake knows
+  is held to the newest one it does, and an older or unreadable one to the oldest; the run says so
+  in one line. A build that swaps the JaCoCo agent artifact is judged by the `toolVersion` it sets.
+  A multi-release jar entry counts only where the test JVM would load it.
 - **`test-jvm-unsupported`**: a newer yoriwake, or a test toolchain of an older Java. When Gradle
   cannot report the test JVM's version (an `executable` it cannot probe), the agent checks the JVM
   it runs in: the run is a full run of that kind, and a recording run marks every class touched.
@@ -925,14 +932,14 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
 A CI job starts with no map, so every run captures and none selects unless one is restored.
 
 On GitHub Actions, use [yoriwake-action](https://github.com/zeuspizza/yoriwake-action), at the
-release named after the plugin's (`v0.2.0` for `0.2.0`), in place of the step that runs Gradle:
+release named after the plugin's (`v0.3.0` for `0.3.0`), in place of the step that runs Gradle:
 
 ```yaml
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '21' }
-      - uses: zeuspizza/yoriwake-action@v0.2.0
+      - uses: zeuspizza/yoriwake-action@v0.3.0
 ```
 
 In one step it caches the map, fetches the history selection needs, records on the default branch,
@@ -971,7 +978,7 @@ allprojects {
 
 ```yaml
 env:
-  YORIWAKE_VERSION: 0.2.0       # the version your build applies
+  YORIWAKE_VERSION: 0.3.0       # the version your build applies
 
 jobs:
   test:
@@ -1062,7 +1069,9 @@ so captures a complete map. Pull request builds narrow and refresh nothing, and 
 
 `fullRunBranches` is what makes the default branch's run a full one while CI passes
 `-Pyoriwake.select` everywhere. Such a run declines selection as `full-run-branch`, names the
-branch, and records like a run without the flag; `-Pyoriwake.isolatedCapture` applies to it. Entries
+branch, and records like a run without the flag, except on a suite recorded with
+`recordSequentially` ([Forcing a full run](#forcing-a-full-run)); `-Pyoriwake.isolatedCapture`
+applies to it. Entries
 are branch names matched whole, in which `*` matches any characters: `main` does not match
 `main.old`, and `release/*` matches `release/1.2`. An entry that is empty or only `*` fails the
 build. The branch is read from git:
@@ -1183,13 +1192,16 @@ A selecting run can be asked to run every test instead, without changing the CI 
   refresh](#when-to-refresh). The record says `full-run-scheduled`.
 
 Any of these makes the run a recording run: it captures and dates the map, and
-`-Pyoriwake.isolatedCapture` applies to it. A map recorded with a fresh test JVM per test class is
-left as it is unless that flag is passed. With a pull request base, the marker stays in the range
-until the pull request merges, so it makes every push of it run in full; the flag is the one-run
-alternative. If git cannot list the commit messages, the run runs everything as
-`decline-undetermined`. `yoriwakeExplain<Task>` reports both, with or without `-Pyoriwake.select`,
-so a commit can be checked before it is pushed. Tests named with `--tests` still run as named, and
-the record's `declines` note lists every decline that held.
+`-Pyoriwake.isolatedCapture` applies to it. The exception is a suite that runs tests in parallel
+inside one JVM under [`recordSequentially`](#recording-a-parallel-suite-one-test-at-a-time): a run
+given `-Pyoriwake.select` keeps its parallel scheduling and records nothing, even when one of these
+makes it run everything, so only a run without `-Pyoriwake.select` refreshes its map. A map recorded
+with a fresh test JVM per test class is left as it is unless that flag is passed. With a pull
+request base, the marker stays in the range until the pull request merges, so it makes every push of
+it run in full; the flag is the one-run alternative. If git cannot list the commit messages, the run
+runs everything as `decline-undetermined`. `yoriwakeExplain<Task>` reports both, with or without
+`-Pyoriwake.select`, so a commit can be checked before it is pushed. Tests named with `--tests`
+still run as named, and the record's `declines` note lists every decline that held.
 
 ### Giving selection a base
 
@@ -1490,8 +1502,10 @@ What it cannot see:
 
 yoriwake also runs in Maven builds, for Surefire's `test` and Failsafe's `integration-test`. It is a
 build extension: one entry in the root POM turns it on, and it needs JaCoCo's `prepare-agent` (and
-`prepare-agent-integration` for Failsafe) as Gradle needs the JaCoCo plugin.
-The plugin is on Maven Central from 0.4.0, signed with the same key as the Gradle plugin.
+`prepare-agent-integration` for Failsafe, whose JVMs otherwise take `prepare-agent`'s agent) as
+Gradle needs the JaCoCo plugin. It needs Maven 3.9.0 or newer and Surefire or Failsafe 3.0.0 or
+newer on the JUnit Platform. The plugin is on Maven Central from 0.4.0, signed with the same key as
+the Gradle plugin.
 
 ```xml
 <plugin>
@@ -1504,20 +1518,46 @@ The plugin is on Maven Central from 0.4.0, signed with the same key as the Gradl
 
 - **Flags** are user properties with the Gradle names: `-Dyoriwake.select`, `-Dyoriwake.observe`,
   `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.trustedMaps`,
-  `-Dyoriwake.isolatedCapture`. Settings without a flag on Gradle stay in the POM here too, in the
-  plugin's `<configuration>`: `fullRunBranches`, `largeChangeThreshold`, `fullRunEveryBuilds`,
-  `fullRunEveryDays`.
-- **Maps** live under `.yoriwake/` at the reactor root, one per execution, and survive `mvn clean`.
-  Surefire and Failsafe executions of a module keep separate maps.
+  `-Dyoriwake.isolatedCapture`, and `-Dyoriwake.alwaysRun=<glob>[,<glob>…]` for one run. The off
+  switch is `-Dyoriwake.enabled=false`; Gradle's `yoriwake.disabled` is not read here.
+- **Settings** go in the plugin's `<configuration>`, read from the first module of the build that
+  declares the plugin, usually the root POM: `<enabled>`, `<fullRunBranches>` (one `<branch>`
+  each), `largeChangeThreshold`, `fullRunEveryBuilds`, `fullRunEveryDays`. `<alwaysRun>` (one
+  `<pattern>` each) is read per module, beside `-Dyoriwake.alwaysRun`; a pattern that pins every
+  test fails the build, as on Gradle.
+- **Not on Maven**: `pathIgnore`, `notReadByTests`, `dependsOn` (a test's `yoriwake-depends-on:`
+  tag still selects it), `environmentInclude` and `systemPropertyIgnore` (the [environment
+  fingerprint](#the-environment-fingerprint) compares its defaults), `narrowPlainRunners`,
+  `recordSequentially` and the audit's `measureToll`.
+- **Maps** live under `.yoriwake/yoriwake/` at the reactor root, one per execution, and survive
+  `mvn clean`; yoriwake writes a `.gitignore` into `.yoriwake/`. Surefire and Failsafe executions
+  of a module keep separate maps.
+- **CI**: cache `.yoriwake/` as the [recipe](#without-the-action) caches `.gradle/yoriwake`, leaving
+  out `.yoriwake/yoriwake/*/raw` and `.yoriwake/yoriwake/*/selection.tsv`. yoriwake-action runs
+  Gradle only.
 - **`-pl` and `-am`**: a module built against a module of the same reactor that this invocation
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.
 - **Goals**: `mvn yoriwake:audit` and `mvn test-compile yoriwake:explain` are `yoriwakeAuditTest`
   and `yoriwakeExplain`; `-Dyoriwake.execution=<id>` picks one execution.
-- **Declined**: an execution Develocity distributes or selects for (`develocity-test-distribution`,
-  `develocity-test-selection`, `develocity-undetermined`), and every execution while the Apache
-  build cache extension is on (`maven-build-cache`; `-Dmaven.build.cache.enabled=false` turns it off
-  for a run). With Develocity loaded, its build cache is told not to restore the test goals.
+- **Declined**: such an execution runs every test, captures nothing, and names its token on the
+  console:
+  - the whole build, on Maven below 3.9.0 or a pre-release (`maven-version`);
+  - Surefire or Failsafe below 3.0.0 (`surefire-version`), a POM that gives it the junit3, junit4,
+    junit47 or testng provider (`surefire-legacy-provider`), or `forkCount=0`
+    (`surefire-in-process`);
+  - no JaCoCo agent execution for its goal, or an `argLine` that drops the agent
+    (`no-jacoco-plugin`), a skipped one (`jacoco-disabled`), or no packages found in the reactor's
+    sources (`no-packages-derived`);
+  - tests that may run concurrently in one JVM (`in-jvm-parallelism`); `recordSequentially` does
+    not exist here;
+  - an execution Develocity distributes or selects for (`develocity-test-distribution`,
+    `develocity-test-selection`, `develocity-undetermined`), and every execution while the Apache
+    build cache extension is on (`maven-build-cache`; `-Dmaven.build.cache.enabled=false` turns it
+    off for a run). With Develocity loaded, its build cache is told not to restore the test goals.
+
+  An execution whose JaCoCo agent also reaches a declined one is declined with it, under the same
+  token.
 
 ## Properties and tasks
 
@@ -1613,8 +1653,10 @@ of the project and an Ant-style glob, relative to the project or, with a leading
 project: `*` and `?` within a directory, `**` as a whole segment for any number of directories. A
 changed path an entry matches runs that task in full, whatever else the change holds; a single test
 or class declares the same with `@Tag("yoriwake-depends-on:<glob>")`, which selects it when such a
-path changes. A declaration can only cause more tests to run. An entry that matches every path, or
-names no `Test` task of its project, fails the build.
+path changes; such a test is left out of the console's `of N tests discovered` count, and
+`decisions.tsv` gives it the reason `DECLARES_CHANGED_PATH`. A declaration can only cause more
+tests to run. An entry that matches every path, or names no `Test` task of its project, fails the
+build.
 
 `environmentInclude` and `systemPropertyIgnore` take names, `*` matching any characters; an empty
 entry or one of only `*` fails the build. See [The environment
@@ -1693,6 +1735,17 @@ format versioning.
   locale differing from the map's runs everything. A system property that changes on every build
   (a build number, a timestamp) does so on every run until it is left out with
   `systemPropertyIgnore`, and test legs on different JDKs need a cache key each.
+
+### From 0.3.0 to 0.4.0
+
+- **Your map is left alone**, unless it was captured on a checkout whose `core.autocrlf` gave
+  sources CRLF line endings: then it is repaired on the next build. The format stays at 7, and the
+  files a trusted-map digest covers are unchanged.
+- **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.4.0`, one ordinary cache miss.
+- **What runs changes without a new flag:** a change of more than 5,000 paths runs everything
+  without analysing them (`large-change`; `largeChangeThreshold` moves the bound).
+  `notReadByTests` still works and warns that it is deprecated; `pathIgnore` replaces it.
+- **Maven** builds are new: see [Maven](#maven).
 
 ## Prior art
 
