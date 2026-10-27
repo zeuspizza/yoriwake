@@ -187,8 +187,8 @@ public final class AgentContract {
     public static final String ALWAYS_RUN_PROPERTY = "yoriwake.alwaysRun";
 
     /**
-     * The refusal kind of a run whose change-set file could not be written or read. Defined here
-     * because the agent raises it too.
+     * The refusal kind of a run whose change-set file could not be written or read, or, on Maven,
+     * whose run file could not be read. Defined here because the agent raises it too.
      */
     public static final String CHANGE_SET_UNREADABLE_KIND = "change-set-unreadable";
 
@@ -206,7 +206,8 @@ public final class AgentContract {
 
     /**
      * The refusal kind of a complement run whose selection record does not match it. Defined here
-     * because the agent raises it too, when the record's test JVM is not this one.
+     * because the agent raises it too, when the record cannot be read or its test JVM is not this
+     * one.
      */
     public static final String COMPLEMENT_RECORD_MISMATCH_KIND = "complement-record-mismatch";
 
@@ -446,8 +447,9 @@ public final class AgentContract {
     /**
      * A touch kind: a file that is not a class file was opened beneath the {@link
      * #CAPTURE_ROOT_PROPERTY}, an archive read whole included; its absolute path, or a jar entry
-     * as {@code <jar>!/<entry>}. One read may give several rows, one per name it went by, or, for a
-     * read the agent could not place, its path as given.
+     * that is neither a class nor a source file as {@code <jar>!/<entry>}. One read may give
+     * several rows, one per name it went by, or, for a read the agent could not place, its path as
+     * given.
      */
     public static final String TOUCH_RESOURCE = "resource";
 
@@ -619,12 +621,19 @@ public final class AgentContract {
     /** One of the {@code RUN_*} values. */
     public static final String OUTCOME_NOTE = "outcome";
 
-    /** The coarse token saying which side forced, when the outcome is {@link #RUN_FULL}. */
+    /**
+     * The coarse token saying which side forced, when the outcome is {@link #RUN_FULL} because the
+     * daemon or the selector forced it; absent for an observing run and a complement-record
+     * mismatch.
+     */
     public static final String FULL_RUN_KIND_NOTE = "full-run-kind";
 
     public static final String FULL_RUN_REASON_NOTE = "full-run-reason";
 
-    /** The daemon's own refusal token, copied from {@link #REFUSED_KIND_PROPERTY}. */
+    /**
+     * The refusal token: copied from {@link #REFUSED_KIND_PROPERTY}, or raised by the agent itself
+     * (an unreadable change-set or run file, a complement-record mismatch).
+     */
     public static final String REFUSAL_KIND_NOTE = "refusal-kind";
 
     /** Every decline that held, copied from {@link #DECLINES_PROPERTY}. */
@@ -670,7 +679,10 @@ public final class AgentContract {
     /** The executor's shape was not one the hook knows, so every class ran. */
     public static final String PLAIN_FILTER_UNHOOKED = "unhooked";
 
-    /** The hook could not reach the judgement, or the judgement threw, so every class ran. */
+    /**
+     * A judgement threw, so at least the class it was judging ran; a judgement the hook could not
+     * reach goes unnoticed and reads as {@link #PLAIN_FILTER_HOOKED}.
+     */
     public static final String PLAIN_FILTER_UNSUPPORTED = "unsupported";
 
     /**

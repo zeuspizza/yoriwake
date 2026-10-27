@@ -24,7 +24,7 @@ The latest release. Fixes ship as a patch on the latest minor version; upgrade t
 ## Scope
 
 - The agent, which runs as a `-javaagent` inside your test JVM.
-- The plugin, which runs inside your Gradle build.
+- The Gradle plugin and the Maven build extension, which run inside your build.
 - How the coverage map is read back, including a map restored from a CI cache that a pull request
   could have written.
 - The GitHub Action, [zeuspizza/yoriwake-action](https://github.com/zeuspizza/yoriwake-action).
@@ -32,7 +32,8 @@ The latest release. Fixes ship as a patch on the latest minor version; upgrade t
 ## Verifying a release
 
 From 0.3.0, each release is built and tested once by `release.yml` on the version's tag, and those
-same files are attested, signed and uploaded. You can check, for a version `<version>`:
+same files are attested, signed and uploaded; from 0.4.0 they include the Maven plugin's, uploaded
+to Maven Central. You can check, for a version `<version>`:
 
 1. **The jar is the one the release built.** Download it from the Plugin Portal, and `SHA256SUMS`
    from the [GitHub release](https://github.com/zeuspizza/yoriwake/releases):
@@ -45,7 +46,13 @@ same files are attested, signed and uploaded. You can check, for a version `<ver
    shasum -a 256 "yoriwake-gradle-plugin-$v.jar"
    ```
 
-   The two digests are the same.
+   The two digests are the same. For the Maven plugin, from 0.4.0, take the jar from Maven Central:
+
+   ```bash
+   curl -fsSLO "https://repo1.maven.org/maven2/io/github/zeuspizza/yoriwake-maven-plugin/$v/yoriwake-maven-plugin-$v.jar"
+   grep "/yoriwake-maven-plugin-$v.jar\$" SHA256SUMS
+   shasum -a 256 "yoriwake-maven-plugin-$v.jar"
+   ```
 
 2. **It was built by this repository's release workflow, from that tag** (GitHub CLI 2.49 or newer):
 
@@ -59,11 +66,14 @@ same files are attested, signed and uploaded. You can check, for a version `<ver
    with status 0. Without `--signer-workflow` and `--source-ref` it would
    accept an attestation from any workflow of this repository, on any ref. The release workflow
    also attests the rehearsal it runs on each candidate, of version `0.0.0-rehearsal` and from a
-   branch; `--source-ref "refs/tags/v$v"` rejects those.
+   branch; `--source-ref "refs/tags/v$v"` rejects those. The same command, given
+   `yoriwake-maven-plugin-$v.jar`, verifies the Maven plugin: the attestation covers every file
+   `SHA256SUMS` lists.
 
-3. **What it bundles.** The SBOM on the GitHub release lists every library in the jar, the agent
-   nested in it, and the package each was relocated to. It is one of the files step 2's attestation
-   covers, so check the copy you read against it:
+3. **What it bundles.** The SBOM on the GitHub release lists every library in the Gradle plugin's
+   jar, the agent nested in it, and the package each was relocated to; it does not describe the
+   Maven plugin's jar. It is one of the files step 2's attestation covers, so check the copy you
+   read against it:
 
    ```bash
    curl -fsSLO "https://github.com/zeuspizza/yoriwake/releases/download/v$v/yoriwake-gradle-plugin-$v.cdx.json"
@@ -75,8 +85,8 @@ same files are attested, signed and uploaded. You can check, for a version `<ver
    The same SBOM is also attested against the jar itself, as a CycloneDX predicate
    (`--predicate-type https://cyclonedx.org/bom` on the jar prints it).
 
-4. **The agent your tests run.** It is inside the jar; step 2 for the plugin jar covers it, and it
-   can be checked on its own:
+4. **The agent your tests run.** It is inside the jar; step 2 for either plugin jar covers it, and
+   the Gradle plugin's can be checked on its own:
 
    ```bash
    unzip -p "yoriwake-gradle-plugin-$v.jar" yoriwake-agent.jar > yoriwake-agent.jar
@@ -96,7 +106,8 @@ same files are attested, signed and uploaded. You can check, for a version `<ver
    ```
 
    `gpg` reports a good signature from `81DB8AB88E9C8E4968B07F75EA16A721BE2F2196` (a warning that
-   the key is not certified with a trusted signature is expected).
+   the key is not certified with a trusted signature is expected). The Maven plugin's signature is
+   `yoriwake-maven-plugin-$v.jar.asc`, beside its jar on Maven Central.
 
 **In your build:** Gradle's [dependency verification](https://docs.gradle.org/current/userguide/dependency_verification.html)
 checks the signature on every resolution when `gradle/verification-metadata.xml` trusts the key for

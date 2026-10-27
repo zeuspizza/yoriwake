@@ -479,8 +479,9 @@ final class ReadHooks {
 
     /**
      * {@code public final class java.lang.YoriwakeReadSink} with one {@code public static volatile
-     * Consumer} per sink: {@code SINK, LOOKUP, DEFINE, PROCESS, NATIVE, LIBRARY, ENV}, and
-     * {@code GUARD}, which {@link GuardHooks} sets.
+     * Consumer} per sink: {@code SINK, LOOKUP, DEFINE, PROCESS, NATIVE, LIBRARY, RESOLVED, ENV}, and
+     * {@code GUARD}, which {@link GuardHooks} sets; and the static {@code loaded} method that feeds
+     * {@code RESOLVED}.
      */
     private static byte[] holderBytes() {
         ClassWriter writer = new ClassWriter(0);

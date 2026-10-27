@@ -26,7 +26,10 @@ internal sealed class ScopeOutcome(val detail: String) {
             /** The task has no jacoco extension to scope. */
             NO_JACOCO_EXTENSION("no-jacoco-extension"),
 
-            /** No packages derive from this build's sources: Groovy, Scala, generated-only. */
+            /**
+             * No packages derive from this build's sources: generated-only, or in a language whose
+             * `package` line the derivation does not read.
+             */
             NO_PACKAGES_DERIVED("no-packages-derived"),
 
             /** Setting the includes threw. The build is left exactly as it was. */

@@ -132,7 +132,7 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
      */
     DECLINE_UNDETERMINED("decline-undetermined"),
 
-    /** `-Pyoriwake.fullRun` asked a selecting run to run everything; it records the map instead. */
+    /** `yoriwake.fullRun` asked a selecting run to run everything; it records the map instead. */
     FULL_RUN_REQUESTED("full-run-requested", requested = true),
 
     /** The checked-out branch is one `fullRunBranches` lists; as above. */
@@ -162,7 +162,8 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     /**
      * A class of the task's own output is compiled for a newer Java than the plugin's ASM reads or
      * the host's JaCoCo officially instruments, so its digest or its coverage cannot be trusted. A
-     * newer yoriwake, or a newer `jacoco.toolVersion`, lifts this.
+     * newer yoriwake, or a newer JaCoCo (`jacoco.toolVersion` on Gradle, the jacoco-maven-plugin
+     * version on Maven), lifts this.
      */
     CLASS_FILE_UNSUPPORTED("class-file-unsupported"),
 

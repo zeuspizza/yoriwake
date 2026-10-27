@@ -334,7 +334,7 @@ internal object ChangeDetection {
     )
 
     /**
-     * The paths [trackedPaths] reports for [against] that lie outside the Gradle root, which it
+     * The paths [trackedPaths] reports for [against] that lie outside the build's root, which it
      * leaves verbatim: as strings they cannot be told from root-relative ones. Null when git could
      * not answer.
      */
@@ -350,7 +350,7 @@ internal object ChangeDetection {
     }
 
     /**
-     * The Gradle root's directory relative to the repository's top, "" when they are the same, null
+     * The build's root directory relative to the repository's top, "" when they are the same, null
      * when git or the file system could not say.
      */
     private fun rootPrefix(git: Runner, projectDir: File): String? {
@@ -369,7 +369,7 @@ internal object ChangeDetection {
         // Ignored files are left out on purpose; `WorkingTree.drift` covers the ones that moved.
         git.run(listOf("ls-files", "--others", "--exclude-standard"))
 
-    // Rebases repo-relative paths onto the Gradle root. Paths outside it stay verbatim, so they
+    // Rebases repo-relative paths onto the build's root. Paths outside it stay verbatim, so they
     // remain unmappable and force.
     private fun rebaseToProject(
         git: Runner,

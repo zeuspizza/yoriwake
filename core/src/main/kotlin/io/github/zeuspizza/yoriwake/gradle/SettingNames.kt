@@ -1,6 +1,9 @@
 package io.github.zeuspizza.yoriwake.gradle
 
-/** The `-P` flags the shared logic names in what it tells the user; the front end reads them. */
+/**
+ * The property names the shared logic names in what it tells the user; each front end reads them
+ * and spells them as its host does (`-P` on Gradle, `-D` on Maven).
+ */
 internal object SettingNames {
     const val SELECT = "yoriwake.select"
     const val OBSERVE = "yoriwake.observe"

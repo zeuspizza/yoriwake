@@ -193,7 +193,7 @@ internal class DecodeRun(
             return
         }
         // Read here, not through a provider, which resolves before any task action runs.
-        // A run that executed the whole suite dates the map even under `-Pyoriwake.select`,
+        // A run that executed the whole suite dates the map even under `yoriwake.select`,
         // or the map's age would never reset.
         val executedEverything = fullRunMarker.delete()
         // The HEAD the tests saw, read before the build compiled anything; null when it could not be

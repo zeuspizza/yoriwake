@@ -46,7 +46,10 @@ private fun testJvmRefusal(jvmMajor: Int, agentCeiling: Int, classes: CeilingRef
     )
 }
 
-/** The line a run prints when `jacoco.toolVersion` is not one the plugin knows, or null. */
+/**
+ * The line a run prints when the host's JaCoCo version (`jacoco.toolVersion` on Gradle, the
+ * jacoco-maven-plugin version on Maven) is not one yoriwake knows, or null.
+ */
 internal fun jacocoCeilingNote(facts: ClasspathView): String? =
     facts.jacocoVersion()?.let { ClassFileSupport.jacocoCeiling(it.ifEmpty { null }).note }
 

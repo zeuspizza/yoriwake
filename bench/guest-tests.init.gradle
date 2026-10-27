@@ -16,9 +16,10 @@
  * yoriwake reads the build script's test filters: a filter pattern added later would make every
  * run a filtered one, and a filtered capture keeps no map. The properties are set when the task
  * graph is ready, after every build script's own `configureEach`, as guest-selection-off.init.gradle
- * does; a system property is not a filter. `notReadByTests` is the remedy the reference gives a
- * user whose build writes a file no test reads (an npm cache, a report a test framework writes into
- * its working directory), set before yoriwake reads it, as a build script would.
+ * does; a system property is not a filter. `notReadByTests` names a file the build writes and no
+ * test reads (an npm cache, a report a test framework writes into its working directory), set
+ * before yoriwake reads it, as a build script would. It is deprecated, and kept here because its
+ * replacement, `pathIgnore`, keeps any `src/` path, and kestra's is one.
  */
 def classExcludes = (System.getProperty('yoriwake.harness.testClassExcludes') ?: '')
         .split(',')*.trim().findAll { it }

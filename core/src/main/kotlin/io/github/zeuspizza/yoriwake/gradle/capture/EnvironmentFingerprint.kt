@@ -19,8 +19,9 @@ import java.security.SecureRandom
  * another one a test can take other paths, so a selecting run whose environment differs runs every
  * test and records the map again. Only ever adds full runs.
  *
- * Both sides are computed in the daemon from the test task, before the test JVM starts: whether a
- * run captures is decided there, and a capture writes the fingerprint it was compared against.
+ * Both sides are computed in the build's own JVM from the test task or Maven execution, before the
+ * test JVM starts: whether a run captures is decided there, and a capture writes the fingerprint it
+ * was compared against.
  * Values of system properties and variables are kept only as digests salted per map.
  */
 internal object EnvironmentFingerprint {

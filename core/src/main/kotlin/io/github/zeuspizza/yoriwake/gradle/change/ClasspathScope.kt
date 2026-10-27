@@ -19,9 +19,10 @@ internal object ClasspathScope {
      * Keeps every path except class sources of modules absent from the classpath that no class names.
      *
      * @param paths repository-relative, forward-slashed
-     * @param moduleDirs repository-relative directory of each module, mapped to its Gradle path.
+     * @param moduleDirs repository-relative directory of each module, mapped to its module path
+     *   (its Gradle path, or its Maven project id).
      *   The root project appears as `""` and never owns a path by itself.
-     * @param present Gradle paths of the modules whose output is on this task's classpath. Empty
+     * @param present module paths of the modules whose output is on this task's classpath. Empty
      *   means the classpath could not be established, and nothing is dropped.
      * @param namedInClasses which of the candidate paths this task's compiled classes name. Null or
      *   a throw means it could not be asked, and nothing is dropped.

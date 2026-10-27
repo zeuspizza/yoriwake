@@ -3,7 +3,7 @@ package io.github.zeuspizza.yoriwake.gradle.facts
 import java.io.File
 
 /**
- * The modules whose output is reachable from this task, by Gradle path: dependency resolution and
+ * The modules whose output is reachable from this task, by module path: dependency resolution and
  * file matching unioned, over runtime, compile and annotation-processor classpaths. Empty when
  * nothing could be established, which the caller reads as "drop nothing".
  */

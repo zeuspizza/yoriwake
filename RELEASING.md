@@ -31,9 +31,9 @@ the latest release.
 
 ## The candidate
 
-A release candidate is a commit, never a tag. Only the final step tags, and only that tag
-publishes: `release.yml` publishes to the Gradle Plugin Portal on any `v*` tag, and a published
-version cannot be taken back, so no `v*` tag exists until every gate below has passed.
+A release candidate is a commit, never a tag. Only the final step tags, and only that tag publishes:
+`release.yml` publishes to the Gradle Plugin Portal and Maven Central on any `v*` tag, and a
+published version cannot be taken back, so no `v*` tag exists until every gate below has passed.
 
 - **Minor.** A commit of `main` with every change for the release merged. Before it, a pull request
   moves the functional suite's 9.x version to Gradle's newest release, with the cells of
@@ -62,7 +62,7 @@ no minutes against a budget.
 
 | # | Step | Who | Actions minutes |
 |---|---|---|---|
-| 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest` |
+| 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest` |
 | 1 | `./gradlew build :maven:functionalTest` and `./gradlew build :maven:functionalTest -PreleaseVersion=<version>` pass. The build runs the functional suite on Gradle 8.14 and 9; `:maven:functionalTest` runs the Maven plugin's. | maintainer | none, run locally |
 | 1b | `python3 scripts/check_reproducible.py <candidate> <version>` passes: two fresh clones build the same Gradle plugin jar, its nested agent jar, and the Maven plugin's jar, sources jar and javadoc jar. | maintainer, locally | none |
 | 2 | Every guard (see [CONTRIBUTING.md](CONTRIBUTING.md#the-guards)) fires at the candidate: `.github/workflows/guards.yml` dispatched on it is green, and the nightly schedule is still enabled (GitHub disables one after 60 days without activity). | maintainer dispatches | none on this public repository; its wall time is the run's own |
@@ -70,6 +70,7 @@ no minutes against a budget.
 | 3b | An adversarial campaign at the candidate, following the private campaign playbook: agents try to make a selecting run skip a test that should run, in every area of the code the release changed and one other in rotation, reading each rule's code for its boundary as well as writing attempts from known shapes. Its record passes the campaign check. Each attempt that held stays in the break suite (`./gradlew :plugin:breakAttempts`, which then passes on Gradle 8.14 and 9); each skipped test it finds is fixed in its own pull request, test first, with a fix that forces or widens and a mutation check that removes the fix, which repeats steps 1a to 3 for what it touches; or the maintainer accepts it as a limit documented in [docs/reference.md](docs/reference.md). | maintainer; agents run the attempts | none, run locally; one Gradle build at a time |
 | 4 | A reduced benchmark on real projects at the candidate: whether each test that should have run did run is the same as at the previous release, or each difference is explained by a merged change. | maintainer | none, run locally; about 20 minutes |
 | 5 | Every new flag, DSL property, token and file is documented in [docs/reference.md](docs/reference.md) or [docs/contract.md](docs/contract.md). | maintainer | none |
+| 5b | The README's Gradle and Maven snippets and the reference's CI examples (`YORIWAKE_VERSION`, the action's tag) name `<version>`. A minor sets them in a pull request merged before the candidate is cut, so step 7's diff stays `CHANGELOG.md` alone; a patch leaves the release branch's as they are, and its pull request on `main` after the release sets them. | maintainer | none |
 | 6 | Each native library in [the reviewed list](docs/reference.md#native-libraries) is compared with its latest major release; a re-review issue is opened for each that moved. | maintainer | none |
 | 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so steps 1a-6 stand; if anything else differs, the gates it touches run again on the final candidate. After a minor's entry merges, every open pull request that touches `CHANGELOG.md` is updated from `main` before it is merged: its lines under the old `## [Unreleased]` would otherwise squash under the new version, and only the updated diff lets its changelog check see that. | maintainer | none |
 | 7b | `.github/workflows/matrix.yml`, dispatched from the final candidate's branch (`main` or `release/<major>.<minor>`) with the final candidate's SHA, is green in every job, so every row of the [supported matrix](docs/reference.md#supported-matrix) ran on the commit that is tagged. The run's link is recorded with the release. A cell red only on a newly bumped Gradle: revert the bump, which makes a new candidate, and open an issue for that Gradle version; a row never leaves the table because a bump failed. | maintainer dispatches | none on this public repository; about 1.5 hours of wall time, an estimate until a run measures it |
@@ -87,29 +88,40 @@ release waits for every one.
    patch, also push the release branch: `git push origin release/<major>.<minor>`. A repository
    ruleset lets only the maintainer create `v*` tags, since a tag is what starts a release.
 2. `release.yml` builds and tests the tag once, then attests the files that build produced, then
-   waits for a maintainer to approve the `release` environment, which holds the Portal key and the
-   signing key and accepts only `v*` tags. Approve it. The approved job signs those same files and
-   uploads them; nothing after the tested build builds anything.
-3. While the Portal reviews the new version, merge only documentation changes.
-4. The last job creates the GitHub release from the tag, with the `CHANGELOG.md` section as the
-   notes and the plugin jar, its signature, the agent jar, the SBOM and `SHA256SUMS` attached. It is
-   marked latest unless a newer version exists. Check it lists those files.
+   waits for a maintainer to approve the `release` environment, which holds the Portal key
+   (`GRADLE_PUBLISH_KEY`, `GRADLE_PUBLISH_SECRET`), the Central token (`CENTRAL_USERNAME`,
+   `CENTRAL_PASSWORD`) and the signing key (`SIGNING_KEY`, `SIGNING_PASSWORD`) and accepts only `v*`
+   tags. Approve it. `publish to the Gradle Plugin Portal` signs those same files and uploads the
+   Gradle plugin; then `publish to Maven Central`, in the same environment, bundles the Maven
+   plugin's signed files, uploads them and waits up to an hour for Central to publish them. Nothing
+   after the tested build builds anything.
+3. A red `publish to Maven Central` leaves the Portal's version standing: re-run that job alone,
+   within GitHub's 30-day re-run limit. A re-run that finds the version already on Central stops
+   green. While the Portal reviews the new version, merge only documentation changes.
+4. The last job, once both uploads are green, creates the GitHub release from the tag, with the
+   `CHANGELOG.md` section as the notes and the Gradle plugin jar and the Maven plugin jar, each with
+   its signature, the agent jar, the SBOM and `SHA256SUMS` attached. It is marked latest unless a
+   newer version exists. Check it lists those files.
 
 ## After the release
 
 - A clean project outside this repository resolves `<version>` from the Portal and runs once with
-  `-Pyoriwake.observe` and once with `-Pyoriwake.select`.
-- The jar the Portal serves for `<version>` matches the release's `SHA256SUMS` and passes
-  `gh attestation verify` as [SECURITY.md](SECURITY.md#verifying-a-release) describes. Run by the
-  maintainer, locally; no Actions minutes. A release whose Portal jar does not verify removes the
-  README's SLSA badge in the same pull request that records it.
-- The tag, checked out and built with `-PreleaseVersion=<version>` on Temurin 21, gives the plugin
-  jar and the nested `yoriwake-agent.jar` that the release's `SHA256SUMS` lists.
+  `-Pyoriwake.observe` and once with `-Pyoriwake.select`. A clean Maven project resolves
+  `io.github.zeuspizza:yoriwake-maven-plugin:<version>` from Maven Central and runs `mvn verify`
+  once with `-Dyoriwake.observe` and once with `-Dyoriwake.select`.
+- The jars the Portal and Maven Central serve for `<version>` match the release's `SHA256SUMS` and
+  pass `gh attestation verify` as [SECURITY.md](SECURITY.md#verifying-a-release) describes. Run by
+  the maintainer, locally; no Actions minutes. A release whose Portal or Central jar does not verify
+  removes the README's SLSA badge in the same pull request that records it.
+- The tag, checked out and built with `-PreleaseVersion=<version>` on Temurin 21, gives the Gradle
+  plugin jar, the nested `yoriwake-agent.jar` and the Maven plugin jar that the release's
+  `SHA256SUMS` lists.
 - The GitHub Action ([zeuspizza/yoriwake-action](https://github.com/zeuspizza/yoriwake-action)) is
   tagged at the matching version.
 - The release is recorded with its final candidate SHA and each gate's result.
-- For a patch, a pull request on `main` adds its `## [<version>]` section to `CHANGELOG.md` and
-  removes its fixes' lines from `## [Unreleased]`.
+- For a patch, a pull request on `main` adds its `## [<version>]` section to `CHANGELOG.md`,
+  removes its fixes' lines from `## [Unreleased]`, and sets the versions step 5b names, unless a
+  newer minor already did.
 - If the release fixes a silent skip, the advisory is updated with the fixed version, and adopters
   who reported it are told.
 - The maintainer re-checks the private sharing gate against this release. Nothing about yoriwake is

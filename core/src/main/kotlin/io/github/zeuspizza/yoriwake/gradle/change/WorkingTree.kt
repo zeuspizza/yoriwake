@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
  * does not pin; a selecting run adds every such path whose content moved or that the snapshot never
  * saw. It only ever adds paths. Hashes, not presence, because builds regenerate ignored files.
  *
- * Paths are relative to the Gradle root, like [ChangeDetection.changedPaths].
+ * Paths are relative to the build's root, like [ChangeDetection.changedPaths].
  */
 internal object WorkingTree {
 

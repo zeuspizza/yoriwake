@@ -57,10 +57,7 @@ private fun oneLine(value: String) = value.replace(Regex("\\s+"), " ").trim()
 
 private val NO_COUNTS = Counts(lines = 0, malformed = 0, testRecords = 0, nonTestRecords = 0)
 
-/**
- * The whole verdict, as data. Lives outside `YoriwakePlugin.kt`, which the JaCoCo line floor
- * excludes.
- */
+/** The whole verdict, as data. In core, so both front ends' audits share it. */
 internal fun Audit.audit(
     mapDir: File,
     taskPath: String,

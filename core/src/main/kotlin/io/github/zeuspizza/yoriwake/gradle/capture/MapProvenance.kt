@@ -97,7 +97,7 @@ internal object MapProvenance {
     private val HEX = Regex("[0-9a-f]{64}")
 
     /**
-     * `-Pyoriwake.trustedMaps`'s lines, `<map directory name>\t<sha256 hex>`, as a map. A malformed
+     * `yoriwake.trustedMaps`'s lines, `<map directory name>\t<sha256 hex>`, as a map. A malformed
      * line is the caller's mistake and fails the build; a map it does not name is not an error.
      */
     fun parseTrustedList(text: String, origin: String): Map<String, String> =

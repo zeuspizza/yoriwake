@@ -111,7 +111,7 @@ internal sealed interface DigestScan {
 internal class TaskArtifacts(
     classpath: Collection<File>,
     private val moduleBuildDirs: Collection<String>,
-    /** This task's own compiled test classes, from `Test.testClassesDirs`. */
+    /** This task's own compiled test classes: `Test.testClassesDirs` on Gradle, the test output on Maven. */
     private val testOutputs: Collection<File> = emptyList(),
     /** The file budget the own-classes walk stops at; a parameter so tests can make it fire. */
     private val maxFiles: Int = MAX_FILES,

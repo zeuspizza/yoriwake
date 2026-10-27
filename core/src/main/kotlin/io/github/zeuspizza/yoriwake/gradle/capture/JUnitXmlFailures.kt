@@ -5,9 +5,10 @@ import javax.xml.stream.XMLInputFactory
 import javax.xml.stream.XMLStreamConstants
 
 /**
- * The failures Gradle's own JUnit XML report holds, which the daemon writes from the events it was
- * sent: a test JVM stopped before it wrote its records cannot lose them. Read by class only, the
- * top-level class of each test, since the report's names are not the agent's test ids.
+ * The failures the host's own JUnit XML report holds (Gradle's, or Surefire's or Failsafe's),
+ * which the build's JVM writes from the events it was sent: a test JVM stopped before it wrote its
+ * records cannot lose them. Read by class only, the top-level class of each test, since the
+ * report's names are not the agent's test ids.
  */
 internal object JUnitXmlFailures {
 
@@ -17,7 +18,7 @@ internal object JUnitXmlFailures {
      * leaves the agent's own records as the account of it.
      *
      * Streamed, not parsed whole: a report inlines everything its tests printed, and this runs in
-     * the Gradle daemon.
+     * the build's own JVM.
      */
     fun classes(dir: File?, unreadable: (File, Throwable) -> Unit = { _, _ -> }): Set<String> {
         val reports = dir?.listFiles { file -> file.isFile && file.name.endsWith(".xml") }.orEmpty()
@@ -30,7 +31,7 @@ internal object JUnitXmlFailures {
 
     private fun failedIn(report: File): Set<String> {
         val factory = XMLInputFactory.newInstance().apply {
-            // Gradle's own output, but read without a DTD or entities all the same.
+            // The host's own output, but read without a DTD or entities all the same.
             setProperty(XMLInputFactory.SUPPORT_DTD, false)
             setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false)
         }

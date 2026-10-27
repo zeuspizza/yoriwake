@@ -343,7 +343,7 @@ internal object CoverageDecoder {
      * describes a newer commit than its stamp; an outcome only ever runs a test. Such a test the map
      * does not hold is added with no coverage, which runs it as surely. Returns how many were marked.
      *
-     * [failedClasses] are the classes Gradle's own report saw fail ([JUnitXmlFailures]). A test JVM
+     * [failedClasses] are the classes the host's own report saw fail ([JUnitXmlFailures]). A test JVM
      * stopped before it wrote its batch (--fail-fast on Windows, where no shutdown hook runs) leaves
      * no record of its failure, so every test the map holds of such a class that reads as passing is
      * marked failed: by class, since the report's names are not test ids, and a test marked failed
@@ -393,7 +393,7 @@ internal object CoverageDecoder {
         return failed.size + reportedOnly
     }
 
-    /** The outcome a test is marked with when only Gradle's report saw its class fail. */
+    /** The outcome a test is marked with when only the host's report saw its class fail. */
     private const val REPORTED_FAILED = "FAILED"
 
     /**
@@ -609,7 +609,7 @@ internal object CoverageDecoder {
 
     /**
      * Drops the union and reports whether there was one, so the caller can say so: a full run
-     * without `-Pyoriwake.internal.loaded` otherwise silently ends narrowing of unexercised code.
+     * without `yoriwake.internal.loaded` otherwise silently ends narrowing of unexercised code.
      */
     private fun discardUnion(mapDir: File): Boolean {
         val had = File(mapDir, LOADED_FILE).isFile

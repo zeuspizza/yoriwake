@@ -23,7 +23,7 @@ import java.util.Set;
  *
  * <p>Only a runner that runs exactly the class's own methods, one description each, may be left
  * out, and only when every test it describes now is one selection skips. Anything else runs, and
- * so does every class when anything here fails: the executor runs a class unless told otherwise.
+ * so does a class whose judgement fails: the executor runs a class unless told otherwise.
  *
  * <p>The executor reaches this class through the system class loader by name, and passes the runner
  * as {@code Object}: Gradle's loader filters the application classpath, and this agent cannot
