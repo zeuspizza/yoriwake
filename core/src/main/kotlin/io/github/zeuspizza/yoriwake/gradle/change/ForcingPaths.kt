@@ -191,15 +191,15 @@ internal object ForcingPaths {
     /**
      * One line per origin, naming at most [NAMED] directories or files each, those holding the most
      * forcing paths first, then how many other paths force too. When git could not say which paths
-     * are tracked, one line counts them instead.
+     * are tracked, one line counts them instead and points to [explain] for a sample.
      */
-    fun lines(task: String, classified: Classified): List<String> {
+    fun lines(task: String, classified: Classified, explain: String = explainTask(task)): List<String> {
         if (classified.origins.isEmpty()) {
             val count = classified.unnamed
             if (!classified.untold || count == 0) return emptyList()
             return listOf(
                 "$count changed ${if (count == 1) "path forces" else "paths force"} this run and could not be " +
-                    "told apart from tracked ones; ${explainTask(task)} lists a sample in explain.json."
+                    "told apart from tracked ones; $explain lists a sample in explain.json."
             )
         }
         val byOrigin = classified.origins.entries.groupBy({ it.value }, { it.key })
@@ -300,7 +300,8 @@ internal object ForcingPaths {
         }
     }.getOrDefault(true)
 
-    private fun explainTask(task: String) =
+    /** The Gradle task that explains [task]. */
+    fun explainTask(task: String) =
         task.substringBeforeLast(':') + ":yoriwakeExplain" + task.substringAfterLast(':').replaceFirstChar(Char::uppercase)
 
     private fun moved(move: WorkingTree.Move?) = when (move) {

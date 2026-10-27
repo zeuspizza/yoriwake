@@ -66,7 +66,8 @@ public final class FilterRule {
                     AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
                     AgentContract.CHANGED_BYTES_PROPERTY,
                     AgentContract.MOVED_FILES_PROPERTY,
-                    AgentContract.IGNORED_PATHS_PROPERTY)));
+                    AgentContract.IGNORED_PATHS_PROPERTY,
+                    AgentContract.BASE_FLAG_PROPERTY)));
 
     /**
      * The decision's inputs as the daemon meant them: {@code system}, with every name in {@link
@@ -147,6 +148,7 @@ public final class FilterRule {
                 .withChangedBytes(splitProperty(property, AgentContract.CHANGED_BYTES_PROPERTY))
                 .withMovedFiles(splitProperty(property, AgentContract.MOVED_FILES_PROPERTY))
                 .withIgnoredPaths(ignoredPaths(orEmpty(property, AgentContract.IGNORED_PATHS_PROPERTY)))
+                .withBaseFlag(property.apply(AgentContract.BASE_FLAG_PROPERTY))
                 // Answers before the map or change set is consulted, so a refused run cannot be
                 // narrowed by a later rule.
                 .withDaemonRefusal(refusalFrom(property))

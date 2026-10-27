@@ -117,6 +117,8 @@ internal object Audit {
         val parallelismOverride: String? = null,
         /** Why the last run's test JVM found its tests may run concurrently and captured nothing, or null. */
         val parallelismUnconfirmed: String? = null,
+        /** Whether the last Maven run declined because the JaCoCo agent missed the test JVM's argLine, or null. */
+        val agentNotOnArgLine: Boolean? = null,
     ) {
         companion object {
             const val FILE = "task-facts"
@@ -149,14 +151,22 @@ internal object Audit {
                     plainNarrowed = fields["plainNarrowed"]?.toBooleanStrictOrNull(),
                     parallelismOverride = fields["parallelismOverride"]?.takeIf { it.isNotEmpty() },
                     parallelismUnconfirmed = fields["parallelismUnconfirmed"]?.takeIf { it.isNotEmpty() },
+                    agentNotOnArgLine = fields["agentNotOnArgLine"]?.toBooleanStrictOrNull(),
                 )
             }
 
-            fun write(mapDir: File, framework: String, parallelism: String?, develocity: String? = null) {
+            fun write(
+                mapDir: File,
+                framework: String,
+                parallelism: String?,
+                develocity: String? = null,
+                agentNotOnArgLine: Boolean? = null,
+            ) {
                 update(mapDir) { previous ->
                     // Carried forward: written in `doFirst`, before this run records anything.
                     previous.copy(
                         framework = framework, parallelism = parallelism, develocity = develocity,
+                        agentNotOnArgLine = agentNotOnArgLine,
                         // This run's own, set by the parallelism action and the decode after this.
                         parallelismOverride = null, parallelismUnconfirmed = null,
                     )
@@ -225,7 +235,9 @@ internal object Audit {
                             "develocity=${next.develocity.orEmpty()}\n" +
                             "plainNarrowed=${next.plainNarrowed?.toString().orEmpty()}\n" +
                             "parallelismOverride=${next.parallelismOverride.orEmpty()}\n" +
-                            "parallelismUnconfirmed=${next.parallelismUnconfirmed.orEmpty().replace('\n', ' ')}\n",
+                            "parallelismUnconfirmed=${next.parallelismUnconfirmed.orEmpty().replace('\n', ' ')}\n" +
+                            // Only Maven writes it, so a Gradle task's file stays as it was.
+                            next.agentNotOnArgLine?.let { "agentNotOnArgLine=$it\n" }.orEmpty(),
                     )
                 }
             }

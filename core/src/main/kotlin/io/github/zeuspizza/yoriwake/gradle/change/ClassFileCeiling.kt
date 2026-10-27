@@ -29,7 +29,7 @@ private fun classCeiling(facts: ClasspathView, artifacts: TaskArtifacts, testJvm
         ?.let { ClassFileSupport.majorOfJava(ClassFileSupport.jacocoCeiling(it.ifEmpty { null }).java) }
         ?: Int.MAX_VALUE
     val ceiling = minOf(ClassFileSupport.asmCeiling(), jacocoCeiling)
-    if (versions.maxMajor > ceiling) return ceilingRefusal(versions, jacocoVersion, jacocoCeiling)
+    if (versions.maxMajor > ceiling) return ceilingRefusal(versions, jacocoVersion, jacocoCeiling, facts.jacocoSetting())
     return null
 }
 
@@ -53,9 +53,15 @@ internal fun jacocoCeilingNote(facts: ClasspathView): String? =
 
 /**
  * [jacocoVersion] is the host's JaCoCo version, empty when unreadable and null when JaCoCo's ceiling
- * does not apply; [jacocoCeiling] is that ceiling as a major version.
+ * does not apply; [jacocoCeiling] is that ceiling as a major version, and [jacocoSetting] where the
+ * build sets that version.
  */
-private fun ceilingRefusal(versions: ClassFileVersions, jacocoVersion: String?, jacocoCeiling: Int): CeilingRefusal {
+private fun ceilingRefusal(
+    versions: ClassFileVersions,
+    jacocoVersion: String?,
+    jacocoCeiling: Int,
+    jacocoSetting: String,
+): CeilingRefusal {
     val java = "Java ${ClassFileSupport.javaOf(versions.maxMajor)}"
     val asm = ClassFileSupport.asmCeiling()
     // Every reader the class is above, each with what lifts it.
@@ -65,9 +71,9 @@ private fun ceilingRefusal(versions: ClassFileVersions, jacocoVersion: String?, 
         }
         if (jacocoVersion != null && versions.maxMajor > jacocoCeiling) {
             add(
-                "JaCoCo ${jacocoVersion.ifEmpty { "(its version unread)" }} (`jacoco.toolVersion`) officially " +
+                "JaCoCo ${jacocoVersion.ifEmpty { "(its version unread)" }} ($jacocoSetting) officially " +
                     "instruments up to Java ${ClassFileSupport.javaOf(jacocoCeiling)}" to
-                    "a `jacoco.toolVersion` that officially supports $java",
+                    "a $jacocoSetting that officially supports $java",
             )
         }
     }

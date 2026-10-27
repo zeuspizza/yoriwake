@@ -34,6 +34,9 @@ internal interface ClasspathView {
     /** The host's JaCoCo version, empty when unreadable; null when these facts leave JaCoCo out. */
     fun jacocoVersion(): String?
 
+    /** Where the build sets [jacocoVersion], as the refusal and its remedy name it. */
+    fun jacocoSetting(): String
+
     /** The test JVM's feature version, null when nobody can tell. */
     fun testJvm(): Int?
 

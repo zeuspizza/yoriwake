@@ -147,6 +147,25 @@ class ForkingFunctionalTest {
     }
 
     @Test
+    fun `a selecting run that falls back over an isolated map leaves it alone and names Maven's flags`(@TempDir dir: File) {
+        val project = committed(dir)
+        recorded(project, "-Dyoriwake.isolatedCapture")
+        // A change coverage can learn from, beside one it cannot see, so the run falls back and would capture.
+        File(project, "lib/src/main/java/dev/demo/lib/Counter.java").edit { it.replace("n * 2", "n + n") }
+        File(project, "lib/pom.xml").edit { "$it\n<!-- forces a full run -->\n" }
+        File(project, ".gitignore").writeText("target/\n")
+        git(project, "add", ".gitignore")
+        git(project, "commit", "-q", "-am", "an edit beside one coverage cannot see")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(output, "leaves it alone and nothing is instrumented")
+        assertContains(output, "Only a run without -Dyoriwake.select updates it; pass -Dyoriwake.isolatedCapture there to keep it isolated.")
+        assertFalse("-Pyoriwake" in output, output)
+    }
+
+    @Test
     fun `a capture records the JVM's environment and the build's files on its classpath`(@TempDir dir: File) {
         val project = committed(dir)
 

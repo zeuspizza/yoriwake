@@ -71,6 +71,8 @@ internal fun Audit.audit(
     blockers: List<Blocker> = emptyList(),
     /** See [Payback.ConfigureCost]. Null when the build could not count it. */
     configureCost: Payback.ConfigureCost? = null,
+    /** Whether `scripts/measure-toll.sh` can time this host's runs; it runs only Gradle. */
+    tollScript: Boolean = true,
 ): Result {
     val provenance = provenance(mapDir)
     fun refuse(headline: String, counts: Counts = NO_COUNTS, vararg detail: String) = Result(
@@ -188,7 +190,7 @@ internal fun Audit.audit(
     // No toll given: report narrowing only, and state that the toll is unmeasured.
     if (toll == null) {
         return Result(
-            State.NARROWING_ONLY, shape, described + unmeasuredToll(captureTask),
+            State.NARROWING_ONLY, shape, described + unmeasuredToll(captureTask, tollScript),
             counts, distribution, provenance, blockers, recordedTime,
         )
     }
@@ -282,6 +284,8 @@ internal fun Audit.blockers(
     compiledClasses: Int? = null,
     mapClasses: Int? = null,
     gitUnavailable: Boolean = false,
+    /** Whether the task is a Maven execution, whose remedies name Maven's settings rather than Gradle's. */
+    maven: Boolean = false,
 ): List<Blocker> = buildList {
     // Not about the map: without a change set every task runs in full.
     if (gitUnavailable) {
@@ -312,9 +316,14 @@ internal fun Audit.blockers(
                 },
                 oneLine("the plugin declined to configure this task: ${refusal.detail}"),
                 when (refusal.kind) {
-                    ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN ->
+                    ScopeOutcome.NotApplied.Kind.NO_JACOCO_PLUGIN -> if (maven) {
+                        "add a jacoco-maven-plugin execution of its `prepare-agent` goal to this " +
+                            "module's POM. Coverage is what this tool selects from; without it " +
+                            "there is nothing to select on."
+                    } else {
                         "apply the `jacoco` plugin to this project. Coverage is what this " +
                             "tool selects from; without it there is nothing to select on."
+                    }
                     ScopeOutcome.NotApplied.Kind.NO_PACKAGES_DERIVED ->
                         "no remedy: this build's sources are in a language the scope " +
                             "derivation does not read -- Groovy and Scala modules among " +
@@ -343,12 +352,18 @@ internal fun Audit.blockers(
                         "upgrade Gradle to 8.14 or newer. Below it, API this plugin reads is " +
                             "missing, and reading around the gap could skip a test that should " +
                             "run, so the plugin declines instead and every run is a full run."
-                    ScopeOutcome.NotApplied.Kind.JACOCO_DISABLED ->
+                    ScopeOutcome.NotApplied.Kind.JACOCO_DISABLED -> if (maven) {
+                        "the jacoco-maven-plugin `prepare-agent` execution is skipped (its " +
+                            "`<skip>`, or `jacoco.skip`), so no coverage agent reaches the test " +
+                            "JVM. Un-skip it for the runs you want selected. Nothing is captured " +
+                            "until you do."
+                    } else {
                         "your build switches the jacoco extension off on this task, so no " +
                             "coverage agent reaches the test JVM. Some builds disable it " +
                             "through a convention plugin, for example behind a project " +
                             "property, so check yours and enable it for the runs you want " +
                             "selected. Nothing is captured until you do."
+                    }
                     ScopeOutcome.NotApplied.Kind.MAVEN_VERSION ->
                         "run the build on a released Maven, 3.9.0 or newer. Below it, or on a " +
                             "release candidate, the plugin declines rather than rely on hooks it " +
@@ -384,17 +399,38 @@ internal fun Audit.blockers(
         )
     }
     when {
+        // A declined execution is never wired, so no run of it records a framework.
+        facts.framework == null && maven && scopeRefusal != null -> Unit
         facts.framework == null -> add(
             Blocker(
                 Audit.BlockerKind.FRAMEWORK_UNKNOWN,
                 "no run of this task has recorded which test framework it uses",
-                "run the task once. Gradle settles the framework after this plugin is " +
-                    "applied, so it is recorded by the run rather than read from the build.",
+                if (maven) {
+                    "run the execution once (`mvn verify`): it records the framework its test " +
+                        "classpath runs on."
+                } else {
+                    "run the task once. Gradle settles the framework after this plugin is " +
+                        "applied, so it is recorded by the run rather than read from the build."
+                },
             )
         )
         facts.framework == TaskFacts.PLATFORM -> Unit
         // Its last selecting run left out whole classes, so the Platform is not what it lacks.
         facts.framework == TaskFacts.JUNIT4 && facts.plainNarrowed == true -> Unit
+        maven -> add(
+            Blocker(
+                Audit.BlockerKind.NOT_ON_JUNIT_PLATFORM,
+                "this task runs on ${facts.framework}, so the JUnit Platform's " +
+                    "PostDiscoveryFilter is never consulted and no test can be deselected " +
+                    "through it",
+                "run the tests on the JUnit Platform: add its engine for them to the test " +
+                    "dependencies, `org.junit.vintage:junit-vintage-engine` for JUnit 4 or " +
+                    "`org.junit.support:testng-engine` for TestNG, and Surefire runs them " +
+                    "there. A vintage run is only honest evidence about the suite it " +
+                    "actually runs: the test runtime gained an engine, so say so wherever " +
+                    "its numbers are quoted.",
+            )
+        )
         else -> add(
             Blocker(
                 Audit.BlockerKind.NOT_ON_JUNIT_PLATFORM,
@@ -443,6 +479,17 @@ internal fun Audit.blockers(
             )
         )
     }
+    if (facts.agentNotOnArgLine == true) {
+        add(
+            Blocker(
+                Audit.BlockerKind.SCOPE_NOT_APPLIED,
+                "the last run of this execution was declined: the JaCoCo agent does not reach the " +
+                    "test JVM's argLine, so nothing was captured",
+                "if the POM sets Surefire's `<argLine>`, keep `@{argLine}` in it, so the property " +
+                    "jacoco-maven-plugin's `prepare-agent` sets reaches the test JVM",
+            )
+        )
+    }
     facts.develocity?.let { token ->
         Audit.BlockerKind.entries.firstOrNull { it.token == token && it.declined }?.let { kind ->
             add(
@@ -461,8 +508,14 @@ internal fun Audit.blockers(
             Blocker(
                 Audit.BlockerKind.IN_JVM_PARALLELISM,
                 "the last run's test JVM found that $reason, so it captured nothing",
-                "find what turns it on after the build script (a task action, a JVM argument provider, " +
-                    "JAVA_TOOL_OPTIONS) and turn it off for recording runs",
+                if (maven) {
+                    "find where the test JVM's configuration turns it on (Surefire's " +
+                        "`systemPropertyVariables`, its `argLine`, JAVA_TOOL_OPTIONS) and turn it off " +
+                        "for recording runs"
+                } else {
+                    "find what turns it on after the build script (a task action, a JVM argument provider, " +
+                        "JAVA_TOOL_OPTIONS) and turn it off for recording runs"
+                },
             )
         )
     } ?: facts.parallelism?.takeIf { facts.parallelismOverride == null }?.let { source ->
@@ -471,7 +524,12 @@ internal fun Audit.blockers(
                 Audit.BlockerKind.IN_JVM_PARALLELISM,
                 "in-JVM parallel execution is enabled via $source, and the plugin refuses to " +
                     "capture under it",
-                if (facts.framework == TaskFacts.PLATFORM) {
+                if (maven) {
+                    "no remedy on Maven while its tests run concurrently in one JVM: they would " +
+                        "share one coverage agent, so per-test attribution would blend them. Turn " +
+                        "in-JVM parallel execution off for the runs you want captured; parallel " +
+                        "forks (`forkCount`) are unaffected."
+                } else if (facts.framework == TaskFacts.PLATFORM) {
                     "record the map one test at a time with -P${SettingNames.RECORD_SEQUENTIALLY} (or " +
                         "`recordSequentially = true`); selecting runs keep the parallel scheduling. " +
                         "Parallel FORKS (maxParallelForks) are unaffected and remain safe."

@@ -421,6 +421,18 @@ class ChangeSelectionTest {
     }
 
     @Test
+    fun `a full run over a map recorded in isolation names the flags as the host spells them`(@TempDir dir: File) {
+        recordedIn(dir, "isolated", "isolated")
+
+        val gradle = decideCapture(dir, mapUsable = true, fullRun = true, learnable = setOf("com.acme.Thing"))
+        val maven = decideCapture(dir, mapUsable = true, fullRun = true, learnable = setOf("com.acme.Thing")) { "-D$it" }
+
+        assertContains(gradle.reason, "Only a run without -Pyoriwake.select updates it; pass -Pyoriwake.isolatedCapture there")
+        assertContains(maven.reason, "Only a run without -Dyoriwake.select updates it; pass -Dyoriwake.isolatedCapture there")
+        assertFalse("-P" in maven.reason, maven.reason)
+    }
+
+    @Test
     fun `a full run over a shared map, or an unusable one labelled isolated, still instruments`(@TempDir dir: File) {
         recordedIn(dir, "shared", "shared")
         assertTrue(decideCapture(dir, mapUsable = true, fullRun = true, learnable = setOf("com.acme.Thing")).capture)

@@ -57,13 +57,20 @@ internal fun narrowingLines(
     )
 }
 
-/** The narrowing half only, worded so it cannot imply anything about the toll. */
-internal fun unmeasuredToll(captureTask: String) = listOf(
+/**
+ * The narrowing half only, worded so it cannot imply anything about the toll. [script] is whether
+ * `scripts/measure-toll.sh` can measure it on this host.
+ */
+internal fun unmeasuredToll(captureTask: String, script: Boolean) = listOf(
     "Whether narrowing repays what instrumenting costs is UNMEASURED here, and is not " +
         "derivable from a map: an instrumented full run arrives before any uninstrumented one. " +
         "One project's overhead does not predict another's: it varies widely between suites. " +
-        "To measure it on this suite, run scripts/measure-toll.sh, which times `$captureTask` " +
-        "twice and calls this task back with both timings."
+        if (script) {
+            "To measure it on this suite, run scripts/measure-toll.sh, which times `$captureTask` " +
+                "twice and calls this task back with both timings."
+        } else {
+            "Nothing measures it on Maven yet."
+        }
 )
 
 /**
