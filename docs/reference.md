@@ -59,7 +59,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
-| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore`; see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore` (on Maven, ignore them in git); see [Files written into the source tree](#files-written-into-the-source-tree) |
 | `pathIgnore left out N changed paths (…): <paths>` | the changed paths `pathIgnore` took out of the change set, counted by entry; see [Paths no test reads](#paths-no-test-reads) |
 | `pathIgnore entry '<entry>' matches <path>, which stays in the change set (<protection>)` | a declared path that is protected, and why |
 | `<path> was read at capture, … despite pathIgnore entry '<entry>' …` | a test JVM read a declared path when the map was recorded, so the tests from that read on run |
@@ -1532,6 +1532,11 @@ the Gradle plugin.
 - **Maps** live under `.yoriwake/yoriwake/` at the reactor root, one per execution, and survive
   `mvn clean`; yoriwake writes a `.gitignore` into `.yoriwake/`. Surefire and Failsafe executions
   of a module keep separate maps.
+- **Develocity's workspace id** (`.mvn/.develocity/develocity-workspace-id`), untracked, is build
+  state, as `.yoriwake/` is: it neither forces a selecting run nor keeps a complement run from
+  narrowing. Tracked, a change to it forces like any other path.
+- **An untracked file that forces** a run is named with `.gitignore` as its remedy, not
+  `pathIgnore`: an ignored file counts only when its content changed since the map was captured.
 - **CI**: cache `.yoriwake/` as the [recipe](#without-the-action) caches `.gradle/yoriwake`, leaving
   out `.yoriwake/yoriwake/*/raw` and `.yoriwake/yoriwake/*/selection.tsv`. yoriwake-action runs
   Gradle only.

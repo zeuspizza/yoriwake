@@ -172,7 +172,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
 
         val settled = SelectionSetup.settle(
             plan.widening!!,
-            { ChangeDetection.changedPaths(git, root, it) },
+            { ChangeDetection.changedPaths(git, root, it) { path -> Recording.isBuildState(path) } },
             settings.largeChangeThreshold,
         ) { _, changed -> LargeChange.counted(changed, null) }
         val (widened, paths) = when (settled) {
@@ -329,7 +329,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         // Only for a map whose stamp stands; the drift is the part of the map's age a commit cannot state.
         val drift = if (stampAge is MapAge.Known) {
             // As the capture's start snapshot excluded them: build output and the maps themselves.
-            val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + Recording.MAPS_HOME
+            val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + Recording.BUILD_STATE
             WorkingTree.drift(root, mapDir, excluded)
         } else {
             null

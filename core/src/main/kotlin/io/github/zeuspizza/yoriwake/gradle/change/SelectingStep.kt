@@ -216,7 +216,7 @@ internal object SelectingStep {
                 (if (scoped.ideState == 0) "" else ", ${scoped.ideState} an IDE's state") +
                 (if (scoped.notReadByTests == 0) "" else ", ${scoped.notReadByTests} notReadByTests lists")
         )
-        ForcingPaths.lines(host.name, forcing, host.explain).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
+        ForcingPaths.lines(host.name, forcing, host.explain, pathIgnore = host.flag(SettingNames.BASE) == "-P${SettingNames.BASE}").forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
 
         val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map

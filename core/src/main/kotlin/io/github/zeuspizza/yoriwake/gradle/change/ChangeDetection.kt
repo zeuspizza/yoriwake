@@ -193,10 +193,16 @@ internal object ChangeDetection {
      * Paths changed against [against], including uncommitted and untracked work. Null when git
      * cannot answer, never empty: empty means "nothing changed", while null forces a full run.
      */
-    fun changedPaths(git: Runner, projectDir: File, against: String): List<String>? {
+    fun changedPaths(
+        git: Runner,
+        projectDir: File,
+        against: String,
+        buildState: (String) -> Boolean = { false },
+    ): List<String>? {
         requireSingleCommit(against)
         val tracked = trackedPaths(git, projectDir, against) ?: return null
-        val untracked = untrackedPaths(git) ?: return null
+        // A tracked path is never build state: only the untracked list is filtered.
+        val untracked = untrackedPaths(git)?.filterNot(buildState) ?: return null
         return (tracked + untracked).distinct()
     }
 
@@ -384,11 +390,12 @@ internal object ChangeDetection {
 
     /**
      * Every path `git status` reports, untracked files included and ignored ones not: empty for a
-     * clean tree, null when git could not answer.
+     * clean tree, null when git could not answer. An untracked path [buildState] holds is left out.
      */
-    fun status(git: Runner): List<String>? =
+    fun status(git: Runner, buildState: (String) -> Boolean = { false }): List<String>? =
         // A changed submodule is not clean, whatever its `ignore` setting says.
         git.run(listOf("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"))
+            ?.filterNot { it.startsWith("?? ") && buildState(it.removePrefix("?? ")) }
 
     fun head(git: Runner): String? =
         git.run(listOf("rev-parse", "HEAD"))?.firstOrNull()?.takeIf(String::isNotBlank)

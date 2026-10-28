@@ -64,6 +64,8 @@ internal class DecodeRun(
     /** How the host spells the flag that records loaded classes, for the line that names it. */
     private val loadedFlag: String,
     private val logger: Log,
+    /** Untracked paths the host's tools write, which leave the tree clean for the selection record. */
+    private val buildState: (String) -> Boolean = { false },
 ) {
 
     /** The host's console, at its three levels. */
@@ -466,7 +468,7 @@ internal class DecodeRun(
     private fun recordSelection(taskPath: String, selecting: Boolean, ranEverything: Boolean) {
         val outcome = runCatching {
             if (selecting) {
-                SelectionRecord.afterSelectingRun(mapDir, rootDir, ranEverything)
+                SelectionRecord.afterSelectingRun(mapDir, rootDir, ranEverything, buildState)
             } else {
                 SelectionRecord.afterDeclinedRun(mapDir)
             }

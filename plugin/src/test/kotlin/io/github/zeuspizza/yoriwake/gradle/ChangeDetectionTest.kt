@@ -182,6 +182,21 @@ class ChangeDetectionTest {
     }
 
     @Test
+    fun `build state leaves the clean-tree check when untracked, never when tracked`() {
+        val git = ChangeDetection.Runner { arguments ->
+            when (arguments.first()) {
+                "status" -> listOf("?? .mvn/state", " M .mvn/tracked", "?? notes.txt")
+                "ls-files" -> listOf(".mvn/state", "notes.txt")
+                else -> null
+            }
+        }
+        val buildState = { path: String -> path.startsWith(".mvn/") }
+
+        assertEquals(listOf(" M .mvn/tracked", "?? notes.txt"), ChangeDetection.status(git, buildState))
+        assertEquals(3, ChangeDetection.status(git)?.size)
+    }
+
+    @Test
     fun `a file git has never seen is part of the change set`() {
         // `git diff` cannot see an untracked file, and an empty change set would run almost nothing.
         val repo = java.nio.file.Files.createTempDirectory("yoriwake-untracked").toFile()

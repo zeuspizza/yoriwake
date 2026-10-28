@@ -264,6 +264,7 @@ internal class Recording(
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
             loadedFlag = "-D${INTERNAL_LOADED}",
+            buildState = { isBuildState(it) },
             logger = object : DecodeRun.Log {
                 override fun lifecycle(message: String) = log.info(message)
                 override fun warn(message: String) = log.warn(message)
@@ -466,7 +467,7 @@ internal class Recording(
     /** The tree where every capture of this session starts, read once, before anything compiled. */
     private fun startTree() = runCatching {
         ensureHome()
-        val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + MAPS_HOME
+        val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + BUILD_STATE
         val listed = WorkingTree.listing(root, excluded)
         val snapshot = File(home, WorkingTree.SNAPSHOT_PENDING_FILE)
         val previous = WorkingTree.takePreviousStart(snapshot)
@@ -537,6 +538,18 @@ internal class Recording(
     companion object {
         /** Under the reactor root, beside `.mvn`; it writes its own `.gitignore`, so it is never committed. */
         const val MAPS_HOME = ".yoriwake"
+
+        /** The id Develocity's Maven extension writes for build scans; no build step or test reads it. */
+        const val DEVELOCITY_WORKSPACE_ID = ".mvn/.develocity/develocity-workspace-id"
+
+        /** What yoriwake and the tools beside it write into the project, untracked, on every build. */
+        val BUILD_STATE = listOf(MAPS_HOME, DEVELOCITY_WORKSPACE_ID)
+
+        /**
+         * Whether an untracked path git names is the workspace id, relative to the build's root or,
+         * as `git status` names it, to a repository the build lies below.
+         */
+        fun isBuildState(path: String) = path == DEVELOCITY_WORKSPACE_ID || path.endsWith("/$DEVELOCITY_WORKSPACE_ID")
         const val FAILSAFE = "maven-failsafe-plugin"
         const val INTERNAL_LOADED = "yoriwake.internal.loaded"
         /** The lifecycle phases that run Surefire or Failsafe, or come after them. */
