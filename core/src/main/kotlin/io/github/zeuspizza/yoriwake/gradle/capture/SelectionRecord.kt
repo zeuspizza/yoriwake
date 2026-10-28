@@ -102,9 +102,15 @@ internal object SelectionRecord {
     /**
      * After a run that selected: writes the record from this run's decision records, or removes any
      * record when one of them is not this run's, was cut short, or disagrees on the test JVM, when the
-     * run did not narrow, or when HEAD or the tree moved or was not clean. Consumes the start reading.
+     * run did not narrow, or when HEAD or the tree moved or was not clean, an untracked path
+     * [buildState] holds aside. Consumes the start reading.
      */
-    fun afterSelectingRun(mapDir: File, rootDir: File, ranEverything: Boolean): Outcome {
+    fun afterSelectingRun(
+        mapDir: File,
+        rootDir: File,
+        ranEverything: Boolean,
+        buildState: (String) -> Boolean = { false },
+    ): Outcome {
         val start = File(mapDir, START_FILE).let { file ->
             Start.decode(file.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() })
                 .also { runCatching { file.delete() } }
@@ -117,7 +123,7 @@ internal object SelectionRecord {
         if (!merged.narrowed) return remove(mapDir, "the run did not narrow")
         val git = ChangeDetection.directRunner(rootDir)
         val head = ChangeDetection.head(git)
-        val status = ChangeDetection.status(git)
+        val status = ChangeDetection.status(git, buildState)
         when {
             start.stamp.commit == null -> return remove(mapDir, "HEAD could not be read when the run started")
             head != start.stamp.commit -> return remove(mapDir, "HEAD moved during the run")

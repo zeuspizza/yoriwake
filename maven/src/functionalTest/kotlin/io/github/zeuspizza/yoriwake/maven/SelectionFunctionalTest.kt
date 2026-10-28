@@ -318,6 +318,89 @@ class SelectionFunctionalTest {
         git(project, "commit", "-q", "-am", "an edit")
     }
 
+    private fun writeWorkspaceId(project: File, id: String = "a-workspace-id") =
+        File(project, ".mvn/.develocity/develocity-workspace-id").also { it.parentFile.mkdirs() }.writeText(id)
+
+    private fun selecting(project: File): String =
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+    @Test
+    fun `Develocity's untracked workspace id does not force a selecting run`(@TempDir dir: File) {
+        val project = captured(dir)
+        writeWorkspaceId(project)
+        editGreeter(project)
+
+        val output = selecting(project)
+
+        val selectingLine = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+            .substringBefore("\n")
+        assertContains(selectingLine, "0 paths coverage cannot see")
+        assertContains(output, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in output.substringAfter("selecting against "), output)
+    }
+
+    @Test
+    fun `a tracked workspace id that changed still forces`(@TempDir dir: File) {
+        val project = committed(dir)
+        writeWorkspaceId(project)
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "a tracked workspace id")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        writeWorkspaceId(project, "another-workspace-id")
+        git(project, "commit", "-q", "-am", "a new workspace id")
+
+        val output = selecting(project)
+
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `a forced run names gitignore and not pathIgnore on Maven`(@TempDir dir: File) {
+        val project = captured(dir)
+        File(project, "notes.txt").writeText("notes")
+        editGreeter(project)
+
+        val output = selecting(project)
+
+        assertContains(output, "notes.txt is untracked or ignored")
+        assertContains(output, "ignore it in git (.gitignore)")
+        assertFalse(output.lines().any { "[yoriwake]" in it && "pathIgnore" in it }, output)
+    }
+
+    @Test
+    fun `a file a test writes during the capture names neither pathIgnore nor gitignore`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "lib/src/test/java/dev/demo/lib/GreeterTest.java").edit {
+            it.replace("void greets() {", "void greets() throws Exception {").replace(
+                "new Greeter().greet(\"Ada\"));",
+                "new Greeter().greet(\"Ada\"));\n        java.nio.file.Files.writeString(java.nio.file.Path.of(\"written.txt\"), String.valueOf(System.nanoTime()));",
+            )
+        }
+        git(project, "commit", "-q", "-am", "a test that writes a file")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        editCounter(project)
+
+        val output = selecting(project)
+
+        val forced = output.lines().filter { "[yoriwake]" in it && "written.txt" in it }
+        assertTrue(forced.any { "changed during" in it && "build directory" in it }, output)
+        assertFalse(forced.any { "pathIgnore" in it || ".gitignore" in it }, output)
+    }
+
+    @Test
+    fun `with an untracked workspace id a complement run runs what the selecting run left out`(@TempDir dir: File) {
+        val project = captured(dir)
+        writeWorkspaceId(project)
+        editGreeter(project)
+        assertContains(selecting(project), "in dev.demo.lib.GreeterTest")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "leaving out the 1 tests the selecting run at ")
+        assertContains(output, "in dev.demo.lib.CounterTest")
+    }
+
     @Test
     fun `a test alwaysRun names runs though the change cannot reach it`(@TempDir dir: File) {
         val project = captured(dir)

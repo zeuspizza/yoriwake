@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Where Develocity's Test Distribution or Predictive Test Selection acts on an execution, yoriwake
@@ -105,5 +107,25 @@ class DevelocityFunctionalTest {
 
         assertFalse("declined, develocity" in output, output)
         assertContains(output, "[yoriwake] lib surefire:test (default-test) map updated: ")
+    }
+
+    @Test
+    fun `Develocity's workspace id written during the capture does not force the next selecting run`(@TempDir dir: File) {
+        val project = withDevelocity(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+        val id = File(project, ".mvn/.develocity/develocity-workspace-id")
+        assertTrue(id.isFile, "Develocity wrote no workspace id")
+        assertEquals(listOf("develocity-workspace-id"), id.parentFile.list()!!.sorted())
+        assertEquals("?? .mvn/.develocity/develocity-workspace-id", git(project, "status", "--porcelain", "--untracked-files=all", ".mvn"))
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+        assertContains(selecting.substringBefore("\n"), "0 paths coverage cannot see")
+        assertContains(selecting, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in selecting, output)
     }
 }

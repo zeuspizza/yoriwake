@@ -4513,6 +4513,17 @@ MUTATIONS = [
      '        host.property(AgentContract.SELECT_PROPERTY, "true")',
      '        host.property(AgentContract.SELECT_PROPERTY, "false")',
      maven_suite, "a change to one class runs the tests that reach it"),
+    # Develocity's workspace id, untracked, is build state on Maven: kept in the change set, it
+    # forces every selecting run on a project with the extension.
+    ("Develocity's untracked workspace id forces a Maven selecting run", MAVEN_SELECTION,
+     "            { ChangeDetection.changedPaths(git, root, it) { path -> Recording.isBuildState(path) } },",
+     "            { ChangeDetection.changedPaths(git, root, it) },",
+     maven_suite, "Develocity's untracked workspace id does not force a selecting run"),
+    ("Develocity's untracked workspace id keeps a Maven complement from narrowing",
+     "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/MavenStamp.kt",
+     "            clean = ChangeDetection.status(git) { Recording.isBuildState(it) }?.isEmpty() == true,",
+     "            clean = ChangeDetection.status(git)?.isEmpty() == true,",
+     maven_suite, "with an untracked workspace id a complement run runs what the selecting run left out"),
     # A full run asked for runs every test and records, as on Gradle.
     ("a Maven full run asked for still selects", MAVEN_SELECTION,
      "        if (plan.declines.isNotEmpty()) {",

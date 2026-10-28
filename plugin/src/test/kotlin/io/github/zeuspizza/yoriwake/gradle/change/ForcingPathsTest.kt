@@ -153,6 +153,21 @@ class ForcingPathsTest {
     }
 
     @Test
+    fun `without pathIgnore an untracked path's remedy is gitignore, and no line names pathIgnore`() {
+        val classified = classify(
+            listOf("app/gen-src/main/resources/a.properties", "app/run.log", "app/src/main/resources/b.txt"),
+            captured = mapOf("app/run.log" to WorkingTree.Move.CHANGED),
+        )
+
+        val lines = ForcingPaths.lines(":app:test", classified, pathIgnore = false)
+
+        assertFalse(lines.any { "pathIgnore" in it }, lines.toString())
+        assertContains(lines.single { "app/gen-src/** is untracked" in it }, "ignore it in git (.gitignore)")
+        assertFalse(".gitignore" in lines.single { "app/run.log" in it }, lines.toString())
+        assertEquals(ForcingPaths.lines(":app:test", classified), ForcingPaths.lines(":app:test", classified, pathIgnore = true))
+    }
+
+    @Test
     fun `a path under directories git tracks nothing in is named by the outermost, as a glob to list`() {
         val path = "app/gen-src/main/resources/META-INF/app.versions.properties"
         val classified = classify(listOf(path))
