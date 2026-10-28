@@ -217,18 +217,18 @@ abstract class MavenBreakAttempt {
         }
 
         primer?.let {
-            val output = FunctionalMaven.run(maven, project, *it.arguments.toTypedArray()).output
+            val output = FunctionalMaven.run(maven, project, *it.arguments.toTypedArray(), KEEP_GOING).output
             it.after(project, output)
             deleteReports(project)
         }
 
-        val output = FunctionalMaven.run(maven, project, *select.toTypedArray()).output
+        val output = FunctionalMaven.run(maven, project, *select.toTypedArray(), KEEP_GOING).output
         val selected = ranTests(project)
         val targetResult = passed(project, target)
         val (notes, rows) = decisions(File(project, ".yoriwake/yoriwake"), target)
 
         deleteReports(project)
-        FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.enabled=false", *CACHES_OFF)
+        FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.enabled=false", KEEP_GOING, *CACHES_OFF)
         val failsUnderFullRun = passed(project, target) == false
 
         val declined = DECLINED.findAll(output).map { match -> match.groupValues.drop(1).first(String::isNotEmpty) }.toList()
@@ -282,6 +282,12 @@ abstract class MavenBreakAttempt {
 
         /** An execution's decline, and Maven's own, which declines every execution of the build. */
         val DECLINED = Regex("""\[yoriwake] [^\n]* declined, ([a-z0-9-]+):|\[yoriwake] (maven-version):""")
+
+        /**
+         * A failed test would stop the lifecycle, and the modules and executions after it would
+         * read as left out; failures are read from the reports, not from Maven's exit code.
+         */
+        const val KEEP_GOING = "-Dmaven.test.failure.ignore=true"
 
         /** A result one of them restored would answer for the run instead of the change. */
         val CACHES_OFF = arrayOf("-Ddevelocity.cache.local.enabled=false", "-Ddevelocity.cache.remote.enabled=false")

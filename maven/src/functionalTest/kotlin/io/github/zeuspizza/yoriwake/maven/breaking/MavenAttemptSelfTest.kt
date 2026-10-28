@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.maven.breaking
 
 import io.github.zeuspizza.yoriwake.gradle.breaking.Aim
 import io.github.zeuspizza.yoriwake.gradle.breaking.Outcome
+import io.github.zeuspizza.yoriwake.maven.FunctionalMaven
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -118,5 +119,58 @@ class MavenAttemptSelfTest : MavenBreakAttempt() {
 
         assertEquals(Outcome.HELD_BY_RULE, result.outcome, result.why)
         assertTrue("left out [dev.sample.AlphaTest]" in result.why, result.why)
+    }
+
+    @Test
+    fun `a Maven below the floor holds by force, naming the decline`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.BetaTest", Aim.Forced("maven-version"), twoClasses, maven = FunctionalMaven.BELOW_FLOOR,
+        ) { breakBeta(it) }
+
+        assertEquals(Outcome.HELD_BY_FORCE, result.outcome, result.why)
+        assertContains(result.why, "maven-version")
+    }
+
+    @Test
+    fun `a failing target in one module leaves the later modules running`(@TempDir dir: File) {
+        // BetaTest, in the module built after the target's, reaches Alpha too, so selection keeps
+        // every test: a later module that stopped with the target's failure would read as left out.
+        val module = { name: String, dependency: String ->
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <parent><groupId>dev.sample</groupId><artifactId>sample</artifactId><version>1.0</version></parent>
+              <artifactId>$name</artifactId>
+              <dependencies>$dependency</dependencies>
+            </project>
+            """.trimIndent() + "\n"
+        }
+        val reactor = minimalPom.replace(
+            "<version>1.0</version>\n",
+            "<version>1.0</version>\n  <packaging>pom</packaging>\n  <modules><module>a</module><module>b</module></modules>\n",
+        )
+        val usesAlpha = "b/src/test/java/dev/sample/BetaTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+            class BetaTest {
+                @Test void passes() { assertNotNull(new Alpha()); }
+            }
+        """.trimIndent()
+        val sources = listOf(
+            "a/pom.xml" to module("a", ""),
+            "b/pom.xml" to module("b", "<dependency><groupId>dev.sample</groupId><artifactId>a</artifactId><version>1.0</version></dependency>"),
+            "a/${oneClass.first}" to oneClass.second, "a/${oneTest.first}" to oneTest.second, usesAlpha,
+        )
+
+        val result = attempt(dir, "dev.sample.AlphaTest", Aim.Row("reaches-change"), sources, reactor) {
+            File(it, "a/src/main/java/dev/sample/Alpha.java").writeText(
+                "package dev.sample;\npublic class Alpha { public int twice(int n) { return n * 2 + 1; } }",
+            )
+        }
+
+        assertEquals(Outcome.VACUOUS, result.outcome, result.why)
+        assertContains(result.why, "nothing left out")
     }
 }
