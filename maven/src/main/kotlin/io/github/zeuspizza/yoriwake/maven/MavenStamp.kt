@@ -30,7 +30,7 @@ internal object MavenStamp {
         val buildRoot = top?.let { runCatching { root.canonicalFile.relativeTo(File(it).canonicalFile).invariantSeparatorsPath }.getOrNull() }
         return SelectionRecord.Stamp(
             commit = ChangeDetection.head(git),
-            clean = ChangeDetection.status(git)?.isEmpty() == true,
+            clean = ChangeDetection.status(git) { Recording.isBuildState(it) }?.isEmpty() == true,
             task = task,
             // Unknown reads as a root no build has, so it never matches.
             buildRoot = buildRoot ?: "?${root.absolutePath}",

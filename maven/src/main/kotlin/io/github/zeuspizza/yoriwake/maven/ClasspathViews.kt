@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.maven
 
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView
 import org.apache.maven.execution.MavenSession
 import org.apache.maven.project.MavenProject
@@ -13,6 +14,7 @@ internal fun classpathView(session: MavenSession, root: File, project: MavenProj
             module.basedir.relativeTo(root).invariantSeparatorsPath to module.id
         }
         override val buildDirs = session.allProjects.associate { it.id to it.build.directory }
+        override val dependencyHomes = dependencyHomes(session)
         override val ownPath: String = project.id
         override fun classpathFiles(): Set<File> = classpath.toSet()
         override fun testOutputFiles(): Set<File> = setOf(File(project.build.testOutputDirectory))
@@ -24,3 +26,9 @@ internal fun classpathView(session: MavenSession, root: File, project: MavenProj
         override fun testJvm(): Int? = null
         override fun agentCeiling(): String? = null
     }
+
+/** Where a Maven test classpath takes dependencies from; see [ClasspathView.dependencyHomes]. */
+internal fun dependencyHomes(session: MavenSession): Map<String, File> = mapOf(
+    ClasspathFiles.MAVEN_REPOSITORY to File(session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path),
+    ClasspathFiles.USER_HOME to File(System.getProperty("user.home").orEmpty()),
+)

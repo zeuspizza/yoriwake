@@ -1,5 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.wiring
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -7,6 +9,7 @@ import java.io.File
 import java.io.IOException
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -66,5 +69,80 @@ class LastLookTest {
         info.writeText("flavor=b\n")
 
         assertContains(assertNotNull(LastLook.whatMoved(compared, walk)), "build-info.properties")
+    }
+
+    @Test
+    fun `a complement whose test JVM starts with another configuration than the record's forces, the same one does not`() {
+        val record = record("late-a")
+
+        assertNull(LastLook.configurationMoved(record) { "late-a" })
+        assertContains(assertNotNull(LastLook.configurationMoved(record) { "late-b" }), "configuration")
+    }
+
+    @Test
+    fun `a record copy that cannot be read, or names no late configuration, forces`() {
+        assertNotNull(LastLook.configurationMoved(null) { "late-a" })
+        assertNotNull(LastLook.configurationMoved(record(null)) { "late-a" })
+        assertNotNull(LastLook.configurationMoved("garbled\n") { "late-a" })
+        assertContains(assertNotNull(LastLook.configurationMoved(record("late-a")) { throw IOException("gone") }), "gone")
+    }
+
+    @Test
+    fun `a selecting run's start gains the late configuration and keeps the early one`(@TempDir dir: File) {
+        SelectionRecord.writeStart(dir, SelectionRecord.Start("token", stamp))
+
+        assertNull(LastLook.addLateConfiguration(dir) { "late-a" })
+
+        val start = assertNotNull(SelectionRecord.Start.decode(File(dir, SelectionRecord.START_FILE).readText()))
+        assertEquals("token", start.token)
+        assertEquals(stamp, start.stamp)
+        assertEquals("late-a", start.lateConfiguration)
+    }
+
+    @Test
+    fun `a start that cannot be completed is deleted`(@TempDir dir: File) {
+        val file = File(dir, SelectionRecord.START_FILE)
+        file.writeText("garbled")
+
+        assertNotNull(LastLook.addLateConfiguration(dir) { "late-a" })
+        assertFalse(file.exists())
+
+        SelectionRecord.writeStart(dir, SelectionRecord.Start("token", stamp))
+
+        assertNotNull(LastLook.addLateConfiguration(dir) { throw IOException("gone") })
+        assertFalse(file.exists())
+    }
+
+    private val stamp = SelectionRecord.Stamp("c0ffee", true, ":test", "", ":", "classpath", "early")
+
+    private fun record(late: String?): String = buildString {
+        append("# test\toutcome\n")
+        append("${AgentContract.NOTE_PREFIX}${AgentContract.VERSION_NOTE}\t${AgentContract.SELECTION_VERSION}\n")
+        if (late != null) append("${AgentContract.NOTE_PREFIX}${AgentContract.STAMP_LATE_CONFIGURATION_NOTE}\t$late\n")
+        append("${AgentContract.NOTE_PREFIX}${AgentContract.ROWS_NOTE}\t0\n")
+    }
+
+    @Test
+    fun `a selecting run's hand-over with dependency rows and a complement's without compare equal when nothing moved`(
+        @TempDir base: File,
+    ) {
+        val root = File(base, "repo")
+        val home = File(base, "gradle-home")
+        val resources = File(root, "app/build/resources/test").apply { mkdirs() }
+        File(resources, "a.txt").writeText("a")
+        val module = File(home, "caches/modules-2/files-2.1/g/a/1/sha/a-1.jar").apply { parentFile.mkdirs(); writeText("jar") }
+        val classpath = listOf(resources, module)
+        val homes = mapOf(ClasspathFiles.GRADLE_USER_HOME to home)
+        val table = assertIs<ClasspathFiles.Walk.Found>(ClasspathFiles.table(classpath, emptyList(), root, homes)).digests
+        val walk = assertIs<ClasspathFiles.Walk.Found>(ClasspathFiles.walk(classpath, emptyList(), root, classes = true)).digests
+
+        LastLook.write(base, root, emptyList(), classes = false, table, homes)
+        val selecting = LastLook.read(LastLook.handOver(base).readText())!!
+        LastLook.write(base, root, emptyList(), classes = true, walk)
+        val complement = LastLook.read(LastLook.handOver(base).readText())!!
+
+        assertEquals(homes.mapValues { it.value.absoluteFile }, selecting.homes)
+        assertNull(LastLook.whatMoved(selecting) { LastLook.again(classpath, it) })
+        assertNull(LastLook.whatMoved(complement) { LastLook.again(classpath, it) })
     }
 }

@@ -231,7 +231,15 @@ val functionalTest by sourceSets.creating
 configurations[functionalTest.implementationConfigurationName].extendsFrom(configurations.testImplementation.get())
 configurations[functionalTest.runtimeOnlyConfigurationName].extendsFrom(configurations.testRuntimeOnly.get())
 
+// The break suite's verdicts, shared with the Gradle plugin's, so an attempt on either build tool
+// is classified by the same rules.
+kotlin.sourceSets.named("functionalTest") {
+    kotlin.srcDir(rootProject.file("plugin/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/gradle/breaking/verdict"))
+}
+
 dependencies {
+    // Record names the break suite reads decisions by.
+    "functionalTestImplementation"(project(":agent"))
     "functionalTestImplementation"(platform("org.junit:junit-bom:5.11.4"))
     "functionalTestImplementation"("org.junit.jupiter:junit-jupiter")
     "functionalTestImplementation"(kotlin("test"))
@@ -244,8 +252,7 @@ val cleanFunctionalRepository by tasks.registering(Delete::class) {
 }
 tasks.named("publishMavenPluginPublicationToFunctionalRepository") { dependsOn(cleanFunctionalRepository) }
 
-tasks.register<Test>("functionalTest") {
-    description = "Runs real Maven builds over fixtures with the published plugin."
+fun Test.overRealMaven() {
     group = "verification"
     testClassesDirs = functionalTest.output.classesDirs
     classpath = functionalTest.runtimeClasspath
@@ -262,4 +269,20 @@ tasks.register<Test>("functionalTest") {
     systemProperty("yoriwake.demo", rootProject.file("samples/demo-maven").absolutePath)
     // One Maven build at a time: they share a local repository, so each library is downloaded once.
     maxParallelForks = 1
+}
+
+// Attempts to make a selecting run skip a test that should have run; each held attempt stays as a
+// regression fixture. Run on their own, as on the Gradle plugin, so `check` never pays for them.
+val breakAttemptsPackage = "io.github.zeuspizza.yoriwake.maven.breaking"
+
+tasks.register<Test>("functionalTest") {
+    description = "Runs real Maven builds over fixtures with the published plugin."
+    overRealMaven()
+    filter.excludeTestsMatching("$breakAttemptsPackage.*")
+}
+
+tasks.register<Test>("breakAttempts") {
+    description = "Runs the break attempts over real Maven builds with the published plugin."
+    overRealMaven()
+    filter.includeTestsMatching("$breakAttemptsPackage.*")
 }

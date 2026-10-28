@@ -73,7 +73,7 @@ class RunModesAttempts : BreakAttempt() {
             File(dir, "gradle.properties").writeText("yoriwake.fullRun=\n")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: on a detached HEAD the listed entries are matched against every
@@ -95,7 +95,7 @@ class RunModesAttempts : BreakAttempt() {
             File(dir, "notes.txt").writeText("not committed")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: every commit since the base widened to the map's age is read,
@@ -116,7 +116,7 @@ class RunModesAttempts : BreakAttempt() {
             File(dir, "notes.txt").writeText("notes, edited")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the branch check reads HEAD's symbolic name and takes only
@@ -133,7 +133,7 @@ class RunModesAttempts : BreakAttempt() {
             changeCodec(dir)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: patterns count as named for the run when they were added to the
@@ -148,7 +148,7 @@ class RunModesAttempts : BreakAttempt() {
             )
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     /** As [minimalBuild], with Codec's source copied to a file no rule dates, and [extra] after it. */
@@ -199,7 +199,7 @@ class RunModesAttempts : BreakAttempt() {
             File(dir, "build/test-results").deleteRecursively()
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the count and the time are written only while a limit is set,
@@ -218,6 +218,6 @@ class RunModesAttempts : BreakAttempt() {
             File(dir, "build/limit.txt").writeText("30\n")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

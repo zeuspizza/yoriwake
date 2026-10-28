@@ -79,7 +79,7 @@ class NewJdksAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: NJ2.
@@ -91,7 +91,7 @@ class NewJdksAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a multi-release jar's versioned classes count only for a
@@ -126,7 +126,7 @@ class NewJdksAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the daemon refuses a test JVM above the agent's ASM from the
@@ -149,6 +149,6 @@ class NewJdksAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

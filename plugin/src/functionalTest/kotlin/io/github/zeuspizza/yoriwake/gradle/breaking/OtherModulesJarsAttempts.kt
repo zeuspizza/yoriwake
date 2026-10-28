@@ -111,7 +111,7 @@ class OtherModulesJarsAttempts : BreakAttempt() {
             buildScript = rootBuild(dependencies = "testImplementation(project(\":lib\"))"),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a sibling counts as on this task's classpath when a declared
@@ -141,7 +141,7 @@ class OtherModulesJarsAttempts : BreakAttempt() {
             File(it, thing.first).writeText("package dev.lib;\npublic class Thing { public int n() { return 2; } }")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a source or resource file of a module that is not on this
@@ -178,6 +178,6 @@ class OtherModulesJarsAttempts : BreakAttempt() {
             File(it, answer.first).writeText("43")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

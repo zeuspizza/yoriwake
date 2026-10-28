@@ -95,6 +95,6 @@ class ReportsAndOverheadAttempts : BreakAttempt() {
             buildScript = copyingBuild + "\nafterEvaluate { yoriwake { alwaysRun.add(\"dev.sample.A1PinnedTest\") } }\n",
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

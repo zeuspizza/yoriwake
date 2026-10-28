@@ -355,9 +355,13 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
+    # The JDK the map was captured on, for the job that selects against it on the same OS.
+    outputs:
+      jdk: ${{ steps.java.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        id: java
         with:
           distribution: temurin
           java-version: '21'
@@ -406,10 +410,11 @@ jobs:
       # A fresh checkout on a different runner, with no build outputs and no map of its own. This is
       # the CI shape: restore the map, change something, run only what the change can reach.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The map's JDK: another patch release would rightly run every test.
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ needs.capture.outputs.jdk }}
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           # The mutated source fails its builds by design; the assertion tells what failed.
@@ -525,6 +530,9 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
+    # The JDK the map was captured on, for the job that selects against it on the same OS.
+    outputs:
+      jdk: ${{ steps.java.outputs.version }}
     steps:
       # Git for Windows' default, as on a developer's machine: tracked text, the demo's resources
       # included, is checked out with CRLF. The selecting job below checks out LF, so its map
@@ -536,6 +544,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        id: java
         with:
           distribution: temurin
           java-version: '21'
@@ -586,10 +595,11 @@ jobs:
           git config --global core.autocrlf false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The map's JDK: another patch release would rightly run every test.
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ needs.capture-on-windows.outputs.jdk }}
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           # The mutated source fails its builds by design; the assertion tells what failed.

@@ -269,6 +269,169 @@ class EngineSupportTest {
         assertCapturedAndSelected(dir, listOf("Alpha", "Beta").associate { "${it}Test" to subject(it, "n + n") })
     }
 
+    /**
+     * A JUnit 4 runner on the vintage engine whose description lists one test, `listed`, reaching
+     * `Other`, and which reports at run time one more test per name in the variable `GROWN`, each
+     * reaching `Codec`. Vintage registers those as dynamic: no descriptor carries them at discovery.
+     * Beside it, `PlainTest`, a plain JUnit 4 class reaching `Subject`. Captured with [grown] as
+     * `GROWN`; returns the map directory.
+     */
+    private fun growingRunnerProject(dir: File, grown: String): File {
+        project(
+            dir,
+            """
+                testImplementation(platform("org.junit:junit-bom:5.11.4"))
+                testImplementation("junit:junit:4.13.2")
+                testRuntimeOnly("org.junit.vintage:junit-vintage-engine")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            """.trimIndent(),
+            // One JVM per class, so no test is selected for sharing a JVM with the change.
+            "useJUnitPlatform(); forkEvery = 1",
+            subject,
+            "src/main/java/dev/engine/Codec.java" to """
+                package dev.engine;
+                public class Codec { public String encode(String s) { return new StringBuilder(s).reverse().toString(); } }
+            """.trimIndent(),
+            "src/main/java/dev/engine/Other.java" to """
+                package dev.engine;
+                public class Other { public int one() { return 1; } }
+            """.trimIndent(),
+            "src/test/java/dev/engine/GrowingRunner.java" to """
+                package dev.engine;
+                import org.junit.runner.Description;
+                import org.junit.runner.Runner;
+                import org.junit.runner.manipulation.Filter;
+                import org.junit.runner.manipulation.Filterable;
+                import org.junit.runner.notification.Failure;
+                import org.junit.runner.notification.RunNotifier;
+                public class GrowingRunner extends Runner implements Filterable {
+                    private final Class<?> type;
+                    private final Description listed;
+                    private boolean listedKept = true;
+                    public GrowingRunner(Class<?> type) {
+                        this.type = type;
+                        this.listed = Description.createTestDescription(type, "listed");
+                    }
+                    @Override public Description getDescription() {
+                        Description suite = Description.createSuiteDescription(type);
+                        if (listedKept) suite.addChild(listed);
+                        return suite;
+                    }
+                    @Override public void filter(Filter filter) { listedKept = filter.shouldRun(listed); }
+                    @Override public void run(RunNotifier notifier) {
+                        if (listedKept) {
+                            notifier.fireTestStarted(listed);
+                            new Other().one();
+                            notifier.fireTestFinished(listed);
+                        }
+                        String names = System.getenv("GROWN");
+                        for (String name : names == null ? new String[0] : names.split(",")) {
+                            if (name.isEmpty()) continue;
+                            Description grown = Description.createTestDescription(type, name);
+                            notifier.fireTestStarted(grown);
+                            if (!"cba".equals(new Codec().encode("abc"))) {
+                                notifier.fireTestFailure(new Failure(grown, new AssertionError("not reversed")));
+                            }
+                            notifier.fireTestFinished(grown);
+                        }
+                    }
+                }
+            """.trimIndent(),
+            "src/test/java/dev/engine/GrowingTest.java" to """
+                package dev.engine;
+                @org.junit.runner.RunWith(GrowingRunner.class)
+                public class GrowingTest {}
+            """.trimIndent(),
+            "src/test/java/dev/engine/PlainTest.java" to """
+                package dev.engine;
+                import org.junit.Test;
+                import static org.junit.Assert.assertEquals;
+                public class PlainTest {
+                    @Test public void doubles() { assertEquals(2, new Subject().twice(1)); }
+                }
+            """.trimIndent(),
+        )
+        File(dir, ".gitignore").writeText("build/\n.gradle/\n")
+        git(dir, "init")
+        git(dir, "commit", "--allow-empty", "-m", "base")
+        git(dir, "add", ".")
+        git(dir, "commit", "-m", "sample")
+        growing(dir, grown, "test").build()
+        File(dir, "build/test-results").deleteRecursively()
+        return checkNotNull(File(dir, ".gradle/yoriwake").listFiles()?.singleOrNull(File::isDirectory))
+    }
+
+    // A variable no change set or environment fingerprint sees, so the runner can report a new test
+    // at run time while the change stays where the test puts it.
+    private fun growing(dir: File, grown: String, vararg args: String) =
+        runner(dir, *args).withEnvironment(System.getenv() + ("GROWN" to grown))
+
+    /** Every test JVM's decision record of the last selecting run; each fork writes its own part. */
+    private fun decisionRecords(map: File): String =
+        map.listFiles().orEmpty()
+            .filter { it.name.startsWith("${AgentContract.DECISIONS_FILE}.") && it.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX) }
+            .ifEmpty { listOf(File(map, AgentContract.DECISIONS_FILE)) }
+            .joinToString("") { it.readText() }
+
+    /** Every test case the last run reported, as `class.name`. */
+    private fun ranCases(dir: File): Set<String> =
+        File(dir, "build/test-results/test").listFiles { f: File -> f.name.endsWith(".xml") }.orEmpty()
+            .flatMap { xml ->
+                Regex("<testcase name=\"([^\"]+)\" classname=\"([^\"]+)\"").findAll(xml.readText())
+                    .map { "${it.groupValues[2]}.${it.groupValues[1]}" }.toList()
+            }.toSet()
+
+    private val listedId = "[engine:junit-vintage]/[runner:dev.engine.GrowingTest]/[test:listed(dev.engine.GrowingTest)]"
+    private val plainId = "[engine:junit-vintage]/[runner:dev.engine.PlainTest]/[test:doubles(dev.engine.PlainTest)]"
+
+    @Test
+    fun `a test a vintage runner reports only at run time runs when it reaches the change`(@TempDir dir: File) {
+        val map = growingRunnerProject(dir, "reverses")
+        assertContains(File(map, "coverage.tsv").readText(), "[runner:dev.engine.GrowingTest]/[dynamic:")
+
+        val codec = File(dir, "src/main/java/dev/engine/Codec.java")
+        codec.writeText(codec.readText().replace("reverse()", "reverse().append(\"!\")"))
+        val failing = growing(dir, "reverses", "test", "-Pyoriwake.select").buildAndFail().output
+
+        val decisions = decisionRecords(map)
+        assertContains(failing, "reverses", message = decisions)
+        assertContains(decisions, "$listedId\tincluded\tCLASS_RUNS_WHOLE")
+        assertContains(decisions, "$plainId\texcluded\tSKIPPED")
+        assertEquals(setOf("dev.engine.GrowingTest.listed", "dev.engine.GrowingTest.reverses"), ranCases(dir), decisions)
+    }
+
+    @Test
+    fun `a test a vintage runner reports at run time for the first time runs`(@TempDir dir: File) {
+        val map = growingRunnerProject(dir, "first")
+
+        val subject = File(dir, "src/main/java/dev/engine/Subject.java")
+        subject.writeText(subject.readText().replace("n * 2", "n + n"))
+        growing(dir, "first,second", "test", "-Pyoriwake.select").build()
+
+        val decisions = decisionRecords(map)
+        assertContains(decisions, "#!outcome\tnarrowed")
+        assertEquals(
+            setOf(
+                "dev.engine.GrowingTest.listed", "dev.engine.GrowingTest.first", "dev.engine.GrowingTest.second",
+                "dev.engine.PlainTest.doubles",
+            ),
+            ranCases(dir), decisions,
+        )
+    }
+
+    @Test
+    fun `a vintage runner that reports no test at run time is still narrowed`(@TempDir dir: File) {
+        val map = growingRunnerProject(dir, "")
+
+        val subject = File(dir, "src/main/java/dev/engine/Subject.java")
+        subject.writeText(subject.readText().replace("n * 2", "n + n"))
+        growing(dir, "", "test", "-Pyoriwake.select").build()
+
+        val decisions = decisionRecords(map)
+        assertContains(decisions, "$listedId\texcluded\tSKIPPED")
+        assertEquals(setOf("dev.engine.PlainTest.doubles"), ranCases(dir), decisions)
+    }
+
     /** Two Kotest specs, each reaching only its own subject; returns a writer of a subject's source. */
     private fun kotestProject(dir: File, testConfig: String = "", kotest: String = "5.9.1"): (String, String) -> Pair<String, String> {
         // Kotest ships its own JUnit Platform engine rather than running on Jupiter.

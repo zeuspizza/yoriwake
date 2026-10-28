@@ -119,7 +119,7 @@ internal object SelectingStep {
         }.let { verdict ->
             // Nothing for the last look to compare against, so nothing vouches for what the build's
             // own last actions write.
-            if (handedOver || verdict != ClasspathFilesVerdict.Unchanged) verdict
+            if (handedOver || (verdict != ClasspathFilesVerdict.Unchanged && verdict !is ClasspathFilesVerdict.Handed)) verdict
             else ClasspathFilesVerdict.Unrecorded("the classpath files could not be handed to classpath-files.compared")
         }
         jacocoCeilingNote(classpathFacts)?.let { host.lifecycle("[yoriwake] ${host.name}: $it") }
@@ -180,10 +180,12 @@ internal object SelectingStep {
                 // Its own property: the change set is also the selector's anchor set for nested
                 // classes.
                 CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,
-                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles,
+                // Escaped, since a file name can hold the comma that joins the list.
+                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles.map(PathIgnore::escape),
                 UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,
                 // Every changed path, before any is dropped, for the tests that declare a dependency on one.
-                CHANGED_PATHS_PROPERTY to paths,
+                // Escaped, since a path can hold the comma that joins the list.
+                CHANGED_PATHS_PROPERTY to paths.map(PathIgnore::escape),
                 ABSENCE_PROVABLE_PROPERTY to established.provable,
                 // Separate property: a test class that has ever run is in the loaded-class union by
                 // definition, so the absence rule would never fire for it.
@@ -216,7 +218,7 @@ internal object SelectingStep {
                 (if (scoped.ideState == 0) "" else ", ${scoped.ideState} an IDE's state") +
                 (if (scoped.notReadByTests == 0) "" else ", ${scoped.notReadByTests} notReadByTests lists")
         )
-        ForcingPaths.lines(host.name, forcing, host.explain).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
+        ForcingPaths.lines(host.name, forcing, host.explain, pathIgnore = host.flag(SettingNames.BASE) == "-P${SettingNames.BASE}").forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
 
         val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map

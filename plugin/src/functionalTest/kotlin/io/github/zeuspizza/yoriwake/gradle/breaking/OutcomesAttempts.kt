@@ -104,7 +104,7 @@ class OutcomesAttempts : BreakAttempt() {
             ),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the map knows a test by its exact id, or a template by the
@@ -145,7 +145,7 @@ class OutcomesAttempts : BreakAttempt() {
             )
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: OR6.
@@ -157,7 +157,7 @@ class OutcomesAttempts : BreakAttempt() {
             buildScript = copyingBuild() + "\nyoriwake { alwaysRun.add(\"dev.sample.A1Pin*\") }\n",
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a pin is matched against a name built from the test's id, the
@@ -189,7 +189,7 @@ class OutcomesAttempts : BreakAttempt() {
             buildScript = copyingBuild() + "\nyoriwake { alwaysRun.add(\"dev.sample.A1PinnedTest\") }\n",
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     /** Runs after a target and before Codec's test, long enough for --fail-fast to stop its JVM. */
@@ -217,7 +217,7 @@ class OutcomesAttempts : BreakAttempt() {
             File(it, "build/test-results").deleteRecursively()
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the agent writes a test's outcome in its own listener, after
@@ -261,7 +261,7 @@ class OutcomesAttempts : BreakAttempt() {
             File(it, "build/test-results").deleteRecursively()
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a tag pins by the descriptor's tags, read only on a leaf after
@@ -302,6 +302,6 @@ class OutcomesAttempts : BreakAttempt() {
             buildScript = copyingBuild(),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

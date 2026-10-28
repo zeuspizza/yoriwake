@@ -1,5 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.breaking
 
+import io.github.zeuspizza.yoriwake.gradle.FunctionalGradle
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -135,7 +137,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = suiteBuild + "\ntasks.test { useJUnitPlatform { includeEngines(\"junit-platform-suite\") } }\n",
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a test's window opens when the listener hears it start, but
@@ -163,7 +165,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a test is known to the map only by its exact id, and Jupiter
@@ -202,7 +204,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             )
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: an engine that runs nothing once one of its tests is left out is
@@ -255,7 +257,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: in-JVM parallelism is refused where the build configures it
@@ -323,7 +325,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the filter judges a test by its own record and a container by
@@ -355,7 +357,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             listOf(codec, other, first, target, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: Spock runs setupSpec before any feature starts, so no feature's
@@ -408,7 +410,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: engineRunsEverything finds Kotest by its engine segment at any
@@ -478,6 +480,73 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: the Platform filter includes a container that has children and
+    // judges each child on its own record; a leaf container is judged through the records beneath
+    // it. A JUnit 4 runner on the vintage engine is a container whose children are the tests its
+    // description lists at discovery, but a runner may report a test at run time its description
+    // never listed (vintage registers it as dynamic). Only that test's record reaches the change.
+    @Test
+    fun `a test a vintage runner reports only at run time is selected through its runner`(@TempDir dir: File) {
+        // Gradle 9 files the listed test under the runner's class beside the one it reports at run
+        // time, and a target's result must hold one test case.
+        assumeTrue(FunctionalGradle.version == "8.14", "runs in the 8.14 suite only")
+        val runner = source(
+            "src/test/java/dev/sample/GrowingRunner.java",
+            """
+            package dev.sample;
+            import org.junit.runner.Description;
+            import org.junit.runner.Runner;
+            import org.junit.runner.manipulation.Filter;
+            import org.junit.runner.manipulation.Filterable;
+            import org.junit.runner.notification.Failure;
+            import org.junit.runner.notification.RunNotifier;
+            public class GrowingRunner extends Runner implements Filterable {
+                private final Class<?> type;
+                private final Description placeholder = Description.createTestDescription(Other.class, "placeholder");
+                private boolean placeholderKept = true;
+                public GrowingRunner(Class<?> type) { this.type = type; }
+                @Override public Description getDescription() {
+                    Description suite = Description.createSuiteDescription(type);
+                    if (placeholderKept) suite.addChild(placeholder);
+                    return suite;
+                }
+                @Override public void filter(Filter filter) { placeholderKept = filter.shouldRun(placeholder); }
+                @Override public void run(RunNotifier notifier) {
+                    if (placeholderKept) {
+                        notifier.fireTestStarted(placeholder);
+                        new Other().one();
+                        notifier.fireTestFinished(placeholder);
+                    }
+                    Description grown = Description.createTestDescription(type, "reverses");
+                    notifier.fireTestStarted(grown);
+                    try {
+                        if (!"cba".equals(new Codec().encode("abc"))) throw new AssertionError("not reversed");
+                    } catch (Throwable failure) {
+                        notifier.fireTestFailure(new Failure(grown, failure));
+                    }
+                    notifier.fireTestFinished(grown);
+                }
+            }
+            """,
+        )
+        val target = source(
+            "src/test/java/dev/sample/A1GrowingTest.java",
+            "package dev.sample;\n@org.junit.runner.RunWith(GrowingRunner.class)\npublic class A1GrowingTest {}",
+        )
+        val build = minimalBuild.replace(
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n" +
+                "testImplementation(\"junit:junit:4.13.2\")\ntestRuntimeOnly(\"org.junit.vintage:junit-vintage-engine\")",
+        ).replace("tasks.test { useJUnitPlatform() }", "tasks.test { useJUnitPlatform(); forkEvery = 1 }")
+        val result = attempt(
+            dir, "dev.sample.A1GrowingTest", Aim.Row("CLASS_RUNS_WHOLE"),
+            listOf(codec, other, first, runner, target, codecTest),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

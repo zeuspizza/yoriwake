@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.agent.select.FilterRule
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore.Protection
 import io.github.zeuspizza.yoriwake.gradle.change.validated
@@ -31,6 +32,19 @@ class PathIgnoreTest {
         "docs/**", "**/*.md", "*.md", "docs/", "a/**/b", "x?.md", "docs/*", "docs/*/*.md",
         "**", "docs/**/*.txt", "**/docs/**", "core/*", "with space/*",
     )
+
+    @Test
+    fun `a change-set item escapes a comma and a percent, and the test JVM reads back the path`() {
+        // The escaped forms the agent's tests feed its matcher, so the two sides cannot drift.
+        val escaped = mapOf(
+            "a,b" to "a%2Cb", "100%" to "100%25", "a%2Cb" to "a%252Cb", "%25" to "%2525",
+            "docker/users,v2.json" to "docker/users%2Cv2.json", "docker/100%.json" to "docker/100%25.json",
+        )
+        escaped.forEach { (path, item) ->
+            assertEquals(item, PathIgnore.escape(path), path)
+            assertEquals(path, FilterRule.unescape(item), item)
+        }
+    }
 
     @Test
     fun `each pattern matches what Gradle's include matches`(@TempDir dir: File) {

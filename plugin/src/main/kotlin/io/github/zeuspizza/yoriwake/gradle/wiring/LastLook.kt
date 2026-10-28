@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle.wiring
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
+import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
@@ -12,17 +13,20 @@ import org.gradle.api.tasks.testing.Test
 import java.io.File
 
 /**
- * The classpath files a run that leaves tests out compared, looked at again right before the test
- * JVM starts.
+ * The classpath files a run that leaves tests out compared, and the task's configuration, looked at
+ * again right before the test JVM starts.
  *
  * The plugin wires a `Test` task once every build script has run, and `doFirst` prepends, so its
  * comparisons run before every `doFirst` the build itself adds: a build-info file the build stamps
  * from git there is written after them. This action runs after those: registered when the plugin is
  * applied, and moved next to the task's own action once every build script has run (see [moveLast]).
  * When the run still narrows, or still leaves out what a selecting run ran, and a file moved since
- * it was compared, the whole suite runs.
+ * it was compared, the whole suite runs. A selecting run's record also carries the configuration its
+ * test JVM starts with, and leaves no record when fail-fast is on by now; a complement whose
+ * configuration differs from that one runs every test. [agentArgument] is the plugin's own
+ * `-javaagent` argument, which the configuration leaves out.
  */
-internal class LastLook(private val mapDir: File) : Action<Task> {
+internal class LastLook(private val mapDir: File, private val agentArgument: String?) : Action<Task> {
 
     override fun execute(task: Task) {
         val test = task as Test
@@ -30,12 +34,21 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
         val selecting = test.systemProperties[AgentContract.SELECT_PROPERTY]?.toString() == "true"
         val complementing = test.systemProperties[AgentContract.COMPLEMENT_RECORD_PROPERTY] != null
         if (!selecting && !complementing) return
+        if (selecting) finishStart(test)
         val handed = handOver(mapDir)
-        if (!handed.isFile) return
-        val compared = runCatching { read(handed.readText()) }.getOrNull()
-        runCatching { handed.delete() }
-        val moved = whatMoved(compared) {
-            ClasspathFiles.walk(test.classpath.files, it.buildDirs, it.rootDir, classes = it.classes)
+        val configured = if (complementing) {
+            val copy = runCatching { File(test.systemProperties[AgentContract.COMPLEMENT_RECORD_PROPERTY].toString()).readText() }
+                .getOrNull()
+            configurationMoved(copy) { configurationOf(test, agentArgument) }
+        } else {
+            null
+        }
+        if (configured != null) runCatching { handed.delete() }
+        val moved = configured ?: run {
+            if (!handed.isFile) return
+            val compared = runCatching { read(handed.readText()) }.getOrNull()
+            runCatching { handed.delete() }
+            whatMoved(compared) { again(test.classpath.files, it) }
         } ?: return
         val (kind, reason) = if (complementing) {
             // Left out by its record no more: the run is a full run that captures nothing.
@@ -51,11 +64,28 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
         runCatching { File(mapDir, AgentContract.CHANGE_SET_FILE).delete() }
     }
 
+    /**
+     * A selecting run's start, given the configuration its test JVM starts with; none when the
+     * task's own `doFirst` actions turned fail-fast on, as at the start.
+     */
+    private fun finishStart(test: Test) {
+        if (!File(mapDir, SelectionRecord.START_FILE).isFile) return
+        if (test.failFast) {
+            runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }
+            test.logger.info("[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record")
+            return
+        }
+        addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }
+            ?.let { test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be completed ($it), so this run leaves no selection record") }
+    }
+
     internal class Compared(
         val rootDir: File,
         val buildDirs: List<String>,
         val classes: Boolean,
         val digests: Map<String, String>,
+        /** [ClasspathFiles.table]'s homes when the comparing action compared a table; empty for a walk. */
+        val homes: Map<String, File> = emptyMap(),
     )
 
     companion object {
@@ -64,6 +94,14 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
 
         /** Where a comparing action leaves what it compared, for this action to look at again. */
         fun handOver(mapDir: File) = File(mapDir, "classpath-files.compared")
+
+        /**
+         * [classpath] digested as the comparing action did: a selecting run's table, with its
+         * dependencies, when the hand-over carries homes; else a complement's walk of build output.
+         */
+        internal fun again(classpath: Collection<File>, compared: Compared): ClasspathFiles.Walk =
+            if (compared.homes.isEmpty()) ClasspathFiles.walk(classpath, compared.buildDirs, compared.rootDir, classes = compared.classes)
+            else ClasspathFiles.table(classpath, compared.buildDirs, compared.rootDir, compared.homes)
 
         /**
          * Why the run may no longer leave tests out, given what a comparing action handed over
@@ -87,6 +125,42 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
         }
 
         /**
+         * Adds [late], the configuration the test JVM starts with, to the selection record's start in
+         * [mapDir]; a start that cannot be read, decoded or written again is deleted, so the run leaves
+         * no record. Returns why it was deleted, or null.
+         */
+        internal fun addLateConfiguration(mapDir: File, late: () -> String): String? {
+            val file = File(mapDir, SelectionRecord.START_FILE)
+            val failure = runCatching {
+                val start = requireNotNull(SelectionRecord.Start.decode(file.readText())) { "it could not be decoded" }
+                SelectionRecord.writeStart(mapDir, SelectionRecord.Start(start.token, start.stamp, late()))
+            }.exceptionOrNull() ?: return null
+            runCatching { file.delete() }
+            return failure.toString()
+        }
+
+        /**
+         * Why a complement run whose test JVM starts with the configuration [now] may no longer leave
+         * out what its record ([record], the copy's text; null when it could not be read) lists; null
+         * when the record's own test JVM started with the same one. Anything that cannot be
+         * established forces.
+         */
+        internal fun configurationMoved(record: String?, now: () -> String): String? {
+            val recorded = record?.let(SelectionRecord::read)?.takeIf { it.failure() == null }
+                ?.let(SelectionRecord::lateConfigurationOf)
+                ?: return "the selection record names no configuration its test JVM started with"
+            val digest = runCatching(now).getOrElse {
+                return "the task's configuration could not be read again before the test JVM started ($it)"
+            }
+            return if (digest == recorded) {
+                null
+            } else {
+                "the task's configuration (its system properties, JVM arguments or test filters) as its test JVM " +
+                    "starts differs from the selecting run's, set by the task's own doFirst actions"
+            }
+        }
+
+        /**
          * Moves this action next to the task's own action, after every `doFirst` that exists by now,
          * such as one a root `subprojects {}` block or a plugin applied earlier added. Left where it
          * is when either cannot be found.
@@ -102,10 +176,21 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
             }
         }
 
-        /** Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes]. */
-        fun write(mapDir: File, rootDir: File, buildDirs: Collection<String>, classes: Boolean, digests: Map<String, String>) {
+        /**
+         * Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes], and
+         * the table's [homes] when it compared one.
+         */
+        fun write(
+            mapDir: File,
+            rootDir: File,
+            buildDirs: Collection<String>,
+            classes: Boolean,
+            digests: Map<String, String>,
+            homes: Map<String, File> = emptyMap(),
+        ) {
             val lines = listOf("root\t${Tsv.escape(rootDir.absolutePath)}", "classes\t$classes") +
                 buildDirs.map { "build\t${Tsv.escape(it)}" } +
+                homes.map { (name, home) -> "home\t${Tsv.escape(name)}\t${Tsv.escape(home.absolutePath)}" } +
                 digests.map { (path, digest) -> "file\t${Tsv.escape(path)}\t$digest" }
             writeAtomically(handOver(mapDir), lines.joinToString("\n", postfix = "\n$END\n"))
         }
@@ -118,6 +203,7 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
             var classes: Boolean? = null
             val buildDirs = mutableListOf<String>()
             val digests = mutableMapOf<String, String>()
+            val homes = mutableMapOf<String, File>()
             for (line in lines.dropLast(1)) {
                 val parts = line.split('\t')
                 when {
@@ -125,10 +211,11 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
                     parts.size == 2 && parts[0] == "classes" -> classes = parts[1].toBooleanStrictOrNull() ?: return null
                     parts.size == 2 && parts[0] == "build" -> buildDirs += Tsv.unescape(parts[1])
                     parts.size == 3 && parts[0] == "file" -> digests[Tsv.unescape(parts[1])] = parts[2]
+                    parts.size == 3 && parts[0] == "home" -> homes[Tsv.unescape(parts[1])] = File(Tsv.unescape(parts[2]))
                     else -> return null
                 }
             }
-            return Compared(root ?: return null, buildDirs, classes ?: return null, digests)
+            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes)
         }
 
         private const val END = "end"

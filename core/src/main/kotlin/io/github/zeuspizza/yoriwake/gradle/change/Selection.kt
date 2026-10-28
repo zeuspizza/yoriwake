@@ -186,6 +186,8 @@ internal sealed interface ClasspathFilesVerdict {
     data class Handed(val moved: ClasspathFiles.Moved, val files: List<String>) : ClasspathFilesVerdict
     /** No table to compare against, or no walk to compare with. */
     data class Unrecorded(val why: String) : ClasspathFilesVerdict
+    /** A jar or directory the classpath takes from outside the build moved: [moved] holds those rows only. */
+    data class DependenciesMoved(val moved: ClasspathFiles.Moved) : ClasspathFilesVerdict
 }
 
 /**
@@ -200,15 +202,25 @@ internal fun classpathFilesRule(
 ): ClasspathFilesVerdict {
     val recorded = CoverageDecoder.readClasspathFiles(mapDir)
         ?: return ClasspathFilesVerdict.Unrecorded("the map records no digests of this task's classpath files")
-    val walk = runCatching { ClasspathFiles.walk(facts.classpathFiles(), facts.buildDirs.values, facts.rootDir) }
-        .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
+    if (ClasspathFiles.DEPENDENCY_ORDER !in recorded) {
+        return ClasspathFilesVerdict.Unrecorded(
+            "the map records no dependencies of this task's classpath; a map recorded before they were looks like this"
+        )
+    }
+    val walk = runCatching {
+        ClasspathFiles.table(facts.classpathFiles(), facts.buildDirs.values, facts.rootDir, facts.dependencyHomes)
+    }.getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
     return when (walk) {
         is ClasspathFiles.Walk.Refused ->
             ClasspathFilesVerdict.Unrecorded("this task's classpath files could not be digested (${walk.reason})")
         is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked)).let { moved ->
             val handed = moved.traceable(facts.rootDir)
+            val dependencies = moved.files.filterKeys { it.startsWith(ClasspathFiles.DEPENDENCY_PREFIX) }
             when {
                 moved.isEmpty -> ClasspathFilesVerdict.Unchanged
+                dependencies.isNotEmpty() -> ClasspathFilesVerdict.DependenciesMoved(
+                    ClasspathFiles.Moved(dependencies.mapKeys { it.key.removePrefix(ClasspathFiles.DEPENDENCY_PREFIX) })
+                )
                 handed != null && CoverageDecoder.recordsResourceReads(mapDir) ->
                     ClasspathFilesVerdict.Handed(moved, handed)
                 else -> ClasspathFilesVerdict.Moved(moved)
@@ -230,6 +242,9 @@ internal fun InlineWidening.withClasspathFiles(
 ): InlineWidening {
     if (verdict == ClasspathFilesVerdict.Unchanged || forces) return this
     if (forcedByPaths) {
+        if (verdict is ClasspathFilesVerdict.DependenciesMoved) {
+            log("dependencies on this task's classpath also changed since the map was captured: ${verdict.moved.named()}")
+        }
         val moved = (verdict as? ClasspathFilesVerdict.Moved)?.moved ?: (verdict as? ClasspathFilesVerdict.Handed)?.moved
         if (moved != null) {
             log("build output on this task's classpath also changed since the map was captured: ${moved.named()}")
@@ -250,6 +265,14 @@ internal fun InlineWidening.withClasspathFiles(
                 "reaches a test through no tracked path. The whole suite runs.",
             scanExhausted = false,
             kind = RefusalKind.CLASSPATH_FILES_CHANGED,
+            detail = verdict.moved.named(),
+        )
+        is ClasspathFilesVerdict.DependenciesMoved -> InlineWidening.refuse(
+            "dependencies on this task's classpath changed since the map was captured: " +
+                "${verdict.moved.named()}. A dependency that resolves to another jar reaches every test, " +
+                "whatever changed it. The whole suite runs.",
+            scanExhausted = false,
+            kind = RefusalKind.DEPENDENCIES_CHANGED,
             detail = verdict.moved.named(),
         )
         is ClasspathFilesVerdict.Unrecorded -> InlineWidening.refuse(

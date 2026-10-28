@@ -129,7 +129,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             file.writeText(file.readText().replace("a + b", "a + b + 1"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: BI2.
@@ -144,7 +144,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             breakAlpha(dir)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: BI3.
@@ -168,7 +168,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             breakAlpha(dir)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: BI4.
@@ -191,7 +191,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             breakAlpha(dir)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: BI10.
@@ -216,7 +216,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             breakAlpha(dir)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     /** A `develocity` task extension shaped like the real plugin's: a feature per getter, each with `getEnabled()`. */
@@ -245,7 +245,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             buildScript = standIn(td = true, pts = false),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: BI6.
@@ -256,7 +256,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             buildScript = standIn(td = false, pts = true),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: BI7.
@@ -272,7 +272,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             ),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: DevelocityDetection reads the modern `develocity` extension and
@@ -293,7 +293,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             ),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: Predictive Test Selection is on when `getEnabled()` is false but
@@ -323,7 +323,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             ),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: readFlag accepts a Boolean or a provider of one and nothing
@@ -352,7 +352,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             ),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     private val parallelProperties =
@@ -366,7 +366,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             listOf(other, first, alpha, alphaTest, alphaNameTest, "src/test/resources/junit-platform.properties" to parallelProperties),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: ParallelismDetector reads junit-platform.properties from each
@@ -393,7 +393,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             ),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the check that the map directory was not overwritten runs in
@@ -420,7 +420,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             ),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: BI9.
@@ -436,7 +436,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             """.trimIndent(),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the scope a record was captured under is read back off the task
@@ -471,7 +471,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             """.trimIndent(),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a changed file that no compiled class or build script names
@@ -507,6 +507,6 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             ),
         ) { dir -> File(dir, "level.knob").writeText("3\n") }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

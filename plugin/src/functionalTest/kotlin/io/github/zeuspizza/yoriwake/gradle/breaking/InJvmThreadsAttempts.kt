@@ -128,7 +128,7 @@ class InJvmThreadsAttempts : BreakAttempt() {
                 reader("A3ReaderTest"), codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: TH2.
@@ -157,7 +157,7 @@ class InJvmThreadsAttempts : BreakAttempt() {
                 reader("A4ReaderTest"), codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: TH3.
@@ -176,7 +176,7 @@ class InJvmThreadsAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the detector reads junit-platform.properties from every
@@ -206,7 +206,7 @@ class InJvmThreadsAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: CaptureSession files a class load against the window open
@@ -259,6 +259,6 @@ class InJvmThreadsAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("public String encode", "public int size() { return 0; } public String encode"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

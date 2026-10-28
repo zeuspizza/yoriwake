@@ -114,6 +114,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         properties: Properties,
         /** The tests this execution always runs, from [Settings.alwaysRunOf]. */
         alwaysRun: List<String> = emptyList(),
+        /** Why the execution runs only tests named for it (`-Dtest`), or null: a selecting run then declines. */
+        namedTests: String? = null,
         /**
          * Explaining, not running: asks to select whatever the invocation asked, leaves no selection
          * record, compares no environment it was not given, and hands what the selecting step worked
@@ -151,19 +153,22 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         val observing = plan.observing
         // Beside the selecting properties below, or a decline's refusal.
         if (observing) host.property(AgentContract.OBSERVE_PROPERTY, "true")
-        if (plan.declines.isNotEmpty()) {
-            val first = plan.declines.first()
+        // As Gradle declines for --tests: narrowing tests someone named would leave some of them out.
+        val declines = plan.declines +
+            listOfNotNull(namedTests?.takeIf { plan.selecting || observing }?.let { RunPlan.Decline(RefusalKind.TESTS_NAMED, it) })
+        if (declines.isNotEmpty()) {
+            val first = declines.first()
             host.refuse(first.kind, first.reason)
-            host.property(AgentContract.DECLINES_PROPERTY, plan.declines.joinToString(",") { it.kind.token })
+            host.property(AgentContract.DECLINES_PROPERTY, declines.joinToString(",") { it.kind.token })
             declinedLeftAloneMarker(CoverageDecoder.recordsDir(mapDir)).delete()
             if (observing) {
                 host.lifecycle(
-                    "[yoriwake] $name: ${plan.declines.joinToString("; ") { it.reason }}, so a selecting run would run " +
+                    "[yoriwake] $name: ${declines.joinToString("; ") { it.reason }}, so a selecting run would run " +
                         "every test, and that is what this run observes."
                 )
                 return RunPlan.Kind.OBSERVE
             }
-            SelectingStep.declined(host, mapDir, plan.declines.map { it.reason }, SettingNames.SELECT, isolatedCapture)
+            SelectingStep.declined(host, mapDir, declines.map { it.reason }, SettingNames.SELECT, isolatedCapture)
             return RunPlan.Kind.RECORD
         }
         if (!plan.selecting && !observing) return RunPlan.Kind.RECORD
@@ -172,7 +177,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
 
         val settled = SelectionSetup.settle(
             plan.widening!!,
-            { ChangeDetection.changedPaths(git, root, it) },
+            { ChangeDetection.changedPaths(git, root, it) { path -> Recording.isBuildState(path) } },
             settings.largeChangeThreshold,
         ) { _, changed -> LargeChange.counted(changed, null) }
         val (widened, paths) = when (settled) {
@@ -275,6 +280,12 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         val text = record.takeIf(File::isFile)?.let { runCatching { it.readText() }.getOrNull() }
         val read = SelectionRecord.read(text)
         val unusable = when {
+            // A trusted-map list makes a restored map directory unreviewed input, and the record in it is
+            // outside the map's digest: only a record handed over by the run that wrote it is used.
+            from.isEmpty() && trusted != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to
+                "the ${AgentContract.SELECTION_FILE} for ${host.name} in $where is not one the trusted-map list " +
+                "vouches for, since a restored cache could have written it; with -D${SettingNames.TRUSTED_MAPS}, " +
+                "pass the selecting run's own record as -D${SettingNames.COMPLEMENT}=<dir>"
             text == null && record.exists() -> RefusalKind.COMPLEMENT_NO_RECORD to
                 "the ${AgentContract.SELECTION_FILE} for ${host.name} in $where cannot be read as a file"
             text == null -> RefusalKind.COMPLEMENT_NO_RECORD to
@@ -329,7 +340,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         // Only for a map whose stamp stands; the drift is the part of the map's age a commit cannot state.
         val drift = if (stampAge is MapAge.Known) {
             // As the capture's start snapshot excluded them: build output and the maps themselves.
-            val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + Recording.MAPS_HOME
+            val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + Recording.BUILD_STATE
             WorkingTree.drift(root, mapDir, excluded)
         } else {
             null

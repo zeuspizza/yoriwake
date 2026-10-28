@@ -115,6 +115,6 @@ class ChildProcessAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

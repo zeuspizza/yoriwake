@@ -144,6 +144,11 @@ jobs:
     needs: candidate
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    # Each leg's JDK, for the select row on the same OS. A matrix job's outputs merge across legs,
+    # so each leg writes its own name.
+    outputs:
+      jdk-linux: ${{ steps.jdk.outputs.jdk-linux }}
+      jdk-macos: ${{ steps.jdk.outputs.jdk-macos }}
     strategy:
       fail-fast: false
       matrix:
@@ -155,9 +160,14 @@ jobs:
         with:
           ref: ${{ needs.candidate.outputs.sha }}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        id: java
         with:
           distribution: temurin
           java-version: '21'
+      - name: name this leg's JDK
+        id: jdk
+        shell: bash
+        run: echo "jdk-${{ matrix.os }}=${{ steps.java.outputs.version }}" >> "$GITHUB_OUTPUT"
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
@@ -212,10 +222,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.candidate.outputs.sha }}
+      # On the capture's OS, the map's JDK: another patch release would rightly run every test.
+      # Across OSes every test runs anyway. The output comes last, so a missing one fails setup.
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ matrix.from != matrix.os && '21' || needs.capture.outputs[format('jdk-{0}', matrix.os)] }}
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true

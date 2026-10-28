@@ -24,6 +24,15 @@ internal object AgentJar {
      */
     fun locationIn(cacheDir: File): File = File(cacheDir, RESOURCE)
 
+    /** [locationIn] the plugin's own directory of a build's project cache directory. */
+    fun locationUnder(projectCacheDir: File): File = locationIn(File(projectCacheDir, DIRECTORY))
+
+    /**
+     * The `-javaagent` argument that attaches [agent]: what the plugin adds, and what the
+     * configuration digest leaves out wherever it is read.
+     */
+    fun argument(agent: File): String = "-javaagent:" + agent.absolutePath
+
     /** Writes the bundled agent to [cacheDir] and returns it, or null when it is not bundled. */
     fun extractTo(cacheDir: File): File? {
         val bundled = javaClass.classLoader.getResourceAsStream(RESOURCE) ?: return null

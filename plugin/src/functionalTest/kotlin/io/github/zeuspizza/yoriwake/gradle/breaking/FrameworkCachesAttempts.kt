@@ -168,7 +168,7 @@ class FrameworkCachesAttempts : BreakAttempt() {
             buildScript = bootBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the annotation digest covers every annotation a class
@@ -219,7 +219,7 @@ class FrameworkCachesAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("default \"dev\"", "default \"prod\""))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a test class that declares a test and that nothing else names
@@ -278,7 +278,7 @@ class FrameworkCachesAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("\"hello\"", "\"hullo\""))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a library load is judged by the class Runtime names as its
@@ -314,7 +314,7 @@ class FrameworkCachesAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild(),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a Kotest test is never left out, at any depth, because Kotest
@@ -403,6 +403,6 @@ class FrameworkCachesAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("same(s).reversed()", "same(s).reversed() + \"-x9\""))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

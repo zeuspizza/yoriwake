@@ -12,6 +12,7 @@ import org.junit.platform.engine.support.descriptor.AbstractTestDescriptor
 import org.junit.platform.engine.support.descriptor.MethodSource
 import java.io.File
 import java.util.Optional
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -244,6 +245,15 @@ class SelectionFilterTest {
     }
 
     @Test
+    fun `a changed path with a comma or a percent in its name matches a declared dependency`(@TempDir dir: File) {
+        // Escaped as the daemon hands them over. A tag cannot hold a comma, so only a wildcard
+        // meets one, and one that also matched the escaped form would prove nothing.
+        val changed = "docker/users%2Cv2.json,docker/100%25.json"
+        assertTrue(declares(dir, "yoriwake-depends-on:/docker/users?v2.json", changed))
+        assertTrue(declares(dir, "yoriwake-depends-on:/docker/100%.json", changed))
+    }
+
+    @Test
     fun `a declared dependency no changed path matches selects nothing`(@TempDir dir: File) {
         assertFalse(declares(dir, "yoriwake-depends-on:/docker/**", "src/main/java/com/acme/A.java,dockerfile"))
     }
@@ -307,6 +317,74 @@ class SelectionFilterTest {
             io.github.zeuspizza.yoriwake.agent.select.Verdict.SKIPPED,
             FilterRule.verdictFor(System::getProperty, decision, testId("Alpha"), true),
             "only the engines that need it are exempt from exclusion",
+        )
+    }
+
+    private val growing = "[engine:junit-vintage]/[runner:com.acme.GrowingTest]"
+
+    private fun vintage(runner: String, test: String, covered: String) =
+        "SUCCESSFUL\t1000000\t$covered\t$runner/$test"
+
+    /** What the filter answers, and why, for a vintage leaf the change cannot reach on its own. */
+    private fun vintageLeaf(dir: File, leaf: String, vararg records: String): Pair<Boolean, String?> {
+        writeMap(dir, *records, record("Alpha", "com.acme.A"))
+        selectingAgainst(dir, "com.acme.A")
+        val result = SelectionFilter(false).apply(Descriptor(leaf, test = true))
+        return result.included() to result.reason.orElse(null)
+    }
+
+    @Test
+    fun `a vintage runner's listed test is kept when a test it reported at run time reaches the change`(
+        @TempDir dir: File,
+    ) {
+        val kept = vintageLeaf(
+            dir, "$growing/[test:listed(com.acme.GrowingTest)]",
+            vintage(growing, "[test:listed(com.acme.GrowingTest)]", "com.acme.Other"),
+            vintage(growing, "[dynamic:reverses(com.acme.GrowingTest)]", "com.acme.A"),
+        )
+
+        assertEquals(true to "CLASS_RUNS_WHOLE", kept)
+    }
+
+    @Test
+    fun `a vintage runner's listed test is kept when its run-time test reaches nothing`(@TempDir dir: File) {
+        // A run-time test the map has never seen can reach the change; only its runner can run it.
+        val kept = vintageLeaf(
+            dir, "$growing/[test:listed(com.acme.GrowingTest)]",
+            vintage(growing, "[test:listed(com.acme.GrowingTest)]", "com.acme.Other"),
+            vintage(growing, "[dynamic:reverses(com.acme.GrowingTest)]", "com.acme.Other"),
+        )
+
+        assertEquals(true to "CLASS_RUNS_WHOLE", kept)
+    }
+
+    @Test
+    fun `a vintage runner with static records only is still narrowed`(@TempDir dir: File) {
+        val kept = vintageLeaf(
+            dir, "$growing/[test:listed(com.acme.GrowingTest)]",
+            vintage(growing, "[test:listed(com.acme.GrowingTest)]", "com.acme.Other"),
+            vintage(growing, "[test:other(com.acme.GrowingTest)]", "com.acme.Other"),
+        )
+
+        assertEquals(false, kept.first)
+    }
+
+    @Test
+    fun `a suite keeps only the member class that reported a test at run time`(@TempDir dir: File) {
+        val suite = "[engine:junit-vintage]/[runner:com.acme.AllTests]"
+        val records = arrayOf(
+            vintage(suite, "[test:com.acme.Inner]/[test:m(com.acme.Inner)]", "com.acme.Other"),
+            vintage(suite, "[test:com.acme.Inner]/[dynamic:grown(com.acme.Inner)]", "com.acme.A"),
+            vintage(suite, "[test:com.acme.Plain]/[test:m(com.acme.Plain)]", "com.acme.Other"),
+        )
+
+        assertEquals(
+            true to "CLASS_RUNS_WHOLE",
+            vintageLeaf(dir, "$suite/[test:com.acme.Inner]/[test:m(com.acme.Inner)]", *records),
+        )
+        assertEquals(
+            false,
+            vintageLeaf(File(dir, "plain"), "$suite/[test:com.acme.Plain]/[test:m(com.acme.Plain)]", *records).first,
         )
     }
 

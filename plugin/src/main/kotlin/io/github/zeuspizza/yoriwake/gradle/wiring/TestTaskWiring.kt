@@ -48,6 +48,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.configuredListing
 import io.github.zeuspizza.yoriwake.gradle.change.head
 import io.github.zeuspizza.yoriwake.gradle.change.validated
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
+import io.github.zeuspizza.yoriwake.gradle.facts.dependencyHomes
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.fullRunBranches
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -333,7 +334,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         test.doFirst { loadedDir.deleteRecursively() }
 
         if (recording) {
-            agent?.let { test.jvmArgs("-javaagent:" + it.absolutePath) }
+            agent?.let { test.jvmArgs(AgentJar.argument(it)) }
             test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)
         }
         configureNonPlatformRunner(test, agent, recording, selecting, runPlan.observing, narrowPlainRunners)
@@ -503,11 +504,12 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val classpath = test.classpath
         val buildDirs = projectFacts(project, buildMemo).buildDirs.values.toList()
         val rootDir = project.rootDir
+        val homes = dependencyHomes(project)
         test.doFirst {
             pending.delete()
             if (declinedUnderDevelocity(test)) return@doFirst
             if (selecting && !fullRunMarker.isFile) return@doFirst
-            val walk = runCatching { ClasspathFiles.walk(classpath.files, buildDirs, rootDir) }
+            val walk = runCatching { ClasspathFiles.table(classpath.files, buildDirs, rootDir, homes) }
                 .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
             when (walk) {
                 is ClasspathFiles.Walk.Found ->
@@ -880,7 +882,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
      */
     private fun declineUnderDevelocity(project: Project, test: Test, mapDir: File, agent: File?) {
         val develocity = DevelocityDetection.provider(project, test)
-        val agentArgument = agent?.let { "-javaagent:" + it.absolutePath }
+        val agentArgument = agent?.let(AgentJar::argument)
         val marker = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         test.doFirst {
             val (kind, reason) = DevelocityDetection.decode(develocity.orNull) ?: run {
@@ -949,7 +951,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             )
             return null
         }
-        val agent = AgentJar.locationIn(File(project.cacheDir(), AgentJar.DIRECTORY))
+        val agent = AgentJar.locationUnder(project.cacheDir())
         test.classpath += project.files(agent)
         // Re-checked every run, so a cleaned cache directory gets its agent back.
         test.doFirst { AgentJar.extractTo(agent.parentFile) }
@@ -1128,29 +1130,35 @@ internal class StampIdentity(
             buildRoot = buildRoot ?: "?${rootDir.absolutePath}",
             buildPath = buildPath,
             classpath = SelectionRecord.classpathDigest(test.classpath.files, rootDir, gradleUserHome),
-            configuration = SelectionRecord.configurationDigest(
-                test.systemProperties,
-                // Every argument the test JVM starts with, those of argument providers included, but
-                // the agents and properties the plugin and JaCoCo set by run kind.
-                test.allJvmArgs.filter { argument ->
-                    argument != agentArgument && !argument.startsWith("-Dyoriwake.") &&
-                        !(argument.startsWith("-javaagent:") && argument.substringBefore('=').endsWith("jacocoagent.jar"))
-                },
-                test.includes.sorted().map { "include $it" } + test.excludes.sorted().map { "exclude $it" } +
-                    test.filter.includePatterns.sorted().map { "filter.include $it" } +
-                    test.filter.excludePatterns.sorted().map { "filter.exclude $it" },
-                frameworkFilter(test),
-            ),
+            configuration = configurationOf(test, agentArgument),
         )
     }
 
     companion object {
         fun of(project: Project, test: Test, agent: File?) = StampIdentity(
             project.rootDir, test.path, project.buildTreePath, project.gradle.gradleUserHomeDir,
-            agent?.let { "-javaagent:" + it.absolutePath },
+            agent?.let(AgentJar::argument),
         )
     }
 }
+
+/**
+ * The stamp's digest of [test]'s configuration as it is when called, leaving out [agentArgument],
+ * the plugin's own `-javaagent` argument. Read where a run starts and again by [LastLook].
+ */
+internal fun configurationOf(test: Test, agentArgument: String?): String = SelectionRecord.configurationDigest(
+    test.systemProperties,
+    // Every argument the test JVM starts with, those of argument providers included, but the agents
+    // and properties the plugin and JaCoCo set by run kind.
+    test.allJvmArgs.filter { argument ->
+        argument != agentArgument && !argument.startsWith("-Dyoriwake.") &&
+            !(argument.startsWith("-javaagent:") && argument.substringBefore('=').endsWith("jacocoagent.jar"))
+    },
+    test.includes.sorted().map { "include $it" } + test.excludes.sorted().map { "exclude $it" } +
+        test.filter.includePatterns.sorted().map { "filter.include $it" } +
+        test.filter.excludePatterns.sorted().map { "filter.exclude $it" },
+    frameworkFilter(test),
+)
 
 /** The test framework's own filters that are set, as `name=[values]`, or null when none is. */
 // Top level, so the provider reading it captures no wiring instance.

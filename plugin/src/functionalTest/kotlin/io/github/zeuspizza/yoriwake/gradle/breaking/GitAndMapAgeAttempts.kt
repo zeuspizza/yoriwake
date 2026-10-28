@@ -74,7 +74,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             stagedThenDeleted(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: widenToMapAge reads a map as present by its schema-version
@@ -88,7 +88,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             File(mapDir(it), "capture-commit").delete()
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: widenToMapAge relates the stamp to the base with git merge-base.
@@ -103,7 +103,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             stagedThenDeleted(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     /** An ignored fixture whose name holds U+FFFD, the character a name git prints as non-UTF-8 decodes to. */
@@ -121,7 +121,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             suite + ignoredFixtures + (oddName to "x"),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the same filter, at selection: WorkingTree.driftOver returns
@@ -135,7 +135,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             File(it, oddName).writeText("x")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: writeChangeSet refuses when writeAtomically cannot put the file
@@ -147,7 +147,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             File(mapDir(it), "${AgentContract.CHANGE_SET_FILE}/left-behind").apply { parentFile.mkdirs() }.writeText("x")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: Selector.decide forces on an empty change set unless every
@@ -176,7 +176,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             stagedThenDeleted(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the plugin reads a map as present by its schema-version file
@@ -190,7 +190,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             File(mapDir(it), AgentContract.MAP_SCHEMA_VERSION_FILE).delete()
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the selector matches discovered tests against the map by their
@@ -209,7 +209,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             test.writeText(test.readText().replace("void reverses()", "void reversesAgain()"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     /** A git submodule at `lib`, whose committed `.gitmodules` entry sets [ignore], holding a data file. */
@@ -275,7 +275,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: ChangeDetection.changedPaths and WorkingTree.listing ask git
@@ -290,7 +290,7 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: as above, with `ignore = all`: even a commit inside the
@@ -304,6 +304,6 @@ class GitAndMapAgeAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

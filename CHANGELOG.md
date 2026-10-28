@@ -49,11 +49,18 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A complement runs every test when the test task's own `doFirst` sets its configuration or fail-fast differently. Map: left alone.
 - A capture records when a JaCoCo runtime on the test classpath (Android's `testCoverageEnabled`) hides the started agent. Map: left alone.
 - A test JVM that finds parallelism the plugin missed records nothing. Map: left alone.
 - A test the engine starts and never finishes runs every time and no longer discards the capture. Map: left alone.
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
 - A plain JUnit 4 class whose `@BeforeClass`, `@AfterClass` or class rule fails runs again on the next selecting run. Map: left alone.
+- A vintage runner that reports tests at run time runs whole, so those tests are no longer left out. Map: left alone.
+- A test runs when a declared link it read through moves, or a declared dependency's path has a comma. Map: left alone.
+- A changed generated classpath file named with a leading or trailing space runs its readers; one with a comma no longer runs every test. Map: left alone.
+- A dependency that resolves to another jar runs every test, whatever changed it. Map: repaired on the next build.
+- Maven: Develocity's untracked workspace id no longer forces selecting or complement runs. Map: left alone.
+- Maven: a forced run names `.gitignore`, not `pathIgnore`, as the remedy. Map: left alone.
 
 ## [0.3.0] - 2026-10-22
 

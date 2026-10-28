@@ -71,7 +71,7 @@ class DecisionRecordAttempts : BreakAttempt() {
             buildScript = minimalBuild.replace("tasks.test { useJUnitPlatform() }", "tasks.test { useJUnitPlatform(); forkEvery = 1 }"),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the record's JVM-wide windows open at the first touch of a
@@ -129,6 +129,6 @@ class DecisionRecordAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

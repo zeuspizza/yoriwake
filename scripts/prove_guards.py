@@ -639,7 +639,7 @@ def guard_suite():
 
 
 BREAK_FILE = ("plugin/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/gradle/breaking/"
-              "BreakAttempt.kt")
+              "verdict/Verdict.kt")
 BREAK_FLOOR_ONLY = [":plugin:breakAttempts", "-x", ":plugin:breakAttemptsGradle9"]
 
 
@@ -743,6 +743,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "BootClassPathFunctionalTest": 50,
     "BranchPolicyFunctionalTest": 81,
     "CaptureFunctionalTest": 97,
+    # Estimated from DeclaredDependenciesFunctionalTest, as few builds of the same shape, until an
+    # every-guard run measures it.
+    "ChangedDependenciesFunctionalTest": 36,
     "ChangedBytesFunctionalTest": 40,
     "ClassFileCeilingFunctionalTest": 55,
     "ComplementFunctionalTest": 214,
@@ -1326,6 +1329,32 @@ MUTATIONS = [
      "        if (declaredHit != null && !widening.forces) {",
      "        if (false && declaredHit != null && !widening.forces) {",
      functional_suite, "a path the build declares for a task runs that task in full"),
+    # A changed path reaches the test JVM in a comma-joined list, so a comma in its name must be
+    # escaped there and undone before a declared glob is matched against it.
+    ("changed paths reach the test JVM unescaped", SELECTING_STEP,
+     "                CHANGED_PATHS_PROPERTY to paths.map(PathIgnore::escape),",
+     "                CHANGED_PATHS_PROPERTY to paths,",
+     functional_suite, "a test that declares a dependency runs when a file with a comma in its name changes"),
+    ("declared dependencies match changed paths still escaped", SELECTION_FILTER,
+     "                    if (!path.isEmpty() && PathGlob.matches(resolved, FilterRule.unescape(path))) {",
+     "                    if (!path.isEmpty() && PathGlob.matches(resolved, path)) {",
+     agent_suite, "a changed path with a comma or a percent in its name matches a declared dependency"),
+    ("a handed-over verdict narrows though the last look was never handed it", SELECTING_STEP,
+     "            if (handedOver || (verdict != ClasspathFilesVerdict.Unchanged && verdict !is ClasspathFilesVerdict.Handed)) verdict",
+     "            if (handedOver || verdict != ClasspathFilesVerdict.Unchanged) verdict",
+     functional_suite, "a generated resource that changed runs everything when the last look cannot be handed it"),
+    ("a moved classpath file reaches the test JVM unescaped", SELECTING_STEP,
+     "                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles.map(PathIgnore::escape),",
+     "                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles,",
+     functional_suite, "a generated resource with a comma in its name runs the test that reads it"),
+    ("a moved classpath file is read back still escaped", FILTER_RULE,
+     "                values.add(unescape(item));",
+     "                values.add(item);",
+     agent_suite, "the moved files come from the file with commas, percents and spaces restored"),
+    ("a percent in a changed path reaches the test JVM unescaped", PATH_IGNORE,
+     '    fun escape(value: String) = value.replace("%", "%25").replace(",", "%2C")',
+     '    fun escape(value: String) = value.replace(",", "%2C")',
+     unit_suite, "a change-set item escapes a comma and a percent, and the test JVM reads back the path"),
     ("a double star in a declared dependency matches exactly one directory", PATH_GLOB,
      "            for (int next = s; next <= segments.length; next++) {",
      "            for (int next = s + 1; next <= Math.min(s + 1, segments.length); next++) {",
@@ -1374,7 +1403,7 @@ MUTATIONS = [
     # The unpack, back inside configuration. Every first build after an install then configures
     # twice, which is invisible in a build log and costs every two-arm cache measurement a third arm.
     ("the agent is unpacked during configuration again", TEST_TASK_WIRING,
-     "        val agent = AgentJar.locationIn(File(project.cacheDir(), AgentJar.DIRECTORY))",
+     "        val agent = AgentJar.locationUnder(project.cacheDir())",
      "        val agent = AgentJar.extractTo(File(project.cacheDir(), AgentJar.DIRECTORY))!!",
      functional_suite, "reuses its configuration-cache entry"),
     ("the Isolated Projects decline stops firing", YORIWAKE_PLUGIN,
@@ -2732,6 +2761,26 @@ MUTATIONS = [
      "                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests) }",
      "                    runCatching { Unit }",
      functional_suite, "a classpath file the test task's doFirst writes from a property differently runs every test"),
+    # The configuration and fail-fast are read again after the test task's own doFirst actions: a
+    # property one of them sets differently in the two runs reaches the test unseen otherwise.
+    ("a selecting run's record carries the configuration before the build's doFirst", LAST_LOOK,
+     "SelectionRecord.Start(start.token, start.stamp, late())",
+     "SelectionRecord.Start(start.token, start.stamp, start.stamp.configuration)",
+     functional_suite, "a system property only the selecting run's doFirst sets runs every test in the complement"),
+    ("a complement run's last look never compares the configuration", LAST_LOOK,
+     "            configurationMoved(copy) { configurationOf(test, agentArgument) }",
+     "            configurationMoved(copy) { configurationOf(test, agentArgument) }.takeIf { false }",
+     functional_suite, "a JVM argument only the complement's doFirst adds runs every test, naming the configuration"),
+    # The agent's absolute path differs between checkouts: kept in the late digest, it forces every
+    # complement run in another job.
+    ("the last look's configuration keeps the plugin's own agent argument", YORIWAKE_PLUGIN,
+     "                AgentJar.argument(AgentJar.locationUnder(cacheDir))",
+     "                AgentJar.argument(AgentJar.locationUnder(cacheDir.parentFile))",
+     functional_suite, "a complement in a fresh clone of the same commit leaves out what the selecting run ran"),
+    ("a selecting run's doFirst fail-fast still leaves a record", LAST_LOOK,
+     "        if (test.failFast) {",
+     "        if (false) {",
+     functional_suite, "a selecting run whose test task's doFirst turns on fail-fast leaves no record"),
     ("a manifest's Class-Path is not followed by the selecting walk", CLASSPATH_FILES,
      "                                    pending.addLast(named to true)",
      "                                    pending.size",
@@ -2740,6 +2789,12 @@ MUTATIONS = [
      "                                    pending.addLast(named to true)",
      "                                    pending.size",
      functional_suite, "a jar only another jar's manifest names, built from a property differently, runs every test"),
+    # A dependency resolved to another jar reaches every test with no changed path behind it: a
+    # version read from a file `pathIgnore` leaves out, a `-P` property, a dynamic version.
+    ("the classpath-files table leaves the dependencies out", CLASSPATH_FILES,
+     "            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())",
+     "            is Walk.Found -> walk",
+     functional_suite, "a dependency version bumped in a properties file the build loads runs every test"),
     # A task Develocity runs or chooses tests for is declined, and nothing of yoriwake's acts on it
     #: Test Distribution recorded half a suite's coverage even locally.
     ("Test Distribution is no longer detected", DEVELOCITY_DETECTION,
@@ -2895,10 +2950,6 @@ MUTATIONS = [
      "        now.configuration != recorded.configuration ->",
      "        false ->",
      functional_suite, "a task configured differently runs every test"),
-    ("a fail-fast selecting run leaves a record of results Gradle dropped", TEST_TASK_WIRING,
-     "            if (test.failFast) {",
-     "            if (false) {",
-     functional_suite, "a fail-fast selecting run leaves no record"),
     ("a complement run takes a record from another test JVM", SELECTION_RUN,
      "            if (!here.equals(recorded)) {",
      "            if (false) {",
@@ -3239,6 +3290,12 @@ MUTATIONS = [
      "        if (engineRunsEverything(id)) {\n            return Verdict.ENGINE_RUNS_EVERYTHING;",
      "        if (false) {\n            return Verdict.ENGINE_RUNS_EVERYTHING;",
      agent_suite, "a Kotest spec the change cannot reach is still included"),
+    # Leaving out every listed test of a vintage runner prunes it, and the tests it reports only
+    # while it runs never run.
+    ("a vintage runner that reports tests at run time is pruned again", SELECTOR,
+     "            if (runTimeReporters.isEmpty()) {\n                return false;",
+     "            if (true) {\n                return false;",
+     agent_suite, "a vintage runner's listed test is kept when its run-time test reaches nothing"),
     ("a Kotest spec stops recording that its engine runs it", RULES,
      "            found.add(Rule.ENGINE_RUNS_EVERYTHING);", "",
      agent_suite, "a Kotest spec records that its engine runs it whatever changed"),
@@ -3794,16 +3851,16 @@ MUTATIONS = [
     # left-out check one that narrowed nothing reads as held; without the declared-verdict check one
     # that held by another rule reads as reaching the boundary it aimed at.
     ("the break helper stops asking whether the change fails the target under a full run", BREAK_FILE,
-     "        if (!observed.targetFailsUnderFullRun) {",
-     "        if (false && !observed.targetFailsUnderFullRun) {",
+     "    if (!observed.targetFailsUnderFullRun) {",
+     "    if (false && !observed.targetFailsUnderFullRun) {",
      break_suite, "does not fail the target under a full run is vacuous"),
     ("the break helper stops asking whether the selecting run left anything out", BREAK_FILE,
-     "        if (observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
-     "        if (false && observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
+     "    if (observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
+     "    if (false && observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
      break_suite, "leaves no test out is vacuous"),
     ("the break helper stops comparing the recorded verdict with the declared one", BREAK_FILE,
-     "        if (!onTarget(observed, aim, held)) {",
-     "        if (false && !onTarget(observed, aim, held)) {",
+     "    if (!onTarget(observed, aim, held)) {",
+     "    if (false && !onTarget(observed, aim, held)) {",
      break_suite, "ran by another rule than the one it aims at is off target"),
     # A changed file no class or build script names may still be read: found by a pattern, walked
     # to, listed in another file, or handed over by path. Dropping it skips the test that reads it.
@@ -3965,6 +4022,10 @@ MUTATIONS = [
      '            if (file.equals(path) || file.startsWith(path + "/")) {',
      "            if (file.equals(path)) {",
      agent_suite, "a read of a directory above an ignored path reads it"),
+    ("a read below an ignored path is not a read of it", SELECTOR,
+     '            if (path.startsWith(file + "/")) {',
+     "            if (false) {",
+     agent_suite, "a read below an ignored path reads it"),
     ("a JVM that read every file did not read an ignored path", SELECTOR,
      "    public static boolean readsIgnored(String path, Collection<String> ignored) {\n"
      "        if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {",
@@ -4419,6 +4480,12 @@ MUTATIONS = [
      "        if (outside.isNotEmpty()) {",
      "        if (false) {",
      maven_suite, "a module built against a reactor module from a repository captures nothing"),
+    # A `-D` version property, a version range or an updated SNAPSHOT resolves another jar with no
+    # changed path: the capture must record the dependencies for a selecting run to compare.
+    ("a Maven capture records no dependencies", MAVEN_RECORDING,
+     "ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session))",
+     "ClasspathFiles.walk(classpath, buildDirs, root)",
+     maven_suite, "a dependency a version property resolves to another version runs every test"),
     # Surefire hands the JUnit Platform its parallel switch through its own parameters: missed there,
     # interleaved tests would blend into one another's coverage.
     ("Surefire's parameters are left out of the parallelism check", MAVEN_RECORDING,
@@ -4446,9 +4513,30 @@ MUTATIONS = [
      '        host.property(AgentContract.SELECT_PROPERTY, "true")',
      '        host.property(AgentContract.SELECT_PROPERTY, "false")',
      maven_suite, "a change to one class runs the tests that reach it"),
+    # Develocity's workspace id, untracked, is build state on Maven: kept in the change set, it
+    # forces every selecting run on a project with the extension.
+    ("Develocity's untracked workspace id forces a Maven selecting run", MAVEN_SELECTION,
+     "            { ChangeDetection.changedPaths(git, root, it) { path -> Recording.isBuildState(path) } },",
+     "            { ChangeDetection.changedPaths(git, root, it) },",
+     maven_suite, "Develocity's untracked workspace id does not force a selecting run"),
+    ("Develocity's untracked workspace id keeps a Maven complement from narrowing",
+     "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/MavenStamp.kt",
+     "            clean = ChangeDetection.status(git) { Recording.isBuildState(it) }?.isEmpty() == true,",
+     "            clean = ChangeDetection.status(git)?.isEmpty() == true,",
+     maven_suite, "with an untracked workspace id a complement run runs what the selecting run left out"),
+    # A restored map directory is unreviewed input under a trusted-map list: a complement reads a
+    # record only from a directory the selecting run handed over.
+    ("a Maven complement trusts a restored record under a trusted-map list", MAVEN_SELECTION,
+     "            from.isEmpty() && trusted != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to",
+     "            false -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to",
+     maven_suite, "with a trusted-map list a complement reading this build's own record runs everything"),
+    ("a Maven selecting run narrows the tests -Dtest names", MAVEN_SELECTION,
+     "            listOfNotNull(namedTests?.takeIf { plan.selecting || observing }?.let { RunPlan.Decline(RefusalKind.TESTS_NAMED, it) })",
+     "            listOfNotNull<RunPlan.Decline>(null)",
+     maven_suite, "tests named with -Dtest all run in a selecting run"),
     # A full run asked for runs every test and records, as on Gradle.
     ("a Maven full run asked for still selects", MAVEN_SELECTION,
-     "        if (plan.declines.isNotEmpty()) {",
+     "        if (declines.isNotEmpty()) {",
      "        if (false) {",
      maven_suite, "a full run asked for on the command line runs everything and records the map"),
     # An observing Maven run must tell its test JVM to record what selection would leave out.

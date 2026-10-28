@@ -224,6 +224,8 @@ internal class Recording(
                 ?.toIntOrNull()?.let { it > 0 } == true,
             properties = properties,
             alwaysRun = pins[project.id].orEmpty(),
+            namedTests = parameter(project, configuration, "test", if (execution.artifactId == FAILSAFE) "it.test" else "test")
+                ?.let { "tests were named with -D${if (execution.artifactId == FAILSAFE) "it.test" else "test"}=$it" },
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
@@ -264,6 +266,7 @@ internal class Recording(
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
             loadedFlag = "-D${INTERNAL_LOADED}",
+            buildState = { isBuildState(it) },
             logger = object : DecodeRun.Log {
                 override fun lifecycle(message: String) = log.info(message)
                 override fun warn(message: String) = log.warn(message)
@@ -390,10 +393,9 @@ internal class Recording(
     ): Pair<EnvironmentFingerprint.View, EnvironmentFingerprint.Rules>? {
         val classpathPending = pendingClasspathFiles(mapDir)
         classpathPending.delete()
-        // A local repository inside the checkout holds libraries, not this build's output.
-        val repository = session.localRepository?.basedir?.let { File(it).absoluteFile }
-        val built = classpath.filterNot { entry -> repository != null && entry.absoluteFile.startsWith(repository) }
-        when (val walk = runCatching { ClasspathFiles.walk(built, session.allProjects.map { it.build.directory }, root) }
+        // The local repository counts as a dependency home even inside the checkout.
+        val buildDirs = session.allProjects.map { it.build.directory }
+        when (val walk = runCatching { ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session)) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Found -> runCatching { CoverageDecoder.writeClasspathFilesTo(classpathPending, walk.digests) }
             is ClasspathFiles.Walk.Refused -> log.debug("[yoriwake] ${project.artifactId}: no classpath file digests recorded (${walk.reason})")
@@ -466,7 +468,7 @@ internal class Recording(
     /** The tree where every capture of this session starts, read once, before anything compiled. */
     private fun startTree() = runCatching {
         ensureHome()
-        val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + MAPS_HOME
+        val excluded = WorkingTree.excluded(root, session.allProjects.map { it.build.directory }) + BUILD_STATE
         val listed = WorkingTree.listing(root, excluded)
         val snapshot = File(home, WorkingTree.SNAPSHOT_PENDING_FILE)
         val previous = WorkingTree.takePreviousStart(snapshot)
@@ -537,6 +539,18 @@ internal class Recording(
     companion object {
         /** Under the reactor root, beside `.mvn`; it writes its own `.gitignore`, so it is never committed. */
         const val MAPS_HOME = ".yoriwake"
+
+        /** The id Develocity's Maven extension writes for build scans; no build step or test reads it. */
+        const val DEVELOCITY_WORKSPACE_ID = ".mvn/.develocity/develocity-workspace-id"
+
+        /** What yoriwake and the tools beside it write into the project, untracked, on every build. */
+        val BUILD_STATE = listOf(MAPS_HOME, DEVELOCITY_WORKSPACE_ID)
+
+        /**
+         * Whether an untracked path git names is the workspace id, relative to the build's root or,
+         * as `git status` names it, to a repository the build lies below.
+         */
+        fun isBuildState(path: String) = path == DEVELOCITY_WORKSPACE_ID || path.endsWith("/$DEVELOCITY_WORKSPACE_ID")
         const val FAILSAFE = "maven-failsafe-plugin"
         const val INTERNAL_LOADED = "yoriwake.internal.loaded"
         /** The lifecycle phases that run Surefire or Failsafe, or come after them. */

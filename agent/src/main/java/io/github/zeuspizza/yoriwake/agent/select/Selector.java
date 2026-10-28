@@ -26,6 +26,7 @@ public final class Selector {
         private final String fullRunReason;
         private final FullRunKind fullRunKind;
         private final Set<String> knownTestIds;
+        private final Set<String> runTimeReporters;
         private Set<String> notKnownToPass = Collections.emptySet();
         private Set<String> sharedJvmOnly = Collections.emptySet();
         private volatile Rules rules;
@@ -36,6 +37,39 @@ public final class Selector {
             this.fullRunReason = fullRunReason;
             this.fullRunKind = fullRunKind;
             this.knownTestIds = knownTestIds;
+            this.runTimeReporters = runTimeReporters(knownTestIds);
+        }
+
+        /** The ids under which the map recorded a test reported at run time, as vintage names one. */
+        private static Set<String> runTimeReporters(Set<String> knownTestIds) {
+            Set<String> reporters = new HashSet<>();
+            for (String id : knownTestIds) {
+                int dynamic = id.indexOf("/[dynamic:");
+                if (dynamic > 0) {
+                    reporters.add(id.substring(0, dynamic));
+                }
+            }
+            return reporters;
+        }
+
+        /**
+         * Whether this id, or a container above it, is one the map recorded reporting a test at run
+         * time. No descriptor carries such a test at discovery, so only keeping its container's
+         * listed tests runs it, even one the map has never seen.
+         */
+        public boolean reportsAtRunTime(String id) {
+            if (runTimeReporters.isEmpty()) {
+                return false;
+            }
+            if (runTimeReporters.contains(id)) {
+                return true;
+            }
+            for (int end = id.indexOf("]/["); end >= 0; end = id.indexOf("]/[", end + 1)) {
+                if (runTimeReporters.contains(id.substring(0, end + 1))) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         static Decision fullRun(String reason, FullRunKind kind, Set<String> knownTestIds) {
@@ -743,8 +777,9 @@ public final class Selector {
     }
 
     /**
-     * Whether reading {@code path} reads an ignored path: the path, a directory above it, an entry
-     * of it when it is an archive, or every file.
+     * Whether reading {@code path} reads an ignored path: the path, a directory above it, a file
+     * below it (the path is a link to a directory), an entry of it when it is an archive, or every
+     * file.
      */
     public static boolean readsIgnored(String path, Collection<String> ignored) {
         if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {
@@ -752,6 +787,9 @@ public final class Selector {
         }
         for (String file : ignored) {
             if (file.equals(path) || file.startsWith(path + "/")) {
+                return true;
+            }
+            if (path.startsWith(file + "/")) {
                 return true;
             }
             if (path.startsWith(file + "!/")) {

@@ -72,6 +72,48 @@ class SelectionFunctionalTest {
         assertTrue(File(map, "observation.json").isFile, "no observation.json in $map")
     }
 
+    /** The demo with commons-lang3 on `lib`'s test classpath at `${lang3.version}`, 3.17.0 unless set; captured. */
+    private fun capturedWithLang3(dir: File): File = committed(dir).also { project ->
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId>\n  <properties><lang3.version>3.17.0</lang3.version></properties>\n" +
+                    "  <dependencies><dependency><groupId>org.apache.commons</groupId><artifactId>commons-lang3</artifactId>" +
+                    "<version>${'$'}{lang3.version}</version><scope>test</scope></dependency></dependencies>",
+            )
+        }
+        git(project, "commit", "-q", "-am", "commons-lang3")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+    }
+
+    @Test
+    fun `a dependency a version property resolves to another version runs every test`(@TempDir dir: File) {
+        val project = capturedWithLang3(dir)
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", "-Dlang3.version=3.16.0",
+        ).succeeded().output
+
+        assertContains(output, "dependencies on this task's classpath changed since the map was captured")
+        assertContains(output, "commons-lang3")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `an unchanged classpath selects as before`(@TempDir dir: File) {
+        val project = capturedWithLang3(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+        assertContains(selecting, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in selecting, output)
+        assertFalse("dependencies on this task's classpath changed" in output, output)
+    }
+
     /** The plugin's `<configuration>` in the root POM, given [xml]; committed. */
     private fun configured(project: File, xml: String) {
         File(project, "pom.xml").edit {
@@ -185,6 +227,34 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `with a trusted-map list a complement reading this build's own record runs everything`(@TempDir dir: File) {
+        val project = selectedOnce(dir)
+        File(project, "trusted.txt").writeText("")
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", "-Dyoriwake.trustedMaps=trusted.txt",
+        ).succeeded().output
+
+        assertContains(output, "is not one the trusted-map list vouches for")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `tests named with -Dtest all run in a selecting run`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+            "-Dtest=CounterTest,GreeterTest",
+        ).succeeded().output
+
+        assertContains(output, "tests were named with -Dtest=CounterTest,GreeterTest")
+        assertContains(output, "in dev.demo.lib.CounterTest")
+        assertContains(output, "in dev.demo.lib.GreeterTest")
+    }
+
+    @Test
     fun `two run kinds asked together fail the build before any test runs`(@TempDir dir: File) {
         val project = captured(dir)
 
@@ -274,6 +344,89 @@ class SelectionFunctionalTest {
     private fun editGreeter(project: File) {
         File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
         git(project, "commit", "-q", "-am", "an edit")
+    }
+
+    private fun writeWorkspaceId(project: File, id: String = "a-workspace-id") =
+        File(project, ".mvn/.develocity/develocity-workspace-id").also { it.parentFile.mkdirs() }.writeText(id)
+
+    private fun selecting(project: File): String =
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+    @Test
+    fun `Develocity's untracked workspace id does not force a selecting run`(@TempDir dir: File) {
+        val project = captured(dir)
+        writeWorkspaceId(project)
+        editGreeter(project)
+
+        val output = selecting(project)
+
+        val selectingLine = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+            .substringBefore("\n")
+        assertContains(selectingLine, "0 paths coverage cannot see")
+        assertContains(output, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in output.substringAfter("selecting against "), output)
+    }
+
+    @Test
+    fun `a tracked workspace id that changed still forces`(@TempDir dir: File) {
+        val project = committed(dir)
+        writeWorkspaceId(project)
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "a tracked workspace id")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        writeWorkspaceId(project, "another-workspace-id")
+        git(project, "commit", "-q", "-am", "a new workspace id")
+
+        val output = selecting(project)
+
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `a forced run names gitignore and not pathIgnore on Maven`(@TempDir dir: File) {
+        val project = captured(dir)
+        File(project, "notes.txt").writeText("notes")
+        editGreeter(project)
+
+        val output = selecting(project)
+
+        assertContains(output, "notes.txt is untracked or ignored")
+        assertContains(output, "ignore it in git (.gitignore)")
+        assertFalse(output.lines().any { "[yoriwake]" in it && "pathIgnore" in it }, output)
+    }
+
+    @Test
+    fun `a file a test writes during the capture names neither pathIgnore nor gitignore`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "lib/src/test/java/dev/demo/lib/GreeterTest.java").edit {
+            it.replace("void greets() {", "void greets() throws Exception {").replace(
+                "new Greeter().greet(\"Ada\"));",
+                "new Greeter().greet(\"Ada\"));\n        java.nio.file.Files.writeString(java.nio.file.Path.of(\"written.txt\"), String.valueOf(System.nanoTime()));",
+            )
+        }
+        git(project, "commit", "-q", "-am", "a test that writes a file")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        editCounter(project)
+
+        val output = selecting(project)
+
+        val forced = output.lines().filter { "[yoriwake]" in it && "written.txt" in it }
+        assertTrue(forced.any { "changed during" in it && "build directory" in it }, output)
+        assertFalse(forced.any { "pathIgnore" in it || ".gitignore" in it }, output)
+    }
+
+    @Test
+    fun `with an untracked workspace id a complement run runs what the selecting run left out`(@TempDir dir: File) {
+        val project = captured(dir)
+        writeWorkspaceId(project)
+        editGreeter(project)
+        assertContains(selecting(project), "in dev.demo.lib.GreeterTest")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "leaving out the 1 tests the selecting run at ")
+        assertContains(output, "in dev.demo.lib.CounterTest")
     }
 
     @Test

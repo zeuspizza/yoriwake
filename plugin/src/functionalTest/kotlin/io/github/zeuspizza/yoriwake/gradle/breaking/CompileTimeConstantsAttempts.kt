@@ -56,7 +56,7 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
             listOf(limits, baked, executes, third, thirdTest, classOrderByName),
         ) { File(it, limits.first).writeText(limits.second.replace("MAX = 10", "MAX = 11")) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: only an exact match against a recorded constant digest licenses
@@ -89,7 +89,7 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
             )
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a private constant that is never written into a field is
@@ -114,6 +114,6 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
             buildScript = forkingBuild,
         ) { File(it, pricing.first).writeText(pricing.second.replace("BASE = 10", "BASE = 11")) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

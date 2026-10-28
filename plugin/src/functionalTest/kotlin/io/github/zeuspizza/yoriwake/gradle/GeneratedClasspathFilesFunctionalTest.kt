@@ -205,6 +205,57 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         )
     }
 
+    @Test
+    fun `a generated resource with a comma in its name runs the test that reads it`(@TempDir dir: File) {
+        // A list of moved files is comma-joined on its way to the test JVM.
+        val users = """
+            val generateUsers by tasks.registering {
+                val users = providers.gradleProperty("users").orElse("a")
+                val out = layout.buildDirectory.file("generated/users/users,v2.json")
+                inputs.property("users", users)
+                outputs.file(out)
+                doLast { out.get().asFile.apply { parentFile.mkdirs() }.writeText(users.get()) }
+            }
+            sourceSets.test { resources.srcDir(layout.buildDirectory.dir("generated/users")) }
+            tasks.processTestResources { dependsOn(generateUsers) }
+        """.trimIndent()
+        val reader = "src/test/java/dev/sample/AaInfoTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import java.io.InputStream;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class AaInfoTest {
+                @Test void reads() throws Exception {
+                    String users;
+                    try (InputStream in = getClass().getResourceAsStream("/users,v2.json")) { users = new String(in.readAllBytes()); }
+                    if ("x".equals(users)) assertEquals(1, new Legacy().value());
+                }
+            }
+        """.trimIndent()
+        fixture(dir, appExtra = users, infoReader = reader)
+        capture(dir, "-Pusers=a")
+        editLegacy(dir)
+
+        val output = select(dir, "-Pusers=x")
+
+        assertReaderRanAlone(dir, output)
+    }
+
+    @Test
+    fun `a generated resource that changed runs everything when the last look cannot be handed it`(@TempDir dir: File) {
+        fixture(dir)
+        capture(dir, "-Pinfo=a")
+        editLegacy(dir)
+        // A directory where the hand-over file goes: writing it fails, so no last look can follow.
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles().orEmpty().single { it.name.startsWith("app-test") }
+        File(mapDir, "classpath-files.compared/blocked").mkdirs()
+
+        val output = select(dir, "-Pinfo=x")
+
+        assertTrue("could not be handed to classpath-files.compared" in output, output)
+        assertTrue("dev.sample.AaInfoTest" in ranTests(app(dir)) && "dev.sample.AlphaTest" in ranTests(app(dir)), output)
+    }
+
     /** [infoTest], opening the generated file by a path it builds: [path] names it from the project directory. */
     private fun infoReadThrough(path: String, before: String = "", after: String = "") =
         "src/test/java/dev/sample/AaInfoTest.java" to """

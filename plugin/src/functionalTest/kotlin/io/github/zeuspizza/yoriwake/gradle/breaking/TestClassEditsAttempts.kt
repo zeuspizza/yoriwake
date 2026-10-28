@@ -60,7 +60,7 @@ class TestClassEditsAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("assertEquals(2,", "assertEquals(3,"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a test is known to the map by its exact id, or as a template
@@ -96,7 +96,7 @@ class TestClassEditsAttempts : BreakAttempt() {
             )
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: an exempt test class is dated only by lookups, reads,
@@ -191,6 +191,6 @@ class TestClassEditsAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("} }", "}\n    private int unused() { return 0; } }"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

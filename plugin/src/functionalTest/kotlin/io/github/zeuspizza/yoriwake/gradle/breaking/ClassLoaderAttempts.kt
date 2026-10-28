@@ -154,7 +154,7 @@ class ClassLoaderAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: TouchRecorder.defined reads the class name from the bytes with
@@ -189,7 +189,7 @@ class ClassLoaderAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a class on the bootstrap loader is loaded with a null loader,
@@ -260,6 +260,6 @@ class ClassLoaderAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("\"codec\"", "\"codec!\""))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

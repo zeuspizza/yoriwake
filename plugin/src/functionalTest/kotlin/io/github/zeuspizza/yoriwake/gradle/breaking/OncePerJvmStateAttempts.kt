@@ -106,7 +106,7 @@ class OncePerJvmStateAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: what a class's first load in the window between two test
@@ -157,7 +157,7 @@ class OncePerJvmStateAttempts : BreakAttempt() {
             listOf(codec, other, first, cache, builder, middle, target, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a jar read with code other than the JDK's zip is recorded by
@@ -201,7 +201,7 @@ class OncePerJvmStateAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the startup window ends at the Platform's plan start, and
@@ -244,6 +244,6 @@ class OncePerJvmStateAttempts : BreakAttempt() {
             buildScript = sessionBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

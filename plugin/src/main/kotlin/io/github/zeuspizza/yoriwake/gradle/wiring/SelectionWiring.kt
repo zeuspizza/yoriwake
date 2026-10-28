@@ -220,7 +220,7 @@ internal fun TestTaskWiring.configureSelection(
                 mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
                 notReadByTests, ignore, declared, observing,
             ),
-            GradleSelectingHost(test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values),
+            GradleSelectingHost(test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes),
         )
     }
 
@@ -785,6 +785,7 @@ private class GradleSelectingHost(
     private val mapDir: File,
     private val rootDir: File? = null,
     private val buildDirs: Collection<String> = emptyList(),
+    private val homes: Map<String, File> = emptyMap(),
 ) : SelectingStep.Host {
     override val name: String get() = test.path
 
@@ -800,7 +801,7 @@ private class GradleSelectingHost(
 
     // The build's own doFirst actions run after this one: the last look compares again.
     override fun handOver(compared: Map<String, String>): Boolean =
-        runCatching { LastLook.write(mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared) }.isSuccess
+        runCatching { LastLook.write(mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared, homes) }.isSuccess
 
     override fun captureNothing() {
         test.systemProperty(RECORDS_DIR_PROPERTY, "")

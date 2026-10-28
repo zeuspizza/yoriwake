@@ -59,7 +59,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
-| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore`; see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore` (on Maven, ignore them in git); see [Files written into the source tree](#files-written-into-the-source-tree) |
 | `pathIgnore left out N changed paths (…): <paths>` | the changed paths `pathIgnore` took out of the change set, counted by entry; see [Paths no test reads](#paths-no-test-reads) |
 | `pathIgnore entry '<entry>' matches <path>, which stays in the change set (<protection>)` | a declared path that is protected, and why |
 | `<path> was read at capture, … despite pathIgnore entry '<entry>' …` | a test JVM read a declared path when the map was recorded, so the tests from that read on run |
@@ -134,6 +134,11 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   once: the forced run records them, unless the classpath holds over 200,000 such files, which are
   then never recorded). One whose readers the map records runs only them. The run names up to five
   files; see [Generated files on the test classpath](#generated-files-on-the-test-classpath);
+- a jar or directory the test runtime classpath takes from outside the build (a dependency) that
+  differs from the capture's: another version, one added, removed or reordered, or other content at
+  the same place, whatever changed it, a file `pathIgnore` leaves out, a `-P` or `-D` property or
+  nothing in the tree (`dependencies-changed`). The run names up to five. A map recorded before
+  dependencies were runs every test once (`classpath-files-unrecorded`) and records them;
 - a change touching startup coverage, which no single test owns;
 - more changed paths than `largeChangeThreshold` (5,000 by default) against the base the run was
   asked about, with untracked files and the working tree's drift, less the paths `pathIgnore` takes
@@ -254,7 +259,9 @@ names them. A file that appeared or is gone, one outside the root project, a cla
 reads for (a map recorded by 0.2.0, a test JVM whose reads were not all observed) run everything,
 naming it (`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path`
 names is on the test JVM's class path too, so it counts the same way, its class files included,
-wherever it lies but in Gradle's module cache. Dependency jars are the classpath rule's.
+wherever it lies but in Gradle's module cache. A dependency jar or directory that moved runs
+everything (`dependencies-changed`), naming it: one in Gradle's module cache by its path, which
+names its content, and every other one by its content.
 
 The JDK's class loader reads each of your jars' manifests itself, to open the jar and to define a
 package from it, and keeps only what it acts on: `Class-Path`, `Multi-Release`,
@@ -910,6 +917,10 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   test runtime gained an engine.
 - It does not make JUnit 3 `TestCase`s, or a custom `Runner` that bypasses the Platform,
   selectable. Where it does not apply, the run forces.
+- A runner the map recorded reporting a test at run time, one its description never listed, runs
+  whole on every selecting run, so each test it reports runs, even one the map has never seen.
+  `decisions.tsv` records its listed tests as `CLASS_RUNS_WHOLE`. A runner whose first such test
+  appears after the map was recorded is judged by its listed tests until the next capture.
 - Robolectric suites are unverified. On some projects their classes fail Platform discovery, and
   the vintage engine cannot help them; on others they are discovered and run through it.
   Selection is as safe there as anywhere, but how far it narrows has not been measured.
@@ -1360,9 +1371,14 @@ compiles or what the build reads. The run names each, with the protection that k
 - `git-quoted`: a path git printed in quotes, as it does a name with bytes it escapes, which no
   rule above can be judged on.
 
+A dependency the build resolves to another jar runs every test whatever changed it, a declared
+path included, such as a `versions.properties` the build script reads its versions from
+(`dependencies-changed`).
+
 A path left out is still a changed path a test may read, and the map says so where it can: a test
-JVM that read the path at capture, a directory above it, or every file (from a child process or an
-unreviewed native library on), runs every test from that read on (`shares-jvm-ignored-path`), and the
+JVM that read the path at capture, a directory above it, a file below it (through a link to a
+directory), or every file (from a child process or an unreviewed native library on), runs every
+test from that read on (`shares-jvm-ignored-path`), and the
 console says the path was read despite its entry. A changed source file left out runs every test
 of a test JVM whose record does not include the source files it opened, which a map recorded before
 this release does not. A map recorded before the plugin recorded reads,
@@ -1409,8 +1425,16 @@ field equals its own (its classpath looked at again after the task's own `doFirs
 [Generated files on the test classpath](#generated-files-on-the-test-classpath)) and its working
 tree is clean, so a test is left out only when it already ran on this code, this way. A test that ran on other code says nothing about this code.
 
+The configuration is read again right before the test JVM starts, after the task's own `doFirst`
+actions, in both runs; the complement uses the record only when that reading equals the selecting
+run's too. A system property or JVM argument that a `doFirst` sets differently in the two runs, or
+in only one of them, makes the complement run every test as `complement-record-mismatch`. One set
+there alike in both keeps the complement. Set what differs at configuration, or through a
+`jvmArgumentProviders` entry, so the complement names it as soon as it starts.
+
 A selecting run leaves no record, and removes an older one, when it ran everything, declined, ran
-with `--fail-fast` (Gradle drops the results of tests that finish after the first failure), or
+with fail-fast however it is set (`--fail-fast`, `failFast` in the task's configuration or in its
+own `doFirst`; Gradle drops the results of tests that finish after the first failure), or
 started or ended on a tree `git status` does not report clean, untracked files included. A test JVM
 that died, a test an assumption aborted and a test its engine skipped are never listed, so they run
 in the complement.
@@ -1525,6 +1549,8 @@ the Gradle plugin.
   each), `largeChangeThreshold`, `fullRunEveryBuilds`, `fullRunEveryDays`. `<alwaysRun>` (one
   `<pattern>` each) is read per module, beside `-Dyoriwake.alwaysRun`; a pattern that pins every
   test fails the build, as on Gradle.
+- **`-Dtest`** (or `-Dit.test` for Failsafe) makes a selecting run run every test it names
+  (`tests-named`), as `--tests` does on Gradle.
 - **Not on Maven**: `pathIgnore`, `notReadByTests`, `dependsOn` (a test's `yoriwake-depends-on:`
   tag still selects it), `environmentInclude` and `systemPropertyIgnore` (the [environment
   fingerprint](#the-environment-fingerprint) compares its defaults), `narrowPlainRunners`,
@@ -1532,6 +1558,11 @@ the Gradle plugin.
 - **Maps** live under `.yoriwake/yoriwake/` at the reactor root, one per execution, and survive
   `mvn clean`; yoriwake writes a `.gitignore` into `.yoriwake/`. Surefire and Failsafe executions
   of a module keep separate maps.
+- **Develocity's workspace id** (`.mvn/.develocity/develocity-workspace-id`), untracked, is build
+  state, as `.yoriwake/` is: it neither forces a selecting run nor keeps a complement run from
+  narrowing. Tracked, a change to it forces like any other path.
+- **An untracked file that forces** a run is named with `.gitignore` as its remedy, not
+  `pathIgnore`: an ignored file counts only when its content changed since the map was captured.
 - **CI**: cache `.yoriwake/` as the [recipe](#without-the-action) caches `.gradle/yoriwake`, leaving
   out `.yoriwake/yoriwake/*/raw` and `.yoriwake/yoriwake/*/selection.tsv`. yoriwake-action runs
   Gradle only.
@@ -1738,8 +1769,8 @@ format versioning.
 
 ### From 0.3.0 to 0.4.0
 
-- **Your map is left alone**, unless it was captured on a checkout whose `core.autocrlf` gave
-  sources CRLF line endings: then it is repaired on the next build. The format stays at 7, and the
+- **Your map is repaired on the next build**: a 0.3.0 map records no dependency jars, so each
+  task's first selecting run runs every test once and records them. The format stays at 7, and the
   files a trusted-map digest covers are unchanged.
 - **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.4.0`, one ordinary cache miss.
 - **What runs changes without a new flag:** a change of more than 5,000 paths runs everything

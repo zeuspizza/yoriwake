@@ -230,7 +230,11 @@ class SelectionRecordTest {
         )
         assertEquals(start.stamp, SelectionRecord.Start.decode(start.encode())?.stamp)
         assertEquals("token", SelectionRecord.Start.decode(start.encode())?.token)
-        listOf(null, "", "token", start.encode() + "\nextra").forEach {
+        assertNull(SelectionRecord.Start.decode(start.encode())?.lateConfiguration)
+        val late = SelectionRecord.Start(start.token, start.stamp, "late")
+        assertEquals(start.stamp, SelectionRecord.Start.decode(late.encode())?.stamp)
+        assertEquals("late", SelectionRecord.Start.decode(late.encode())?.lateConfiguration)
+        listOf(null, "", "token", late.encode() + "\nextra").forEach {
             assertNull(SelectionRecord.Start.decode(it), "decoded ${it?.replace("\n", "|")}")
         }
     }
