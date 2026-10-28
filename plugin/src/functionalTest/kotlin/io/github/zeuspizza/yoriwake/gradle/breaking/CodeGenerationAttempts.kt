@@ -124,7 +124,7 @@ class CodeGenerationAttempts : BreakAttempt() {
             File(dir, "src/main/resources/banner.txt").writeText("bye\n")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: AP1.
@@ -147,7 +147,7 @@ class CodeGenerationAttempts : BreakAttempt() {
             ),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: WorkingTree passes over a `build` directory as build output
@@ -169,7 +169,7 @@ class CodeGenerationAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("return 1;", "return 2 - 1;"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: AP2.
@@ -181,7 +181,7 @@ class CodeGenerationAttempts : BreakAttempt() {
             buildScript = generator("src/main/resources/gen.txt"),
         ) { dir -> runner(dir, "generate", "-Pvalue=3").build() }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     /** A processor project generating `<Type>Value.get()` from `@Value`, or from the file `-AvalueFile` names. */
@@ -273,7 +273,7 @@ class CodeGenerationAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("@dev.proc.Value(2)", "@dev.proc.Value(3)"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: AP4.
@@ -295,7 +295,7 @@ class CodeGenerationAttempts : BreakAttempt() {
             ),
         ) { dir -> File(dir, "src/main/proc/value.txt").writeText("3\n") }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: changed bytes are found by digesting every own class against
@@ -350,6 +350,6 @@ class CodeGenerationAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("@dev.proc.Value(2)", "@dev.proc.Value(3)"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

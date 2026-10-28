@@ -100,7 +100,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
     /** A test that runs the codec itself, second by name: anything that skips it skipped a reach. */
     private val codecRunner = source(
@@ -173,7 +173,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, codecTest, classOrderByName), buildScript = jarBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RF17.
@@ -231,7 +231,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RF18.
@@ -279,7 +279,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, sub, first, reader, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RF19.
@@ -339,7 +339,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RF20.
@@ -415,7 +415,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, trigger, probe, first, reader, codecTest, classOrderByName), buildScript = agentBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RF21.
@@ -490,7 +490,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, moduleClass, first, reader, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the classpath files are digested in yoriwake's own doFirst
@@ -534,7 +534,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, placeholder, reader, codecTest, classOrderByName), buildScript = stampingBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the classpath-files walk stops at 200,000 files and then
@@ -569,7 +569,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, codecRunner, classOrderByName), buildScript = budgetBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a read counts as a read of every class in an archive only when
@@ -625,7 +625,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, scanner, codecTest, classOrderByName), buildScript = zipBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a changed path that is not a build input stops forcing when no
@@ -679,7 +679,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             File(it, "notes.md").appendText("\nTODO: one more thing.\n")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: generated classpath files count by content, a jar by each
@@ -734,7 +734,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, classOrderByName), buildScript = regeneratingBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the stale check drops paths in a `.gradle` directory as the
@@ -768,7 +768,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             File(dir, fixture).writeText("mode=strict\n")
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     /**
@@ -851,7 +851,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, codecTest, classOrderByName), buildScript = versionedBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a changed archive in a classpath directory runs everything,
@@ -915,7 +915,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, codecTest, classOrderByName), buildScript = launcherBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a moved file selects from its first read in each JVM on, not
@@ -970,7 +970,7 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, info, warmup, cached, codecTest, classOrderByName), buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: an archive the JDK's zip code opens is skipped as a whole read,
@@ -1019,6 +1019,6 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             listOf(codec, other, first, reader, codecTest, classOrderByName), buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

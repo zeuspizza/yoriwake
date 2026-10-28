@@ -115,7 +115,7 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: past a proxy, the first judged frame is whoever called the
@@ -133,7 +133,7 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the frame above a hooked call is its caller, and a method
@@ -187,7 +187,7 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = previewBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     /** The copied-bytes reader, used as the JVM-wide target after an unobserving touch. */
@@ -255,7 +255,7 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RH10. An interface proxy over a hooked call run by JDK code on another
@@ -278,7 +278,7 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RH12. A java.beans.Expression naming nativeLinker: the call runs through
@@ -314,7 +314,7 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = previewBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: RH13. A java.beans.EventHandler proxy whose action is a method the test
@@ -361,7 +361,7 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: nativeCode() judges its caller with the same proxy-aware walk
@@ -407,6 +407,6 @@ class ReflectionAndHandlesAttempts : BreakAttempt() {
             buildScript = previewBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

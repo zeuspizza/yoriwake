@@ -135,7 +135,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = suiteBuild + "\ntasks.test { useJUnitPlatform { includeEngines(\"junit-platform-suite\") } }\n",
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a test's window opens when the listener hears it start, but
@@ -163,7 +163,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a test is known to the map only by its exact id, and Jupiter
@@ -202,7 +202,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             )
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: an engine that runs nothing once one of its tests is left out is
@@ -255,7 +255,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: in-JVM parallelism is refused where the build configures it
@@ -323,7 +323,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the filter judges a test by its own record and a container by
@@ -355,7 +355,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             listOf(codec, other, first, target, codecTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: Spock runs setupSpec before any feature starts, so no feature's
@@ -408,7 +408,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: engineRunsEverything finds Kotest by its engine segment at any
@@ -478,6 +478,6 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

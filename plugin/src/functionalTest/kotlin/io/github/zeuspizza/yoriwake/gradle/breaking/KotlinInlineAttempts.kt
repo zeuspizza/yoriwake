@@ -90,7 +90,7 @@ class KotlinInlineAttempts : BreakAttempt() {
             buildScript = forkedKotlinBuild,
         ) { changeAboveZero(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the SMAP signal is judged across every own class, main and
@@ -127,7 +127,7 @@ class KotlinInlineAttempts : BreakAttempt() {
             buildScript = strippingBuild,
         ) { changeAboveZero(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the scan walks only module output and refuses when another
@@ -146,7 +146,7 @@ class KotlinInlineAttempts : BreakAttempt() {
             buildScript = fixturesBuild,
         ) { changeAlphaJava(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the classes of a changed source are looked up in the classpath's
@@ -180,7 +180,7 @@ class KotlinInlineAttempts : BreakAttempt() {
             buildScript = packagedBuild,
         ) { changeAlphaJava(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: KI5. Every reader inside the scan is wrapped, so a class file the scan
@@ -205,7 +205,7 @@ class KotlinInlineAttempts : BreakAttempt() {
             buildScript = brokenBuild,
         ) { changeAlphaJava(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the reference names `-Xno-source-debug-extension` as a build
@@ -224,6 +224,6 @@ class KotlinInlineAttempts : BreakAttempt() {
             buildScript = flagBuild,
         ) { changeAboveZero(it) }
 
-        assertOutcome(BreakAttempt.Outcome.OFF_TARGET, result)
+        assertOutcome(Outcome.OFF_TARGET, result)
     }
 }

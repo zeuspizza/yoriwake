@@ -82,7 +82,7 @@ class WhoWroteTheMapAttempts : BreakAttempt() {
             File(it, "scratch.txt").delete()
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: MapProvenance.verify looks the map up by its directory name.
@@ -96,7 +96,7 @@ class WhoWroteTheMapAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: MapProvenance.DIGESTED again, for the files this release added
@@ -114,7 +114,7 @@ class WhoWroteTheMapAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: MP2. An empty list is valid, and names no map.
@@ -125,6 +125,6 @@ class WhoWroteTheMapAttempts : BreakAttempt() {
             changeCodec(it)
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

@@ -88,7 +88,7 @@ class ServiceLoadersAttempts : BreakAttempt() {
             listOf(spi, codec, other, registration, first, loaderTest, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: SL2.
@@ -118,7 +118,7 @@ class ServiceLoadersAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("public String encode", "public boolean strict() { return true; } public String encode"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: coverage is dumped and reset around each test, so a provider
@@ -163,7 +163,7 @@ class ServiceLoadersAttempts : BreakAttempt() {
             listOf(spi, codec, other, registry, registration, first, warm, cached, classOrderByName),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a changed path maps to classes only when it is a `.java` or
@@ -185,7 +185,7 @@ class ServiceLoadersAttempts : BreakAttempt() {
             buildScript = mavenLayout,
         ) { File(it, besideSources.first).writeText("dev.sample.Upper\n") }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the lazy lookup loads each provider with initialize=false,
@@ -214,6 +214,6 @@ class ServiceLoadersAttempts : BreakAttempt() {
             file.writeText(file.readText().replace("public class Codec implements Spi", "public class Codec"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

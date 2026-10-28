@@ -126,7 +126,7 @@ class NativeCodeAttempts : BreakAttempt() {
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a reviewed library loaded by its own class records only a
@@ -161,6 +161,6 @@ class NativeCodeAttempts : BreakAttempt() {
             ),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

@@ -101,7 +101,7 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
             listOf(codec, other, first, propertyTest, codecTest, classOrderByName), buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the fingerprint reads the task's JVM arguments as Gradle hands
@@ -122,7 +122,7 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
             listOf(codec, other, first, propertyTest, codecTest, classOrderByName), buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a capture writes the fingerprint it starts with to a pending
@@ -151,7 +151,7 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
             listOf(codec, other, first, codecRunner, classOrderByName), buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: EV1.
@@ -183,7 +183,7 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: EV2.
@@ -195,7 +195,7 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
             buildScript = buildWith("systemProperty(\"tree.state\", treeState.get())"),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: EV3.
@@ -219,6 +219,6 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
             ),
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 }

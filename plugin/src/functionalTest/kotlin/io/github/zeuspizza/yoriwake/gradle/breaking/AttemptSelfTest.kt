@@ -31,7 +31,7 @@ class AttemptSelfTest : BreakAttempt() {
             listOf(oneClass, oneTest, secondClass, secondTest, classOrder),
         ) { breakBeta(it) }
 
-        assertEquals(BreakAttempt.Outcome.VACUOUS, result.outcome, result.why)
+        assertEquals(Outcome.VACUOUS, result.outcome, result.why)
         assertTrue("does not fail the target under a full run" in result.why, result.why)
     }
 
@@ -43,7 +43,7 @@ class AttemptSelfTest : BreakAttempt() {
             )
         }
 
-        assertEquals(BreakAttempt.Outcome.VACUOUS, result.outcome, result.why)
+        assertEquals(Outcome.VACUOUS, result.outcome, result.why)
         assertTrue("nothing left out" in result.why, result.why)
     }
 
@@ -72,7 +72,7 @@ class AttemptSelfTest : BreakAttempt() {
             File(it, "build.gradle.kts").writeText(factorBuild.replace("\"factor\", \"2\"", "\"factor\", \"3\""))
         }
 
-        assertEquals(BreakAttempt.Outcome.HELD_BY_FORCE, result.outcome, result.why)
+        assertEquals(Outcome.HELD_BY_FORCE, result.outcome, result.why)
         assertTrue("unmappable-paths" in result.why, result.why)
         assertTrue("environment-changed" !in result.why, result.why)
     }
@@ -84,7 +84,7 @@ class AttemptSelfTest : BreakAttempt() {
             listOf(oneClass, oneTest, secondClass, secondTest, classOrder),
         ) { breakBeta(it) }
 
-        assertEquals(BreakAttempt.Outcome.HELD_BY_RULE, result.outcome, result.why)
+        assertEquals(Outcome.HELD_BY_RULE, result.outcome, result.why)
     }
 
     @Test
@@ -95,7 +95,7 @@ class AttemptSelfTest : BreakAttempt() {
             listOf(oneClass, oneTest, secondClass, secondTest, classOrder),
         ) { breakBeta(it) }
 
-        assertEquals(BreakAttempt.Outcome.OFF_TARGET, result.outcome, result.why)
+        assertEquals(Outcome.OFF_TARGET, result.outcome, result.why)
     }
 
     @Test
@@ -141,23 +141,23 @@ class AttemptSelfTest : BreakAttempt() {
             )
         }
 
-        assertEquals(BreakAttempt.Outcome.GAP, result.outcome, result.why)
+        assertEquals(Outcome.GAP, result.outcome, result.why)
     }
 
     @Test
     fun `a kept attempt that no longer reaches its rule fails asking to re-aim it`() {
-        val forced = BreakAttempt.Result(BreakAttempt.Outcome.HELD_BY_FORCE, "recorded [unmappable-paths]")
+        val forced = Result(Outcome.HELD_BY_FORCE, "recorded [unmappable-paths]")
 
-        val failure = assertFailsWith<AssertionError> { assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, forced) }
+        val failure = assertFailsWith<AssertionError> { assertOutcome(Outcome.HELD_BY_RULE, forced) }
 
         assertTrue("re-aim it" in failure.message.orEmpty(), failure.message)
     }
 
     @Test
     fun `a kept attempt that became a gap fails as a skipped test`() {
-        val gap = BreakAttempt.Result(BreakAttempt.Outcome.GAP, "the target was skipped")
+        val gap = Result(Outcome.GAP, "the target was skipped")
 
-        val failure = assertFailsWith<AssertionError> { assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, gap) }
+        val failure = assertFailsWith<AssertionError> { assertOutcome(Outcome.HELD_BY_RULE, gap) }
 
         assertTrue("should have run was skipped" in failure.message.orEmpty(), failure.message)
     }

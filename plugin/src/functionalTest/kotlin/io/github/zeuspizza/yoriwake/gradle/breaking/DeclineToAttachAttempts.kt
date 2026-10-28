@@ -80,7 +80,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             gradle = { args -> runner(dir, *args).withGradleVersion("8.13").withTestKitDir(FunctionalGradle.testKitDir("8.13")) },
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: declineIsolatedProjects asks Gradle's own build features, not a
@@ -94,7 +94,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             sources + ("gradle.properties" to "org.gradle.unsafe.isolated-projects=true\norg.gradle.isolated-projects=true\n"),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: yoriwake attaches through the `java` plugin or an Android one.
@@ -129,7 +129,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             dir, "dev.sample.A2AlphaTest", Aim.Forced("no-host-plugin"), sources, buildScript = javaBase,
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: whether the task's JaCoCo is on is read when yoriwake
@@ -144,7 +144,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             """.trimIndent(),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the same read, past it: a projectsEvaluated hook the build
@@ -162,7 +162,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             """.trimIndent(),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: canAttachMultiplatform looks for `src/jvmMain` or `src/jvmTest`.
@@ -220,7 +220,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             task = "desktopTest",
         ) { breakAlpha(it, "src/desktopMain/kotlin/dev/sample/Alpha.kt") }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the scope comes from the main source sets alone. A module
@@ -264,7 +264,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             ),
         ) { breakAlpha(it, helper.first) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the package scan strips comments but not string literals. A
@@ -287,7 +287,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             listOf(other, first, alpha, packageInfo, alphaTest, classOrderByName),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: fixtures. Row: DA8.
@@ -298,7 +298,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             buildScript = minimalBuild.replace("    jacoco\n", ""),
         ) { breakAlpha(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: applyJacocoIncludes adopts a host's own jacoco includes as the
@@ -327,7 +327,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             """.trimIndent(),
         ) { breakAlpha(it, util.first) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     /**
@@ -394,7 +394,7 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             buildScript = multiplatformBuild("jvm()", "jvmMain { kotlin.srcDir(\"$extraDir\") }"),
         ) { breakAlpha(it, "$extraDir/dev/extra/Alpha.kt") }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: hasJvmTarget takes a `src/jvmMain` or `src/jvmTest` directory
@@ -422,6 +422,6 @@ class DeclineToAttachAttempts : DeclinedAttempt() {
             buildScript = multiplatformBuild("jvm(\"desktop\")"),
         ) { breakAlpha(it, "src/desktopMain/kotlin/dev/sample/Alpha.kt") }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

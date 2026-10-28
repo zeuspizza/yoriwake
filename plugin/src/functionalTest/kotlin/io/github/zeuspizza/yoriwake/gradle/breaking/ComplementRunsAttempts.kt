@@ -95,7 +95,7 @@ class ComplementRunsAttempts : BreakAttempt() {
             narrow = ::rewriteCodec, selecting = listOf("-Pflavor=a"), complementing = listOf("-Pflavor=b"),
         )
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: fixtures. Row: CR3, as 0.2 changed it: a build-produced directory on the classpath
@@ -110,7 +110,7 @@ class ComplementRunsAttempts : BreakAttempt() {
             narrow = ::rewriteCodec, selecting = listOf("-Pflavor=a"), complementing = listOf("-Pflavor=b"),
         )
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a selecting run leaves a record only when the tree is clean
@@ -159,7 +159,7 @@ class ComplementRunsAttempts : BreakAttempt() {
             },
         )
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the classpath digest reads the entries the task's classpath
@@ -189,7 +189,7 @@ class ComplementRunsAttempts : BreakAttempt() {
             narrow = ::rewriteCodec, selecting = listOf("-Pflavor=a"), complementing = listOf("-Pflavor=b"),
         )
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     /**

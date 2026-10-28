@@ -639,7 +639,7 @@ def guard_suite():
 
 
 BREAK_FILE = ("plugin/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/gradle/breaking/"
-              "BreakAttempt.kt")
+              "verdict/Verdict.kt")
 BREAK_FLOOR_ONLY = [":plugin:breakAttempts", "-x", ":plugin:breakAttemptsGradle9"]
 
 
@@ -3794,16 +3794,16 @@ MUTATIONS = [
     # left-out check one that narrowed nothing reads as held; without the declared-verdict check one
     # that held by another rule reads as reaching the boundary it aimed at.
     ("the break helper stops asking whether the change fails the target under a full run", BREAK_FILE,
-     "        if (!observed.targetFailsUnderFullRun) {",
-     "        if (false && !observed.targetFailsUnderFullRun) {",
+     "    if (!observed.targetFailsUnderFullRun) {",
+     "    if (false && !observed.targetFailsUnderFullRun) {",
      break_suite, "does not fail the target under a full run is vacuous"),
     ("the break helper stops asking whether the selecting run left anything out", BREAK_FILE,
-     "        if (observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
-     "        if (false && observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
+     "    if (observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
+     "    if (false && observed.leftOut.isEmpty() && observed.forcedKinds.isEmpty()) {",
      break_suite, "leaves no test out is vacuous"),
     ("the break helper stops comparing the recorded verdict with the declared one", BREAK_FILE,
-     "        if (!onTarget(observed, aim, held)) {",
-     "        if (false && !onTarget(observed, aim, held)) {",
+     "    if (!onTarget(observed, aim, held)) {",
+     "    if (false && !onTarget(observed, aim, held)) {",
      break_suite, "ran by another rule than the one it aims at is off target"),
     # A changed file no class or build script names may still be read: found by a pattern, walked
     # to, listed in another file, or handed over by path. Dropping it skips the test that reads it.

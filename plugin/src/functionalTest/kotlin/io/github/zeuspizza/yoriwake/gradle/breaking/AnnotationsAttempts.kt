@@ -60,7 +60,7 @@ class AnnotationsAttempts : BreakAttempt() {
             listOf(level, packageInfo, oneClass, oneTest, target, third, thirdTest, classOrderByName),
         ) { File(it, packageInfo.first).writeText("@Level(4)\npackage dev.sample;") }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a class the annotation table lacks is new, and forces only if
@@ -90,7 +90,7 @@ class AnnotationsAttempts : BreakAttempt() {
             )
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a changed class only in the test output is spared the force
@@ -122,7 +122,7 @@ class AnnotationsAttempts : BreakAttempt() {
             listOf(level, helper, target, third, thirdTest, classOrderByName),
         ) { File(it, helper.first).writeText(helper.second.replace("\"hello\"", "\"howdy\"")) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: annotations inside method bodies are left out of the annotation
@@ -153,7 +153,7 @@ class AnnotationsAttempts : BreakAttempt() {
             File(it, service.first).writeText(service.second.replace("((Integer) o) * 2", "((@Tag Integer) o) * 2 + 1"))
         }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a test class this task runs that declares a test is exempt
@@ -209,6 +209,6 @@ class AnnotationsAttempts : BreakAttempt() {
             buildScript = apartBuild,
         ) { File(it, levelled.first).writeText(levelled.second.replace("@Level(3)", "@Level(4)")) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }

@@ -97,7 +97,7 @@ class GeneratedBytecodeAttempts : BreakAttempt() {
             buildScript = breakingBuild,
         ) { File(it, oneClass.first).writeText(oneClass.second.replace("n * 2", "n * 2 + 1")) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a test recorded changed bytes only if it executed that very
@@ -113,7 +113,7 @@ class GeneratedBytecodeAttempts : BreakAttempt() {
             buildScript = forkingBuild(weaving("compileTestJava", "dev/sample/A1GreetTest.class")),
         ) { changeOther(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: "recorded" means executed. A class a test only loads and reads
@@ -133,7 +133,7 @@ class GeneratedBytecodeAttempts : BreakAttempt() {
             buildScript = forkingBuild(weaving("compileJava", "dev/sample/Holder.class")),
         ) { changeOther(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a window for changed bytes opens on a first touch of that exact
@@ -159,6 +159,6 @@ class GeneratedBytecodeAttempts : BreakAttempt() {
             buildScript = forkingBuild(weaving("compileJava", "dev/sample/Greeter.class")),
         ) { changeOther(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }
