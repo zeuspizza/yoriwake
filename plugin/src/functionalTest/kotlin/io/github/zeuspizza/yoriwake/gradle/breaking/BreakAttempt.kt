@@ -247,6 +247,8 @@ abstract class BreakAttempt : FunctionalTestSupport() {
             "shares-jvm-moved-classpath-file" to "SHARES_JVM_WITH_CHANGE",
             "shares-jvm-unobserved" to "SHARES_JVM_WITH_CHANGE",
             "shares-jvm-unpositioned" to "SHARES_JVM_WITH_CHANGE",
+            "shares-jvm-ignored-path" to "SHARES_JVM_WITH_CHANGE",
+            "declares-changed-path" to "DECLARES_CHANGED_PATH",
             "not-known-to-pass" to "NOT_KNOWN_TO_PASS",
             "not-in-map" to "NOT_IN_MAP",
             "always-run" to "ALWAYS_RUN",
