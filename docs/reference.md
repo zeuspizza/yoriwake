@@ -910,6 +910,10 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   test runtime gained an engine.
 - It does not make JUnit 3 `TestCase`s, or a custom `Runner` that bypasses the Platform,
   selectable. Where it does not apply, the run forces.
+- A runner the map recorded reporting a test at run time, one its description never listed, runs
+  whole on every selecting run, so each test it reports runs, even one the map has never seen.
+  `decisions.tsv` records its listed tests as `CLASS_RUNS_WHOLE`. A runner whose first such test
+  appears after the map was recorded is judged by its listed tests until the next capture.
 - Robolectric suites are unverified. On some projects their classes fail Platform discovery, and
   the vintage engine cannot help them; on others they are discovered and run through it.
   Selection is as safe there as anywhere, but how far it narrows has not been measured.

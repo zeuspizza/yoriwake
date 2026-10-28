@@ -144,6 +144,66 @@ class SelectorTest {
         assertTrue(decision.includes(feature), "its iterations reach the change, so it must run")
     }
 
+    private val growing = "[engine:junit-vintage]/[runner:com.acme.GrowingTest]"
+
+    @Test
+    fun `a leaf beneath a runner that reported a test at run time runs whole, reached or not`(@TempDir dir: File) {
+        for ((name, reached) in listOf("reached" to "com.acme.A", "unreached" to "com.acme.Other")) {
+            val decision = decide(
+                map(
+                    File(dir, name),
+                    Triple("$growing/[test:listed(com.acme.GrowingTest)]", "SUCCESSFUL", "com.acme.Other"),
+                    Triple("$growing/[dynamic:grown(com.acme.GrowingTest)]", "SUCCESSFUL", reached),
+                    test("com.acme.ATest", "com.acme.A"),
+                ),
+                changed = listOf("com.acme.A"),
+            )
+
+            assertTrue(decision.reportsAtRunTime("$growing/[test:listed(com.acme.GrowingTest)]"), name)
+            assertTrue(decision.reportsAtRunTime(growing), name)
+            assertFalse(decision.reportsAtRunTime("[engine:junit-vintage]/[runner:com.acme.Plain]/[test:m(com.acme.Plain)]"), name)
+            assertFalse(decision.reportsAtRunTime("[engine:junit-vintage]/[runner:com.acme.GrowingTestTwo]/[test:m(x)]"), name)
+        }
+    }
+
+    @Test
+    fun `a runner with static records only does not run whole`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                Triple("$growing/[test:listed(com.acme.GrowingTest)]", "SUCCESSFUL", "com.acme.Other"),
+                test("com.acme.ATest", "com.acme.A"),
+            ),
+            changed = listOf("com.acme.A"),
+        )
+
+        assertFalse(decision.reportsAtRunTime("$growing/[test:listed(com.acme.GrowingTest)]"))
+    }
+
+    @Test
+    fun `the shared rule gives a vintage runner's listed test the verdict the filter records`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                Triple("$growing/[test:listed(com.acme.GrowingTest)]", "SUCCESSFUL", "com.acme.Other"),
+                Triple("$growing/[dynamic:grown(com.acme.GrowingTest)]", "SUCCESSFUL", "com.acme.A"),
+                test("com.acme.BTest", "com.acme.Other"),
+                test("com.acme.ATest", "com.acme.A"),
+            ),
+            changed = listOf("com.acme.A"),
+        )
+        val select = java.util.function.UnaryOperator<String> { if (it == AgentContract.SELECT_PROPERTY) "true" else null }
+
+        assertEquals(
+            Verdict.CLASS_RUNS_WHOLE,
+            FilterRule.verdictFor(select, decision, "$growing/[test:listed(com.acme.GrowingTest)]", true),
+        )
+        assertEquals(
+            Verdict.SKIPPED,
+            FilterRule.verdictFor(select, decision, "[engine:junit-jupiter]/[class:com.acme.BTest]/[method:t()]", true),
+        )
+    }
+
     @Test
     fun `a leaf with no recorded children never consults the subtree`(@TempDir dir: File) {
         // For every id the map holds with no children, the short-circuit and the exact rule agree.

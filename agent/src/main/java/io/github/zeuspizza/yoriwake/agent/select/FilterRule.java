@@ -189,7 +189,13 @@ public final class FilterRule {
         if (engineRunsEverything(id)) {
             return Verdict.ENGINE_RUNS_EVERYTHING;
         }
-        return Verdict.of(reasonOf(decision, id, isTest));
+        Selector.Decision.Reason reason = reasonOf(decision, id, isTest);
+        // Leaving out every listed test of a vintage runner prunes it, and with it the tests it
+        // reports only while it runs.
+        if (reason == Selector.Decision.Reason.SKIPPED && decision.reportsAtRunTime(id)) {
+            return Verdict.CLASS_RUNS_WHOLE;
+        }
+        return Verdict.of(reason);
     }
 
     // `reasonForTest`, not `reasonFor`: Spock reports a data-driven feature as a test, and its own
