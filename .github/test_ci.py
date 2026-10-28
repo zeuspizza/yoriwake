@@ -373,6 +373,88 @@ def case_an_upload_without_a_retention_or_a_reader_is_reported():
     return problems
 
 
+# Jobs that select against a map captured on another OS: they assert that every test runs, and a
+# patch release on one OS may not exist on the other, so they resolve the JDK themselves.
+CROSS_OS = {
+    "select-on-windows": "selects on Windows against the Linux map",
+    "select-on-linux": "selects on Linux against the Windows map",
+}
+
+
+def _artifact_names(job, action):
+    """The `name:` of each `action` step in a job's text, a `${{ }}` expression read as `*`."""
+    names = []
+    lines = job.splitlines()
+    for number, line in enumerate(lines):
+        if f"actions/{action}@" not in line:
+            continue
+        for after in lines[number + 1:number + 6]:
+            if after.strip().startswith("name:"):
+                names.append(re.sub(r"\$\{\{[^}]*\}\}", "*", after.split(":", 1)[1].strip()))
+                break
+    return names
+
+
+def unpinned_map_jdks(text):
+    """Each job that downloads a `coverage-map*` artifact and resolves its JDK on its own: a map
+    selected against on another patch release runs every test. Its `java-version` must read the
+    output of the job that uploaded the map, with no fallback after it."""
+    jobs = release_jobs(text)
+    producers = {name: job for job, body in jobs.items()
+                 for name in _artifact_names(body, "upload-artifact") if name.startswith("coverage-map")}
+    found = []
+    for job, body in jobs.items():
+        maps = [n for n in _artifact_names(body, "download-artifact") if n.startswith("coverage-map")]
+        if not maps or job in CROSS_OS:
+            continue
+        versions = re.findall(r"^\s*java-version:\s*(.*)$", body, re.MULTILINE)
+        for name in maps:
+            producer = producers.get(name)
+            reads = re.compile(rf"needs\.{re.escape(producer)}\.outputs[.\[]") if producer else None
+            if not versions or not all(reads and (match := reads.search(v)) and "||" not in v[match.end():]
+                                       for v in versions):
+                found.append(f"{job}: java-version {versions} does not read {producer or '?'}'s JDK for {name}")
+    return found
+
+
+def case_a_map_consumer_that_resolves_its_own_jdk_is_reported():
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        verify = handle.read()
+    with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
+        matrix = handle.read()
+    own = verify.replace("java-version: ${{ needs.capture.outputs.jdk }}", "java-version: '21'")
+    if not any(p.startswith("select:") for p in unpinned_map_jdks(own)):
+        problems += fail("verify.yml's select resolving '21' itself passed")
+    if any(p.split(":")[0] in CROSS_OS for p in unpinned_map_jdks(verify)):
+        problems += fail("a cross-OS job resolving its own JDK was reported")
+    crossed = verify.replace("java-version: ${{ needs.capture-on-windows.outputs.jdk }}",
+                             "java-version: ${{ needs.capture.outputs.jdk }}")
+    if not any(p.startswith("select-on-windows-from-windows:") for p in unpinned_map_jdks(crossed)):
+        problems += fail("a select job reading another capture's JDK passed")
+    expression = "${{ matrix.from != matrix.os && '21' || needs.capture.outputs[format('jdk-{0}', matrix.os)] }}"
+    if expression not in matrix:
+        return problems + fail("matrix.yml's select no longer reads its capture's JDK as this case expects")
+    if not unpinned_map_jdks(matrix.replace(expression, "'21'")):
+        problems += fail("matrix.yml's select resolving '21' itself passed")
+    fallback = "${{ matrix.from == matrix.os && needs.capture.outputs[format('jdk-{0}', matrix.os)] || '21' }}"
+    if not unpinned_map_jdks(matrix.replace(expression, fallback)):
+        problems += fail("a fallback after the capture's output passed")
+    return problems
+
+
+def case_every_map_consumer_runs_its_capture_jdk():
+    problems = 0
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            text = handle.read()
+        if "\njobs:\n" not in text:
+            continue
+        for problem in unpinned_map_jdks(text):
+            problems += fail(f"{name} {problem}")
+    return problems
+
+
 def case_every_upload_names_its_retention_and_its_reader():
     problems = 0
     for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
@@ -2730,6 +2812,8 @@ CASES = (
     case_no_workflow_names_a_moving_linux_runner,
     case_an_upload_without_a_retention_or_a_reader_is_reported,
     case_every_upload_names_its_retention_and_its_reader,
+    case_a_map_consumer_that_resolves_its_own_jdk_is_reported,
+    case_every_map_consumer_runs_its_capture_jdk,
     case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
     case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_reported,
     case_the_reference_table_and_the_matrix_cells_agree,
