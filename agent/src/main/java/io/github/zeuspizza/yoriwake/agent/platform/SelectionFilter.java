@@ -103,7 +103,7 @@ public class SelectionFilter implements PostDiscoveryFilter {
                 }
                 String resolved = PathGlob.resolve(glob, projectDir);
                 for (String path : changed.split(",")) {
-                    if (!path.isEmpty() && PathGlob.matches(resolved, path)) {
+                    if (!path.isEmpty() && PathGlob.matches(resolved, FilterRule.unescape(path))) {
                         return true;
                     }
                 }

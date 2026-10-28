@@ -222,7 +222,8 @@ public final class FilterRule {
         return paths;
     }
 
-    private static String unescape(String value) {
+    /** One change-set list item as the daemon meant it: {@code %2C} and {@code %25} back to {@code ,} and {@code %}. */
+    public static String unescape(String value) {
         StringBuilder out = new StringBuilder(value.length());
         for (int index = 0; index < value.length(); index++) {
             if (value.startsWith("%2C", index)) {

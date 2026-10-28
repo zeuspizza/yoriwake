@@ -35,7 +35,7 @@ refuses the run as `change-set-unreadable`.
 | `NARROW_PLAIN_JUNIT4` | `junit4` | plugin → agent | `yoriwake.plainRunners.narrow`'s value for plain JUnit 4 |
 | `CHANGED_CLASSES_PROPERTY` | `yoriwake.change.classes` | plugin → agent | Changed classes |
 | `UNMAPPABLE_PATHS_PROPERTY` | `yoriwake.change.unmappable` | plugin → agent | Changed paths no class was derived from; any one forces |
-| `CHANGED_PATHS_PROPERTY` | `yoriwake.change.paths` | plugin → agent | Every changed path, before any is dropped; matched only against tests' `yoriwake-depends-on:` tags |
+| `CHANGED_PATHS_PROPERTY` | `yoriwake.change.paths` | plugin → agent | Every changed path, before any is dropped, comma-separated with `%` and `,` written `%25` and `%2C`; matched only against tests' `yoriwake-depends-on:` tags |
 | `PROJECT_DIR_PROPERTY` | `yoriwake.project.dir` | plugin → agent | The test task's project directory relative to the root project, against which a tag's glob resolves |
 | `ACCOUNTED_PROPERTY` | `yoriwake.change.accountedFor` | plugin → agent | `true` when every changed path was accounted for, so an empty change set means "nothing changed" |
 | `ABSENCE_PROVABLE_PROPERTY` | `yoriwake.change.absenceProvable` | plugin → agent | Changed classes whose absence from the map proves them untested |

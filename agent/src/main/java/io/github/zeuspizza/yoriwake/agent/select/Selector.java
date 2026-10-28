@@ -743,8 +743,9 @@ public final class Selector {
     }
 
     /**
-     * Whether reading {@code path} reads an ignored path: the path, a directory above it, an entry
-     * of it when it is an archive, or every file.
+     * Whether reading {@code path} reads an ignored path: the path, a directory above it, a file
+     * below it (the path is a link to a directory), an entry of it when it is an archive, or every
+     * file.
      */
     public static boolean readsIgnored(String path, Collection<String> ignored) {
         if (AgentContract.FIRST_TOUCH_ANY.equals(path)) {
@@ -752,6 +753,9 @@ public final class Selector {
         }
         for (String file : ignored) {
             if (file.equals(path) || file.startsWith(path + "/")) {
+                return true;
+            }
+            if (path.startsWith(file + "/")) {
                 return true;
             }
             if (path.startsWith(file + "!/")) {

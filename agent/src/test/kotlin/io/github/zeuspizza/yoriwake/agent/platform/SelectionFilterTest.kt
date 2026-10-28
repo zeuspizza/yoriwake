@@ -244,6 +244,15 @@ class SelectionFilterTest {
     }
 
     @Test
+    fun `a changed path with a comma or a percent in its name matches a declared dependency`(@TempDir dir: File) {
+        // Escaped as the daemon hands them over. A tag cannot hold a comma, so only a wildcard
+        // meets one, and one that also matched the escaped form would prove nothing.
+        val changed = "docker/users%2Cv2.json,docker/100%25.json"
+        assertTrue(declares(dir, "yoriwake-depends-on:/docker/users?v2.json", changed))
+        assertTrue(declares(dir, "yoriwake-depends-on:/docker/100%.json", changed))
+    }
+
+    @Test
     fun `a declared dependency no changed path matches selects nothing`(@TempDir dir: File) {
         assertFalse(declares(dir, "yoriwake-depends-on:/docker/**", "src/main/java/com/acme/A.java,dockerfile"))
     }
