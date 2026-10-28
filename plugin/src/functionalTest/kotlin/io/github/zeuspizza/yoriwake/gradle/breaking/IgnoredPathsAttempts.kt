@@ -352,6 +352,41 @@ class IgnoredPathsAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
+    // Track: code reading. Boundary: build-file keeps build scripts, gradle.properties, version
+    // catalogs, anything under a gradle directory and build logic, by name. A properties file the
+    // build script loads its dependency versions from (refreshVersions' versions.properties) is none
+    // of those: a version bump in it under `**` is held by the comparison of the resolved jars.
+    @Test
+    fun `a dependency version bumped in a properties file the build loads runs the tests on that dependency`(
+        @TempDir dir: File,
+    ) {
+        val versionTest = source(
+            "src/test/java/dev/sample/A1VersionTest.java",
+            """
+            package dev.sample;
+            import org.apache.commons.lang3.StringUtils;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1VersionTest {
+                @Test void pinned() { assertEquals("3.17.0", StringUtils.class.getPackage().getImplementationVersion()); }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1VersionTest", Aim.Forced("dependencies-changed"),
+            listOf(other, first, versionTest, "versions.properties" to "commons-lang3=3.17.0\n", classOrderByName),
+            buildScript = ignoring(
+                "**",
+                extra = """
+                    val lang3 = file("versions.properties").readLines().first { it.startsWith("commons-lang3=") }.substringAfter("=")
+                    dependencies { testImplementation("org.apache.commons:commons-lang3:${'$'}lang3") }
+                """.trimIndent(),
+            ),
+        ) { File(it, "versions.properties").writeText("commons-lang3=3.16.0\n") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
     // Track: code reading. Boundary: source-set keeps a path under any `src` directory or under a
     // directory Gradle reports for a source set. A resource directory the build adds under another
     // name is only kept if the reported directories really include resource directories.

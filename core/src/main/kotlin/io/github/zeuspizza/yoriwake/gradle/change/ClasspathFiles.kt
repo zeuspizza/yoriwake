@@ -15,6 +15,10 @@ import java.util.jar.Manifest
  * produce it. That fails for a file generated from git state, a property or the clock, so its
  * content is recorded at each dating capture and compared before a selecting run's tests start.
  * Class files are the class-digest rule's.
+ *
+ * The same table names each jar or directory the classpath takes from outside the build ([table]):
+ * a dependency that resolves to another jar changes what the tests run against with no changed path
+ * behind it, whatever moved it (a properties file, a `-P` or `-D` property, a dynamic version).
  */
 internal object ClasspathFiles {
 
@@ -69,12 +73,14 @@ internal object ClasspathFiles {
         maxFiles: Int = MAX_FILES,
         classes: Boolean = false,
         text: TrackedText = TrackedText(rootDir),
+        dependency: (File) -> Boolean = { false },
     ): Walk {
         val roots = buildDirs.map { File(it).absoluteFile } + rootDir.absoluteFile
         // Gradle's and the plugin's own state, such as the agent jar, is not the build's output.
         val state = File(rootDir.absoluteFile, ".gradle").path + File.separator
         val produced = classpath.map(File::getAbsoluteFile).distinct().filter { entry ->
-            roots.any { root -> entry.path.startsWith(root.path + File.separator) } && !entry.path.startsWith(state)
+            roots.any { root -> entry.path.startsWith(root.path + File.separator) } && !entry.path.startsWith(state) &&
+                !dependency(entry)
         }
         val digests = sortedMapOf<String, String>()
         var files = 0
@@ -153,6 +159,87 @@ internal object ClasspathFiles {
         return Walk.Found(digests)
     }
 
+    /**
+     * [walk]'s digests plus one row per classpath entry from outside the build, keyed
+     * `dependency:<where>/<path>` so that another checkout or machine names it alike, and
+     * [DEPENDENCY_ORDER], a digest of every entry's key in classpath order. [homes] maps a
+     * placeholder ([GRADLE_USER_HOME], [PROJECT_CACHE_DIR], [MAVEN_REPOSITORY], [USER_HOME]) to its
+     * directory. An entry under one is a dependency, a local repository inside the checkout included,
+     * unless a root or build directory holding it lies deeper, as a checkout in the user's home does.
+     *
+     * Named by their path, which names their content or version, and never read: Gradle's module
+     * cache wherever it lies (a read-only cache included, keyed alike), generated Gradle API jars and
+     * wrapper distributions, what the plugin itself writes under [PROJECT_CACHE_DIR], and a released
+     * version in the Maven repository. A SNAPSHOT there is read whole, as is any other entry under a
+     * home. `mavenLocal()` under the user's home is keyed by its path and read by content. Any other
+     * entry, such as the jar of a build this one includes or an absolute `files(...)`, is keyed
+     * `dependency:<outside>/<name>`, with `#2`, `#3` for a name repeated in classpath order, since
+     * its path differs between machines, and read by content: a jar entry by entry (a rebuilt jar
+     * keeps entry timestamps), a directory file by file.
+     */
+    fun table(
+        classpath: Collection<File>,
+        buildDirs: Collection<String>,
+        rootDir: File,
+        homes: Map<String, File>,
+        maxFiles: Int = MAX_FILES,
+        text: TrackedText = TrackedText(rootDir),
+    ): Walk {
+        val root = rootDir.absoluteFile
+        val roots = buildDirs.map { File(it).absoluteFile } + root
+        val state = File(root, ".gradle")
+        fun File.holds(entry: File) = entry == this || entry.path.startsWith(path + File.separator)
+        // The deepest first, so a home inside another (a Gradle user home under the user's) wins.
+        val byDepth = homes.mapValues { it.value.absoluteFile }.entries.sortedByDescending { it.value.path.length }
+        // A home counts only where it lies deeper than the root or build directory holding the entry:
+        // a local repository inside the checkout holds dependencies, a checkout inside the user's home
+        // holds build output.
+        fun homeOf(entry: File) = byDepth.firstOrNull { (_, home) -> home.holds(entry) && home != entry }
+            ?.takeIf { (_, home) -> roots.none { it.holds(entry) && it.path.length >= home.path.length } }
+        val rows = sortedMapOf<String, String>()
+        val order = mutableListOf<String>()
+        val repeated = mutableMapOf<String, Int>()
+        for (entry in classpath.map(File::getAbsoluteFile).distinct()) {
+            val home = homeOf(entry)
+            val built = home == null && !state.holds(entry) && roots.any { it.holds(entry) }
+            if (built) {
+                order += pathOf(rootDir, entry)
+                continue
+            }
+            val moduleCache = entry.invariantSeparatorsPath.substringAfter(MODULE_CACHE_FILES, "")
+            val relative = home?.let { entry.relativeTo(it.value).invariantSeparatorsPath }
+            val key = if (moduleCache.isNotEmpty()) {
+                // Gradle's module cache names each file by its SHA-1, under the user home or a read-only
+                // cache alike, so one key serves both.
+                "$DEPENDENCY_PREFIX$MODULE_CACHE/$moduleCache".also { rows[it] = NAMED_BY_PATH }
+            } else if (home != null && relative != null && (home.key != USER_HOME || relative.startsWith(MAVEN_LOCAL))) {
+                val digest = when {
+                    home.key == GRADLE_USER_HOME && NAMED_LAYOUTS.any { it.containsMatchIn(relative) } -> NAMED_BY_PATH
+                    // The plugin's own agent jar, written from the plugin's bytes by a `doFirst` that may
+                    // run after this: read, it would be absent at one end and present at the other.
+                    home.key == PROJECT_CACHE_DIR -> NAMED_BY_PATH
+                    // A released version's path names it; a SNAPSHOT is replaced in place.
+                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH
+                    home.key == USER_HOME -> contentDigest(entry)
+                    else -> wholeDigest(entry)
+                }
+                "$DEPENDENCY_PREFIX${home.key}/$relative".also { rows[it] = digest }
+            } else {
+                // Where other builds live, such as one this build includes: under the user's home or not,
+                // its path differs between machines, so it is named by its file name and read.
+                val count = repeated.merge(entry.name, 1, Int::plus)!!
+                val suffix = if (count > 1) "#$count" else ""
+                "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}$suffix".also { rows[it] = contentDigest(entry) }
+            }
+            order += key
+        }
+        rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
+        return when (val walk = walk(classpath, buildDirs, rootDir, maxFiles, text = text, dependency = { homeOf(it) != null })) {
+            is Walk.Refused -> walk
+            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())
+        }
+    }
+
     /** What moved since the capture, each file with how; empty when nothing did. */
     data class Moved(val files: Map<String, String>) {
         val isEmpty: Boolean get() = files.isEmpty()
@@ -171,6 +258,7 @@ internal object ClasspathFiles {
         fun traceable(rootDir: File): List<String>? {
             val handed = mutableListOf<String>()
             for ((path, how) in files) {
+                if (path.startsWith(DEPENDENCY_PREFIX)) return null
                 if (how != "changed" || path.endsWith(EXPOSED_SUFFIX) || path.endsWith(".class")) return null
                 if (SOURCE_SUFFIXES.any(path::endsWith)) return null
                 if ("!/" !in path && isArchive(File(rootDir, path))) return null
@@ -274,6 +362,73 @@ internal object ClasspathFiles {
     }
 
     private val ARCHIVE_SUFFIXES = listOf(".jar", ".zip", ".war", ".ear", ".aar", ".jmod")
+
+    /** The prefix of every row [table] adds; no path relative to the root starts with it. */
+    const val DEPENDENCY_PREFIX = "dependency:"
+
+    /** The row digesting the classpath's order; a table without it was recorded before dependency rows were. */
+    const val DEPENDENCY_ORDER = DEPENDENCY_PREFIX + "#order"
+
+    const val GRADLE_USER_HOME = "<gradle-user-home>"
+    const val PROJECT_CACHE_DIR = "<project-cache-dir>"
+    const val MAVEN_REPOSITORY = "<maven-repository>"
+    const val USER_HOME = "<home>"
+    private const val OUTSIDE = "<outside>"
+
+    /** Gradle's module cache, wherever it lies: the files below it are keyed from here on. */
+    private const val MODULE_CACHE = "<gradle-module-cache>"
+    private const val MODULE_CACHE_FILES = "/modules-2/files-2.1/"
+
+    /** Gradle's `mavenLocal()` under the user's home, keyed by its path as the Maven repository is. */
+    private const val MAVEN_LOCAL = ".m2/repository/"
+
+    /** What a row whose path names its content records, having read nothing. */
+    private const val NAMED_BY_PATH = "named"
+
+    /** What a classpath entry that does not exist records. */
+    private const val ABSENT = "absent"
+
+    /**
+     * Layouts under the Gradle user home whose paths name what they hold: the module cache by each
+     * file's SHA-1, the others by Gradle's version.
+     */
+    private val NAMED_LAYOUTS = listOf(
+        Regex("^caches/modules-2/"),
+        Regex("^caches/[^/]+/generated-gradle-jars/"),
+        Regex("^wrapper/dists/"),
+    )
+
+    /** A file's bytes, or a directory's files by relative path and bytes; [ABSENT] when neither. */
+    private fun wholeDigest(entry: File): String = runCatching {
+        when {
+            entry.isFile -> entry.inputStream().use(::sha256)
+            entry.isDirectory -> directoryDigest(entry)
+            else -> ABSENT
+        }
+    }.getOrDefault(UNREADABLE)
+
+    /** As [wholeDigest], but a jar by each entry's name and bytes, never its entry timestamps. */
+    private fun contentDigest(entry: File): String {
+        if (!entry.isFile || !(entry.name.endsWith(".jar") || entry.name.endsWith(".zip"))) return wholeDigest(entry)
+        return runCatching {
+            JarFile(entry, false).use { zip ->
+                val lines = zip.entries().asSequence().filterNot { it.isDirectory }.sortedBy { it.name }
+                    .map { "${it.name}\u0000${zip.getInputStream(it).use(::sha256)}" }.toList()
+                sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
+            }
+        }.getOrElse {
+            // A file the JVM puts on a class path though no zip reader opens it, such as an empty jar.
+            wholeDigest(entry)
+        }
+    }
+
+    private fun directoryDigest(directory: File): String {
+        val lines = directory.walkTopDown().filter { it.isFile }
+            .map { it.relativeTo(directory).invariantSeparatorsPath to it }
+            .sortedBy { it.first }
+            .map { (relative, file) -> "$relative\u0000${file.inputStream().use(::sha256)}" }.toList()
+        return sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
+    }
 
     /** Gradle's module cache, whose paths name their content. */
     private fun inModuleCache(file: File) = "/caches/modules-2/" in file.invariantSeparatorsPath

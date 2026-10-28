@@ -1,7 +1,9 @@
 package io.github.zeuspizza.yoriwake.gradle.facts
 
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathScope
+import io.github.zeuspizza.yoriwake.gradle.wiring.cacheDir
 import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import java.io.File
@@ -38,6 +40,8 @@ internal data class ClasspathFacts(
     val testJvm: org.gradle.api.provider.Provider<Int>? = null,
     /** A lower agent ceiling the task hands its test JVM, for tests on installed JDKs; else absent. */
     val agentCeiling: org.gradle.api.provider.Provider<String>? = null,
+    /** Plain directories taken at configuration, so nothing resolves or reads a jar then. */
+    override val dependencyHomes: Map<String, File> = emptyMap(),
 ) : ClasspathView {
     override fun classpathFiles(): Set<File> = classpath.files
 
@@ -141,8 +145,16 @@ internal fun classpathFacts(
     agentCeiling = test.systemProperties.let { properties ->
         project.provider { properties[io.github.zeuspizza.yoriwake.agent.contract.AgentContract.AGENT_ASM_CEILING_PROPERTY]?.toString() }
     },
+    dependencyHomes = dependencyHomes(project),
     )
 }
+
+/** Where a Gradle test classpath takes dependencies from; see [ClasspathView.dependencyHomes]. */
+internal fun dependencyHomes(project: Project): Map<String, File> = mapOf(
+    ClasspathFiles.GRADLE_USER_HOME to project.gradle.gradleUserHomeDir,
+    ClasspathFiles.PROJECT_CACHE_DIR to project.cacheDir(),
+    ClasspathFiles.USER_HOME to File(System.getProperty("user.home").orEmpty()),
+)
 
 /**
  * Modules this project depends on, across every classpath that matters. Null when no

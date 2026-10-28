@@ -48,6 +48,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.configuredListing
 import io.github.zeuspizza.yoriwake.gradle.change.head
 import io.github.zeuspizza.yoriwake.gradle.change.validated
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
+import io.github.zeuspizza.yoriwake.gradle.facts.dependencyHomes
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.fullRunBranches
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -503,11 +504,12 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val classpath = test.classpath
         val buildDirs = projectFacts(project, buildMemo).buildDirs.values.toList()
         val rootDir = project.rootDir
+        val homes = dependencyHomes(project)
         test.doFirst {
             pending.delete()
             if (declinedUnderDevelocity(test)) return@doFirst
             if (selecting && !fullRunMarker.isFile) return@doFirst
-            val walk = runCatching { ClasspathFiles.walk(classpath.files, buildDirs, rootDir) }
+            val walk = runCatching { ClasspathFiles.table(classpath.files, buildDirs, rootDir, homes) }
                 .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
             when (walk) {
                 is ClasspathFiles.Walk.Found ->

@@ -102,6 +102,7 @@ refusal-kind	constant-changed
 refusal-kind	constant-unrecorded
 refusal-kind	declared-path-changed
 refusal-kind	decline-undetermined
+refusal-kind	dependencies-changed
 refusal-kind	develocity-test-distribution
 refusal-kind	develocity-test-selection
 refusal-kind	develocity-undetermined

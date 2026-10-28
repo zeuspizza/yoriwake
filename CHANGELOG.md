@@ -58,6 +58,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A vintage runner that reports tests at run time runs whole, so those tests are no longer left out. Map: left alone.
 - A test runs when a declared link it read through moves, or a declared dependency's path has a comma. Map: left alone.
 - A changed generated classpath file named with a leading or trailing space runs its readers; one with a comma no longer runs every test. Map: left alone.
+- A dependency that resolves to another jar runs every test, whatever changed it. Map: repaired on the next build.
 
 ## [0.3.0] - 2026-10-22
 

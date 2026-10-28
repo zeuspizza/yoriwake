@@ -743,6 +743,9 @@ FUNCTIONAL_CLASS_SECONDS = {
     "BootClassPathFunctionalTest": 50,
     "BranchPolicyFunctionalTest": 81,
     "CaptureFunctionalTest": 97,
+    # Estimated from DeclaredDependenciesFunctionalTest, as few builds of the same shape, until an
+    # every-guard run measures it.
+    "ChangedDependenciesFunctionalTest": 36,
     "ChangedBytesFunctionalTest": 40,
     "ClassFileCeilingFunctionalTest": 55,
     "ComplementFunctionalTest": 214,
@@ -2782,6 +2785,12 @@ MUTATIONS = [
      "                                    pending.addLast(named to true)",
      "                                    pending.size",
      functional_suite, "a jar only another jar's manifest names, built from a property differently, runs every test"),
+    # A dependency resolved to another jar reaches every test with no changed path behind it: a
+    # version read from a file `pathIgnore` leaves out, a `-P` property, a dynamic version.
+    ("the classpath-files table leaves the dependencies out", CLASSPATH_FILES,
+     "            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())",
+     "            is Walk.Found -> walk",
+     functional_suite, "a dependency version bumped in a properties file the build loads runs every test"),
     # A task Develocity runs or chooses tests for is declined, and nothing of yoriwake's acts on it
     #: Test Distribution recorded half a suite's coverage even locally.
     ("Test Distribution is no longer detected", DEVELOCITY_DETECTION,
@@ -4471,6 +4480,12 @@ MUTATIONS = [
      "        if (outside.isNotEmpty()) {",
      "        if (false) {",
      maven_suite, "a module built against a reactor module from a repository captures nothing"),
+    # A `-D` version property, a version range or an updated SNAPSHOT resolves another jar with no
+    # changed path: the capture must record the dependencies for a selecting run to compare.
+    ("a Maven capture records no dependencies", MAVEN_RECORDING,
+     "ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session))",
+     "ClasspathFiles.walk(classpath, buildDirs, root)",
+     maven_suite, "a dependency a version property resolves to another version runs every test"),
     # Surefire hands the JUnit Platform its parallel switch through its own parameters: missed there,
     # interleaved tests would blend into one another's coverage.
     ("Surefire's parameters are left out of the parallelism check", MAVEN_RECORDING,

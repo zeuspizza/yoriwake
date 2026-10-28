@@ -390,10 +390,9 @@ internal class Recording(
     ): Pair<EnvironmentFingerprint.View, EnvironmentFingerprint.Rules>? {
         val classpathPending = pendingClasspathFiles(mapDir)
         classpathPending.delete()
-        // A local repository inside the checkout holds libraries, not this build's output.
-        val repository = session.localRepository?.basedir?.let { File(it).absoluteFile }
-        val built = classpath.filterNot { entry -> repository != null && entry.absoluteFile.startsWith(repository) }
-        when (val walk = runCatching { ClasspathFiles.walk(built, session.allProjects.map { it.build.directory }, root) }
+        // The local repository counts as a dependency home even inside the checkout.
+        val buildDirs = session.allProjects.map { it.build.directory }
+        when (val walk = runCatching { ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session)) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Found -> runCatching { CoverageDecoder.writeClasspathFilesTo(classpathPending, walk.digests) }
             is ClasspathFiles.Walk.Refused -> log.debug("[yoriwake] ${project.artifactId}: no classpath file digests recorded (${walk.reason})")
