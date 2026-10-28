@@ -1374,7 +1374,7 @@ MUTATIONS = [
     # The unpack, back inside configuration. Every first build after an install then configures
     # twice, which is invisible in a build log and costs every two-arm cache measurement a third arm.
     ("the agent is unpacked during configuration again", TEST_TASK_WIRING,
-     "        val agent = AgentJar.locationIn(File(project.cacheDir(), AgentJar.DIRECTORY))",
+     "        val agent = AgentJar.locationUnder(project.cacheDir())",
      "        val agent = AgentJar.extractTo(File(project.cacheDir(), AgentJar.DIRECTORY))!!",
      functional_suite, "reuses its configuration-cache entry"),
     ("the Isolated Projects decline stops firing", YORIWAKE_PLUGIN,
@@ -2742,6 +2742,12 @@ MUTATIONS = [
      "            configurationMoved(copy) { configurationOf(test, agentArgument) }",
      "            configurationMoved(copy) { configurationOf(test, agentArgument) }.takeIf { false }",
      functional_suite, "a JVM argument only the complement's doFirst adds runs every test, naming the configuration"),
+    # The agent's absolute path differs between checkouts: kept in the late digest, it forces every
+    # complement run in another job.
+    ("the last look's configuration keeps the plugin's own agent argument", YORIWAKE_PLUGIN,
+     "                AgentJar.argument(AgentJar.locationUnder(cacheDir))",
+     "                AgentJar.argument(AgentJar.locationUnder(cacheDir.parentFile))",
+     functional_suite, "a complement in a fresh clone of the same commit leaves out what the selecting run ran"),
     ("a selecting run's doFirst fail-fast still leaves a record", LAST_LOOK,
      "        if (test.failFast) {",
      "        if (false) {",

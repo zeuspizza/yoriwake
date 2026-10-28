@@ -59,7 +59,7 @@ public abstract class YoriwakePlugin : Plugin<Project> {
             val cacheDir = project.cacheDir()
             // Where the wiring puts the agent, so the configuration read again leaves it out too.
             val agentArgument = if (AgentJar.isBundled()) {
-                "-javaagent:" + AgentJar.locationIn(File(cacheDir, AgentJar.DIRECTORY)).absolutePath
+                AgentJar.argument(AgentJar.locationUnder(cacheDir))
             } else {
                 null
             }

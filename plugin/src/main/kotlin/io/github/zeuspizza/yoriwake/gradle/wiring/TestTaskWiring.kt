@@ -333,7 +333,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         test.doFirst { loadedDir.deleteRecursively() }
 
         if (recording) {
-            agent?.let { test.jvmArgs("-javaagent:" + it.absolutePath) }
+            agent?.let { test.jvmArgs(AgentJar.argument(it)) }
             test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)
         }
         configureNonPlatformRunner(test, agent, recording, selecting, runPlan.observing, narrowPlainRunners)
@@ -880,7 +880,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
      */
     private fun declineUnderDevelocity(project: Project, test: Test, mapDir: File, agent: File?) {
         val develocity = DevelocityDetection.provider(project, test)
-        val agentArgument = agent?.let { "-javaagent:" + it.absolutePath }
+        val agentArgument = agent?.let(AgentJar::argument)
         val marker = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         test.doFirst {
             val (kind, reason) = DevelocityDetection.decode(develocity.orNull) ?: run {
@@ -949,7 +949,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             )
             return null
         }
-        val agent = AgentJar.locationIn(File(project.cacheDir(), AgentJar.DIRECTORY))
+        val agent = AgentJar.locationUnder(project.cacheDir())
         test.classpath += project.files(agent)
         // Re-checked every run, so a cleaned cache directory gets its agent back.
         test.doFirst { AgentJar.extractTo(agent.parentFile) }
@@ -1135,7 +1135,7 @@ internal class StampIdentity(
     companion object {
         fun of(project: Project, test: Test, agent: File?) = StampIdentity(
             project.rootDir, test.path, project.buildTreePath, project.gradle.gradleUserHomeDir,
-            agent?.let { "-javaagent:" + it.absolutePath },
+            agent?.let(AgentJar::argument),
         )
     }
 }
