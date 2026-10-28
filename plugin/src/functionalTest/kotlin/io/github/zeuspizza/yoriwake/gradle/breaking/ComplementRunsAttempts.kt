@@ -192,6 +192,42 @@ class ComplementRunsAttempts : BreakAttempt() {
         assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
     }
 
+    // Track: code reading. Boundary: the stamp's configuration (system properties, JVM arguments,
+    // filters) is read in the plugin's own doFirst, which runs before every doFirst the build adds;
+    // only the classpath is looked at again after them. Here the build's own doFirst sets a system
+    // property from a project property the complement run passes differently.
+    @Test
+    fun `a system property the test task's doFirst sets from a property differently is a record mismatch`(@TempDir dir: File) {
+        val build = minimalBuild + """
+
+            tasks.test {
+                val flavor = providers.gradleProperty("flavor").getOrElse("a")
+                doFirst { (this as Test).systemProperty("flavor", flavor) }
+            }
+        """.trimIndent()
+        val target = source(
+            "src/test/java/dev/sample/A9TargetTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A9TargetTest {
+                @Test void flavorA() {
+                    assertEquals("cba", new Codec().encode("abc"));
+                    assertEquals("a", System.getProperty("flavor"));
+                }
+            }
+            """,
+        )
+        val result = complementAttempt(
+            dir, "dev.sample.A9TargetTest", Aim.Forced(AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND),
+            listOf(codec, other, first, target, classOrderByName), build,
+            narrow = ::rewriteCodec, selecting = listOf("-Pflavor=a"), complementing = listOf("-Pflavor=b"),
+        )
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
     /**
      * As [attempt], for a complement run: records the map, commits [narrow] and runs a selecting
      * build with [selecting], which must narrow and run [target]; applies [between], then runs a
