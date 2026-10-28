@@ -40,11 +40,14 @@ class FailsafeFunctionalTest {
                     "            <goals><goal>prepare-agent-integration</goal></goals>\n          </execution>",
             )
         }
+        // AppIT first in its JVM: run after CounterIT loaded Counter, a change to Counter rightly selects
+        // it, and Failsafe's default order is the file system's, which differs between machines.
         File(project, "app/pom.xml").edit {
             it.replace(
                 "</dependencies>",
                 "</dependencies>\n  <build>\n    <plugins>\n      <plugin>\n" +
                     "        <artifactId>maven-failsafe-plugin</artifactId>\n" +
+                    "        <configuration><runOrder>alphabetical</runOrder></configuration>\n" +
                     "        <executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions>\n" +
                     "      </plugin>\n    </plugins>\n  </build>",
             )
