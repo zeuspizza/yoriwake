@@ -1,5 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.breaking
 
+import io.github.zeuspizza.yoriwake.gradle.FunctionalGradle
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -488,6 +490,9 @@ class EnginesAndContainersAttempts : BreakAttempt() {
     // never listed (vintage registers it as dynamic). Only that test's record reaches the change.
     @Test
     fun `a test a vintage runner reports only at run time is selected through its runner`(@TempDir dir: File) {
+        // Gradle 9 files the listed test under the runner's class beside the one it reports at run
+        // time, and a target's result must hold one test case.
+        assumeTrue(FunctionalGradle.version == "8.14", "runs in the 8.14 suite only")
         val runner = source(
             "src/test/java/dev/sample/GrowingRunner.java",
             """
