@@ -312,6 +312,12 @@ public final class AgentContract {
     public static final String STAMP_CONFIGURATION_NOTE = "configuration";
 
     /**
+     * A selection record note: the same digest as {@link #STAMP_CONFIGURATION_NOTE}, read right
+     * before the test JVM started, after the task's own {@code doFirst} actions.
+     */
+    public static final String STAMP_LATE_CONFIGURATION_NOTE = "configuration-late";
+
+    /**
      * Ends each writer's own copy of its decisions, {@code decisions.tsv.<pid>-<writer>.part}.
      * {@link #DECISIONS_FILE} is last-writer-wins across test JVMs; the parts hold the whole task.
      */

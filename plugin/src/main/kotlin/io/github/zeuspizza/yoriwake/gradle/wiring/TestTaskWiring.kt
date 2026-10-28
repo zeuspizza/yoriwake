@@ -1128,19 +1128,7 @@ internal class StampIdentity(
             buildRoot = buildRoot ?: "?${rootDir.absolutePath}",
             buildPath = buildPath,
             classpath = SelectionRecord.classpathDigest(test.classpath.files, rootDir, gradleUserHome),
-            configuration = SelectionRecord.configurationDigest(
-                test.systemProperties,
-                // Every argument the test JVM starts with, those of argument providers included, but
-                // the agents and properties the plugin and JaCoCo set by run kind.
-                test.allJvmArgs.filter { argument ->
-                    argument != agentArgument && !argument.startsWith("-Dyoriwake.") &&
-                        !(argument.startsWith("-javaagent:") && argument.substringBefore('=').endsWith("jacocoagent.jar"))
-                },
-                test.includes.sorted().map { "include $it" } + test.excludes.sorted().map { "exclude $it" } +
-                    test.filter.includePatterns.sorted().map { "filter.include $it" } +
-                    test.filter.excludePatterns.sorted().map { "filter.exclude $it" },
-                frameworkFilter(test),
-            ),
+            configuration = configurationOf(test, agentArgument),
         )
     }
 
@@ -1151,6 +1139,24 @@ internal class StampIdentity(
         )
     }
 }
+
+/**
+ * The stamp's digest of [test]'s configuration as it is when called, leaving out [agentArgument],
+ * the plugin's own `-javaagent` argument. Read where a run starts and again by [LastLook].
+ */
+internal fun configurationOf(test: Test, agentArgument: String?): String = SelectionRecord.configurationDigest(
+    test.systemProperties,
+    // Every argument the test JVM starts with, those of argument providers included, but the agents
+    // and properties the plugin and JaCoCo set by run kind.
+    test.allJvmArgs.filter { argument ->
+        argument != agentArgument && !argument.startsWith("-Dyoriwake.") &&
+            !(argument.startsWith("-javaagent:") && argument.substringBefore('=').endsWith("jacocoagent.jar"))
+    },
+    test.includes.sorted().map { "include $it" } + test.excludes.sorted().map { "exclude $it" } +
+        test.filter.includePatterns.sorted().map { "filter.include $it" } +
+        test.filter.excludePatterns.sorted().map { "filter.exclude $it" },
+    frameworkFilter(test),
+)
 
 /** The test framework's own filters that are set, as `name=[values]`, or null when none is. */
 // Top level, so the provider reading it captures no wiring instance.

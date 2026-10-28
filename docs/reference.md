@@ -1409,8 +1409,16 @@ field equals its own (its classpath looked at again after the task's own `doFirs
 [Generated files on the test classpath](#generated-files-on-the-test-classpath)) and its working
 tree is clean, so a test is left out only when it already ran on this code, this way. A test that ran on other code says nothing about this code.
 
+The configuration is read again right before the test JVM starts, after the task's own `doFirst`
+actions, in both runs; the complement uses the record only when that reading equals the selecting
+run's too. A system property or JVM argument that a `doFirst` sets differently in the two runs, or
+in only one of them, makes the complement run every test as `complement-record-mismatch`. One set
+there alike in both keeps the complement. Set what differs at configuration, or through a
+`jvmArgumentProviders` entry, so the complement names it as soon as it starts.
+
 A selecting run leaves no record, and removes an older one, when it ran everything, declined, ran
-with `--fail-fast` (Gradle drops the results of tests that finish after the first failure), or
+with fail-fast however it is set (`--fail-fast`, `failFast` in the task's configuration or in its
+own `doFirst`; Gradle drops the results of tests that finish after the first failure), or
 started or ended on a tree `git status` does not report clean, untracked files included. A test JVM
 that died, a test an assumption aborted and a test its engine skipped are never listed, so they run
 in the complement.

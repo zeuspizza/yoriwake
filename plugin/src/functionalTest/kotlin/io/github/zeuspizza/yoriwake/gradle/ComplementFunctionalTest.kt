@@ -417,6 +417,112 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a system property the test task's doFirst sets from a property differently runs every test, naming the configuration`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    val flavor = providers.gradleProperty("flavor").getOrElse("a")
+                    doFirst { (this as Test).systemProperty("flavor", flavor) }
+                }
+            """.trimIndent(),
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE, "-Pflavor=a").build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertRanEverythingOverConfiguration(dir, output)
+    }
+
+    @Test
+    fun `a system property only the selecting run's doFirst sets runs every test in the complement`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    val flavor = providers.gradleProperty("flavor")
+                    if (flavor.isPresent) {
+                        val value = flavor.get()
+                        doFirst { (this as Test).systemProperty("flavor", value) }
+                    }
+                }
+            """.trimIndent(),
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE, "-Pflavor=a").build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = complement(dir).output
+
+        assertRanEverythingOverConfiguration(dir, output)
+    }
+
+    @Test
+    fun `a JVM argument only the complement's doFirst adds runs every test, naming the configuration`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    if (providers.gradleProperty("mode").isPresent) {
+                        doFirst { (this as Test).jvmArgs("-Dsample.mode=b") }
+                    }
+                }
+            """.trimIndent(),
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pmode").build().output
+
+        assertRanEverythingOverConfiguration(dir, output)
+    }
+
+    @Test
+    fun `a system property the test task's doFirst sets alike in both runs keeps the complement`(@TempDir dir: File) {
+        captured(dir, extraBuild = "\ntasks.test { doFirst { (this as Test).systemProperty(\"flavor\", \"a\") } }\n")
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = complement(dir).output
+
+        assertEquals(early, ranTests(dir), output)
+        assertContains(output, "2 tests left out as already run, 4 run")
+    }
+
+    @Test
+    fun `a selecting run whose test task's doFirst turns on fail-fast leaves no record`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    val failFirst = providers.gradleProperty("failFirst").isPresent
+                    doFirst { (this as Test).failFast = failFirst }
+                }
+            """.trimIndent(),
+        )
+        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
+            "package dev.sample;\npublic class Alpha { public int twice(int n) { return n * 3; } }\n"
+        )
+        commit(dir, "break alpha")
+        val selecting = runner(dir, "test", SELECT, BASE, "-PfailFirst").buildAndFail()
+        assertTrue("dev.sample.XrayTest" in ranTests(dir), selecting.output)
+        assertEquals(null, selectionRecord(dir), "a run its doFirst made fail-fast left a record")
+
+        val output = runner(dir, "test", COMPLEMENT).buildAndFail().output
+
+        assertEquals(everyTest, ranTests(dir), output)
+        assertEquals("complement-no-record", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    @Test
     fun `a record from another Java runtime runs every test uncaptured, noting the mismatch`(@TempDir dir: File) {
         selected(dir)
         val record = File(mapDir(dir), AgentContract.SELECTION_FILE)
@@ -538,6 +644,13 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
         assertEquals(everyTest, ranTests(dir), output)
         assertEquals(refusal, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertEquals(head(dir), stamp(dir), "the run did not record the map\n$output")
+    }
+
+    /** Checks a complement run whose configuration moved after its first comparison ran every test, naming it. */
+    private fun assertRanEverythingOverConfiguration(dir: File, output: String) {
+        assertEquals(everyTest, ranTests(dir), output)
+        assertEquals(AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, "configuration")
     }
 
     private fun writeSample(dir: File, forkEvery: Boolean = false, parameterised: Boolean = false, extraBuild: String = "") {
