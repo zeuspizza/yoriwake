@@ -382,17 +382,24 @@ CROSS_OS = {
 
 
 def _artifact_names(job, action):
-    """The `name:` of each `action` step in a job's text, a `${{ }}` expression read as `*`."""
+    """The `name:` or `pattern:` of each `action` step in a job's text, up to the next step, a
+    `${{ }}` expression read as `*`."""
     names = []
     lines = job.splitlines()
     for number, line in enumerate(lines):
         if f"actions/{action}@" not in line:
             continue
-        for after in lines[number + 1:number + 6]:
-            if after.strip().startswith("name:"):
+        for after in lines[number + 1:]:
+            if after.lstrip().startswith("- "):
+                break
+            if after.strip().startswith(("name:", "pattern:")):
                 names.append(re.sub(r"\$\{\{[^}]*\}\}", "*", after.split(":", 1)[1].strip()))
                 break
     return names
+
+
+# The one fallback allowed before a capture's output: a matrix row selecting across OSes.
+CROSS_OS_ROW = re.compile(r"^\$\{\{\s*matrix\.from != matrix\.os && '21' \|\|\s*$")
 
 
 def unpinned_map_jdks(text):
@@ -403,6 +410,11 @@ def unpinned_map_jdks(text):
     producers = {name: job for job, body in jobs.items()
                  for name in _artifact_names(body, "upload-artifact") if name.startswith("coverage-map")}
     found = []
+    for producer in sorted(set(producers.values())):
+        body = jobs[producer]
+        emitted = re.findall(r"^\s+jdk[\w-]*:\s*\$\{\{\s*steps\.([\w-]+)\.outputs\.", body, re.MULTILINE)
+        if not emitted or not all(re.search(rf"^\s+id:\s*{re.escape(step)}\s*$", body, re.MULTILINE) for step in emitted):
+            found.append(f"{producer}: uploads a map but emits no JDK output from one of its steps")
     for job, body in jobs.items():
         maps = [n for n in _artifact_names(body, "download-artifact") if n.startswith("coverage-map")]
         if not maps or job in CROSS_OS:
@@ -412,6 +424,7 @@ def unpinned_map_jdks(text):
             producer = producers.get(name)
             reads = re.compile(rf"needs\.{re.escape(producer)}\.outputs[.\[]") if producer else None
             if not versions or not all(reads and (match := reads.search(v)) and "||" not in v[match.end():]
+                                       and ("||" not in v[:match.start()] or CROSS_OS_ROW.match(v[:match.start()]))
                                        for v in versions):
                 found.append(f"{job}: java-version {versions} does not read {producer or '?'}'s JDK for {name}")
     return found
@@ -440,6 +453,12 @@ def case_a_map_consumer_that_resolves_its_own_jdk_is_reported():
     fallback = "${{ matrix.from == matrix.os && needs.capture.outputs[format('jdk-{0}', matrix.os)] || '21' }}"
     if not unpinned_map_jdks(matrix.replace(expression, fallback)):
         problems += fail("a fallback after the capture's output passed")
+    if not unpinned_map_jdks(matrix.replace("matrix.from != matrix.os && '21'", "matrix.from == matrix.os && '21'")):
+        problems += fail("an inverted condition that gives the same-OS row '21' passed")
+    if not unpinned_map_jdks(own.replace("name: coverage-map\n", "pattern: coverage-map*\n")):
+        problems += fail("a consumer downloading the map by pattern was not checked")
+    if not any(p.startswith("capture:") for p in unpinned_map_jdks(verify.replace("        id: java\n", "", 1))):
+        problems += fail("a capture whose JDK output reads no step passed")
     return problems
 
 
