@@ -225,7 +225,7 @@ class ComplementRunsAttempts : BreakAttempt() {
             narrow = ::rewriteCodec, selecting = listOf("-Pflavor=a"), complementing = listOf("-Pflavor=b"),
         )
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: a selecting run with fail-fast leaves no record, since Gradle
@@ -287,7 +287,7 @@ class ComplementRunsAttempts : BreakAttempt() {
             ),
             Aim.Forced("complement-no-record"),
         )
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, Result(result.outcome, "${result.why}; the selecting run reported $selected"))
+        assertOutcome(Outcome.HELD_BY_FORCE, Result(result.outcome, "${result.why}; the selecting run reported $selected"))
     }
 
     private fun forcedOf(notes: List<Map<String, String>>) = notes.flatMap { note ->

@@ -547,6 +547,6 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(BreakAttempt.Outcome.HELD_BY_RULE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }
