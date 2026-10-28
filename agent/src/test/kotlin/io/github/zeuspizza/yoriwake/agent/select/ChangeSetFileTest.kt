@@ -66,6 +66,20 @@ class ChangeSetFileTest {
     }
 
     @Test
+    fun `the moved files come from the file with commas, percents and spaces restored`(@TempDir dir: File) {
+        val file = written(
+            File(dir, "change-set"),
+            AgentContract.MOVED_FILES_PROPERTY to " first.json,app/a%2Cb.json,app/100%25.json,app/ lead.json,last.json ",
+        )
+        val inputs = FilterRule.resolveInputs(system(AgentContract.CHANGE_SET_FILE_PROPERTY to file.path))
+
+        assertEquals(
+            listOf(" first.json", "app/a,b.json", "app/100%.json", "app/ lead.json", "last.json "),
+            FilterRule.movedFiles(inputs),
+        )
+    }
+
+    @Test
     fun `a change-set file that is missing or cut short refuses, so everything runs`(@TempDir dir: File) {
         // Read as an empty change set, either would narrow with nothing known to have changed.
         val cut = written(File(dir, "cut"), AgentContract.CHANGED_CLASSES_PROPERTY to "dev.Alpha", end = false)

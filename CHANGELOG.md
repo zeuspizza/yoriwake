@@ -55,6 +55,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
 - A plain JUnit 4 class whose `@BeforeClass`, `@AfterClass` or class rule fails runs again on the next selecting run. Map: left alone.
 - A test runs when a declared link it read through moves, or a declared dependency's path has a comma. Map: left alone.
+- A changed generated classpath file named with a leading or trailing space runs its readers; one with a comma no longer runs every test. Map: left alone.
 
 ## [0.3.0] - 2026-10-22
 

@@ -147,7 +147,7 @@ public final class FilterRule {
                 .withOwnTestClasses(splitProperty(property, AgentContract.OWN_TEST_CLASSES_PROPERTY))
                 .withExemptTestClasses(splitProperty(property, AgentContract.EXEMPT_TEST_CLASSES_PROPERTY))
                 .withChangedBytes(splitProperty(property, AgentContract.CHANGED_BYTES_PROPERTY))
-                .withMovedFiles(splitProperty(property, AgentContract.MOVED_FILES_PROPERTY))
+                .withMovedFiles(movedFiles(property))
                 .withIgnoredPaths(ignoredPaths(orEmpty(property, AgentContract.IGNORED_PATHS_PROPERTY)))
                 .withBaseFlag(property.apply(AgentContract.BASE_FLAG_PROPERTY))
                 // Answers before the map or change set is consulted, so a refused run cannot be
@@ -237,6 +237,20 @@ public final class FilterRule {
             }
         }
         return out.toString();
+    }
+
+    /**
+     * The {@link AgentContract#MOVED_FILES_PROPERTY} files as the daemon named them: untrimmed, since
+     * a name may start or end with a space and the daemon writes none around the commas.
+     */
+    public static List<String> movedFiles(UnaryOperator<String> property) {
+        List<String> values = new ArrayList<>();
+        for (String item : orEmpty(property, AgentContract.MOVED_FILES_PROPERTY).split(",")) {
+            if (!item.isEmpty()) {
+                values.add(unescape(item));
+            }
+        }
+        return values;
     }
 
     private static List<String> splitProperty(UnaryOperator<String> property, String name) {

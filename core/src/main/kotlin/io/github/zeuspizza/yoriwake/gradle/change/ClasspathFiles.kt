@@ -166,7 +166,6 @@ internal object ClasspathFiles {
          * - a class or source file, read as a class rather than a file;
          * - an archive inside a directory, compared whole but read by its entries;
          * - one outside the root, whose reads are not recorded;
-         * - one whose path holds a comma, which the selector's list cannot carry;
          * - a manifest whose loaded attributes moved or cannot be told.
          */
         fun traceable(rootDir: File): List<String>? {
@@ -176,8 +175,6 @@ internal object ClasspathFiles {
                 if (SOURCE_SUFFIXES.any(path::endsWith)) return null
                 if ("!/" !in path && isArchive(File(rootDir, path))) return null
                 if (path.startsWith("../") || File(path).isAbsolute) return null
-                // The selector is handed a comma-separated list.
-                if (',' in path) return null
                 handed += path
             }
             return handed
