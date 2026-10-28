@@ -34,9 +34,7 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
         if (!handed.isFile) return
         val compared = runCatching { read(handed.readText()) }.getOrNull()
         runCatching { handed.delete() }
-        val moved = whatMoved(compared) {
-            ClasspathFiles.walk(test.classpath.files, it.buildDirs, it.rootDir, classes = it.classes)
-        } ?: return
+        val moved = whatMoved(compared) { again(test.classpath.files, it) } ?: return
         val (kind, reason) = if (complementing) {
             // Left out by its record no more: the run is a full run that captures nothing.
             test.setSystemProperties(test.systemProperties - AgentContract.COMPLEMENT_RECORD_PROPERTY)
@@ -56,6 +54,8 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
         val buildDirs: List<String>,
         val classes: Boolean,
         val digests: Map<String, String>,
+        /** [ClasspathFiles.table]'s homes when the comparing action compared a table; empty for a walk. */
+        val homes: Map<String, File> = emptyMap(),
     )
 
     companion object {
@@ -64,6 +64,14 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
 
         /** Where a comparing action leaves what it compared, for this action to look at again. */
         fun handOver(mapDir: File) = File(mapDir, "classpath-files.compared")
+
+        /**
+         * [classpath] digested as the comparing action did: a selecting run's table, with its
+         * dependencies, when the hand-over carries homes; else a complement's walk of build output.
+         */
+        internal fun again(classpath: Collection<File>, compared: Compared): ClasspathFiles.Walk =
+            if (compared.homes.isEmpty()) ClasspathFiles.walk(classpath, compared.buildDirs, compared.rootDir, classes = compared.classes)
+            else ClasspathFiles.table(classpath, compared.buildDirs, compared.rootDir, compared.homes)
 
         /**
          * Why the run may no longer leave tests out, given what a comparing action handed over
@@ -102,10 +110,21 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
             }
         }
 
-        /** Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes]. */
-        fun write(mapDir: File, rootDir: File, buildDirs: Collection<String>, classes: Boolean, digests: Map<String, String>) {
+        /**
+         * Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes], and
+         * the table's [homes] when it compared one.
+         */
+        fun write(
+            mapDir: File,
+            rootDir: File,
+            buildDirs: Collection<String>,
+            classes: Boolean,
+            digests: Map<String, String>,
+            homes: Map<String, File> = emptyMap(),
+        ) {
             val lines = listOf("root\t${Tsv.escape(rootDir.absolutePath)}", "classes\t$classes") +
                 buildDirs.map { "build\t${Tsv.escape(it)}" } +
+                homes.map { (name, home) -> "home\t${Tsv.escape(name)}\t${Tsv.escape(home.absolutePath)}" } +
                 digests.map { (path, digest) -> "file\t${Tsv.escape(path)}\t$digest" }
             writeAtomically(handOver(mapDir), lines.joinToString("\n", postfix = "\n$END\n"))
         }
@@ -118,6 +137,7 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
             var classes: Boolean? = null
             val buildDirs = mutableListOf<String>()
             val digests = mutableMapOf<String, String>()
+            val homes = mutableMapOf<String, File>()
             for (line in lines.dropLast(1)) {
                 val parts = line.split('\t')
                 when {
@@ -125,10 +145,11 @@ internal class LastLook(private val mapDir: File) : Action<Task> {
                     parts.size == 2 && parts[0] == "classes" -> classes = parts[1].toBooleanStrictOrNull() ?: return null
                     parts.size == 2 && parts[0] == "build" -> buildDirs += Tsv.unescape(parts[1])
                     parts.size == 3 && parts[0] == "file" -> digests[Tsv.unescape(parts[1])] = parts[2]
+                    parts.size == 3 && parts[0] == "home" -> homes[Tsv.unescape(parts[1])] = File(Tsv.unescape(parts[2]))
                     else -> return null
                 }
             }
-            return Compared(root ?: return null, buildDirs, classes ?: return null, digests)
+            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes)
         }
 
         private const val END = "end"

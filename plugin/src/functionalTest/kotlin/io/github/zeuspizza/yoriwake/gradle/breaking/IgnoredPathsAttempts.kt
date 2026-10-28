@@ -355,7 +355,7 @@ class IgnoredPathsAttempts : BreakAttempt() {
     // Track: code reading. Boundary: build-file keeps build scripts, gradle.properties, version
     // catalogs, anything under a gradle directory and build logic, by name. A properties file the
     // build script loads its dependency versions from (refreshVersions' versions.properties) is none
-    // of those, and nothing else compares a dependency jar: a version bump in it under `**`.
+    // of those: a version bump in it under `**` is held by the comparison of the resolved jars.
     @Test
     fun `a dependency version bumped in a properties file the build loads runs the tests on that dependency`(
         @TempDir dir: File,
@@ -373,7 +373,7 @@ class IgnoredPathsAttempts : BreakAttempt() {
             """,
         )
         val result = attempt(
-            dir, "dev.sample.A1VersionTest", Aim.Forced("unmappable-paths"),
+            dir, "dev.sample.A1VersionTest", Aim.Forced("dependencies-changed"),
             listOf(other, first, versionTest, "versions.properties" to "commons-lang3=3.17.0\n", classOrderByName),
             buildScript = ignoring(
                 "**",
@@ -385,7 +385,6 @@ class IgnoredPathsAttempts : BreakAttempt() {
         ) { File(it, "versions.properties").writeText("commons-lang3=3.16.0\n") }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
-        assertKept(dir, "**", "build-file")
     }
 
     // Track: code reading. Boundary: source-set keeps a path under any `src` directory or under a

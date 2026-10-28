@@ -134,6 +134,11 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   once: the forced run records them, unless the classpath holds over 200,000 such files, which are
   then never recorded). One whose readers the map records runs only them. The run names up to five
   files; see [Generated files on the test classpath](#generated-files-on-the-test-classpath);
+- a jar or directory the test runtime classpath takes from outside the build (a dependency) that
+  differs from the capture's: another version, one added, removed or reordered, or other content at
+  the same place, whatever changed it, a file `pathIgnore` leaves out, a `-P` or `-D` property or
+  nothing in the tree (`dependencies-changed`). The run names up to five. A map recorded before
+  dependencies were runs every test once (`classpath-files-unrecorded`) and records them;
 - a change touching startup coverage, which no single test owns;
 - more changed paths than `largeChangeThreshold` (5,000 by default) against the base the run was
   asked about, with untracked files and the working tree's drift, less the paths `pathIgnore` takes
@@ -254,7 +259,9 @@ names them. A file that appeared or is gone, one outside the root project, a cla
 reads for (a map recorded by 0.2.0, a test JVM whose reads were not all observed) run everything,
 naming it (`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path`
 names is on the test JVM's class path too, so it counts the same way, its class files included,
-wherever it lies but in Gradle's module cache. Dependency jars are the classpath rule's.
+wherever it lies but in Gradle's module cache. A dependency jar or directory that moved runs
+everything (`dependencies-changed`), naming it: one in Gradle's module cache by its path, which
+names its content, and every other one by its content.
 
 The JDK's class loader reads each of your jars' manifests itself, to open the jar and to define a
 package from it, and keeps only what it acts on: `Class-Path`, `Multi-Release`,
@@ -1359,6 +1366,10 @@ compiles or what the build reads. The run names each, with the protection that k
   string, such as a `ReadmeTest` naming `README.md`;
 - `git-quoted`: a path git printed in quotes, as it does a name with bytes it escapes, which no
   rule above can be judged on.
+
+A dependency the build resolves to another jar runs every test whatever changed it, a declared
+path included, such as a `versions.properties` the build script reads its versions from
+(`dependencies-changed`).
 
 A path left out is still a changed path a test may read, and the map says so where it can: a test
 JVM that read the path at capture, a directory above it, or every file (from a child process or an

@@ -54,6 +54,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A test the engine starts and never finishes runs every time and no longer discards the capture. Map: left alone.
 - A trusted-map list written by an earlier yoriwake says so, rather than reading like a changed map. Map: left alone.
 - A plain JUnit 4 class whose `@BeforeClass`, `@AfterClass` or class rule fails runs again on the next selecting run. Map: left alone.
+- A dependency that resolves to another jar runs every test, whatever changed it. Map: repaired on the next build.
 
 ## [0.3.0] - 2026-10-22
 

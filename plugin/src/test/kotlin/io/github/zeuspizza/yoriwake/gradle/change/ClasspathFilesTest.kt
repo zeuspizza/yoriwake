@@ -496,4 +496,158 @@ class ClasspathFilesTest {
         val failing = found(ClasspathFiles.walk(listOf(resources), listOf(), root, text = TrackedText(root) { null }))
         assertNotEquals(copyDigest(root, "one\ntwo\n"), failing["build/resources/test/a.txt"])
     }
+
+    /** A machine: a root, a Gradle user home and a user home, each in its own directory under [base]. */
+    private class Machine(base: File) {
+        val root = File(base, "work/sample").apply { mkdirs() }
+        val gradleHome = File(base, "gradle-home").apply { mkdirs() }
+        val home = File(base, "user").apply { mkdirs() }
+        val repository = File(base, "m2/repository").apply { mkdirs() }
+        val homes = mapOf(
+            ClasspathFiles.GRADLE_USER_HOME to gradleHome,
+            ClasspathFiles.PROJECT_CACHE_DIR to File(root, ".gradle"),
+            ClasspathFiles.MAVEN_REPOSITORY to repository,
+            ClasspathFiles.USER_HOME to home,
+        )
+
+        fun table(vararg classpath: File) = ClasspathFiles.table(classpath.toList(), listOf(), root, homes)
+    }
+
+    private fun dependencies(walk: ClasspathFiles.Walk) =
+        found(walk).filterKeys { it.startsWith(ClasspathFiles.DEPENDENCY_PREFIX) }
+
+    private val moduleJar = "caches/modules-2/files-2.1/org.apache.commons/commons-lang3/3.17.0/abc/commons-lang3-3.17.0.jar"
+
+    @Test
+    fun `a module-cache jar is named by its path under the Gradle user home and never opened`(@TempDir base: File) {
+        val machine = Machine(base)
+        val unreadable = File(machine.gradleHome, moduleJar).apply { parentFile.mkdirs(); mkdirs() }
+
+        val first = dependencies(machine.table(unreadable))
+        val second = dependencies(machine.table(unreadable))
+
+        assertTrue("dependency:<gradle-user-home>/$moduleJar" in first, first.toString())
+        assertTrue(ClasspathFiles.compare(first, second).isEmpty)
+        assertTrue(first.values.none { it == ClasspathFiles.UNREADABLE }, first.toString())
+    }
+
+    @Test
+    fun `the same table from two Gradle user homes and two roots compares equal`(@TempDir base: File) {
+        val tables = listOf("one", "two").map { name ->
+            val machine = Machine(File(base, name))
+            val module = jar(File(machine.gradleHome, moduleJar), 0L, "a.txt" to "a")
+            val agent = jar(File(machine.root, ".gradle/yoriwake-agent.jar"), 0L, "agent.txt" to "agent")
+            val local = jar(File(machine.home, "libs/local.jar"), 0L, "local.txt" to "local")
+            val resources = File(machine.root, "build/resources/test").apply { mkdirs() }
+            file(resources, "info.properties", "info=a")
+            found(machine.table(resources, module, agent, local))
+        }
+
+        assertEquals(tables[0], tables[1])
+        assertTrue(ClasspathFiles.DEPENDENCY_ORDER in tables[0])
+        assertTrue("dependency:<project-cache-dir>/yoriwake-agent.jar" in tables[0], tables[0].toString())
+        assertTrue("dependency:<home>/libs/local.jar" in tables[0], tables[0].toString())
+    }
+
+    @Test
+    fun `a Maven repository jar is read whole, and its metadata beside it is not`(@TempDir base: File) {
+        val machine = Machine(base)
+        val lang3 = jar(File(machine.repository, "org/apache/commons/lang3/3.17.0/lang3-3.17.0.jar"), 0L, "a.txt" to "a")
+        val metadata = file(lang3.parentFile, "maven-metadata-central.xml", "<one/>")
+        val before = found(machine.table(lang3))
+
+        metadata.writeText("<two/>")
+        assertTrue(ClasspathFiles.compare(before, found(machine.table(lang3))).isEmpty)
+
+        jar(lang3, 0L, "a.txt" to "b")
+        val moved = ClasspathFiles.compare(before, found(machine.table(lang3)))
+        assertEquals(mapOf("dependency:<maven-repository>/org/apache/commons/lang3/3.17.0/lang3-3.17.0.jar" to "changed"), moved.files)
+    }
+
+    @Test
+    fun `the agent jar is named by its path, whether or not it is written yet`(@TempDir base: File) {
+        val machine = Machine(base)
+        val agent = File(machine.root, ".gradle/yoriwake-agent/yoriwake-agent.jar")
+        val before = found(machine.table(agent))
+
+        jar(agent, 0L, "agent.txt" to "one")
+
+        assertTrue(ClasspathFiles.compare(before, found(machine.table(agent))).isEmpty)
+        assertTrue("dependency:<project-cache-dir>/yoriwake-agent/yoriwake-agent.jar" in before, before.toString())
+    }
+
+    @Test
+    fun `a jar outside every home is read by its entries and keyed by its name`(@TempDir base: File) {
+        val tables = listOf(0L, 1_000_000_000_000L).mapIndexed { index, time ->
+            val machine = Machine(File(base, "machine$index"))
+            // An included build's jar, rebuilt with other entry timestamps.
+            val included = jar(File(base, "included$index/build/libs/tool.jar"), time, "t.txt" to "t")
+            val other = jar(File(base, "elsewhere$index/tool.jar"), 0L, "u.txt" to "u")
+            val classes = File(base, "outside$index/classes").apply { mkdirs() }
+            file(classes, "dev/Data.txt", "d")
+            found(machine.table(included, other, classes))
+        }
+
+        assertEquals(tables[0], tables[1])
+        assertEquals(
+            setOf("dependency:<outside>/tool.jar", "dependency:<outside>/tool.jar#2", "dependency:<outside>/classes", ClasspathFiles.DEPENDENCY_ORDER),
+            tables[0].keys,
+        )
+    }
+
+    @Test
+    fun `a directory outside the root moves when a file in it does`(@TempDir base: File) {
+        val machine = Machine(base)
+        val classes = File(base, "classes").apply { mkdirs() }
+        val data = file(classes, "dev/Data.txt", "d")
+        val before = found(machine.table(classes))
+
+        data.writeText("e")
+
+        assertEquals(setOf("dependency:<outside>/classes"), ClasspathFiles.compare(before, found(machine.table(classes))).files.keys)
+    }
+
+    @Test
+    fun `a reorder moves only the order row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val one = jar(File(machine.home, "libs/one.jar"), 0L, "a.txt" to "a")
+        val two = jar(File(machine.home, "libs/two.jar"), 0L, "b.txt" to "b")
+
+        val moved = ClasspathFiles.compare(found(machine.table(one, two)), found(machine.table(two, one)))
+
+        assertEquals(mapOf(ClasspathFiles.DEPENDENCY_ORDER to "changed"), moved.files)
+    }
+
+    @Test
+    fun `a dependency row is never handed to the selector`(@TempDir root: File) {
+        val moved = ClasspathFiles.Moved(mapOf("dependency:<home>/libs/one.jar" to "changed"))
+
+        assertEquals(null, moved.traceable(root))
+    }
+
+    @Test
+    fun `a local repository beneath the root gives dependency rows, not walked entries`(@TempDir base: File) {
+        val machine = Machine(base)
+        val repository = File(machine.root, ".m2/repository")
+        val lang3 = jar(File(repository, "org/lang3/1/lang3-1.jar"), 0L, "a.txt" to "a")
+
+        val table = found(ClasspathFiles.table(listOf(lang3), listOf(), machine.root, machine.homes + (ClasspathFiles.MAVEN_REPOSITORY to repository)))
+
+        assertEquals(setOf("dependency:<maven-repository>/org/lang3/1/lang3-1.jar", ClasspathFiles.DEPENDENCY_ORDER), table.keys)
+    }
+
+    @Test
+    fun `a checkout inside the user's home walks its own output, and a jar beside it is a dependency`(@TempDir home: File) {
+        val root = File(home, "projects/sample")
+        val resources = File(root, "build/resources/test").apply { mkdirs() }
+        file(resources, "info.properties", "info=a")
+        val beside = jar(File(home, "projects/other/build/libs/other.jar"), 0L, "o.txt" to "o")
+
+        val table = found(ClasspathFiles.table(listOf(resources, beside), listOf(), root, mapOf(ClasspathFiles.USER_HOME to home)))
+
+        assertEquals(
+            setOf("build/resources/test/info.properties", "dependency:<home>/projects/other/build/libs/other.jar", ClasspathFiles.DEPENDENCY_ORDER),
+            table.keys,
+        )
+    }
 }

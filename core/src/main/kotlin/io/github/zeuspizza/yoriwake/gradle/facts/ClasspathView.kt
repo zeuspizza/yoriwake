@@ -16,6 +16,13 @@ internal interface ClasspathView {
     /** Module path to build directory, so a classpath entry can be traced back to its module. */
     val buildDirs: Map<String, String>
 
+    /**
+     * Placeholder to directory for where the classpath takes dependencies from (the Gradle user
+     * home, the project cache directory, the Maven local repository, the user's home), so the
+     * classpath-files table names a dependency alike in another checkout or on another machine.
+     */
+    val dependencyHomes: Map<String, File>
+
     /** The module under test, which is present whether or not it has produced output yet. */
     val ownPath: String
 

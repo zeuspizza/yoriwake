@@ -67,4 +67,28 @@ class LastLookTest {
 
         assertContains(assertNotNull(LastLook.whatMoved(compared, walk)), "build-info.properties")
     }
+
+    @Test
+    fun `a selecting run's hand-over with dependency rows and a complement's without compare equal when nothing moved`(
+        @TempDir base: File,
+    ) {
+        val root = File(base, "repo")
+        val home = File(base, "gradle-home")
+        val resources = File(root, "app/build/resources/test").apply { mkdirs() }
+        File(resources, "a.txt").writeText("a")
+        val module = File(home, "caches/modules-2/files-2.1/g/a/1/sha/a-1.jar").apply { parentFile.mkdirs(); writeText("jar") }
+        val classpath = listOf(resources, module)
+        val homes = mapOf(ClasspathFiles.GRADLE_USER_HOME to home)
+        val table = assertIs<ClasspathFiles.Walk.Found>(ClasspathFiles.table(classpath, emptyList(), root, homes)).digests
+        val walk = assertIs<ClasspathFiles.Walk.Found>(ClasspathFiles.walk(classpath, emptyList(), root, classes = true)).digests
+
+        LastLook.write(base, root, emptyList(), classes = false, table, homes)
+        val selecting = LastLook.read(LastLook.handOver(base).readText())!!
+        LastLook.write(base, root, emptyList(), classes = true, walk)
+        val complement = LastLook.read(LastLook.handOver(base).readText())!!
+
+        assertEquals(homes.mapValues { it.value.absoluteFile }, selecting.homes)
+        assertNull(LastLook.whatMoved(selecting) { LastLook.again(classpath, it) })
+        assertNull(LastLook.whatMoved(complement) { LastLook.again(classpath, it) })
+    }
 }

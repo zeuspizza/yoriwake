@@ -63,6 +63,13 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
      */
     CLASSPATH_FILES_CHANGED("classpath-files-changed"),
 
+    /**
+     * A jar or directory this task's classpath takes from outside the build differs from the
+     * captured one, or is new, gone or reordered: a dependency resolves to another jar, whatever
+     * moved it. Recapturing will not change that.
+     */
+    DEPENDENCIES_CHANGED("dependencies-changed"),
+
     /** The inline scan or the bytes walk ran out of budget, or could not read something it walked. */
     SCAN_EXHAUSTED("scan-exhausted"),
 

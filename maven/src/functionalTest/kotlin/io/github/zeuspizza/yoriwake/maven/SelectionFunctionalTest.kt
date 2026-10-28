@@ -72,6 +72,48 @@ class SelectionFunctionalTest {
         assertTrue(File(map, "observation.json").isFile, "no observation.json in $map")
     }
 
+    /** The demo with commons-lang3 on `lib`'s test classpath at `${lang3.version}`, 3.17.0 unless set; captured. */
+    private fun capturedWithLang3(dir: File): File = committed(dir).also { project ->
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId>\n  <properties><lang3.version>3.17.0</lang3.version></properties>\n" +
+                    "  <dependencies><dependency><groupId>org.apache.commons</groupId><artifactId>commons-lang3</artifactId>" +
+                    "<version>${'$'}{lang3.version}</version><scope>test</scope></dependency></dependencies>",
+            )
+        }
+        git(project, "commit", "-q", "-am", "commons-lang3")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+    }
+
+    @Test
+    fun `a dependency a version property resolves to another version runs every test`(@TempDir dir: File) {
+        val project = capturedWithLang3(dir)
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", "-Dlang3.version=3.16.0",
+        ).succeeded().output
+
+        assertContains(output, "dependencies on this task's classpath changed since the map was captured")
+        assertContains(output, "commons-lang3")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `an unchanged classpath selects as before`(@TempDir dir: File) {
+        val project = capturedWithLang3(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+        assertContains(selecting, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in selecting, output)
+        assertFalse("dependencies on this task's classpath changed" in output, output)
+    }
+
     /** The plugin's `<configuration>` in the root POM, given [xml]; committed. */
     private fun configured(project: File, xml: String) {
         File(project, "pom.xml").edit {
