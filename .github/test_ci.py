@@ -1220,6 +1220,8 @@ def case_a_change_to_product_sources_runs_every_guard():
     cases = {
         ("plugin/src/main/kotlin/A.kt",): True,
         ("README.md", "agent/src/main/java/A.java"): True,
+        ("core/src/main/kotlin/A.kt",): True,
+        ("maven/src/main/kotlin/A.kt",): True,
         ("agent/src/test/kotlin/ATest.kt", "bench/run.py"): False,
         ("plugin/build.gradle.kts",): False,
         (): True,

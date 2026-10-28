@@ -227,6 +227,34 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `with a trusted-map list a complement reading this build's own record runs everything`(@TempDir dir: File) {
+        val project = selectedOnce(dir)
+        File(project, "trusted.txt").writeText("")
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", "-Dyoriwake.trustedMaps=trusted.txt",
+        ).succeeded().output
+
+        assertContains(output, "is not one the trusted-map list vouches for")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `tests named with -Dtest all run in a selecting run`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+            "-Dtest=CounterTest,GreeterTest",
+        ).succeeded().output
+
+        assertContains(output, "tests were named with -Dtest=CounterTest,GreeterTest")
+        assertContains(output, "in dev.demo.lib.CounterTest")
+        assertContains(output, "in dev.demo.lib.GreeterTest")
+    }
+
+    @Test
     fun `two run kinds asked together fail the build before any test runs`(@TempDir dir: File) {
         val project = captured(dir)
 

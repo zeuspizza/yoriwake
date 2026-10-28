@@ -1549,6 +1549,8 @@ the Gradle plugin.
   each), `largeChangeThreshold`, `fullRunEveryBuilds`, `fullRunEveryDays`. `<alwaysRun>` (one
   `<pattern>` each) is read per module, beside `-Dyoriwake.alwaysRun`; a pattern that pins every
   test fails the build, as on Gradle.
+- **`-Dtest`** (or `-Dit.test` for Failsafe) makes a selecting run run every test it names
+  (`tests-named`), as `--tests` does on Gradle.
 - **Not on Maven**: `pathIgnore`, `notReadByTests`, `dependsOn` (a test's `yoriwake-depends-on:`
   tag still selects it), `environmentInclude` and `systemPropertyIgnore` (the [environment
   fingerprint](#the-environment-fingerprint) compares its defaults), `narrowPlainRunners`,
@@ -1767,8 +1769,8 @@ format versioning.
 
 ### From 0.3.0 to 0.4.0
 
-- **Your map is left alone**, unless it was captured on a checkout whose `core.autocrlf` gave
-  sources CRLF line endings: then it is repaired on the next build. The format stays at 7, and the
+- **Your map is repaired on the next build**: a 0.3.0 map records no dependency jars, so each
+  task's first selecting run runs every test once and records them. The format stays at 7, and the
   files a trusted-map digest covers are unchanged.
 - **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.4.0`, one ordinary cache miss.
 - **What runs changes without a new flag:** a change of more than 5,000 paths runs everything

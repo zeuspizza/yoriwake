@@ -119,7 +119,7 @@ internal object SelectingStep {
         }.let { verdict ->
             // Nothing for the last look to compare against, so nothing vouches for what the build's
             // own last actions write.
-            if (handedOver || verdict != ClasspathFilesVerdict.Unchanged) verdict
+            if (handedOver || (verdict != ClasspathFilesVerdict.Unchanged && verdict !is ClasspathFilesVerdict.Handed)) verdict
             else ClasspathFilesVerdict.Unrecorded("the classpath files could not be handed to classpath-files.compared")
         }
         jacocoCeilingNote(classpathFacts)?.let { host.lifecycle("[yoriwake] ${host.name}: $it") }

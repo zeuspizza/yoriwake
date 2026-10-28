@@ -1339,6 +1339,10 @@ MUTATIONS = [
      "                    if (!path.isEmpty() && PathGlob.matches(resolved, FilterRule.unescape(path))) {",
      "                    if (!path.isEmpty() && PathGlob.matches(resolved, path)) {",
      agent_suite, "a changed path with a comma or a percent in its name matches a declared dependency"),
+    ("a handed-over verdict narrows though the last look was never handed it", SELECTING_STEP,
+     "            if (handedOver || (verdict != ClasspathFilesVerdict.Unchanged && verdict !is ClasspathFilesVerdict.Handed)) verdict",
+     "            if (handedOver || verdict != ClasspathFilesVerdict.Unchanged) verdict",
+     functional_suite, "a generated resource that changed runs everything when the last look cannot be handed it"),
     ("a moved classpath file reaches the test JVM unescaped", SELECTING_STEP,
      "                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles.map(PathIgnore::escape),",
      "                MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles,",
@@ -4524,9 +4528,19 @@ MUTATIONS = [
      "            clean = ChangeDetection.status(git) { Recording.isBuildState(it) }?.isEmpty() == true,",
      "            clean = ChangeDetection.status(git)?.isEmpty() == true,",
      maven_suite, "with an untracked workspace id a complement run runs what the selecting run left out"),
+    # A restored map directory is unreviewed input under a trusted-map list: a complement reads a
+    # record only from a directory the selecting run handed over.
+    ("a Maven complement trusts a restored record under a trusted-map list", MAVEN_SELECTION,
+     "            from.isEmpty() && trusted != null -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to",
+     "            false -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to",
+     maven_suite, "with a trusted-map list a complement reading this build's own record runs everything"),
+    ("a Maven selecting run narrows the tests -Dtest names", MAVEN_SELECTION,
+     "            listOfNotNull(namedTests?.takeIf { plan.selecting || observing }?.let { RunPlan.Decline(RefusalKind.TESTS_NAMED, it) })",
+     "            listOfNotNull<RunPlan.Decline>(null)",
+     maven_suite, "tests named with -Dtest all run in a selecting run"),
     # A full run asked for runs every test and records, as on Gradle.
     ("a Maven full run asked for still selects", MAVEN_SELECTION,
-     "        if (plan.declines.isNotEmpty()) {",
+     "        if (declines.isNotEmpty()) {",
      "        if (false) {",
      maven_suite, "a full run asked for on the command line runs everything and records the map"),
     # An observing Maven run must tell its test JVM to record what selection would leave out.

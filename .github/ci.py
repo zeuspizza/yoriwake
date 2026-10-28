@@ -132,8 +132,9 @@ def needs_checks(paths):
     return any(path in CHECKED_DOCS or not (path.endswith(".md") or path.startswith("docs/")) for path in paths)
 
 
-# The sources a pull request must pass every guard for: what the plugin and agent ship.
-PRODUCT_SOURCES = ("plugin/src/main/", "core/src/main/", "agent/src/main/")
+# The sources a pull request must pass every guard for: what the plugin, the Maven extension and the
+# agent ship.
+PRODUCT_SOURCES = ("plugin/src/main/", "core/src/main/", "agent/src/main/", "maven/src/main/")
 
 
 def touches_product(paths):
