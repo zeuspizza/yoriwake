@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
+import io.github.zeuspizza.yoriwake.gradle.wiring.AgentJar
 import io.github.zeuspizza.yoriwake.agent.capture.ZipContent
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -200,6 +201,9 @@ internal object ClasspathFiles {
         val order = mutableListOf<String>()
         val repeated = mutableMapOf<String, Int>()
         for (entry in classpath.map(File::getAbsoluteFile).distinct()) {
+            // The plugin's own agent, not an input of the tests: present or not, it changes nothing they
+            // read, and a task the wiring finds without it already runs everything for that reason.
+            if (entry.name == AgentJar.RESOURCE) continue
             val home = homeOf(entry)
             val built = home == null && !state.holds(entry) && roots.any { it.holds(entry) }
             if (built) {
@@ -215,8 +219,8 @@ internal object ClasspathFiles {
             } else if (home != null && relative != null && (home.key != USER_HOME || relative.startsWith(MAVEN_LOCAL))) {
                 val digest = when {
                     home.key == GRADLE_USER_HOME && NAMED_LAYOUTS.any { it.containsMatchIn(relative) } -> NAMED_BY_PATH
-                    // The plugin's own agent jar, written from the plugin's bytes by a `doFirst` that may
-                    // run after this: read, it would be absent at one end and present at the other.
+                    // What the plugin itself writes there, from its own bytes by a `doFirst` that may run
+                    // after this: read, it would be absent at one end and present at the other.
                     home.key == PROJECT_CACHE_DIR -> NAMED_BY_PATH
                     // A released version's path names it; a SNAPSHOT is replaced in place.
                     home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH

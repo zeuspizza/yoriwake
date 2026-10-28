@@ -549,7 +549,7 @@ class ClasspathFilesTest {
 
         assertEquals(tables[0], tables[1])
         assertTrue(ClasspathFiles.DEPENDENCY_ORDER in tables[0])
-        assertTrue("dependency:<project-cache-dir>/yoriwake-agent.jar" in tables[0], tables[0].toString())
+        assertTrue(tables[0].keys.none { "yoriwake-agent" in it }, tables[0].toString())
         assertTrue("dependency:<outside>/local.jar" in tables[0], tables[0].toString())
     }
 
@@ -599,7 +599,7 @@ class ClasspathFilesTest {
     }
 
     @Test
-    fun `the agent jar is named by its path, whether or not it is written yet`(@TempDir base: File) {
+    fun `the agent jar is no dependency, whether or not it is written or on the classpath`(@TempDir base: File) {
         val machine = Machine(base)
         val agent = File(machine.root, ".gradle/yoriwake-agent/yoriwake-agent.jar")
         val before = found(machine.table(agent))
@@ -607,7 +607,8 @@ class ClasspathFilesTest {
         jar(agent, 0L, "agent.txt" to "one")
 
         assertTrue(ClasspathFiles.compare(before, found(machine.table(agent))).isEmpty)
-        assertTrue("dependency:<project-cache-dir>/yoriwake-agent/yoriwake-agent.jar" in before, before.toString())
+        assertTrue(ClasspathFiles.compare(before, found(machine.table())).isEmpty)
+        assertTrue(before.keys.none { "yoriwake-agent" in it }, before.toString())
     }
 
     @Test
