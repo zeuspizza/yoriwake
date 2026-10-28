@@ -192,6 +192,109 @@ class ComplementRunsAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
+    // Track: code reading. Boundary: the stamp's configuration (system properties, JVM arguments,
+    // filters) is read in the plugin's own doFirst, which runs before every doFirst the build adds;
+    // only the classpath is looked at again after them. Here the build's own doFirst sets a system
+    // property from a project property the complement run passes differently.
+    @Test
+    fun `a system property the test task's doFirst sets from a property differently is a record mismatch`(@TempDir dir: File) {
+        val build = minimalBuild + """
+
+            tasks.test {
+                val flavor = providers.gradleProperty("flavor").getOrElse("a")
+                doFirst { (this as Test).systemProperty("flavor", flavor) }
+            }
+        """.trimIndent()
+        val target = source(
+            "src/test/java/dev/sample/A9TargetTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A9TargetTest {
+                @Test void flavorA() {
+                    assertEquals("cba", new Codec().encode("abc"));
+                    assertEquals("a", System.getProperty("flavor"));
+                }
+            }
+            """,
+        )
+        val result = complementAttempt(
+            dir, "dev.sample.A9TargetTest", Aim.Forced(AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND),
+            listOf(codec, other, first, target, classOrderByName), build,
+            narrow = ::rewriteCodec, selecting = listOf("-Pflavor=a"), complementing = listOf("-Pflavor=b"),
+        )
+
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a selecting run with fail-fast leaves no record, since Gradle
+    // drops the results of tests that finish after the first failure; the plugin reads `failFast` in
+    // its own doFirst, before every doFirst the build adds. Here the build's own doFirst turns
+    // fail-fast on, so the run that drops a failing target's result may still list it as ran.
+    @Test
+    fun `a selecting run whose test task's doFirst turns on fail-fast leaves no record`(@TempDir dir: File) {
+        // Only on the selecting run, as a CI job that wants the first failure fast would ask.
+        val build = minimalBuild + """
+
+            tasks.test {
+                val failFastAsked = providers.gradleProperty("failFirst").isPresent
+                doFirst { (this as Test).failFast = failFastAsked }
+            }
+        """.trimIndent()
+        fun failing(name: String) = source(
+            "src/test/java/dev/sample/$name.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class $name { @Test void reverses() { assertEquals("cba", new Codec().encode("abc")); } }
+            """,
+        )
+        val target = "dev.sample.A9TargetTest"
+        build(dir, "build.gradle.kts" to build, codec, other, first, failing("A5FailsFirstTest"), failing("A9TargetTest"), classOrderByName)
+        committed(dir)
+        runner(dir, "test").build()
+        val captured = ranTests(dir)
+        check(passedIn(dir, target) == true) { "$target did not pass when the map was recorded; ran $captured" }
+
+        val file = File(dir, codec.first)
+        file.writeText(file.readText().replace("reverse()", "reverse().append(\"!\")"))
+        commit(dir, "break codec")
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "-PfailFirst").run()
+        val selected = ranTests(dir)
+        check("dev.sample.A0UnrelatedTest" !in selected) { "the selecting run did not narrow; it ran $selected" }
+
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-Pyoriwake.complement").run()
+        val complemented = ranTests(dir)
+        val targetResult = passedIn(dir, target)
+        val notes = notesOf(dir)
+
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "--rerun", "-Pyoriwake.disabled").run()
+        val failsUnderFullRun = passedIn(dir, target) == false
+
+        val result = classify(
+            Observed(
+                targetFailsUnderFullRun = failsUnderFullRun,
+                targetRan = targetResult != null,
+                targetFailed = targetResult == false,
+                leftOut = captured - complemented,
+                forcedKinds = forcedOf(notes),
+                targetRows = emptyList(),
+            ),
+            Aim.Forced("complement-no-record"),
+        )
+        assertOutcome(BreakAttempt.Outcome.HELD_BY_FORCE, Result(result.outcome, "${result.why}; the selecting run reported $selected"))
+    }
+
+    private fun forcedOf(notes: List<Map<String, String>>) = notes.flatMap { note ->
+        listOfNotNull(note[AgentContract.REFUSAL_KIND_NOTE], note[AgentContract.FULL_RUN_KIND_NOTE]) +
+            note[AgentContract.FORCING_KINDS_NOTE].orEmpty().split(',')
+    }.filter { it.isNotBlank() && it != AgentContract.RULE_NONE }.distinct()
+
     /**
      * As [attempt], for a complement run: records the map, commits [narrow] and runs a selecting
      * build with [selecting], which must narrow and run [target]; applies [between], then runs a

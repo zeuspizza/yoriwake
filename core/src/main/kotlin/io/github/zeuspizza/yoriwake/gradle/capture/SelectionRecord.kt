@@ -61,21 +61,28 @@ internal object SelectionRecord {
 
     private fun describe(stamp: Stamp) = "${stamp.buildRoot.ifEmpty { "the repository's top level" }} (${stamp.buildPath})"
 
-    /** What a selecting run's first action leaves its decode. */
-    class Start(val token: String, val stamp: Stamp) {
-        fun encode(): String = listOf(
-            token, stamp.commit.orEmpty(), stamp.clean.toString(), stamp.task, stamp.buildRoot,
-            stamp.buildPath, stamp.classpath, stamp.configuration,
-        ).joinToString("\n") { Tsv.escape(it) }
+    /**
+     * What a selecting run's first action leaves its decode, and [lateConfiguration], the
+     * configuration digest its test JVM starts with, after the task's own `doFirst` actions, once
+     * the last look added it.
+     */
+    class Start(val token: String, val stamp: Stamp, val lateConfiguration: String? = null) {
+        fun encode(): String = (
+            listOf(
+                token, stamp.commit.orEmpty(), stamp.clean.toString(), stamp.task, stamp.buildRoot,
+                stamp.buildPath, stamp.classpath, stamp.configuration,
+            ) + listOfNotNull(lateConfiguration)
+            ).joinToString("\n") { Tsv.escape(it) }
 
         companion object {
             /** Null for anything [encode] did not write. */
             fun decode(text: String?): Start? {
                 val fields = text?.split("\n")?.map(Tsv::unescape) ?: return null
-                if (fields.size != 8 || fields[0].isEmpty() || fields[2] !in setOf("true", "false")) return null
+                if (fields.size !in 8..9 || fields[0].isEmpty() || fields[2] !in setOf("true", "false")) return null
                 return Start(
                     fields[0],
                     Stamp(fields[1].ifEmpty { null }, fields[2].toBoolean(), fields[3], fields[4], fields[5], fields[6], fields[7]),
+                    fields.getOrNull(8),
                 )
             }
         }
@@ -118,7 +125,7 @@ internal object SelectionRecord {
             status == null -> return remove(mapDir, "git could not say whether the working tree is clean")
             status.isNotEmpty() -> return remove(mapDir, "the working tree was not clean when the run ended (${status.size} paths)")
         }
-        val written = runCatching { write(mapDir, start.stamp, merged.identity, merged.ran) }
+        val written = runCatching { write(mapDir, start.stamp, start.lateConfiguration, merged.identity, merged.ran) }
         written.exceptionOrNull()?.let { return remove(mapDir, "it could not be written ($it)") }
         return Outcome.Written(merged.ran.size)
     }
@@ -178,6 +185,10 @@ internal object SelectionRecord {
             configuration = notes[AgentContract.STAMP_CONFIGURATION_NOTE].orEmpty(),
         )
     }
+
+    /** The configuration digest a usable record's test JVM started with, or null when it names none. */
+    fun lateConfigurationOf(record: SelectionRecordFile.Result): String? =
+        record.notes()[AgentContract.STAMP_LATE_CONFIGURATION_NOTE]?.takeIf { it.isNotEmpty() }
 
     /** The test JVM's identity a usable record was written under. */
     fun identityOf(record: SelectionRecordFile.Result): Map<String, String> =
@@ -331,7 +342,13 @@ internal object SelectionRecord {
         return Merge.Merged(ran, identity.orEmpty(), narrowed && !fullRun)
     }
 
-    private fun write(mapDir: File, stamp: Stamp, identity: Map<String, String>, ran: Map<String, String>) {
+    private fun write(
+        mapDir: File,
+        stamp: Stamp,
+        lateConfiguration: String?,
+        identity: Map<String, String>,
+        ran: Map<String, String>,
+    ) {
         val notes = linkedMapOf(
             AgentContract.VERSION_NOTE to AgentContract.SELECTION_VERSION,
             AgentContract.STAMP_COMMIT_NOTE to stamp.commit.orEmpty(),
@@ -341,6 +358,7 @@ internal object SelectionRecord {
             AgentContract.STAMP_CLASSPATH_NOTE to stamp.classpath,
             AgentContract.STAMP_CONFIGURATION_NOTE to stamp.configuration,
         )
+        lateConfiguration?.let { notes[AgentContract.STAMP_LATE_CONFIGURATION_NOTE] = it }
         identity.forEach { (key, value) -> notes[AgentContract.JVM_NOTE_PREFIX + key] = value }
         notes[AgentContract.ROWS_NOTE] = ran.size.toString()
         val text = buildString {

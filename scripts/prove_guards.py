@@ -1374,7 +1374,7 @@ MUTATIONS = [
     # The unpack, back inside configuration. Every first build after an install then configures
     # twice, which is invisible in a build log and costs every two-arm cache measurement a third arm.
     ("the agent is unpacked during configuration again", TEST_TASK_WIRING,
-     "        val agent = AgentJar.locationIn(File(project.cacheDir(), AgentJar.DIRECTORY))",
+     "        val agent = AgentJar.locationUnder(project.cacheDir())",
      "        val agent = AgentJar.extractTo(File(project.cacheDir(), AgentJar.DIRECTORY))!!",
      functional_suite, "reuses its configuration-cache entry"),
     ("the Isolated Projects decline stops firing", YORIWAKE_PLUGIN,
@@ -2732,6 +2732,26 @@ MUTATIONS = [
      "                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests) }",
      "                    runCatching { Unit }",
      functional_suite, "a classpath file the test task's doFirst writes from a property differently runs every test"),
+    # The configuration and fail-fast are read again after the test task's own doFirst actions: a
+    # property one of them sets differently in the two runs reaches the test unseen otherwise.
+    ("a selecting run's record carries the configuration before the build's doFirst", LAST_LOOK,
+     "SelectionRecord.Start(start.token, start.stamp, late())",
+     "SelectionRecord.Start(start.token, start.stamp, start.stamp.configuration)",
+     functional_suite, "a system property only the selecting run's doFirst sets runs every test in the complement"),
+    ("a complement run's last look never compares the configuration", LAST_LOOK,
+     "            configurationMoved(copy) { configurationOf(test, agentArgument) }",
+     "            configurationMoved(copy) { configurationOf(test, agentArgument) }.takeIf { false }",
+     functional_suite, "a JVM argument only the complement's doFirst adds runs every test, naming the configuration"),
+    # The agent's absolute path differs between checkouts: kept in the late digest, it forces every
+    # complement run in another job.
+    ("the last look's configuration keeps the plugin's own agent argument", YORIWAKE_PLUGIN,
+     "                AgentJar.argument(AgentJar.locationUnder(cacheDir))",
+     "                AgentJar.argument(AgentJar.locationUnder(cacheDir.parentFile))",
+     functional_suite, "a complement in a fresh clone of the same commit leaves out what the selecting run ran"),
+    ("a selecting run's doFirst fail-fast still leaves a record", LAST_LOOK,
+     "        if (test.failFast) {",
+     "        if (false) {",
+     functional_suite, "a selecting run whose test task's doFirst turns on fail-fast leaves no record"),
     ("a manifest's Class-Path is not followed by the selecting walk", CLASSPATH_FILES,
      "                                    pending.addLast(named to true)",
      "                                    pending.size",
