@@ -526,7 +526,7 @@ class ClasspathFilesTest {
         val first = dependencies(machine.table(unreadable))
         val second = dependencies(machine.table(unreadable))
 
-        assertTrue("dependency:<gradle-user-home>/$moduleJar" in first, first.toString())
+        assertTrue("dependency:<gradle-module-cache>/${moduleJar.substringAfter("files-2.1/")}" in first, first.toString())
         assertTrue(ClasspathFiles.compare(first, second).isEmpty)
         assertTrue(first.values.none { it == ClasspathFiles.UNREADABLE }, first.toString())
     }
@@ -546,13 +546,43 @@ class ClasspathFilesTest {
         assertEquals(tables[0], tables[1])
         assertTrue(ClasspathFiles.DEPENDENCY_ORDER in tables[0])
         assertTrue("dependency:<project-cache-dir>/yoriwake-agent.jar" in tables[0], tables[0].toString())
-        assertTrue("dependency:<home>/libs/local.jar" in tables[0], tables[0].toString())
+        assertTrue("dependency:<outside>/local.jar" in tables[0], tables[0].toString())
     }
 
     @Test
-    fun `a Maven repository jar is read whole, and its metadata beside it is not`(@TempDir base: File) {
+    fun `a read-only module cache keys a jar as the Gradle user home's does`(@TempDir base: File) {
+        val machine = Machine(base)
+        val home = jar(File(machine.gradleHome, moduleJar), 0L, "a.txt" to "a")
+        val readOnly = File(base, "ro-cache/${moduleJar.removePrefix("caches/")}").also { it.parentFile.mkdirs(); home.copyTo(it) }
+
+        assertEquals(dependencies(machine.table(home)), dependencies(machine.table(readOnly)))
+    }
+
+    @Test
+    fun `a jar that no zip reader opens is read by its bytes`(@TempDir base: File) {
+        val machine = Machine(base)
+        val empty = File(base, "tools/empty.jar").apply { parentFile.mkdirs(); writeBytes(ByteArray(0)) }
+
+        val table = dependencies(machine.table(empty))
+
+        assertTrue(table.values.none { it == ClasspathFiles.UNREADABLE }, table.toString())
+    }
+
+    @Test
+    fun `a released Maven repository jar is named by its path and never read`(@TempDir base: File) {
         val machine = Machine(base)
         val lang3 = jar(File(machine.repository, "org/apache/commons/lang3/3.17.0/lang3-3.17.0.jar"), 0L, "a.txt" to "a")
+        val before = found(machine.table(lang3))
+
+        jar(lang3, 0L, "a.txt" to "b")
+
+        assertTrue(ClasspathFiles.compare(before, found(machine.table(lang3))).isEmpty)
+    }
+
+    @Test
+    fun `a Maven repository SNAPSHOT is read whole, and its metadata beside it is not`(@TempDir base: File) {
+        val machine = Machine(base)
+        val lang3 = jar(File(machine.repository, "org/apache/commons/lang3/3.18.0-SNAPSHOT/lang3-3.18.0-SNAPSHOT.jar"), 0L, "a.txt" to "a")
         val metadata = file(lang3.parentFile, "maven-metadata-central.xml", "<one/>")
         val before = found(machine.table(lang3))
 
@@ -561,7 +591,7 @@ class ClasspathFilesTest {
 
         jar(lang3, 0L, "a.txt" to "b")
         val moved = ClasspathFiles.compare(before, found(machine.table(lang3)))
-        assertEquals(mapOf("dependency:<maven-repository>/org/apache/commons/lang3/3.17.0/lang3-3.17.0.jar" to "changed"), moved.files)
+        assertEquals(mapOf("dependency:<maven-repository>/org/apache/commons/lang3/3.18.0-SNAPSHOT/lang3-3.18.0-SNAPSHOT.jar" to "changed"), moved.files)
     }
 
     @Test
@@ -646,7 +676,7 @@ class ClasspathFilesTest {
         val table = found(ClasspathFiles.table(listOf(resources, beside), listOf(), root, mapOf(ClasspathFiles.USER_HOME to home)))
 
         assertEquals(
-            setOf("build/resources/test/info.properties", "dependency:<home>/projects/other/build/libs/other.jar", ClasspathFiles.DEPENDENCY_ORDER),
+            setOf("build/resources/test/info.properties", "dependency:<outside>/other.jar", ClasspathFiles.DEPENDENCY_ORDER),
             table.keys,
         )
     }
