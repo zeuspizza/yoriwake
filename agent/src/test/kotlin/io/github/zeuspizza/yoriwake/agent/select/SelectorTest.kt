@@ -1215,6 +1215,29 @@ class SelectorTest {
     }
 
     @Test
+    fun `a read below an ignored path reads it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/link/a.txt"))),
+            accounted = true,
+            ignored = listOf("docs/link"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+    }
+
+    @Test
+    fun `a read beside an ignored path does not read it`(@TempDir dir: File) {
+        val decision = decide(
+            stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 4, "docs/linkage.txt"))),
+            accounted = true,
+            ignored = listOf("docs/link"),
+        )
+
+        assertFalse(decision.includes(placed("com.acme.ReaderTest")))
+    }
+
+    @Test
     fun `a JVM that read every file from a point runs from there on an ignored path`(@TempDir dir: File) {
         val decision = decide(
             stampMap(dir, listOf(recorded("j"), recorded("k"), read("j", 6, AgentContract.FIRST_TOUCH_ANY))),

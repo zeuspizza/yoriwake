@@ -27,17 +27,21 @@ class DeclaredDependenciesFunctionalTest : FunctionalTestSupport() {
 
     private val ignoringDocker = """yoriwake { pathIgnore.add("docker/**") }"""
 
-    private val fixture = "docker/fixture.json" to "{\"rows\": 1}\n"
 
     private fun app(dir: File) = File(dir, "app")
 
     /**
-     * Captures `:app`, then changes `docker/fixture.json`, which the build ignores: without a
-     * declaration the change runs nothing, as for a file no test reads.
+     * Captures `:app`, then changes [fixture], which the build ignores: without a declaration the
+     * change runs nothing, as for a file no test reads.
      */
-    private fun fixtureChangedAfterCapture(dir: File, appBuild: String, vararg sources: Pair<String, String>) {
+    private fun fixtureChangedAfterCapture(
+        dir: File,
+        appBuild: String,
+        vararg sources: Pair<String, String>,
+        fixture: String = "docker/fixture.json",
+    ) {
         build(
-            dir, "build.gradle.kts" to "", fixture,
+            dir, "build.gradle.kts" to "", fixture to "{\"rows\": 1}\n",
             "app/build.gradle.kts" to appBuild + System.lineSeparator() + ignoringDocker,
             *arrayOf(oneClass, oneTest, secondClass, *sources).map { (path, content) -> "app/$path" to content }
                 .toTypedArray(),
@@ -46,7 +50,7 @@ class DeclaredDependenciesFunctionalTest : FunctionalTestSupport() {
         committed(dir)
         runner(dir, ":app:test").build()
         File(app(dir), "build/test-results").deleteRecursively()
-        File(dir, "docker/fixture.json").writeText("{\"rows\": 2}\n")
+        File(dir, fixture).writeText("{\"rows\": 2}\n")
     }
 
     private fun rowReason(dir: File, test: String): String {
@@ -59,6 +63,17 @@ class DeclaredDependenciesFunctionalTest : FunctionalTestSupport() {
     @Test
     fun `a changed path no class names selects the test that declares it`(@TempDir dir: File) {
         fixtureChangedAfterCapture(dir, minimalBuild, declaringSecondTest)
+
+        val output = runner(dir, ":app:test", "-Pyoriwake.select").build().output
+
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(app(dir)), output)
+        assertEquals("DECLARES_CHANGED_PATH", rowReason(dir, "BetaTest"))
+    }
+
+    @Test
+    fun `a test that declares a dependency runs when a file with a comma in its name changes`(@TempDir dir: File) {
+        val declaringJson = declaringSecondTest.first to declaringSecondTest.second.replace("/docker/**", "/docker/*.json")
+        fixtureChangedAfterCapture(dir, minimalBuild, declaringJson, fixture = "docker/users,v2.json")
 
         val output = runner(dir, ":app:test", "-Pyoriwake.select").build().output
 

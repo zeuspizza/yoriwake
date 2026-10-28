@@ -192,5 +192,6 @@ internal object PathIgnore {
      */
     fun encode(ignored: Ignored): String = escape(ignored.path) + "\t" + escape(ignored.entry)
 
-    private fun escape(value: String) = value.replace("%", "%25").replace(",", "%2C")
+    /** [value] with `%` and `,` escaped, for a comma-separated change-set list. */
+    fun escape(value: String) = value.replace("%", "%25").replace(",", "%2C")
 }

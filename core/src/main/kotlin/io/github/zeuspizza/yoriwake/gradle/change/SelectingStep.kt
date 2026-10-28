@@ -183,7 +183,8 @@ internal object SelectingStep {
                 MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles,
                 UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,
                 // Every changed path, before any is dropped, for the tests that declare a dependency on one.
-                CHANGED_PATHS_PROPERTY to paths,
+                // Escaped, since a path can hold the comma that joins the list.
+                CHANGED_PATHS_PROPERTY to paths.map(PathIgnore::escape),
                 ABSENCE_PROVABLE_PROPERTY to established.provable,
                 // Separate property: a test class that has ever run is in the loaded-class union by
                 // definition, so the absence rule would never fire for it.

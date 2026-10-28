@@ -1,8 +1,12 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.DisabledOnOs
+import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Paths
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -141,6 +145,26 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(setOf("dev.sample.DocsTest", "dev.sample.ZuluTest"), ranTests(dir), output)
         assertContains(output, "docs/snippets.md was read at capture")
+        assertEquals("SHARES_JVM_WITH_CHANGE", decisionReasons(dir).filterKeys { "DocsTest" in it }.values.single(), output)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "git for Windows records a link as a plain file unless core.symlinks is on")
+    fun `a test that reads through a declared link to a directory runs when the link moves`(@TempDir dir: File) {
+        File(dir, "docs").mkdirs()
+        val link = File(dir, "docs/current").toPath()
+        Files.createSymbolicLink(link, Paths.get("../data/v1"))
+        captured(
+            dir, declaring("docs/**"), "data/v1/sample.txt" to "one\n", "data/v2/sample.txt" to "two\n",
+            reader("DocsTest", "docs/current/sample.txt"), laterTest,
+        )
+        Files.delete(link)
+        Files.createSymbolicLink(link, Paths.get("../data/v2"))
+
+        val output = selecting(dir)
+
+        assertEquals(setOf("dev.sample.DocsTest", "dev.sample.ZuluTest"), ranTests(dir), output)
+        assertContains(output, "docs/current was read at capture")
         assertEquals("SHARES_JVM_WITH_CHANGE", decisionReasons(dir).filterKeys { "DocsTest" in it }.values.single(), output)
     }
 

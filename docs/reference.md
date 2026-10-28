@@ -1365,8 +1365,9 @@ compiles or what the build reads. The run names each, with the protection that k
   rule above can be judged on.
 
 A path left out is still a changed path a test may read, and the map says so where it can: a test
-JVM that read the path at capture, a directory above it, or every file (from a child process or an
-unreviewed native library on), runs every test from that read on (`shares-jvm-ignored-path`), and the
+JVM that read the path at capture, a directory above it, a file below it (through a link to a
+directory), or every file (from a child process or an unreviewed native library on), runs every
+test from that read on (`shares-jvm-ignored-path`), and the
 console says the path was read despite its entry. A changed source file left out runs every test
 of a test JVM whose record does not include the source files it opened, which a map recorded before
 this release does not. A map recorded before the plugin recorded reads,
