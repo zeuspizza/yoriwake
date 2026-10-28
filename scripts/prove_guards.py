@@ -3259,6 +3259,12 @@ MUTATIONS = [
      "        if (engineRunsEverything(id)) {\n            return Verdict.ENGINE_RUNS_EVERYTHING;",
      "        if (false) {\n            return Verdict.ENGINE_RUNS_EVERYTHING;",
      agent_suite, "a Kotest spec the change cannot reach is still included"),
+    # Leaving out every listed test of a vintage runner prunes it, and the tests it reports only
+    # while it runs never run.
+    ("a vintage runner that reports tests at run time is pruned again", SELECTOR,
+     "            if (runTimeReporters.isEmpty()) {\n                return false;",
+     "            if (true) {\n                return false;",
+     agent_suite, "a vintage runner's listed test is kept when its run-time test reaches nothing"),
     ("a Kotest spec stops recording that its engine runs it", RULES,
      "            found.add(Rule.ENGINE_RUNS_EVERYTHING);", "",
      agent_suite, "a Kotest spec records that its engine runs it whatever changed"),

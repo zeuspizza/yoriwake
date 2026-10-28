@@ -156,10 +156,11 @@ private fun readDecisions(mapDir: File, target: String): Pair<List<Map<String, S
 }
 
 /**
- * Whether a decision row is one of [target]'s: a method of the class, or a Kotest spec, which
- * discovery yields whole and whose tests appear only as it runs. A static nested class
- * (`Outer$Inner`) Jupiter discovers on its own is named whole; a `@Nested` one is the segment
- * naming its simple name under its enclosing class's.
+ * Whether a decision row is one of [target]'s: a method of the class, a Kotest spec, which
+ * discovery yields whole and whose tests appear only as it runs, or a test its JUnit 4 runner
+ * lists on the vintage engine, which names the class only in the runner's segment. A static
+ * nested class (`Outer$Inner`) Jupiter discovers on its own is named whole; a `@Nested` one is
+ * the segment naming its simple name under its enclosing class's.
  */
 private fun isTargetRow(id: String, target: String): Boolean {
     val classes = target.split('$')
@@ -167,7 +168,8 @@ private fun isTargetRow(id: String, target: String): Boolean {
         .joinToString("/")
     return (id.contains("[class:$target]") && METHOD_SEGMENTS.any { id.contains(it) }) ||
         (classes.size > 1 && id.contains("$nested/[method:")) ||
-        id.endsWith("[spec:$target]") || id.contains("[spec:$target]/[feature:")
+        id.endsWith("[spec:$target]") || id.contains("[spec:$target]/[feature:") ||
+        id.contains("[runner:$target]/")
 }
 
 /** The segments under which Jupiter names a test method: plain, a template, a factory. */
