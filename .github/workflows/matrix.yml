@@ -5,17 +5,10 @@ name: supported matrix
 # of this workflow on the commit the release is tagged from; `.github/test_ci.py` keeps the table
 # and the cell list below in step.
 #
-# Nightly on `main`, testing its head, so a cell a change breaks is an open issue the next morning
-# rather than news on release night; a failed scheduled run opens that issue. A scheduled workflow
-# that sees no repository activity for 60 days is disabled by GitHub; the release checklist checks it
-# is on. Dispatched from the candidate's own branch (`main` for a minor, `release/<major>.<minor>`
-# for a patch), so the workflow, the build and the table come from one line of history. It costs
-# hours of runner time, which is why no push or pull request starts it.
+# Dispatched in each release check, never on a schedule, from the candidate's own branch (`main` for
+# a minor, `release/<major>.<minor>` for a patch), so the workflow, the build and the table come from
+# one line of history. It costs hours of runner time, which is why no push or pull request starts it.
 on:
-  # 23:41 UTC: the run and its issue land overnight in Europe, and a run of usual length ends before
-  # guards.yml's nightly run starts, so the two do not compete for the plan's concurrent jobs.
-  schedule:
-    - cron: '41 23 * * *'
   workflow_dispatch:
     inputs:
       candidate:
@@ -40,12 +33,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # Through the environment, never spliced into the script: the input is free text. A
-      # scheduled run has no input and tests the head it runs on; a dispatch must still name one.
+      # Through the environment, never spliced into the script: the input is free text.
       - name: check the candidate
         id: check
         env:
-          CANDIDATE: ${{ github.event_name == 'schedule' && github.sha || inputs.candidate }}
+          CANDIDATE: ${{ inputs.candidate }}
         run: |
           set -eu
           # The gate's own steps come from this branch, not from the candidate, so only a release
@@ -292,45 +284,11 @@ jobs:
           CANDIDATE: ${{ needs.candidate.outputs.sha }}
         run: python3 .github/matrix_check.py results results --candidate "$CANDIDATE"
 
-  # Only a scheduled run has nobody watching it; a dispatched one is read by whoever started it. The
-  # issue names the jobs that did not succeed, so the red cell is readable without opening the run;
-  # a failure only the summary finds names the summary, whose log names the cell.
-  report-failure:
-    needs: [candidate, cell, capture, select, summary]
-    if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: read
-      issues: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN: ${{ github.run_id }}
-          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TITLE: Scheduled supported-matrix run failed
-        run: |
-          set -u
-          # A listing that fails still leaves the run's link in the issue.
-          failed=$(gh run view "$RUN" -R "$REPO" --json jobs --jq '.jobs[]
-            | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")
-            | "- \(.name): \(.conclusion)"') || failed=""
-          { echo "$URL"; [ -z "$failed" ] || printf '\nJobs that did not succeed:\n%s\n' "$failed"; } > body.md
-          # One issue per failure rather than per night: while one with this title is open, a failed
-          # night comments on it. A listing that fails opens a new one.
-          open=$(gh issue list -R "$REPO" --state open --author app/github-actions --search "in:title $TITLE" \
-            --json number,title --jq '.[] | select(.title == env.TITLE) | .number' | head -1) || open=""
-          if [ -n "$open" ]; then
-            gh issue comment "$open" -R "$REPO" --body-file body.md
-          else
-            gh issue create -R "$REPO" --title "$TITLE" --body-file body.md
-          fi
-
   # The run's one summary: each job's result, each cell's tests and what failed
   # (.github/run_summary.py). It reports and gates nothing; the check above is the summary job.
   run-summary:
     name: run summary
-    needs: [candidate, cell, capture, select, summary, report-failure]
+    needs: [candidate, cell, capture, select, summary]
     if: always()
     runs-on: ubuntu-24.04
     steps:

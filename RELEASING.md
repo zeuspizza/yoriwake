@@ -38,11 +38,10 @@ published version cannot be taken back, so no `v*` tag exists until every gate b
 - **Minor.** A commit of `main` with every change for the release merged. Before it, a pull request
   moves the functional suite's 9.x version to Gradle's newest release, with the cells of
   `.github/workflows/matrix.yml` and the reference's [supported matrix](docs/reference.md#supported-matrix).
-  The candidate is cut only once the newest scheduled `matrix.yml` run on `main` is green and ran a
-  commit at or after that pull request, and the schedule is still enabled (GitHub disables one after
-  60 days without activity). Step 7b still proves the commit that is tagged.
-- **Patch.** A commit on `release/<major>.<minor>`, which is pushed with each patch's tag. No
-  scheduled run tests a release branch, so step 7b is a patch's only matrix run. If the
+  Step 7b's dispatched `matrix.yml` run proves the commit that is tagged; no workflow runs on a
+  schedule.
+- **Patch.** A commit on `release/<major>.<minor>`, which is pushed with each patch's tag. Step 7b
+  is its matrix run, as for a minor. If the
   branch exists neither locally nor on `origin`, create it from the line's latest tag
   (`git tag -l 'v0.2.*' --sort=-v:refname | head -1`, then `git branch release/0.2 <that tag>`).
   Cherry-pick each fix from `main` (`git cherry-pick -x <sha>`); a conflict in `CHANGELOG.md` is
@@ -65,7 +64,7 @@ no minutes against a budget.
 | 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest` |
 | 1 | `./gradlew build :maven:functionalTest` and `./gradlew build :maven:functionalTest -PreleaseVersion=<version>` pass. The build runs the functional suite on Gradle 8.14 and 9; `:maven:functionalTest` runs the Maven plugin's. | maintainer | none, run locally |
 | 1b | `python3 scripts/check_reproducible.py <candidate> <version>` passes: two fresh clones build the same Gradle plugin jar, its nested agent jar, and the Maven plugin's jar, sources jar and javadoc jar. | maintainer, locally | none |
-| 2 | Every guard (see [CONTRIBUTING.md](CONTRIBUTING.md#the-guards)) fires at the candidate: `.github/workflows/guards.yml` dispatched on it is green, and the nightly schedule is still enabled (GitHub disables one after 60 days without activity). | maintainer dispatches | none on this public repository; its wall time is the run's own |
+| 2 | Every guard (see [CONTRIBUTING.md](CONTRIBUTING.md#the-guards)) fires at the candidate: `.github/workflows/guards.yml` dispatched on it is green. | maintainer dispatches | none on this public repository; its wall time is the run's own |
 | 3 | One code review of the whole release diff, `v<previous>..<candidate>`, so interactions between changes are seen. It also asks whether upgrading needs anything beyond the CHANGELOG's map lines (a map format change, a renamed or removed property or flag, a changed CI recipe or cache path); if so, the release notes and the reference's "Upgrading and your map" get a short "what you do" paragraph. Each confirmed finding is fixed in its own pull request, which repeats steps 1a, 1 and 2 for what it touches. | maintainer | none |
 | 3b | An adversarial campaign at the candidate, following the private campaign playbook: agents try to make a selecting run skip a test that should run, in every area of the code the release changed and one other in rotation, reading each rule's code for its boundary as well as writing attempts from known shapes. Its record passes the campaign check. Each attempt that held stays in a break suite (`./gradlew :plugin:breakAttempts`, which then passes on Gradle 8.14 and 9, or the Maven plugin's `./gradlew :maven:breakAttempts`, which then passes); each skipped test it finds is fixed in its own pull request, test first, with a fix that forces or widens and a mutation check that removes the fix, which repeats steps 1a to 3 for what it touches; or the maintainer accepts it as a limit documented in [docs/reference.md](docs/reference.md). | maintainer; agents run the attempts | none, run locally; one Gradle or Maven build at a time |
 | 4 | A reduced benchmark on real projects at the candidate: whether each test that should have run did run is the same as at the previous release, or each difference is explained by a merged change. | maintainer | none, run locally; about 20 minutes |
@@ -142,8 +141,7 @@ releases that read it exist:
 2. Add the JDK's case to `TestJvmRangeFunctionalTest` and its row to the reference's [supported
    matrix](docs/reference.md#supported-matrix), with the JDK in `matrix.yml`'s `setup-java` list,
    and update the ceilings in the reference's [New JDKs](docs/reference.md#new-jdks).
-3. Check `.github/workflows/jdk-ea.yml` is still enabled (GitHub disables a schedule after 60 days
-   without activity) and its last run was green.
+3. Dispatch `.github/workflows/jdk-ea.yml` and check it is green.
 4. One CHANGELOG line names the JDK and the map's effect.
 
 `jdk-ea.yml` is also dispatched on each release candidate, beside `matrix.yml` (step 7b).

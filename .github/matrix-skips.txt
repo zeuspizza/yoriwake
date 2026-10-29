@@ -12,3 +12,4 @@ JvmSharedFunctionalTest.a SQLite connection that enables extension loading selec
 JvmSharedFunctionalTest.SQLite at a version nobody reviewed selects every later test in its JVM | windows/*/* | only the Linux and macOS builds of SQLite's native library were reviewed
 JvmSharedFunctionalTest.netty-tcnative's BoringSSL build at the reviewed version, told by its bytes, narrows | windows/*/* | only the Linux and macOS builds of netty-tcnative were reviewed
 JvmSharedFunctionalTest.netty-tcnative's BoringSSL build at a version nobody reviewed selects every later test | windows/*/* | only the Linux and macOS builds of netty-tcnative were reviewed
+PathIgnoreFunctionalTest.a test that reads through a declared link to a directory runs when the link moves | windows/*/* | git for Windows records a link as a plain file unless core.symlinks is on
