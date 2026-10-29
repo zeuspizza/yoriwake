@@ -1,0 +1,151 @@
+name: recording cost
+
+# What isolated capture costs to record, and how far parallel forks win it back, measured on the
+# runners a recording job uses. Each project is one job, so its arms come from one machine: the
+# shared JVM, isolated at one fork, and isolated at the runner's cores, each recorded afresh
+# (`bench/run.py --recapture`) with one row, so the run is its recording. `repeats` times each arm
+# that many times, back to back. With `rows`, one more job records a project isolated and measures
+# that many of its rows, to compare with the shared rows of the last full sweep.
+#
+# Dispatched by hand, never on a schedule: it costs runner hours.
+on:
+  workflow_dispatch:
+    inputs:
+      projects:
+        description: space-separated projects under bench/projects/ to time
+        type: string
+        default: micronaut-core opentelemetry-java spring-security
+      repeats:
+        description: how many times each arm runs
+        type: string
+        default: '3'
+      rows:
+        description: a project to record isolated and measure rows on, or empty for none
+        type: string
+        default: kafka
+      row-limit:
+        description: how many of that project's rows to measure
+        type: string
+        default: '8'
+
+permissions:
+  contents: read
+
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      projects: ${{ steps.plan.outputs.projects }}
+    steps:
+      # Through the environment, never spliced into the script: the input is free text.
+      - id: plan
+        env:
+          PROJECTS: ${{ inputs.projects }}
+        run: |
+          set -eu
+          # shellcheck disable=SC2086 # one project per word, as the input lists them
+          printf 'projects=%s\n' "$(printf '%s\n' $PROJECTS | grep -E '^[a-z0-9-]+$' | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  arms:
+    needs: plan
+    if: needs.plan.outputs.projects != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.plan.outputs.projects) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: |
+            11
+            17
+            25
+            26
+            21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          add-job-summary: never
+      - name: time each arm
+        env:
+          PROJECT: ${{ matrix.project }}
+          REPEATS: ${{ inputs.repeats }}
+        run: |
+          set -eu
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          cores=$(nproc)
+          mkdir -p "out/$PROJECT"
+          for repeat in $(seq 1 "$REPEATS"); do
+            for arm in shared isolated-1 "isolated-$cores"; do
+              case "$arm" in
+                shared) flags=() ;;
+                *) flags=(--isolated-capture --isolated-forks "${arm#isolated-}") ;;
+              esac
+              python3 bench/run.py "bench/projects/$PROJECT.toml" --limit 1 --recapture "${flags[@]}" \
+                || echo "::warning::$PROJECT $arm run $repeat failed; its results say how far it got"
+              for results in bench/results/"$PROJECT"*.json; do
+                cp "$results" "out/$PROJECT/$arm-$repeat-$(basename "$results")"
+              done
+            done
+          done
+          python3 bench/recording_cost.py "out/$PROJECT" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Read by whoever dispatched the run, to write the reference's figure; a week covers that.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: recording-cost-${{ matrix.project }}
+          path: out/
+          retention-days: 7
+
+  rows:
+    if: inputs.rows != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: |
+            11
+            17
+            25
+            26
+            21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          add-job-summary: never
+      - name: record isolated and measure rows
+        env:
+          PROJECT: ${{ inputs.rows }}
+          LIMIT: ${{ inputs.row-limit }}
+        run: |
+          set -eu
+          case "$PROJECT" in *[!a-z0-9-]*) echo "::error::not a project name: $PROJECT"; exit 1 ;; esac
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          python3 bench/run.py "bench/projects/$PROJECT.toml" --limit "$LIMIT" --isolated-capture --isolated-forks "$(nproc)"
+          mkdir -p "out/$PROJECT"
+          cp bench/results/"$PROJECT"*.json "out/$PROJECT/"
+      # Read by whoever dispatched the run, beside the last full sweep's shared rows; a week covers that.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: recording-rows-${{ inputs.rows }}
+          path: out/
+          retention-days: 7
