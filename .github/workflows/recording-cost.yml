@@ -86,27 +86,32 @@ jobs:
           bench/machine_sampler.sh & sampler=$!
           trap 'kill "$sampler" 2>/dev/null || true' EXIT
           cores=$(nproc)
-          mkdir -p "out/$PROJECT"
+          # Outside the checkout: run.py refuses a checkout with changes it did not make.
+          out="$RUNNER_TEMP/recording-cost/$PROJECT"
+          mkdir -p "$out"
           for repeat in $(seq 1 "$REPEATS"); do
             for arm in shared isolated-1 "isolated-$cores"; do
               case "$arm" in
-                shared) flags=() ;;
-                *) flags=(--isolated-capture --isolated-forks "${arm#isolated-}") ;;
+                shared) flags=(); results="bench/results/$PROJECT.json" ;;
+                *) flags=(--isolated-capture --isolated-forks "${arm#isolated-}"); results="bench/results/$PROJECT.isolated.json" ;;
               esac
               python3 bench/run.py "bench/projects/$PROJECT.toml" --limit 1 --recapture "${flags[@]}" \
                 || echo "::warning::$PROJECT $arm run $repeat failed; its results say how far it got"
-              for results in bench/results/"$PROJECT"*.json; do
-                cp "$results" "out/$PROJECT/$arm-$repeat-$(basename "$results")"
-              done
+              # Only a file this run wrote: bench/results holds the published sweep's, which a run
+              # that stopped early leaves as it was. Restored after, so the next run starts clean.
+              if [ -f "$results" ] && { [ -z "$(git ls-files -- "$results")" ] || ! git diff --quiet HEAD -- "$results"; }; then
+                cp "$results" "$out/$arm-$repeat-$(basename "$results")"
+              fi
+              git checkout -q HEAD -- "$results" 2>/dev/null || rm -f "$results"
             done
           done
-          python3 bench/recording_cost.py "out/$PROJECT" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 bench/recording_cost.py "$out" | tee -a "$GITHUB_STEP_SUMMARY"
       # Read by whoever dispatched the run, to write the reference's figure; a week covers that.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-cost-${{ matrix.project }}
-          path: out/
+          path: ${{ runner.temp }}/recording-cost/
           retention-days: 7
 
   rows:
@@ -140,12 +145,12 @@ jobs:
           bench/machine_sampler.sh & sampler=$!
           trap 'kill "$sampler" 2>/dev/null || true' EXIT
           python3 bench/run.py "bench/projects/$PROJECT.toml" --limit "$LIMIT" --isolated-capture --isolated-forks "$(nproc)"
-          mkdir -p "out/$PROJECT"
-          cp bench/results/"$PROJECT"*.json "out/$PROJECT/"
+          mkdir -p "$RUNNER_TEMP/recording-rows"
+          cp "bench/results/$PROJECT.isolated.json" "$RUNNER_TEMP/recording-rows/"
       # Read by whoever dispatched the run, beside the last full sweep's shared rows; a week covers that.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-rows-${{ inputs.rows }}
-          path: out/
+          path: ${{ runner.temp }}/recording-rows/
           retention-days: 7
