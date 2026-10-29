@@ -2,20 +2,15 @@ name: guards
 
 # Breaks each safety rule in turn and checks that a test catches it (scripts/prove_guards.py).
 # Every pull request runs fast mode and the guards its change can affect, in any suite; one that
-# changes the plugin's or agent's shipped sources runs every guard instead. Every guard also runs
-# nightly, and on dispatch before a release. A guard that does not fire fails the job and names it.
+# changes the shipped sources runs every guard instead. Every guard also runs on dispatch in each
+# release check, never on a schedule. A guard that does not fire fails the job and names it.
 #
 # Each guard job runs in 8 shards of the selected guards, balanced by measured cost with a functional
 # class's guards together (`--shard I/N`), and a check job under the job's required name: every shard succeeded, and every
 # guard the check selects itself fired in exactly one shard (.github/guard_shards.py).
-#
-# A scheduled workflow that sees no repository activity for 60 days is disabled by GitHub; the
-# release checklist checks it is on.
 on:
   pull_request:
     branches: [main]
-  schedule:
-    - cron: '23 2 * * *'
   workflow_dispatch:
 
 # A newer push to a pull request cancels its older run.
@@ -222,28 +217,3 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: python3 .github/run_summary.py .github/workflows/guards.yml results
-
-  report-failure:
-    needs: [changes, full-shard, full]
-    if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-24.04
-    permissions:
-      issues: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TITLE: Nightly guard run failed
-        run: |
-          set -u
-          echo "$URL" > body.md
-          # One issue per failure rather than per night: while one with this title is open, a failed
-          # night comments on it. A listing that fails opens a new one.
-          open=$(gh issue list -R "$REPO" --state open --author app/github-actions --search "in:title $TITLE" \
-            --json number,title --jq '.[] | select(.title == env.TITLE) | .number' | head -1) || open=""
-          if [ -n "$open" ]; then
-            gh issue comment "$open" -R "$REPO" --body-file body.md
-          else
-            gh issue create -R "$REPO" --title "$TITLE" --body-file body.md
-          fi

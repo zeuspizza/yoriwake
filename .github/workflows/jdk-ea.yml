@@ -5,11 +5,8 @@ name: early-access JDK
 # the test expects is computed from the ceilings this commit carries: narrowing within every
 # ceiling, the named refusal above one. Anything else fails the job.
 #
-# Weekly, and dispatched on each release candidate (`RELEASING.md`). A scheduled workflow that sees
-# no repository activity for 60 days is disabled by GitHub; the release checklist checks it is on.
+# Dispatched on each release candidate (`RELEASING.md`), never on a schedule.
 on:
-  schedule:
-    - cron: '17 5 * * 1'
   workflow_dispatch:
 
 permissions:

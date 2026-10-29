@@ -594,13 +594,13 @@ def case_every_workflow_pins_its_actions_by_sha():
     return problems
 
 
-def case_the_early_access_job_runs_weekly_bounded_and_read_only():
-    """Its value is a weekly answer before a JDK ships; a run that hangs or writes is not that."""
+def case_the_early_access_job_is_dispatched_bounded_and_read_only():
+    """Its value is an answer on each release candidate before a JDK ships; a run that hangs or
+    writes is not that."""
     problems = 0
     with open(os.path.join(WORKFLOWS, "jdk-ea.yml"), encoding="utf-8") as handle:
         text = handle.read()
     for needle, why in (
-        ("  schedule:\n    - cron: ", "it is not scheduled"),
         ("  workflow_dispatch:", "it cannot be dispatched on a release candidate"),
         ("permissions:\n  contents: read", "its token is not read-only"),
         ("    timeout-minutes: 30", "its job has no 30-minute bound"),
@@ -639,61 +639,46 @@ def case_the_early_access_check_passes_only_when_its_test_passed():
     return problems
 
 
-def matrix_schedule_problems(text):
-    """What would let a cell break on main unnoticed, or let a dispatch test something unchecked."""
+def matrix_dispatch_problems(text):
+    """What would let a dispatch test something unchecked."""
     problems = []
-    if not re.search(r"^  schedule:\n    - cron: ", text, re.M):
-        problems.append("it is not scheduled")
     if not re.search(r"^  workflow_dispatch:\n    inputs:\n      candidate:\n", text, re.M):
         problems.append("it cannot be dispatched on a named candidate")
-    if text.count("inputs.candidate") != 1 or \
-            "${{ github.event_name == 'schedule' && github.sha || inputs.candidate }}" not in text:
+    if text.count("inputs.candidate") != 1 or "CANDIDATE: ${{ inputs.candidate }}\n" not in text:
         problems.append("a job reads the input itself, or a dispatch can fall back to the branch head")
     # Every checkout but the candidate job's own, which checks out the branch to test ancestry on,
     # and the run summary's, which reads only this run's own script and workflow.
     if text.count("ref: ${{ needs.candidate.outputs.sha }}") != text.count("uses: actions/checkout@") - 2 or \
             '--candidate "$CANDIDATE"' not in text:
         problems.append("the jobs do not all test the candidate the first job checked")
-    report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", text, re.M)
-    if not report or "    if: failure() && github.event_name == 'schedule'\n" not in report.group(1) \
-            or "issues: write" not in report.group(1) or "gh issue create" not in report.group(1):
-        problems.append("a failed scheduled run opens no issue")
-    elif not re.search(r"^    needs: \[candidate, cell, capture, select, summary\]\n", report.group(1), re.M):
-        problems.append("a job the report does not wait for can fail without an issue")
     return problems
 
 
-def case_the_matrix_runs_nightly_and_reports_a_failed_night():
+def case_the_matrix_tests_only_the_candidate_a_dispatch_names():
     with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
         text = handle.read()
-    problems = sum(fail(f"matrix.yml: {problem}") for problem in matrix_schedule_problems(text))
+    problems = sum(fail(f"matrix.yml: {problem}") for problem in matrix_dispatch_problems(text))
     for edited, expected in (
-        (text.replace("  schedule:\n    - cron: '41 23 * * *'\n", ""), "not scheduled"),
-        (text.replace("github.event_name == 'schedule' && github.sha || inputs.candidate", "inputs.candidate || github.sha"),
+        (text.replace("CANDIDATE: ${{ inputs.candidate }}", "CANDIDATE: ${{ inputs.candidate || github.sha }}"),
          "fall back"),
         (text.replace("ref: ${{ needs.candidate.outputs.sha }}", "ref: ${{ inputs.candidate }}", 1), "reads the input"),
-        (text.replace("    if: failure() && github.event_name == 'schedule'\n", "    if: failure()\n"), "opens no issue"),
         (text.replace("ref: ${{ needs.candidate.outputs.sha }}\n", "", 1), "do not all test the candidate"),
-        (text.replace("select, summary]\n    if: failure()", "select]\n    if: failure()"), "does not wait for"),
     ):
         if edited == text:
             problems += fail(f"the fixture edit for {expected!r} no longer applies to matrix.yml")
-        elif not any(expected in problem for problem in matrix_schedule_problems(edited)):
+        elif not any(expected in problem for problem in matrix_dispatch_problems(edited)):
             problems += fail(f"an edited matrix.yml was not reported for {expected!r}")
     return problems
 
 
-def case_a_failure_that_lasts_is_one_issue_not_one_a_night():
-    """A scheduled run that fails until someone fixes it would otherwise open an issue each night."""
+def case_no_workflow_runs_on_a_schedule():
+    """Long runs (every guard, the matrix, the sweep, the early-access JDK) are dispatched in each
+    release check: on a schedule they cost runner hours on commits a pull request already proved."""
     problems = 0
-    for name in ("guards.yml", "sweep.yml", "matrix.yml"):
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
         with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
-            report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", handle.read(), re.M)
-        block = report.group(1) if report else ""
-        for needle in ("gh issue list", "select(.title == env.TITLE)", 'gh issue comment "$open"',
-                       'gh issue create -R "$REPO" --title "$TITLE"'):
-            if needle not in block:
-                problems += fail(f"{name}: a failed scheduled run does not reuse the open issue ({needle!r} is missing)")
+            if re.search(r"^  schedule:", handle.read(), re.M):
+                problems += fail(f"{name} runs on a schedule")
     return problems
 
 LABELS = ["linux/8.14/21", "linux/9.8.0/21"]
@@ -1177,8 +1162,6 @@ def case_every_guard_job_runs_all_its_shards_under_its_required_name():
         holders = [j.split(":", 1)[0] for j in jobs if f"    name: {name}\n" in j]
         if len(holders) != 1 or holders[0] not in ("fast", "full"):
             problems += fail(f"the required check `{name}` is on {holders}, not on one check job")
-    if "needs: [changes, full-shard, full]" not in text:
-        problems += fail("a nightly failure in a shard or the check opens no issue")
     return problems
 
 
@@ -1248,7 +1231,6 @@ def case_the_guard_workflows_are_read_only_and_cover_every_pull_request():
         if "secrets." in text:
             problems += fail(f"{name}: uses a secret")
     for needle, why in (
-        ("  schedule:\n    - cron: ", "it is not scheduled nightly"),
         ("  workflow_dispatch:", "it cannot be dispatched before a release"),
         ("--mode fast", "it does not run fast mode"),
         ("--changed", "it does not run the guards the change can affect"),
@@ -1260,8 +1242,6 @@ def case_the_guard_workflows_are_read_only_and_cover_every_pull_request():
     ):
         if needle not in guards:
             problems += fail(f"guards.yml: {why}")
-    if not re.search(r"report-failure:\n(    [^\n]*\n)*    if: failure\(\) && github.event_name == 'schedule'", guards):
-        problems += fail("guards.yml: a nightly failure opens no issue")
     for needle, why in (
         ("--against", "it does not compare the guard table with the base branch"),
         ("test_prove_guards.py", "it does not check every anchor"),
@@ -2140,7 +2120,7 @@ def _sweep_plan(tier, only, arm=None):
     return argv[argv.index("--only") + 1:-1] if "--only" in argv else []
 
 
-def case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly():
+def case_a_sweep_without_inputs_runs_the_full_arm_of_every_project():
     """A run with no inputs once planned nothing and ended green; a dispatch keeps its defaults."""
     problems = 0
     arm = []
@@ -2148,9 +2128,7 @@ def case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly():
         problems += fail(f"a run with no inputs asked for the {arm or 'no'} arm, not every project's full arm")
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         text = handle.read()
-    report = re.search(r"^  report-failure:\n((?:    [^\n]*\n|\n)*)", text, re.M)
     for needle, why in (
-        ("  schedule:\n    - cron: ", "it is not scheduled"),
         ("  workflow_dispatch:\n", "it cannot be dispatched"),
         ('--factor "${FACTOR:-1.5}"', "a run with no inputs passes no factor to the slicer"),
         ("        default: auto\n", "a dispatch's tier no longer defaults to auto"),
@@ -2159,10 +2137,6 @@ def case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly():
     ):
         if needle not in text:
             problems += fail(f"sweep.yml: {why}")
-    if not report or "    if: failure() && github.event_name == 'schedule'\n" not in report.group(1) \
-            or "merge" not in report.group(1).split("\n", 1)[0]:
-        problems += fail("sweep.yml: a failed scheduled run, or one whose merge declared a project "
-                         "missing, opens no issue")
     return problems
 
 
@@ -2712,7 +2686,7 @@ REQUIRED_CHECKS = (
     "no guard weakened",
 )
 # The workflows that end in one summary, and the jobs it need not wait for.
-RUN_SUMMARIES = {"verify.yml": (), "guards.yml": ("report-failure",), "matrix.yml": ()}
+RUN_SUMMARIES = {"verify.yml": (), "guards.yml": (), "matrix.yml": ()}
 
 
 def run_summary_problems(text, exempt=()):
@@ -2785,8 +2759,8 @@ CASES = (
     case_on_windows_the_wrapper_script_runs_as_its_batch_file,
     case_output_the_console_cannot_encode_passes_through_untouched,
     case_the_matrix_cell_builds_through_the_download_rerun,
-    case_the_matrix_runs_nightly_and_reports_a_failed_night,
-    case_a_failure_that_lasts_is_one_issue_not_one_a_night,
+    case_the_matrix_tests_only_the_candidate_a_dispatch_names,
+    case_no_workflow_runs_on_a_schedule,
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
@@ -2852,7 +2826,7 @@ CASES = (
     case_a_missing_or_wider_cell_fails,
     case_a_job_that_ran_another_commit_fails,
     case_a_cell_with_two_tasks_results_fails,
-    case_the_early_access_job_runs_weekly_bounded_and_read_only,
+    case_the_early_access_job_is_dispatched_bounded_and_read_only,
     case_the_early_access_check_passes_only_when_its_test_passed,
     case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job,
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
@@ -2861,7 +2835,7 @@ CASES = (
     case_the_changelog_check_finds_exactly_the_section_it_is_given,
     case_security_names_the_release_key,
     case_a_sweep_of_every_project_can_be_asked_for,
-    case_a_scheduled_sweep_runs_the_full_arm_of_every_project_weekly,
+    case_a_sweep_without_inputs_runs_the_full_arm_of_every_project,
     case_a_record_job_archives_the_checkout_the_plan_names,
     case_a_failed_project_is_declared_missing_and_the_rest_still_merge,
     case_a_completion_that_cannot_complete_is_refused_before_it_measures,
