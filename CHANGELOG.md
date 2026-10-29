@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
+**Your map:** repaired on the next build, which runs every test once and records the dependency jars.
+
 ### Added
 
 - A Maven build extension on Maven Central: Surefire and Failsafe record, select, observe and complement, with `yoriwake:audit` and `yoriwake:explain`. Map: new, per execution.
@@ -185,6 +189,8 @@ First release. **Your map:** none exists yet; the first full run records one.
 - Pinning with `@Tag("yoriwake-always-run")`, `yoriwake { alwaysRun }` and `-Pyoriwake.alwaysRun`.
 - `-Pyoriwake.isolatedCapture`, which records the map with a fresh test JVM per test class.
 
-[Unreleased]: https://github.com/zeuspizza/yoriwake/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/zeuspizza/yoriwake/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/zeuspizza/yoriwake/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/zeuspizza/yoriwake/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zeuspizza/yoriwake/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zeuspizza/yoriwake/releases/tag/v0.1.0

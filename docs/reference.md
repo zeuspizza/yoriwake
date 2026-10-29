@@ -950,7 +950,7 @@ release named after the plugin's (`v0.3.0` for `0.3.0`), in place of the step th
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '21' }
-      - uses: zeuspizza/yoriwake-action@v0.3.0
+      - uses: zeuspizza/yoriwake-action@v0.4.0
 ```
 
 In one step it caches the map, fetches the history selection needs, records on the default branch,
@@ -989,7 +989,7 @@ allprojects {
 
 ```yaml
 env:
-  YORIWAKE_VERSION: 0.3.0       # the version your build applies
+  YORIWAKE_VERSION: 0.4.0       # the version your build applies
 
 jobs:
   test:
