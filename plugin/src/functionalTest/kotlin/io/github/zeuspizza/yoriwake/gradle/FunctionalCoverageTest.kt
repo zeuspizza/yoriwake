@@ -119,7 +119,7 @@ class FunctionalCoverageTest {
         val jvmArgs = File(home, "gradle.properties").readLines().single { it.startsWith("org.gradle.jvmargs=") }
         // In 512 MB a full collection now and then clears the Kotlin DSL compiler's half-built
         // index of the Gradle API jar, and every new script in that daemon then fails.
-        assertTrue("-Xmx2g" in jvmArgs && "-Xmx512m" !in jvmArgs, jvmArgs)
+        assertTrue("-Xmx" + (System.getenv("STRESS_DAEMON_XMX") ?: "2g") in jvmArgs, jvmArgs)
     }
 
     @Test

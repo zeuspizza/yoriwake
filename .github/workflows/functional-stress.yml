@@ -10,13 +10,14 @@ permissions:
 
 jobs:
   stress:
-    name: stress ${{ matrix.repeat }} (shard ${{ matrix.shard }}/2)
+    name: stress ${{ matrix.heap }} ${{ matrix.repeat }} (shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        repeat: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        heap: [512m, 2g]
+        repeat: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,7 +30,10 @@ jobs:
           cache-read-only: true
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/2 --continue --console=plain
+        env:
+          STRESS_DAEMON_XMX: ${{ matrix.heap }}
+          STRESS_GC_LOG_DIR: ${{ github.workspace }}/plugin/build/daemon-gc
+        run: mkdir -p plugin/build/daemon-gc && ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/2 --continue --console=plain
       - name: list what the TestKit homes downloaded
         if: failure()
         shell: bash
@@ -37,11 +41,17 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: stress-${{ matrix.repeat }}-shard-${{ matrix.shard }}
+          name: stress-${{ matrix.heap }}-${{ matrix.repeat }}-shard-${{ matrix.shard }}
           path: |
             plugin/build/test-kit-homes.txt
             plugin/build/test-kit-diagnostics/
             plugin/build/test-results/functionalTest/*.xml
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
           include-hidden-files: true
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: gc-${{ matrix.heap }}-${{ matrix.repeat }}-shard-${{ matrix.shard }}
+          path: plugin/build/daemon-gc/
           retention-days: 7

@@ -40,7 +40,9 @@ object FunctionalCoverage {
      * script in that daemon, until the daemon disposes its compiler. A heap dump of such a daemon
      * showed the index with two roots, the one kept having no children.
      */
-    private const val DAEMON_DEFAULTS = "-XX:MaxMetaspaceSize=384m -XX:+HeapDumpOnOutOfMemoryError -Xms256m -Xmx2g"
+    private val DAEMON_DEFAULTS = "-XX:MaxMetaspaceSize=384m -XX:+HeapDumpOnOutOfMemoryError -Xms256m -Xmx" +
+        (System.getenv("STRESS_DAEMON_XMX") ?: "2g") +
+        (System.getenv("STRESS_GC_LOG_DIR")?.let { " -Xlog:gc:file=$it/gc-%p.log" } ?: "")
 
     /**
      * The repository's own download retry, in every home: a fresh home resolves each fixture's
