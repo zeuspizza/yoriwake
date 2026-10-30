@@ -25,14 +25,22 @@ import java.util.concurrent.atomic.AtomicInteger
  * copy of the plugin's classes, with JaCoCo's runtime on their boot classpath, and send their data
  * here over loopback. It is written once per test class, so the data says which class reached what.
  *
- * Off unless the build asks for it; then the TestKit home's `gradle.properties` names no JVM
- * arguments at all, and the daemons are exactly what a user's build starts, retrying a failed
- * download as this repository's own build does.
+ * Off unless the build asks for it; then the TestKit home's `gradle.properties` names only the
+ * daemon's memory, and the daemons are what a user's build starts, with more heap and retrying a
+ * failed download as this repository's own build does.
  */
 object FunctionalCoverage {
 
-    /** What a daemon gets when no `org.gradle.jvmargs` is set; replacing them must change nothing else. */
-    private const val DAEMON_DEFAULTS = "-XX:MaxMetaspaceSize=384m -XX:+HeapDumpOnOutOfMemoryError -Xms256m -Xmx512m"
+    /**
+     * What a daemon gets when no `org.gradle.jvmargs` is set, with 2 GB of heap instead of 512 MB.
+     * Gradle 8's Kotlin DSL rebuilds an index of its 185 MB generated API jar in every build that
+     * compiles a script, and in 512 MB that churn ends in a full collection now and then. A full
+     * collection clears every soft reference, and one landing while the compiler indexes that jar
+     * leaves an index with an empty root: every Gradle API class reads as missing, for every new
+     * script in that daemon, until the daemon disposes its compiler. A heap dump of such a daemon
+     * showed the index with two roots, the one kept having no children.
+     */
+    private const val DAEMON_DEFAULTS = "-XX:MaxMetaspaceSize=384m -XX:+HeapDumpOnOutOfMemoryError -Xms256m -Xmx2g"
 
     /**
      * The repository's own download retry, in every home: a fresh home resolves each fixture's
@@ -87,7 +95,7 @@ object FunctionalCoverage {
             ).joinToString(" ") { "\"$it\"" }
             "org.gradle.jvmargs=" + "$DAEMON_DEFAULTS $arguments".replace("\\", "\\\\") + "\n"
         } else {
-            "# no JVM arguments: functional coverage is off\n"
+            "org.gradle.jvmargs=$DAEMON_DEFAULTS\n"
         }
         File(testKitHome, "gradle.properties").writeText(text + REPOSITORY_RETRY)
     }
