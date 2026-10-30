@@ -112,6 +112,15 @@ class FunctionalCoverageTest {
         }
     }
 
+    @Test
+    fun `every home retries a failed download, with coverage or without`() {
+        val home = File(dir, "home").also(FunctionalCoverage::configure)
+
+        val text = File(home, "gradle.properties").readText()
+        assertTrue("systemProp.org.gradle.internal.repository.max.tentatives=5" in text, text)
+        assertTrue("systemProp.org.gradle.internal.repository.initial.backoff=2000" in text, text)
+    }
+
     private fun start() = CoverageServer(dir, "test-session", replyTimeoutMillis = 10_000).also { it.start() }
 
     private fun connect(): FakeRuntime {

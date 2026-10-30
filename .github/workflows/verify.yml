@@ -158,6 +158,7 @@ jobs:
           name: test-kit-homes-linux-functionalTest-${{ matrix.shard }}-of-2
           path: |
             plugin/build/test-kit-homes.txt
+            plugin/build/test-kit-diagnostics/
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log
@@ -242,6 +243,7 @@ jobs:
           name: test-kit-homes-linux-functionalTestGradle9-${{ matrix.shard }}-of-2
           path: |
             plugin/build/test-kit-homes.txt
+            plugin/build/test-kit-diagnostics/
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log
@@ -761,6 +763,7 @@ jobs:
           name: test-kit-homes-windows-functionalTest-${{ matrix.shard }}-of-8
           path: |
             plugin/build/test-kit-homes.txt
+            plugin/build/test-kit-diagnostics/
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log
@@ -839,6 +842,7 @@ jobs:
           name: test-kit-homes-windows-functionalTestGradle9-${{ matrix.shard }}-of-8
           path: |
             plugin/build/test-kit-homes.txt
+            plugin/build/test-kit-diagnostics/
             plugin/build/tmp/*/work/.gradle-test-kit-*/daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-test-kit-*/test-kit-daemon/**/*.log
             plugin/build/tmp/*/work/.gradle-tooling-api-*/daemon/**/*.log

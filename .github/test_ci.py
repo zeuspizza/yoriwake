@@ -1662,6 +1662,8 @@ def functional_evidence_problems(text):
                             f"`.gradle-test-kit-*` directories")
         elif not any("plugin/build/test-kit-homes.txt" in step for step in evidence):
             problems.append(f"{job}: the upload leaves out the listing of what the homes downloaded")
+        elif not any("plugin/build/test-kit-diagnostics/" in step for step in evidence):
+            problems.append(f"{job}: the upload leaves out what the suite captured from a failed script compilation")
     return problems
 
 
@@ -1686,6 +1688,8 @@ def case_a_shard_that_drops_its_evidence_is_reported():
          "when it fails"),
         (text.replace(block, block.replace("            plugin/build/test-kit-homes.txt\n", "", 1)),
          "leaves out the listing"),
+        (text.replace(block, block.replace("            plugin/build/test-kit-diagnostics/\n", "", 1)),
+         "failed script compilation"),
     ):
         found = [p for p in functional_evidence_problems(edited) if p.startswith("functional-gradle9-windows-shard")]
         if edited == text:
