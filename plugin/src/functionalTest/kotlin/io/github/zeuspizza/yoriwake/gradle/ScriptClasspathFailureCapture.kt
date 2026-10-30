@@ -8,6 +8,7 @@ import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipFile
 
@@ -22,7 +23,8 @@ import java.util.zip.ZipFile
  * empty list for it without a word: Gradle 8 discards the compiler's output. So this dumps each
  * live daemon's flight recording (the exceptions it threw in the last minutes, kept while coverage
  * is on), reruns the build in the same daemon at debug level, and keeps the daemon's open files,
- * memory maps, limits and system properties beside it. Registered for the whole suite; a few
+ * memory maps, limits and system properties beside it, and once per run, when the rerun fails the
+ * same way, a heap dump of that daemon. Registered for the whole suite; a few
  * captures per run are enough.
  */
 class ScriptClasspathFailureCapture : TestExecutionExceptionHandler {
@@ -92,8 +94,15 @@ class ScriptClasspathFailureCapture : TestExecutionExceptionHandler {
         report.appendLine("test: $test")
         report.appendLine("the rerun failed the same way: ${SIGNATURE in output}")
         report.appendLine("live daemons before the rerun: $daemons")
-        DAEMON_PID.findAll(output).map { it.groupValues[1] }.distinct().forEach { pid ->
-            report.appendLine("rerun in daemon $pid")
+        val failedAgainIn = DAEMON_PID.findAll(output).map { it.groupValues[1] }.distinct().toList()
+        failedAgainIn.forEach { pid -> report.appendLine("rerun in daemon $pid") }
+        // While the broken state is proven live, what the compiler holds in memory: once per run, and
+        // with every object, so the dump's own collection cannot clear what it is meant to show.
+        if (SIGNATURE in output && !heapDumped.getAndSet(true)) {
+            failedAgainIn.forEach { pid ->
+                val dump = File(directory, "$name-daemon-$pid.hprof")
+                report.appendLine("heap dump: ${run(bin, "jcmd", pid, "GC.heap_dump", "-all", dump.absolutePath).trim()}")
+            }
         }
         daemons.forEach { pid ->
             val proc = File("/proc/$pid")
@@ -157,5 +166,6 @@ class ScriptClasspathFailureCapture : TestExecutionExceptionHandler {
         // Where the compiler reads a classpath jar, and where it swallows a failure to.
         val ARCHIVE_CODE = listOf("intellij.openapi.vfs", "java.util.zip", "CoreJar")
         val captured = AtomicInteger()
+        val heapDumped = AtomicBoolean()
     }
 }
