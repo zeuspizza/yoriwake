@@ -109,9 +109,11 @@ class ScriptClasspathFailureCapture : TestExecutionExceptionHandler {
                 .forEach { report.appendLine("  open: $it") }
         }
         File(home, "caches").walkTopDown()
-            .filter { it.isFile && it.parentFile.name == "generated-gradle-jars" }
+            // Jars only: the cache's lock file beside them is held by the daemon, and Windows refuses its read.
+            .filter { it.isFile && it.parentFile.name == "generated-gradle-jars" && it.extension == "jar" }
             .forEach { jar ->
-                report.appendLine("${jar.path} ${jar.length()} bytes, modified ${jar.lastModified()}, sha-256 ${sha256(jar)}")
+                val digest = runCatching { sha256(jar) }.getOrElse { "unreadable ($it)" }
+                report.appendLine("${jar.path} ${jar.length()} bytes, modified ${jar.lastModified()}, sha-256 $digest")
                 val readable = runCatching {
                     ZipFile(jar).use { zip -> "${zip.size()} entries, Project.class ${zip.getEntry(PROJECT) != null}" }
                 }.getOrElse { "unreadable: $it" }
