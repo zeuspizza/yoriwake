@@ -20,9 +20,9 @@ on:
         type: string
         default: '3'
       rows:
-        description: a project to record isolated and measure rows on, or empty for none
+        description: a project to record isolated and measure rows on, such as kafka; empty for none
         type: string
-        default: kafka
+        default: ''
       row-limit:
         description: how many of that project's rows to measure
         type: string
