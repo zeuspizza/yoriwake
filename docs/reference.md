@@ -1151,7 +1151,19 @@ selecting builds run your tests exactly as they did.
   for every build. Recording takes several times longer: every test class pays for a JVM start,
   instrumentation against a cold JIT, and any setup a shared JVM would have reused.
 - **Raise `maxParallelForks` for that job** if your build lets you. The flag keeps whatever the
-  task sets and starts that many JVMs at a time.
+  task sets and starts that many JVMs at a time. Measured on GitHub's 4-core `ubuntu-24.04`
+  runners at `6d15f47` (the plugin of 0.4.0), three recordings per arm of each project's test task:
+
+  | Project | Shared JVM | Isolated, 1 fork | Isolated, 4 forks |
+  |---|---|---|---|
+  | opentelemetry-java | 25-26 s | 130-136 s | 91-93 s |
+  | micronaut-core | 14-16 s | 190-194 s | 154 s |
+  | moshi | 4-6 s | 158-159 s | 121-122 s |
+
+  Four forks took 20 to 31% off the isolated recording, which stayed 3.5 to 34 times the shared
+  one. The cost follows the number of test classes, each paying a JVM start, not the suite's own
+  length: the fastest shared suite here grew the most. Set `maxParallelForks` to the machine's
+  cores in the recording job only, where your tests tolerate parallel JVMs.
 - **Only a recording run updates it.** A selecting run that falls back to a full run still runs
   every test, with your fork settings, but leaves a map holding any JVM recorded in isolation
   exactly as it is, and says so. Recording that run would replace the isolated records with
