@@ -550,6 +550,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          # Windows images ship JDKs Temurin does not publish (`21.0.12+101`), which the selecting
+          # job, on another image, cannot install: take the latest Temurin release instead.
+          check-latest: true
       # On Windows setup-java reports the JDK as `21.0.13+9.0`, a version it refuses as input.
       - name: the JDK, as setup-java takes it back
         id: jdk
