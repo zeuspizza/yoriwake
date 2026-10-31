@@ -2216,6 +2216,78 @@ def case_every_measuring_step_samples_the_machine_until_it_ends():
     return problems
 
 
+GUEST_STEPS = ("\n      - name: record and cut into slices", "\n      - name: measure this slice",
+               "\n      - name: sweep the controls")
+
+
+def case_no_guest_build_writes_to_the_run_page():
+    """A guest's build may write its own test report to the job summary (anki-android's does, per
+    test task): dozens of unlabelled tables per project. Every step that runs guests unsets the
+    variable before its first build, so nothing it starts can find the file."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for opener in GUEST_STEPS:
+        script = _sweep_step(text, opener)
+        unset = script.find("\nunset GITHUB_STEP_SUMMARY\n")
+        if unset < 0 or unset > script.find("python3 "):
+            problems += fail(f"sweep.yml:{opener.split('name: ')[1]} runs a build before it unsets "
+                             f"GITHUB_STEP_SUMMARY")
+    script = _sweep_step(text, GUEST_STEPS[0])
+    with tempfile.TemporaryDirectory() as root:
+        bench = os.path.join(root, "bench")
+        os.makedirs(bench)
+        with open(os.path.join(bench, "machine_sampler.sh"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n")
+        os.chmod(os.path.join(bench, "machine_sampler.sh"), 0o755)
+        # Each stands for a guest build: it writes a table wherever the variable points.
+        for stub in ("run.py", "shard.py"):
+            with open(os.path.join(bench, stub), "w", encoding="utf-8") as handle:
+                handle.write(f"import os\nopen({root!r} + '/ran-{stub}', 'w').close()\n"
+                             "path = os.environ.get('GITHUB_STEP_SUMMARY')\n"
+                             "if path:\n    open(path, 'a').write('| Test Results |\\n')\n")
+        page = os.path.join(root, "summary.md")
+        open(page, "w").close()
+        env = {**os.environ, "NAME": "demo", "ARGS": json.dumps(["bench/projects/demo.toml"]),
+               "CHECKOUT": "checkouts/demo", "FACTOR": "1.5", "GITHUB_STEP_SUMMARY": page}
+        subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+        if not os.path.exists(os.path.join(root, "ran-run.py")):
+            problems += fail("the record step's script did not reach its build")
+        elif os.path.getsize(page):
+            problems += fail(f"a guest build in the record step wrote to the run page: "
+                             f"{open(page).read()!r}")
+    return problems
+
+
+def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
+    """The page and `sweep-results` come from `merged/`, also on a run that then fails for a missing
+    project, and the page never turns the run red. The per-job artifacts keep their three days."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    merge = _job_block(text, "merge")
+    guard = "${{ !cancelled() && hashFiles('merged/**/sweep.json') != '' }}"
+    page = merge[merge.index("      - name: write the run page"):]
+    page = page[:page.index("\n      - ", 1)]
+    if f"if: {guard}" not in page or "continue-on-error: true" not in page \
+            or "bench/sweep_page.py merged unpacked" not in page:
+        problems += fail(f"the page step does not run sweep_page.py whenever the merge wrote results, "
+                         f"without failing the run: {page}")
+    if merge.count("actions/upload-artifact@") != 1:
+        problems += fail("the merge job does not upload exactly one artifact")
+    else:
+        upload = merge[merge.rindex("\n      - ", 0, merge.index("actions/upload-artifact@")):]
+        for needed in (f"- if: {guard}", "name: sweep-results", "path: merged/", "overwrite: true",
+                       "if-no-files-found: error"):
+            if needed not in upload:
+                problems += fail(f"the sweep-results upload lacks {needed!r}")
+    for job in ("record", "shard"):
+        block = _job_block(text, job)
+        if block.count("retention-days: 3") != block.count("actions/upload-artifact@"):
+            problems += fail(f"a {job} upload no longer keeps three days")
+    return problems
+
+
 def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
     """One failed project must not cost the others their rows, and a sweep short of one must say so
     and fail: kafka's record failed and kafka-core lost a shard, so only okio is merged, the release
@@ -2847,6 +2919,8 @@ CASES = (
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
     case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
     case_every_measuring_step_samples_the_machine_until_it_ends,
+    case_no_guest_build_writes_to_the_run_page,
+    case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged,
     case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure,
     case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported,
     case_a_green_run_summarises_every_job_and_each_suites_shards,
