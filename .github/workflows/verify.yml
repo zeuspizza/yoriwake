@@ -534,7 +534,7 @@ jobs:
     runs-on: windows-latest
     # The JDK the map was captured on, for the job that selects against it on the same OS.
     outputs:
-      jdk: ${{ steps.java.outputs.version }}
+      jdk: ${{ steps.jdk.outputs.version }}
     steps:
       # Git for Windows' default, as on a developer's machine: tracked text, the demo's resources
       # included, is checked out with CRLF. The selecting job below checks out LF, so its map
@@ -550,6 +550,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # On Windows setup-java reports the JDK as `21.0.13+9.0`, a version it refuses as input.
+      - name: the JDK, as setup-java takes it back
+        id: jdk
+        shell: bash
+        run: |
+          version='${{ steps.java.outputs.version }}'
+          [[ $version == *+*.0 ]] && version=${version%.0}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
