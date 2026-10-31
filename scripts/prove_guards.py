@@ -18,6 +18,13 @@ an in-memory copy and checked byte for byte afterwards.
 Run from the repository root. Paths in MUTATIONS are relative to it. By default the guards run in
 worker worktrees under `sandbox/prove-guards/`, and this tree is never written.
 
+On Windows the same commands run under `python`, and Gradle starts through `gradlew.bat`. A suite
+that cannot run there fails unmutated and is refused, naming its first failure, before any source
+is mutated. One guard per suite on a Windows runner with a CRLF checkout (2026-10-31): unit, agent,
+functional, decoder, reference, jdk identity, sbom, configuration guards, break, portal, qualify,
+replay, revert, process, config cost, order, mutations, sharding, sweep and corpus fire there;
+python, ci, scan, controls, preflight, maven and maven break fail unmutated there.
+
 **DO NOT EDIT A MUTATED SOURCE WHILE THIS IS RUNNING WITH `--jobs 1`.** That mode mutates this tree
 in place, and the restore writes back the whole in-memory `original`, so an edit made to a mutated
 file mid-run is DISCARDED -- and silently, because the byte-identical check compares against the
@@ -54,6 +61,26 @@ def write_source(path, text):
         handle.write(text)
 
 
+# A mutation is applied to decoded text, so its anchors match a CRLF checkout too; the source is
+# saved and restored as BYTES. Text-mode reads fold '\r\n' into '\n' and text-mode writes emit the
+# platform's ending, so restoring the decoded text turned a CRLF file into LF on Linux and macOS and
+# an LF file into CRLF on Windows -- and a check that hashed decoded text passed both.
+def read_bytes(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def write_bytes(path, data):
+    with open(path, "wb") as handle:
+        handle.write(data)
+
+
+def check_restored(path, original):
+    """Refuses a source whose bytes are not `original` after its restore."""
+    assert hashlib.sha256(read_bytes(path)).hexdigest() == hashlib.sha256(original).hexdigest(), \
+        f"restore failed: {path}"
+
+
 def source(path):
     """Where a mutation's repository-relative path is on disk, in the tree under test.
 
@@ -69,10 +96,23 @@ def source(path):
 GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false", "-Pyoriwake.kotlinWarningsAsErrors=false"]
 
 
+def wrapper(tree):
+    """The Gradle wrapper that starts a build in `tree`.
+
+    `./gradlew` is a shell script, which Windows cannot execute, so there it is the batch file, by
+    absolute path: Windows looks a bare program name up beside this process, not in `cwd=`.
+    """
+    return os.path.join(tree, "gradlew.bat") if os.name == "nt" else "./gradlew"
+
+
 def gradle(args):
-    """`./gradlew` in the tree under test."""
-    return subprocess.run(["./gradlew"] + GRADLE_ARGS + args, capture_output=True, text=True,
-                          cwd=yoriwake_checkout.root())
+    """The Gradle wrapper in the tree under test.
+
+    No stdin: interrupted, `cmd.exe` would wait on a "Terminate batch job (Y/N)?" nobody sees.
+    """
+    tree = yoriwake_checkout.root()
+    return subprocess.run([wrapper(tree)] + GRADLE_ARGS + args, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, cwd=tree)
 
 
 def _restore_on_signal(path, original):
@@ -85,7 +125,7 @@ def _restore_on_signal(path, original):
     """
     def put_back(*_):
         try:
-            write_source(path, original)
+            write_bytes(path, original)
         except Exception:
             pass
         raise SystemExit(130)
@@ -97,7 +137,7 @@ def _restore_on_signal(path, original):
         except (ValueError, OSError):
             # Not the main thread, or a platform without it. The atexit hook below still stands.
             pass
-    at_exit = lambda: write_source(path, original)  # noqa: E731
+    at_exit = lambda: write_bytes(path, original)  # noqa: E731
     atexit.register(at_exit)
 
     def disarm():
@@ -5060,7 +5100,8 @@ def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
     error lines below it, or None."""
     for tree in trees:
-        done = subprocess.run(["./gradlew", "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True, cwd=tree)
+        done = subprocess.run([wrapper(tree), "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, cwd=tree)
         if done.returncode != 0:
             output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
@@ -5109,12 +5150,13 @@ def _prove_in_worker(index):
         return index, None, (f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
                              f"{standing[0]}")
     target = source(path)
-    original = read_source(target)
-    write_source(target, original.replace(old, new, 1))
+    original = read_bytes(target)
+    write_source(target, read_source(target).replace(old, new, 1))
     try:
         return index, _run_suite(suite, test_class), None
     finally:
-        write_source(target, original)
+        write_bytes(target, original)
+        check_restored(target, original)
 
 
 def _run_parallel(args, selected, skipped, reasons):
@@ -5604,9 +5646,9 @@ def _main(args, held):
                 return 1
             baselined.add(test_class)
         path = source(relative)
-        original = read_source(path)
-        digest = hashlib.sha256(original.encode(ENCODING)).hexdigest()
-        if old not in original:
+        original = read_bytes(path)
+        text = read_source(path)
+        if old not in text:
             # Unreachable via the pre-flight check above, which refuses before any suite runs. Kept
             # for the one case that check cannot cover: a source edited while this is running, which
             # is how a mutation once survived into a working tree. It says so rather than being
@@ -5621,14 +5663,13 @@ def _main(args, held):
         # caught only because a later pre-flight refused. `run.py` carries the same
         # atexit-plus-signal restore for its checkouts, for the same reason.
         undo = _restore_on_signal(path, original)
-        write_source(path, original.replace(old, new, 1))
+        write_source(path, text.replace(old, new, 1))
         try:
             fired = _suite_run(suite, test_class)
         finally:
-            write_source(path, original)
+            write_bytes(path, original)
             undo()
-            assert hashlib.sha256(read_source(path).encode(ENCODING)).hexdigest() == digest, \
-                f"restore failed: {path}"
+            check_restored(path, original)
         failures += _report(MUTATIONS.index(mutation), fired, None)
 
     print()
