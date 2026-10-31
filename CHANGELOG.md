@@ -18,6 +18,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Added
 
 - A code of conduct, an accessibility statement and a pull request template. Map: left alone.
+- SECURITY.md shows how to rebuild a release from its tag and compare it, byte for byte. Map: left alone.
 
 ### Changed
 
