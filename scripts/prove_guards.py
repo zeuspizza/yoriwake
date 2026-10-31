@@ -4636,7 +4636,7 @@ MUTATIONS = [
      maven_suite, "integration tests are captured into their own map"),
     # CORE DECIDES, MAVEN BUILDS WHAT IT COMPARES. Each guard below drops what Maven hands a shared
     # rule: the test JVM's arguments and environment, its call into the environment comparison, the
-    # map-age widening's merge-base, and Surefire's stop-after-failure and failIfNoTests. The SNAPSHOT
+    # map's capture stamp, and Surefire's stop-after-failure and failIfNoTests. The SNAPSHOT
     # one is core's: no one-line Maven change hides a replaced SNAPSHOT, since a wrong repository
     # home reads the jar by its content anyway.
     ("a Maven selecting run compares no argLine property", MAVEN_RECORDING,
@@ -4649,15 +4649,17 @@ MUTATIONS = [
      maven_suite, "another time zone in Maven's environment runs every test"),
     ("a Maven selecting run never compares the environment", MAVEN_SELECTION,
      "        if (environment != null) {",
-     "        if (false) {",
+     "        if (environment != null && false) {",
      maven_suite, "a map recorded on another JDK runs every test, names both versions, and the next run narrows"),
     ("a SNAPSHOT in the Maven repository is named by its path", CLASSPATH_FILES,
      '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH',
      "                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH",
      maven_suite, "a SNAPSHOT dependency replaced in the repository runs every test"),
+    # The map's age, not the merge-base: the change set is the union of the diffs against the
+    # widened base and against the stamp, so a merge-base of the base with itself changes nothing.
     ("a Maven selecting run does not widen to the map's age", MAVEN_SELECTION,
-     'git.run(listOf("merge-base", "--end-of-options", a, b))',
-     'git.run(listOf("merge-base", "--end-of-options", a, a))',
+     "            base, readCaptureStamp(mapDir), File(mapDir, AgentContract.MAP_SCHEMA_VERSION_FILE).isFile,",
+     "            base, null, false,",
      maven_suite, "a change committed after the capture runs its tests though the base is newer"),
     ("a Maven capture that stops after a failure dates the map", MAVEN_RECORDING,
      "        if ((stopAfter?.toIntOrNull() ?: 0) > 0) return",
