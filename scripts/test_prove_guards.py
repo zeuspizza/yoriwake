@@ -422,6 +422,64 @@ def case_every_functional_guard_resolves_to_one_class():
     return fail(f"no single class for: {', '.join(unresolved)}") if unresolved else 0
 
 
+def case_every_maven_guard_resolves_to_one_class():
+    """A renamed Maven test would otherwise fall back to the whole Maven suite, unseen."""
+    unresolved = [m[0] for m in pg.MUTATIONS if m[4] is pg.maven_suite
+                  and pg._class_of(m[4], m[5]) is None]
+    return fail(f"no single Maven class for: {', '.join(unresolved)}") if unresolved else 0
+
+
+def _maven_classes_the_whole_suite_misses(root):
+    """The Maven test classes under `root` outside the break package that the whole-suite run's
+    `--tests` filters match none of, read off the arguments `maven_suite` hands Gradle."""
+    import fnmatch
+    import re
+    passed = []
+    saved = pg.gradle
+    pg.gradle = lambda args: passed.append(args) or subprocess.CompletedProcess(args, 0, "", "")
+    try:
+        pg.maven_suite()
+    finally:
+        pg.gradle = saved
+    filters = [a for i, a in enumerate(passed[0]) if i > 0 and passed[0][i - 1] == "--tests"]
+    missed = []
+    sources = os.path.join(root, pg.MAVEN_SOURCES)
+    for directory, _dirs, files in os.walk(sources):
+        if "breaking" in os.path.relpath(directory, sources).split(os.sep):
+            continue
+        for name in files:
+            if not name.endswith(".kt"):
+                continue
+            with open(os.path.join(directory, name), encoding="utf-8") as f:
+                text = f.read()
+            if not re.search(r"@(Test|ParameterizedTest)\b", text):
+                continue
+            package = re.search(r"^package ([\w.]+)", text, re.M)
+            qualified = f"{package.group(1)}.{name[:-3]}" if package else name[:-3]
+            if not any(fnmatch.fnmatchcase(qualified, pattern) for pattern in filters):
+                missed.append(name[:-3])
+    return sorted(missed)
+
+
+def case_the_maven_whole_suite_runs_every_maven_class():
+    """A hand-kept list of classes went stale: three classes were added after it and never ran."""
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, pg.MAVEN_SOURCES, "kotlin", "dev")
+        os.makedirs(os.path.join(tree, "breaking"))
+        with open(os.path.join(tree, "ScopeFunctionalTest.kt"), "w") as f:
+            f.write("package dev\nclass ScopeFunctionalTest {\n  @Test fun `a scope`() {}\n}\n")
+        with open(os.path.join(tree, "breaking", "SomeAttempt.kt"), "w") as f:
+            f.write("package dev.breaking\nclass SomeAttempt {\n  @Test fun `an attempt`() {}\n}\n")
+        missed = _maven_classes_the_whole_suite_misses(tmp)
+        if missed:
+            failures += fail(f"the whole Maven suite does not run {', '.join(missed)}")
+    missed = _maven_classes_the_whole_suite_misses(pg.yoriwake_checkout.root())
+    if missed:
+        failures += fail(f"the whole Maven suite does not run {', '.join(missed)} of this checkout")
+    return failures
+
+
 def case_no_testkit_suite_runs_in_the_parallel_phase():
     """TestKit builds failed unmutated under load; only the alone phase keeps load away from them."""
     failures = 0
@@ -430,6 +488,17 @@ def case_no_testkit_suite_runs_in_the_parallel_phase():
             failures += fail(f"{name} starts TestKit builds and runs in the parallel phase")
         if name in pg.UNLOCKED_SUITES:
             failures += fail(f"{name} starts TestKit builds and runs without the Gradle lock")
+    return failures
+
+
+def case_the_maven_break_suite_runs_under_the_lock_as_the_maven_suite_does():
+    """Real Maven and no TestKit build: locked beside the other suites, not held for the alone phase."""
+    failures = 0
+    for name in ("maven", "maven break"):
+        if not pg._locked(name):
+            failures += fail(f"{name} runs Gradle without the lock")
+        if name in pg.EXCLUSIVE_SUITES:
+            failures += fail(f"{name} starts no TestKit build and waits for the alone phase")
     return failures
 
 
@@ -765,7 +834,10 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_tracked_edit_and_a_new_file_are_both_changes,
          case_a_functional_guard_runs_the_one_class_that_holds_its_test,
          case_every_functional_guard_resolves_to_one_class,
+         case_every_maven_guard_resolves_to_one_class,
+         case_the_maven_whole_suite_runs_every_maven_class,
          case_no_testkit_suite_runs_in_the_parallel_phase,
+         case_the_maven_break_suite_runs_under_the_lock_as_the_maven_suite_does,
          case_a_gradle_suite_not_named_safe_runs_under_the_lock,
          case_functional_guards_pair_by_class_and_configuration_guards_run_alone,
          case_guard_names_its_own_guards_and_refuses_an_unknown_one,

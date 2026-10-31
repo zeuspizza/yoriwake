@@ -572,15 +572,11 @@ def maven_suite(test_class=None):
     """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks.
 
     With `test_class`, that class alone, as `functional_suite`: each Maven build is minutes on a
-    runner, and every class at every guard ran a shard past its time limit.
+    runner, and every class at every guard ran a shard past its time limit. Without one, every
+    functional class by the filter: a hand-kept list of classes missed the ones added after it.
     """
-    filters = ["--tests", f"*.{test_class}"] if test_class else [
-        "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
-        "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--tests", "*FailsafeFunctionalTest*",
-        "--tests", "*AuditAndExplainFunctionalTest*",
-        "--tests", "*MapProvenanceFunctionalTest*", "--tests", "*BuildCacheFunctionalTest*",
-        "--tests", "*DevelocityFunctionalTest*"]
-    done = gradle([":maven:functionalTest"] + filters + ["--rerun"])
+    done = gradle([":maven:functionalTest", "--tests", f"*.{test_class}" if test_class else FUNCTIONAL_FILTER,
+                   "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -661,6 +657,28 @@ def break_suite():
     return named
 
 
+MAVEN_BREAK_FILE = ("maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/breaking/"
+                    "MavenBreakAttempt.kt")
+
+
+def maven_break_suite():
+    """The Maven break helper's self-test: one attempt of each outcome, over real Maven builds.
+
+    A suite of its own beside `break`, so a Gradle helper guard never pays for Maven builds and a
+    Maven one never pays for the Gradle self-test. No other suite runs these attempts either.
+    """
+    done = gradle([":maven:breakAttempts", "--tests", "*MavenAttemptSelfTest*", "--rerun"])
+    if done.returncode == 0:
+        return []
+    lines = (done.stdout + done.stderr).splitlines()
+    named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
+    if not named:
+        compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
+            if compile_errors else ["the Maven break suite failed without naming a test"]
+    return named
+
+
 # (name, function, seconds) -- ordered cheapest first, so a red baseline surfaces before the
 # expensive suites are started.
 #
@@ -728,6 +746,9 @@ SUITES = [
     # 50s wall for one unmutated run, the plugin and agent compiled from
     # scratch in a fresh worktree; its eight tests took 39s of it.
     ("break", break_suite, 50),
+    # 135s wall for one unmutated run, the plugin built and published in a fresh worktree; its
+    # twelve attempts took 119s of it.
+    ("maven break", maven_break_suite, 135),
 ]
 
 SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
@@ -3866,6 +3887,25 @@ MUTATIONS = [
      "    if (!onTarget(observed, aim, held)) {",
      "    if (false && !onTarget(observed, aim, held)) {",
      break_suite, "ran by another rule than the one it aims at is off target"),
+    # THE MAVEN BREAK HELPER READS WHAT SUREFIRE LEFT, and classifies by the verdicts above. A target
+    # with a second method would hide a skipped one behind it; a report read as passed, a decline
+    # not read, or a capture's report left beside the selecting run's each misclassify an attempt.
+    ("the Maven break helper takes a target holding two test methods", MAVEN_BREAK_FILE,
+     "        check(targetCases == 1) {",
+     "        check(true) {",
+     maven_break_suite, "an attempt whose target holds two test methods is refused"),
+    ("the Maven break helper reads every report as passed", MAVEN_BREAK_FILE,
+     "            if (results.all { it == null }) null else results.none { it == false }",
+     "            if (results.all { it == null }) null else true",
+     maven_break_suite, "an attempt through a documented limit that skips its failing target is a gap"),
+    ("the Maven break helper no longer reads an execution's decline", MAVEN_BREAK_FILE,
+     '        val DECLINED = Regex("""\\[yoriwake] [^\\n]* declined, ([a-z0-9-]+):|',
+     '        val DECLINED = Regex("""\\[yoriwake] [^\\n]* declined; ([a-z0-9-]+):|',
+     maven_break_suite, "a declined execution holds by force, naming the decline"),
+    ("the Maven break helper keeps the capture's reports for the selecting run", MAVEN_BREAK_FILE,
+     "        deleteReports(project)\n        change(project)\n",
+     "        change(project)\n",
+     maven_break_suite, "an attempt that reaches the rule it aims at is held by rule"),
     # A changed file no class or build script names may still be read: found by a pattern, walked
     # to, listed in another file, or handed over by path. Dropping it skips the test that reads it.
     ("a changed path outside a source tree is dropped as unread again", SELECTION,
@@ -4598,6 +4638,45 @@ MUTATIONS = [
      "        if (outcome is ScopeOutcome.NotApplied || !isTestGoal(execution)) return\n",
      "        if (outcome is ScopeOutcome.NotApplied) return\n",
      maven_suite, "integration tests are captured into their own map"),
+    # CORE DECIDES, MAVEN BUILDS WHAT IT COMPARES. Each guard below drops what Maven hands a shared
+    # rule: the test JVM's arguments and environment, its call into the environment comparison, the
+    # map's capture stamp, and Surefire's stop-after-failure and failIfNoTests. The SNAPSHOT
+    # one is core's: no one-line Maven change hides a replaced SNAPSHOT, since a wrong repository
+    # home reads the jar by its content anyway.
+    ("a Maven selecting run compares no argLine property", MAVEN_RECORDING,
+     '                hostArguments + configuration.getChild("systemPropertyVariables")?.children.orEmpty()',
+     '                emptyList<String>() + configuration.getChild("systemPropertyVariables")?.children.orEmpty()',
+     maven_suite, "another value of a property the argLine passes runs every test"),
+    ("a Maven selecting run compares none of Maven's environment", MAVEN_RECORDING,
+     '            val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()',
+     '            val environment = emptyMap<String, String>() + configuration.getChild("environmentVariables")?.children.orEmpty()',
+     maven_suite, "another time zone in Maven's environment runs every test"),
+    ("a Maven selecting run never compares the environment", MAVEN_SELECTION,
+     "        if (environment != null) {",
+     "        if (environment != null && false) {",
+     maven_suite, "a map recorded on another JDK runs every test, names both versions, and the next run narrows"),
+    ("a SNAPSHOT in the Maven repository is named by its path", CLASSPATH_FILES,
+     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH',
+     "                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH",
+     maven_suite, "a SNAPSHOT dependency replaced in the repository runs every test"),
+    # The map's age, not the merge-base: the change set is the union of the diffs against the
+    # widened base and against the stamp, so a merge-base of the base with itself changes nothing.
+    ("a Maven selecting run does not widen to the map's age", MAVEN_SELECTION,
+     "            base, readCaptureStamp(mapDir), File(mapDir, AgentContract.MAP_SCHEMA_VERSION_FILE).isFile,",
+     "            base, null, false,",
+     maven_suite, "a change committed after the capture runs its tests though the base is newer"),
+    ("a Maven capture that stops after a failure dates the map", MAVEN_RECORDING,
+     "        if ((stopAfter?.toIntOrNull() ?: 0) > 0) return",
+     "        if (false) return",
+     maven_suite, "a capture that stops after a failure leaves the map's stamp as it was"),
+    ("a Maven selecting run that stops after a failure leaves a record", MAVEN_RECORDING,
+     "                ?.toIntOrNull()?.let { it > 0 } == true,",
+     "                ?.toIntOrNull()?.let { false } == true,",
+     maven_suite, "a selecting run that stops after a failure leaves no record, so a complement runs every test"),
+    ("a Maven selecting or complement run keeps failIfNoTests", MAVEN_RECORDING,
+     '        if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"',
+     '        if (false) child(configuration, "failIfNoTests").value = "false"',
+     maven_suite, "a module whose every test is left out passes under failIfNoTests"),
     # Explain works on a copy: the selecting steps write the change set and capture markers.
     ("Maven explain writes into the map it explains", MAVEN_EXPLAIN,
      "                name, copy, project.basedir",
@@ -4739,10 +4818,12 @@ SUITE_TESTS = {
     "functional": ("plugin/src/functionalTest/",),
     "break": ("plugin/src/functionalTest/",),
     "maven": ("maven/src/functionalTest/", "samples/demo-maven/"),
+    # The verdicts the Maven helper classifies by are the Gradle suite's own.
+    "maven break": ("maven/src/functionalTest/", "plugin/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/gradle/breaking/verdict/"),
 }
 # A change to how the Gradle suites are BUILT can break any of them, so it selects all of them.
 GRADLE_SUITES = {"decoder", "agent", "jdk identity", "unit", "configuration guards", "functional",
-                 "replay", "break", "sbom", "portal", "reference", "maven"}
+                 "replay", "break", "sbom", "portal", "reference", "maven", "maven break"}
 # Run with NOTHING beside them. The functional suite has failed unmutated in a worker while only
 # Python suites ran next to it, and passed alone in the same tree: its TestKit builds compare
 # file timestamps, and load moves them. Its guards run after the parallel phase, one at a time. The
@@ -4952,6 +5033,7 @@ WARM_UP = {
     "configuration guards": ":plugin:functionalTestClasses",
     "break": ":plugin:functionalTestClasses",
     "maven": ":maven:functionalTestClasses",
+    "maven break": ":maven:functionalTestClasses",
 }
 
 
