@@ -1,0 +1,114 @@
+name: A test that should have run did not
+description: Report a test yoriwake skipped that the change should have selected, with what reproduces it.
+title: "Missed test: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A skipped test that should have run leaves a green build, so only you can report it. What
+        reproduces the miss can be overwritten by the next full run, so keep it now, most durable
+        first:
+
+        1. The `[yoriwake]` lines of the run that left the test out. They stay in its log, on CI too.
+        2. If the map has not been refreshed since that run, its map directory and the explain
+           output, taken at that run's commit and working tree, before another build refreshes the
+           map.
+
+        If the map is gone, say so and still give the change, the base and the test. Only the
+        skipped test is required. Class names, test names, paths and the map can be redacted, or
+        you can say here that you would rather share them privately. Security issues go through
+        the security policy, not here.
+
+  - type: dropdown
+    id: build-tool
+    attributes:
+      label: Build tool
+      options:
+        - Gradle
+        - Maven
+    validations:
+      required: false
+
+  - type: input
+    id: build-tool-version
+    attributes:
+      label: Build tool version
+      description: From `./gradlew --version` or `mvn --version`.
+    validations:
+      required: false
+
+  - type: input
+    id: jdk
+    attributes:
+      label: JDK
+      description: Vendor and version running the tests, if you know it.
+    validations:
+      required: false
+
+  - type: input
+    id: yoriwake-version
+    attributes:
+      label: yoriwake version
+      description: >-
+        From the `plugins` block (Gradle) or the POM (Maven). With yoriwake-action, its tag as well.
+    validations:
+      required: false
+
+  - type: textarea
+    id: change
+    attributes:
+      label: The change
+      description: >-
+        A diff, or the changed paths, and the base it was selected against (the commit in the
+        `selecting against <sha>` line).
+    validations:
+      required: false
+
+  - type: textarea
+    id: skipped-test
+    attributes:
+      label: The test that was skipped and should have run
+      description: >-
+        Its name, and how you know it should have run: it failed in a later full run, on another
+        branch, by hand. If you cannot share the name, describe the shape.
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: The run's yoriwake lines
+      description: >-
+        The `[yoriwake]` lines of the run that left the test out (on Gradle, run with
+        `--console=plain`): the configuring line, `selecting against <sha> (<origin>)` and
+        `of N tests discovered: ...`. If the run was on CI, copy them from that job's log: an
+        explain run locally reads another map than the one CI restored.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: explain
+    attributes:
+      label: Explain output
+      description: >-
+        Only if the map is still the one that selected: `./gradlew yoriwakeExplain<Task>` (for
+        example `yoriwakeExplainTest`) with the same `-Pyoriwake.base` as the run, or
+        `mvn test-compile yoriwake:explain` with the same `-Dyoriwake.base` (add
+        `-Dyoriwake.execution=<id>` for one execution). Otherwise write "map already refreshed".
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: map
+    attributes:
+      label: The map directory
+      description: >-
+        If you can share it: `.gradle/yoriwake/<task>-<hash>/` on Gradle, or the execution's
+        directory under `.yoriwake/yoriwake/` on Maven, zipped without its `raw/` directory. Its
+        records of the skipped test show why coverage missed the change; `decisions.tsv` alone only
+        says the test was skipped. Say here if you would rather share it privately.
+    validations:
+      required: false

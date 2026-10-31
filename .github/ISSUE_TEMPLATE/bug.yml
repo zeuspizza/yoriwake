@@ -15,6 +15,7 @@ body:
       description: >-
         The most important question on this form. A skipped test that would have failed is the
         one defect this tool must never have. If you are not sure, say so.
+        If yes, the missed test form asks for what reproduces it.
       options:
         - "Yes"
         - "No"
