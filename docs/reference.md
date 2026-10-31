@@ -781,7 +781,11 @@ Three things differ:
   - an edited test class nothing else names, through code that is handed the class without a lookup
     before the class's first test, but is not your build's own code run during discovery: a class
     orderer or listener from a dependency jar, or a test execution listener whose plan-start
-    callback runs after yoriwake's own.
+    callback runs after yoriwake's own;
+  - a class or source file's size, time or existence, asked without opening the file
+    (`Files.size`, `File.length`, `Files.exists`), such as a test that keeps a class file under a
+    byte budget. The agent sees a file opened, not its attributes read; a test that also opens or
+    loads the class is seen.
 - **Build output a test reads by path.** A file under a build directory that is not on the test
   runtime classpath, such as a fixture under `build/` a test opens with `File`, is build state and
   never a change, so one generated from git state, the clock or the environment can change while
