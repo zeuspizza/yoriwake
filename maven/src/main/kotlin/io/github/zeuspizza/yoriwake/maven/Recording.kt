@@ -16,6 +16,7 @@ import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
+import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.ParallelismDetector
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingClasspathFiles
@@ -210,13 +211,15 @@ internal class Recording(
             configuration.getChild("reportsDirectory")?.value?.takeUnless { it.contains("\${") }
                 ?: File(project.build.directory, if (execution.artifactId == FAILSAFE) "failsafe-reports" else "surefire-reports").path
         )
-        val environment = fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }))
+        // One index listing for this execution's digests, never kept past it: a later execution reads afresh.
+        val text = TrackedText(root)
+        val environment = fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }), text)
         val undated = undatedBy(project, execution, configuration)
         val hostArguments = arguments(resolved(project, host).orEmpty())
         val kind = selection.apply(
             name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath),
             environment, undated, isolated,
-            stamp = { stampOf(project, key, configuration, classpath, hostArguments) },
+            stamp = { stampOf(project, key, configuration, classpath, hostArguments, text) },
             stopsAfterFailure = parameter(
                 project, configuration, "skipAfterFailureCount",
                 if (execution.artifactId == FAILSAFE) "failsafe.skipAfterFailureCount" else "surefire.skipAfterFailureCount",
@@ -226,6 +229,7 @@ internal class Recording(
             alwaysRun = pins[project.id].orEmpty(),
             namedTests = parameter(project, configuration, "test", if (execution.artifactId == FAILSAFE) "it.test" else "test")
                 ?.let { "tests were named with -D${if (execution.artifactId == FAILSAFE) "it.test" else "test"}=$it" },
+            text = text,
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
@@ -303,8 +307,9 @@ internal class Recording(
         configuration: Xpp3Dom,
         classpath: List<File>,
         hostArguments: List<String>,
+        text: TrackedText,
     ) = MavenStamp.observe(
-        root, key, project.id, classpath,
+        selection.git, root, key, project.id, classpath,
         File(session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path),
         // Surefire promotes the invocation's user properties to the test JVM's system properties.
         session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +
@@ -320,6 +325,7 @@ internal class Recording(
         } + listOf("groups", "excludedGroups", "test", "classpathDependencyScopeExclude").mapNotNull { name ->
             parameter(project, configuration, name, name)?.let { "$name $it" }
         },
+        text,
     )
 
     /**
@@ -390,12 +396,13 @@ internal class Recording(
         configuration: Xpp3Dom,
         classpath: List<File>,
         hostArguments: List<String>,
+        text: TrackedText,
     ): Pair<EnvironmentFingerprint.View, EnvironmentFingerprint.Rules>? {
         val classpathPending = pendingClasspathFiles(mapDir)
         classpathPending.delete()
         // The local repository counts as a dependency home even inside the checkout.
         val buildDirs = session.allProjects.map { it.build.directory }
-        when (val walk = runCatching { ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session)) }
+        when (val walk = runCatching { ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session), text = text) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Found -> runCatching { CoverageDecoder.writeClasspathFilesTo(classpathPending, walk.digests) }
             is ClasspathFiles.Walk.Refused -> log.debug("[yoriwake] ${project.artifactId}: no classpath file digests recorded (${walk.reason})")

@@ -2929,6 +2929,24 @@ MUTATIONS = [
      "        now.classpath != recorded.classpath ->",
      "        false ->",
      functional_suite, "a classpath resolved differently runs every test"),
+    # A Maven invocation keeps only the git answers that cannot move with HEAD or the work tree.
+    ("a Maven invocation keeps git answers that move with the tree", CHANGE_DETECTION,
+     "        else -> false\n",
+     "        else -> true\n",
+     unit_suite, "an invocation asks the top level and a git path once, and HEAD and status each time"),
+    ("a Maven invocation keeps a merge base of a named ref", CHANGE_DETECTION,
+     "            COMMIT_ID.matches(arguments[2]) && COMMIT_ID.matches(arguments[3])",
+     "            true",
+     unit_suite, "a merge base is kept only between two commits named by id"),
+    # A stamp digests its classpath only when a comparison can read it, and reads it whole then.
+    ("a stamp skips the classpath digest on a clean tree", SELECTION_RECORD,
+     "                else -> classpath\n",
+     "                else -> notDigested(\"always\")\n",
+     unit_suite, "a selecting run that starts clean digests its classpath once"),
+    ("a complement skips the classpath comparison", SELECTION_RECORD,
+     "                ?: mismatch(recorded, fields.copy(classpath = classpath))",
+     "                ?: null",
+     unit_suite, "a complement digests its classpath once the fields before it match, and reports what mismatch does"),
     ("a complement run takes a record of another task configuration", SELECTION_RECORD,
      "        now.configuration != recorded.configuration ->",
      "        false ->",
@@ -3077,12 +3095,12 @@ MUTATIONS = [
     # A complement leaves out a test only when it ran against identical classpath content: the
     # build's own outputs (generated resources, class files, jar entries) are digested by content.
     ("a complement's classpath digest names the build's outputs by path only again", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     ("a complement run leaves out tests that ran against another generated classpath file", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
      functional_suite, "a file the build generates from a property differently runs every test"),
     # A walk that cannot vouch for every file must digest to a value no other run matches.
     ("a classpath walk that cannot vouch for every file digests alike in both runs", SELECTION_RECORD,
@@ -3090,8 +3108,8 @@ MUTATIONS = [
      "    private fun unmatched(reason: String) = \"$UNMATCHED $reason\"",
      unit_suite, "a classpath entry under the build that cannot be read digests to a value no run matches"),
     ("class files leave the complement's classpath digest", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true)",
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     # An unreadable selection record must not reach Gradle's configuration-time read.
     ("an unreadable selection record is handed to Gradle to read at configuration", SELECTION_WIRING,
@@ -4485,8 +4503,8 @@ MUTATIONS = [
     # A `-D` version property, a version range or an updated SNAPSHOT resolves another jar with no
     # changed path: the capture must record the dependencies for a selecting run to compare.
     ("a Maven capture records no dependencies", MAVEN_RECORDING,
-     "ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session))",
-     "ClasspathFiles.walk(classpath, buildDirs, root)",
+     "ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session), text = text)",
+     "ClasspathFiles.walk(classpath, buildDirs, root, text = text)",
      maven_suite, "a dependency a version property resolves to another version runs every test"),
     # Surefire hands the JUnit Platform its parallel switch through its own parameters: missed there,
     # interleaved tests would blend into one another's coverage.

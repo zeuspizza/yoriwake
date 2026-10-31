@@ -414,6 +414,35 @@ internal object ChangeDetection {
         else output.lines().filter(String::isNotBlank)
     }
 
+    /**
+     * [directRunner], with the answers that cannot move with HEAD or the work tree kept in [memo] and
+     * given again: the repository's top level, a path git names, and the merge base of two commits
+     * named by id. Every other command is asked afresh, as is one git could not answer. The list is
+     * fixed here, so a new git call is asked afresh unless added to it.
+     */
+    fun memoisingRunner(
+        projectDir: File,
+        memo: java.util.concurrent.ConcurrentMap<String, List<String>>,
+        direct: Runner = directRunner(projectDir),
+    ): Runner {
+        val root = projectDir.absolutePath
+        return Runner { arguments ->
+            if (!cannotMove(arguments)) return@Runner direct.run(arguments)
+            val key = (listOf(root) + arguments).joinToString("\u0000")
+            memo[key] ?: direct.run(arguments)?.also { memo.putIfAbsent(key, it) }
+        }
+    }
+
+    private val COMMIT_ID = Regex("[0-9a-f]{40}|[0-9a-f]{64}")
+
+    private fun cannotMove(arguments: List<String>): Boolean = when {
+        arguments == listOf("rev-parse", "--show-toplevel") -> true
+        arguments.size == 3 && arguments[0] == "rev-parse" && arguments[1] == "--git-path" -> true
+        arguments.size == 4 && arguments[0] == "merge-base" && arguments[1] == "--end-of-options" ->
+            COMMIT_ID.matches(arguments[2]) && COMMIT_ID.matches(arguments[3])
+        else -> false
+    }
+
     /** git's whole output, unsplit, for `-z` listings -- or null when it could not answer. */
     internal fun rawGit(workingDir: File, arguments: List<String>): String? {
         val output = runCatching { exec(workingDir, arguments) }.getOrDefault(FAILED)
