@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- A test that should have run and did not is reported through its own issue form. Map: left alone.
+
 ### Changed
 
 - The reference measures what isolated capture costs to record and how far parallel forks win back. Map: left alone.
