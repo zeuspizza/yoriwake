@@ -935,7 +935,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
             val token = java.util.UUID.randomUUID().toString()
             test.systemProperty(RUN_TOKEN_PROPERTY, token)
-            runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, identity.observe(test))) }
+            runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, identity.observe(test).forStart())) }
                 .onFailure { test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be written ($it)") }
         }
     }
@@ -1118,20 +1118,19 @@ internal class StampIdentity(
     private val agentArgument: String?,
 ) : java.io.Serializable {
 
-    fun observe(test: Test): SelectionRecord.Stamp {
+    fun observe(test: Test): SelectionRecord.Reading {
         val git = ChangeDetection.directRunner(rootDir)
         val top = git.run(listOf("rev-parse", "--show-toplevel"))?.firstOrNull()
         val buildRoot = top?.let { runCatching { rootDir.canonicalFile.relativeTo(File(it).canonicalFile).invariantSeparatorsPath }.getOrNull() }
-        return SelectionRecord.Stamp(
+        return SelectionRecord.Reading(
             commit = ChangeDetection.head(git),
             clean = ChangeDetection.status(git)?.isEmpty() == true,
             task = task,
             // Unknown reads as a root no build has, so it never matches.
             buildRoot = buildRoot ?: "?${rootDir.absolutePath}",
             buildPath = buildPath,
-            classpath = SelectionRecord.classpathDigest(test.classpath.files, rootDir, gradleUserHome),
             configuration = configurationOf(test, agentArgument),
-        )
+        ) { SelectionRecord.classpathDigest(test.classpath.files, rootDir, gradleUserHome) }
     }
 
     companion object {

@@ -18,6 +18,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Changed
 
 - The reference measures what isolated capture costs to record and how far parallel forks win back. Map: left alone.
+- A selecting run on an uncommitted tree skips its classpath digest; Maven asks git less per execution. Map: left alone.
 
 ### Fixed
 

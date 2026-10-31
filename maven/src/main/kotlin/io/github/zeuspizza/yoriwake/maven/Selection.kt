@@ -20,6 +20,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.SelectingStep
 import io.github.zeuspizza.yoriwake.gradle.change.SelectionSetup
+import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView
 import io.github.zeuspizza.yoriwake.gradle.wiring.declinedLeftAloneMarker
@@ -38,7 +39,21 @@ import java.util.UUID
  */
 internal class Selection(private val session: MavenSession, private val root: File, private val log: Logger) {
 
-    private val git = ChangeDetection.directRunner(root)
+    /**
+     * This invocation's git: the answers that cannot move are asked once per session, every other
+     * command once per asking. See [ChangeDetection.memoisingRunner].
+     */
+    val git = ChangeDetection.memoisingRunner(root, java.util.concurrent.ConcurrentHashMap())
+
+    /**
+     * The default base, asked once per invocation as Gradle asks it once per build. A base read before
+     * HEAD moved is still safe: the selection widens it to its merge base with the capture commit, and
+     * diffs from there to the work tree. Not kept when git found none, so a later execution asks again.
+     */
+    @Volatile private var defaultBase: ChangeDetection.Base? = null
+
+    private fun defaultBase(): ChangeDetection.Base? =
+        defaultBase ?: synchronized(this) { defaultBase ?: ChangeDetection.defaultBase(git).also { defaultBase = it } }
 
     private val settings by lazy { Settings.of(session) }
 
@@ -108,7 +123,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         undated: String?,
         isolatedCapture: Boolean,
         /** This execution's selection-record stamp, read where it starts. */
-        stamp: () -> SelectionRecord.Stamp,
+        stamp: () -> SelectionRecord.Reading,
         /** Whether Surefire stops after a failure, so a record could list a test whose outcome nobody saw. */
         stopsAfterFailure: Boolean,
         properties: Properties,
@@ -125,6 +140,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         /** The map's name in a trusted-map list; differs from [mapDir]'s when explaining on a copy. */
         listedName: String = mapDir.name,
         worked: (SelectingStep.Worked, String) -> Unit = { _, _ -> },
+        /** The execution's one reading of which copies of tracked text files git wrote with `\r\n`. */
+        text: TrackedText = TrackedText(root),
     ): RunPlan.Kind {
         val host = Host(name, properties)
         // Whatever the run kind, as on Gradle: an observing or complement run reports the pin too.
@@ -241,7 +258,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         val done = SelectingStep.run(
             SelectingStep.Inputs(
                 mapDir, root, paths, widened.ref, widened.origin, sourceDirs, view,
-                notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing,
+                notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing, text = text,
             ),
             host,
         )
@@ -253,14 +270,14 @@ internal class Selection(private val session: MavenSession, private val root: Fi
      * Begins the selection record a complement run reads: the stamp and a token the test JVM writes
      * into its decision records. The decode completes it, or removes it when it cannot vouch for it.
      */
-    private fun startRecord(host: Host, mapDir: File, stamp: () -> SelectionRecord.Stamp, stopsAfterFailure: Boolean) {
+    private fun startRecord(host: Host, mapDir: File, stamp: () -> SelectionRecord.Reading, stopsAfterFailure: Boolean) {
         if (stopsAfterFailure) {
             log.debug("[yoriwake] ${host.name}: Surefire stops after a failure, so this run leaves no selection record")
             return
         }
         val token = UUID.randomUUID().toString()
         host.property(AgentContract.RUN_TOKEN_PROPERTY, token)
-        runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, stamp())) }
+        runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, stamp().forStart())) }
             .onFailure { log.debug("[yoriwake] ${host.name}: the selection record's start could not be written ($it)") }
     }
 
@@ -270,7 +287,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
      * A record that is missing or does not match makes it a recording run, named; one that matches
      * captures nothing and leaves the map and the record as they are.
      */
-    private fun complement(host: Host, mapDir: File, from: String, stamp: () -> SelectionRecord.Stamp): RunPlan.Kind {
+    private fun complement(host: Host, mapDir: File, from: String, stamp: () -> SelectionRecord.Reading): RunPlan.Kind {
         val record = if (from.isEmpty()) {
             File(mapDir, AgentContract.SELECTION_FILE)
         } else {
@@ -297,7 +314,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         val recorded = SelectionRecord.stampOf(read)
         val copy = File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE)
         val (kind, reason) = unusable
-            ?: (SelectionRecord.mismatch(recorded, stamp())
+            ?: (stamp().mismatchWith(recorded)
                 ?: runCatching { copy.parentFile.mkdirs(); writeAtomically(copy, text!!) }
                     .exceptionOrNull()?.let { "its copy could not be written ($it)" })
                 ?.let {
@@ -325,7 +342,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
     /** The base, from `-Dyoriwake.base` or git, widened to the map's age, and the tree's drift since the capture. */
     private fun widening(mapDir: File): RunPlan.Widening {
         val base = session.userProperties.getProperty(SettingNames.BASE)?.let { ChangeDetection.Base(it, "-D${SettingNames.BASE}") }
-            ?: ChangeDetection.defaultBase(git)
+            ?: defaultBase()
             ?: ChangeDetection.Base(
                 "HEAD",
                 "no branch base found, so the working tree only -- every run will be a full run until you pass " +

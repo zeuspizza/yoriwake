@@ -170,6 +170,81 @@ class SelectionFunctionalTest {
         }
     }
 
+    /**
+     * The demo with release 1.0 of a library of [groupId]'s on `lib`'s test classpath, captured, then
+     * a Greeter edit committed and a selecting run that narrows and leaves its record.
+     */
+    private fun selectedWithRelease(dir: File, groupId: String): File {
+        installLibrary(dir, groupId, "1.0", 1)
+        return committed(File(dir, "project")).also { project ->
+            File(project, "lib/pom.xml").edit {
+                it.replace(
+                    "<artifactId>lib</artifactId>",
+                    "<artifactId>lib</artifactId>\n  <dependencies><dependency><groupId>$groupId</groupId><artifactId>answer</artifactId>" +
+                        "<version>1.0</version><scope>test</scope></dependency></dependencies>",
+                )
+            }
+            git(project, "commit", "-q", "-am", "a released dependency")
+            FunctionalMaven.run(maven, project, "verify").succeeded()
+            editGreeter(project)
+            val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+                .succeeded().output
+            assertFalse("in dev.demo.lib.CounterTest" in output, output)
+        }
+    }
+
+    @Test
+    fun `a release installed again at its version makes a complement run every test`(@TempDir dir: File) {
+        val groupId = "dev.reinstalled${System.nanoTime()}"
+        try {
+            val project = selectedWithRelease(dir, groupId)
+            installLibrary(dir, groupId, "1.0", 2)
+
+            val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+            assertContains(output, "differs from this run in the test runtime classpath")
+            assertContains(output, "Tests run: 2, Failures: 0")
+        } finally {
+            File(FunctionalMaven.localRepo, groupId.replace('.', '/')).deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a release copied over in the local repository, its tracking file untouched, makes a complement run every test`(@TempDir dir: File) {
+        val groupId = "dev.copied${System.nanoTime()}"
+        val other = "dev.other${System.nanoTime()}"
+        try {
+            val project = selectedWithRelease(dir, groupId)
+            val jar = File(FunctionalMaven.localRepo, "${groupId.replace('.', '/')}/answer/1.0/answer-1.0.jar")
+            val tracking = File(jar.parentFile, "_remote.repositories")
+            val tracked = tracking.takeIf(File::isFile)?.readText()
+            installLibrary(dir, other, "1.0", 2)
+            File(FunctionalMaven.localRepo, "${other.replace('.', '/')}/answer/1.0/answer-1.0.jar").copyTo(jar, overwrite = true)
+
+            val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+            assertEquals(tracked, tracking.takeIf(File::isFile)?.readText())
+            assertContains(output, "differs from this run in the test runtime classpath")
+            assertContains(output, "Tests run: 2, Failures: 0")
+        } finally {
+            File(FunctionalMaven.localRepo, groupId.replace('.', '/')).deleteRecursively()
+            File(FunctionalMaven.localRepo, other.replace('.', '/')).deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a selecting run on a tree that is not clean leaves no record, so a complement runs every test`(@TempDir dir: File) {
+        val project = captured(dir)
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD").succeeded()
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "no selection.tsv for lib surefire:test (default-test)")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
     @Test
     fun `a change committed after the capture runs its tests though the base is newer`(@TempDir dir: File) {
         val project = captured(dir)

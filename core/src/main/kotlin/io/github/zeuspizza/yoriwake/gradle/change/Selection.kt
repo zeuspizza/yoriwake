@@ -198,6 +198,8 @@ internal sealed interface ClasspathFilesVerdict {
 internal fun classpathFilesRule(
     mapDir: File,
     facts: ClasspathView,
+    /** Which copies of tracked text files git wrote with `\r\n`; shared within one Maven execution. */
+    text: TrackedText = TrackedText(facts.rootDir),
     walked: (Map<String, String>) -> Unit = {},
 ): ClasspathFilesVerdict {
     val recorded = CoverageDecoder.readClasspathFiles(mapDir)
@@ -208,7 +210,7 @@ internal fun classpathFilesRule(
         )
     }
     val walk = runCatching {
-        ClasspathFiles.table(facts.classpathFiles(), facts.buildDirs.values, facts.rootDir, facts.dependencyHomes)
+        ClasspathFiles.table(facts.classpathFiles(), facts.buildDirs.values, facts.rootDir, facts.dependencyHomes, text = text)
     }.getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
     return when (walk) {
         is ClasspathFiles.Walk.Refused ->
