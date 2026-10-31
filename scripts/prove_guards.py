@@ -2795,6 +2795,10 @@ MUTATIONS = [
      "            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())",
      "            is Walk.Found -> walk",
      functional_suite, "a dependency version bumped in a properties file the build loads runs every test"),
+    ("a dependency's manifest Class-Path is not followed by the classpath-files table", CLASSPATH_FILES,
+     "            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)\n",
+     "",
+     functional_suite, "a file only a dependency's manifest names runs every test when it is replaced"),
     # A task Develocity runs or chooses tests for is declined, and nothing of yoriwake's acts on it
     #: Test Distribution recorded half a suite's coverage even locally.
     ("Test Distribution is no longer detected", DEVELOCITY_DETECTION,

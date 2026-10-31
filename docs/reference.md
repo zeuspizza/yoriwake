@@ -261,7 +261,9 @@ naming it (`classpath-files-changed`). A jar or directory a walked jar's manifes
 names is on the test JVM's class path too, so it counts the same way, its class files included,
 wherever it lies but in Gradle's module cache. A dependency jar or directory that moved runs
 everything (`dependencies-changed`), naming it: one in Gradle's module cache by its path, which
-names its content, and every other one by its content.
+names its content, and every other one by its content. A file a dependency read by its content names
+in its manifest `Class-Path`, such as a `lib/a.jar` beside a vendor jar, counts the same way, by its
+content, whether it is there or not.
 
 The JDK's class loader reads each of your jars' manifests itself, to open the jar and to define a
 package from it, and keeps only what it acts on: `Class-Path`, `Multi-Release`,

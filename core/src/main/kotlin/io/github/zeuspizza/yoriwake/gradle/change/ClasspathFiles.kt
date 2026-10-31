@@ -131,12 +131,7 @@ internal object ClasspathFiles {
                                     digestOf({ zip.getInputStream(zipped) }, zipped.name, text)
                                 }.getOrDefault(UNREADABLE)
                             }
-                            val classPath = zip.manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH).orEmpty()
-                            for (token in classPath.split(' ', '\t', '\n', '\r', '\u000c').filter(String::isNotEmpty)) {
-                                val uri = runCatching { entry.toURI().resolve(token) }.getOrNull()
-                                // The JVM ignores a URL that is not a `file:` one.
-                                if (uri != null && !uri.scheme.equals("file", ignoreCase = true)) continue
-                                val named = uri?.let { runCatching { File(it).absoluteFile.normalize() }.getOrNull() }
+                            for ((token, named) in classPathOf(entry, zip.manifest)) {
                                 if (named == null) {
                                     // Not resolved here, so it forces rather than guesses.
                                     digests["$jar Class-Path $token"] = UNREADABLE
@@ -177,6 +172,13 @@ internal object ClasspathFiles {
      * `dependency:<outside>/<name>`, with `#2`, `#3` for a name repeated in classpath order, since
      * its path differs between machines, and read by content: a jar entry by entry (a rebuilt jar
      * keeps entry timestamps), a directory file by file.
+     *
+     * What the manifest `Class-Path` of an entry read by content names is on the test JVM's class path
+     * too, and on no classpath Gradle or Maven lists: each file it names, and what a named jar names
+     * in turn, gets a row keyed `<the naming row's key> Class-Path <token>`, read by content (a
+     * directory with each jar in it by its entries), [ABSENT] when missing, since a file that later
+     * appears there shadows every later entry. A file on the classpath or already named, or in
+     * Gradle's module cache, gets none.
      */
     fun table(
         classpath: Collection<File>,
@@ -200,6 +202,8 @@ internal object ClasspathFiles {
         val rows = sortedMapOf<String, String>()
         val order = mutableListOf<String>()
         val repeated = mutableMapOf<String, Int>()
+        // Each entry read by content with its row's key, for what its manifest's `Class-Path` names.
+        val following = ArrayDeque<Pair<String, File>>()
         for (entry in classpath.map(File::getAbsoluteFile).distinct()) {
             // The plugin's own agent, not an input of the tests: present or not, it changes nothing they
             // read, and a task the wiring finds without it already runs everything for that reason.
@@ -236,11 +240,44 @@ internal object ClasspathFiles {
                 "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}$suffix".also { rows[it] = contentDigest(entry) }
             }
             order += key
+            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)
+        }
+        val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
+        while (following.isNotEmpty()) {
+            val (referrer, jar) = following.removeFirst()
+            if (!jar.isFile || !(jar.name.endsWith(".jar") || jar.name.endsWith(".zip"))) continue
+            // A jar no zip reader opens has no manifest the JVM can read either; its own row moves with its bytes.
+            val manifest = runCatching { JarFile(jar, false).use { it.manifest } }.getOrNull()
+            for ((token, named) in classPathOf(jar, manifest)) {
+                // A token that does not resolve is ignored by the JDK too, and an edit to it moves the jar's own row.
+                if (named == null || inModuleCache(named) || !seen.add(named)) continue
+                val key = "$referrer Class-Path $token"
+                rows[key] = if (named.isDirectory) {
+                    runCatching { directoryDigest(named, ::contentDigest) }.getOrDefault(UNREADABLE)
+                } else {
+                    contentDigest(named)
+                }
+                following.addLast(key to named)
+            }
         }
         rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
         return when (val walk = walk(classpath, buildDirs, rootDir, maxFiles, text = text, dependency = { homeOf(it) != null })) {
             is Walk.Refused -> walk
             is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())
+        }
+    }
+
+    /**
+     * Each token of [manifest]'s `Class-Path` with the file it names, resolved against [jar] as the
+     * JDK's class loader resolves it; null when it does not resolve. A URL that is not a `file:` one
+     * is left out: the JVM ignores it.
+     */
+    private fun classPathOf(jar: File, manifest: Manifest?): List<Pair<String, File?>> {
+        val classPath = manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH).orEmpty()
+        return classPath.split(' ', '\t', '\n', '\r', '\u000c').filter(String::isNotEmpty).mapNotNull { token ->
+            val uri = runCatching { jar.toURI().resolve(token) }.getOrNull()
+            if (uri != null && !uri.scheme.equals("file", ignoreCase = true)) return@mapNotNull null
+            token to uri?.let { runCatching { File(it).absoluteFile.normalize() }.getOrNull() }
         }
     }
 
@@ -426,11 +463,11 @@ internal object ClasspathFiles {
         }
     }
 
-    private fun directoryDigest(directory: File): String {
+    private fun directoryDigest(directory: File, digest: (File) -> String = { it.inputStream().use(::sha256) }): String {
         val lines = directory.walkTopDown().filter { it.isFile }
             .map { it.relativeTo(directory).invariantSeparatorsPath to it }
             .sortedBy { it.first }
-            .map { (relative, file) -> "$relative\u0000${file.inputStream().use(::sha256)}" }.toList()
+            .map { (relative, file) -> "$relative\u0000${digest(file)}" }.toList()
         return sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
     }
 

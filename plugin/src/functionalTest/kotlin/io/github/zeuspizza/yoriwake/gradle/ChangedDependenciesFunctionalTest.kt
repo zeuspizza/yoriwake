@@ -4,6 +4,10 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.jar.Attributes
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -102,5 +106,65 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), narrowed)
         assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], narrowed)
+    }
+
+    /** A jar of [entries], with [classPath] as its manifest's `Class-Path` when given. */
+    private fun jar(target: File, classPath: String?, vararg entries: Pair<String, String>) {
+        target.parentFile.mkdirs()
+        val manifest = Manifest().apply {
+            mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+            if (classPath != null) mainAttributes[Attributes.Name.CLASS_PATH] = classPath
+        }
+        JarOutputStream(target.outputStream(), manifest).use { out ->
+            for ((name, content) in entries) {
+                out.putNextEntry(JarEntry(name))
+                out.write(content.toByteArray())
+                out.closeEntry()
+            }
+        }
+    }
+
+    /** Before Beta by name; reads the resource only `vendor.jar`'s manifest puts on the class path. */
+    private val vendorTest = "src/test/java/dev/sample/AbVendorTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class AbVendorTest {
+            @Test void reads() { assertNotNull(getClass().getResource("/vendor.properties")); }
+        }
+    """.trimIndent()
+
+    /** `vendor.jar`, outside the root, carries no files; its manifest names `lib/a.jar` beside it. */
+    private fun vendorCaptured(dir: File, vendor: File) {
+        jar(File(vendor, "vendor.jar"), "lib/a.jar")
+        jar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=a\n")
+        val onClasspath = "dependencies { testRuntimeOnly(files(\"${File(vendor, "vendor.jar").invariantSeparatorsPath}\")) }"
+        captured(dir, fromProjectProperty + "\n" + onClasspath, vendorTest)
+    }
+
+    @Test
+    fun `a file only a dependency's manifest names runs every test when it is replaced`(@TempDir dir: File, @TempDir vendor: File) {
+        vendorCaptured(dir, vendor)
+        jar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=b\n")
+        changeBeta(dir)
+
+        val output = select(dir)
+
+        assertTrue("dev.sample.AbVendorTest" in ranTests(dir), output)
+        assertEquals("dependencies-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, "vendor.jar Class-Path lib/a.jar")
+    }
+
+    @Test
+    fun `a dependency whose manifest names a file selects as before when nothing changed`(@TempDir dir: File, @TempDir vendor: File) {
+        vendorCaptured(dir, vendor)
+        changeBeta(dir)
+
+        repeat(2) {
+            val output = select(dir)
+
+            assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+            assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        }
     }
 }
