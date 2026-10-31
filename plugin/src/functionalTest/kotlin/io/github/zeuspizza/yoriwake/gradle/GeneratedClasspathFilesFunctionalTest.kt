@@ -416,6 +416,59 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
         assertTrue(output.contains("app/build/extra/flavor.jar!/flavor.properties"), output)
     }
 
+    /** Before Legacy by name; reads the resource only `VENDOR.JAR`'s manifest puts on the class path. */
+    private val vendorTest = "src/test/java/dev/sample/AcVendorTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class AcVendorTest {
+            @Test void reads() { assertNotNull(getClass().getResource("/vendor.properties")); }
+        }
+    """.trimIndent()
+
+    /** A jar at [target] of [entries], with [classPath] as its manifest's `Class-Path` when given. */
+    private fun vendorJar(target: File, classPath: String?, vararg entries: Pair<String, String>) {
+        target.parentFile.mkdirs()
+        val manifest = java.util.jar.Manifest().apply {
+            mainAttributes[java.util.jar.Attributes.Name.MANIFEST_VERSION] = "1.0"
+            if (classPath != null) mainAttributes[java.util.jar.Attributes.Name.CLASS_PATH] = classPath
+        }
+        java.util.jar.JarOutputStream(target.outputStream(), manifest).use { out ->
+            for ((name, content) in entries) {
+                out.putNextEntry(java.util.jar.JarEntry(name))
+                out.write(content.toByteArray())
+                out.closeEntry()
+            }
+        }
+    }
+
+    @Test
+    fun `a jar an upper-case JAR a build jar's manifest names runs the test that reads it when it changed`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        val upper = File(vendor, "VENDOR.JAR")
+        vendorJar(upper, "lib/a.jar")
+        vendorJar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=a\n")
+        val pointer = """
+            val pointerJar by tasks.registering(Jar::class) {
+                archiveFileName.set("pointer.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("extra"))
+                manifest { attributes("Class-Path" to "${upper.absoluteFile.toURI()}") }
+            }
+            dependencies { testRuntimeOnly(files(pointerJar)) }
+        """.trimIndent()
+        fixture(dir, pointer, vendorTest)
+        capture(dir)
+        vendorJar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=b\n")
+        editLegacy(dir)
+
+        val output = select(dir)
+
+        assertTrue("dev.sample.AcVendorTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
     @Test
     fun `an unchanged generated resource narrows as before`(@TempDir dir: File) {
         fixture(dir)
