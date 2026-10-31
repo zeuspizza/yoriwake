@@ -156,8 +156,10 @@ accepts that label in the commit messages and the pull request of a fork.
 
 ## Reporting a bug
 
-Use the [bug report form](https://github.com/zeuspizza/yoriwake/issues/new?template=bug.yml). The
-most useful thing it asks is whether a test that should have run did not.
+A test that should have run and did not goes through the
+[missed test form](https://github.com/zeuspizza/yoriwake/issues/new?template=missed-test.yml), which
+asks for what reproduces it. Anything else goes through the
+[bug report form](https://github.com/zeuspizza/yoriwake/issues/new?template=bug.yml).
 
 Security issues go through [SECURITY.md](SECURITY.md), not the issue tracker.
 

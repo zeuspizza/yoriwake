@@ -19,6 +19,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - A code of conduct, an accessibility statement and a pull request template. Map: left alone.
 - SECURITY.md shows how to rebuild a release from its tag and compare it, byte for byte. Map: left alone.
+- A test that should have run and did not is reported through its own issue form. Map: left alone.
 
 ### Changed
 

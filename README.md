@@ -192,6 +192,8 @@ learns from build history. It is local and free, and it would rather run everyth
 - [Benchmarks](docs/benchmarks.md): the projects, the method, and every published figure
 - [Contributing](CONTRIBUTING.md): building, testing, what a change to selection must prove
 - [Changelog](CHANGELOG.md): each release, and what it does to an existing map
+- [Report a missed test](https://github.com/zeuspizza/yoriwake/issues/new?template=missed-test.yml):
+  a test that should have run and did not
 - [Security](SECURITY.md): reporting a vulnerability, and [verifying a release](SECURITY.md#verifying-a-release)
 
 ## Licence
