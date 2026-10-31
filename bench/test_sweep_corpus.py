@@ -537,6 +537,8 @@ def case_the_isolated_arm_runs_on_single_jvm_suites_and_the_override():
              "isolated arm: not run (multi-JVM suite)"),
             ("unrecorded", {"capture_facts": None}, "isolated arm: not run (test JVM count unknown)"),
             (override, {"capture_facts": {"map_task_facts": {"workers": 15}}}, None),
+            ("maven", {"build_tool": "maven", "capture_facts": {"map_task_facts": {"workers": 1}}},
+             "isolated arm: not run (Maven project)"),
         )
         for name, header, expected in cases:
             path = _results(name, [], directory, **header)

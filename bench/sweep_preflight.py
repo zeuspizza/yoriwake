@@ -76,13 +76,15 @@ def logs_bytes(logs=LOGS, projects=None):
 
 
 def map_dirs_bytes(checkouts=CHECKOUTS, projects=None):
-    """Bytes of every map directory the corpus checkouts hold, old `pts` names included."""
+    """Bytes of every map directory the corpus checkouts hold, old `pts` names included, and a
+    Maven checkout's under `.yoriwake/`."""
     total = 0
     if not os.path.isdir(checkouts):
         return 0
     for name in os.listdir(checkouts) if projects is None else projects:
         for root_name in ("yoriwake", "pts"):
             total += dir_bytes(os.path.join(checkouts, name, ".gradle", root_name))
+        total += dir_bytes(os.path.join(checkouts, name, ".yoriwake", "yoriwake"))
     return total
 
 

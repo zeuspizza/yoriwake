@@ -95,6 +95,18 @@ def case_sweeps_of_two_fixture_trees_are_not_compared():
     return failures
 
 
+def case_sweeps_of_two_build_tools_are_not_compared():
+    gradle = {**_file(_row(0)), "build_tool": "gradle"}
+    maven = {**_file(_row(0)), "build_tool": "maven"}
+    failures = 0
+    report = compare_results.compare(gradle, maven)
+    if report["agree"] or not any("maven" in line for line in report["differences"]):
+        failures += fail(f"a Gradle and a Maven sweep were compared row for row: {report}")
+    if not compare_results.compare(_file(_row(0)), gradle)["agree"]:
+        failures += fail("a file with no build_tool did not compare as a Gradle one")
+    return failures
+
+
 def test_compare_results():
     failures = 0
     for name, case in sorted(globals().items()):

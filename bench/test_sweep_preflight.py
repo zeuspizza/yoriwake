@@ -54,6 +54,13 @@ def case_an_only_leg_is_priced_from_its_own_projects():
             problems += fail(f"--only maps {sweep_preflight.map_dirs_bytes(checkouts, ['a', 'b'])}")
         if sweep_preflight.map_dirs_bytes(checkouts) != 55:
             problems += fail(f"corpus maps {sweep_preflight.map_dirs_bytes(checkouts)}, expected 55")
+        # A Maven checkout keeps its maps under `.yoriwake/`, beside its POM.
+        os.makedirs(os.path.join(checkouts, "m", ".yoriwake", "yoriwake"))
+        with open(os.path.join(checkouts, "m", ".yoriwake", "yoriwake", "m"), "wb") as handle:
+            handle.write(b"m" * 7)
+        if sweep_preflight.map_dirs_bytes(checkouts, ["m"]) != 7:
+            problems += fail(f"a Maven checkout's maps {sweep_preflight.map_dirs_bytes(checkouts, ['m'])}"
+                             f", expected 7")
     return problems
 
 

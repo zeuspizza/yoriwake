@@ -433,7 +433,26 @@ def case_each_set_builds_the_plugin_its_control_needs():
     return failures
 
 
+def case_a_maven_control_publishes_and_puts_back_the_maven_plugin():
+    """The planted clone publishes the Maven plugin for a Maven project (`run.py` decides it per
+    project), and the real checkout publishes its own back afterwards, so no planted Maven plugin
+    stays in mavenLocal."""
+    failures = 0
+    if ":maven:publishToMavenLocal" not in controls.run.publish_tasks(maven=True):
+        failures += fail("a Maven project's plugin under test does not publish the Maven plugin")
+    if controls.run.publish_tasks(maven=False) != [":plugin:publishToMavenLocal"]:
+        failures += fail("a Gradle project's publish changed")
+    if ":maven:publishToMavenLocal" not in controls.republish_tasks(["demo", "demo-maven"]):
+        failures += fail("a leg with demo-maven leaves the planted Maven plugin in mavenLocal")
+    if ":maven:publishToMavenLocal" in controls.republish_tasks(["demo", "demo-kotlin"]):
+        failures += fail("a Gradle-only leg republishes the Maven plugin")
+    if "demo-maven" not in controls.CONTROL_PROJECTS:
+        failures += fail("the default control does not run the Maven fixture")
+    return failures
+
+
 CASES = (case_every_control_project_must_report_a_miss,
+         case_a_maven_control_publishes_and_puts_back_the_maven_plugin,
          case_in_complement_mode_the_shared_jvm_miss_needs_its_rule,
          case_planting_writes_only_the_clone,
          case_the_planted_miss_matches_exactly_once,

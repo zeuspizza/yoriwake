@@ -288,6 +288,47 @@ def case_the_outcome_listener_writes_what_the_reader_reads():
     return failures
 
 
+MAVEN = os.path.join(SOURCE_ROOT, "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven")
+
+
+def case_the_maven_names_the_harness_reads_are_the_ones_the_maven_plugin_writes():
+    """Where a Maven map lives, how its execution is keyed and named, and the lines the harness
+    reads a decline and an attachment from, read out of the Maven plugin: a renamed one finds no
+    map, scores a declined execution as a selection, or reads no reason."""
+    import maven_build  # noqa: PLC0415
+    failures = 0
+    recording = _read(os.path.join(MAVEN, "Recording.kt"))
+    lifecycle = _read(os.path.join(MAVEN, "YoriwakeLifecycle.kt"))
+    settings = _read(os.path.join(MAVEN, "Settings.kt"))
+    contract = _read(os.path.join(AGENT, "contract", "AgentContract.java"))
+    if _kotlin_constant(recording, "MAPS_HOME") != maven_build.MAPS_HOME:
+        failures += fail(f"the Maven plugin's maps no longer live under {maven_build.MAPS_HOME}")
+    if _java_constant(contract, "MAP_ROOT_DIR") != maven_build.MAP_ROOT_DIR:
+        failures += fail(f"the map root is no longer {maven_build.MAP_ROOT_DIR}")
+    if _kotlin_constant(settings, "ENABLED") != maven_build.ENABLED_PROPERTY:
+        failures += fail(f"the off switch is no longer -D{maven_build.ENABLED_PROPERTY}")
+    if _kotlin_constant(settings, "PLUGIN_KEY") != \
+            f"{maven_build.PLUGIN_GROUP}:{maven_build.PLUGIN_ARTIFACT}":
+        failures += fail("the plugin's coordinates moved")
+    key = '"${project.groupId}:${project.artifactId}:${execution.artifactId}:${execution.executionId}"'
+    if key not in recording:
+        failures += fail("the map key is no longer groupId:artifactId:plugin:execution")
+    name = ('"${project.artifactId} ${execution.artifactId.removePrefix("maven-")'
+            '.removeSuffix("-plugin")}:${execution.goal} (${execution.executionId})"')
+    if name not in recording:
+        failures += fail("console lines no longer name an execution `<artifactId> <plugin>:<goal> (<id>)`")
+    if 'log.warn("[yoriwake] ${run.name} declined, ${outcome.kind.token}: ' not in lifecycle:
+        failures += fail("a declined execution's line is no longer `<name> declined, <token>: `")
+    if 'log.info("[yoriwake] attached to Maven $version")' not in lifecycle:
+        failures += fail("the attachment line is no longer `attached to Maven <version>`")
+    outcome = _read(os.path.join(CORE, "wiring", "ScopeOutcome.kt"))
+    if f'MAVEN_VERSION("{maven_build.MAVEN_VERSION_TOKEN}")' not in outcome:
+        failures += fail(f"the below-floor token is no longer {maven_build.MAVEN_VERSION_TOKEN}")
+    if 'log.warn("[yoriwake] $token: Maven $version is older than' not in lifecycle:
+        failures += fail("the below-floor line no longer opens with its token")
+    return failures
+
+
 def test_module_contract():
     failures = 0
     for name, case in sorted(globals().items()):

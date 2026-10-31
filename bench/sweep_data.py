@@ -29,6 +29,8 @@ TEST_OUTCOMES_MARKER = "yoriwake-harness: test outcomes "
 
 # How Gradle names a test worker on its command line: `... GradleWorkerMain 'Gradle Test Executor 3'`.
 TEST_WORKER_MARK = "Gradle Test Executor"
+# And Surefire's and Failsafe's forked JVMs, which start from a `surefirebooter*.jar`.
+MAVEN_TEST_WORKER_MARK = "surefirebooter"
 SAMPLE_SECONDS = 0.5
 
 # Must match AgentContract's JVM_MODE_FILE, MODE_ISOLATED, MODE_SHARED and MAP_SCHEMA_VERSION_FILE;
@@ -51,14 +53,15 @@ DECODE_TASK_PREFIX = "yoriwakeDecode"
 
 
 class TestJvmSampler:
-    """Peak resident memory and count of the test JVMs alive during one Gradle build, sampled by `ps`.
+    """Peak resident memory and count of the test JVMs alive during one build, sampled by `ps`.
 
     RSS, not heap, sampled twice a second: a JVM or a peak shorter than that can be missed, so
     the figure is a lower bound on the true peak. Both arms of a comparison are sampled the same way.
     """
 
-    def __init__(self, interval=SAMPLE_SECONDS, ps=None):
+    def __init__(self, interval=SAMPLE_SECONDS, ps=None, mark=TEST_WORKER_MARK):
         self.interval = interval
+        self.mark = mark
         self.ps = ps or _ps_listing
         self.peaks = {}
         self.java = None
@@ -88,7 +91,7 @@ class TestJvmSampler:
         self.samples += 1
         total = 0
         for pid, rss_kb, args in listing:
-            if TEST_WORKER_MARK not in args:
+            if self.mark not in args:
                 continue
             total += rss_kb
             self.peaks[pid] = max(self.peaks.get(pid, 0), rss_kb)

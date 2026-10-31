@@ -228,6 +228,25 @@ Written by `run.gradle` for every build, keyed by its log path.
 | `decision_write_failures` | log line count | |
 | `network_retries` | 1 when the build failed on a dependency download alone and ran once more after a pause, else 0; the first attempt's log is kept as `<name>.network-1.log` | the record and its timings describe the rerun; a rerun usually falls in a module's first build, before the timed arms |
 
+## Maven files (`build = "maven"`)
+
+A Maven project's file has every field a Gradle one has. Where the Maven side cannot fill one, it
+is null for the reason given here, never a figure borrowed from another meaning.
+
+| field | source | serves |
+|---|---|---|
+| `build_tool` | `maven`; absent on a Gradle file, which every reader takes as `gradle` | `compare_results.py` refuses to compare two build tools |
+| `maven_digest` | digest of `maven/src/main` and `maven/build.gradle.kts` at publish, beside `selector_digest` (which a Maven file carries too, unchanged in meaning) | freshness: the resume, `merge.py`'s one-digest-per-sweep check and `corpus_state.py` also check it; absent on a Gradle file |
+| `staged_pom` | what the staging commit wired: `plugin added` or `plugin version`, `jacoco <goal> added`, `<execution> skipTests=false`, `target/ ignored` | the staged tree is reproducible from `commit` plus this list |
+| `environment.maven_version` | `mvn --version` of the Maven the arms ran: the guest's `mvnw`, else the pinned one; `environment.gradle_version` is null | environment line |
+| arm record `tasks`, `plugin` | null: both come from Gradle init scripts | |
+| arm record `test_jvms` and the RSS fields | Surefire's and Failsafe's forked JVMs (`surefirebooter`); `test_java_version` is null when the fork starts through a shell | |
+| row `result_keys` | always `xml`, `result_keys_fallback` naming `no listener on Maven`: no per-method listener exists for Surefire | which population a recall row belongs to |
+| row `status: invalid` with `declined` | an arm in which the plugin declined the measured execution (`declined, <token>:`), or in which a test execution other than the measured one ran; the token is `declined` | a decline is never scored as a narrowed or clean row |
+| row `status: not-run` | the measured execution was skipped or never reached in a build that did not fail; no build cache serves a Maven arm, so it is never `cache-hit` | answered nothing, as `stalled` |
+
+A capture whose execution the plugin declined refuses the project, naming the token.
+
 ## Project summary (`sweep-summary.jsonl`, `sweep_corpus.summarise`)
 
 New per arm: `capture_mode`, `capture_max_parallel_forks`, `paired_with`, `capture_seconds`,

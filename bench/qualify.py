@@ -42,6 +42,7 @@ sys.path.insert(0, HERE)
 
 from process import STALLED, run  # noqa: E402
 import run as harness  # noqa: E402
+import maven_build  # noqa: E402
 import own_processes  # noqa: E402
 
 # Long enough for a first build that downloads the world, short enough that a hung suite does not
@@ -58,13 +59,19 @@ QUALIFY_STALL = 20 * 60
 COULD_NOT_START = "the attempt could not start"
 
 
-def screen_build_system(checkout):
-    """Gradle or nothing. The plugin is a Gradle plugin; a Maven project cannot be measured at all."""
+def screen_build_system(checkout, project=None):
+    """The build the project file names, at the repository root: Gradle unless it says
+    `build = "maven"`, which is screened with the Maven plugin."""
+    if maven_build.is_maven(project or {}):
+        if os.path.isfile(os.path.join(checkout, "pom.xml")):
+            return None
+        return "no pom.xml at the repository root, though the project file says build = \"maven\""
     for name in ("settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle"):
         if os.path.isfile(os.path.join(checkout, name)):
             return None
     if os.path.isfile(os.path.join(checkout, "pom.xml")):
-        return "maven, not gradle -- the plugin is a Gradle plugin"
+        return ("maven, not gradle -- set build = \"maven\" in the project file to screen it with "
+                "the Maven plugin")
     return "no gradle build found at the repository root"
 
 
@@ -316,18 +323,23 @@ def qualify(project, keep=False):
     #
     # A refusal is this project's VERDICT here, not a crash: `assert_droppable` raises SystemExit,
     # and everything else in this function turns a failure into a recorded blocker.
-    try:
-        harness.stage_checkout(checkout, project)
-    except SystemExit as refused:
-        verdict["blocker"] = f"could not stage the checkout: {refused}"
-        print(f"    BLOCKED: {verdict['blocker']}", flush=True)
-        return verdict
-
-    blocker = screen_build_system(checkout)
+    blocker = screen_build_system(checkout, project)
     if blocker:
         verdict["blocker"] = blocker
         print(f"    BLOCKED: {blocker}", flush=True)
         return verdict
+
+    try:
+        harness.stage_checkout(checkout, project)
+        # A Maven guest is wired by a committed POM change, as `run.py` wires it.
+        if maven_build.is_maven(project):
+            verdict["evidence"]["staged_pom"] = maven_build.stage(checkout, project)
+    except SystemExit as refused:
+        verdict["blocker"] = f"could not stage the checkout: {refused}"
+        print(f"    BLOCKED: {verdict['blocker']}", flush=True)
+        return verdict
+    if maven_build.is_maven(project):
+        return qualify_maven(project, checkout, verdict)
 
     module = project.get("module") or ""
     # THE DIRECTORY, WHICH IS NOT ALWAYS THE GRADLE NAME. Everything below reads files -- build
@@ -563,6 +575,114 @@ def qualify(project, keep=False):
     return verdict
 
 
+def maven_test_counts(checkout, module_dir, reports, since):
+    """(tests, failures, test_seconds) from the Surefire or Failsafe reports this run wrote, as
+    `test_counts` reads Gradle's."""
+    pattern = os.path.join(maven_build.reports_dir(checkout, module_dir, reports), "TEST-*.xml")
+    files = [p for p in glob.glob(pattern) if os.path.getmtime(p) >= since]
+    if not files:
+        return None, None, None
+    total = failed = 0
+    test_seconds = 0.0
+    for path in files:
+        try:
+            head = open(path, encoding="utf-8", errors="replace").read(2000)
+        except OSError:
+            continue
+        suite = re.search(r"<testsuite\b[^>]*>", head)
+        if not suite:
+            continue
+        attributes = dict(re.findall(r'(\w+)="([^"]*)"', suite.group(0)))
+        try:
+            total += int(attributes.get("tests", 0))
+            failed += int(attributes.get("failures", 0)) + int(attributes.get("errors", 0))
+            test_seconds += float(attributes.get("time", 0) or 0)
+        except ValueError:
+            continue
+    return total, failed, round(test_seconds, 1)
+
+
+def qualify_maven(project, checkout, verdict):
+    """The screen for a `build = "maven"` project, past its checkout and staging: one capture of
+    the measured execution as a sweep's arm runs it (`-pl <module> -am`, upstream tests skipped).
+
+    Attachment is a map for that execution written by this run; a decline is the verdict, with the
+    plugin's token; another test execution that ran, or tests read from no fresh report, block it as
+    they would every row. First contact is `yoriwake:audit` for the execution.
+    """
+    name = project["name"]
+    module_dir = harness.module_dir(project)
+    seams = harness.Seams(project, checkout)
+    scratch = os.path.join(HERE, "logs", name)
+    os.makedirs(scratch, exist_ok=True)
+    log = os.path.join(scratch, "qualify.log")
+    shown = os.path.relpath(log, ROOT)
+    command, env = harness.maven_arm(checkout, project, [*harness.INIT_SCRIPT_ARGS,
+                                                         "-Pyoriwake.internal.loaded",
+                                                         harness.test_task_path(project)])
+    started = time.time()
+    code, seconds = run(command, checkout, log, timeout=QUALIFY_TIMEOUT, stall_seconds=QUALIFY_STALL,
+                        progress_paths=harness.test_progress_paths(checkout, project), env=env)
+    verdict["evidence"].update(seconds=seconds, log=shown, execution=seams.name)
+
+    def blocked(reason):
+        verdict["blocker"] = reason
+        print(f"    BLOCKED: {reason}", flush=True)
+        return verdict
+
+    if code == STALLED:
+        return blocked(f"the suite went silent for {QUALIFY_STALL // 60} minutes and was killed")
+    token = maven_build.declined(log, seams.name)
+    verdict["evidence"]["declined"] = token
+    if token:
+        said = next((line for line in maven_build.lines_about(log, seams.name)
+                     if "declined" in line or token in line), "")
+        return blocked(f"the plugin declined {seams.name}: {token}"
+                       + (f" -- {said[:300]}" if said else "") + f"; see {shown}")
+    attached = bool(seams.find_map()) and os.path.getmtime(
+        os.path.join(seams.find_map(), "coverage.tsv")) >= started
+    verdict["evidence"]["plugin_attached"] = maven_build.attached(log)
+    verdict["evidence"]["captured_a_map"] = attached
+    others = maven_build.other_tests_ran(log, seams.artifact, seams.execution)
+    if others:
+        return blocked(f"tests of {', '.join(others)} ran beside {seams.name}, so every arm would "
+                       f"time them and be refused; see {shown}")
+    if not seams.ran(log):
+        failure = next((line for line in (maven_build.read_log(log) or "").splitlines()
+                        if line.startswith("[ERROR]")), "").strip()
+        return blocked(f"the build {'failed' if maven_build.build_failed(log) else 'ended'} "
+                       f"(exit {code}) before {seams.name} ran"
+                       + (f" -- {failure[:300]}" if failure else "") + f"; see {shown}")
+    tests, failures, test_seconds = maven_test_counts(checkout, module_dir,
+                                                      seams.execution.reports, started)
+    verdict["evidence"].update(tests=tests, already_failing=failures, test_seconds=test_seconds)
+    if not tests:
+        return blocked(f"{seams.name} ran (exit {code}) but wrote no fresh test report -- a build "
+                       f"that ran nothing; see {shown}")
+    if not attached:
+        unfinished = seams.unfinished_map()
+        return blocked(f"{seams.name} ran {tests} tests but this run captured no map"
+                       + (f"; raw records under {unfinished} were never merged" if unfinished
+                          else "") + f"; see {shown}")
+    verdict["qualified"] = True
+    audit_log = os.path.join(scratch, "audit.log")
+    audit_started = time.time()
+    audit_code, _ = run([maven_build.executable(checkout), "-B", "--no-transfer-progress",
+                         f"-D{maven_build.VERSION_PROPERTY}={harness.MAVEN_PLUGIN_VERSION}",
+                         f"-Dyoriwake.execution={seams.execution.id}", *harness.guest_flags(project),
+                         "yoriwake:audit"],
+                        checkout, audit_log, env=env)
+    verdict["evidence"].update(
+        read_audit(seams.find_map(), since=audit_started) if audit_code == 0
+        else {"narrowing": "unknown", "blockers": f"audit-did-not-run(exit {audit_code})"})
+    print(f"    QUALIFIED: {tests} tests in {seconds}s wall"
+          + (f", {test_seconds}s summed across suites" if test_seconds else "")
+          + (f", {failures} already failing" if failures else "")
+          + f"; first contact {verdict['evidence'].get('narrowing')} "
+            f"({verdict['evidence'].get('blockers')})", flush=True)
+    return verdict
+
+
 def first_contact(checkout, project, module, task, scratch):
     """Whether this project would narrow on day one, and the named blockers when it would not.
 
@@ -769,7 +889,15 @@ def main_with_paths(paths, as_json, publish=None):
     # Redirected for the duration rather than threading a stream through every print: the progress
     # commentary is genuinely for a person watching, and a person watching a redirected run is
     # reading stderr anyway.
-    publish = harness.publish_plugin_under_test if publish is None else publish
+    if publish is None:
+        # A Maven project resolves the Maven plugin as well, so it is published beside the other.
+        maven = maven_build.any_maven(paths)
+
+        def publish():
+            if maven:
+                harness.publish_plugin_under_test(maven=True)
+            else:
+                harness.publish_plugin_under_test()
     progress = sys.stderr if as_json else sys.stdout
     real_stdout = sys.stdout
     sys.stdout = progress

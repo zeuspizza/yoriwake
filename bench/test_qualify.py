@@ -623,7 +623,122 @@ def case_results_are_counted_from_a_build_directory_that_is_not_called_build():
     return failed
 
 
-CASES = (case_results_are_counted_from_a_build_directory_that_is_not_called_build,
+def case_a_maven_root_is_screened_only_when_the_project_file_says_maven():
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "pom.xml"), "w").close()
+        if qualify.screen_build_system(tmp, {"build": "maven"}) is not None:
+            print("  FAIL: a Maven root with build = \"maven\" did not pass the screen")
+            failures += 1
+        refused = qualify.screen_build_system(tmp, {}) or ""
+        if "build = \"maven\"" not in refused:
+            print(f"  FAIL: a Maven root without the key was refused without naming it: {refused}")
+            failures += 1
+    return failures
+
+
+MAVEN_POM = ('<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>'
+             '<groupId>dev.demo</groupId><artifactId>{}</artifactId><version>1.0</version>'
+             '</project>')
+
+
+def _maven_qualify(log_text):
+    """`qualify` over a staged-looking Maven checkout whose one build writes `log_text`."""
+    tmp = tempfile.mkdtemp(prefix="yoriwake-qualify-maven-")
+    for relative, artifact in (("pom.xml", "root"), ("app/pom.xml", "app")):
+        os.makedirs(os.path.dirname(os.path.join(tmp, relative)), exist_ok=True)
+        with open(os.path.join(tmp, relative), "w", encoding="utf-8") as handle:
+            handle.write(MAVEN_POM.format(artifact))
+
+    def build(command, cwd, log, **_):
+        with open(log, "w", encoding="utf-8") as handle:
+            handle.write(log_text)
+        return 1, 3.0
+
+    saved = (qualify.run, qualify.harness.checkout_project, qualify.harness.stage_checkout,
+             qualify.maven_build.stage, qualify.maven_build.executable)
+    qualify.run = build
+    qualify.harness.checkout_project = lambda project: tmp
+    qualify.harness.stage_checkout = lambda checkout, project: (None, [])
+    qualify.maven_build.stage = lambda checkout, project: []
+    qualify.maven_build.executable = lambda checkout: "mvn"
+    try:
+        return qualify.qualify({"name": "m", "build": "maven", "module": "app", "url": "u",
+                                "commit": "a" * 40})
+    finally:
+        (qualify.run, qualify.harness.checkout_project, qualify.harness.stage_checkout,
+         qualify.maven_build.stage, qualify.maven_build.executable) = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def case_a_declined_maven_execution_is_not_qualified_and_names_its_token():
+    verdict = _maven_qualify(
+        "[WARNING] [yoriwake] app surefire:test (default-test) declined, no-jacoco-plugin: app has "
+        "no jacoco-maven-plugin prepare-agent execution; every test runs and nothing is captured\n"
+        "[INFO] --- surefire:3.5.6:test (default-test) @ app ---\n[INFO] BUILD SUCCESS\n")
+    blocker = verdict["blocker"] or ""
+    if verdict["qualified"] or "no-jacoco-plugin" not in blocker:
+        print(f"  FAIL: a declined execution qualified, or its token is missing: {blocker[:160]}")
+        return 1
+    return 0
+
+
+def case_a_maven_run_that_ran_no_tests_does_not_read_an_earlier_runs_reports():
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = os.path.join(tmp, "app", "target", "surefire-reports")
+        os.makedirs(directory)
+        path = os.path.join(directory, "TEST-com.acme.Test.xml")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(SUITE.format(tests=5, failures=1, seconds="2.0"))
+        os.utime(path, (time.time() - 3600, time.time() - 3600))
+        counted = qualify.maven_test_counts(tmp, "app", "surefire-reports", time.time() - 60)
+        if counted != (None, None, None):
+            print(f"  FAIL: an earlier run's Surefire report was counted as this run's: {counted}")
+            failures += 1
+        os.utime(path, None)
+        counted = qualify.maven_test_counts(tmp, "app", "surefire-reports", time.time() - 60)
+        if counted != (5, 1, 2.0):
+            print(f"  FAIL: this run's Surefire report read as {counted}")
+            failures += 1
+    return failures
+
+
+def case_a_maven_fixture_copy_commits_no_target_and_target_survives_restore():
+    failures = 0
+    with tempfile.TemporaryDirectory() as source, tempfile.TemporaryDirectory() as checkouts:
+        sample = os.path.join(source, "samples", "m")
+        os.makedirs(os.path.join(sample, "target", "classes"))
+        os.makedirs(os.path.join(sample, ".yoriwake", "yoriwake"))
+        for relative in ("pom.xml", "target/classes/A.class", ".yoriwake/yoriwake/coverage.tsv"):
+            open(os.path.join(sample, relative), "w").close()
+        saved = qualify.harness.SOURCE, qualify.harness.CHECKOUTS
+        qualify.harness.SOURCE, qualify.harness.CHECKOUTS = source, checkouts
+        try:
+            path = qualify.harness.checkout_project({"name": "m", "build": "maven",
+                                                     "copy_of": "samples/m"})
+        finally:
+            qualify.harness.SOURCE, qualify.harness.CHECKOUTS = saved
+        import subprocess  # noqa: PLC0415
+        tracked = subprocess.run(["git", "-C", path, "ls-files"], capture_output=True,
+                                 text=True).stdout.split()
+        if any(name.startswith(("target/", ".yoriwake/")) for name in tracked):
+            print(f"  FAIL: the fixture committed build state: {tracked}")
+            failures += 1
+        os.makedirs(os.path.join(path, "app", "target", "classes"))
+        open(os.path.join(path, "app", "target", "classes", "B.class"), "w").close()
+        qualify.harness.restore(path)
+        if not os.path.exists(os.path.join(path, "app", "target", "classes", "B.class")):
+            print("  FAIL: restore() removed the compiled reactor")
+            failures += 1
+    return failures
+
+
+CASES = (case_a_maven_root_is_screened_only_when_the_project_file_says_maven,
+         case_a_declined_maven_execution_is_not_qualified_and_names_its_token,
+         case_a_maven_run_that_ran_no_tests_does_not_read_an_earlier_runs_reports,
+         case_a_maven_fixture_copy_commits_no_target_and_target_survives_restore,
+         case_results_are_counted_from_a_build_directory_that_is_not_called_build,
          case_a_stale_map_directory_is_not_this_run_attaching,
          case_the_corpus_loop_reaps_between_projects,
          case_test_counts_reads_the_task_it_was_given,

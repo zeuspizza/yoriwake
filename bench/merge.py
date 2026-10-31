@@ -157,7 +157,8 @@ def check_sweep(planned, merged, arm, isolated, missing=None):
     """
     missing = missing or {}
     # Two selectors' rows in one recall figure describe neither; commits that share one may differ.
-    for stamp in ("selector_digest", "grammar_digest"):
+    # `maven_digest` is on Maven files only, so a sweep of both build tools agrees on the others.
+    for stamp in ("selector_digest", "grammar_digest", "maven_digest"):
         by_value = {}
         for name, data in sorted(merged.items()):
             if data.get(stamp) is not None:

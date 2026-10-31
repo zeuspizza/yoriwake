@@ -1,0 +1,23 @@
+# The Maven sample fixture, the Maven counterpart of `demo.toml`: proves the harness drives a
+# Maven build end to end before any Maven project's row is read. `app` depends on `lib`, so every
+# arm builds `lib` with `-am`, skips its tests and runs `app`'s: a mutation in `lib` that fails an
+# `app` test is the cross-module row every corpus reactor takes.
+#
+# Copied out of the yoriwake checkout into its own checkout before use, as `demo` is; `target/`
+# and `.yoriwake/` stay out of the copy and out of git.
+name = "demo-maven"
+build = "maven"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES: every target the two modules offer is a handful of rows,
+# and each costs seconds.
+sweep_limit = 10
+
+# A LOCAL SAMPLE BUILD, NOT A PROJECT: evidence that the harness works on Maven, never evidence
+# about a build nobody here chose. See `demo.toml`.
+fixture = true
+copy_of = "samples/demo-maven"
+commit = "local"
+# The module directory Maven builds with `-pl`; its Surefire `default-test` is measured.
+module = "app"
+flags = []
+sources = ["lib/src/main/java", "app/src/main/java"]

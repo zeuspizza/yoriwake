@@ -421,6 +421,24 @@ def case_one_sweep_measured_under_two_selectors_is_refused():
     return 0 if summary["plugin_commits"] == ["p1", "p2"] else fail(f"two commits: {summary}")
 
 
+def case_a_sweep_of_both_build_tools_merges_and_two_maven_plugins_do_not():
+    demo = {**_recording(), "mutations": MISS}
+    maven = {**demo, "project": "demo-maven", "build_tool": "maven", "maven_digest": "m1"}
+    failures = 0
+    try:
+        merge.check_sweep(["demo", "demo-maven"], {"demo": demo, "demo-maven": maven},
+                          arm="full", isolated=False)
+    except merge.Refused as refused:
+        failures += fail(f"a sweep of one Gradle and one Maven project was refused: {refused}")
+    other = {**maven, "project": "other-maven", "maven_digest": "m2"}
+    why = _refused(lambda: merge.check_sweep(
+        ["demo-maven", "other-maven"], {"demo-maven": maven, "other-maven": other},
+        arm="full", isolated=False))
+    if not why or "maven_digest" not in why:
+        failures += fail(f"two Maven plugins in one sweep: {why}")
+    return failures
+
+
 def test_merge():
     failures = 0
     for name, case in sorted(globals().items()):

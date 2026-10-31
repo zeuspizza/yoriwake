@@ -113,6 +113,23 @@ flags = ["-PenablePTS=false"]
 sources = ["detekt-rules-style/src/main/kotlin", "detekt-psi-utils/src/main/kotlin"]
 ```
 
+A Maven project says so, and names the module directory `-pl` builds and, when it is not
+Surefire's `default-test`, the execution measured:
+
+```toml
+build = "maven"
+module = "dubbo-common"
+# `surefire` (the default) or `failsafe`; `execution` defaults to `default-test`, or
+# `default-integration-test` for Failsafe.
+test_plugin = "surefire"
+```
+
+The harness wires the plugin under test, and JaCoCo where no POM declares its agent, into the POMs
+in a committed staging change, and every arm runs `mvn -pl <module> -am` with the upstream modules'
+tests skipped. The guest's `mvnw` is used when it has one, otherwise a pinned Maven. A Maven row
+reads XML keys only, and has no task times or plugin timers; the isolated, class-granularity and
+class-selection arms, complement ground truth, history replay and the revert set are refused.
+
 Then qualify it. Choose projects for shape rather than fame: a green suite and a red one, Java and
 Kotlin, parameterised-heavy and plain. Anything needing network services is out: the sweep must run
 unattended.
