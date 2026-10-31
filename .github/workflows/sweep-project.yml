@@ -1,0 +1,176 @@
+name: sweep-project
+
+# One project of a sweep (sweep.yml calls it once per project): its record job, then one job per
+# slice of its accepted target list. A project's slices wait for its own record job only, so a slow
+# project's record does not hold back the others' slices. The merge, in sweep.yml, reads what these
+# jobs upload.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: the project's entry of the plan, as JSON
+        type: string
+        required: true
+      factor:
+        description: runner seconds per local second, for a project priced from local times
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  packages: read
+
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    # A guest may resolve dependencies from GitHub Packages, which takes a token even for a public
+    # package: bitwarden-android's SDK. Read-only, and handed to that project's build alone below.
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      shards: ${{ steps.record.outputs.shards }}
+      of: ${{ steps.record.outputs.of }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: |
+            11
+            17
+            25
+            26
+            21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          # A measured project's own failing tests fail builds here; the results tell what failed.
+          add-job-summary: never
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: published-rows
+          # Outside the checkout: an untracked file in it makes run.py refuse the tree as dirty.
+          path: ${{ runner.temp }}/published-rows
+      - name: record and cut into slices
+        id: record
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          # Relative to bench/; another project's clone for one measured in it (detekt-junk).
+          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
+          FACTOR: ${{ inputs.factor }}
+        run: |
+          set -eu
+          # A runner that runs out of memory or disk is shut down whole, and this step's log is all
+          # it leaves: the machine's use, every 30 seconds, beside the build's.
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          mapfile -t args < <(jq -r '.[]' <<< "$ARGS")
+          python3 bench/run.py "${args[@]}" --accepted-out "bench/logs/$NAME/accepted.json"
+          # Priced from what runners measured of this project in the last published sweep, when
+          # it has rows there; else from this job's own header.
+          priced=()
+          last="$RUNNER_TEMP/published-rows/$NAME.json"
+          [ -f "$last" ] && priced=(--priced-from "$last")
+          # The dispatch input's default, for a scheduled run, which has none.
+          shards=$(python3 bench/shard.py "bench/logs/$NAME/accepted.json" --factor "${FACTOR:-1.5}" \
+            "${priced[@]+"${priced[@]}"}")
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+          echo "of=$(jq length <<< "$shards")" >> "$GITHUB_OUTPUT"
+          [ "$shards" != "[]" ] || echo "::warning::$NAME was cut into no slices"
+          # A tar, not the artifact's own zip, which drops the checkout's executable bits. Under the
+          # project's name, because one artifact downloads without its own directory and several
+          # with: readers find `<project>/accepted.json` either way.
+          mkdir -p "record/$NAME"
+          cp "bench/logs/$NAME/accepted.json" "record/$NAME/"
+          tar -czf "record/$NAME/state.tar.gz" -C bench "logs/$NAME" "results/$NAME.json" \
+            "$CHECKOUT" logs/evidence
+      # Each shard and the merge read it. Three days cover a weekend re-run of a scheduled sweep's
+      # failed jobs; the merge must finish before the first record expires.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: record-${{ fromJSON(inputs.project).project }}
+          retention-days: 3
+          path: record/
+      # A record job that fails says why in its logs, not in the job's own output: the warm-up's
+      # build error, the stalled capture's last lines. Not named record-*, which the merge reads.
+      # A person reads it to see why the record job failed.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failed-record-${{ fromJSON(inputs.project).project }}
+          retention-days: 3
+          path: bench/logs/${{ fromJSON(inputs.project).project }}/*.log
+
+  shard:
+    needs: record
+    # A project cut into no slices measures nothing; the merge declares it missing.
+    if: needs.record.outputs.shards != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.record.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: |
+            11
+            17
+            25
+            26
+            21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          # A measured project's own failing tests fail builds here; the results tell what failed.
+          add-job-summary: never
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: record-${{ fromJSON(inputs.project).project }}
+          # Outside the checkout: an untracked file in it makes run.py refuse the tree as dirty.
+          path: ${{ runner.temp }}/record
+      - name: measure this slice
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          SHARD: ${{ matrix.shard }}/${{ needs.record.outputs.of }}
+        run: |
+          set -eu
+          # A runner that runs out of memory or disk is shut down whole, and this step's log is all
+          # it leaves: the machine's use, every 30 seconds, beside the build's.
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          tar -xzf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench
+          mapfile -t args < <(jq -r '.[] | select(. != "--recapture")' <<< "$ARGS")
+          python3 bench/run.py "${args[@]}" --accepted "bench/logs/$NAME/accepted.json" \
+            --shard "$SHARD"
+      # The merge reads it; kept as long as the records it was cut from.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-${{ fromJSON(inputs.project).project }}-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}
+          retention-days: 3
+          path: |
+            bench/logs/${{ fromJSON(inputs.project).project }}/shard-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}.json
+            bench/logs/evidence/
+            bench/logs/${{ fromJSON(inputs.project).project }}/**/*.stall-*.log
+            bench/logs/${{ fromJSON(inputs.project).project }}/**/*.network-*.log

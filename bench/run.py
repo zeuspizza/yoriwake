@@ -841,6 +841,18 @@ def is_timed(position, recall_only, timing_cap):
     return not recall_only and (timing_cap is None or position <= timing_cap)
 
 
+def slice_times_a_row(start, end, recall_only, timing_cap):
+    """Whether a slice of list positions `[start, end)`, counted from 0, holds a timed row: only
+    then does a shard pay for the discarded warm-up run that makes its first timed row comparable."""
+    return any(is_timed(position + 1, recall_only, timing_cap) for position in range(start, end))
+
+
+def failed_before_the_tests(log_path, module, task):
+    """Whether a build failed without reaching the test task: on an unwarmed shard's first row,
+    the cue to run the skipped warm-up and learn whether the runner or the row is at fault."""
+    return not test_task_ran(log_path, module, task) and build_failed(log_path)
+
+
 def full_arm_skipped(timed, decisions, selected_ran):
     """Whether an untimed row takes its selected arm as the full arm: it forced, every writer
     agreeing, and reached tests. A timed row runs the full arm whatever it decided."""
@@ -5421,6 +5433,7 @@ def main():
     # so the timing cap times the rows a single job would. The recording job keeps what passes the
     # gate instead of measuring it.
     recorded, recorded_rejections = [], []
+    unwarmed = False
     if shard:
         stamps = {"selector_digest": measured_selector_digest(), "grammar_digest": grammar,
                   "plugin_commit": plugin_commit(), "commit": project["commit"],
@@ -5431,13 +5444,24 @@ def main():
             return 1
         ordered, accepted = accepted_slice(accepted_list, shard)
         # A shard runs on a fresh machine with no capture before it, so its first row would pay
-        # for cold daemons and caches: the same discarded run the capture is preceded by.
-        warmup_log = os.path.join(scratch, f"warmup-shard-{shard[0]}.log")
-        gradle(checkout, project, [task_path, "--rerun-tasks"], warmup_log)
-        if not test_task_ran(warmup_log, module, task_name):
-            print("the shard's warm-up run never reached the tests, so its timed rows would not "
-                  "be comparable; aborting", flush=True)
-            return 1
+        # for cold daemons and caches: the same discarded run the capture is preceded by. Only a
+        # timed row's times are published, so a slice of untimed rows skips it; recall cannot
+        # depend on it, because the selected arm always runs before the full arm.
+        if slice_times_a_row(accepted, accepted + len(ordered), args.recall_only,
+                             args.timing_cap):
+            warmup_log = os.path.join(scratch, f"warmup-shard-{shard[0]}.log")
+            gradle(checkout, project, [task_path, "--rerun-tasks"], warmup_log)
+            if not test_task_ran(warmup_log, module, task_name):
+                print("the shard's warm-up run never reached the tests, so its timed rows would "
+                      "not be comparable; aborting", flush=True)
+                return 1
+        else:
+            # The warm-up also caught a fresh runner that cannot reach the tests. A first row that
+            # fails before them runs it then (`unwarmed`), so a runner fault leaves the slice
+            # re-runnable and a row's own failure is still filed.
+            print("no warm-up run: none of this slice's rows is timed, and recall does not "
+                  "depend on one", flush=True)
+            unwarmed = True
     declined = 0
     # Per `pool/v1` family, the targets left undrawn once the family was refused mid-sweep.
     abandoned = Counter()
@@ -5479,6 +5503,21 @@ def main():
             # A revert row's item is its commit, the part of its target after `revert::`.
             passes.insert(position, ("rerun", [(row["target"].split("::", 1)[row["kind"] == "revert"],
                                                 row["kind"], row["index"]) for row in redo]))
+
+    def runner_reaches_tests():
+        """After an unwarmed shard's first row failed before the tests: whether the unmutated tree
+        reaches them, by the warm-up run the slice skipped. If it does, the failure is the row's
+        and is filed as on a warmed shard; a `build-failed` row is the tool breaking its host."""
+        restore(checkout)
+        if map_dir:
+            restore_map(map_backup, map_dir)
+        log = os.path.join(scratch, f"warmup-shard-{shard[0]}.log")
+        gradle(checkout, project, [task_path, "--rerun-tasks"], log)
+        if test_task_ran(log, module, task_name):
+            return True
+        print("the shard's warm-up run, run after its first row failed before the tests, never "
+              "reached them either; aborting rather than filing the row", flush=True)
+        return False
 
     if complement_off:
         queue_remeasure(0)
@@ -5589,6 +5628,7 @@ def main():
             # ONCE. This ran twice with identical arguments and the same log path, so the second call
             # measured an up-to-date build and overwrote the log of the one that did the work.
             gate_started = time.time()
+            cold, unwarmed = unwarmed, False
             revert_variant = None
             if candidate is not None:
                 def reset_tree():
@@ -5632,6 +5672,10 @@ def main():
             # guest will not take; that is a fact about the grammar and there is no row in it. Counted,
             # named, and read back by `assert_recall.py` against the ceiling -- a silent discard is how
             # a seventh grammar defect would shrink this project's sample with nothing looking wrong.
+            # The record job's gate accepted this target, so on a cold runner a rejection may be
+            # the runner's, not the generator's.
+            if mutation_rejected and cold and not runner_reaches_tests():
+                return 1
             if mutation_rejected:
                 rejected.append(label)
                 rejected_mutations.append([label, kind, index])
@@ -5698,6 +5742,9 @@ def main():
                 selected_log)
             if stalled(selected_code, label, findings, "selected"):
                 continue
+            if cold and failed_before_the_tests(selected_log, module, task_name) \
+                    and not runner_reaches_tests():
+                return 1
             if not executed_or_excluded(selected_log, module, label, findings, "selected", task_name):
                 continue
             selected = read_results(checkout, results_dir, started, task_name, selected_log)
