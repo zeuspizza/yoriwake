@@ -59,7 +59,7 @@ def row_cost(row):
                                                  "complement_seconds")))
 
 
-def per_row(data):
+def per_row(data, forced_share_without_rows=1.0):
     """The per-row seconds the projection prices with, from a results file's answered rows."""
     rows = [r for r in data.get("mutations") or [] if r.get("status") in ANSWERED]
     suite = data.get("baseline_seconds") or 0
@@ -70,14 +70,15 @@ def per_row(data):
         "full": full,
         "complement": _median([r.get("complement_seconds") for r in rows], full),
         "forced_share": (sum(1 for r in rows if r.get("decision_outcome") != "narrowed") / len(rows)
-                         if rows else 1.0),
+                         if rows else forced_share_without_rows),
         "stalled_rows": sum(1 for r in data.get("mutations") or [] if r.get("status") == "stalled"),
     }
 
 
-def project(data, rows, timing_cap=None, recall_only=False, ground_truth="full"):
+def project(data, rows, timing_cap=None, recall_only=False, ground_truth="full",
+            forced_share_without_rows=1.0):
     """One project's projected hours for a sweep of `rows` rows under these rules."""
-    unit = per_row(data)
+    unit = per_row(data, forced_share_without_rows)
     suite = data.get("baseline_seconds") or unit["full"]
     repeats = data.get("baseline_repeats") or run.DEFAULT_BASELINE_REPEATS
     fixed = (data.get("capture_seconds") or suite) + suite * (1 + repeats) + unit["selected"]

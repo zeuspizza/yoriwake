@@ -314,11 +314,14 @@ def unpinned_uses(text):
     """Each `uses:` line not pinned to a full commit SHA with a `# vX.Y.Z` comment.
 
     A tag can be moved to other code without a commit here, so a tag pin changes what CI runs
-    without anyone reviewing it; the comment is what tells a reader which release the SHA is.
+    without anyone reviewing it; the comment is what tells a reader which release the SHA is. A
+    workflow of this repository (`./.github/workflows/...`) runs at this commit, so needs neither.
     """
     found = []
     for number, line in enumerate(text.splitlines(), start=1):
         match = USES.match(line)
+        if match and match.group(1).startswith("./.github/workflows/"):
+            continue
         if match and not (PINNED.match(match.group(1)) and VERSION_COMMENT.match(match.group(2))):
             found.append(f"line {number}: {line.strip()}")
     return found
@@ -2262,9 +2265,12 @@ def case_a_sweep_without_inputs_runs_the_full_arm_of_every_project():
         problems += fail(f"a run with no inputs asked for the {arm or 'no'} arm, not every project's full arm")
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         text = handle.read()
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        if '--factor "${FACTOR:-1.5}"' not in handle.read():
+            problems += fail("sweep-project.yml: a run with no inputs passes no factor to the slicer")
     for needle, why in (
         ("  workflow_dispatch:\n", "it cannot be dispatched"),
-        ('--factor "${FACTOR:-1.5}"', "a run with no inputs passes no factor to the slicer"),
+        ("      factor: ${{ inputs.factor }}\n", "the factor does not reach the slicer"),
         ("        default: auto\n", "a dispatch's tier no longer defaults to auto"),
         ("        default: demo\n", "a dispatch's only no longer defaults to demo"),
         ("        default: '1.5'\n", "a dispatch's factor no longer defaults to 1.5"),
@@ -2334,20 +2340,21 @@ def case_the_machine_sampler_logs_memory_disk_and_the_largest_processes():
 
 def case_every_measuring_step_samples_the_machine_until_it_ends():
     problems = 0
-    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
         text = handle.read()
     for opener in ("\n      - name: record and cut into slices", "\n      - name: measure this slice"):
         script = _sweep_step(text, opener)
         start = script.find("bench/machine_sampler.sh & sampler=$!")
         if start < 0 or "trap 'kill \"$sampler\" 2>/dev/null || true' EXIT" not in script \
                 or start > script.find("python3 bench/run.py"):
-            problems += fail(f"sweep.yml:{opener.split('name: ')[1]} does not sample the machine from "
+            problems += fail(f"sweep-project.yml:{opener.split('name: ')[1]} does not sample the machine from "
                              f"before the build until the step ends")
     return problems
 
 
-GUEST_STEPS = ("\n      - name: record and cut into slices", "\n      - name: measure this slice",
-               "\n      - name: sweep the controls")
+GUEST_STEPS = (("sweep-project.yml", "\n      - name: record and cut into slices"),
+               ("sweep-project.yml", "\n      - name: measure this slice"),
+               ("sweep.yml", "\n      - name: sweep the controls"))
 
 
 def case_no_guest_build_writes_to_the_run_page():
@@ -2355,15 +2362,17 @@ def case_no_guest_build_writes_to_the_run_page():
     test task): dozens of unlabelled tables per project. Every step that runs guests unsets the
     variable before its first build, so nothing it starts can find the file."""
     problems = 0
-    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
-        text = handle.read()
-    for opener in GUEST_STEPS:
-        script = _sweep_step(text, opener)
+    texts = {}
+    for workflow, opener in GUEST_STEPS:
+        if workflow not in texts:
+            with open(os.path.join(WORKFLOWS, workflow), encoding="utf-8") as handle:
+                texts[workflow] = handle.read()
+        script = _sweep_step(texts[workflow], opener)
         unset = script.find("\nunset GITHUB_STEP_SUMMARY\n")
         if unset < 0 or unset > script.find("python3 "):
-            problems += fail(f"sweep.yml:{opener.split('name: ')[1]} runs a build before it unsets "
+            problems += fail(f"{workflow}:{opener.split('name: ')[1]} runs a build before it unsets "
                              f"GITHUB_STEP_SUMMARY")
-    script = _sweep_step(text, GUEST_STEPS[0])
+    script = _sweep_step(texts[GUEST_STEPS[0][0]], GUEST_STEPS[0][1])
     with tempfile.TemporaryDirectory() as root:
         bench = os.path.join(root, "bench")
         os.makedirs(bench)
@@ -2379,7 +2388,8 @@ def case_no_guest_build_writes_to_the_run_page():
         page = os.path.join(root, "summary.md")
         open(page, "w").close()
         env = {**os.environ, "NAME": "demo", "ARGS": json.dumps(["bench/projects/demo.toml"]),
-               "CHECKOUT": "checkouts/demo", "FACTOR": "1.5", "GITHUB_STEP_SUMMARY": page}
+               "CHECKOUT": "checkouts/demo", "FACTOR": "1.5", "GITHUB_STEP_SUMMARY": page,
+               "RUNNER_TEMP": root}
         subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
         if not os.path.exists(os.path.join(root, "ran-run.py")):
             problems += fail("the record step's script did not reach its build")
@@ -2411,86 +2421,120 @@ def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
                        "if-no-files-found: error"):
             if needed not in upload:
                 problems += fail(f"the sweep-results upload lacks {needed!r}")
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        project = handle.read()
     for job in ("record", "shard"):
-        block = _job_block(text, job)
+        block = _job_block(project, job)
         if block.count("retention-days: 3") != block.count("actions/upload-artifact@"):
             problems += fail(f"a {job} upload no longer keeps three days")
     return problems
 
 
-def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
-    """One failed project must not cost the others their rows, and a sweep short of one must say so
-    and fail: kafka's record failed and kafka-core lost a shard, so only okio is merged, the release
-    notes name both, and the run ends red. A shard job without its own condition would be skipped by
-    the failed record two jobs up, so every job after the records carries one."""
+def _job(text, name):
+    """A job's block from a workflow, up to the next job."""
+    block = text[text.index(f"\n  {name}:\n") + 1:]
+    following = re.search(r"\n  [\w-]+:\n", block)
+    return block[:following.start() + 1] if following else block
+
+
+def case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_all():
+    """A project's slices wait for its own record job only; the merge runs after a failed project,
+    and neither the projects nor the merge run on a plan with none (a replay or a control)."""
     problems = 0
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
-        text = handle.read()
-    for job in ("slices", "shard", "merge"):
-        block = text[text.index(f"\n  {job}:\n"):]
-        block = block[:block.index("\n    runs-on:")]
-        if "!cancelled()" not in block:
-            problems += fail(f"the {job} job does not run after a failed record job")
-    slices = _sweep_step(text, "\n      - id: slices")
-    merge = _sweep_step(text, "\n      - name: merge, and attach to a draft release")
+        sweep = handle.read()
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        project = handle.read()
+    call, merge = _job(sweep, "project"), _job(sweep, "merge")
+    if "uses: ./.github/workflows/sweep-project.yml" not in call \
+            or "fail-fast: ${{ needs.plan.outputs.tier == 'reduced' }}" not in call:
+        problems += fail("sweep.yml does not call sweep-project.yml once per project, each on its own "
+                         "but on the reduced arm, which a failed member makes unpublishable")
+    if "needs.plan.outputs.projects != '[]'" not in call:
+        problems += fail("the project calls run on a plan with no project")
+    if "needs: [plan, project]" not in merge or "!cancelled()" not in merge \
+            or "needs.plan.result == 'success'" not in merge \
+            or "needs.plan.outputs.projects != '[]'" not in merge:
+        problems += fail("the merge does not follow every project, failed ones included, and only "
+                         "a plan that has projects")
+    if re.findall(r"^  ([\w-]+):$", project.split("\njobs:\n", 1)[1], re.M) != ["record", "shard"]:
+        problems += fail("sweep-project.yml is not one record job and its slices")
+    if "    needs: record\n" not in _job(project, "shard"):
+        problems += fail("a project's slices do not follow its own record job")
+    return problems
+
+
+def _sweep_merge(root, plan, arm="full"):
+    """sweep.yml's merge step over `root/downloaded`, `merge.py` stubbed to record its arguments
+    and to refuse a reduced arm short of a member, as the real one does."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        merge = _sweep_step(handle.read(), "\n      - name: merge, and attach to a draft release")
+    bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
+    os.makedirs(bin_dir, exist_ok=True)
+    os.makedirs(bench, exist_ok=True)
+    with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
+        handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{root}/gh-args"\n')
+    os.chmod(os.path.join(bin_dir, "gh"), 0o755)
+    with open(os.path.join(bench, "merge.py"), "w", encoding="utf-8") as handle:
+        handle.write(f"import json, os, sys\njson.dump(sys.argv[1:], open({root!r} + '/merge-args', 'w'))\n"
+                     "if 'reduced' in sys.argv and '--missing' in sys.argv: sys.exit(1)\n"
+                     "os.makedirs('merged', exist_ok=True)\n")
+    env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+           "PLAN": json.dumps([{"project": n} for n in plan]), "ARM": arm, "RUN": "7"}
+    return subprocess.run(["bash", "-c", merge], cwd=root, env=env, capture_output=True, text=True)
+
+
+def _recorded(root, name, slices, shards):
+    """A project's record artifact cut into `slices` slices, and the shard artifacts `shards`."""
+    record = os.path.join(root, "downloaded", f"record-{name}", name)
+    state = os.path.join(root, "state", name)
+    os.makedirs(record)
+    os.makedirs(os.path.join(state, "results"))
+    os.makedirs(os.path.join(state, "logs", "evidence"))
+    with open(os.path.join(record, "accepted.json"), "w", encoding="utf-8") as handle:
+        json.dump({"slices": [[]] * slices}, handle)
+    with open(os.path.join(state, "results", f"{name}.json"), "w", encoding="utf-8") as handle:
+        handle.write("{}")
+    subprocess.run(["tar", "-czf", os.path.join(record, "state.tar.gz"), "-C", state,
+                    "results", "logs"], check=True)
+    for k in shards:
+        shard = os.path.join(root, "downloaded", f"shard-{name}-{k}-of-{slices}")
+        os.makedirs(os.path.join(shard, name))
+        os.makedirs(os.path.join(shard, "evidence"))
+        open(os.path.join(shard, name, f"shard-{k}-of-{slices}.json"), "w").close()
+        open(os.path.join(shard, "evidence", "e.tar.gz"), "w").close()
+
+
+def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
+    """One failed project must not cost the others their rows, and a sweep short of one must say so
+    and fail: kafka's record failed, kafka-core lost a shard and detekt was cut into no slices, so
+    only okio is merged, the release notes name the other three, and the run ends red. The merge
+    reads which from the artifacts alone."""
+    problems = 0
     with tempfile.TemporaryDirectory() as root:
-        bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
-        os.makedirs(bin_dir)
-        os.makedirs(bench)
-        with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
-            handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{root}/gh-args"\n')
-        os.chmod(os.path.join(bin_dir, "gh"), 0o755)
-        with open(os.path.join(bench, "merge.py"), "w", encoding="utf-8") as handle:
-            handle.write(f"import json, os, sys\njson.dump(sys.argv[1:], open({root!r} + '/merge-args', 'w'))\n"
-                         "os.makedirs('merged', exist_ok=True)\n")
-        for name, shards in (("okio", (1, 2)), ("kafka-core", (1,))):
-            record = os.path.join(root, "downloaded", f"record-{name}", name)
-            state = os.path.join(root, "state", name)
-            os.makedirs(record)
-            os.makedirs(os.path.join(state, "results"))
-            os.makedirs(os.path.join(state, "logs", "evidence"))
-            with open(os.path.join(record, "accepted.json"), "w", encoding="utf-8") as handle:
-                json.dump({"slices": [[], []]}, handle)
-            with open(os.path.join(state, "results", f"{name}.json"), "w", encoding="utf-8") as handle:
-                handle.write("{}")
-            subprocess.run(["tar", "-czf", os.path.join(record, "state.tar.gz"), "-C", state,
-                            "results", "logs"], check=True)
-            for k in shards:
-                shard = os.path.join(root, "downloaded", f"shard-{name}-{k}-of-2")
-                os.makedirs(os.path.join(shard, name))
-                os.makedirs(os.path.join(shard, "evidence"))
-                open(os.path.join(shard, name, f"shard-{k}-of-2.json"), "w").close()
-                open(os.path.join(shard, "evidence", "e.tar.gz"), "w").close()
-        shutil.copytree(os.path.join(root, "downloaded"), os.path.join(root, "records"))
-        plan = json.dumps([{"project": n} for n in ("kafka", "kafka-core", "okio")])
-        env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
-               "PLAN": plan, "ARM": "full", "RUN": "7", "GITHUB_OUTPUT": os.path.join(root, "output")}
-        done = subprocess.run(["bash", "-c", slices], cwd=root, env=env, capture_output=True, text=True)
-        if not os.path.exists(env["GITHUB_OUTPUT"]):
-            return problems + fail(f"slices wrote no outputs: {done.stdout.strip()} {done.stderr.strip()}")
-        outputs = dict(line.split("=", 1) for line in open(env["GITHUB_OUTPUT"]).read().splitlines())
-        missing = json.loads(outputs.get("missing", "[]"))
-        shards = json.loads(outputs.get("shards", "[]"))
-        if done.returncode or [m["project"] for m in missing] != ["kafka"] or \
-                sorted({s["project"] for s in shards}) != ["kafka-core", "okio"]:
-            problems += fail(f"slices: exit {done.returncode}, missing {missing}, shards {shards}")
-        env["MISSING"] = outputs.get("missing", "[]")
-        done = subprocess.run(["bash", "-c", merge], cwd=root, env=env, capture_output=True, text=True)
+        _recorded(root, "okio", 2, (1, 2))
+        _recorded(root, "kafka-core", 2, (1,))
+        _recorded(root, "detekt", 0, ())
+        # Another project's artifact whose name begins this one's: not kafka's record.
+        _recorded(root, "kafka-extra", 1, (1,))
+        done = _sweep_merge(root, ("kafka", "kafka-core", "okio", "detekt"))
         merged = json.load(open(os.path.join(root, "merge-args")))
         notes = open(os.path.join(root, "gh-args")).read()
         if done.returncode == 0:
-            problems += fail("a sweep short of two projects ended green")
+            problems += fail("a sweep short of three projects ended green")
         if "PARTIAL" not in notes:
             problems += fail("a partial sweep's draft release is titled as a complete one")
         if sorted(os.listdir(os.path.join(root, "art"))) != ["okio"]:
             problems += fail(f"merged {os.listdir(os.path.join(root, 'art'))}, not okio alone")
-        for name in ("kafka=its record job failed", "kafka-core=shard(s) 2 of 2 failed"):
+        for name in ("kafka=its record job failed", "kafka-core=shard(s) 2 of 2 failed",
+                     "detekt=it was cut into no slices"):
             if name not in merged or name not in notes:
                 problems += fail(f"{name!r} is not declared to the merge and in the notes: {merged}")
-        reduced = {**env, "ARM": "reduced", "GITHUB_OUTPUT": os.path.join(root, "output-reduced")}
-        if subprocess.run(["bash", "-c", slices], cwd=root, env=reduced,
-                          capture_output=True).returncode == 0:
-            problems += fail("a reduced arm short of a member still went on to measure")
+    with tempfile.TemporaryDirectory() as root:
+        _recorded(root, "okio", 1, (1,))
+        done = _sweep_merge(root, ("okio", "kafka"), arm="reduced")
+        if done.returncode == 0 or os.path.exists(os.path.join(root, "gh-args")):
+            problems += fail("a reduced arm short of a member was published")
     return problems
 
 
@@ -2679,13 +2723,113 @@ def case_a_record_job_archives_the_checkout_the_plan_names():
     """A project measured in another's clone has no `checkouts/<its name>`: a record job archiving
     that path fails, and its slices get nothing to measure."""
     problems = 0
-    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
-        text = handle.read()
-    record = text[text.index("\n  record:\n"):text.index("\n  slices:\n")]
-    if "CHECKOUT: ${{ matrix.project.checkout }}" not in record:
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        record = _job(handle.read(), "record")
+    if "CHECKOUT: ${{ fromJSON(inputs.project).checkout }}" not in record:
         problems += fail("the record job does not take its checkout from the plan")
     if '"$CHECKOUT"' not in record or "checkouts/$NAME" in record:
         problems += fail("the record job does not archive the checkout the plan names")
+    return problems
+
+
+def _record_step(root, published):
+    """sweep-project.yml's record step for demo, `run.py` and `shard.py` stubbed; with `published`,
+    the last published sweep has rows for demo. What `shard.py` was asked, and the step's outputs."""
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        script = _sweep_step(handle.read(), "\n      - name: record and cut into slices")
+    bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
+    os.makedirs(bin_dir)
+    os.makedirs(bench)
+    with open(os.path.join(bench, "machine_sampler.sh"), "w", encoding="utf-8") as handle:
+        handle.write("#!/bin/sh\nexit 0\n")
+    os.chmod(os.path.join(bench, "machine_sampler.sh"), 0o755)
+    with open(os.path.join(bin_dir, "python3"), "w", encoding="utf-8") as handle:
+        handle.write("#!/bin/sh\ncase $1 in\n"
+                     "  bench/run.py) mkdir -p bench/logs/demo bench/logs/evidence bench/results "
+                     "bench/checkouts/demo; echo '{}' > bench/logs/demo/accepted.json; "
+                     "echo '{}' > bench/results/demo.json ;;\n"
+                     f'  bench/shard.py) printf "%s\\n" "$@" > "{root}/shard-args"; echo "[1,2,3]" ;;\n'
+                     "esac\n")
+    os.chmod(os.path.join(bin_dir, "python3"), 0o755)
+    temp = os.path.join(root, "temp")
+    os.makedirs(os.path.join(temp, "published-rows"))
+    if published:
+        open(os.path.join(temp, "published-rows", "demo.json"), "w").close()
+    env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+           "NAME": "demo", "ARGS": '["bench/projects/demo.toml"]', "CHECKOUT": "checkouts/demo",
+           "FACTOR": "", "RUNNER_TEMP": temp, "GITHUB_OUTPUT": os.path.join(root, "output")}
+    done = subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+    asked = open(os.path.join(root, "shard-args")).read().split() \
+        if os.path.exists(os.path.join(root, "shard-args")) else None
+    outputs = dict(line.split("=", 1) for line in open(env["GITHUB_OUTPUT"]).read().splitlines()) \
+        if os.path.exists(env["GITHUB_OUTPUT"]) else {}
+    return done, asked, outputs, os.path.join(temp, "published-rows", "demo.json")
+
+
+def case_a_record_job_prices_its_slices_from_the_last_published_sweep_when_it_has_rows():
+    problems = 0
+    for published in (True, False):
+        with tempfile.TemporaryDirectory() as root:
+            done, asked, outputs, rows = _record_step(root, published)
+            if done.returncode or asked is None:
+                problems += fail(f"the record step failed: {done.stdout} {done.stderr}")
+                continue
+            priced = asked[asked.index("--priced-from") + 1] if "--priced-from" in asked else None
+            if priced != (rows if published else None):
+                problems += fail(f"published rows {'present' if published else 'absent'}: shard.py "
+                                 f"was asked {asked}")
+            if outputs.get("shards") != "[1,2,3]" or outputs.get("of") != "3":
+                problems += fail(f"the record job hands its slices on as {outputs}")
+            if not os.path.exists(os.path.join(root, "record", "demo", "state.tar.gz")):
+                problems += fail("the record job archived no state")
+    return problems
+
+
+def _fetch_published(root, tag, broken=False):
+    """sweep.yml's step fetching the last published sweep's rows; `tag` is the newest published
+    sweep's (empty for none), whose archive holds demo's merged file and the sweep's summary."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        script = _sweep_step(handle.read(), "\n      - name: fetch the rows the last published sweep measured")
+    bin_dir = os.path.join(root, "bin")
+    os.makedirs(bin_dir)
+    tree = os.path.join(root, "tree")
+    os.makedirs(os.path.join(tree, "merged"))
+    os.makedirs(os.path.join(tree, "art"))
+    for name in ("demo.json", "sweep.json"):
+        open(os.path.join(tree, "merged", name), "w").close()
+    subprocess.run(["tar", "-czf", os.path.join(root, "asset.tar.gz"), "-C", tree, "merged", "art"],
+                   check=True)
+    with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
+        handle.write(f"#!/bin/sh\necho \"$*\" >> {root}/gh-calls\ncase $2 in\n"
+                     f"  list) echo '{tag}' ;;\n"
+                     + ("  download) exit 1 ;;\n" if broken else
+                        f'  download) shift 2; while [ "$1" != --dir ]; do shift; done; mkdir -p "$2"; '
+                        f'cp {root}/asset.tar.gz "$2/{tag}.tar.gz" ;;\n')
+                     + "esac\n")
+    os.chmod(os.path.join(bin_dir, "gh"), 0o755)
+    temp = os.path.join(root, "temp")
+    os.makedirs(temp)
+    env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+           "RUNNER_TEMP": temp, "GITHUB_REPOSITORY": "o/r"}
+    return subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+
+
+def case_the_last_published_sweep_s_rows_reach_the_record_jobs_and_no_sweep_is_no_rows():
+    problems = 0
+    # A release that cannot be read costs the pricing, not the sweep.
+    for tag, broken, rows in (("sweep-5", False, ["demo.json", "source.txt"]), ("", False, ["source.txt"]),
+                              ("sweep-5", True, ["source.txt"])):
+        with tempfile.TemporaryDirectory() as root:
+            done = _fetch_published(root, tag, broken)
+            found = sorted(os.listdir(os.path.join(root, "published-rows"))) \
+                if os.path.isdir(os.path.join(root, "published-rows")) else None
+            if done.returncode or found != rows:
+                problems += fail(f"newest published sweep {tag or 'none'}: exit {done.returncode}, "
+                                 f"published-rows holds {found}: {done.stderr}")
+                continue
+            source = open(os.path.join(root, "published-rows", "source.txt")).read().strip()
+            if source != ("none" if broken else tag or "none"):
+                problems += fail(f"the rows say they came from {source!r}, not {tag or 'none'}")
     return problems
 
 
@@ -3047,6 +3191,9 @@ CASES = (
     case_a_sweep_without_inputs_runs_the_full_arm_of_every_project,
     case_a_record_job_archives_the_checkout_the_plan_names,
     case_a_failed_project_is_declared_missing_and_the_rest_still_merge,
+    case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_all,
+    case_a_record_job_prices_its_slices_from_the_last_published_sweep_when_it_has_rows,
+    case_the_last_published_sweep_s_rows_reach_the_record_jobs_and_no_sweep_is_no_rows,
     case_a_completion_that_cannot_complete_is_refused_before_it_measures,
     case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft,
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
