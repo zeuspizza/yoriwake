@@ -452,7 +452,7 @@ def _maven_classes_the_whole_suite_misses(root):
                 continue
             with open(os.path.join(directory, name), encoding="utf-8") as f:
                 text = f.read()
-            if "@Test" not in text:
+            if not re.search(r"@(Test|ParameterizedTest)\b", text):
                 continue
             package = re.search(r"^package ([\w.]+)", text, re.M)
             qualified = f"{package.group(1)}.{name[:-3]}" if package else name[:-3]
