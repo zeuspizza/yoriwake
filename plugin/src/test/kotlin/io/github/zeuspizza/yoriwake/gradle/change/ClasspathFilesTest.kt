@@ -807,4 +807,82 @@ class ClasspathFilesTest {
             dependencies(machine.table(vendor, a)).keys,
         )
     }
+
+    @Test
+    fun `a file an upper-case JAR dependency's manifest names gets a row, and moves only that row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/VENDOR.JAR"), 0L, manifest("lib/a.jar"))
+        val named = jar(File(base, "vendor/lib/a.jar"), 0L, "a.txt" to "a")
+        val before = found(machine.table(vendor))
+
+        assertTrue("dependency:<outside>/VENDOR.JAR Class-Path lib/a.jar" in before, before.toString())
+
+        jar(named, 0L, "a.txt" to "b")
+
+        assertEquals(
+            mapOf("dependency:<outside>/VENDOR.JAR Class-Path lib/a.jar" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `an upper-case JAR a dependency's manifest names gives chained rows`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("lib/B.JAR"))
+        jar(File(base, "vendor/lib/B.JAR"), 0L, manifest("c.jar"))
+        jar(File(base, "vendor/lib/c.jar"), 0L, "c.txt" to "c")
+
+        assertTrue(
+            "dependency:<outside>/vendor.jar Class-Path lib/B.JAR Class-Path c.jar" in dependencies(machine.table(vendor)),
+        )
+    }
+
+    @Test
+    fun `a zip dependency with no extension follows its manifest`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor"), 0L, manifest("lib/a.jar"))
+        jar(File(base, "vendor/lib/a.jar"), 0L, "a.txt" to "a")
+
+        assertTrue("dependency:<outside>/vendor Class-Path lib/a.jar" in dependencies(machine.table(vendor)))
+    }
+
+    @Test
+    fun `a text file on the classpath gives its own row only`(@TempDir base: File) {
+        val machine = Machine(base)
+        val notes = file(base, "vendor/notes.txt", "Class-Path: lib/a.jar\n")
+        jar(File(base, "vendor/lib/a.jar"), 0L, "a.txt" to "a")
+
+        assertEquals(
+            setOf("dependency:<outside>/notes.txt", ClasspathFiles.DEPENDENCY_ORDER),
+            dependencies(machine.table(notes)).keys,
+        )
+    }
+
+    @Test
+    fun `an upper-case JAR a walked jar's manifest names keeps its own row and gives rows for what it names`(
+        @TempDir root: File,
+    ) {
+        val libs = File(root, "build/libs")
+        val path = jar(File(libs, "path.jar"), 0L, manifest("VENDOR.JAR notes.txt"))
+        jar(File(libs, "VENDOR.JAR"), 0L, manifest("a.jar %zz"))
+        jar(File(libs, "a.jar"), 0L, "a.txt" to "a", "dev/A.class" to "bytes")
+        file(libs, "notes.txt", "Class-Path: b.jar\n")
+        jar(File(libs, "b.jar"), 0L, "b.txt" to "b")
+
+        val digests = files(ClasspathFiles.walk(listOf(path), listOf(), root))
+
+        assertEquals(
+            setOf(
+                "build/libs/path.jar!/META-INF/MANIFEST.MF",
+                "build/libs/VENDOR.JAR",
+                "build/libs/VENDOR.JAR Class-Path %zz",
+                "build/libs/a.jar!/a.txt",
+                "build/libs/a.jar!/dev/A.class",
+                "build/libs/notes.txt",
+            ),
+            digests.keys,
+        )
+        assertEquals(ClasspathFiles.UNREADABLE, digests["build/libs/VENDOR.JAR Class-Path %zz"])
+        assertNotEquals(ClasspathFiles.UNREADABLE, digests["build/libs/VENDOR.JAR"])
+    }
 }

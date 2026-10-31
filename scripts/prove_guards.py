@@ -2768,6 +2768,16 @@ MUTATIONS = [
      "            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)\n",
      "",
      functional_suite, "a file only a dependency's manifest names runs every test when it is replaced"),
+    # The JDK's class loader follows the manifest of every class-path file, whatever its name: a
+    # vendor's `VENDOR.JAR` puts what it names on the class path as a `vendor.jar` would.
+    ("a dependency's manifest Class-Path is followed only from a file named .jar or .zip", CLASSPATH_FILES,
+     "            if (!jar.isFile) continue",
+     '            if (!jar.isFile || !(jar.name.endsWith(".jar") || jar.name.endsWith(".zip"))) continue',
+     functional_suite, "a file an upper-case JAR dependency's manifest names runs every test when it is replaced"),
+    ("the selecting walk does not follow the manifest of a file it digests whole", CLASSPATH_FILES,
+     "                            pending.add(named to true)",
+     "                            pending.size",
+     functional_suite, "a jar an upper-case JAR a build jar's manifest names runs the test that reads it when it changed"),
     # A task Develocity runs or chooses tests for is declined, and nothing of yoriwake's acts on it
     #: Test Distribution recorded half a suite's coverage even locally.
     ("Test Distribution is no longer detected", DEVELOCITY_DETECTION,
