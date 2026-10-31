@@ -1165,6 +1165,70 @@ def case_every_guard_job_runs_all_its_shards_under_its_required_name():
     return problems
 
 
+def guard_costs_problems(text):
+    """What keeps the every-guard check from reporting its shards' time or keeping their costs,
+    above all on a run where a shard failed, which is when the time matters."""
+    block = _job_block(text, "full")
+    if block is None:
+        return ["the full job is gone"]
+    steps = block.split("\n      - ")
+    download = [step for step in steps if "download-artifact@" in step]
+    checkout = [step for step in steps if "actions/checkout@" in step]
+    costs = [step for step in steps if "guard_costs.py" in step or "name: guard-costs" in step]
+    problems = []
+    if not download or "id: shards" not in download[0] or "if: always()" not in download[0]:
+        problems.append("the shards' download is not `id: shards` with `if: always()`")
+    if not checkout or "if: always()" not in checkout[0]:
+        problems.append("the checkout does not run when a shard failed")
+    for what in ("guard_costs.py report shards", "guard_costs.py derive shards", "name: guard-costs"):
+        step = next((step for step in costs if what in step), None)
+        if step is None:
+            problems.append(f"no step runs `{what}`")
+        elif "if: always() && steps.shards.outcome == 'success'" not in step:
+            problems.append(f"`{what}` is not gated on the shards' download alone")
+        elif "continue-on-error: true" not in step:
+            problems.append(f"`{what}` can fail the required check, though it only reports")
+    return problems
+
+
+def case_the_every_guard_check_reports_and_keeps_its_measured_costs():
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = guard_costs_problems(text)
+    if problems:
+        return sum(fail(f"guards.yml: {problem}") for problem in problems)
+    if not guard_costs_problems(text.replace("        if: always() && steps.shards.outcome == 'success'\n", "", 1)):
+        return fail("a derive step that runs only on success was not reported")
+    if not guard_costs_problems(text.replace("        continue-on-error: true\n", "", 1)):
+        return fail("a cost step that can fail the required check was not reported")
+    return 0
+
+
+def case_guard_results_with_timings_read_as_those_without():
+    """A run's timings are new keys; the check must read a results file from before them alike."""
+    problems = 0
+    verdicts = []
+    for timed in (False, True):
+        with tempfile.TemporaryDirectory() as root:
+            selection = _guard_selection(root, ["a", "b"])
+            _guard_shard(root, 1, 2, {"a": "fired"}, 2)
+            _guard_shard(root, 2, 2, {"b": "nothing caught"}, 2)
+            if timed:
+                for index in (1, 2):
+                    path = os.path.join(root, "shards", f"guards-pr-{index}-of-2", "changed.json")
+                    with open(path, encoding="utf-8") as handle:
+                        result = json.load(handle)
+                    result.update(seconds=100.0, phases={"setup": 10.0, "parallel": 90.0}, idle_tail=None)
+                    for guard in result["guards"]:
+                        guard.update(suite_class="maven/SomeTest", seconds=40.0, baseline_seconds=None)
+                    with open(path, "w", encoding="utf-8") as handle:
+                        json.dump(result, handle)
+            verdicts.append(_guard_check(root, selection))
+    if verdicts[0] != verdicts[1] or not verdicts[0]:
+        problems += fail(f"timed results read differently: {verdicts}")
+    return problems
+
+
 def case_only_a_docs_change_skips_the_checks():
     """A wrong "docs only" skips every check, which GitHub counts as passing: each way in is tested."""
     problems = 0
@@ -2792,6 +2856,8 @@ CASES = (
     case_guard_shards_that_partition_the_selection_and_fire_pass,
     case_every_way_a_selected_guard_can_go_unproved_fails,
     case_every_guard_job_runs_all_its_shards_under_its_required_name,
+    case_the_every_guard_check_reports_and_keeps_its_measured_costs,
+    case_guard_results_with_timings_read_as_those_without,
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
     case_no_map_is_reported_rather_than_returned_as_success,
