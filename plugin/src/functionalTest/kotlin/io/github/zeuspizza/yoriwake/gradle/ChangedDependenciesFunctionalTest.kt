@@ -134,11 +134,11 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
         }
     """.trimIndent()
 
-    /** `vendor.jar`, outside the root, carries no files; its manifest names `lib/a.jar` beside it. */
-    private fun vendorCaptured(dir: File, vendor: File) {
-        jar(File(vendor, "vendor.jar"), "lib/a.jar")
+    /** [name], outside the root, carries no files; its manifest names `lib/a.jar` beside it. */
+    private fun vendorCaptured(dir: File, vendor: File, name: String = "vendor.jar") {
+        jar(File(vendor, name), "lib/a.jar")
         jar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=a\n")
-        val onClasspath = "dependencies { testRuntimeOnly(files(\"${File(vendor, "vendor.jar").invariantSeparatorsPath}\")) }"
+        val onClasspath = "dependencies { testRuntimeOnly(files(\"${File(vendor, name).invariantSeparatorsPath}\")) }"
         captured(dir, fromProjectProperty + "\n" + onClasspath, vendorTest)
     }
 
@@ -153,6 +153,22 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
         assertTrue("dev.sample.AbVendorTest" in ranTests(dir), output)
         assertEquals("dependencies-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertContains(output, "vendor.jar Class-Path lib/a.jar")
+    }
+
+    @Test
+    fun `a file an upper-case JAR dependency's manifest names runs every test when it is replaced`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        vendorCaptured(dir, vendor, "VENDOR.JAR")
+        jar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=b\n")
+        changeBeta(dir)
+
+        val output = select(dir)
+
+        assertTrue("dev.sample.AbVendorTest" in ranTests(dir), output)
+        assertEquals("dependencies-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, "VENDOR.JAR Class-Path lib/a.jar")
     }
 
     @Test

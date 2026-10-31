@@ -1244,4 +1244,28 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
+
+    // Track: code reading. Boundary: the dependency rows follow the manifest `Class-Path` of every
+    // class-path file that is not a directory, as the JDK's class loader does, whatever the file is
+    // called. A vendor SDK shipped with an upper-case `VENDOR.JAR` names the jar that holds its
+    // settings.
+    @Test
+    fun `a jar an upper-case JAR dependency's manifest names runs the test that reads it when it is replaced`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        manifestJar(File(vendor, "VENDOR.JAR"), "lib/a.jar")
+        manifestJar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=a\n")
+        val build = buildWith("", after = "dependencies { testRuntimeOnly(files(\"${File(vendor, "VENDOR.JAR").invariantSeparatorsPath}\")) }")
+        val result = attempt(
+            dir, "dev.sample.A1VendorTest", Aim.Forced("dependencies-changed"),
+            listOf(codec, other, first, propertyTest("A1VendorTest", "vendor.properties", "flavor", "a"), codecTest, classOrderByName),
+            buildScript = build,
+        ) {
+            changeCodec(it)
+            manifestJar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=b\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }

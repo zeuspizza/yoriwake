@@ -753,74 +753,22 @@ SUITES = [
 
 SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
 
-# One run of each functional class on a GitHub runner, in seconds, for balancing the shards: the
-# registry's one functional figure cannot tell a 30s class from a 230s one. Derived from the job
-# logs of the every-guard run 39274620985 (8 shards, 574 guards): in each shard, each class's
-# interval between its tree's `<Class> done in <tree> at <N>s` lines, divided by its guards in that
-# shard plus the baseline each shard pays, averaged over the shards that ran it. Re-measured by
-# repeating that on a later every-guard run.
-FUNCTIONAL_CLASS_SECONDS = {
-    "AuditAndExplainFunctionalTest": 52,
-    "BootClassPathFunctionalTest": 50,
-    "BranchPolicyFunctionalTest": 81,
-    "CaptureFunctionalTest": 97,
-    # Estimated from DeclaredDependenciesFunctionalTest, as few builds of the same shape, until an
-    # every-guard run measures it.
-    "ChangedDependenciesFunctionalTest": 36,
-    "ChangedBytesFunctionalTest": 40,
-    "ClassFileCeilingFunctionalTest": 55,
-    "ComplementFunctionalTest": 214,
-    "ConfigurationCacheFunctionalTest": 40,
-    "DecisionRulesFunctionalTest": 26,
-    # Estimated from MultiProjectFunctionalTest, as many builds of the same shape, until an
-    # every-guard run measures it.
-    "DeclaredDependenciesFunctionalTest": 36,
-    # Estimated from DecisionRulesFunctionalTest, as many builds of the same shape, until an
-    # every-guard run measures it.
-    "LargeChangeFunctionalTest": 30,
-    "DeclineFunctionalTest": 65,
-    "DevelocityFunctionalTest": 79,
-    "EnvironmentFingerprintFunctionalTest": 82,
-    "FullRunRequestFunctionalTest": 101,
-    "GeneratedClasspathFilesFunctionalTest": 120,
-    "HostCoverageFunctionalTest": 60,
-    # Estimated from its local time (21s for eight builds) doubled for a runner, until an
-    # every-guard run measures it.
-    "InJvmParallelismCharacterizationTest": 45,
-    "InitScriptFunctionalTest": 54,
-    "IsolatedCaptureFunctionalTest": 71,
-    "JvmSharedFunctionalTest": 172,
-    # Estimated from HostCoverageFunctionalTest by local run time (40 s to its 15 s), until an
-    # every-guard run measures it.
-    "KoverFunctionalTest": 160,
-    # Plus 8 s measured locally for the two plain JUnit 4 class-failure tests, until an every-guard
-    # run measures it again.
-    "MapDatingFunctionalTest": 237,
-    "MapProvenanceFunctionalTest": 98,
-    # Estimated from TestWrittenFilesFunctionalTest by test count (17 of its 29), until an
-    # every-guard run measures it.
-    "PathIgnoreFunctionalTest": 61,
-    # An estimate: 46-48 s locally per Gradle version for its 10 tests, scaled as SelectionFunctionalTest.
-    "PlainRunnerSelectionFunctionalTest": 90,
-    "MultiProjectFunctionalTest": 36,
-    "MultiplatformFunctionalTest": 140,
-    "NamedTestsFunctionalTest": 111,
-    "NestedLoaderFunctionalTest": 40,
-    "ObservationFunctionalTest": 79,
-    "RefusalFunctionalTest": 96,
-    "RevertAfterUndatedCaptureFunctionalTest": 224,
-    "ScheduledFullRunFunctionalTest": 72,
-    "SelectionFunctionalTest": 197,
-    # Estimated from its local time (27s for nine tests) doubled for a runner, until an
-    # every-guard run measures it.
-    "SequentialRecordingFunctionalTest": 55,
-    # Measured locally (20s for one test, two builds) doubled for a runner, until an every-guard
-    # run measures it.
-    "ShadowedJacocoRuntimeFunctionalTest": 40,
-    "TestLauncherFunctionalTest": 42,
-    "TestRetryFunctionalTest": 79,
-    "TestWrittenFilesFunctionalTest": 104,
-}
+# What one run of each functional and Maven class costs on a GitHub runner, for balancing the
+# shards: the registry's one figure per suite cannot tell a 30s class from a 1,200s one. Keyed
+# `<suite>/<Class>`, each with the seconds of its baseline and of one guard's run, measured by an
+# every-guard run on CI. `scripts/guard_costs.py derive` rewrites the file from such a run's
+# results; it is not edited by hand. Classes no run has timed yet are listed under `estimated`.
+COSTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guard_costs.json")
+_COSTS = {}
+
+
+def class_costs():
+    """The cost table's classes, read once."""
+    if not _COSTS:
+        with open(COSTS_FILE, encoding=ENCODING) as handle:
+            _COSTS.update(json.load(handle)["classes"])
+    return _COSTS
+
 
 # The fast set: what runs on every pull request, so it must stay well inside a runner's patience.
 # The next suite added to it should come with a measurement, not an estimate. `python`,
@@ -2820,6 +2768,16 @@ MUTATIONS = [
      "            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)\n",
      "",
      functional_suite, "a file only a dependency's manifest names runs every test when it is replaced"),
+    # The JDK's class loader follows the manifest of every class-path file, whatever its name: a
+    # vendor's `VENDOR.JAR` puts what it names on the class path as a `vendor.jar` would.
+    ("a dependency's manifest Class-Path is followed only from a file named .jar or .zip", CLASSPATH_FILES,
+     "            if (!jar.isFile) continue",
+     '            if (!jar.isFile || !(jar.name.endsWith(".jar") || jar.name.endsWith(".zip"))) continue',
+     functional_suite, "a file an upper-case JAR dependency's manifest names runs every test when it is replaced"),
+    ("the selecting walk does not follow the manifest of a file it digests whole", CLASSPATH_FILES,
+     "                            pending.add(named to true)",
+     "                            pending.size",
+     functional_suite, "a jar an upper-case JAR a build jar's manifest names runs the test that reads it when it changed"),
     # A task Develocity runs or chooses tests for is declined, and nothing of yoriwake's acts on it
     #: Test Distribution recorded half a suite's coverage even locally.
     ("Test Distribution is no longer detected", DEVELOCITY_DETECTION,
@@ -4845,9 +4803,9 @@ ALONE_SLOTS = 2
 
 
 def _alone_bins(exclusive, slots):
-    """The alone phase: one group per functional class, most guards first, each handed whole to
-    whichever tree is free -- a fixed split by guard count left one tree idle for minutes -- and
-    the guards that run one at a time after them. One slot pairs nothing."""
+    """The alone phase: one group per functional class, heaviest by the cost table first, each
+    handed whole to whichever tree is free -- a fixed split by guard count left one tree idle for
+    minutes -- and the guards that run one at a time after them. One slot pairs nothing."""
     by_class, serial = {}, []
     for index in exclusive:
         suite, expect = MUTATIONS[index][4], MUTATIONS[index][5]
@@ -4855,7 +4813,9 @@ def _alone_bins(exclusive, slots):
             by_class.setdefault(_class_of(suite, expect), []).append(index)
         else:
             serial.append(index)
-    return sorted(by_class.values(), key=len, reverse=True), serial
+    heaviest = sorted(by_class.items(), key=lambda item: (
+        -_class_weight("functional", item[0], len(item[1])), item[0] or ""))
+    return [indices for _name, indices in heaviest], serial
 
 
 def _init_alone(slots):
@@ -5087,34 +5047,53 @@ def _run_suite(suite, test_class=None):
     Measured: four functional suites at once failed unmutated in every worker. TestKit
     keeps its daemons and configuration cache under the machine's shared temp directory, so
     concurrent TestKit builds read each other's state, and the other Gradle suites failed beside
-    them under the same load. Python suites share nothing and still run in parallel.
+    them under the same load. Python suites share nothing and still run in parallel. Returns its
+    failures and the seconds it ran, the wait for the lock left out.
     """
     if _locked(SUITE_NAMES[suite]):
         with _WORKER["gradle_lock"]:
-            return _suite_run(suite, test_class)
-    return _suite_run(suite, test_class)
+            return _timed_run(suite, test_class)
+    return _timed_run(suite, test_class)
+
+
+def _timed_run(suite, test_class):
+    """A suite's failures and the seconds it ran. Timed inside the lock, so a wait for another
+    worker's build is not counted as this one's cost."""
+    start = time.monotonic()
+    fired = _suite_run(suite, test_class)
+    return fired, round(time.monotonic() - start, 1)
 
 
 def _prove_in_worker(index):
-    """One guard, in this worker's own tree: its suite unmutated once, then mutated."""
+    """One guard, in this worker's own tree: its suite unmutated once, then mutated. Returns its
+    index, what fired, a refusal, and the seconds of its run and of the baseline it paid, if any."""
     label, path, old, new, suite, expect = MUTATIONS[index]
     name = SUITE_NAMES[suite]
     test_class = _class_of(suite, expect)
     key = (name, test_class)
+    timing = _timing(name, test_class)
     if key not in _WORKER["baselined"]:
-        _WORKER["baselined"][key] = _run_suite(suite, test_class)
+        _WORKER["baselined"][key], timing["baseline_seconds"] = _run_suite(suite, test_class)
     standing = _WORKER["baselined"][key]
     if standing:
         scope = f" ({test_class})" if test_class else ""
         return index, None, (f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
-                             f"{standing[0]}")
+                             f"{standing[0]}"), timing
     target = source(path)
     original = read_source(target)
     write_source(target, original.replace(old, new, 1))
     try:
-        return index, _run_suite(suite, test_class), None
+        fired, timing["seconds"] = _run_suite(suite, test_class)
+        return index, fired, None, timing
     finally:
         write_source(target, original)
+
+
+def _timing(name, test_class):
+    """A guard's entry in `--results`' timings, before anything ran: its suite and class as the
+    cost table keys them, the seconds of its mutated run, and of the baseline it paid, if any."""
+    return {"suite_class": f"{name}/{test_class}" if test_class else None, "seconds": None,
+            "baseline_seconds": None}
 
 
 def _run_parallel(args, selected, skipped, reasons):
@@ -5127,6 +5106,7 @@ def _run_parallel(args, selected, skipped, reasons):
     paths = prepare_workers(slots_needed)
     tasks = warm_up_tasks(selected)
     if tasks:
+        _phase("warm_up")
         print(f"compiling {' '.join(tasks)} in each worker tree, one at a time", flush=True)
         refusal = _warm_up(paths, tasks)
         if refusal:
@@ -5157,6 +5137,7 @@ def _run_parallel(args, selected, skipped, reasons):
         del others[:max(1, slots_needed - 1)]
     failures = 0
     results = []
+    _phase("parallel")
     if indices:
         with concurrent.futures.ProcessPoolExecutor(max_workers=slots_needed, mp_context=context,
                                                     initializer=_init_worker,
@@ -5171,6 +5152,7 @@ def _run_parallel(args, selected, skipped, reasons):
         print(f"\n{sum(map(len, bins))} functional guard(s) in {len(bins)} classes, {slots} at a time, "
               f"each class whole to whichever of {', '.join(paths[:slots])} is free:",
               flush=True)
+        _phase("functional")
         alone = manager.Queue()
         for path in paths[:slots]:
             alone.put(path)
@@ -5186,10 +5168,12 @@ def _run_parallel(args, selected, skipped, reasons):
                 cls = _class_of(functional_suite, MUTATIONS[results[0][0]][5])
                 print(f"    {cls} done in {tree} at {last[tree]:.0f}s", flush=True)
         if len(last) > 1:
-            print(f"    idle tail: {max(last.values()) - min(last.values()):.0f}s", flush=True)
+            _RUN["idle_tail"] = round(max(last.values()) - min(last.values()), 1)
+            print(f"    idle tail: {_RUN['idle_tail']:.0f}s", flush=True)
     else:
         serial = [i for b in bins for i in b] + serial
     if serial:
+        _phase("serial")
         print(f"\n{len(serial)} guard(s) whose suite runs alone, in {paths[0]}:", flush=True)
         here, setting = os.getcwd(), os.environ.get(yoriwake_checkout.SETTING)
         _enter(paths[0])
@@ -5216,8 +5200,19 @@ def _not_proof(line):
 
 
 # What this run decided, for `--results`: each guard's outcome by label, and the first refusal that
-# stopped it, so a guard the run never reached is written as not proved, with the reason.
-_RUN = {"outcomes": {}, "refused": None, "selection": 0}
+# stopped it, so a guard the run never reached is written as not proved, with the reason. Also what
+# it cost: each guard's timings by label, and the seconds of each phase of the run.
+_RUN = {"outcomes": {}, "refused": None, "selection": 0, "timings": {}, "phases": {}, "phase": None,
+        "started": None, "idle_tail": None}
+
+
+def _phase(name):
+    """Ends the run's current phase and starts `name`; None ends it alone."""
+    now = time.monotonic()
+    if _RUN["phase"]:
+        current, since = _RUN["phase"]
+        _RUN["phases"][current] = _RUN["phases"].get(current, 0) + now - since
+    _RUN["phase"] = (name, now) if name else None
 
 
 def _refuse(message):
@@ -5226,10 +5221,12 @@ def _refuse(message):
     _RUN["refused"] = _RUN["refused"] or message.splitlines()[0]
 
 
-def _report(index, fired, refusal):
-    """Prints one guard's verdict. Returns 1 when it does not count as proved."""
+def _report(index, fired, refusal, timing=None):
+    """Prints one guard's verdict, and keeps its timing. Returns 1 when it does not count as proved."""
     label, _path, _old, _new, _suite, expect = MUTATIONS[index]
     outcomes = _RUN["outcomes"]
+    if timing:
+        _RUN["timings"][label] = timing
     if refusal:
         print(f"{label:62} -> NOT PROVED: {refusal}", flush=True)
         outcomes[label] = ("not proved", refusal)
@@ -5255,56 +5252,85 @@ def _report(index, fired, refusal):
 
 def _place(units, count, shards):
     """Each (weight, name, guards) unit, heaviest first, to the shard with the least weight so far,
-    then the fewest units, then the lowest index; returns each shard's weight."""
-    load, held = [0.0] * count, [0] * count
-    for weight, _name, guards in sorted(units, key=lambda unit: (-unit[0], unit[1])):
+    then the fewest units, then the lowest index; returns each shard's weight, and each unit with
+    the shard it went to."""
+    load, held, placed = [0.0] * count, [0] * count, []
+    for unit in sorted(units, key=lambda unit: (-unit[0], unit[1])):
         lightest = min(range(count), key=lambda i: (load[i], held[i], i))
-        load[lightest] += weight
+        load[lightest] += unit[0]
         held[lightest] += 1
-        shards[lightest].extend(guards)
-    return load
+        shards[lightest].extend(unit[2])
+        placed.append((lightest, unit))
+    return load, placed
 
 
-def class_seconds(name):
-    """One run of a functional class on CI: measured, the median of those measured for a class not
-    yet measured, and the whole suite for a guard whose class does not resolve."""
-    known = sorted(FUNCTIONAL_CLASS_SECONDS.values())
+def class_cost(suite, name):
+    """The (baseline, guard) seconds of one class of `suite` on CI: measured, the median of the
+    suite's classes for one not yet in the table, and the whole suite for a guard whose class does
+    not resolve."""
+    known = [cost for key, cost in class_costs().items() if key.split("/", 1)[0] == suite]
+    baselines = sorted(cost["baseline"] for cost in known)
+    guards = sorted(cost["guard"] for cost in known)
     if name is None:
-        return sum(known)
-    return FUNCTIONAL_CLASS_SECONDS.get(name, known[len(known) // 2])
+        return sum(baselines), sum(guards)
+    cost = class_costs().get(f"{suite}/{name}")
+    if cost is None:
+        return baselines[len(baselines) // 2], guards[len(guards) // 2]
+    return cost["baseline"], cost["guard"]
+
+
+def _class_weight(suite, name, guards):
+    """The seconds a run of `guards` guards of one class costs: its baseline, then each guard."""
+    baseline, guard = class_cost(suite, name)
+    return baseline + guards * guard
 
 
 def partition(mutations, count):
     """`mutations` in `count` shards balanced by cost, each in `mutations`' order, and each shard's
-    projected (functional, other) seconds. Computed from the selection, the weights above and the
-    checkout only, so every machine splits a commit's selection alike.
+    projection: its wall seconds and its functional, Maven and other parts. Computed from the
+    selection, `guard_costs.json` and the checkout only, so every machine splits a commit's
+    selection alike.
 
-    A functional class's guards share one tree's run and its one baseline, so they stay together
-    unless the class outweighs one tree's share of the functional phase; then it splits into
-    near-equal chunks. Functional chunks weigh CI seconds and the other guards their suite's
-    registry seconds; the two scales are balanced apart, never added.
+    A functional or Maven class's guards share their baselines, one per worker tree that runs them,
+    so they stay together unless the class outweighs a shard's share of its suite; then it splits
+    into near-equal chunks. A functional class runs in one tree; a Maven class's guards go to
+    whichever of the parallel phase's workers is free, so a chunk may pay its baseline more than
+    once where the projection counts it once; `guard_costs.py report` shows what that costs. Both are placed on one scale, the seconds a chunk adds to its shard's wall
+    clock: a functional chunk runs beside another on one of `ALONE_SLOTS` trees, a Maven chunk under
+    the Gradle lock, one build at a time. The other guards are placed after them by their suite's
+    registry seconds, a scale balanced apart and never added.
     """
+    # How many of a suite's builds run at once in a shard.
+    slots = {"functional": ALONE_SLOTS, "maven": 1}
     by_class, other = {}, []
     for m in mutations:
-        if m[4] is functional_suite:
-            by_class.setdefault(_class_of(m[4], m[5]), []).append(m)
+        if SUITE_NAMES.get(m[4]) in slots:
+            by_class.setdefault((SUITE_NAMES[m[4]], _class_of(m[4], m[5])), []).append(m)
         else:
             other.append(m)
-    rate = class_seconds
-    weights = {name: (len(guards) + 1) * rate(name) for name, guards in by_class.items()}
-    share = sum(weights.values()) / (count * ALONE_SLOTS) if weights else 0
+    totals = {}
+    for (suite, name), guards in by_class.items():
+        totals[suite] = totals.get(suite, 0) + _class_weight(suite, name, len(guards))
     units = []
-    for name, guards in by_class.items():
-        pieces = 1 if weights[name] <= share else min(len(guards), math.ceil(weights[name] / share))
+    for (suite, name), guards in by_class.items():
+        weight = _class_weight(suite, name, len(guards))
+        share = totals[suite] / (count * slots[suite])
+        pieces = 1 if weight <= share else min(len(guards), math.ceil(weight / share))
         for piece in range(pieces):
             chunk = guards[piece * len(guards) // pieces:(piece + 1) * len(guards) // pieces]
-            units.append(((len(chunk) + 1) * rate(name), name or "", chunk))
+            units.append((_class_weight(suite, name, len(chunk)) / slots[suite],
+                          f"{suite}/{name or ''}", chunk))
     shards = [[] for _ in range(count)]
-    functional = _place(units, count, shards)
+    wall, placed = _place(units, count, shards)
+    parts = [{"functional": 0.0, "maven": 0.0} for _ in range(count)]
+    for index, (weight, name, _chunk) in placed:
+        suite = name.split("/", 1)[0]
+        parts[index][suite] += weight * slots[suite]
     cost = {fn: c for _n, fn, c in SUITES}
-    rest = _place([(cost.get(m[4], 0), m[0], [m]) for m in other], count, shards)
+    rest, _placed = _place([(cost.get(m[4], 0), m[0], [m]) for m in other], count, shards)
     order = {m[0]: i for i, m in enumerate(mutations)}
-    return [sorted(shard, key=lambda m: order[m[0]]) for shard in shards], list(zip(functional, rest))
+    loads = [{"wall": wall[i], **parts[i], "other": rest[i]} for i in range(count)]
+    return [sorted(shard, key=lambda m: order[m[0]]) for shard in shards], loads
 
 
 def in_shard(mutations, shard):
@@ -5316,8 +5342,10 @@ def in_shard(mutations, shard):
 def shard_projections(mutations, count):
     """One line per shard: its guards and projected weights, so the balance reads before a dispatch."""
     shards, loads = partition(mutations, count)
-    return [f"shard {i + 1}/{count}: {len(shard)} guard(s), functional ~{loads[i][0]:.0f}s on CI, "
-            f"other ~{loads[i][1]:.0f}s by the registry" for i, shard in enumerate(shards)]
+    return [f"shard {i + 1}/{count}: {len(shard)} guard(s), ~{load['wall'] / 60:.0f} min projected on "
+            f"CI (functional ~{load['functional']:.0f}s over {ALONE_SLOTS} trees, Maven "
+            f"~{load['maven']:.0f}s), other ~{load['other']:.0f}s by the registry"
+            for i, (shard, load) in enumerate(zip(shards, loads))]
 
 
 def parse_shard(text):
@@ -5342,16 +5370,22 @@ def _selection_header(args, selection):
 
 
 def write_results(path, args, selection, ran):
-    """`--results`: each guard this run held, with its outcome. A guard the run stopped before is
-    not proved, with the refusal that stopped it."""
+    """`--results`: each guard this run held, with its outcome and the seconds it took. A guard the
+    run stopped before is not proved, with the refusal that stopped it, and has no seconds. Also
+    the run's seconds, and each phase's: they sum to the run's."""
     stopped = _RUN["refused"] or "the run ended before it was proved"
+    _phase(None)
     guards = []
     for mutation in ran:
         outcome, detail = _RUN["outcomes"].get(mutation[0], ("not proved", stopped))
+        timing = _RUN["timings"].get(mutation[0]) or _timing(None, None)
         guards.append({"label": mutation[0], "suite": SUITE_NAMES.get(mutation[4]),
-                       "outcome": outcome, "detail": detail})
+                       "outcome": outcome, "detail": detail, **timing})
+    started = _RUN["started"]
     _write_json(path, {**_selection_header(args, selection), "refused": _RUN["refused"],
-                       "guards": guards})
+                       "seconds": round(time.monotonic() - started, 1) if started else None,
+                       "phases": {name: round(seconds, 1) for name, seconds in _RUN["phases"].items()},
+                       "idle_tail": _RUN["idle_tail"], "guards": guards})
 
 
 def _shard_line(args, selected):
@@ -5402,8 +5436,8 @@ def main(argv=None):
                              "suite taken out of the fast set, and exit 1 if there is any")
     parser.add_argument("--shard", metavar="I/N",
                         help="only shard I of N of the selected guards, split by measured cost with "
-                             "a functional class's guards together, as CI runs them; with the same "
-                             "flags, reproduces one CI shard")
+                             "a functional or Maven class's guards together, as CI runs them; with "
+                             "the same flags, reproduces one CI shard")
     parser.add_argument("--results", metavar="FILE",
                         help="write each guard this run held and its outcome to FILE as JSON, on "
                              "every exit")
@@ -5411,7 +5445,9 @@ def main(argv=None):
                         help="run nothing; write the guards these flags select, before any shard, "
                              "to FILE as JSON")
     args = parser.parse_args(argv)
-    _RUN.update(outcomes={}, refused=None, selection=0)
+    _RUN.update(outcomes={}, refused=None, selection=0, timings={}, phases={}, phase=None,
+                started=time.monotonic(), idle_tail=None)
+    _phase("setup")
     held = {"selection": [], "ran": []}
     try:
         return _main(args, held)
@@ -5570,6 +5606,7 @@ def _main(args, held):
         return _run_parallel(args, selected, skipped, reasons)
     # THE BASELINE, FIRST. Every line below reads "the guard fired" from a failing suite, so a suite
     # that was already failing would report every mutation as caught while catching nothing.
+    _phase("serial")
     print("baseline, unmutated:")
     # A functional guard that runs one class is baselined on that class, just before its first
     # mutation; the whole suite here only if some guard falls back to it.
@@ -5594,8 +5631,9 @@ def _main(args, held):
     for mutation in selected:
         label, relative, old, new, suite, expect = mutation
         test_class = _class_of(suite, expect)
+        timing = _timing(SUITE_NAMES[suite], test_class)
         if test_class and test_class not in baselined:
-            standing = suite(test_class)
+            standing, timing["baseline_seconds"] = _timed_run(suite, test_class)
             print(f"  baseline {test_class:44} -> {len(standing)} failing"
                   + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
             if standing:
@@ -5623,13 +5661,13 @@ def _main(args, held):
         undo = _restore_on_signal(path, original)
         write_source(path, original.replace(old, new, 1))
         try:
-            fired = _suite_run(suite, test_class)
+            fired, timing["seconds"] = _timed_run(suite, test_class)
         finally:
             write_source(path, original)
             undo()
             assert hashlib.sha256(read_source(path).encode(ENCODING)).hexdigest() == digest, \
                 f"restore failed: {path}"
-        failures += _report(MUTATIONS.index(mutation), fired, None)
+        failures += _report(MUTATIONS.index(mutation), fired, None, timing)
 
     print()
     if failures:

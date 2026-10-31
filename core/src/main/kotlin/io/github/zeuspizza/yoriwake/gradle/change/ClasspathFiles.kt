@@ -59,9 +59,11 @@ internal object ClasspathFiles {
      * elsewhere are not the build's output. Paths are relative to [rootDir]; a jar entry is
      * `<jar>!/<entry>`. With [classes], class files are walked too.
      *
-     * What a walked jar's manifest `Class-Path` names is on the test JVM's class path too, and on no
-     * classpath Gradle lists: it is walked wherever it lies, but in Gradle's module cache, whose paths
-     * name their content, and with its class files, which the class-digest rule never reads.
+     * What the manifest `Class-Path` of a walked jar, or of any other file walked whole, names is on
+     * the test JVM's class path too, and on no classpath Gradle lists: the JDK's class loader opens
+     * every class-path file as a jar, whatever its name. It is walked wherever it lies, but in
+     * Gradle's module cache, whose paths name their content, and with its class files, which the
+     * class-digest rule never reads.
      *
      * A copy of a tracked text file that git writes with `\r\n` in this checkout is digested with
      * its line endings as `\n` ([TrackedText]), so a checkout with other line-ending settings
@@ -145,9 +147,19 @@ internal object ClasspathFiles {
                 }
                 entry.isFile -> {
                     if (++files > maxFiles) return budgetSpent(maxFiles)
-                    digests[pathOf(rootDir, entry)] = runCatching {
+                    val file = pathOf(rootDir, entry)
+                    digests[file] = runCatching {
                         digestOf(entry::inputStream, entry.name, text)
                     }.getOrDefault(UNREADABLE)
+                    // A file no zip reader opens has no manifest the JVM can read either.
+                    val manifest = runCatching { JarFile(entry, false).use { it.manifest } }.getOrNull()
+                    for ((token, named) in classPathOf(entry, manifest)) {
+                        if (named == null) {
+                            digests["$file Class-Path $token"] = UNREADABLE
+                        } else if (!inModuleCache(named) && seen.add(named)) {
+                            pending.add(named to true)
+                        }
+                    }
                 }
                 // An entry that does not exist (a resource directory with nothing in it) holds nothing.
             }
@@ -174,10 +186,10 @@ internal object ClasspathFiles {
      * keeps entry timestamps), a directory file by file.
      *
      * What the manifest `Class-Path` of an entry read by content names is on the test JVM's class path
-     * too, and on no classpath Gradle or Maven lists: each file it names, and what a named jar names
-     * in turn, gets a row keyed `<the naming row's key> Class-Path <token>`, read by content (a
-     * directory with each jar in it by its entries), [ABSENT] when missing, since a file that later
-     * appears there shadows every later entry. A file on the classpath or already named, or in
+     * too, and on no classpath Gradle or Maven lists, whatever the naming file is called: each file
+     * it names, and what a named file names in turn, gets a row keyed `<the naming row's key>
+     * Class-Path <token>`, read by content (a directory with each jar in it by its entries),
+     * [ABSENT] when missing, since a file that later appears there shadows every later entry. A file on the classpath or already named, or in
      * Gradle's module cache, gets none.
      */
     fun table(
@@ -245,8 +257,9 @@ internal object ClasspathFiles {
         val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
         while (following.isNotEmpty()) {
             val (referrer, jar) = following.removeFirst()
-            if (!jar.isFile || !(jar.name.endsWith(".jar") || jar.name.endsWith(".zip"))) continue
-            // A jar no zip reader opens has no manifest the JVM can read either; its own row moves with its bytes.
+            // The JDK's class loader opens every class-path file as a jar, whatever its name.
+            if (!jar.isFile) continue
+            // A file no zip reader opens has no manifest the JVM can read either; its own row moves with its bytes.
             val manifest = runCatching { JarFile(jar, false).use { it.manifest } }.getOrNull()
             for ((token, named) in classPathOf(jar, manifest)) {
                 // A token that does not resolve is ignored by the JDK too, and an edit to it moves the jar's own row.
