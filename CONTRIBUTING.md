@@ -36,7 +36,9 @@ python3 scripts/prove_guards.py --changed origin/main   # the guards your change
 `bench/scan_private.py --push` refuses references to the maintainers' private notes (their
 identifiers, dates and documents) in what the push adds to `bench/`, `scripts/`, `docs/`,
 `.github/` and this file, and in its commit messages; the `scan` workflow runs it on every pull request, its title and
-body included.
+body included. It also refuses the name of the maintainers' assistant in commit messages and pull
+request text, except from a fork, whose label for an AI-assisted change may name it (below): from a
+fork, run it as `python3 bench/scan_private.py --fork --push`.
 
 `./gradlew build` and `./gradlew :maven:functionalTest` are the gate a pull request must pass. The
 build includes the coverage gates; a change that lowers coverage below them fails it.
@@ -149,7 +151,8 @@ Python one). Then run `--guard "<label>"` and watch it fire, before and after th
 ## AI-assisted contributions
 
 Welcome, and they must be labelled: a `Co-Authored-By` trailer or a note in the pull request saying
-which tool contributed. The same bar applies as to any other change.
+which tool contributed. The same bar applies as to any other change. The private-reference scan
+accepts that label in the commit messages and the pull request of a fork.
 
 ## Reporting a bug
 

@@ -27,6 +27,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A pull request from a fork may name the AI tool that assisted it, as CONTRIBUTING asks. Map: left alone.
 - A file only a dependency jar's manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
 - A file a `VENDOR.JAR` or other non-`.jar` manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
 
