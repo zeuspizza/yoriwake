@@ -62,7 +62,9 @@ EMPTY_CHANGE_SET = "empty-change-set"
 # demo and demo-kotlin are the plain cases. order-dependent is the shared-JVM-state case: a dropped
 # test that fails only after a selected test left state in the JVM, which a complement run alone
 # cannot reproduce and a full arm can.
-CONTROL_PROJECTS = ("demo", "demo-kotlin", "order-dependent")
+CONTROL_PROJECTS = ("demo", "demo-kotlin", "order-dependent", "demo-maven")
+# The Maven fixture, whose rows take full ground truth only: complement mode passes it by.
+MAVEN_CONTROLS = ("demo-maven",)
 SHARED_JVM_CONTROL = "order-dependent"
 # In complement mode these must report a miss from a row whose only truth was the complement:
 # a miss a full arm stood behind proves nothing about the complement.
@@ -169,7 +171,7 @@ SET_CONTROLS = {
                       "families": FORCING_FIXTURE_FAMILIES,
                       "plants": (planted_no_force(),) + NO_FORCE_RULES,
                       "args": ()},
-    run.NEUTRAL_SET: {"projects": ("demo", "demo-kotlin", "demo-android"), "plants": (),
+    run.NEUTRAL_SET: {"projects": ("demo", "demo-kotlin", "demo-android", "demo-maven"), "plants": (),
                       "args": ("--limit", "2")},
 }
 # `--corpus`: the legs that need a corpus checkout. Their maps are stamped with the control's arm,
@@ -451,6 +453,14 @@ def read_control_results(name, shapes=run.DEFAULT_SHAPES):
         return None
 
 
+def republish_tasks(projects):
+    """What the real checkout publishes after a planted leg: every plugin the leg's projects
+    resolved, the Maven plugin when one of them is a Maven build (`run.py` published its planted
+    one from the clone)."""
+    return run.publish_tasks(run.maven_build.any_maven(
+        [os.path.join(HERE, "projects", f"{name}.toml") for name in projects]))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -468,7 +478,8 @@ def main(argv=None):
     if args.corpus and args.shapes not in CORPUS_CONTROLS:
         parser.error(f"--corpus is a leg of {', '.join(CORPUS_CONTROLS)} only")
     control = (CORPUS_CONTROLS if args.corpus else SET_CONTROLS)[args.shapes]
-    projects = args.projects or list(control["projects"])
+    projects = args.projects or [name for name in control["projects"]
+                                 if args.ground_truth == "full" or name not in MAVEN_CONTROLS]
     if not set(projects) <= set(control["projects"]):
         parser.error(f"the {args.shapes} control runs on {', '.join(control['projects'])}")
     if args.ground_truth != "full" and args.shapes != run.DEFAULT_SHAPES:
@@ -507,7 +518,7 @@ def main(argv=None):
         # resolves the snapshot from there picks up a plugin with a defect planted in it.
         if clone != real:
             subprocess.run([os.path.join(real, "gradlew"), "--quiet",
-                            ":plugin:publishToMavenLocal"], cwd=real, check=False)
+                            *republish_tasks(projects)], cwd=real, check=False)
     return report(args, results)
 
 

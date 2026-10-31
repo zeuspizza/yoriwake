@@ -592,6 +592,9 @@ def isolated_arm_skip_reason(name, shared_results):
         data = {}
     facts = (data.get("capture_facts") or {}).get("map_task_facts") or {}
     workers = facts.get("workers")
+    # `run.py` refuses the isolated arm on a Maven project: it is not proven there.
+    if data.get("build_tool") == "maven":
+        return "isolated arm: not run (Maven project)", workers
     if name in ISOLATED_ALSO or workers == 1:
         return None, workers
     if not isinstance(workers, int):

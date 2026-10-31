@@ -153,6 +153,7 @@ def _restore_on_signal(path, original):
     return disarm
 
 PY_SRC = "bench/run.py"
+MAVEN_HARNESS = "bench/maven_build.py"
 SWEEP_SRC = "bench/sweep_corpus.py"
 CORPUS_SRC = "bench/corpus_state.py"
 CONTROLS_SRC = "bench/controls.py"
@@ -356,6 +357,12 @@ def order_suite():
     rows, results files and `git init`s in temporary directories."""
     return [line for script in ("bench/test_family_order.py", "bench/test_replay_order.py")
             for line in _python_checks(script)]
+
+
+def maven_harness_suite():
+    """The harness's Maven build seam, over Maven-shaped logs, reports and POMs in temporary
+    directories: what an arm runs, what its log and reports say, and the staged POM."""
+    return _python_checks("bench/test_maven_build.py")
 
 
 def controls_suite():
@@ -747,6 +754,8 @@ SUITES = [
     ("ci", ci_suite, 3.7),
     # Pure Python; two `git init`s and a local clone in a temporary directory.
     ("controls", controls_suite, 0.3),
+    # Pure Python plus a dozen `git init`s; 1.7s for one unmutated run on an Apple M1 Max.
+    ("maven harness", maven_harness_suite, 1.7),
     # Pure Python; one `git init` in a temporary directory.
     ("preflight", preflight_suite, 0.3),
     # Real child processes that stall or run past a short limit; 5.6s for one unmutated run.
@@ -815,7 +824,8 @@ def class_costs():
 # `functional` and `agent` are what full mode is for: they are most of the harness's time, and a
 # change to the agent or plugin sources runs full mode anyway. Treat the summary line the script
 # PRINTS as the authority on what a mode covers.
-FAST_SUITES = {"sweep", "sharding", "scan", "ci", "controls", "preflight", "corpus", "mutations", "order",
+FAST_SUITES = {"sweep", "sharding", "scan", "ci", "controls", "maven harness", "preflight", "corpus",
+               "mutations", "order",
                "revert",
                "decoder", "reference",
                "jdk identity", "unit", "qualify", "config cost", "configuration guards"}
@@ -4807,6 +4817,66 @@ MUTATIONS = [
      "        if (script) {\n",
      "        if (true) {\n",
      unit_suite, "on Maven the unmeasured toll names no script, since the one there is runs only Gradle"),
+    # The harness's Maven build seam (bench/maven_build.py and run.py's dispatch to it).
+    ("a Maven arm reads an earlier arm's reports as its own", MAVEN_HARNESS,
+     "    fresh = [p for p in glob.glob(pattern) if os.path.getmtime(p) >= since]",
+     "    fresh = glob.glob(pattern)", maven_harness_suite,
+     "a report older than the arm was read as that arm's results"),
+    ("a Maven map is taken from whichever execution's directory sorts first", MAVEN_HARNESS,
+     "    directory = map_dir_of(checkout, key)\n    return directory if",
+     "    directory = (sorted(glob.glob(os.path.join(maps_root(checkout), \"*\"))) or [\"\"])[0]\n"
+     "    return directory if", maven_harness_suite,
+     "another module's default-test map was handed over"),
+    ("a skipped Maven execution counts as one that ran", MAVEN_HARNESS,
+     "        elif any(marker in line for marker in SKIPPED):", "        elif False:",
+     maven_harness_suite, "a skipped execution counted as run"),
+    ("a Maven capture line is read as why selection ran everything", MAVEN_HARNESS,
+     "        if reason.startswith(skip_openers):\n            continue",
+     "        if False:\n            continue", maven_harness_suite, "the reason read as"),
+    ("a declined Maven execution is scored as a selection", PY_SRC,
+     "        if token:\n            return (f\"ran {self.name} declined",
+     "        if False:\n            return (f\"ran {self.name} declined", maven_harness_suite,
+     "an arm whose execution was declined was scored"),
+    ("a Maven arm that ran an upstream module's tests is scored", PY_SRC,
+     "        if others:\n            return (f\"ran tests of",
+     "        if False:\n            return (f\"ran tests of", maven_harness_suite,
+     "a row whose upstream module's tests ran was scored"),
+    ("any failed Maven compile is discarded as the generator's", MAVEN_HARNESS,
+     '    return "COMPILATION ERROR" in log or re.search(r"^\\[ERROR\\] e: ", log, re.M) is not None',
+     "    return True", maven_harness_suite,
+     "a dependency resolution failure was read as a generator rejection"),
+    ("a missing Maven artifact is retried as a transient download", MAVEN_HARNESS,
+     "    if not transfers or any(NOT_TRANSIENT_MAVEN.search(line) for line in errors) \\",
+     "    if not transfers or False \\", maven_harness_suite, "a 404 was retried"),
+    ("a Maven row builds over a resource the tree no longer has", MAVEN_HARNESS,
+     "            os.remove(path)\n            removed.append(output)",
+     "            removed.append(output)", maven_harness_suite,
+     "a resource renamed away survived"),
+    ("a Gradle project's arm is driven through Maven", PY_SRC,
+     "    if maven_build.is_maven(project):\n        return _maven_build(",
+     "    if True:\n        return _maven_build(", maven_harness_suite,
+     "a Gradle project's arm did not run Gradle"),
+    ("a Maven sweep runs complement ground truth", PY_SRC,
+     '                                    args.ground_truth != "full")',
+     "                                    False)", maven_harness_suite,
+     "a Maven run with --ground-truth check was not refused"),
+    ("a Maven recording run without a map passes on to its shards", PY_SRC,
+     "        if capture_map or not recording:", "        if True:", maven_harness_suite,
+     "a recording run without a map was not refused naming"),
+    ("a Maven build killed without its failure banner is filed as not run", MAVEN_HARNESS,
+     '    return log is None or "[INFO] BUILD SUCCESS" not in log',
+     '    return log is not None and "[INFO] BUILD FAILURE" in log', maven_harness_suite,
+     "killed without its failure banner"),
+    ("a resource a mutation added outlives its restore into a later invocation", MAVEN_HARNESS,
+     "        seen = set()\n    removed = []", "        return []\n    removed = []",
+     maven_harness_suite, "a resource a mutation added survived its restore"),
+    ("staging reformats POM lines it did not edit", MAVEN_HARNESS,
+     '            written += lines[i1:i2] if tag == "equal" else after[j1:j2]',
+     "            written += after[j1:j2]", maven_harness_suite,
+     "staging rewrote lines it did not edit"),
+    ("staging adds a second JaCoCo agent beside the guest's", MAVEN_HARNESS,
+     "    if not any(execution.agent_goal in other.agent_goals() for other in poms):",
+     "    if True:", maven_harness_suite, "a reactor with its own agent gained a second"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
@@ -4816,6 +4886,7 @@ SUITE_TESTS = {
     "ci": (".github/test_ci.py",),
     "sharding": ("bench/test_merge.py", "bench/test_shard.py", "bench/test_tier.py"),
     "controls": ("bench/test_controls.py", "bench/test_cost.py"),
+    "maven harness": ("bench/test_maven_build.py",),
     "preflight": ("bench/test_sweep_preflight.py",),
     "process": ("bench/test_process.py",),
     "corpus": ("bench/test_corpus_state.py",),

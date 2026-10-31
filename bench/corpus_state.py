@@ -292,6 +292,15 @@ def examine(name, results_dir, qualified, project=None, root=None, shape_set="de
                 "reason": f"measured against selector {digest}, and the selector is now {current}; "
                           f"this file records {entry['missed']} missed failure(s) against the "
                           f"older one"}
+    # AND, FOR A MAVEN FILE, ON WHAT THE MAVEN PLUGIN IS: its rows ran through `maven/` as well as
+    # the shared selector, which `selector_digest` does not cover.
+    if data.get("build_tool") == "maven":
+        maven_now = run.maven_build.digest(root or run.SOURCE)
+        if data.get("maven_digest") != maven_now:
+            return {**entry, "verdict": STALE_STAMP,
+                    "reason": f"measured with Maven plugin {data.get('maven_digest')}, and it is "
+                              f"now {maven_now}; this file records {entry['missed']} missed "
+                              f"failure(s) against the older one"}
     # AND ON WHAT THE FIXTURE IS. A fixture is measured at `commit = "local"`, so a test added to
     # it moves no other stamp; its rows describe the tree `fixture_digest` names, and a file
     # without one cannot say which tree that was.
@@ -345,7 +354,8 @@ def examine(name, results_dir, qualified, project=None, root=None, shape_set="de
     # event as `build-failed`; `stalled` and `cache-hit` answered nothing and say so.
     # `invalid` too: a selecting arm whose test JVM never reported is the plugin breaking the build.
     broken = [r for r in rows if r.get("status") in ("build-failed", "did-not-build", "invalid")]
-    unanswered = [r for r in rows if r.get("status") in ("stalled", "cache-hit")]
+    # `not-run`: a Maven arm whose measured execution was skipped or never reached.
+    unanswered = [r for r in rows if r.get("status") in ("stalled", "cache-hit", "not-run")]
     malformed = [r for r in checked if "missed" not in r]
 
     if entry["missed"]:
