@@ -198,18 +198,19 @@ class EngineSupportTest {
         assertCapturedAndSelected(dir, listOf("Alpha", "Beta").associate { "${it}Spec" to subject(it, "n + n") })
     }
 
-    @Test
-    fun `a Jupiter suite on JUnit 6 is captured and selected`(@TempDir dir: File) {
-        // The rest of the suite pins JUnit 5; the newest major is tested here so the reference can
-        // name both. JUnit 6 needs Java 17, which every supported daemon JDK is above.
-        val subject = { name: String, body: String ->
-            "src/main/java/dev/engine/$name.java" to """
-                package dev.engine;
-                public class $name {
-                    public int twice(int n) { return $body; }
-                }
-            """.trimIndent()
-        }
+    /**
+     * The newest JUnit major, which the rest of the suite does not pin: 6 here, or the release
+     * `-Pyoriwake.functional.junitVersion` names, to try one before it is out.
+     */
+    private val newestJUnit = System.getProperty("yoriwake.functional.junitVersion") ?: "6.1.3"
+
+    /**
+     * Two Jupiter test classes on [newestJUnit], each reaching its own subject, with [testConfig]
+     * in the test task. Asserts the fixture resolves the JUnit that was asked for, so a try whose
+     * version was not applied fails rather than passing on the default.
+     */
+    private fun newestJUnitProject(dir: File, testConfig: String) {
+        // JUnit 6 needs Java 17, which every supported daemon JDK is above.
         val tests = listOf("Alpha", "Beta").map { name ->
             "src/test/java/dev/engine/${name}Test.java" to """
                 package dev.engine;
@@ -223,15 +224,64 @@ class EngineSupportTest {
         project(
             dir,
             """
-                testImplementation(platform("org.junit:junit-bom:6.1.3"))
+                testImplementation(platform("org.junit:junit-bom:$newestJUnit"))
                 testImplementation("org.junit.jupiter:junit-jupiter")
                 testRuntimeOnly("org.junit.platform:junit-platform-launcher")
             """.trimIndent(),
-            "useJUnitPlatform()",
-            subject("Alpha", "n * 2"), subject("Beta", "n * 2"), *tests.toTypedArray(),
+            testConfig,
+            twice("Alpha", "n * 2"), twice("Beta", "n * 2"), *tests.toTypedArray(),
         )
+        val insight = runner(
+            dir, "dependencyInsight", "--configuration", "testRuntimeClasspath",
+            "--dependency", "org.junit.jupiter:junit-jupiter-api",
+        ).build().output
+        assertContains(insight, "org.junit.jupiter:junit-jupiter-api:$newestJUnit")
+        // What a try reads back: the property reached the test, not only the default.
+        println("yoriwake-junit resolved=$newestJUnit")
+    }
 
-        assertCapturedAndSelected(dir, listOf("Alpha", "Beta").associate { "${it}Test" to subject(it, "n + n") })
+    private fun twice(name: String, body: String) = "src/main/java/dev/engine/$name.java" to """
+        package dev.engine;
+        public class $name {
+            public int twice(int n) { return $body; }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `a Jupiter suite on JUnit 6 is captured and selected`(@TempDir dir: File) {
+        // The rest of the suite pins JUnit 5; the newest major is tested here so the reference can
+        // name both.
+        newestJUnitProject(dir, "useJUnitPlatform()")
+
+        assertCapturedAndSelected(dir, listOf("Alpha", "Beta").associate { "${it}Test" to twice(it, "n + n") })
+    }
+
+    @Test
+    fun `Jupiter's parallel mode switched on by a task action on JUnit 6 records nothing`(@TempDir dir: File) {
+        // The plugin reads the build script before any task action runs, so only the agent, reading
+        // the configuration through the JUnit Platform's API, sees the switch. A recording run, as a
+        // narrowing run captures nothing and never asks.
+        val switch = "junit.jupiter.execution.parallel.enabled"
+        newestJUnitProject(
+            dir,
+            """
+                useJUnitPlatform()
+                if (providers.gradleProperty("late").isPresent) { doFirst { systemProperty("$switch", "true") } }
+            """.trimIndent(),
+        )
+        File(dir, ".gitignore").writeText("build/\n.gradle/\n.kotlin/\n")
+        git(dir, "init")
+        git(dir, "add", ".")
+        git(dir, "commit", "-m", "sample")
+        runner(dir, "test").build()
+        File(dir, "src/main/java/dev/engine/Alpha.java").writeText(twice("Alpha", "n + n").second)
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", "-Plate").build().output
+
+        assertContains(output, "JUnit Jupiter's parallel execution is on in the test JVM")
+        assertContains(output, "the map is left exactly as it was")
+        assertEquals(setOf("dev.engine.AlphaTest", "dev.engine.BetaTest"), ranTests(dir), output)
     }
 
     @Test

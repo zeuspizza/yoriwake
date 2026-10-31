@@ -29,7 +29,7 @@ class TestJvmRangeFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `test JVM on JDK 25`(@TempDir dir: File) {
-        assumeTrue(FunctionalGradle.version.startsWith("9."), "Gradle before 9.1 does not support Java 25")
+        assumeTrue(FunctionalGradle.atLeast(9, 1), "Gradle before 9.1 does not support Java 25")
         capturesAndSelects(dir, 25)
     }
 
