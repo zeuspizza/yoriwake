@@ -11,10 +11,12 @@ Run: `python scripts/test_prove_guards.py`
 import contextlib
 import io
 import json
+import math
 import os
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -529,8 +531,17 @@ def case_functional_guards_pair_by_class_and_configuration_guards_run_alone():
         seen |= classes
         if any(pg.MUTATIONS[i][4] is not pg.functional_suite for i in indices):
             failures += fail("a guard is paired but is not a functional guard")
-    if [len(g) for g in groups] != sorted((len(g) for g in groups), reverse=True):
-        failures += fail("the classes are not handed out most guards first")
+    weights = [pg._class_weight("functional", pg._class_of(pg.MUTATIONS[g[0]][4], pg.MUTATIONS[g[0]][5]),
+                                len(g)) for g in groups]
+    if weights != sorted(weights, reverse=True):
+        failures += fail("the classes are not handed out heaviest first")
+    # Guard count and cost disagree: the heavier class goes first though it has fewer guards.
+    light = [i for i in exclusive if pg._class_of(pg.MUTATIONS[i][4], pg.MUTATIONS[i][5])
+             == "DecisionRulesFunctionalTest"][:3]
+    heavy = [i for i in exclusive if pg._class_of(pg.MUTATIONS[i][4], pg.MUTATIONS[i][5])
+             == "MapDatingFunctionalTest"][:1]
+    if len(light) == 3 and heavy and pg._alone_bins(light + heavy, 2)[0] != [heavy, light]:
+        failures += fail("a class with more guards went before a heavier one")
     if sorted(i for g in groups for i in g) != sorted(i for i in exclusive if i not in serial):
         failures += fail("a guard of the alone phase is in no task and not run one at a time")
     if any(pg.MUTATIONS[i][4] is pg.functional_suite for i in serial):
@@ -587,30 +598,52 @@ def case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one():
     return failures
 
 
-def case_a_functional_class_stays_whole_unless_it_outweighs_a_tree_share():
-    """Each shard pays a class's baseline once per tree that runs it, so scattering costs time."""
+# How many of a suite's builds a shard runs at once, as the partition weighs them.
+SLOTS = {"functional": pg.ALONE_SLOTS, "maven": 1}
+
+
+def _heavy_classes(mutations):
+    """Each functional and Maven class of `mutations`, as (suite, class), with its guards."""
+    classes = {}
+    for m in mutations:
+        if pg.SUITE_NAMES.get(m[4]) in SLOTS:
+            classes.setdefault((pg.SUITE_NAMES[m[4]], pg._class_of(m[4], m[5])), []).append(m)
+    return classes
+
+
+def case_a_class_stays_whole_unless_it_outweighs_a_shard_share():
+    """Each worker pays a class's baseline once, so scattering a class's guards costs time."""
     failures = 0
     split, _loads = pg.partition(pg.MUTATIONS, 8)
-    classes = {}
-    for index, shard in enumerate(split):
-        for m in shard:
-            if m[4] is pg.functional_suite:
-                classes.setdefault(pg._class_of(m[4], m[5]), set()).add(index)
-    functional = [m for m in pg.MUTATIONS if m[4] is pg.functional_suite]
-    rates = pg.FUNCTIONAL_CLASS_SECONDS
-    counts = {}
-    for m in functional:
-        counts[pg._class_of(m[4], m[5])] = counts.get(pg._class_of(m[4], m[5]), 0) + 1
-    share = sum((n + 1) * rates[name] for name, n in counts.items()) / (8 * pg.ALONE_SLOTS)
-    for name, shards in classes.items():
-        weight = (counts[name] + 1) * rates[name]
-        allowed = 1 if weight <= share else min(counts[name], -(-weight // share))
-        if len(shards) > allowed:
-            failures += fail(f"{name} ({counts[name]} guards, {weight}s) spread over {len(shards)} "
-                             f"shards; at most {allowed} for a {share:.0f}s share")
-    if len(classes.get("JvmSharedFunctionalTest", ())) < 2:
-        failures += fail("JvmSharedFunctionalTest, heavier than a tree's share, was not split")
+    classes = _heavy_classes(pg.MUTATIONS)
+    totals = {}
+    for (suite, name), guards in classes.items():
+        totals[suite] = totals.get(suite, 0) + pg._class_weight(suite, name, len(guards))
+    for (suite, name), guards in classes.items():
+        weight = pg._class_weight(suite, name, len(guards))
+        share = totals[suite] / (8 * SLOTS[suite])
+        allowed = 1 if weight <= share else min(len(guards), math.ceil(weight / share))
+        labels = [m[0] for m in guards]
+        held = [[m[0] for m in shard if m[0] in labels] for shard in split]
+        held = [h for h in held if h]
+        if len(held) > allowed:
+            failures += fail(f"{suite}/{name} ({len(guards)} guards, {weight}s) spread over "
+                             f"{len(held)} shards; at most {allowed} for a {share:.0f}s share")
+        # Each shard's part of a class is a run of its guards in table order, not every other one.
+        for part in held:
+            first = labels.index(part[0])
+            if labels[first:first + len(part)] != part:
+                failures += fail(f"{suite}/{name} was dealt out, not cut: {part}")
+    for name in ("JvmSharedFunctionalTest",):
+        if sum(any(pg._class_of(m[4], m[5]) == name and m[4] is pg.functional_suite for m in shard)
+               for shard in split) < 2:
+            failures += fail(f"{name}, heavier than a tree's share, was not split")
+    maven = [m for m in pg.MUTATIONS if m[4] is pg.maven_suite
+             and pg._class_of(m[4], m[5]) == "SelectionFunctionalTest"]
+    if sum(any(m in shard for m in maven) for shard in split) < 2:
+        failures += fail("the Maven SelectionFunctionalTest, heavier than a shard's share, was not split")
     # One class alone outweighs every share: each guard its own chunk, and no endless split.
+    functional = [m for m in pg.MUTATIONS if m[4] is pg.functional_suite]
     ten = [m for m in functional if pg._class_of(m[4], m[5]) == "JvmSharedFunctionalTest"][:10]
     split, _loads = pg.partition(ten, 8)
     if sum(map(len, split)) != len(ten) or max(map(len, split)) > 2:
@@ -618,40 +651,115 @@ def case_a_functional_class_stays_whole_unless_it_outweighs_a_tree_share():
     return failures
 
 
-def case_every_functional_guard_has_a_measured_class_and_an_unknown_one_weighs_the_median():
+def case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median():
     failures = 0
-    for m in pg.MUTATIONS:
-        if m[4] is pg.functional_suite and pg._class_of(m[4], m[5]) not in pg.FUNCTIONAL_CLASS_SECONDS:
-            failures += fail(f"{m[0]}'s class {pg._class_of(m[4], m[5])} has no measured seconds")
-    rates = sorted(pg.FUNCTIONAL_CLASS_SECONDS.values())
-    if pg.class_seconds("NotYetMeasuredFunctionalTest") != rates[len(rates) // 2]:
-        failures += fail(f"a class missing from the table weighs {pg.class_seconds('NotYetMeasuredFunctionalTest')}, "
-                         f"not the median {rates[len(rates) // 2]}")
-    if pg.class_seconds(None) != sum(rates):
-        failures += fail("a guard whose class does not resolve does not weigh the whole suite")
+    for (suite, name), guards in _heavy_classes(pg.MUTATIONS).items():
+        if f"{suite}/{name}" not in pg.class_costs():
+            failures += fail(f"{guards[0][0]}'s class {suite}/{name} has no cost in the table")
+    for suite in SLOTS:
+        known = [cost for key, cost in pg.class_costs().items() if key.startswith(suite + "/")]
+        baselines = sorted(c["baseline"] for c in known)
+        guards = sorted(c["guard"] for c in known)
+        median = (baselines[len(baselines) // 2], guards[len(guards) // 2])
+        if pg.class_cost(suite, "NotYetMeasuredFunctionalTest") != median:
+            failures += fail(f"a {suite} class missing from the table costs "
+                             f"{pg.class_cost(suite, 'NotYetMeasuredFunctionalTest')}, not the median {median}")
+        if pg.class_cost(suite, None) != (sum(baselines), sum(guards)):
+            failures += fail(f"a {suite} guard whose class does not resolve does not cost the whole suite")
+    # The two suites share class names; each is weighed by its own entry.
+    for suite in SLOTS:
+        cost = pg.class_costs()[f"{suite}/SelectionFunctionalTest"]
+        if pg.class_cost(suite, "SelectionFunctionalTest") != (cost["baseline"], cost["guard"]):
+            failures += fail(f"{suite}/SelectionFunctionalTest is not weighed by its own entry")
+    if pg.class_costs()["functional/SelectionFunctionalTest"] == pg.class_costs()["maven/SelectionFunctionalTest"]:
+        failures += fail("the table cannot tell the two SelectionFunctionalTest classes apart")
     return failures
 
 
-def case_the_shards_functional_walls_are_within_one_chunk_of_each_other():
-    """A summed load can balance while one tree carries a whole class: the wall is the test."""
+def case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other():
+    """Functional and Maven time add up in a shard, so they are balanced together, on its wall."""
     failures = 0
-    split, _loads = pg.partition(pg.MUTATIONS, 8)
-    walls, heaviest = [], 0
-    for shard in split:
-        groups = {}
-        for m in shard:
-            if m[4] is pg.functional_suite:
-                groups.setdefault(pg._class_of(m[4], m[5]), []).append(m)
-        chunks = sorted(((len(g) + 1) * pg.FUNCTIONAL_CLASS_SECONDS[name] for name, g in groups.items()),
-                        reverse=True)
-        heaviest = max([heaviest] + chunks)
-        trees = [0] * pg.ALONE_SLOTS
-        for chunk in chunks:
-            trees[trees.index(min(trees))] += chunk
-        walls.append(max(trees))
-    if max(walls) - min(walls) > heaviest:
-        failures += fail(f"the 8 shards' functional walls {walls} differ by more than one chunk ({heaviest}s)")
+    for run in range(2):
+        split, loads = pg.partition(pg.MUTATIONS, 8)
+        walls = [load["wall"] for load in loads]
+        heaviest = max(pg._class_weight(suite, name, len(guards)) / SLOTS[suite]
+                       for shard in split for (suite, name), guards in _heavy_classes(shard).items())
+        if max(walls) - min(walls) > heaviest:
+            failures += fail(f"the 8 shards' projected walls {[round(w) for w in walls]} differ by "
+                             f"more than one heavy unit ({heaviest:.0f}s)")
+        for shard, load in zip(split, loads):
+            parts = load["functional"] / pg.ALONE_SLOTS + load["maven"]
+            if abs(parts - load["wall"]) > 1:
+                failures += fail(f"a shard's wall {load['wall']:.0f}s is not its parts' {parts:.0f}s")
+    # Without Maven guards, the other guards still do not move a functional guard.
+    no_maven = [m for m in pg.MUTATIONS if m[4] is not pg.maven_suite]
+    functional = [m for m in no_maven if m[4] is pg.functional_suite]
+    alone, _loads = pg.partition(functional, 8)
+    beside, _loads = pg.partition(no_maven, 8)
+    if [[m for m in shard if m[4] is pg.functional_suite] for shard in beside] != alone:
+        failures += fail("the other guards moved a functional guard to another shard")
     return failures
+
+
+def case_a_worker_pays_a_class_baseline_once_and_times_each_run():
+    """`derive` reads a guard's seconds and its baseline's apart: one baseline per class per tree."""
+    failures = 0
+    saved = (pg._class_of, dict(pg._WORKER))
+    with _synthetic([("first", True), ("second", True)]):
+        def slow(test_class=None):
+            time.sleep(0.05)
+            return []
+        pg.SUITES.append(("synthetic slow", slow, 0))
+        pg.SUITE_NAMES[slow] = "synthetic slow"
+        pg.MUTATIONS[:] = [(m[0], m[1], m[2], m[3], slow, m[5]) for m in pg.MUTATIONS]
+        pg._class_of = lambda suite, expect: "SlowTest"
+        pg._WORKER.update(baselined={}, gradle_lock=contextlib.nullcontext())
+        try:
+            timings = [pg._prove_in_worker(i)[3] for i in range(2)]
+        finally:
+            pg._class_of = saved[0]
+            pg._WORKER.clear()
+            pg._WORKER.update(saved[1])
+    first, second = timings
+    if {first["suite_class"], second["suite_class"]} != {"synthetic slow/SlowTest"}:
+        failures += fail(f"the guards' suite and class are {first['suite_class']}, {second['suite_class']}")
+    if not (first["baseline_seconds"] or 0) >= 0.05 or second["baseline_seconds"] is not None:
+        failures += fail(f"the class's baseline was not paid once, by the first guard: {timings}")
+    if not all((t["seconds"] or 0) >= 0.05 for t in timings):
+        failures += fail(f"a guard's run has no seconds: {timings}")
+    return failures
+
+
+def case_a_wait_for_the_lock_is_not_counted_as_a_guards_seconds():
+    """Four workers share one Gradle lock; a guard waiting for it did not cost those seconds."""
+    import threading
+    saved = dict(pg._WORKER)
+
+    def quick():
+        return []
+    pg.SUITE_NAMES[quick] = "maven"
+    lock, held = threading.Lock(), threading.Event()
+
+    def other_worker():
+        with lock:
+            held.set()
+            time.sleep(0.5)
+    pg._WORKER.update(gradle_lock=lock)
+    try:
+        thread = threading.Thread(target=other_worker)
+        thread.start()
+        held.wait()
+        start = time.monotonic()
+        _fired, seconds = pg._run_suite(quick)
+        waited = time.monotonic() - start
+        thread.join()
+    finally:
+        del pg.SUITE_NAMES[quick]
+        pg._WORKER.clear()
+        pg._WORKER.update(saved)
+    if waited < 0.3 or seconds > 0.2:
+        return fail(f"a run that waited {waited:.2f}s for the lock was timed at {seconds}s")
+    return 0
 
 
 def case_a_shard_that_is_not_one_of_n_refuses():
@@ -761,6 +869,11 @@ def case_the_parallel_run_ci_uses_writes_outcomes_and_refusals():
             got = _results(result)["guards"]
             if code != 0 or [(g["label"], g["outcome"]) for g in got] != [("caught", "fired")]:
                 failures += fail(f"a parallel run that fired wrote {code} {got} {out!r}")
+            whole = _results(result)
+            if got and got[0]["seconds"] is None:
+                failures += fail(f"a guard that ran has no seconds: {got}")
+            if abs(sum(whole["phases"].values()) - whole["seconds"]) > 1:
+                failures += fail(f"the phases {whole['phases']} do not sum to the run's {whole['seconds']}s")
             pg.warm_up_tasks = lambda selected: [":compile"]
             pg._warm_up = lambda trees, tasks: f"{trees[0]} does not compile unmutated: e: boom"
             code, out = _run(["--guard", "caught", "--results", result])
@@ -787,6 +900,8 @@ def case_a_refused_run_writes_every_guard_it_held_as_not_proved():
         if code != 1 or [(g["label"], g["outcome"]) for g in got["guards"]] != [("moved", "not proved")] \
                 or "anchor" not in (got["refused"] or ""):
             failures += fail(f"a refused run wrote {code} {got}")
+        if (got["guards"][0]["seconds"], got["guards"][0]["baseline_seconds"]) != (None, None):
+            failures += fail(f"a guard refused before its run has seconds: {got['guards'][0]}")
     return failures
 
 
@@ -845,9 +960,11 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_cold_worker_trees_compile_one_at_a_time_before_the_guards,
          case_a_tree_that_does_not_compile_names_the_compiler_errors,
          case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one,
-    case_a_functional_class_stays_whole_unless_it_outweighs_a_tree_share,
-    case_every_functional_guard_has_a_measured_class_and_an_unknown_one_weighs_the_median,
-    case_the_shards_functional_walls_are_within_one_chunk_of_each_other,
+         case_a_class_stays_whole_unless_it_outweighs_a_shard_share,
+         case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median,
+         case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other,
+         case_a_worker_pays_a_class_baseline_once_and_times_each_run,
+         case_a_wait_for_the_lock_is_not_counted_as_a_guards_seconds,
          case_a_shard_that_is_not_one_of_n_refuses,
          case_an_empty_shard_succeeds_and_says_whose_guards_it_left,
          case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it,

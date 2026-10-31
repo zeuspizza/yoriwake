@@ -109,6 +109,7 @@ python3 scripts/prove_guards.py --guard "<label>"       # one guard
 python3 scripts/prove_guards.py --mode full --shard 3/8 # CI's shard 3 of 8 of every guard, to reproduce it
 python3 scripts/prove_guards.py                         # every guard; the gate for plugin/ and agent/
 python3 scripts/test_prove_guards.py                    # the harness's own tests, every anchor included
+python3 scripts/test_guard_costs.py                     # the shard cost table's derivation and report
 ```
 
 Each run prints one line per guard and a closing line saying how many it attempted out of how
@@ -119,12 +120,16 @@ guards run in four worktrees under `sandbox/prove-guards/` and never write your 
 
 On a pull request, CI runs fast mode and the guards the change can affect; a change to
 `plugin/src/main`, `core/src/main`, `agent/src/main` or `maven/src/main` runs every guard instead,
-and every guard runs on dispatch in each release check. Each of these runs in 8 shards of its selected guards, balanced by measured cost with a functional
-class's guards together (`--shard I/8`, with the same `--mode` and `--changed` as the job,
-reproduces one), and a check job under the job's name fails unless every guard
-the run selects fired in exactly one shard. A separate check fails a pull request that removes a
-guard, or changes its target, fragment, suite or expected test, or takes a suite out of fast mode,
-until a maintainer approves it.
+and every guard runs on dispatch in each release check. Each of these runs in 8 shards of its
+selected guards, balanced by the costs CI measured with a functional or Maven class's guards
+together (`--shard I/8`, with the same `--mode` and `--changed` as the job, reproduces one), and a
+check job under the job's name fails unless every guard the run selects fired in exactly one shard.
+The costs are `scripts/guard_costs.json`. Every run's `--results` records each guard's seconds, and
+the every-guard check prints each shard's projected and measured time and uploads the table its
+run measured as the `guard-costs` artifact; the release check commits it
+(`scripts/guard_costs.py derive` writes it from the shards' results). A separate check fails a
+pull request that removes a guard, or changes its target, fragment, suite or expected test, or
+takes a suite out of fast mode, until a maintainer approves it.
 
 **A new rule comes with its guard.** Add the entry to `MUTATIONS`: a label that says what breaks,
 the source, a fragment that appears exactly once in it, its replacement, the suite, and a phrase
