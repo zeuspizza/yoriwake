@@ -1,0 +1,110 @@
+name: guards on windows
+
+# One run on this branch: scripts/prove_guards.py on Windows, one guard per suite on the worker
+# path, then one in-place run interrupted with Ctrl+C. Removed before the branch merges.
+on:
+  push:
+    branches: [fix/guards-windows]
+    paths: [.github/workflows/guards-windows.yml]
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
+jobs:
+  survey:
+    name: guards on windows
+    runs-on: windows-latest
+    timeout-minutes: 240
+    steps:
+      # Git for Windows' default, as on a developer's machine: tracked text is checked out CRLF.
+      - name: allow long paths, and check out with CRLF line endings
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          add-job-summary: never
+          cache-read-only: true
+
+      - name: the self-test
+        continue-on-error: true
+        run: python scripts/test_prove_guards.py
+
+      # The first guard of every suite, plus the two re-anchored for Windows; worker trees.
+      - name: one guard per suite
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p results
+          python - <<'EOF' 2>&1 | tee results/survey.log
+          import subprocess, sys
+          sys.path[:0] = ["scripts"]
+          import prove_guards as g
+          labels = {}
+          for m in g.MUTATIONS:
+              labels.setdefault(g.SUITE_NAMES[m[4]], m[0])
+          picked = list(labels.values()) + [
+              "the decision record's staging file goes back to one name per process",
+              "a discarded capture forgets the failures it saw"]
+          args = [a for label in dict.fromkeys(picked) for a in ("--guard", label)]
+          sys.exit(subprocess.run([sys.executable, "scripts/prove_guards.py", "--jobs", "2",
+                                   "--results", "results/survey.json", *args]).returncode)
+          EOF
+
+      # A unit guard on a Kotlin source, in place, interrupted once its mutation is in the tree.
+      - name: an in-place run interrupted with Ctrl+C
+        continue-on-error: true
+        shell: bash
+        run: |
+          python - <<'EOF' 2>&1 | tee results/interrupt.log
+          import ctypes, os, subprocess, sys, time
+          sys.path[:0] = ["scripts"]
+          import prove_guards as g
+          label, path = next((m[0], m[1]) for m in g.MUTATIONS
+                             if g.SUITE_NAMES[m[4]] == "unit" and m[1].endswith(".kt"))
+          print(f"guard: {label}\ntarget: {path}", flush=True)
+          # Its own console, so the Ctrl+C reaches it and its Gradle and nothing of this job's.
+          log = open("results/interrupted-run.log", "w")
+          run = subprocess.Popen([sys.executable, "scripts/prove_guards.py", "--jobs", "1", "--guard", label],
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE, stdout=log, stderr=subprocess.STDOUT)
+          status = lambda: subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                                          capture_output=True, text=True).stdout.strip()
+          deadline = time.time() + 1800
+          while path not in status() and run.poll() is None and time.time() < deadline:
+              time.sleep(1)
+          print(f"mutated in the tree: {path in status()}", flush=True)
+          time.sleep(20)
+          k32 = ctypes.windll.kernel32
+          k32.FreeConsole()
+          attached = k32.AttachConsole(run.pid)
+          k32.SetConsoleCtrlHandler(None, True)
+          sent = k32.GenerateConsoleCtrlEvent(0, 0)
+          time.sleep(2)
+          k32.FreeConsole()
+          print(f"attached: {attached}, Ctrl+C sent: {sent}", flush=True)
+          try:
+              code = run.wait(600)
+          except subprocess.TimeoutExpired:
+              run.kill()
+              code = "still running after 600 s"
+          log.close()
+          print(open("results/interrupted-run.log").read())
+          print(f"exit: {code}\ngit status after: {status() or 'clean'}", flush=True)
+          sys.exit(0 if not status() else 1)
+          EOF
+
+      # Read by the branch's author with `gh run download`, for the survey.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: guards-windows
+          path: results/
+          retention-days: 7
