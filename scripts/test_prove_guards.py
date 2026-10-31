@@ -815,6 +815,105 @@ def case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing():
     return failures
 
 
+def case_gradle_starts_through_the_wrapper_windows_can_run():
+    """`./gradlew` is a shell script Windows cannot start; there the batch file runs, by absolute
+    path, because Windows looks a bare program name up beside this process and not in `cwd=`.
+    Nothing reads stdin, so an interrupt cannot leave `cmd.exe` asking to terminate the batch job."""
+    failures = 0
+    started = []
+
+    def run(argv, **kwargs):
+        started.append((argv[0], kwargs.get("cwd"), kwargs.get("stdin")))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    saved = (pg.os.name, pg.subprocess.run, os.environ.get(pg.yoriwake_checkout.SETTING))
+    tree = os.path.abspath("tree")
+    os.environ[pg.yoriwake_checkout.SETTING] = tree
+    pg.subprocess.run = run
+    try:
+        for name, expected in (("nt", os.path.join(tree, "gradlew.bat")), ("posix", "./gradlew")):
+            pg.os.name = name
+            if pg.wrapper(tree) != expected:
+                failures += fail(f"on {name} the wrapper is {pg.wrapper(tree)!r}, not {expected!r}")
+            started.clear()
+            pg.gradle(["tasks"])
+            pg._warm_up([tree], [":compile"])
+            if started != [(expected, tree, subprocess.DEVNULL)] * 2:
+                failures += fail(f"on {name} Gradle started as {started}")
+    finally:
+        pg.os.name, pg.subprocess.run = saved[0], saved[1]
+        if saved[2] is None:
+            os.environ.pop(pg.yoriwake_checkout.SETTING, None)
+        else:
+            os.environ[pg.yoriwake_checkout.SETTING] = saved[2]
+    return failures
+
+
+# A source's bytes before a mutation, by its line endings: what a restore must give back.
+LINE_ENDINGS = {"LF": b"before\nanchor\nafter\n", "CRLF": b"before\r\nanchor\r\nafter\r\n",
+                "mixed": b"before\r\nanchor\nafter\r\n"}
+
+
+def _windows_text_writes():
+    """`write_source` as it behaves on Windows, where a text-mode write turns each '\\n' into '\\r\\n'."""
+    def write(path, text):
+        with open(path, "w", encoding=pg.ENCODING, newline="\r\n") as handle:
+            handle.write(text)
+    return write
+
+
+def case_a_mutated_source_is_restored_byte_for_byte_whatever_its_line_endings():
+    """Text-mode reads fold '\\r\\n' into '\\n' and text-mode writes emit the platform's ending, so a
+    restore of the decoded text rewrote a CRLF checkout as LF here and an LF checkout as CRLF on
+    Windows -- and a check that hashed decoded text passed both. Both execution paths, under this
+    platform's writes and under Windows'."""
+    failures = 0
+    saved = pg.write_source
+    try:
+        for platform, writes in (("this platform", saved), ("Windows", _windows_text_writes())):
+            pg.write_source = writes
+            for endings, original in LINE_ENDINGS.items():
+                with _synthetic([("caught", True)]) as tmp:
+                    path = os.path.join(tmp, "caught.txt")
+                    with open(path, "wb") as f:
+                        f.write(original)
+                    code, out = _run(["--guard", "caught", "--jobs", "1"])
+                    with open(path, "rb") as f:
+                        restored = f.read()
+                    if code != 0 or restored != original:
+                        failures += fail(f"--jobs 1, {endings} under {platform}: exit {code}, "
+                                         f"restored {restored!r} from {original!r}: {out!r}")
+                    pg._WORKER.update(baselined={}, gradle_lock=None)
+                    _index, fired, refused = pg._prove_in_worker(0)
+                    with open(path, "rb") as f:
+                        restored = f.read()
+                    if not fired or refused or restored != original:
+                        failures += fail(f"worker, {endings} under {platform}: fired {fired}, "
+                                         f"refused {refused}, restored {restored!r} from {original!r}")
+    finally:
+        pg.write_source = saved
+        pg._WORKER.clear()
+    return failures
+
+
+def case_the_restore_check_compares_bytes_not_decoded_text():
+    """A restore that changed only line endings decodes to the same text; the check must still refuse it."""
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "source.txt")
+        original = LINE_ENDINGS["LF"]
+        _windows_text_writes()(path, original.decode())
+        try:
+            pg.check_restored(path, original)
+            failures += fail("an LF source rewritten as CRLF passed the restore check")
+        except AssertionError:
+            pass
+        with open(path, "wb") as f:
+            f.write(original)
+        pg.check_restored(path, original)
+    return failures
+
+
 CASES = (case_every_case_in_this_file_is_registered,
          case_a_suite_stopped_by_a_dirty_tree_names_the_files,
          case_only_the_refusal_block_is_read_as_dirty_files,
@@ -853,7 +952,10 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it,
          case_a_refused_run_writes_every_guard_it_held_as_not_proved,
          case_the_parallel_run_ci_uses_writes_outcomes_and_refusals,
-         case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing)
+         case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing,
+         case_gradle_starts_through_the_wrapper_windows_can_run,
+         case_a_mutated_source_is_restored_byte_for_byte_whatever_its_line_endings,
+         case_the_restore_check_compares_bytes_not_decoded_text)
 
 
 def test_prove_guards():
