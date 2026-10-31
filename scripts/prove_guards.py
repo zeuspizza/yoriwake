@@ -18,6 +18,13 @@ an in-memory copy and checked byte for byte afterwards.
 Run from the repository root. Paths in MUTATIONS are relative to it. By default the guards run in
 worker worktrees under `sandbox/prove-guards/`, and this tree is never written.
 
+On Windows the same commands run under `python`, and Gradle starts through `gradlew.bat`. A suite
+that cannot run there fails unmutated and is refused, naming its first failure, before any source
+is mutated. One guard per suite on a Windows runner with a CRLF checkout: unit, agent,
+functional, decoder, reference, jdk identity, sbom, configuration guards, break, portal, qualify,
+replay, revert, process, config cost, order, mutations, sharding, sweep and corpus fire there;
+python, ci, scan, controls, preflight, maven and maven break fail unmutated there.
+
 **DO NOT EDIT A MUTATED SOURCE WHILE THIS IS RUNNING WITH `--jobs 1`.** That mode mutates this tree
 in place, and the restore writes back the whole in-memory `original`, so an edit made to a mutated
 file mid-run is DISCARDED -- and silently, because the byte-identical check compares against the
@@ -54,6 +61,26 @@ def write_source(path, text):
         handle.write(text)
 
 
+# A mutation is applied to decoded text, so its anchors match a CRLF checkout too; the source is
+# saved and restored as BYTES. Text-mode reads fold '\r\n' into '\n' and text-mode writes emit the
+# platform's ending, so restoring the decoded text turned a CRLF file into LF on Linux and macOS and
+# an LF file into CRLF on Windows -- and a check that hashed decoded text passed both.
+def read_bytes(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def write_bytes(path, data):
+    with open(path, "wb") as handle:
+        handle.write(data)
+
+
+def check_restored(path, original):
+    """Refuses a source whose bytes are not `original` after its restore."""
+    assert hashlib.sha256(read_bytes(path)).hexdigest() == hashlib.sha256(original).hexdigest(), \
+        f"restore failed: {path}"
+
+
 def source(path):
     """Where a mutation's repository-relative path is on disk, in the tree under test.
 
@@ -69,10 +96,23 @@ def source(path):
 GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false", "-Pyoriwake.kotlinWarningsAsErrors=false"]
 
 
+def wrapper(tree):
+    """The Gradle wrapper that starts a build in `tree`.
+
+    `./gradlew` is a shell script, which Windows cannot execute, so there it is the batch file, by
+    absolute path: Windows looks a bare program name up beside this process, not in `cwd=`.
+    """
+    return os.path.join(tree, "gradlew.bat") if os.name == "nt" else "./gradlew"
+
+
 def gradle(args):
-    """`./gradlew` in the tree under test."""
-    return subprocess.run(["./gradlew"] + GRADLE_ARGS + args, capture_output=True, text=True,
-                          cwd=yoriwake_checkout.root())
+    """The Gradle wrapper in the tree under test.
+
+    No stdin: interrupted, `cmd.exe` would wait on a "Terminate batch job (Y/N)?" nobody sees.
+    """
+    tree = yoriwake_checkout.root()
+    return subprocess.run([wrapper(tree)] + GRADLE_ARGS + args, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, cwd=tree)
 
 
 def _restore_on_signal(path, original):
@@ -85,7 +125,7 @@ def _restore_on_signal(path, original):
     """
     def put_back(*_):
         try:
-            write_source(path, original)
+            write_bytes(path, original)
         except Exception:
             pass
         raise SystemExit(130)
@@ -97,7 +137,7 @@ def _restore_on_signal(path, original):
         except (ValueError, OSError):
             # Not the main thread, or a platform without it. The atexit hook below still stands.
             pass
-    at_exit = lambda: write_source(path, original)  # noqa: E731
+    at_exit = lambda: write_bytes(path, original)  # noqa: E731
     atexit.register(at_exit)
 
     def disarm():
@@ -2929,6 +2969,24 @@ MUTATIONS = [
      "        now.classpath != recorded.classpath ->",
      "        false ->",
      functional_suite, "a classpath resolved differently runs every test"),
+    # A Maven invocation keeps only the git answers that cannot move with HEAD or the work tree.
+    ("a Maven invocation keeps git answers that move with the tree", CHANGE_DETECTION,
+     "        else -> false\n",
+     "        else -> true\n",
+     unit_suite, "an invocation asks the top level and a git path once, and HEAD and status each time"),
+    ("a Maven invocation keeps a merge base of a named ref", CHANGE_DETECTION,
+     "            COMMIT_ID.matches(arguments[2]) && COMMIT_ID.matches(arguments[3])",
+     "            true",
+     unit_suite, "a merge base is kept only between two commits named by id"),
+    # A stamp digests its classpath only when a comparison can read it, and reads it whole then.
+    ("a stamp skips the classpath digest on a clean tree", SELECTION_RECORD,
+     "                else -> classpath\n",
+     "                else -> notDigested(\"always\")\n",
+     unit_suite, "a selecting run that starts clean digests its classpath once"),
+    ("a complement skips the classpath comparison", SELECTION_RECORD,
+     "                ?: mismatch(recorded, fields.copy(classpath = classpath))",
+     "                ?: null",
+     unit_suite, "a complement digests its classpath once the fields before it match, and reports what mismatch does"),
     ("a complement run takes a record of another task configuration", SELECTION_RECORD,
      "        now.configuration != recorded.configuration ->",
      "        false ->",
@@ -3077,12 +3135,12 @@ MUTATIONS = [
     # A complement leaves out a test only when it ran against identical classpath content: the
     # build's own outputs (generated resources, class files, jar entries) are digested by content.
     ("a complement's classpath digest names the build's outputs by path only again", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     ("a complement run leaves out tests that ran against another generated classpath file", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
      functional_suite, "a file the build generates from a property differently runs every test"),
     # A walk that cannot vouch for every file must digest to a value no other run matches.
     ("a classpath walk that cannot vouch for every file digests alike in both runs", SELECTION_RECORD,
@@ -3090,8 +3148,8 @@ MUTATIONS = [
      "    private fun unmatched(reason: String) = \"$UNMATCHED $reason\"",
      unit_suite, "a classpath entry under the build that cannot be read digests to a value no run matches"),
     ("class files leave the complement's classpath digest", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true)",
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     # An unreadable selection record must not reach Gradle's configuration-time read.
     ("an unreadable selection record is handed to Gradle to read at configuration", SELECTION_WIRING,
@@ -4206,8 +4264,12 @@ MUTATIONS = [
      '            hits.append(f"commit {sha[:9]} {line[4:]}: unscannable path: rename it")',
      "            pass", scan_suite, "a path git must still quote passed unscanned"),
     ("the scan stops reading a pull request's title and body", "bench/scan_private.py",
-     '    return scan_text(label, text or "", MESSAGE_RULES)', "    return []", scan_suite,
+     '    return scan_text(label, text or "", message_rules(fork))', "    return []", scan_suite,
      "a plan id in a pull request title passed"),
+    ("the scan lets every branch name the assistant in a message", "bench/scan_private.py",
+     '    return [rule for rule in MESSAGE_RULES if rule[0] != "assistant"] if fork else MESSAGE_RULES',
+     '    return [rule for rule in MESSAGE_RULES if rule[0] != "assistant"]', scan_suite,
+     "the assistant named in a commit message on a branch here passed"),
     # The changelog check: a line under a released version, the release entry it must let through,
     # and the workflow that runs it.
     ("the changelog check stops refusing a released version", ".github/ci.py",
@@ -4485,8 +4547,8 @@ MUTATIONS = [
     # A `-D` version property, a version range or an updated SNAPSHOT resolves another jar with no
     # changed path: the capture must record the dependencies for a selecting run to compare.
     ("a Maven capture records no dependencies", MAVEN_RECORDING,
-     "ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session))",
-     "ClasspathFiles.walk(classpath, buildDirs, root)",
+     "ClasspathFiles.table(classpath, buildDirs, root, dependencyHomes(session), text = text)",
+     "ClasspathFiles.walk(classpath, buildDirs, root, text = text)",
      maven_suite, "a dependency a version property resolves to another version runs every test"),
     # Surefire hands the JUnit Platform its parallel switch through its own parameters: missed there,
     # interleaved tests would blend into one another's coverage.
@@ -5020,7 +5082,8 @@ def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
     error lines below it, or None."""
     for tree in trees:
-        done = subprocess.run(["./gradlew", "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True, cwd=tree)
+        done = subprocess.run([wrapper(tree), "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, cwd=tree)
         if done.returncode != 0:
             output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
@@ -5080,13 +5143,14 @@ def _prove_in_worker(index):
         return index, None, (f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
                              f"{standing[0]}"), timing
     target = source(path)
-    original = read_source(target)
-    write_source(target, original.replace(old, new, 1))
+    original = read_bytes(target)
+    write_source(target, read_source(target).replace(old, new, 1))
     try:
         fired, timing["seconds"] = _run_suite(suite, test_class)
         return index, fired, None, timing
     finally:
-        write_source(target, original)
+        write_bytes(target, original)
+        check_restored(target, original)
 
 
 def _timing(name, test_class):
@@ -5279,10 +5343,17 @@ def class_cost(suite, name):
     return cost["baseline"], cost["guard"]
 
 
+# The parallel phase's workers: `--jobs`' default, and what CI runs.
+JOBS = 4
+
+
 def _class_weight(suite, name, guards):
-    """The seconds a run of `guards` guards of one class costs: its baseline, then each guard."""
+    """The seconds a run of `guards` guards of one class costs: its baseline in each tree that runs
+    them, then each guard. A functional class runs in one tree; a Maven class's guards go to
+    whichever parallel worker is free, so each of up to `JOBS` workers pays its baseline."""
     baseline, guard = class_cost(suite, name)
-    return baseline + guards * guard
+    trees = min(guards, JOBS) if suite == "maven" else 1
+    return trees * baseline + guards * guard
 
 
 def partition(mutations, count):
@@ -5294,8 +5365,8 @@ def partition(mutations, count):
     A functional or Maven class's guards share their baselines, one per worker tree that runs them,
     so they stay together unless the class outweighs a shard's share of its suite; then it splits
     into near-equal chunks. A functional class runs in one tree; a Maven class's guards go to
-    whichever of the parallel phase's workers is free, so a chunk may pay its baseline more than
-    once where the projection counts it once; `guard_costs.py report` shows what that costs. Both are placed on one scale, the seconds a chunk adds to its shard's wall
+    whichever of the parallel phase's workers is free, so a chunk pays its baseline once per worker
+    that runs it. Both are placed on one scale, the seconds a chunk adds to its shard's wall
     clock: a functional chunk runs beside another on one of `ALONE_SLOTS` trees, a Maven chunk under
     the Gradle lock, one build at a time. The other guards are placed after them by their suite's
     registry seconds, a scale balanced apart and never added.
@@ -5427,7 +5498,7 @@ def main(argv=None):
                         help="only the guard with this label (repeatable): a task proves the guards "
                              "it adds or re-anchors this way; the full run waits for the release "
                              "check")
-    parser.add_argument("--jobs", type=int, default=4, metavar="N",
+    parser.add_argument("--jobs", type=int, default=JOBS, metavar="N",
                         help="guards run in parallel, each worker in its own git worktree under "
                              "sandbox/prove-guards/ (default 4; 1 runs in this tree, one at a "
                              "time)")
@@ -5642,9 +5713,9 @@ def _main(args, held):
                 return 1
             baselined.add(test_class)
         path = source(relative)
-        original = read_source(path)
-        digest = hashlib.sha256(original.encode(ENCODING)).hexdigest()
-        if old not in original:
+        original = read_bytes(path)
+        text = read_source(path)
+        if old not in text:
             # Unreachable via the pre-flight check above, which refuses before any suite runs. Kept
             # for the one case that check cannot cover: a source edited while this is running, which
             # is how a mutation once survived into a working tree. It says so rather than being
@@ -5659,14 +5730,13 @@ def _main(args, held):
         # caught only because a later pre-flight refused. `run.py` carries the same
         # atexit-plus-signal restore for its checkouts, for the same reason.
         undo = _restore_on_signal(path, original)
-        write_source(path, original.replace(old, new, 1))
+        write_source(path, text.replace(old, new, 1))
         try:
             fired, timing["seconds"] = _timed_run(suite, test_class)
         finally:
-            write_source(path, original)
+            write_bytes(path, original)
             undo()
-            assert hashlib.sha256(read_source(path).encode(ENCODING)).hexdigest() == digest, \
-                f"restore failed: {path}"
+            check_restored(path, original)
         failures += _report(MUTATIONS.index(mutation), fired, None, timing)
 
     print()

@@ -362,4 +362,72 @@ class SelectionRecordTest {
         assertTrue("configuration" in SelectionRecord.mismatch(recorded, recorded.copy(configuration = "e")).orEmpty())
         assertTrue("commit" in SelectionRecord.mismatch(recorded, recorded.copy(commit = null)).orEmpty())
     }
+
+    /** A stamp reading whose classpath digest counts how often it was asked for. */
+    private class Counted(val digest: String = "c") {
+        var digests = 0
+        fun reading(commit: String? = "a".repeat(40), clean: Boolean = true, task: String = ":test", configuration: String = "d") =
+            SelectionRecord.Reading(commit, clean, task, "", ":", configuration) { digests++; digest }
+    }
+
+    @Test
+    fun `a selecting run that starts on a tree that is not clean never digests its classpath, and its record is removed`(@TempDir root: File) {
+        val (repo, map) = repository(root)
+        val counted = Counted()
+        val stamp = counted.reading(commit = git(repo, "rev-parse", "HEAD"), clean = false).forStart()
+        start(map, repo, stamp = stamp)
+        part(map, "1-1", "token-1", listOf("a"))
+
+        val outcome = SelectionRecord.afterSelectingRun(map, repo, ranEverything = false)
+
+        assertEquals(0, counted.digests)
+        assertContains(stamp.classpath, "not digested: the tree was not clean where the run started")
+        assertEquals(SelectionRecord.Outcome.Removed("the working tree was not clean when the run started"), outcome)
+    }
+
+    @Test
+    fun `a selecting run that starts at an unknown commit never digests its classpath`() {
+        val counted = Counted()
+
+        val stamp = counted.reading(commit = null).forStart()
+
+        assertEquals(0, counted.digests)
+        assertContains(stamp.classpath, "not digested: HEAD could not be read")
+    }
+
+    @Test
+    fun `a selecting run that starts clean digests its classpath once`() {
+        val counted = Counted(digest = "e")
+
+        val stamp = counted.reading().forStart()
+
+        assertEquals(1, counted.digests)
+        assertEquals("e", stamp.classpath)
+    }
+
+    @Test
+    fun `a complement whose record differs before the classpath never digests it, and names that field`() {
+        val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", "c", "d")
+        val counted = Counted(digest = "other")
+
+        assertContains(counted.reading(commit = "b".repeat(40)).mismatchWith(recorded).orEmpty(), "the commit")
+        assertContains(counted.reading(clean = false).mismatchWith(recorded).orEmpty(), "working tree")
+        assertContains(counted.reading(task = ":other:test").mismatchWith(recorded).orEmpty(), "the task")
+        assertEquals(0, counted.digests)
+    }
+
+    @Test
+    fun `a complement digests its classpath once the fields before it match, and reports what mismatch does`() {
+        val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", "c", "d")
+
+        assertNull(Counted(digest = "c").reading().mismatchWith(recorded))
+        // The classpath comes before the configuration, whichever step reads it.
+        val both = Counted(digest = "e")
+        assertEquals(
+            SelectionRecord.mismatch(recorded, recorded.copy(classpath = "e", configuration = "f")),
+            both.reading(configuration = "f").mismatchWith(recorded),
+        )
+        assertEquals(1, both.digests)
+        assertContains(Counted(digest = "c").reading(configuration = "f").mismatchWith(recorded).orEmpty(), "configuration")
+    }
 }

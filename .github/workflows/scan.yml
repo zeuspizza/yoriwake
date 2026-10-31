@@ -2,7 +2,9 @@ name: scan
 
 # The backstop for the scan every push runs first (CONTRIBUTING.md): what a pull request adds, its
 # commit messages, and its title and body, from which the squash commit on main is written. Its own
-# workflow, so editing a description re-scans it without re-running the build.
+# workflow, so editing a description re-scans it without re-running the build. A pull request from a
+# fork may name, in its messages, the AI tool that assisted it, as CONTRIBUTING.md asks; one from a
+# branch here may not. A deleted head repository counts as a fork.
 on:
   pull_request:
     branches: [main]
@@ -24,9 +26,13 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -eu
+          fork=
+          if [ "$FORK" = true ]; then fork=--fork; fi
           status=0
-          python3 bench/scan_private.py --range "$BASE" "$HEAD" || status=1
-          python3 bench/scan_private.py --message PR_TITLE PR_BODY || status=1
+          # $fork unquoted: empty, it adds no argument.
+          python3 bench/scan_private.py $fork --range "$BASE" "$HEAD" || status=1
+          python3 bench/scan_private.py $fork --message PR_TITLE PR_BODY || status=1
           exit "$status"

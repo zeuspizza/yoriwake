@@ -1,0 +1,73 @@
+name: codeql
+
+# CodeQL code scanning of the Kotlin and Java sources, the Python scripts and these workflows, with
+# its results in the repository's Security tab.
+#
+# Only a push to main that changes code runs it, never a pull request: a pull request's checks
+# already fill the runners a public repository gets at once, and the push that merges it is
+# analysed within the hour. No schedule either: the pinned action fixes the queries until a pin
+# bump, which is itself a push to main. Dispatch is for a maintainer who wants a fresh analysis.
+on:
+  push:
+    branches: [main]
+    paths: ['**', '!**/*.md', '!docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The build runs on Gradle 8.14, the supported floor, on purpose (CONTRIBUTING.md); turning off
+# setup-gradle's build capture is the action's only way to drop its "out of date" notice.
+env:
+  GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
+
+# No concurrency group: each push to main is analysed on its own, as verify.yml checks each.
+jobs:
+  analyze:
+    name: analyze ${{ matrix.language }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Kotlin has no build-free mode: CodeQL reads it from a compile it traces.
+          - language: java-kotlin
+            build-mode: manual
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      # The traced build runs with no git credential left on disk.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        if: matrix.build-mode == 'manual'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        if: matrix.build-mode == 'manual'
+        with:
+          cache-read-only: true
+          add-job-summary: on-failure
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      # Every source set compiled from scratch in this one traced process: no build cache, no
+      # daemon and Kotlin compiled in-process, so no compile happens where the tracer cannot see it.
+      - if: matrix.build-mode == 'manual'
+        run: >-
+          ./gradlew classes testClasses functionalTestClasses captureScriptClasses
+          bootFixtureClasses jdkIdentityClasses
+          --no-daemon --no-build-cache --no-configuration-cache --rerun-tasks
+          -Pkotlin.compiler.execution.strategy=in-process --console=plain
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}

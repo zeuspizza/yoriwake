@@ -109,6 +109,22 @@ to Maven Central. You can check, for a version `<version>`:
    the key is not certified with a trusted signature is expected). The Maven plugin's signature is
    `yoriwake-maven-plugin-$v.jar.asc`, beside its jar on Maven Central.
 
+6. **It rebuilds from its tag, byte for byte** (from 0.4.0). Build the tag on JDK 21, as the
+   release workflow does on Temurin 21, in the directory that holds step 1's `SHA256SUMS`:
+
+   ```bash
+   git clone --quiet --depth 1 --branch "v$v" https://github.com/zeuspizza/yoriwake.git "yoriwake-$v"
+   (cd "yoriwake-$v" && ./gradlew --quiet --no-build-cache :plugin:assemble :maven:assemble -PreleaseVersion="$v")
+   shasum -a 256 "yoriwake-$v/plugin/build/libs/plugin-$v.jar" "yoriwake-$v/maven/build/libs/yoriwake-maven-plugin-$v.jar"
+   unzip -p "yoriwake-$v/plugin/build/libs/plugin-$v.jar" yoriwake-agent.jar | shasum -a 256
+   grep -E "/yoriwake-(gradle|maven)-plugin-$v.jar\$| yoriwake-agent.jar\$" SHA256SUMS
+   ```
+
+   `git` warns about the tag and a detached HEAD; both are expected. The build names the Gradle
+   plugin jar `plugin-$v.jar`; its digest, the agent's and the Maven plugin jar's are the three
+   that `SHA256SUMS` lists. 0.4.0, built by the release workflow on Temurin 21.0.13 on Linux, gives
+   the same bytes rebuilt on Temurin 21.0.12 on macOS; another JDK's compiler may not.
+
 **In your build:** Gradle's [dependency verification](https://docs.gradle.org/current/userguide/dependency_verification.html)
 checks the signature on every resolution when `gradle/verification-metadata.xml` trusts the key for
 this group. Gradle looks keys up on keys.openpgp.org:
