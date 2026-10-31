@@ -491,6 +491,17 @@ def case_no_testkit_suite_runs_in_the_parallel_phase():
     return failures
 
 
+def case_the_maven_break_suite_runs_under_the_lock_as_the_maven_suite_does():
+    """Real Maven and no TestKit build: locked beside the other suites, not held for the alone phase."""
+    failures = 0
+    for name in ("maven", "maven break"):
+        if not pg._locked(name):
+            failures += fail(f"{name} runs Gradle without the lock")
+        if name in pg.EXCLUSIVE_SUITES:
+            failures += fail(f"{name} starts no TestKit build and waits for the alone phase")
+    return failures
+
+
 def case_a_gradle_suite_not_named_safe_runs_under_the_lock():
     failures = 0
     for name in pg.GRADLE_SUITES:
@@ -826,6 +837,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_every_maven_guard_resolves_to_one_class,
          case_the_maven_whole_suite_runs_every_maven_class,
          case_no_testkit_suite_runs_in_the_parallel_phase,
+         case_the_maven_break_suite_runs_under_the_lock_as_the_maven_suite_does,
          case_a_gradle_suite_not_named_safe_runs_under_the_lock,
          case_functional_guards_pair_by_class_and_configuration_guards_run_alone,
          case_guard_names_its_own_guards_and_refuses_an_unknown_one,

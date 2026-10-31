@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -25,6 +26,25 @@ class MavenAttemptSelfTest : MavenBreakAttempt() {
     }
 
     private val twoClasses = listOf(oneClass, oneTest, secondClass, secondTest)
+
+    @Test
+    fun `an attempt whose target holds two test methods is refused`(@TempDir dir: File) {
+        val twoMethods = "src/test/java/dev/sample/AlphaTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class AlphaTest {
+                @Test void passes() { assertEquals(2, new Alpha().twice(1)); }
+                @Test void passesAgain() { assertEquals(4, new Alpha().twice(2)); }
+            }
+        """.trimIndent()
+
+        val refused = assertFailsWith<IllegalStateException> {
+            attempt(dir, "dev.sample.AlphaTest", Aim.Row("reaches-change"), listOf(oneClass, twoMethods)) {}
+        }
+
+        assertContains(refused.message.orEmpty(), "ran 2 test cases")
+    }
 
     @Test
     fun `an attempt whose change does not fail the target under a full run is vacuous`(@TempDir dir: File) {
