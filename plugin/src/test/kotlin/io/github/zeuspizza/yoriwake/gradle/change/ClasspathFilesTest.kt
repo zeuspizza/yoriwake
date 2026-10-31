@@ -501,6 +501,52 @@ class ClasspathFilesTest {
         assertNotEquals(copyDigest(root, "one\ntwo\n"), failing["build/resources/test/a.txt"])
     }
 
+    /** A [TrackedText] at [root] that counts its index listings. */
+    private class CountedText(root: File) {
+        var listings = 0
+        val text = TrackedText(root) { arguments ->
+            if ("--stage" in arguments) listings++
+            ChangeDetection.rawGit(root, arguments)
+        }
+    }
+
+    @Test
+    fun `one execution's stamp and tables list the index once and digest as fresh readings do`(@TempDir root: File) {
+        repository(root)
+        val resources = File(root, "build/resources/test").apply { mkdirs() }
+        file(resources, "a.txt", "one\r\ntwo\r\n")
+        val home = File(root, "../m2").absoluteFile
+        val counted = CountedText(root)
+
+        val stamp = io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord.classpathDigest(listOf(resources), root, home, counted.text)
+        val selecting = found(ClasspathFiles.table(listOf(resources), listOf(), root, mapOf(), text = counted.text))
+        val capture = found(ClasspathFiles.table(listOf(resources), listOf(), root, mapOf(), text = counted.text))
+
+        assertEquals(1, counted.listings)
+        assertEquals(io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord.classpathDigest(listOf(resources), root, home), stamp)
+        assertEquals(found(ClasspathFiles.table(listOf(resources), listOf(), root, mapOf())), selecting)
+        assertEquals(selecting, capture)
+        assertEquals(copyDigest(root, "one\ntwo\n"), selecting["build/resources/test/a.txt"])
+    }
+
+    @Test
+    fun `a copy no tracked blob matches keeps its bytes digest with a shared reading`(@TempDir root: File) {
+        repository(root)
+        val resources = File(root, "build/resources/test").apply { mkdirs() }
+        file(resources, "a.txt", "one\r\ntwo\r\n")
+        file(resources, "gen.txt", "gen\r\n")
+        val counted = CountedText(root)
+
+        val shared = found(ClasspathFiles.walk(listOf(resources), listOf(), root, text = counted.text))
+        val again = found(ClasspathFiles.walk(listOf(resources), listOf(), root, text = counted.text))
+
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest("gen\r\n".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        assertEquals(bytes, shared["build/resources/test/gen.txt"])
+        assertEquals(shared, again)
+        assertEquals(1, counted.listings)
+    }
+
     /** A machine: a root, a Gradle user home and a user home, each in its own directory under [base]. */
     private class Machine(base: File) {
         val root = File(base, "work/sample").apply { mkdirs() }

@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
 import java.io.File
 
 /**
@@ -16,6 +17,8 @@ import java.io.File
 internal object MavenStamp {
 
     fun observe(
+        /** The invocation's git, run at [root]. */
+        git: ChangeDetection.Runner,
         root: File,
         task: String,
         buildPath: String,
@@ -24,24 +27,24 @@ internal object MavenStamp {
         systemProperties: Map<String, String>,
         hostArguments: List<String>,
         filters: List<String>,
-    ): SelectionRecord.Stamp {
-        val git = ChangeDetection.directRunner(root)
+        /** The execution's one reading of which copies of tracked text files git wrote with `\r\n`. */
+        text: TrackedText,
+    ): SelectionRecord.Reading {
         val top = git.run(listOf("rev-parse", "--show-toplevel"))?.firstOrNull()
         val buildRoot = top?.let { runCatching { root.canonicalFile.relativeTo(File(it).canonicalFile).invariantSeparatorsPath }.getOrNull() }
-        return SelectionRecord.Stamp(
+        return SelectionRecord.Reading(
             commit = ChangeDetection.head(git),
             clean = ChangeDetection.status(git) { Recording.isBuildState(it) }?.isEmpty() == true,
             task = task,
             // Unknown reads as a root no build has, so it never matches.
             buildRoot = buildRoot ?: "?${root.absolutePath}",
             buildPath = buildPath,
-            classpath = SelectionRecord.classpathDigest(classpath, root, localRepository),
             configuration = SelectionRecord.configurationDigest(
                 systemProperties,
                 hostArguments.filter { !it.startsWith("-Dyoriwake.") },
                 filters.sorted(),
                 null,
             ),
-        )
+        ) { SelectionRecord.classpathDigest(classpath, root, localRepository, text) }
     }
 }
