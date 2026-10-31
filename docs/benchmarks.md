@@ -157,7 +157,8 @@ the [sweep data dictionary](sweep-data-dictionary.md). A sweep can also run on G
 measure; what a change to the plugin asks of it (nothing, a replay, the reduced arm or every
 project) follows from the paths it touched (`bench/tier.py`). Every project is swept there on
 dispatch in each release check. A dispatch with `completes=<run>` re-runs some of that run's missing projects and
-publishes one sweep of both, refused if the selector moved between them.
+publishes one sweep of both, refused if the selector moved between them. The run's page shows one
+section per project, its rows by arm, and its `sweep-results` artifact holds the merged results.
 
 ### Recall
 

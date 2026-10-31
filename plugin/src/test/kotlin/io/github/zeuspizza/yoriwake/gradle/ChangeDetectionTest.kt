@@ -585,6 +585,77 @@ class ChangeDetectionTest {
             .redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
         assertEquals(0, exit, "git ${args.joinToString(" ")}")
     }
+
+    /** A runner that answers every command with its own words, null for [failing] ones, and counts them. */
+    private class Counting(val failing: Set<String> = emptySet()) : ChangeDetection.Runner {
+        val asked = mutableListOf<String>()
+        override fun run(arguments: List<String>): List<String>? {
+            val command = arguments.joinToString(" ")
+            asked += command
+            return if (command in failing) null else listOf(command)
+        }
+    }
+
+    @Test
+    fun `an invocation asks the top level and a git path once, and HEAD and status each time`(@TempDir dir: File) {
+        val counting = Counting()
+        val git = ChangeDetection.memoisingRunner(dir, java.util.concurrent.ConcurrentHashMap(), counting)
+        val asked = listOf(
+            listOf("rev-parse", "--show-toplevel"), listOf("rev-parse", "--git-path", "logs/HEAD"),
+            listOf("rev-parse", "HEAD"), listOf("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"),
+            listOf("ls-files", "--others", "--exclude-standard"), listOf("diff", "--name-only", "HEAD"),
+        )
+
+        repeat(2) { asked.forEach { assertEquals(listOf(it.joinToString(" ")), git.run(it)) } }
+
+        assertEquals(1, counting.asked.count { it == "rev-parse --show-toplevel" })
+        assertEquals(1, counting.asked.count { it == "rev-parse --git-path logs/HEAD" })
+        assertEquals(2, counting.asked.count { it == "rev-parse HEAD" })
+        assertEquals(2, counting.asked.count { it.startsWith("status ") })
+        assertEquals(2, counting.asked.count { it.startsWith("ls-files ") })
+        assertEquals(2, counting.asked.count { it.startsWith("diff ") })
+    }
+
+    @Test
+    fun `a merge base is kept only between two commits named by id`(@TempDir dir: File) {
+        val counting = Counting()
+        val git = ChangeDetection.memoisingRunner(dir, java.util.concurrent.ConcurrentHashMap(), counting)
+        val a = "a".repeat(40)
+        val b = "b".repeat(40)
+
+        repeat(2) {
+            git.run(listOf("merge-base", "--end-of-options", a, b))
+            git.run(listOf("merge-base", "--end-of-options", a, "main"))
+            git.run(listOf("merge-base", "HEAD", "@{upstream}"))
+        }
+
+        assertEquals(1, counting.asked.count { it == "merge-base --end-of-options $a $b" })
+        assertEquals(2, counting.asked.count { it == "merge-base --end-of-options $a main" })
+        assertEquals(2, counting.asked.count { it == "merge-base HEAD @{upstream}" })
+    }
+
+    @Test
+    fun `a question git could not answer is asked again`(@TempDir dir: File) {
+        val counting = Counting(failing = setOf("rev-parse --show-toplevel"))
+        val git = ChangeDetection.memoisingRunner(dir, java.util.concurrent.ConcurrentHashMap(), counting)
+
+        repeat(2) { assertEquals(null, git.run(listOf("rev-parse", "--show-toplevel"))) }
+
+        assertEquals(2, counting.asked.size)
+    }
+
+    @Test
+    fun `two build roots keep their own answers`(@TempDir dir: File) {
+        val memo = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+        val first = Counting()
+        val second = Counting()
+
+        ChangeDetection.memoisingRunner(File(dir, "a"), memo, first).run(listOf("rev-parse", "--show-toplevel"))
+        ChangeDetection.memoisingRunner(File(dir, "b"), memo, second).run(listOf("rev-parse", "--show-toplevel"))
+
+        assertEquals(1, first.asked.size)
+        assertEquals(1, second.asked.size)
+    }
 }
 
 /**

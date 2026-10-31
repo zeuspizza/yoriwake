@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.SelectionRecordFile
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
+import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
@@ -58,6 +59,42 @@ internal object SelectionRecord {
             "the task's configuration (its system properties, JVM arguments or test filters)"
         else -> null
     }
+
+    /**
+     * A stamp read where a run starts, its classpath digested only when a comparison can read it: a
+     * selecting run that starts at an unknown commit or on a tree that is not clean leaves no record,
+     * and a complement whose record differs in the commit, the tree, the task or the build refuses on
+     * that field whatever the classpath holds. When it is digested, it reads what [classpathDigest]
+     * always reads.
+     */
+    class Reading(
+        commit: String?,
+        clean: Boolean,
+        task: String,
+        buildRoot: String,
+        buildPath: String,
+        configuration: String,
+        digest: () -> String,
+    ) {
+        private val fields = Stamp(commit, clean, task, buildRoot, buildPath, "", configuration)
+        private val classpath by lazy(digest)
+
+        /** The stamp a selecting run's start stores. */
+        fun forStart(): Stamp = fields.copy(
+            classpath = when {
+                fields.commit == null -> notDigested("HEAD could not be read where the run started")
+                !fields.clean -> notDigested("the tree was not clean where the run started")
+                else -> classpath
+            },
+        )
+
+        /** [mismatch] of [recorded] and this reading: the same field, in the same words. */
+        fun mismatchWith(recorded: Stamp): String? =
+            mismatch(recorded, fields.copy(classpath = recorded.classpath, configuration = recorded.configuration))
+                ?: mismatch(recorded, fields.copy(classpath = classpath))
+    }
+
+    private fun notDigested(reason: String) = unmatched("not digested: $reason")
 
     private fun describe(stamp: Stamp) = "${stamp.buildRoot.ifEmpty { "the repository's top level" }} (${stamp.buildPath})"
 
@@ -214,7 +251,13 @@ internal object SelectionRecord {
      * When that walk cannot vouch for every file, or the root itself is on the classpath, the digest
      * is one no other run produces, carrying why.
      */
-    fun classpathDigest(files: Iterable<File>, rootDir: File, gradleUserHome: File): String {
+    fun classpathDigest(
+        files: Iterable<File>,
+        rootDir: File,
+        gradleUserHome: File,
+        /** Which copies of tracked text files git wrote with `\r\n`; shared within one Maven execution. */
+        text: TrackedText = TrackedText(rootDir),
+    ): String {
         val built = mutableListOf<File>()
         val named = files.map { file ->
             // The walk reads only what is beneath the root, so the root itself would be named only.
@@ -227,7 +270,7 @@ internal object SelectionRecord {
             if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
             (inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath) + " " + contentDigest(file)
         }
-        val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true) }
+        val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Refused -> return unmatched(walk.reason)
             is ClasspathFiles.Walk.Found -> walk.digests

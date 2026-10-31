@@ -7,7 +7,9 @@ name: sweep
 # order), which fixes its accepted target list and cuts it into slices. Each slice is one job that
 # runs both arms of its rows, so a row's two times come from one machine. The merge job folds the
 # slices back into the file one job would have written (bench/merge.py) and attaches the results,
-# with the maps and decision records, to a draft release for a maintainer to publish.
+# with the maps and decision records, to a draft release for a maintainer to publish. It also writes
+# the run page, one section per project (bench/sweep_page.py), and uploads the merged results as the
+# `sweep-results` artifact.
 #
 # What runs follows from what changed since `base` (bench/tier.py) unless `tier` names it: nothing,
 # an offline replay of the last published sweep's rows, the reduced arm, or every project. A full
@@ -154,7 +156,11 @@ jobs:
         with:
           cache-read-only: true
           add-job-summary: on-failure
-      - run: python3 bench/controls.py
+      - name: sweep the controls
+        run: |
+          # As in the record and shard steps: no guest build writes to the run page.
+          unset GITHUB_STEP_SUMMARY
+          python3 bench/controls.py
 
   # Selection logic alone: the last published sweep's rows re-asked of this selector, offline. A
   # pass or a fail, never new figures.
@@ -231,6 +237,9 @@ jobs:
           FACTOR: ${{ inputs.factor }}
         run: |
           set -eu
+          # A guest's own test report on the run page is unlabelled and repeated for every build it
+          # runs (anki-android's build writes one per test task); the merge job writes the page.
+          unset GITHUB_STEP_SUMMARY
           # A runner that runs out of memory or disk is shut down whole, and this step's log is all
           # it leaves: the machine's use, every 30 seconds, beside the build's.
           bench/machine_sampler.sh & sampler=$!
@@ -365,6 +374,9 @@ jobs:
           SHARD: ${{ matrix.slice.shard }}/${{ matrix.slice.of }}
         run: |
           set -eu
+          # A guest's own test report on the run page is unlabelled and repeated for every build it
+          # runs (anki-android's build writes one per test task); the merge job writes the page.
+          unset GITHUB_STEP_SUMMARY
           # A runner that runs out of memory or disk is shut down whole, and this step's log is all
           # it leaves: the machine's use, every 30 seconds, beside the build's.
           bench/machine_sampler.sh & sampler=$!
@@ -497,3 +509,20 @@ jobs:
             echo "::error::missing from this sweep: $(printf '%s; ' "${declared[@]}")"
             exit 1
           fi
+      # The run page: one section per merged project. Also after the merge step failed for a missing
+      # project, which it does after the release; a fault here never turns the sweep red.
+      - name: write the run page
+        if: ${{ !cancelled() && hashFiles('merged/**/sweep.json') != '' }}
+        continue-on-error: true
+        run: python3 bench/sweep_page.py merged unpacked >> "$GITHUB_STEP_SUMMARY"
+      # The one download a reader needs: the merged results, also of a sweep that ends red for a
+      # missing project. The record-* and shard-* artifacts stay for re-running a slice or the
+      # merge; a re-run merge replaces this one.
+      - if: ${{ !cancelled() && hashFiles('merged/**/sweep.json') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sweep-results
+          path: merged/
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: true

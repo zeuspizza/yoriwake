@@ -412,7 +412,7 @@ internal fun TestTaskWiring.configureComplement(
         copy.delete()
         runCatching { lastLook.delete() }
         if (declinedUnderDevelocity(test) || namedTestsLeftAlone(test, leftAlone) || refusedAtExecution(test)) return@doFirst
-        val mismatch = SelectionRecord.mismatch(recorded, identity.observe(test))
+        val mismatch = identity.observe(test).mismatchWith(recorded)
             ?: runCatching { copy.parentFile.mkdirs(); writeAtomically(copy, validated) }
                 .exceptionOrNull()?.let { "its copy could not be written ($it)" }
             // The build's own doFirst actions run after this: the last look compares the build's

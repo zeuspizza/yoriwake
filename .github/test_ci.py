@@ -681,6 +681,72 @@ def case_no_workflow_runs_on_a_schedule():
                 problems += fail(f"{name} runs on a schedule")
     return problems
 
+def code_scanning_problems(text):
+    """What would put code scanning on every pull request, widen its token, or let it run unbounded
+    or skip the Kotlin sources."""
+    problems = []
+    if not re.search(r"^  push:\n    branches: \[main\]\n", text, re.M):
+        problems.append("it does not run on pushes to main")
+    if not re.search(r"^  workflow_dispatch:", text, re.M):
+        problems.append("it cannot be dispatched")
+    if re.search(r"^  pull_request(_target)?:", text, re.M):
+        problems.append("it runs on pull requests")
+    if not re.search(r"^permissions:\n  contents: read\n(?!  )", text, re.M):
+        problems.append("its top-level token is not read-only")
+    if "concurrency:" in text:
+        problems.append("a concurrency group can cancel the analysis of a push to main")
+    jobs = re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[-1], re.M)
+    for job in jobs:
+        block = _job_block(text, job) or ""
+        if not re.search(r"^    permissions:\n      contents: read\n      security-events: write\n(?!      )",
+                         block, re.M):
+            problems.append(f"job {job} does not ask for exactly contents: read and security-events: write")
+        if "\n    timeout-minutes: " not in block:
+            problems.append(f"job {job} has no time bound")
+    for language, mode in (("java-kotlin", "manual"), ("python", "none"), ("actions", "none")):
+        if not re.search(rf"^ +- language: {language}\n +build-mode: {mode}\n", text, re.M):
+            problems.append(f"{language} is not analysed in {mode} build mode")
+    return problems
+
+
+def case_code_scanning_runs_on_main_never_on_pull_requests():
+    """A pull request already queues more jobs than the free plan's concurrent-job cap; the push to
+    main that merges it is analysed instead. And Kotlin, most of the product, has no build-free
+    mode."""
+    with open(os.path.join(WORKFLOWS, "codeql.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = sum(fail(f"codeql.yml: {problem}") for problem in code_scanning_problems(text))
+    for edited, expected in (
+        (text.replace("  workflow_dispatch:", "  pull_request:\n    branches: [main]\n  workflow_dispatch:"),
+         "runs on pull requests"),
+        (text.replace("permissions:\n  contents: read\n", "permissions:\n  contents: read\n  security-events: write\n", 1),
+         "top-level token"),
+        (re.sub(r"^    timeout-minutes: \d+\n", "", text, flags=re.M), "no time bound"),
+        (text.replace("language: java-kotlin\n            build-mode: manual",
+                      "language: java-kotlin\n            build-mode: none"), "java-kotlin is not analysed"),
+        (text.replace("language: python\n            build-mode: none",
+                      "language: python\n            build-mode: manual"), "python is not analysed"),
+        (text.replace("      security-events: write\n", "      security-events: write\n      actions: write\n", 1),
+         "exactly contents: read and security-events: write"),
+        (text.replace("\njobs:\n", "\nconcurrency: codeql\n\njobs:\n", 1), "concurrency group"),
+        (text.replace("  workflow_dispatch:\n", "", 1), "cannot be dispatched"),
+        (text.replace("    branches: [main]\n", "    branches: [release]\n", 1), "pushes to main"),
+    ):
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to codeql.yml")
+        elif not any(expected in problem for problem in code_scanning_problems(edited)):
+            problems += fail(f"an edited codeql.yml was not reported for {expected!r}")
+    # A source set the traced compile leaves out is missing from the analysis without any error.
+    compile_line = re.search(r"\./gradlew ([^\n]*\n[^\n]*)\n", text)
+    tasks = set(compile_line.group(1).split()) if compile_line else set()
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for module in ("plugin", "agent", "core", "maven"):
+        for source_set in sorted(os.listdir(os.path.join(root, module, "src"))):
+            task = {"main": "classes", "test": "testClasses"}.get(source_set, source_set + "Classes")
+            if task not in tasks:
+                problems += fail(f"codeql.yml: the traced compile does not run {task} for {module}/src/{source_set}")
+    return problems
+
 LABELS = ["linux/8.14/21", "linux/9.8.0/21"]
 ROWS = [
     ("Gradle", "8.14", ["*/8.14/*"], ["MatrixCellIdentityTest"]),
@@ -2280,6 +2346,78 @@ def case_every_measuring_step_samples_the_machine_until_it_ends():
     return problems
 
 
+GUEST_STEPS = ("\n      - name: record and cut into slices", "\n      - name: measure this slice",
+               "\n      - name: sweep the controls")
+
+
+def case_no_guest_build_writes_to_the_run_page():
+    """A guest's build may write its own test report to the job summary (anki-android's does, per
+    test task): dozens of unlabelled tables per project. Every step that runs guests unsets the
+    variable before its first build, so nothing it starts can find the file."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for opener in GUEST_STEPS:
+        script = _sweep_step(text, opener)
+        unset = script.find("\nunset GITHUB_STEP_SUMMARY\n")
+        if unset < 0 or unset > script.find("python3 "):
+            problems += fail(f"sweep.yml:{opener.split('name: ')[1]} runs a build before it unsets "
+                             f"GITHUB_STEP_SUMMARY")
+    script = _sweep_step(text, GUEST_STEPS[0])
+    with tempfile.TemporaryDirectory() as root:
+        bench = os.path.join(root, "bench")
+        os.makedirs(bench)
+        with open(os.path.join(bench, "machine_sampler.sh"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n")
+        os.chmod(os.path.join(bench, "machine_sampler.sh"), 0o755)
+        # Each stands for a guest build: it writes a table wherever the variable points.
+        for stub in ("run.py", "shard.py"):
+            with open(os.path.join(bench, stub), "w", encoding="utf-8") as handle:
+                handle.write(f"import os\nopen({root!r} + '/ran-{stub}', 'w').close()\n"
+                             "path = os.environ.get('GITHUB_STEP_SUMMARY')\n"
+                             "if path:\n    open(path, 'a').write('| Test Results |\\n')\n")
+        page = os.path.join(root, "summary.md")
+        open(page, "w").close()
+        env = {**os.environ, "NAME": "demo", "ARGS": json.dumps(["bench/projects/demo.toml"]),
+               "CHECKOUT": "checkouts/demo", "FACTOR": "1.5", "GITHUB_STEP_SUMMARY": page}
+        subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+        if not os.path.exists(os.path.join(root, "ran-run.py")):
+            problems += fail("the record step's script did not reach its build")
+        elif os.path.getsize(page):
+            problems += fail(f"a guest build in the record step wrote to the run page: "
+                             f"{open(page).read()!r}")
+    return problems
+
+
+def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
+    """The page and `sweep-results` come from `merged/`, also on a run that then fails for a missing
+    project, and the page never turns the run red. The per-job artifacts keep their three days."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    merge = _job_block(text, "merge")
+    guard = "${{ !cancelled() && hashFiles('merged/**/sweep.json') != '' }}"
+    page = merge[merge.index("      - name: write the run page"):]
+    page = page[:page.index("\n      - ", 1)]
+    if f"if: {guard}" not in page or "continue-on-error: true" not in page \
+            or "bench/sweep_page.py merged unpacked" not in page:
+        problems += fail(f"the page step does not run sweep_page.py whenever the merge wrote results, "
+                         f"without failing the run: {page}")
+    if merge.count("actions/upload-artifact@") != 1:
+        problems += fail("the merge job does not upload exactly one artifact")
+    else:
+        upload = merge[merge.rindex("\n      - ", 0, merge.index("actions/upload-artifact@")):]
+        for needed in (f"- if: {guard}", "name: sweep-results", "path: merged/", "overwrite: true",
+                       "if-no-files-found: error"):
+            if needed not in upload:
+                problems += fail(f"the sweep-results upload lacks {needed!r}")
+    for job in ("record", "shard"):
+        block = _job_block(text, job)
+        if block.count("retention-days: 3") != block.count("actions/upload-artifact@"):
+            problems += fail(f"a {job} upload no longer keeps three days")
+    return problems
+
+
 def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
     """One failed project must not cost the others their rows, and a sweep short of one must say so
     and fail: kafka's record failed and kafka-core lost a shard, so only okio is merged, the release
@@ -2829,6 +2967,7 @@ CASES = (
     case_the_matrix_cell_builds_through_the_download_rerun,
     case_the_matrix_tests_only_the_candidate_a_dispatch_names,
     case_no_workflow_runs_on_a_schedule,
+    case_code_scanning_runs_on_main_never_on_pull_requests,
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
     case_a_code_file_moved_into_docs_still_needs_the_checks,
@@ -2913,6 +3052,8 @@ CASES = (
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
     case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
     case_every_measuring_step_samples_the_machine_until_it_ends,
+    case_no_guest_build_writes_to_the_run_page,
+    case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged,
     case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure,
     case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported,
     case_a_green_run_summarises_every_job_and_each_suites_shards,

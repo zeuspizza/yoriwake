@@ -85,6 +85,8 @@ internal object SelectingStep {
         /** Each glob the build declares every test of this run depends on: resolved, and as written. */
         val declared: List<Pair<String, String>>,
         val observing: Boolean,
+        /** Which copies of tracked text files git wrote with `\r\n`; one per Maven execution, read once. */
+        val text: TrackedText = TrackedText(rootDir),
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -114,7 +116,7 @@ internal object SelectingStep {
         // with no change behind it; read now, after the run's inputs are built, and again by the
         // host's last look, after the build's own last actions.
         var handedOver = true
-        val classpathFiles = classpathFilesRule(mapDir, classpathFacts) { compared ->
+        val classpathFiles = classpathFilesRule(mapDir, classpathFacts, inputs.text) { compared ->
             handedOver = host.handOver(compared)
         }.let { verdict ->
             // Nothing for the last look to compare against, so nothing vouches for what the build's
