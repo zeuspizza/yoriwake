@@ -20,7 +20,10 @@ worker worktrees under `sandbox/prove-guards/`, and this tree is never written.
 
 On Windows the same commands run under `python`, and Gradle starts through `gradlew.bat`. A suite
 that cannot run there fails unmutated and is refused, naming its first failure, before any source
-is mutated.
+is mutated. One guard per suite on a Windows runner with a CRLF checkout (2026-10-31): unit, agent,
+functional, decoder, reference, jdk identity, sbom, configuration guards, break, portal, qualify,
+replay, revert, process, config cost, order, mutations, sharding, sweep and corpus fire there;
+python, ci, scan, controls, preflight, maven and maven break fail unmutated there.
 
 **DO NOT EDIT A MUTATED SOURCE WHILE THIS IS RUNNING WITH `--jobs 1`.** That mode mutates this tree
 in place, and the restore writes back the whole in-memory `original`, so an edit made to a mutated
