@@ -226,4 +226,159 @@ class KotlinInlineAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.OFF_TARGET, result)
     }
+
+    // Track: code reading. Boundary: the scan matches the classes an SMAP names against the
+    // prefixes of the changed sources, which come from the path and the file's type declarations.
+    // Here the inline function sits in a companion object of a class its file is not named after,
+    // so the SMAP names `Range$Companion` and only the declared type can match it.
+    @Test
+    fun `an inline function in a companion object of a class its file is not named after selects its caller`(
+        @TempDir dir: File,
+    ) {
+        val limits = source(
+            "src/main/kotlin/dev/demokt/Limits.kt",
+            """
+            package dev.demokt
+            class Range(val low: Int) {
+                companion object { inline fun positive(n: Int): Boolean = n > 0 }
+                fun contains(n: Int): Boolean = n >= low
+            }
+            fun limitOf(n: Int): Int = n
+            """,
+        )
+        // Executes the file's own facade class, so the changed file is known to the map by its path.
+        val limitsTest = kotlinTest("A3LimitsTest", "@Test fun limit() { assertEquals(1, limitOf(1)) }")
+        val target = kotlinTest("A1CompanionTest", "@Test fun positive() { assertTrue(Range.positive(1)) }")
+        val rangeTest = kotlinTest("A2RangeTest", "@Test fun contains() { assertTrue(Range(0).contains(1)) }")
+        val result = attempt(
+            dir, "dev.demokt.A1CompanionTest", Aim.Row("reaches-change"),
+            listOf(limits, target, rangeTest, limitsTest, alpha, alphaTest),
+            buildScript = forkedKotlinBuild,
+        ) {
+            val file = File(it, limits.first)
+            file.writeText(file.readText().replace("n > 0", "n > 1"))
+        }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: the scan reads every file named like a class under the own
+    // output roots, resources included, and stops at a 4 MB read cap. A bytecode tool's tests keep
+    // a large sample named `.class` among their resources.
+    @Test
+    fun `a large class-named sample among the test resources stops the inline scan`(@TempDir dir: File) {
+        val sampleBuild = forkedKotlinBuild + "\n" + """
+            tasks.processTestResources {
+                doLast {
+                    val sample = destinationDir.resolve("samples/Huge.class")
+                    sample.parentFile.mkdirs()
+                    sample.writeBytes(ByteArray(5 * 1024 * 1024))
+                }
+            }
+        """.trimIndent()
+        val result = attempt(
+            dir, "dev.demokt.A1InlinedTest", Aim.Forced("scan-exhausted"),
+            listOf(
+                inlined, inlinedTest, belowTenTest, alpha, alphaTest,
+                // A resource of its own, or the copy task has no source and its action never runs.
+                "src/test/resources/samples/README.txt" to "Samples a bytecode reader is tested on.\n",
+            ),
+            buildScript = sampleBuild,
+        ) { changeAboveZero(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the classes of a changed source are looked up in the classpath's
+    // directories and in own jars, which are recognised by a `.jar` name; the JDK's class loader
+    // takes any zip. Tests run against the module's classes packed as `.zip` files in the build
+    // directory, with no classes directory on the classpath.
+    @Test
+    fun `tests run against classes packed as zip files in the build directory refuse to narrow`(@TempDir dir: File) {
+        val zippedBuild = minimalBuild.replace(
+            "tasks.test { useJUnitPlatform() }",
+            """
+            val packMain = tasks.register<Zip>("packMain") {
+                from(sourceSets.main.get().output)
+                archiveFileName.set("main.zip")
+                destinationDirectory.set(layout.buildDirectory.dir("packed"))
+            }
+            val packTest = tasks.register<Zip>("packTest") {
+                from(sourceSets.test.get().output)
+                archiveFileName.set("test.zip")
+                destinationDirectory.set(layout.buildDirectory.dir("packed"))
+            }
+            tasks.test {
+                useJUnitPlatform()
+                classpath = files(packMain, packTest) + classpath.filter { it.name.endsWith(".jar") }
+            }
+            """.trimIndent(),
+        )
+        val result = attempt(
+            dir, "dev.sample.AlphaTest", Aim.Forced("scan-refused"),
+            listOf(alphaJava, alphaJavaTest, secondClass, secondTest, classOrderByName),
+            buildScript = zippedBuild,
+        ) { changeAlphaJava(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a Kotlin output with no SMAP anywhere cannot say who inlined a
+    // change, and Kotlin writes one only into a class that inlined something. Here only Java tests
+    // call the Kotlin code, as plain methods, so no class carries one though nothing was stripped.
+    @Test
+    fun `a Kotlin module only Java tests call carries no SMAP and refuses on a Kotlin change`(@TempDir dir: File) {
+        val javaCaller = source(
+            "src/test/java/dev/demokt/A1JavaCallerTest.java",
+            """
+            package dev.demokt;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class A1JavaCallerTest { @Test void positive() { assertTrue(InlinedKt.aboveZero(1)); } }
+            """,
+        )
+        val javaAlpha = source(
+            "src/test/java/dev/demokt/A4JavaAlphaTest.java",
+            """
+            package dev.demokt;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A4JavaAlphaTest { @Test void twice() { assertEquals(2, new Alpha().twice(1)); } }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.demokt.A1JavaCallerTest", Aim.Forced("smap-absent"),
+            listOf(inlined, javaCaller, alpha, javaAlpha),
+            buildScript = forkedKotlinBuild,
+        ) { changeAboveZero(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the SMAP names the class that holds the inlined body, and the
+    // scan matches it against the changed file's prefixes. `@file:JvmName` gives the file's functions
+    // a class named after neither, so the scan finds no caller: the caller, recompiled with the new
+    // body, is held by the bytes comparison instead, which this attempt keeps watching.
+    @Test
+    fun `an inline function in a file renamed by JvmName selects the test it was copied into`(@TempDir dir: File) {
+        val renamed = source(
+            "src/main/kotlin/dev/demokt/Inlined.kt",
+            """
+            @file:JvmName("Checks")
+            package dev.demokt
+            inline fun aboveZero(n: Int): Boolean = n > 0
+            fun belowTen(n: Int): Boolean = n < 10
+            class Inlined { fun one(): Int = 1 }
+            """,
+        )
+        // Executes the class named after the file, so the changed file is known to the map by its path.
+        val inlinedClassTest = kotlinTest("A3InlinedClassTest", "@Test fun one() { assertEquals(1, Inlined().one()) }")
+        val result = attempt(
+            dir, "dev.demokt.A1InlinedTest", Aim.Row("reaches-change"),
+            listOf(renamed, inlinedTest, belowTenTest, inlinedClassTest, alpha, alphaTest),
+            buildScript = forkedKotlinBuild,
+        ) { changeAboveZero(it) }
+
+        assertOutcome(Outcome.OFF_TARGET, result)
+    }
 }

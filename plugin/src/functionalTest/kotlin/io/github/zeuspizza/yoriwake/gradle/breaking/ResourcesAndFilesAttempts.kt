@@ -1021,4 +1021,227 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
+
+    /** A jar at [file] whose manifest's `Class-Path` is [classPath] (none when null), holding [entries]. */
+    private fun manifestJar(file: File, classPath: String?, vararg entries: Pair<String, String>) {
+        file.parentFile.mkdirs()
+        val manifest = java.util.jar.Manifest()
+        manifest.mainAttributes[java.util.jar.Attributes.Name.MANIFEST_VERSION] = "1.0"
+        if (classPath != null) manifest.mainAttributes[java.util.jar.Attributes.Name.CLASS_PATH] = classPath
+        java.util.jar.JarOutputStream(file.outputStream(), manifest).use { out ->
+            for ((name, text) in entries) {
+                out.putNextEntry(java.util.zip.ZipEntry(name))
+                out.write(text.toByteArray())
+                out.closeEntry()
+            }
+        }
+    }
+
+    /** A test, first by name, that asserts [key] of the classpath resource [resource] is [expected]. */
+    private fun propertyTest(name: String, resource: String, key: String, expected: String) = source(
+        "src/test/java/dev/sample/$name.java",
+        """
+        package dev.sample;
+        import java.io.InputStream;
+        import java.util.Properties;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class $name {
+            @Test void reads() throws Exception {
+                Properties properties = new Properties();
+                try (InputStream in = getClass().getResourceAsStream("/$resource")) {
+                    assertNotNull(in, "$resource is not on the class path");
+                    properties.load(in);
+                }
+                assertEquals("$expected", properties.getProperty("$key"));
+            }
+        }
+        """,
+    )
+
+    /** [file] as a `Class-Path` token: an absolute `file:` URL, ending in `/` for a directory. */
+    private fun urlOf(file: File, directory: Boolean = false): String =
+        file.absoluteFile.toURI().toString().trimEnd('/') + if (directory) "/" else ""
+
+    // Track: code reading. Boundary: a file a dependency's manifest names gets no row when it is
+    // already on the class path; what changes there is the class rules' to judge. Here a vendor jar
+    // outside the root names the module's own classes directory, so a changed class must still
+    // select by its reach and not move the dependency rows.
+    @Test
+    fun `a dependency whose manifest names the module's own classes leaves a changed class to its reach`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        // Canonical, as Gradle lists it: a temporary directory behind a link would name another path.
+        manifestJar(File(vendor, "vendor.jar"), urlOf(File(dir.canonicalFile, "build/classes/java/main"), directory = true))
+        val build = buildWith("", after = "dependencies { testRuntimeOnly(files(\"${File(vendor, "vendor.jar").invariantSeparatorsPath}\")) }")
+        val result = attempt(
+            dir, "dev.sample.A9CodecTest", Aim.Row("reaches-change"),
+            listOf(codec, other, first, codecTest, classOrderByName), buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: a changed path no coverage map can see forces unless it is an
+    // IDE's state or declared not read; nothing on Gradle's classpath names this one. A committed
+    // `libs/helper.jar` reaches the tests only through a vendor jar's manifest, outside the root.
+    @Test
+    fun `a committed jar only a dependency's manifest names forces the run when it changes`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        val helper = File(dir, "libs/helper.jar")
+        manifestJar(helper, null, "helper.properties" to "mode=a\n")
+        manifestJar(File(vendor, "vendor.jar"), urlOf(helper))
+        val build = buildWith("", after = "dependencies { testRuntimeOnly(files(\"${File(vendor, "vendor.jar").invariantSeparatorsPath}\")) }")
+        val result = attempt(
+            dir, "dev.sample.A1HelperTest", Aim.Forced("unmappable-paths"),
+            listOf(codec, other, first, propertyTest("A1HelperTest", "helper.properties", "mode", "a"), codecTest, classOrderByName),
+            buildScript = build,
+        ) { manifestJar(helper, null, "helper.properties" to "mode=b\n") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the build-output walk follows a walked jar's manifest wherever
+    // it points, and a moved file outside the root is not handed to the read records. A jar the
+    // build writes names a configuration directory beside the checkout.
+    @Test
+    fun `a directory outside the root a build jar's manifest names forces the run when a file in it changes`(
+        @TempDir dir: File,
+        @TempDir outside: File,
+    ) {
+        val settings = File(outside, "conf/settings.properties")
+        settings.parentFile.mkdirs()
+        settings.writeText("mode=a\n")
+        val build = buildWith(
+            "",
+            after = """
+            val configJar = tasks.register<Jar>("configJar") {
+                archiveFileName.set("config.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("config"))
+                manifest { attributes("Class-Path" to "${urlOf(settings.parentFile, directory = true)}") }
+            }
+            dependencies { testRuntimeOnly(files(configJar)) }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1SettingsTest", Aim.Forced("classpath-files-changed"),
+            listOf(codec, other, first, propertyTest("A1SettingsTest", "settings.properties", "mode", "a"), codecTest, classOrderByName),
+            buildScript = build,
+        ) {
+            changeCodec(it)
+            settings.writeText("mode=b\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: what a walked jar's manifest names is walked with its class
+    // files, which the walk otherwise skips, and they count against the 200,000-file budget. A
+    // zip of 200,001 class files, named only by a build jar's manifest, spends it where the same
+    // zip on the classpath directly would not.
+    @Test
+    fun `a zip of class files only a build jar's manifest names spends the digest budget`(@TempDir dir: File) {
+        val budgetBuild = "import java.util.zip.ZipEntry\nimport java.util.zip.ZipOutputStream\n" + buildWith(
+            "",
+            after = """
+            val manyZip = tasks.register("manyZip") {
+                val out = layout.buildDirectory.file("pointer/many.zip")
+                outputs.file(out)
+                doLast {
+                    val zip = out.get().asFile
+                    zip.parentFile.mkdirs()
+                    ZipOutputStream(zip.outputStream().buffered()).use { stream ->
+                        for (i in 0..200_000) {
+                            stream.putNextEntry(ZipEntry("many/C" + i + ".class"))
+                            stream.write('x'.code)
+                            stream.closeEntry()
+                        }
+                    }
+                }
+            }
+            val pointerJar = tasks.register<Jar>("pointerJar") {
+                dependsOn(manyZip)
+                archiveFileName.set("pointer.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("pointer"))
+                manifest { attributes("Class-Path" to "many.zip") }
+            }
+            dependencies { testRuntimeOnly(files(pointerJar)) }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A9CodecTest", Aim.Forced("classpath-files-unrecorded"),
+            listOf(codec, other, first, codecTest, classOrderByName), buildScript = budgetBuild,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the stale check drops untracked paths under another Gradle
+    // build's `build/` as that build's output, but never a tracked one. A TestKit fixture project
+    // under the test resources commits a file in its own `build/`, which a build task restores
+    // after configuration.
+    @Test
+    fun `a tracked file in a fixture build's output that a task restores after configuration runs everything as stale`(
+        @TempDir dir: File,
+    ) {
+        val fixture = "src/test/resources/sample-build/build/expected.txt"
+        val result = attempt(
+            dir, "dev.sample.A1CodecTest", Aim.Forced("change-set-stale"),
+            listOf(
+                codec, other, first, codecRunner, classOrderByName,
+                "src/test/resources/sample-build/settings.gradle" to "rootProject.name = 'fixture'\n",
+                // The fixture's own ignore file keeps its output folder, as a committed fixture needs.
+                "src/test/resources/sample-build/.gitignore" to "!build/\n",
+                fixture to "plain\n",
+            ),
+            buildScript = buildWith(
+                "",
+                after = """
+                val restoreFixture by tasks.registering(Exec::class) {
+                    commandLine("git", "checkout", "--", "$fixture")
+                }
+                tasks.processTestResources { dependsOn(restoreFixture) }
+                """,
+            ),
+        ) { dir ->
+            changeCodec(dir)
+            File(dir, fixture).writeText("strict\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a generated jar a build jar's manifest names is walked entry by
+    // entry, and a moved entry is handed to the read records under `<jar>!/<entry>`; the read is
+    // made by the JDK's class loader through the manifest, not by the test opening the jar.
+    @Test
+    fun `a generated resource in a jar only a build jar's manifest names runs the test that reads it`(@TempDir dir: File) {
+        val build = infoBuild + "\n" + """
+            val infoJar = tasks.register<Jar>("infoJar") {
+                from(stampInfo)
+                archiveFileName.set("info.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("gen/jar"))
+                isPreserveFileTimestamps = false
+                isReproducibleFileOrder = true
+            }
+            val pointerJar = tasks.register<Jar>("pointerJar") {
+                dependsOn(infoJar)
+                archiveFileName.set("pointer.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("gen/jar"))
+                manifest { attributes("Class-Path" to "info.jar") }
+            }
+            dependencies { testRuntimeOnly(files(pointerJar)) }
+        """.trimIndent()
+        val result = attempt(
+            dir, "dev.sample.A1InfoTest", Aim.Row("shares-jvm-moved-classpath-file"),
+            listOf(codec, other, first, propertyTest("A1InfoTest", "info.properties", "state", "clean"), codecTest, classOrderByName),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
 }
