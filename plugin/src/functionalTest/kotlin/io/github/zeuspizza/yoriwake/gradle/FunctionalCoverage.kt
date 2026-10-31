@@ -25,13 +25,33 @@ import java.util.concurrent.atomic.AtomicInteger
  * copy of the plugin's classes, with JaCoCo's runtime on their boot classpath, and send their data
  * here over loopback. It is written once per test class, so the data says which class reached what.
  *
- * Off unless the build asks for it; then the TestKit home's `gradle.properties` names no JVM
- * arguments at all, and the daemons are exactly what a user's build starts.
+ * Off unless the build asks for it; then the TestKit home's `gradle.properties` names only the
+ * daemon's memory, and the daemons are what a user's build starts, with more heap and retrying a
+ * failed download as this repository's own build does.
  */
 object FunctionalCoverage {
 
-    /** What a daemon gets when no `org.gradle.jvmargs` is set; replacing them must change nothing else. */
-    private const val DAEMON_DEFAULTS = "-XX:MaxMetaspaceSize=384m -XX:+HeapDumpOnOutOfMemoryError -Xms256m -Xmx512m"
+    /**
+     * What a daemon gets when no `org.gradle.jvmargs` is set, with 2 GB of heap instead of 512 MB.
+     * Gradle 8's Kotlin DSL rebuilds an index of its 185 MB generated API jar in every build that
+     * compiles a script, and in 512 MB that churn ends in a full collection now and then. A full
+     * collection clears every soft reference, and one landing while the compiler indexes that jar
+     * leaves an index with an empty root: every Gradle API class reads as missing, for every new
+     * script in that daemon, until the daemon disposes its compiler. A heap dump of such a daemon
+     * showed the index with two roots, the one kept having no children.
+     */
+    private const val DAEMON_DEFAULTS = "-XX:MaxMetaspaceSize=384m -XX:+HeapDumpOnOutOfMemoryError -Xms256m -Xmx2g"
+
+    /**
+     * The repository's own download retry, in every home: a fresh home resolves each fixture's
+     * dependencies from Maven Central, and one rate-limited request otherwise failed every later
+     * build of the shard.
+     */
+    private const val REPOSITORY_RETRY = "systemProp.org.gradle.internal.repository.max.tentatives=5\n" +
+        "systemProp.org.gradle.internal.repository.initial.backoff=2000\n"
+
+    /** The name of the flight recording each daemon keeps while coverage is on. */
+    const val FLIGHT_RECORDING = "functional"
 
     private val enabled = System.getProperty("yoriwake.functional.coverage") == "true"
 
@@ -68,12 +88,16 @@ object FunctionalCoverage {
                 "-Djacoco-agent.port=${server.port}",
                 "-Djacoco-agent.sessionid=${server.sessionId}",
                 "-Djacoco-agent.jmx=false",
+                // The last minutes of exceptions thrown in the daemon, for ScriptClasspathFailureCapture
+                // to dump: Gradle 8 discards the Kotlin compiler's own warnings.
+                "-XX:StartFlightRecording=name=$FLIGHT_RECORDING,maxage=5m,jdk.JavaExceptionThrow#enabled=true",
+                "-Xlog:jfr+startup=warning",
             ).joinToString(" ") { "\"$it\"" }
             "org.gradle.jvmargs=" + "$DAEMON_DEFAULTS $arguments".replace("\\", "\\\\") + "\n"
         } else {
-            "# no JVM arguments: functional coverage is off\n"
+            "org.gradle.jvmargs=$DAEMON_DEFAULTS\n"
         }
-        File(testKitHome, "gradle.properties").writeText(text)
+        File(testKitHome, "gradle.properties").writeText(text + REPOSITORY_RETRY)
     }
 
     /** Collects what every connected daemon has recorded since the last dump, under [name]. */

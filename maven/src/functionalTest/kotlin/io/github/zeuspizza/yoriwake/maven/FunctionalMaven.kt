@@ -40,7 +40,8 @@ object FunctionalMaven {
 
     private val distributions = File(property("yoriwake.mavenDistributions"))
     private val functionalRepo = File(property("yoriwake.functionalRepo"))
-    private val localRepo = File(property("yoriwake.localRepo"))
+    /** The local repository every build shares; a test that installs into it removes what it installed. */
+    val localRepo = File(property("yoriwake.localRepo"))
     val pluginVersion = property("yoriwake.pluginVersion")
     val demo = File(property("yoriwake.demo"))
 
@@ -51,12 +52,15 @@ object FunctionalMaven {
     /** A copy of [fixture] in [dir], to run and edit without touching the original. */
     fun copy(fixture: File, dir: File): File = File(dir, "fixture").also { fixture.copyRecursively(it) }
 
-    /** Runs Maven [version] in [project] with [arguments]; the plugin resolves from this build. */
-    fun run(version: String, project: File, vararg arguments: String): Result =
-        runPlain(version, project, "-Dyoriwake.internal.mavenPreRelease=true", *arguments)
+    /**
+     * Runs Maven [version] in [project] with [arguments], [environment] added to Maven's own; the
+     * plugin resolves from this build.
+     */
+    fun run(version: String, project: File, vararg arguments: String, environment: Map<String, String> = emptyMap()): Result =
+        runPlain(version, project, "-Dyoriwake.internal.mavenPreRelease=true", *arguments, environment = environment)
 
     /** As [run], without allowing a Maven that is not released. */
-    fun runPlain(version: String, project: File, vararg arguments: String): Result {
+    fun runPlain(version: String, project: File, vararg arguments: String, environment: Map<String, String> = emptyMap()): Result {
         // Outside the fixture's own path, which may hold a space that MAVEN_OPTS would split on.
         val home = Files.createTempDirectory("maven-home").toFile()
         val settings = File(home, "settings.xml").apply { writeText(settingsXml()) }
@@ -72,6 +76,7 @@ object FunctionalMaven {
             // The machine's ~/.mavenrc would set its own options for every build.
             environment()["MAVEN_SKIP_RC"] = "true"
             environment().remove("MAVEN_ARGS")
+            environment().putAll(environment)
         }.start()
         val output = process.inputStream.bufferedReader().readText()
         if (!process.waitFor(10, TimeUnit.MINUTES)) {

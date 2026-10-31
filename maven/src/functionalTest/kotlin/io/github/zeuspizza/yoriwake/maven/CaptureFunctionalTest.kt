@@ -81,6 +81,20 @@ class CaptureFunctionalTest {
     }
 
     @Test
+    fun `a capture that stops after a failure leaves the map's stamp as it was`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        val dated = captureCommit(project)
+        File(project, "lib/src/main/java/dev/demo/lib/Counter.java").edit { it.replace("n * 2", "n + n") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dsurefire.skipAfterFailureCount=1").succeeded().output
+
+        assertContains(output, "the run stops after 1 failure(s)")
+        assertEquals(dated, captureCommit(project))
+    }
+
+    @Test
     fun `a test that exits the JVM leaves the map undated`(@TempDir dir: File) {
         val project = committed(dir)
         File(project, "lib/src/test/java/dev/demo/lib/ZExitTest.java").writeText(

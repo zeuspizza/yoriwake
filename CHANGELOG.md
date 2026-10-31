@@ -19,6 +19,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - The reference measures what isolated capture costs to record and how far parallel forks win back. Map: left alone.
 
+### Fixed
+
+- A file only a dependency jar's manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
+
 ## [0.4.0] - 2026-10-29
 
 **Your map:** repaired on the next build, which runs every test once and records the dependency jars.

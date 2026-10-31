@@ -114,6 +114,111 @@ class SelectionFunctionalTest {
         assertFalse("dependencies on this task's classpath changed" in output, output)
     }
 
+    /** A one-class library at [version], [value] its answer, installed into the shared local repository. */
+    private fun installLibrary(dir: File, groupId: String, version: String, value: Int) {
+        val library = File(dir, "library").apply { deleteRecursively() }
+        File(library, "src/main/java/dev/library/Answer.java").apply { parentFile.mkdirs() }
+            .writeText("package dev.library;\npublic class Answer { public static int value() { return $value; } }\n")
+        File(library, "pom.xml").writeText(
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>$groupId</groupId>
+              <artifactId>answer</artifactId>
+              <version>$version</version>
+              <properties><maven.compiler.release>17</maven.compiler.release></properties>
+              <build><pluginManagement><plugins>
+                <plugin><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version></plugin>
+                <plugin><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
+                <plugin><artifactId>maven-surefire-plugin</artifactId><version>3.5.6</version></plugin>
+                <plugin><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version></plugin>
+                <plugin><artifactId>maven-install-plugin</artifactId><version>3.1.3</version></plugin>
+              </plugins></pluginManagement></build>
+            </project>
+            """.trimIndent(),
+        )
+        FunctionalMaven.run(maven, library, "install").succeeded()
+    }
+
+    @Test
+    fun `a SNAPSHOT dependency replaced in the repository runs every test`(@TempDir dir: File) {
+        // Coordinates of this test's own, so no other test resolves the library it replaces.
+        val groupId = "dev.replaced${System.nanoTime()}"
+        try {
+            installLibrary(dir, groupId, "1.0-SNAPSHOT", 1)
+            val project = committed(File(dir, "project"))
+            File(project, "lib/pom.xml").edit {
+                it.replace(
+                    "<artifactId>lib</artifactId>",
+                    "<artifactId>lib</artifactId>\n  <dependencies><dependency><groupId>$groupId</groupId><artifactId>answer</artifactId>" +
+                        "<version>1.0-SNAPSHOT</version><scope>test</scope></dependency></dependencies>",
+                )
+            }
+            git(project, "commit", "-q", "-am", "a SNAPSHOT dependency")
+            FunctionalMaven.run(maven, project, "verify").succeeded()
+            editGreeter(project)
+            installLibrary(dir, groupId, "1.0-SNAPSHOT", 2)
+
+            val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+                .succeeded().output
+
+            assertContains(output, "dependencies on this task's classpath changed since the map was captured")
+            assertContains(output, "answer-1.0-SNAPSHOT.jar")
+            assertContains(output, "Tests run: 2, Failures: 0")
+        } finally {
+            File(FunctionalMaven.localRepo, groupId.replace('.', '/')).deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a change committed after the capture runs its tests though the base is newer`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD")
+            .succeeded().output
+
+        val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+        assertContains(selecting, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in selecting, output)
+    }
+
+    @Test
+    fun `a selecting run that stops after a failure leaves no record, so a complement runs every test`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+        val stopAfter = "-Dsurefire.skipAfterFailureCount=1"
+        assertContains(
+            FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", stopAfter)
+                .succeeded().output,
+            "in dev.demo.lib.GreeterTest",
+        )
+
+        // The same property, so the stamps agree and only the missing record can refuse.
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", stopAfter).succeeded().output
+
+        assertContains(output, "no selection.tsv for lib surefire:test (default-test) in this build's map directory")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `a module whose every test is left out passes under failIfNoTests`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+        // The same properties on both runs, so the complement's stamp matches the selecting run's.
+        val arguments = arrayOf("verify", "-pl", "lib,app", "-DfailIfNoTests=true")
+        assertContains(
+            FunctionalMaven.run(maven, project, *arguments, "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1").succeeded().output,
+            "in dev.demo.app.AppTest",
+        )
+
+        // app's one test ran in the selecting run, so the complement leaves out every test app has.
+        val output = FunctionalMaven.run(maven, project, *arguments, "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "in dev.demo.lib.CounterTest")
+        assertFalse("in dev.demo.app.AppTest" in output, output)
+    }
+
     /** The plugin's `<configuration>` in the root POM, given [xml]; committed. */
     private fun configured(project: File, xml: String) {
         File(project, "pom.xml").edit {

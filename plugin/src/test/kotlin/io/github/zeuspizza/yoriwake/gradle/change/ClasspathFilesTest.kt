@@ -685,4 +685,126 @@ class ClasspathFilesTest {
             table.keys,
         )
     }
+
+    private fun manifest(classPath: String) = "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: $classPath\n"
+
+    @Test
+    fun `a file only a dependency's manifest names gets a row, and moves only that row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("lib/a.jar"))
+        val named = jar(File(base, "vendor/lib/a.jar"), 0L, "a.txt" to "a")
+        val before = found(machine.table(vendor))
+
+        assertTrue("dependency:<outside>/vendor.jar Class-Path lib/a.jar" in before, before.toString())
+
+        jar(named, 0L, "a.txt" to "b")
+
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path lib/a.jar" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a dependency naming a file gives the same table on two machines`(@TempDir base: File) {
+        val tables = listOf("one", "two").map { name ->
+            val machine = Machine(File(base, name))
+            val vendor = jar(File(base, "$name/vendor/vendor.jar"), 0L, manifest("lib/a.jar"))
+            jar(File(base, "$name/vendor/lib/a.jar"), 0L, "a.txt" to "a")
+            found(machine.table(vendor))
+        }
+
+        assertEquals(tables[0], tables[1])
+    }
+
+    @Test
+    fun `a named jar's own Class-Path gives chained rows, and jars naming each other one row each`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("a.jar"))
+        jar(File(base, "vendor/a.jar"), 0L, manifest("b.jar"))
+        jar(File(base, "vendor/b.jar"), 0L, manifest("a.jar vendor.jar"))
+
+        val table = dependencies(machine.table(vendor))
+
+        assertEquals(
+            setOf(
+                "dependency:<outside>/vendor.jar",
+                "dependency:<outside>/vendor.jar Class-Path a.jar",
+                "dependency:<outside>/vendor.jar Class-Path a.jar Class-Path b.jar",
+                ClasspathFiles.DEPENDENCY_ORDER,
+            ),
+            table.keys,
+        )
+    }
+
+    @Test
+    fun `a missing named file is recorded, and moves when it appears`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("lib/a.jar"))
+        val before = found(machine.table(vendor))
+
+        jar(File(base, "vendor/lib/a.jar"), 0L, "a.txt" to "a")
+
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path lib/a.jar" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a dependency's token that does not resolve, or is not a file URL, gives no row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("%zz https://example.com/x.jar"))
+
+        assertEquals(setOf("dependency:<outside>/vendor.jar", ClasspathFiles.DEPENDENCY_ORDER), dependencies(machine.table(vendor)).keys)
+    }
+
+    @Test
+    fun `a named directory reads each jar in it by its entries`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("."))
+        val sibling = File(base, "vendor/sibling.jar")
+        jar(sibling, 0L, "s.txt" to "s")
+        val before = found(machine.table(vendor))
+
+        jar(sibling, 1_000_000_000_000L, "s.txt" to "s")
+        assertTrue(ClasspathFiles.compare(before, found(machine.table(vendor))).isEmpty)
+
+        jar(sibling, 0L, "s.txt" to "t")
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path ." to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a SNAPSHOT and a mavenLocal jar follow their manifests, a released and a module-cache jar do not`(@TempDir base: File) {
+        val machine = Machine(base)
+        val snapshot = jar(File(machine.repository, "org/s/1-SNAPSHOT/s-1-SNAPSHOT.jar"), 0L, manifest("s.txt"))
+        val local = jar(File(machine.home, ".m2/repository/org/l/1/l-1.jar"), 0L, manifest("l.txt"))
+        val released = jar(File(machine.repository, "org/r/1/r-1.jar"), 0L, manifest("r.txt"))
+        val cached = jar(File(machine.gradleHome, moduleJar), 0L, manifest("c.txt"))
+
+        val named = dependencies(machine.table(snapshot, local, released, cached)).keys.filter { "Class-Path" in it }
+
+        assertEquals(
+            listOf(
+                "dependency:<home>/.m2/repository/org/l/1/l-1.jar Class-Path l.txt",
+                "dependency:<maven-repository>/org/s/1-SNAPSHOT/s-1-SNAPSHOT.jar Class-Path s.txt",
+            ),
+            named,
+        )
+    }
+
+    @Test
+    fun `a named file that is also a classpath entry gets no named row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("a.jar"))
+        val a = jar(File(base, "vendor/a.jar"), 0L, "a.txt" to "a")
+
+        assertEquals(
+            setOf("dependency:<outside>/vendor.jar", "dependency:<outside>/a.jar", ClasspathFiles.DEPENDENCY_ORDER),
+            dependencies(machine.table(vendor, a)).keys,
+        )
+    }
 }

@@ -617,6 +617,13 @@ testing {
                             systemProperty("yoriwake.functional.earlyAccessJdk", it)
                         }
                         systemProperty("yoriwake.functional.coverage", functionalCoverage.toString())
+                        // A script that stops compiling against the Gradle API leaves its daemon's view
+                        // here for CI to upload; the suite registers the capture as a service.
+                        systemProperty("junit.jupiter.extensions.autodetection.enabled", "true")
+                        systemProperty(
+                            "yoriwake.functional.diagnosticsDir",
+                            layout.buildDirectory.dir("test-kit-diagnostics/$name").get().asFile.absolutePath,
+                        )
                         if (functionalCoverage) {
                             // One file per test class, from this task's run only: a rerun never mixes in an older one.
                             val daemonCoverage = layout.buildDirectory.dir("jacoco/daemon-$name")

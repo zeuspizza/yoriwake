@@ -98,7 +98,7 @@ class FunctionalCoverageTest {
     }
 
     @Test
-    fun `every home of a run reports to the same port, and a run without coverage sets no arguments`() {
+    fun `every home of a run reports to the same port, and a run without coverage sets only the memory`() {
         val first = File(dir, "first").also(FunctionalCoverage::configure)
         val second = File(dir, "second").also(FunctionalCoverage::configure)
 
@@ -108,8 +108,27 @@ class FunctionalCoverageTest {
             assertTrue("-Djacoco-agent.port=" in firstText && "-Xbootclasspath/a:" in firstText, firstText)
             assertTrue("-javaagent" !in firstText, "a Java agent turns the configuration cache off")
         } else {
-            assertTrue("org.gradle.jvmargs" !in firstText, firstText)
+            assertTrue("jacoco" !in firstText && "-Xbootclasspath" !in firstText, firstText)
         }
+    }
+
+    @Test
+    fun `every home gives its daemons 2 GB of heap, with coverage or without`() {
+        val home = File(dir, "home").also(FunctionalCoverage::configure)
+
+        val jvmArgs = File(home, "gradle.properties").readLines().single { it.startsWith("org.gradle.jvmargs=") }
+        // In 512 MB a full collection now and then clears the Kotlin DSL compiler's half-built
+        // index of the Gradle API jar, and every new script in that daemon then fails.
+        assertTrue("-Xmx2g" in jvmArgs && "-Xmx512m" !in jvmArgs, jvmArgs)
+    }
+
+    @Test
+    fun `every home retries a failed download, with coverage or without`() {
+        val home = File(dir, "home").also(FunctionalCoverage::configure)
+
+        val text = File(home, "gradle.properties").readText()
+        assertTrue("systemProp.org.gradle.internal.repository.max.tentatives=5" in text, text)
+        assertTrue("systemProp.org.gradle.internal.repository.initial.backoff=2000" in text, text)
     }
 
     private fun start() = CoverageServer(dir, "test-session", replyTimeoutMillis = 10_000).also { it.start() }
