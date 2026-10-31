@@ -572,15 +572,11 @@ def maven_suite(test_class=None):
     """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks.
 
     With `test_class`, that class alone, as `functional_suite`: each Maven build is minutes on a
-    runner, and every class at every guard ran a shard past its time limit.
+    runner, and every class at every guard ran a shard past its time limit. Without one, every
+    functional class by the filter: a hand-kept list of classes missed the ones added after it.
     """
-    filters = ["--tests", f"*.{test_class}"] if test_class else [
-        "--tests", "*DeclineFunctionalTest*", "--tests", "*CaptureFunctionalTest*",
-        "--tests", "*ForkingFunctionalTest*", "--tests", "*SelectionFunctionalTest*", "--tests", "*FailsafeFunctionalTest*",
-        "--tests", "*AuditAndExplainFunctionalTest*",
-        "--tests", "*MapProvenanceFunctionalTest*", "--tests", "*BuildCacheFunctionalTest*",
-        "--tests", "*DevelocityFunctionalTest*"]
-    done = gradle([":maven:functionalTest"] + filters + ["--rerun"])
+    done = gradle([":maven:functionalTest", "--tests", f"*.{test_class}" if test_class else FUNCTIONAL_FILTER,
+                   "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
