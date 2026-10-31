@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- SECURITY.md shows how to rebuild a release from its tag and compare it, byte for byte. Map: left alone.
+
 ### Changed
 
 - The reference measures what isolated capture costs to record and how far parallel forks win back. Map: left alone.
