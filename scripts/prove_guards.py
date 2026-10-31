@@ -5343,10 +5343,17 @@ def class_cost(suite, name):
     return cost["baseline"], cost["guard"]
 
 
+# The parallel phase's workers: `--jobs`' default, and what CI runs.
+JOBS = 4
+
+
 def _class_weight(suite, name, guards):
-    """The seconds a run of `guards` guards of one class costs: its baseline, then each guard."""
+    """The seconds a run of `guards` guards of one class costs: its baseline in each tree that runs
+    them, then each guard. A functional class runs in one tree; a Maven class's guards go to
+    whichever parallel worker is free, so each of up to `JOBS` workers pays its baseline."""
     baseline, guard = class_cost(suite, name)
-    return baseline + guards * guard
+    trees = min(guards, JOBS) if suite == "maven" else 1
+    return trees * baseline + guards * guard
 
 
 def partition(mutations, count):
@@ -5358,8 +5365,8 @@ def partition(mutations, count):
     A functional or Maven class's guards share their baselines, one per worker tree that runs them,
     so they stay together unless the class outweighs a shard's share of its suite; then it splits
     into near-equal chunks. A functional class runs in one tree; a Maven class's guards go to
-    whichever of the parallel phase's workers is free, so a chunk may pay its baseline more than
-    once where the projection counts it once; `guard_costs.py report` shows what that costs. Both are placed on one scale, the seconds a chunk adds to its shard's wall
+    whichever of the parallel phase's workers is free, so a chunk pays its baseline once per worker
+    that runs it. Both are placed on one scale, the seconds a chunk adds to its shard's wall
     clock: a functional chunk runs beside another on one of `ALONE_SLOTS` trees, a Maven chunk under
     the Gradle lock, one build at a time. The other guards are placed after them by their suite's
     registry seconds, a scale balanced apart and never added.
@@ -5491,7 +5498,7 @@ def main(argv=None):
                         help="only the guard with this label (repeatable): a task proves the guards "
                              "it adds or re-anchors this way; the full run waits for the release "
                              "check")
-    parser.add_argument("--jobs", type=int, default=4, metavar="N",
+    parser.add_argument("--jobs", type=int, default=JOBS, metavar="N",
                         help="guards run in parallel, each worker in its own git worktree under "
                              "sandbox/prove-guards/ (default 4; 1 runs in this tree, one at a "
                              "time)")

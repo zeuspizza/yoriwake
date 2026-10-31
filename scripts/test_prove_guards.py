@@ -651,6 +651,22 @@ def case_a_class_stays_whole_unless_it_outweighs_a_shard_share():
     return failures
 
 
+def case_a_maven_class_pays_its_baseline_in_each_worker_that_runs_it():
+    """The parallel phase hands a Maven class's guards to whichever worker is free, and each worker
+    baselines the class before its first guard: on CI, four guards of one class paid four baselines."""
+    failures = 0
+    for guards in (1, 3, pg.JOBS, pg.JOBS + 3):
+        baseline, guard = pg.class_cost("maven", "SelectionFunctionalTest")
+        expected = min(guards, pg.JOBS) * baseline + guards * guard
+        if pg._class_weight("maven", "SelectionFunctionalTest", guards) != expected:
+            failures += fail(f"{guards} Maven guards of one class weigh "
+                             f"{pg._class_weight('maven', 'SelectionFunctionalTest', guards)}s, not {expected}s")
+        baseline, guard = pg.class_cost("functional", "SelectionFunctionalTest")
+        if pg._class_weight("functional", "SelectionFunctionalTest", guards) != baseline + guards * guard:
+            failures += fail(f"{guards} functional guards of one class, in one tree, pay more than one baseline")
+    return failures
+
+
 def case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median():
     failures = 0
     for (suite, name), guards in _heavy_classes(pg.MUTATIONS).items():
@@ -1060,6 +1076,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_tree_that_does_not_compile_names_the_compiler_errors,
          case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one,
          case_a_class_stays_whole_unless_it_outweighs_a_shard_share,
+         case_a_maven_class_pays_its_baseline_in_each_worker_that_runs_it,
          case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median,
          case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other,
          case_a_worker_pays_a_class_baseline_once_and_times_each_run,
