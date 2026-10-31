@@ -13,6 +13,15 @@ object FunctionalGradle {
     }
 
     /**
+     * Whether [version] is [major].[minor] or later, a pre-release counting as its release, so a
+     * gate on what a Gradle added stays open on every later major.
+     */
+    fun atLeast(major: Int, minor: Int): Boolean {
+        val (actualMajor, actualMinor) = version.split('.', '-').take(2).map { it.toIntOrNull() ?: 0 }
+        return actualMajor > major || actualMajor == major && actualMinor >= minor
+    }
+
+    /**
      * One TestKit home per version, under this task's own temporary directory. Shared, an idle
      * daemon of the other version holds the journal cache lock, and a reusing build must get it
      * released to load its entry: under load that handoff once timed out after 60s and failed the

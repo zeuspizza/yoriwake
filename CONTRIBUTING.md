@@ -12,6 +12,9 @@ Requires JDK 21 to run Gradle, and JDKs 11, 17 and 25 where Gradle's toolchain d
 them: the functional suite runs a test JVM on each. `-Pyoriwake.functional.testJvms=21` skips the
 others for a local run. CI runs each functional suite in shards by test class;
 `-Pyoriwake.functional.shard=3/8` runs the same classes as its shard 3 of 8, to reproduce one.
+`-Pyoriwake.functional.gradleVersion=<v>` runs `functionalTestGradle9` on another Gradle, and
+`-Pyoriwake.functional.junitVersion=<v>` runs the newest-JUnit cases of `EngineSupportTest` on
+another JUnit, either a pre-release, to try it before it is out.
 
 The build runs on Gradle 8.14, the oldest Gradle the plugin supports, so the plugin compiles only
 against what that Gradle offers; the 9.x line is tested through TestKit and the supported matrix.

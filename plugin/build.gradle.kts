@@ -467,9 +467,11 @@ tasks.test {
 // Every test that runs a real Gradle build through TestKit, apart from `test` so the unit tests
 // stay fast and publish nothing. The whole suite runs once per Gradle version: the declared floor
 // and a current 9.x, each as its own task with its own TestKit home.
+// `-Pyoriwake.functional.gradleVersion` runs the 9.x suite on another Gradle, a pre-release
+// included, to learn before its release whether it breaks the plugin.
 val functionalGradleVersions = mapOf(
     "functionalTest" to "8.14",
-    "functionalTestGradle9" to "9.8.0",
+    "functionalTestGradle9" to (providers.gradleProperty("yoriwake.functional.gradleVersion").orNull ?: "9.8.0"),
     "breakAttempts" to "8.14",
     "breakAttemptsGradle9" to "9.8.0",
 )
@@ -615,6 +617,9 @@ testing {
                         }
                         providers.gradleProperty("yoriwake.functional.earlyAccessJdk").orNull?.let {
                             systemProperty("yoriwake.functional.earlyAccessJdk", it)
+                        }
+                        providers.gradleProperty("yoriwake.functional.junitVersion").orNull?.let {
+                            systemProperty("yoriwake.functional.junitVersion", it)
                         }
                         systemProperty("yoriwake.functional.coverage", functionalCoverage.toString())
                         // A script that stops compiling against the Gradle API leaves its daemon's view
