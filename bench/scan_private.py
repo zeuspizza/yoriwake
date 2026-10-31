@@ -8,6 +8,7 @@ documents mean nothing to a reader here. This scan keeps them out of `bench/`, `
     python3 bench/scan_private.py --range BASE HEAD # what a pull request adds (CI)
     python3 bench/scan_private.py --message VAR...  # text in these environment variables (CI)
     python3 bench/scan_private.py PATH...           # files or directories, whole
+    python3 bench/scan_private.py --fork MODE ...   # a fork's messages may name the assistant
 
 Prints one line per match and exits 1 when there is any.
 """
@@ -43,6 +44,13 @@ RULES = [
 MESSAGE_RULES = [rule for rule in RULES if rule[0] != "date"]
 
 
+def message_rules(fork):
+    """The rules for commit messages and pull request text. A contributor from a fork names the
+    tool that assisted the change, as CONTRIBUTING.md asks; only the maintainers' own messages
+    must not name their assistant."""
+    return [rule for rule in MESSAGE_RULES if rule[0] != "assistant"] if fork else MESSAGE_RULES
+
+
 def in_scope(path):
     return path not in EXEMPT and (path.startswith(SCOPE[:-1]) or path == SCOPE[-1])
 
@@ -76,7 +84,7 @@ def git(root, *args):
     ).stdout
 
 
-def scan_range(root, base, head):
+def scan_range(root, base, head, fork=False):
     """Every line a commit in the range adds to an in-scope path, and every commit message in it.
 
     Commit by commit, not the tree at `head`: a line one commit adds and a later one removes is
@@ -85,7 +93,7 @@ def scan_range(root, base, head):
     hits = []
     for sha in git(root, "rev-list", "--reverse", f"{base}..{head}").split():
         message = git(root, "log", "-1", "--format=%B", sha)
-        hits += scan_text(f"commit {sha[:9]}", message, MESSAGE_RULES)
+        hits += scan_text(f"commit {sha[:9]}", message, message_rules(fork))
         # Paths as they are: git otherwise quotes a name with non-ASCII or special characters,
         # and a quoted path would match no scope.
         hits += scan_added(sha, git(root, "-c", "core.quotePath=false", "show", "--format=",
@@ -111,10 +119,10 @@ def scan_added(sha, patch):
     return hits
 
 
-def scan_message(label, text):
+def scan_message(label, text, fork=False):
     """A pull request's title or body, under the rules a commit message gets: the squash commit
     that lands on main is written from them."""
-    return scan_text(label, text or "", MESSAGE_RULES)
+    return scan_text(label, text or "", message_rules(fork))
 
 
 def scan_paths(root, targets):
@@ -138,13 +146,16 @@ def ignored_paths(root, paths):
 
 
 def main(argv, root="."):
+    fork = argv[:1] == ["--fork"]
+    if fork:
+        argv = argv[1:]
     if argv[:1] == ["--push"]:
-        hits = scan_range(root, argv[1] if len(argv) > 1 else "origin/main", "HEAD")
+        hits = scan_range(root, argv[1] if len(argv) > 1 else "origin/main", "HEAD", fork)
     elif argv[:1] == ["--range"] and len(argv) == 3:
-        hits = scan_range(root, argv[1], argv[2])
+        hits = scan_range(root, argv[1], argv[2], fork)
     elif argv[:1] == ["--message"] and len(argv) > 1:
         # Read from the environment, so a workflow never pastes untrusted text into a command.
-        hits = [hit for name in argv[1:] for hit in scan_message(name, os.environ.get(name))]
+        hits = [hit for name in argv[1:] for hit in scan_message(name, os.environ.get(name), fork)]
     elif argv and not argv[0].startswith("-"):
         hits = scan_paths(root, argv)
     else:

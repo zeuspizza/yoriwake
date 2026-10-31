@@ -4248,8 +4248,12 @@ MUTATIONS = [
      '            hits.append(f"commit {sha[:9]} {line[4:]}: unscannable path: rename it")',
      "            pass", scan_suite, "a path git must still quote passed unscanned"),
     ("the scan stops reading a pull request's title and body", "bench/scan_private.py",
-     '    return scan_text(label, text or "", MESSAGE_RULES)', "    return []", scan_suite,
+     '    return scan_text(label, text or "", message_rules(fork))', "    return []", scan_suite,
      "a plan id in a pull request title passed"),
+    ("the scan lets every branch name the assistant in a message", "bench/scan_private.py",
+     '    return [rule for rule in MESSAGE_RULES if rule[0] != "assistant"] if fork else MESSAGE_RULES',
+     '    return [rule for rule in MESSAGE_RULES if rule[0] != "assistant"]', scan_suite,
+     "the assistant named in a commit message on a branch here passed"),
     # The changelog check: a line under a released version, the release entry it must let through,
     # and the workflow that runs it.
     ("the changelog check stops refusing a released version", ".github/ci.py",

@@ -26,6 +26,7 @@ SEEDS = {
     "home path": "read from /Users/someone/checkouts",
     "spike": "the spike showed it",
     "private tool": "counted with session_tokens",
+    "assistant": "written with Claude's help",
 }
 
 
@@ -170,6 +171,45 @@ def case_a_pull_request_title_or_body_is_scanned_as_a_message():
                 failures += fail("--message did not fail on a decision id in the body")
         finally:
             del os.environ["SCAN_TITLE"], os.environ["SCAN_BODY"]
+    return failures
+
+
+def case_a_fork_may_name_the_assistant_in_its_messages_only():
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        git = _repo(root)
+        _write(root, "bench/base.py", "clean\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "base")
+        git("tag", "base")
+        _write(root, "bench/new.py", "clean\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "fix\n\nCo-Authored-By: Claude <noreply@example.com>")
+        if scan_private.main(["--range", "base", "HEAD"], root) != 1:
+            failures += fail("the assistant named in a commit message on a branch here passed")
+        if scan_private.main(["--fork", "--range", "base", "HEAD"], root) != 0:
+            failures += fail("a fork's commit message naming the assistant was refused")
+        _write(root, "docs/x.md", "written with Claude\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "docs")
+        if scan_private.main(["--fork", "--range", "base", "HEAD"], root) != 1:
+            failures += fail("the assistant named in a fork's file passed")
+
+        os.environ["SCAN_TITLE"], os.environ["SCAN_BODY"] = "clean", "Written with Claude Code."
+        try:
+            if scan_private.main(["--message", "SCAN_TITLE", "SCAN_BODY"], root) != 1:
+                failures += fail("the assistant named in a pull request body here passed")
+            if scan_private.main(["--fork", "--message", "SCAN_TITLE", "SCAN_BODY"], root) != 0:
+                failures += fail("a fork's pull request body naming the assistant was refused")
+            os.environ["SCAN_BODY"] = "Written with Claude Code, see KTD4."
+            if scan_private.main(["--fork", "--message", "SCAN_TITLE", "SCAN_BODY"], root) != 1:
+                failures += fail("a decision id in a fork's pull request body passed")
+        finally:
+            del os.environ["SCAN_TITLE"], os.environ["SCAN_BODY"]
+
+        for argv in (["--fork"], ["--fork", "--bogus"]):
+            if scan_private.main(argv, root) != 2:
+                failures += fail(f"{argv} did not print usage")
     return failures
 
 
