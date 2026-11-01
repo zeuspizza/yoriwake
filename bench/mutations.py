@@ -323,7 +323,7 @@ NESTED_CONSTANT = re.compile(
 
 # What cannot hold a structural brace: comments, text blocks, strings and char literals. Blanked
 # before braces are counted, so a `"{"` in a string does not open a scope.
-_NOT_CODE = re.compile(r'//[^\n]*|/\*.*?\*/|"""(?:.|\n)*?"""|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])+\'',
+_NOT_CODE = re.compile(r'//[^\n]*|/\*.*?\*/|""".*?"""|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])+\'',
                        re.S)
 
 
