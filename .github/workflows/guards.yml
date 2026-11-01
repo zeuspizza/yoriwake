@@ -69,8 +69,9 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true' }}
     runs-on: ubuntu-24.04
-    # As long as a shard of every guard: `--changed` selects every guard when a change edits all of them.
-    timeout-minutes: 120
+    # A full shard's limit plus the fast step that runs first (7 to 12 minutes): `--changed` selects
+    # every guard when a change edits all of them.
+    timeout-minutes: 165
     strategy:
       fail-fast: false
       matrix:
