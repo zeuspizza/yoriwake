@@ -494,6 +494,31 @@ def case_the_recall_arm_shapes_bump_every_notation_and_only_nested_java_members(
     )
 
 
+def case_an_unterminated_text_block_does_not_hang_the_brace_count(root):
+    """A `\"\"\"` never closed, followed by blank lines, used to backtrack exponentially in the
+    pattern that blanks comments, strings and text blocks before braces are counted -- a hang on a
+    truncated or malformed source. It must return at once, and a closed text block must still be
+    blanked so its braces are not counted.
+    """
+    probe = ("import sys; sys.path.insert(0, sys.argv[1]); import mutations; "
+             "mutations._NOT_CODE.sub(' ', 'class A {\\n    String s = \"\"\"' + '\\n' * 50)")
+    try:
+        subprocess.run([sys.executable, "-c", probe, os.path.dirname(os.path.abspath(__file__))],
+                       check=True, timeout=10)
+        returned = True
+    except subprocess.TimeoutExpired:
+        returned = False
+    closed = write(root, "T.java",
+                   "public class T {\n    String s = \"\"\"\n        {{\n        \"\"\";\n"
+                   "    public static final int LIMIT = 7;\n}\n")
+    return (
+        check("an unterminated text block followed by 50 newlines is scanned promptly", returned,
+              "the scan did not return within 10 seconds") +
+        check("the braces in a closed text block are not counted",
+              not mutations.has_nested_constant(closed), "a top-level member was registered")
+    )
+
+
 # ---------------------------------------------------------------------------------- pool/v1
 
 def _pool():
@@ -1179,6 +1204,7 @@ CASES = (case_java_constant, case_kotlin_constant, case_string_constant,
          case_the_recall_arm_shapes_are_never_in_the_default_grammar,
          case_each_recall_arm_shape_changes_what_it_names,
          case_the_recall_arm_shapes_bump_every_notation_and_only_nested_java_members,
+         case_an_unterminated_text_block_does_not_hang_the_brace_count,
          case_void_return_inserts_one_return_at_entry,
          case_throw_entry_throws_at_entry_whatever_the_return_type,
          case_constructors_initialisers_and_bodiless_methods_yield_no_target,
