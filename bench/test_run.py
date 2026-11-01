@@ -5250,6 +5250,40 @@ def case_a_shard_measures_its_slice_and_counts_from_its_start():
     return failures
 
 
+def case_a_shard_warms_up_only_when_its_slice_times_a_row():
+    """The warm-up only makes a timed row comparable; a slice of untimed rows skips it."""
+    failures = 0
+    for start, end, recall_only, timing_cap, expected in (
+            (0, 4, True, None, False),    # --recall-only: no row is timed
+            (5, 9, False, 8, True),       # positions 6-9 under a cap of 8: 6, 7 and 8 are timed
+            (8, 12, False, 8, False),     # positions 9-12: past the cap
+            (8, 12, False, None, True)):  # neither flag: every row is timed
+        if run.slice_times_a_row(start, end, recall_only, timing_cap) != expected:
+            failures += fail(f"slice [{start}, {end}) recall_only={recall_only} "
+                             f"timing_cap={timing_cap} read {not expected}")
+    return failures
+
+
+def case_an_unwarmed_shard_suspects_the_runner_only_for_a_build_that_never_reached_the_tests():
+    """The first row stands in for the warm-up: a build that failed before the test task is the
+    runner's; one whose tests failed, or that ran no tests without failing, is the row's."""
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        for name, text, expected in (
+                ("broken", "> Task :core:compileJava FAILED\nFAILURE: Build failed with an "
+                           "exception.\n", True),
+                ("red", "> Task :core:test FAILED\nFAILURE: Build failed with an exception.\n",
+                 False),
+                ("cached", "> Task :core:test FROM-CACHE\nBUILD SUCCESSFUL\n", False)):
+            log = os.path.join(root, f"{name}.log")
+            with open(log, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            if run.failed_before_the_tests(log, "core", "test") != expected:
+                failures += fail(f"a {name} build read as {'not ' if expected else ''}failing "
+                                 f"before the tests")
+    return failures
+
+
 def case_a_sharded_pool_run_refuses_a_timing_cap():
     import contextlib  # noqa: PLC0415
     import io  # noqa: PLC0415
@@ -5509,6 +5543,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_project_measured_in_another_s_clone_clones_it_at_that_project_s_pin,
          case_a_shard_measures_its_slice_and_counts_from_its_start,
          case_a_sharded_pool_run_refuses_a_timing_cap,
+         case_a_shard_warms_up_only_when_its_slice_times_a_row,
+         case_an_unwarmed_shard_suspects_the_runner_only_for_a_build_that_never_reached_the_tests,
          case_a_shard_refuses_a_list_drawn_under_other_stamps,
          case_a_selecting_arm_runs_with_other_ci_run_values_than_a_recording_arm,
          case_a_run_launched_without_a_mode_takes_full_arm_truth,

@@ -27,6 +27,12 @@ def compare(a, b):
         return {"agree": False, "flagged": [], "rows": 0,
                 "differences": [f"drawn from the {a.get('target_shapes')} and the "
                                 f"{b.get('target_shapes')} shape sets, which are not one sample"]}
+    # Two build tools are two builds: a Maven row and a Gradle row of one target ran different
+    # arms. A file with no `build_tool` is a Gradle one.
+    if (a.get("build_tool") or "gradle") != (b.get("build_tool") or "gradle"):
+        return {"agree": False, "flagged": [], "rows": 0,
+                "differences": [f"measured with {a.get('build_tool') or 'gradle'} and "
+                                f"{b.get('build_tool') or 'gradle'}, which are not one sample"]}
     # And two trees of one fixture are two suites: a row can agree on its target and still have run
     # different tests.
     if a.get("fixture_digest") != b.get("fixture_digest"):

@@ -74,6 +74,7 @@ sys.path.insert(0, HERE)
 import mutations  # noqa: E402
 import config_cost  # noqa: E402  (the plugin's counters file has one reader)
 import sweep_data  # noqa: E402
+import maven_build  # noqa: E402  (the Maven side of every build seam)
 # Re-exported deliberately. These moved out on a seam the review named; every existing caller,
 # including the tests, still says `run.STALLED` and `run.run`.
 from process import STALLED, STALL_SECONDS, run, stalled  # noqa: E402,F401
@@ -296,10 +297,13 @@ def checkout_project(project, keep_state=False):
             return path
         if os.path.isdir(path):
             remove_tree(path)
-        shutil.copytree(source, path, ignore=shutil.ignore_patterns("build", ".gradle"))
+        # A Maven sample built in place leaves `target/` and `.yoriwake/` beside its POMs.
+        state = (("target", maven_build.MAPS_HOME) if maven_build.is_maven(project)
+                 else ("build", ".gradle"))
+        shutil.copytree(source, path, ignore=shutil.ignore_patterns(*state))
         subprocess.run(["git", "init", "--quiet", path], check=True)
         with open(os.path.join(path, ".gitignore"), "w", encoding="utf-8") as handle:
-            handle.write("build/\n.gradle/\n")
+            handle.write("".join(f"{name}/\n" for name in state))
         subprocess.run(["git", "-C", path, "add", "."], check=True)
         subprocess.run(["git", "-C", path, "-c", "user.email=b@e", "-c", "user.name=b",
                         "commit", "--quiet", "-m", "fixture"], check=True)
@@ -593,10 +597,14 @@ GRADLE_BUILD_SCRIPTS = ("build.gradle", "build.gradle.kts", "settings.gradle",
 def is_build_state(path, project, is_gradle_build):
     """Whether an untracked path is build output or Gradle's own state, which the reset never
     touches: anything under `.gradle/`, `.kotlin/` or `.git/` (the map lives under `.gradle/`), and
-    anything under a `build/` (or the project's `build_dir`) beside a Gradle build script."""
+    anything under a `build/` (or the project's `build_dir`) beside a Gradle build script. On a
+    Maven project, `.yoriwake/` and a `target/` beside a POM instead (`maven_build.is_build_state`);
+    `is_gradle_build` then answers whether a directory holds a POM."""
     directories = path.split("/")[:-1]
     if any(d in (".gradle", ".kotlin", ".git") for d in directories):
         return True
+    if maven_build.is_maven(project):
+        return maven_build.is_build_state(directories, is_gradle_build)
     names = {"build", build_dir(project)}
     return any(d in names and is_gradle_build("/".join(directories[:i]))
                for i, d in enumerate(directories))
@@ -615,10 +623,13 @@ def untracked_files(checkout, project):
         capture_output=True, check=True).stdout.decode("utf-8", "surrogateescape")
     seen = {}
 
+    # A Maven project's build state sits beside a POM rather than a Gradle script.
+    scripts = ("pom.xml",) if maven_build.is_maven(project) else GRADLE_BUILD_SCRIPTS
+
     def is_gradle_build(directory):
         if directory not in seen:
             at = os.path.join(checkout, directory) if directory else checkout
-            seen[directory] = any(os.path.isfile(os.path.join(at, s)) for s in GRADLE_BUILD_SCRIPTS)
+            seen[directory] = any(os.path.isfile(os.path.join(at, s)) for s in scripts)
         return seen[directory]
 
     found = set()
@@ -839,6 +850,18 @@ def is_timed(position, recall_only, timing_cap):
     time: every row of a timing sweep, or its first `timing_cap` rows, forced or not.
     Decided from the position alone, before either arm runs."""
     return not recall_only and (timing_cap is None or position <= timing_cap)
+
+
+def slice_times_a_row(start, end, recall_only, timing_cap):
+    """Whether a slice of list positions `[start, end)`, counted from 0, holds a timed row: only
+    then does a shard pay for the discarded warm-up run that makes its first timed row comparable."""
+    return any(is_timed(position + 1, recall_only, timing_cap) for position in range(start, end))
+
+
+def failed_before_the_tests(log_path, module, task):
+    """Whether a build failed without reaching the test task: on an unwarmed shard's first row,
+    the cue to run the skipped warm-up and learn whether the runner or the row is at fault."""
+    return not test_task_ran(log_path, module, task) and build_failed(log_path)
 
 
 def full_arm_skipped(timed, decisions, selected_ran):
@@ -1167,6 +1190,8 @@ def gradle(checkout, project, task_args, log_path):
     attempt's log and its sidecar files are kept as `<name>.network-1.<ext>`, and the record
     describes the rerun, with `network_retries` saying it was one.
     """
+    if maven_build.is_maven(project):
+        return _maven_build(checkout, project, task_args, log_path)
     result, record = _build_once(checkout, project, task_args, log_path)
     retries = 0
     if result[0] not in (0, STALLED):
@@ -1292,6 +1317,63 @@ def _build_once(checkout, project, task_args, log_path):
                 pass
             time.sleep(0.2)
     return result, arm_record(log_path, project, sampler, launched, ended)
+
+
+def _maven_build(checkout, project, task_args, log_path):
+    """`gradle` for a Maven project: one build, run once more after a pause when it failed on a
+    dependency download alone, the first attempt's log kept as `<name>.network-1.<ext>`. No daemon
+    outlives a killed Maven build, so nothing is stopped after one."""
+    result, record = _maven_once(checkout, project, task_args, log_path)
+    retries = 0
+    if result[0] not in (0, STALLED):
+        why = maven_build.download_failure(log_path)
+        if why is not None:
+            root, ext = os.path.splitext(log_path)
+            os.replace(log_path, f"{root}.network-1{ext}")
+            print(f"    rerunning in {NETWORK_RETRY_PAUSE}s, once: a dependency download failed: {why}",
+                  flush=True)
+            time.sleep(NETWORK_RETRY_PAUSE)
+            result, record = _maven_once(checkout, project, task_args, log_path)
+            retries = 1
+    ARM_STATS[log_path] = {**record, "network_retries": retries}
+    return result
+
+
+def _maven_once(checkout, project, task_args, log_path):
+    """One Maven build of an arm `task_args` describes in Gradle's terms, and its record.
+
+    The record has no task times and no plugin timers: both come from Gradle init scripts, and a
+    Maven arm leaves them null rather than borrowing another figure. Copies of resources the tree no
+    longer has are removed first (`maven_build.remove_stale_resources`), so a row starts from
+    outputs that match its tree.
+    """
+    command, env = maven_arm(checkout, project, task_args)
+    maven_build.remove_stale_resources(checkout)
+    with sweep_data.TestJvmSampler(mark=sweep_data.MAVEN_TEST_WORKER_MARK) as sampler:
+        result = run(command, checkout, log_path,
+                     progress_paths=test_progress_paths(checkout, project), env=env)
+    record = {**sampler.stats(), "tasks": None, "plugin": None,
+              "decision_write_failures": decision_write_failures(log_path)}
+    return result, record
+
+
+def maven_arm(checkout, project, task_args):
+    """`(command, env)` for the Maven build of an arm `task_args` describes in Gradle's terms."""
+    try:
+        arguments = maven_build.invocation(project, task_args,
+                                           staged_jacoco=maven_build.staged_jacoco(checkout),
+                                           version=MAVEN_PLUGIN_VERSION)
+    except maven_build.Refused as refused:
+        raise SystemExit(f"{project['name']}: a Maven arm was asked for something it cannot run: "
+                         f"{refused}. Refusing rather than running a different build.")
+    command = ([maven_build.executable(checkout)] + arguments
+               + maven_build.fork_cap_flags(fork_cap(project)) + guest_flags(project))
+    return command, ci_environment(task_args, maven_build.environment(project, find_jdk))
+
+
+# The Maven plugin's version, which every Maven arm passes to the staged POM: the one
+# `:maven:publishToMavenLocal` installs from the checkout.
+MAVEN_PLUGIN_VERSION = maven_build.plugin_version(SOURCE)
 
 
 # One entry per build this process ran, keyed by its log path. See `gradle`.
@@ -1524,6 +1606,11 @@ def assert_classes_task(checkout, project, log_path, probe):
     if code == 0:
         return
     name = project.get("name") or "this project"
+    if maven_build.is_maven(project):
+        raise SystemExit(
+            f"the reactor of {name} did not validate for module {module or '(root)'} "
+            f"({'killed' if code == STALLED else f'exit {code}'}), so whether the compile gate can "
+            f"run here is unestablished. Refusing rather than sweeping under it. Log: {log_path}")
     # WHICH FAILURE IT WAS, read from the log, because the remedies are unrelated and only one of
     # them is `test_classes_task`. The exit code alone says the probe failed; a dependency that
     # would not resolve, a daemon that died and a broken sibling build script all exit non-zero
@@ -1579,6 +1666,17 @@ def results_reader(project):
     about project files. A call site that forgets the directory reads an empty one, and an empty
     read is indistinguishable from a build that ran nothing -- which is the defect this exists for.
     """
+    if maven_build.is_maven(project):
+        reports = maven_build.Execution(project).reports
+
+        def read_maven(checkout, module, since, task, log_path):
+            # XML keys only: no per-method listener exists for Surefire or Failsafe.
+            ran, failed = maven_build.read_results(checkout, module, since, reports)
+            if ran is None:
+                return Outcomes(None, None, cause="no fresh results")
+            return Outcomes(ran, failed, None, "no listener on Maven")
+
+        return read_maven
     build = build_dir(project)
 
     def read(checkout, module, since, task, log_path):
@@ -1635,6 +1733,10 @@ def test_progress_paths(checkout, project):
     Returns the directory whether or not it exists yet: `progress_mark` treats an absent path as no
     progress, which is correct for the window before the task starts writing.
     """
+    if maven_build.is_maven(project):
+        # Surefire writes a report per class as each finishes, the only thing a quiet suite writes.
+        return [maven_build.reports_dir(checkout, module_dir(project),
+                                        maven_build.Execution(project).reports)]
     return [os.path.join(checkout, module_dir(project), build_dir(project), "test-results",
                          test_task_name(project), "binary")]
 
@@ -2117,6 +2219,8 @@ def compile_or_reject(checkout, project, task_args, log_path, compile_with):
     code, _ = compile_with(checkout, project, task_args, log_path)
     if code in (0, STALLED):
         return code, False
+    if maven_build.is_maven(project):
+        return code, maven_build.compiler_rejected(log_path)
     # A NON-ZERO EXIT IS NOT ENOUGH, and treating it as one launders the guest's own broken build
     # into a generator defect. The gate exists to discard source THIS GENERATOR wrote badly; a
     # daemon that died, a missing toolchain, an OOM and a Checkstyle failure all exit non-zero and
@@ -4377,6 +4481,9 @@ def write_results(out_path, project, module, capture_seconds, baseline_seconds, 
 RUN_STAMPS = {}
 
 
+# THE MAVEN PLUGIN SOURCE THE PUBLISHED MAVEN JAR WAS BUILT FROM, for a Maven project's
+# `maven_digest`. None until `publish_plugin_under_test` publishes it.
+PUBLISHED_MAVEN_DIGEST = None
 # THE SELECTOR THE PUBLISHED JAR WAS BUILT FROM. None until `publish_plugin_under_test` runs.
 PUBLISHED_SELECTOR_DIGEST = None
 # AND THE CHECKOUT COMMIT IT WAS BUILT AT, for the same reason.
@@ -4401,7 +4508,13 @@ def measured_selector_digest():
     return PUBLISHED_SELECTOR_DIGEST
 
 
-def publish_plugin_under_test():
+def publish_tasks(maven):
+    """The publish tasks for the plugin under test: the Gradle plugin's, and the Maven plugin's
+    when a Maven guest will resolve it."""
+    return [":plugin:publishToMavenLocal"] + ([":maven:publishToMavenLocal"] if maven else [])
+
+
+def publish_plugin_under_test(maven=False):
     """Publishes the plugin the yoriwake checkout contains, before anything is measured.
 
     `INIT_SCRIPT_ARGS` points the init script at the checkout's snapshot, resolved from mavenLocal, and
@@ -4417,14 +4530,16 @@ def publish_plugin_under_test():
     Fails the sweep rather than warning. A benchmark that cannot guarantee what it measured is worse
     than no benchmark, because its output is indistinguishable from a real result.
     """
-    global PUBLISHED_SELECTOR_DIGEST, PUBLISHED_COMMIT
+    global PUBLISHED_SELECTOR_DIGEST, PUBLISHED_COMMIT, PUBLISHED_MAVEN_DIGEST
     # Before the build, so a dirty checkout costs nothing: every row is stamped with its HEAD.
     commit = yoriwake_checkout.commit(short=True)
     print(f"publishing the plugin under test to mavenLocal from {SOURCE} at {commit}", flush=True)
     before = selector_digest()
+    maven_before = maven_build.digest(SOURCE) if maven else None
+    tasks = publish_tasks(maven)
     code, seconds = run(
         # A control's planted defect may leave the compiler something to warn about.
-        [wrapper(SOURCE), "--quiet", ":plugin:publishToMavenLocal", "-Pyoriwake.kotlinWarningsAsErrors=false"], SOURCE,
+        [wrapper(SOURCE), "--quiet", *tasks, "-Pyoriwake.kotlinWarningsAsErrors=false"], SOURCE,
         os.path.join(HERE, "logs", "publish.log"),
     )
     if code != 0:
@@ -4433,7 +4548,7 @@ def publish_plugin_under_test():
             "Refusing to measure, because the host build would silently resolve whatever jar is "
             "already in mavenLocal and the results would be stamped with this commit regardless."
         )
-    if selector_digest() != before:
+    if selector_digest() != before or (maven and maven_build.digest(SOURCE) != maven_before):
         raise SystemExit("the selector source changed while the plugin under test was being "
                          "published, so which source the jar holds cannot be established. "
                          "Refusing to measure.")
@@ -4442,8 +4557,135 @@ def publish_plugin_under_test():
                          "published, so which commit the jar holds cannot be established. "
                          "Refusing to measure.")
     PUBLISHED_SELECTOR_DIGEST = before
+    PUBLISHED_MAVEN_DIGEST = maven_before
     PUBLISHED_COMMIT = commit
     print(f"  published in {seconds}s", flush=True)
+
+
+class Seams:
+    """The build seams `main` asks of a log or a map directory, bound to one project and checkout:
+    Gradle's (`test_task_ran`, `find_map`, ...) or, for `build = "maven"`, `maven_build`'s.
+
+    On Maven two more questions apply to every arm (`arm_refusal`): did the plugin decline the
+    measured execution, and did a test execution other than the measured one run. Gradle has
+    neither, and answers None.
+    """
+
+    def __init__(self, project, checkout):
+        self.project, self.checkout = project, checkout
+        self.module = project.get("module") or ""
+        self.task = test_task_name(project)
+        self.task_path = test_task_path(project)
+        self.maven = maven_build.is_maven(project)
+        if self.maven:
+            self.execution = maven_build.Execution(project)
+            group, self.artifact = maven_build.coordinates(checkout, self.module)
+            self.key = self.execution.key(group, self.artifact)
+            self.name = self.execution.name(self.artifact)
+
+    def ran(self, log_path):
+        if self.maven:
+            return maven_build.execution_ran(log_path, self.artifact, self.execution)
+        return test_task_ran(log_path, self.module, self.task)
+
+    def failed_before_the_tests(self, log_path):
+        if self.maven:
+            return not self.ran(log_path) and maven_build.build_failed(log_path)
+        return failed_before_the_tests(log_path, self.module, self.task)
+
+    def find_map(self):
+        return (maven_build.find_map(self.checkout, self.key) if self.maven
+                else find_map(self.checkout, self.module, self.task))
+
+    def map_dirs(self):
+        return (maven_build.map_dirs(self.checkout, self.key) if self.maven
+                else map_dirs_for_task(self.checkout, self.module, self.task))
+
+    def unfinished_map(self):
+        return (maven_build.unfinished_map(self.checkout, self.key) if self.maven
+                else unfinished_map(self.checkout, self.module, self.task))
+
+    def full_run_reason(self, log_path):
+        if self.maven:
+            return maven_build.full_run_reason(log_path, self.name, CAPTURE_REASON_OPENERS)
+        return full_run_reason(log_path, self.task_path)
+
+    def arm_refusal(self, log_path):
+        """Why this arm measured something other than the measured execution, or None."""
+        if not self.maven:
+            return None
+        token = maven_build.declined(log_path, self.name)
+        if token:
+            return (f"ran {self.name} declined by the plugin ({token}), so every test ran and "
+                    f"nothing was selected or captured")
+        others = maven_build.other_tests_ran(log_path, self.artifact, self.execution)
+        if others:
+            return (f"ran tests of {', '.join(others)} beside {self.name}; their time is in the "
+                    f"arm and their reports may share its directory")
+        return None
+
+    def executed_or_excluded(self, log_path, label, findings, phase):
+        if not self.maven:
+            return executed_or_excluded(log_path, self.module, label, findings, phase, self.task)
+        refusal = self.arm_refusal(log_path)
+        if refusal:
+            token = maven_build.declined(log_path, self.name)
+            findings.append({"target": label, "status": "invalid", "phase": phase,
+                             "invalid_reason": f"the {phase} arm {refusal}. Log: {log_path}",
+                             **({"declined": token} if token else {})})
+            print(f"    INVALID: the {phase} arm {refusal}", flush=True)
+            return False
+        if self.ran(log_path):
+            return True
+        # No build cache serves a Maven arm (every one is switched off), so an execution that did
+        # not run without a failed build was skipped or never reached: `not-run`, not `cache-hit`.
+        status = "build-failed" if maven_build.build_failed(log_path) else "not-run"
+        findings.append({"target": label, "status": status, "phase": phase})
+        print(f"    {'BUILD FAILED before' if status == 'build-failed' else 'excluded: nothing ran in'}"
+              f" the {phase} run; see {log_path}", flush=True)
+        return False
+
+    def record_without_map(self, recording, capture_map, capture_log):
+        if not self.maven:
+            return record_without_map(recording, capture_map, capture_log, self.module,
+                                      self.task_path, self.unfinished_map())
+        if capture_map or not recording:
+            return None
+        why = [f"  {line}" for line in maven_build.lines_about(capture_log, self.name)] or [
+            f"  the plugin said nothing about {self.name} in {capture_log}"]
+        unfinished = self.unfinished_map()
+        if unfinished:
+            why.insert(0, f"  the capture wrote raw records under {unfinished} but never merged them")
+        return "\n".join([f"REFUSING: the capture left no map for {self.name}, so no shard could "
+                           f"measure against this record"] + why)
+
+
+def maven_digest_changed(stored, current):
+    """Whether a stored Maven file was measured by another Maven plugin source than `current`;
+    `current` is None on a Gradle project, whose files carry no `maven_digest`."""
+    return current is not None and stored.get("maven_digest") != current
+
+
+def maven_refusal(args):
+    """Why this run cannot measure a Maven project, or None.
+
+    Refused rather than emulated: the class-granularity and class-selection arms are internal
+    Gradle properties; the isolated arm and history replay (and the revert set, which replays
+    commits) are not proven on Maven; and complement ground truth filters with Gradle's `--tests`,
+    where Surefire's `-Dtest` overrides the execution's includes and matches nested classes by its
+    own rules, so a complement could run fewer than the dropped tests and hide a miss.
+    """
+    asked = [flag for flag, on in (("--class-granularity", args.class_granularity),
+                                   ("--class-selection", args.class_selection),
+                                   ("--isolated-capture", args.isolated_capture),
+                                   ("--replay", args.replay),
+                                   (f"--ground-truth {args.ground_truth}",
+                                    args.ground_truth != "full"),
+                                   (f"--shapes {REVERT_SET}", args.shapes == REVERT_SET)) if on]
+    if not asked:
+        return None
+    return (f"{', '.join(asked)} has no Maven meaning the harness has proven; a Maven project "
+            f"runs the shared arm with full ground truth")
 
 
 def argument_parser():
@@ -4609,8 +4851,12 @@ def main():
         if args.isolated_capture or args.replay or args.only_target:
             parser.error("--control is a shared-arm mutation sweep")
         args.recapture = True
+    maven = maven_build.build_tool(project) == maven_build.MAVEN
+    refusal = maven_refusal(args) if maven else None
+    if refusal:
+        parser.error(refusal)
 
-    publish_plugin_under_test()
+    publish_plugin_under_test(maven=maven)
 
     module = project.get("module") or ""
     # THE GRADLE NAME AND THE DIRECTORY ARE TWO ANSWERS, and only one of them reads files.
@@ -4637,6 +4883,9 @@ def main():
     # project that is not a fixture.
     RUN_STAMPS["fixture_digest"] = fixture_digest(project)
     checkout = checkout_project(project, keep_state=bool(shard))
+    # EVERY QUESTION ASKED OF A BUILD'S LOG OR ITS MAP DIRECTORY, answered for this project's build
+    # tool; the row rules below are the same for both.
+    seams = Seams(project, checkout)
     # Sampled before this sweep starts a daemon of its own, so it describes what the sweep INHERITED
     # rather than what it built. None where the question cannot be asked; see daemon_uptime_seconds.
     daemon_uptime_at_start = daemon_uptime_seconds()
@@ -4693,6 +4942,10 @@ def main():
         elif stored.get("selector_digest") is None and stored.get("mutations"):
             print("results carry no selector digest, so the selector that wrote them cannot be "
                   "established; starting fresh", flush=True)
+        # A Maven file's rows also belong to the Maven plugin source that measured them.
+        elif maven_digest_changed(stored, PUBLISHED_MAVEN_DIGEST if maven else None):
+            print(f"results were measured by Maven plugin {stored.get('maven_digest')}, not "
+                  f"{PUBLISHED_MAVEN_DIGEST}; starting fresh", flush=True)
         # AND ROWS BELONG TO THE GRAMMAR THAT DREW THEM. Resuming a `default` sweep under
         # `--shapes recall-arm` would leave both populations in one file under one stamp, and every
         # later reader would compare a figure against rows drawn from a different grammar. Null is
@@ -4843,8 +5096,16 @@ def main():
         "project_outcome": "measured",
         "setup_forced": None,
         "untracked_reset": not args.no_untracked_reset,
+        # Which build tool drove the arms, and the Maven plugin source a Maven row was measured
+        # with beside `selector_digest` (`maven_digest`); absent is a Gradle file.
+        **({"build_tool": maven_build.MAVEN, "maven_digest": PUBLISHED_MAVEN_DIGEST}
+           if maven else {}),
         "environment": {**sweep_data.machine(),
-                        "gradle_version": sweep_data.gradle_version(wrapper(checkout)),
+                        "gradle_version": (None if maven else
+                                           sweep_data.gradle_version(wrapper(checkout))),
+                        **({"maven_version": maven_build.maven_version(
+                            maven_build.executable(checkout),
+                            maven_build.environment(project, find_jdk))} if maven else {}),
                         "daemon_java_version": project.get("daemon_java_version"),
                         "daemon_jvmargs": project.get("daemon_jvmargs"),
                         "checkout_schema_version": sweep_data.checkout_schema_version(SOURCE)},
@@ -4860,6 +5121,10 @@ def main():
     # on one. Safe here because `checkout_project` above has just forced the tree to the pinned
     # commit -- so this validates the pinned files, not whatever a killed previous run left behind.
     staging_commit, staged_sources = stage_checkout(checkout, project)
+    # A Maven guest is wired by a committed POM change, as the sources above are staged; what was
+    # staged is stamped, as `staged_sources` is.
+    if maven:
+        RUN_STAMPS["staged_pom"] = maven_build.stage(checkout, project)
     # Registered as soon as the checkout is known, so an interrupt at any later point still puts
     # the tree back. See _restore_on_exit.
     _restore_on_exit(checkout)
@@ -4880,7 +5145,7 @@ def main():
     # guest does not have. One configuration pass against a capture that costs hours; see
     # `assert_classes_task` for the 31 silent failures that bought this.
     assert_classes_task(checkout, project, os.path.join(scratch, "classes-task.log"), gradle)
-    map_dir = find_map(checkout, module, task_name)
+    map_dir = seams.find_map()
     capture_seconds = previous.get("capture_seconds")
     # None means "not established yet", which is different from "no tests fail".
     already_failing = None
@@ -4931,7 +5196,7 @@ def main():
         # iceberg's and duckduckgo-android's exact state -- reads as absent, the discard is skipped,
         # and the capture writes into the previous run's `raw/` tree for the decode to merge both.
         if args.recapture:
-            for stale in map_dirs_for_task(checkout, module, task_name):
+            for stale in seams.map_dirs():
                 merged = os.path.isfile(os.path.join(stale, "coverage.tsv"))
                 print(f"  discarding the existing "
                       f"{'map' if merged else 'UNMERGED capture'} at {os.path.basename(stale)} so "
@@ -4961,7 +5226,7 @@ def main():
         # cold as before, so capture pays the startup cost and baseline does not -- which is the
         # artefact this block exists to remove, silently reintroduced while the printout claims it
         # was handled. Refusing to measure beats publishing a number whose method is not what it says.
-        if not test_task_ran(warmup_log, module, task_name):
+        if not seams.ran(warmup_log):
             print("the warm-up run never reached the tests, so the timing arms would not be "
                   "comparable; aborting", flush=True)
             return 1
@@ -5020,7 +5285,11 @@ def main():
             print("capture STALLED and was killed; aborting rather than measuring a partial map",
                   flush=True)
             return 1
-        if not test_task_ran(os.path.join(scratch, "capture.log"), module, task_name):
+        refusal = seams.arm_refusal(capture_log)
+        if refusal:
+            print(f"REFUSING: the capture {refusal}", flush=True)
+            return 1
+        if not seams.ran(capture_log):
             print("capture never reached the tests; aborting", flush=True)
             return 1
         # WHAT THE CAPTURE WROTE IS PART OF THE MAP: it hashed those files, so they stay. What the
@@ -5031,9 +5300,8 @@ def main():
         # What the capture cost and what it saw, before anything else runs against its map. The raw
         # records are kept whole, `.exec` included: they are what every later question about this
         # map is answered from, and the next instrumented build clears them.
-        capture_map = find_map(checkout, module, task_name)
-        refusal = record_without_map(args.accepted_out, capture_map, capture_log, module,
-                                     task_path, unfinished_map(checkout, module, task_name))
+        capture_map = seams.find_map()
+        refusal = seams.record_without_map(args.accepted_out, capture_map, capture_log)
         if refusal:
             print(refusal, flush=True)
             return 1
@@ -5072,7 +5340,7 @@ def main():
             # then had no union, so the rule that depends on one could not fire and the sweep measured a
             # switched-off rule while reporting zero missed failures. Found by breaking that rule on
             # purpose and watching nothing change.
-            baseline_map = find_map(checkout, module, task_name)
+            baseline_map = seams.find_map()
             preserved = backup_map(baseline_map, scratch, "map-before-baseline") if baseline_map else None
             baseline_started = time.time()
             baseline_log = os.path.join(scratch, "baseline.log")
@@ -5120,7 +5388,7 @@ def main():
             RUN_STAMPS["baseline_arm"] = arm_stats(os.path.join(scratch, "baseline.log"))
             print(f"  capture {capture_seconds}s, uninstrumented baseline {baseline_seconds}s "
                   f"(both after a discarded warm-up run)", flush=True)
-        map_dir = find_map(checkout, module, task_name)
+        map_dir = seams.find_map()
         if map_dir:
             sweep_data.write_capture_stamp(map_dir, wanted_stamp)
     else:
@@ -5216,7 +5484,7 @@ def main():
     else:
         # WHICH OF THE TWO, because they are different findings with different owners. A capture
         # that never ran is usually the guest's; a capture that ran and was never merged is ours.
-        unfinished = unfinished_map(checkout, module, task_name)
+        unfinished = seams.unfinished_map()
         workers = unfinished_workers(unfinished) if unfinished else None
         if workers:
             print(f"  the map at {unfinished} was not merged: {workers}. Selection will force every "
@@ -5421,6 +5689,7 @@ def main():
     # so the timing cap times the rows a single job would. The recording job keeps what passes the
     # gate instead of measuring it.
     recorded, recorded_rejections = [], []
+    unwarmed = False
     if shard:
         stamps = {"selector_digest": measured_selector_digest(), "grammar_digest": grammar,
                   "plugin_commit": plugin_commit(), "commit": project["commit"],
@@ -5431,13 +5700,24 @@ def main():
             return 1
         ordered, accepted = accepted_slice(accepted_list, shard)
         # A shard runs on a fresh machine with no capture before it, so its first row would pay
-        # for cold daemons and caches: the same discarded run the capture is preceded by.
-        warmup_log = os.path.join(scratch, f"warmup-shard-{shard[0]}.log")
-        gradle(checkout, project, [task_path, "--rerun-tasks"], warmup_log)
-        if not test_task_ran(warmup_log, module, task_name):
-            print("the shard's warm-up run never reached the tests, so its timed rows would not "
-                  "be comparable; aborting", flush=True)
-            return 1
+        # for cold daemons and caches: the same discarded run the capture is preceded by. Only a
+        # timed row's times are published, so a slice of untimed rows skips it; recall cannot
+        # depend on it, because the selected arm always runs before the full arm.
+        if slice_times_a_row(accepted, accepted + len(ordered), args.recall_only,
+                             args.timing_cap):
+            warmup_log = os.path.join(scratch, f"warmup-shard-{shard[0]}.log")
+            gradle(checkout, project, [task_path, "--rerun-tasks"], warmup_log)
+            if not seams.ran(warmup_log):
+                print("the shard's warm-up run never reached the tests, so its timed rows would "
+                      "not be comparable; aborting", flush=True)
+                return 1
+        else:
+            # The warm-up also caught a fresh runner that cannot reach the tests. A first row that
+            # fails before them runs it then (`unwarmed`), so a runner fault leaves the slice
+            # re-runnable and a row's own failure is still filed.
+            print("no warm-up run: none of this slice's rows is timed, and recall does not "
+                  "depend on one", flush=True)
+            unwarmed = True
     declined = 0
     # Per `pool/v1` family, the targets left undrawn once the family was refused mid-sweep.
     abandoned = Counter()
@@ -5479,6 +5759,21 @@ def main():
             # A revert row's item is its commit, the part of its target after `revert::`.
             passes.insert(position, ("rerun", [(row["target"].split("::", 1)[row["kind"] == "revert"],
                                                 row["kind"], row["index"]) for row in redo]))
+
+    def runner_reaches_tests():
+        """After an unwarmed shard's first row failed before the tests: whether the unmutated tree
+        reaches them, by the warm-up run the slice skipped. If it does, the failure is the row's
+        and is filed as on a warmed shard; a `build-failed` row is the tool breaking its host."""
+        restore(checkout)
+        if map_dir:
+            restore_map(map_backup, map_dir)
+        log = os.path.join(scratch, f"warmup-shard-{shard[0]}.log")
+        gradle(checkout, project, [task_path, "--rerun-tasks"], log)
+        if seams.ran(log):
+            return True
+        print("the shard's warm-up run, run after its first row failed before the tests, never "
+              "reached them either; aborting rather than filing the row", flush=True)
+        return False
 
     if complement_off:
         queue_remeasure(0)
@@ -5589,6 +5884,7 @@ def main():
             # ONCE. This ran twice with identical arguments and the same log path, so the second call
             # measured an up-to-date build and overwrote the log of the one that did the work.
             gate_started = time.time()
+            cold, unwarmed = unwarmed, False
             revert_variant = None
             if candidate is not None:
                 def reset_tree():
@@ -5632,6 +5928,10 @@ def main():
             # guest will not take; that is a fact about the grammar and there is no row in it. Counted,
             # named, and read back by `assert_recall.py` against the ceiling -- a silent discard is how
             # a seventh grammar defect would shrink this project's sample with nothing looking wrong.
+            # The record job's gate accepted this target, so on a cold runner a rejection may be
+            # the runner's, not the generator's.
+            if mutation_rejected and cold and not runner_reaches_tests():
+                return 1
             if mutation_rejected:
                 rejected.append(label)
                 rejected_mutations.append([label, kind, index])
@@ -5698,7 +5998,10 @@ def main():
                 selected_log)
             if stalled(selected_code, label, findings, "selected"):
                 continue
-            if not executed_or_excluded(selected_log, module, label, findings, "selected", task_name):
+            if cold and seams.failed_before_the_tests(selected_log) \
+                    and not runner_reaches_tests():
+                return 1
+            if not seams.executed_or_excluded(selected_log, label, findings, "selected"):
                 continue
             selected = read_results(checkout, results_dir, started, task_name, selected_log)
             if selected[0] is None:
@@ -5782,8 +6085,7 @@ def main():
                     restore_map(truth_backup, map_dir)
                 if stalled(full_code, label, findings, "ground-truth"):
                     return None
-                if not executed_or_excluded(full_log, module, label, findings, "ground-truth",
-                                            task_name):
+                if not seams.executed_or_excluded(full_log, label, findings, "ground-truth"):
                     return None
                 full = read_results(checkout, results_dir, started, task_name, full_log)
                 if full[0] is None:
@@ -6102,7 +6404,7 @@ def main():
                 # log line, and on the run path the plugin never prints a force reason at all, so it was
                 # null on 47 of the 87 rows that forced in one corpus sweep. The tokens beside it
                 # come from the selector itself and are what a reader should trust.
-                "full_run_reason": full_run_reason(selected_log, test_task_path(project)),
+                "full_run_reason": seams.full_run_reason(selected_log),
                 **decision_fields(decisions, len(selected_ran)),
                 **map_fields(map_dir),
                 # Of the map the selecting arm READ: a forced arm re-records it, in shared JVMs.

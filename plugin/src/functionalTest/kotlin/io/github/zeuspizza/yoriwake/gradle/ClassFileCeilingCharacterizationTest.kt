@@ -94,7 +94,7 @@ class ClassFileCeilingCharacterizationTest : FunctionalTestSupport() {
 
     @Test
     fun `a change to a module JaCoCo cannot instrument runs the test in another module that executes it`(@TempDir dir: File) {
-        assumeTrue(FunctionalGradle.version.startsWith("9."), "Gradle before 9.1 does not support Java 25")
+        assumeTrue(FunctionalGradle.atLeast(9, 1), "Gradle before 9.1 does not support Java 25")
         build(dir, *modules)
         toolchains(dir)
         committed(dir)

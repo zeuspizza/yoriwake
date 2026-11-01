@@ -582,6 +582,24 @@ def case_a_file_from_before_the_grammar_stamp_is_reported_unstamped_not_matching
     return failed
 
 
+def case_a_maven_file_is_current_only_on_the_current_maven_plugin():
+    """A Maven row ran through `maven/` too, which `selector_digest` does not cover."""
+    failed = 0
+    for stored, stale in ((None, False), ("0" * 12, True)):
+        with tempfile.TemporaryDirectory() as root:
+            repo = os.path.join(root, "repo")
+            write(repo, "maven/src/main/kotlin/Lifecycle.kt", "// v1\n")
+            write(repo, "maven/build.gradle.kts", "// build\n")
+            current = run.maven_build.digest(repo)
+            entry, _, _ = verdict_of(root, "p", [narrowed_row()], header={
+                "build_tool": "maven", "maven_digest": stored or current})
+            if (entry["verdict"] == cs.STALE_STAMP) != stale:
+                print(f"  FAIL: a Maven file {'on an older' if stale else 'on the current'} Maven "
+                      f"plugin read {entry['verdict']}: {entry['reason']}")
+                failed += 1
+    return failed
+
+
 def case_every_case_in_this_file_is_registered():
     """A test that is defined and never called has never run, and looks like one that passes."""
     import re as _re
@@ -747,6 +765,7 @@ def case_a_results_directory_holds_one_shape_set_and_no_history_rows():
 
 
 CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
+         case_a_maven_file_is_current_only_on_the_current_maven_plugin,
          case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it,
          case_a_results_directory_holds_one_shape_set_and_no_history_rows,
          case_a_pool_file_is_refused_per_family_as_assert_recall_reads_it,

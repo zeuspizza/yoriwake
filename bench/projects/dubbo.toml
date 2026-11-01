@@ -1,0 +1,19 @@
+# WHY THIS ONE: a large Maven reactor (57 modules), the Maven counterpart of the multi-module
+# Gradle builds. JUnit Jupiter and the guest's own JaCoCo `prepare-agent` in the root POM, so the
+# plugin adopts the guest's agent rather than a staged one. `dubbo-common` is the module most of the
+# reactor depends on, with about 200 test classes.
+name = "dubbo"
+url = "https://github.com/apache/dubbo.git"
+commit = "7ca3e29f4b48544b24fdfff6ccb9bc1b81132d44"
+build = "maven"
+module = "dubbo-common"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number: one local `--limit 2` run
+# had one of its two rows where a miss was possible (narrowed and induced), so four
+# such rows divided by that ratio. Each row pair cost about 85 s there, compile gate included.
+sweep_limit = 8
+
+# `jacoco.skip` is true in the root POM unless the `jacoco` profile is on; with it skipped the
+# plugin declines every execution (`jacoco-disabled`). Both arms of every row run with the profile.
+flags = ["-Pjacoco"]
+sources = ["dubbo-common/src/main/java"]
