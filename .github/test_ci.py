@@ -709,6 +709,9 @@ def code_scanning_problems(text):
     for language, mode in (("java-kotlin", "manual"), ("python", "none"), ("actions", "none")):
         if not re.search(rf"^ +- language: {language}\n +build-mode: {mode}\n", text, re.M):
             problems.append(f"{language} is not analysed in {mode} build mode")
+    traced = re.search(r"\./gradlew [^\n]*(?:\n {10}[^\n]*)*", text)
+    if not traced or not re.search(r"-Dorg\.gradle\.jvmargs=\"[^\"\n]*-Xmx", traced.group(0)):
+        problems.append("the traced compile runs under Gradle's default daemon memory")
     return problems
 
 
@@ -734,6 +737,7 @@ def case_code_scanning_runs_on_main_never_on_pull_requests():
         (text.replace("\njobs:\n", "\nconcurrency: codeql\n\njobs:\n", 1), "concurrency group"),
         (text.replace("  workflow_dispatch:\n", "", 1), "cannot be dispatched"),
         (text.replace("    branches: [main]\n", "    branches: [release]\n", 1), "pushes to main"),
+        (re.sub(r"\n +-Dorg\.gradle\.jvmargs=[^\n]*", "", text), "default daemon memory"),
     ):
         if edited == text:
             problems += fail(f"the fixture edit for {expected!r} no longer applies to codeql.yml")
