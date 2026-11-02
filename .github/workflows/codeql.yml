@@ -62,12 +62,15 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
       # Every source set compiled from scratch in this one traced process: no build cache, no
       # daemon and Kotlin compiled in-process, so no compile happens where the tracer cannot see it.
+      # CodeQL's Kotlin extractor runs inside that compiler and needs more heap and metaspace than
+      # Gradle's default for the daemon.
       - if: matrix.build-mode == 'manual'
         run: >-
           ./gradlew classes testClasses functionalTestClasses captureScriptClasses
           bootFixtureClasses jdkIdentityClasses
           --no-daemon --no-build-cache --no-configuration-cache --rerun-tasks
           -Pkotlin.compiler.execution.strategy=in-process --console=plain
+          -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g"
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: /language:${{ matrix.language }}
