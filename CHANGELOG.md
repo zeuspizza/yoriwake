@@ -31,6 +31,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A pull request from a fork may name the AI tool that assisted it, as CONTRIBUTING asks. Map: left alone.
 - A file only a dependency jar's manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
 - A file a `VENDOR.JAR` or other non-`.jar` manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
+- An edit to a module a test task does not reach leaves its tests out, on Maven too, whatever its package names. Map: left alone.
+- A Maven capture records its JaCoCo scope. Map: left alone.
 
 ## [0.4.0] - 2026-10-29
 

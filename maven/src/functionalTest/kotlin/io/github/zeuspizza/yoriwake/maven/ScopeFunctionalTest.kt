@@ -11,7 +11,9 @@ import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /** The host's JaCoCo agent, scoped to the reactor's packages or to the host's own includes. */
 class ScopeFunctionalTest {
@@ -106,5 +108,55 @@ class ScopeFunctionalTest {
         val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
 
         assertEquals(REACTOR, includes(agentConfiguration(project, "app", "-pl", "app")))
+    }
+
+    private fun git(project: File, vararg arguments: String) {
+        val process = ProcessBuilder(listOf("git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false") + arguments)
+            .directory(project).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        check(process.waitFor() == 0) { "git ${arguments.joinToString(" ")} failed:\n$output" }
+    }
+
+    /** The demo, [edit] applied, committed and captured. */
+    private fun captured(dir: File, edit: (File) -> Unit = {}): File = FunctionalMaven.copy(FunctionalMaven.demo, dir).also { project ->
+        edit(project)
+        File(project, ".gitignore").writeText("target/\n")
+        git(project, "init", "-q")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "demo")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+    }
+
+    /** The scope `lib`'s Surefire map records, one line per pattern. */
+    private fun libScope(project: File): List<String> {
+        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty()
+            .single { it.name.startsWith("dev.demo-lib-maven-surefire-plugin-default-test-") }
+        return File(map, "effective-scope").readLines()
+    }
+
+    @Test
+    fun `a capture records the scope its JaCoCo agent was given`(@TempDir dir: File) {
+        val project = captured(dir)
+
+        assertEquals(listOf("yoriwake-effective-scope 1") + REACTOR.map { "include\t$it" }, libScope(project))
+
+        // A class the map has never seen: the absence rule now has a scope to ask.
+        File(project, "lib/src/main/java/dev/demo/lib/Extra.java").writeText("package dev.demo.lib;\npublic class Extra {}\n")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "a new class")
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+        assertFalse("the map does not record the scope" in output, output)
+    }
+
+    @Test
+    fun `the host's excludes are in the recorded scope`(@TempDir dir: File) {
+        val project = captured(dir) {
+            File(it, "pom.xml").edit { pom ->
+                pom.replace("<id>prepare-agent</id>", "<id>prepare-agent</id>\n            <configuration><excludes><exclude>dev.demo.lib.Counter</exclude></excludes></configuration>")
+            }
+        }
+
+        assertTrue("exclude\tdev.demo.lib.Counter" in libScope(project), libScope(project).toString())
     }
 }

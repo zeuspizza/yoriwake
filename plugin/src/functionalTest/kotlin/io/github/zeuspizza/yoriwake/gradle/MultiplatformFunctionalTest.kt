@@ -343,7 +343,7 @@ class MultiplatformFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a JVM target with its own name is declined, and its tests and its changes run everything`(
+    fun `a JVM target with its own name is declined, and its changes leave out tasks that do not reach it`(
         @TempDir dir: File,
     ) {
         modules(dir)
@@ -355,27 +355,33 @@ class MultiplatformFunctionalTest : FunctionalTestSupport() {
         val audit = File(dir, ".gradle/yoriwake").listFiles()!!.single { it.name.startsWith("desktop-") }
         assertContains(File(audit, "audit.json").readText(), """"token": "kotlin-multiplatform"""")
 
-        // The declined module's package is still in the build's scope, so its change is one no
-        // class answers to: every other task runs in full rather than guessing it is unrelated.
+        // No other task depends on the declined module, so its source is off their classpath.
         edit(dir, "desktop/src/commonMain/kotlin/dev/desktop/Desk.kt", "desk() = 3", "desk() = 1 + 2")
         val output = runner(dir, *moduleTasks, "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+        assertOffClasspath(dir, output)
+    }
+
+    /** `:app` and `:consumer` reach neither `:desktop` nor `:web`, so an edit there leaves out every test. */
+    private fun assertOffClasspath(dir: File, output: String) {
+        for (task in listOf(":app:jvmTest", ":consumer:test")) {
+            assertContains(
+                output.substringAfter("[yoriwake] $task selecting against ").substringBefore("\n"),
+                "1 in modules that are not on this task's classpath",
+            )
+        }
         for (task in listOf("app-jvmTest", "consumer-test")) {
-            assertEquals("full-run", notes(dir, task)["outcome"], output)
-            assertEquals("no-coverage-for-changed", notes(dir, task)["full-run-kind"], output)
+            assertEquals("narrowed", notes(dir, task)["outcome"], output)
         }
     }
 
     @Test
-    fun `a change in a module with no JVM target runs every JVM test`(@TempDir dir: File) {
+    fun `a change in a module with no JVM target leaves out the JVM tests that do not reach it`(@TempDir dir: File) {
         modules(dir)
         runner(dir, *moduleTasks).build()
         edit(dir, "web/src/commonMain/kotlin/dev/web/Web.kt", "web() = 4", "web() = 2 + 2")
 
         val output = runner(dir, *moduleTasks, "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
 
-        for (task in listOf("app-jvmTest", "consumer-test")) {
-            assertEquals("full-run", notes(dir, task)["outcome"], output)
-            assertEquals("no-coverage-for-changed", notes(dir, task)["full-run-kind"], output)
-        }
+        assertOffClasspath(dir, output)
     }
 }

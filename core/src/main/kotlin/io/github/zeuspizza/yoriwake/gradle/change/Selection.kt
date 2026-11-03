@@ -717,14 +717,15 @@ internal fun scopedChange(
     // The same artifacts `establish` builds, so a path this task's classes name is kept. Lazy: most
     // change sets have no path to ask about.
     val artifacts by lazy { TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles()) }
-    val applied = PathIgnore.apply(changed, ignore) { candidates -> artifacts.pathsNamedInClasses(candidates, ancestors = false) }
+    val applied = PathIgnore.apply(changed, ignore) { candidates -> artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) }
     val paths = applied.kept
     val declared = NotRead.declared(notReadByTests)
     val ideState = paths.count(NotRead::isIdeState)
     val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }
     val present = modulesOnClasspath(facts)
+    // `restrict` asks only about class sources.
     val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present) { candidates ->
-        artifacts.pathsNamedInClasses(candidates)
+        artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE)
     }
     return ScopedChange(
         ChangeDetection.split(restriction.kept, facts.rootDir),
