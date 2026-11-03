@@ -4788,7 +4788,7 @@ MUTATIONS = [
     # Maven records the framework its executions run on, or every audit lists `framework-unknown`,
     # whose remedy no Maven run can clear.
     ("Maven records no framework for the audit", MAVEN_RECORDING,
-     "        Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })\n",
+     "        Audit.TaskFacts.write(mapDir, framework, parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })\n",
      "",
      maven_suite, "an execution on JUnit 4 alone audits as off the Platform with a Maven remedy"),
     # A run declined because its argLine drops the JaCoCo agent says so to the audit, which can
@@ -5419,12 +5419,15 @@ def _report(index, fired, refusal, timing=None):
 
 
 def _place(units, count, shards):
-    """Each (weight, name, guards) unit, heaviest first, to the shard with the least weight so far,
-    then the fewest units, then the lowest index; returns each shard's weight, and each unit with
-    the shard it went to."""
+    """Each (weight, name, guards) unit, heaviest first, to a shard that holds no other chunk of its
+    class (two would pay the class's baseline twice in one tree and break its run of guards), then
+    the least weight so far, then the fewest units, then the lowest index; returns each shard's
+    weight, and each unit with the shard it went to."""
     load, held, placed = [0.0] * count, [0] * count, []
+    names = [set() for _ in range(count)]
     for unit in sorted(units, key=lambda unit: (-unit[0], unit[1])):
-        lightest = min(range(count), key=lambda i: (load[i], held[i], i))
+        lightest = min(range(count), key=lambda i: (unit[1] in names[i], load[i], held[i], i))
+        names[lightest].add(unit[1])
         load[lightest] += unit[0]
         held[lightest] += 1
         shards[lightest].extend(unit[2])
