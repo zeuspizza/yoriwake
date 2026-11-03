@@ -84,8 +84,8 @@ internal class Settings(
         /**
          * [project]'s `<systemPropertyIgnore>` and `<environmentInclude>`, one name per child element,
          * read where `<alwaysRun>` is. A module with no plugin entry of its own (its parent is not the
-         * reactor's root) takes the reactor-wide configuration, so a variable the root lists is still
-         * compared there. An entry that names nothing or everything fails the build.
+         * reactor's root) takes the root's, so a variable the root lists is still compared there.
+         * An entry that names nothing or everything fails the build.
          */
         fun environmentOf(project: MavenProject, session: MavenSession): Environment {
             val configuration = moduleConfiguration(project, session)
@@ -117,9 +117,12 @@ internal class Settings(
                     ?.let { parseFlag("${project.artifactId}'s <recordSequentially>", it.trim()) }
                 ?: false
 
-        private fun moduleConfiguration(project: MavenProject, session: MavenSession): Xpp3Dom? =
-            (project.getPlugin(PLUGIN_KEY) ?: session.projects.firstNotNullOfOrNull { it.getPlugin(PLUGIN_KEY) })
-                ?.configuration as? Xpp3Dom
+        /** The module's own plugin entry, else the reactor root's, never a sibling's that `-pl` happened to put first. */
+        private fun moduleConfiguration(project: MavenProject, session: MavenSession): Xpp3Dom? {
+            val root = session.request.multiModuleProjectDirectory?.absoluteFile
+            val top = session.allProjects.firstOrNull { it.basedir?.absoluteFile == root } ?: session.topLevelProject
+            return (project.getPlugin(PLUGIN_KEY) ?: top?.getPlugin(PLUGIN_KEY))?.configuration as? Xpp3Dom
+        }
 
         private fun checked(patterns: List<String>, source: String): List<String> {
             val kept = patterns.map(String::trim).filter(String::isNotEmpty)

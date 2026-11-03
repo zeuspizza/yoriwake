@@ -61,6 +61,20 @@ class AuditAndExplainFunctionalTest {
     }
 
     @Test
+    fun `an audit of several executions refuses one invocation's timings`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+
+        val output = FunctionalMaven.run(
+            maven, project, "yoriwake:audit", "-Dyoriwake.audit.measureToll",
+            "-Dyoriwake.audit.instrumentedSeconds=12", "-Dyoriwake.audit.uninstrumentedSeconds=10",
+        ).succeeded().output
+
+        assertContains(output, "the two timings are of the whole invocation")
+        assertFalse("Measured toll" in output, output)
+    }
+
+    @Test
     fun `an audit asked to measure with one timing reports a failed run`(@TempDir dir: File) {
         val project = committed(dir)
         FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()

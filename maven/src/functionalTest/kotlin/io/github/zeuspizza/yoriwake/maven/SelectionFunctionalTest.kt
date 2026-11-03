@@ -283,10 +283,10 @@ class SelectionFunctionalTest {
 
     @Test
     fun `a module whose every test is left out passes under failIfNoTests`(@TempDir dir: File) {
-        val project = captured(dir)
-        editGreeter(project)
-        // The same properties on both runs, so the complement's stamp matches the selecting run's.
+        // The same properties on every run: the test JVM's environment and the complement's stamp both compare them.
         val arguments = arrayOf("verify", "-pl", "lib,app", "-DfailIfNoTests=true")
+        val project = committed(dir).also { FunctionalMaven.run(maven, it, *arguments).succeeded() }
+        editGreeter(project)
         assertContains(
             FunctionalMaven.run(maven, project, *arguments, "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1").succeeded().output,
             "in dev.demo.app.AppTest",

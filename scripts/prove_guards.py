@@ -4702,7 +4702,7 @@ MUTATIONS = [
     # Under recordSequentially a recording run turns the engines' parallel switches off and records;
     # any other run keeps them on and must record nothing.
     ("a flagged Maven recording run of a parallel suite declines", MAVEN_RECORDING,
-     "        val recordsSequentially = sequential[project.id] == true && platform && selection.asksRecording",
+     "        val recordsSequentially = covered && selection.asksRecording",
      "        val recordsSequentially = false",
      maven_suite, "a flagged recording run of a parallel suite records it one test at a time"),
     ("a flagged Maven recording run leaves the parallel switches on", MAVEN_RECORDING,

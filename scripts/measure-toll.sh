@@ -16,7 +16,7 @@
 #   scripts/measure-toll.sh . :core:test
 #   scripts/measure-toll.sh ../my-project :core:test -I "$PWD/scripts/yoriwake.init.gradle.kts"
 #   scripts/measure-toll.sh <maven-project-dir> <goal> [extra maven args...]
-#   scripts/measure-toll.sh ../my-maven-project verify -pl core
+#   scripts/measure-toll.sh ../my-maven-project verify -pl core   # one execution: the audit refuses several
 #
 # A directory with a pom.xml and no Gradle wrapper is a Maven build, run with its ./mvnw when it
 # has one, else with mvn. The extra arguments go to both runs and to the audit, so a build that
@@ -79,8 +79,8 @@ if [ -f "$project/pom.xml" ] && [ ! -f "$project/gradlew" ] && [ ! -f "$project/
     # "attached" comes before any execution is wired, so a declined execution would otherwise time
     # as instrumented.
     if ! grep -q "\[yoriwake\] attached to Maven" "$log_dir/instrumented.log" ||
-        grep -qE "\[yoriwake\] .* declined, " "$log_dir/instrumented.log"; then
-        echo "[toll] NO CONCLUSION: the instrumented run did not attach yoriwake, or declined an execution," >&2
+        grep -qE "\[yoriwake\] .*( declined, |captures nothing|nothing is captured)" "$log_dir/instrumented.log"; then
+        echo "[toll] NO CONCLUSION: the instrumented run did not attach yoriwake, or declined or did not wire an execution," >&2
         echo "       so it was not instrumented as asked. Comparing the two would measure nothing." >&2
         echo "       See $log_dir/instrumented.log" >&2
         exit 73

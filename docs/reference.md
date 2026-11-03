@@ -1661,9 +1661,10 @@ they may change or disappear in any release.
 
 [`scripts/measure-toll.sh`](../scripts/measure-toll.sh) `<dir> <task>` runs both timed builds and
 then the audit with them. It runs your suite twice. On a Maven build (a `pom.xml` and no Gradle
-wrapper) it takes a goal, `<dir> verify [-pl <module>]`, runs `./mvnw` or `mvn`, and calls
-`mvn yoriwake:audit`; both runs keep the build's JaCoCo agent, so the toll leaves JaCoCo's own
-cost out.
+wrapper) it takes a goal, `<dir> verify -pl <module>`, runs `./mvnw` or `mvn`, and calls
+`mvn yoriwake:audit`; the timings are the whole invocation's, so the audit answers only when it
+audits one execution (`-pl`, `-Dyoriwake.execution=<id>`). Both runs keep the build's JaCoCo
+agent, so the toll leaves JaCoCo's own cost out.
 
 The extension, `yoriwake { }` in the build script of each project that applies the plugin:
 

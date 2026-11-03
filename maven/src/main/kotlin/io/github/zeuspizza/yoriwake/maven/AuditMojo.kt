@@ -40,18 +40,24 @@ class AuditMojo : AbstractMojo() {
             return
         }
         val properties = session.userProperties
-        val toll = Audit.Toll.from(
-            properties.getProperty(SettingNames.MEASURE_TOLL)?.let {
-                try {
-                    Settings.parseFlag(SettingNames.MEASURE_TOLL, it)
-                } catch (refused: MavenExecutionException) {
-                    throw MojoExecutionException(refused.message)
-                }
-            } == true,
-            properties.getProperty(SettingNames.INSTRUMENTED_SECONDS),
-            properties.getProperty(SettingNames.UNINSTRUMENTED_SECONDS),
-            Audit.DEFAULT_NOISE_FLOOR, "-D",
-        )
+        val measure = try {
+            properties.getProperty(SettingNames.MEASURE_TOLL)?.let { Settings.parseFlag(SettingNames.MEASURE_TOLL, it) } == true
+        } catch (refused: MavenExecutionException) {
+            throw MojoExecutionException(refused.message)
+        }
+        // The script times one whole invocation, which is one execution's toll only when it ran one.
+        val toll = if (measure && audited.size > 1) {
+            Audit.Toll.failed(
+                "instrumented",
+                "the two timings are of the whole invocation, which ran ${audited.size} executions; time and audit one " +
+                    "with -pl <module> or -Dyoriwake.execution=<id>.",
+            )
+        } else {
+            Audit.Toll.from(
+                measure, properties.getProperty(SettingNames.INSTRUMENTED_SECONDS),
+                properties.getProperty(SettingNames.UNINSTRUMENTED_SECONDS), Audit.DEFAULT_NOISE_FLOOR, "-D",
+            )
+        }
         for (each in audited) {
             val mapDir = MapLocation.forTask(home, each.key)
             // Declined as a run would decline it, so the audit gives the decline's remedy.

@@ -153,7 +153,8 @@ internal class Recording(
         val agentMissing = !reachesJacoco(project, configuration)
         // For the audit, before the declines below, so a declined execution still says what it runs
         // on and why it was declined. A module from a repository is this invocation's, not the build's.
-        Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })
+        val framework = frameworkOf(project)
+        Audit.TaskFacts.write(mapDir, framework, parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })
         // A module of this reactor that this invocation did not build comes from a repository, as
         // whatever was installed last: its bytes are not the checkout's.
         val reactor = session.allProjects.associateBy { "${it.groupId}:${it.artifactId}" }
@@ -170,10 +171,10 @@ internal class Recording(
         // Tests interleaved in one JVM share its one JaCoCo agent, and their coverage would blend.
         // Under recordSequentially on the JUnit Platform, a run asked only to record turns the engines'
         // parallel switches off, found or not, and any other run keeps them and captures nothing.
-        val platform = frameworkOf(project) == Audit.TaskFacts.PLATFORM
-        val recordsSequentially = sequential[project.id] == true && platform && selection.asksRecording
-        val keepsParallelism = inJvm.takeIf { sequential[project.id] == true && platform && !selection.asksRecording }
-        if (inJvm != null && !recordsSequentially && keepsParallelism == null) {
+        val covered = sequential[project.id] == true && framework == Audit.TaskFacts.PLATFORM
+        val recordsSequentially = covered && selection.asksRecording
+        val keepsParallelism = inJvm.takeIf { covered && !selection.asksRecording }
+        if (inJvm != null && !covered) {
             log.warn(
                 "[yoriwake] $name declined, ${RefusalKind.IN_JVM_PARALLELISM.token}: its tests may run concurrently in one JVM " +
                     "($inJvm); every test runs and nothing is captured" +
