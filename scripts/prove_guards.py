@@ -2814,6 +2814,30 @@ MUTATIONS = [
      "            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())",
      "            is Walk.Found -> walk",
      functional_suite, "a dependency version bumped in a properties file the build loads runs every test"),
+    # A path does not pin a released version's bytes: a copy, an install of the same version or a
+    # redeployed release downloaded afresh replaces it in place.
+    ("a released Maven version copied over is named by its path", CLASSPATH_FILES,
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
+     maven_suite, "a released dependency copied over in the local repository runs every test"),
+    ("a released Maven version installed again is named by its path", CLASSPATH_FILES,
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
+     maven_suite, "a released dependency installed again at the same version runs every test"),
+    ("a redeployed released Maven version is named by its path", CLASSPATH_FILES,
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
+     maven_suite, "a released dependency redeployed and downloaded afresh runs every test"),
+    # Gradle generates its API jars on each machine and unpacks a distribution keyed by its URL:
+    # either can change in place under the Gradle user home.
+    ("a generated Gradle jar is named by its path", CLASSPATH_FILES,
+     '        Regex("^caches/modules-2/"),\n',
+     '        Regex("^caches/modules-2/"),\n        Regex("^caches/[^/]+/generated-gradle-jars/"),\n',
+     functional_suite, "a generated Gradle jar replaced in place runs every test"),
+    ("a wrapper distribution's jar is named by its path", CLASSPATH_FILES,
+     '        Regex("^caches/modules-2/"),\n',
+     '        Regex("^caches/modules-2/"),\n        Regex("^wrapper/dists/"),\n',
+     functional_suite, "a wrapper distribution's jar replaced in place runs every test"),
     ("a dependency's manifest Class-Path is not followed by the classpath-files table", CLASSPATH_FILES,
      "            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)\n",
      "",
@@ -4704,8 +4728,8 @@ MUTATIONS = [
      "",
      unit_suite, "the classpath digest names a transformed jar by its path, and reads one elsewhere under the Gradle home"),
     ("a SNAPSHOT in the Maven repository is named by its path", CLASSPATH_FILES,
-     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH',
-     "                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH",
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
      maven_suite, "a SNAPSHOT dependency replaced in the repository runs every test"),
     # The map's age, not the merge-base: the change set is the union of the diffs against the
     # widened base and against the stamp, so a merge-base of the base with itself changes nothing.

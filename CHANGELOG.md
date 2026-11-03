@@ -33,6 +33,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A file a `VENDOR.JAR` or other non-`.jar` manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
 - A dependency jar Gradle transforms again on a fresh machine no longer runs everything. Map: repaired on the next build, where one is used.
 - Paths `notReadByTests` lists no longer count toward `largeChangeThreshold`, as in 0.3. Map: left alone.
+- A released Maven jar, a generated Gradle API jar and a Gradle distribution's jar are compared by content. Map: repaired on the next build, which runs every test once.
 
 ## [0.4.0] - 2026-10-29
 
