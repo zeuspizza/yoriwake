@@ -5,6 +5,7 @@ import org.gradle.testkit.runner.GradleRunner
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.UUID
 import java.util.jar.Attributes
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -269,7 +270,6 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
     fun `a transformed dependency Gradle writes again with other bytes selects as before`(
         @TempDir dir: File,
         @TempDir repository: File,
-        @TempDir fresh: File,
     ) {
         published(repository, "flavor=a\n")
         build(dir, "build.gradle.kts" to transformedBuild(repository), oneClass, oneTest, secondClass, secondTest, classOrderByName)
@@ -279,7 +279,10 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
         val capturedBytes = captured.readBytes()
         changeBeta(dir)
 
-        val output = selectOnAFreshMachine(dir, File(fresh, "gradle-home"))
+        // Beside the task's shared TestKit home, not under a @TempDir: on Windows the new daemon keeps
+        // files open in it, and JUnit could not delete it.
+        val home = File(FunctionalGradle.testKitDir().parentFile, ".gradle-test-kit-fresh-${UUID.randomUUID()}")
+        val output = selectOnAFreshMachine(dir, home)
 
         val selected = assertNotNull(transformedInto(output), "the transform did not run again\n$output")
         assertEquals(
