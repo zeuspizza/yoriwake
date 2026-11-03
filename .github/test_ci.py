@@ -642,6 +642,52 @@ def case_the_early_access_check_passes_only_when_its_test_passed():
     return problems
 
 
+def case_the_early_access_check_warns_on_a_wider_run_and_still_passes():
+    """Tests run beyond the prediction are the safe direction: the release records them, the job
+    stays green; a skipped case still fails whatever it printed."""
+    import contextlib
+    import io
+
+    problems = 0
+    marker = f"{matrix_check.EARLY_ACCESS_WIDER} dev.sample.AaNativeTest=NATIVE_LOAD"
+    case = '<testcase name="test JVM on the newest early-access JDK(File)" classname="io.example.TestJvmRangeFunctionalTest">'
+    for status, out, code, warnings in (
+        ("passed", f"noise\n{marker}\n", 0, [marker]),
+        ("passed", "noise\n", 0, []),
+        ("skipped", f"{marker}\n", 1, [marker]),
+    ):
+        with tempfile.TemporaryDirectory() as root:
+            body = case + ("<skipped/>" if status == "skipped" else "") + "</testcase>"
+            with open(os.path.join(root, "TEST-io.example.TestJvmRangeFunctionalTest.xml"), "w", encoding="utf-8") as handle:
+                handle.write(f'<testsuite name="x">{body}<system-out><![CDATA[{out}]]></system-out></testsuite>')
+            summary = os.path.join(root, "summary.md")
+            captured = io.StringIO()
+            previous = os.environ.get("GITHUB_STEP_SUMMARY")
+            os.environ["GITHUB_STEP_SUMMARY"] = summary
+            try:
+                with contextlib.redirect_stdout(captured):
+                    exit_code = matrix_check.main(["early-access", root])
+            finally:
+                if previous is None:
+                    del os.environ["GITHUB_STEP_SUMMARY"]
+                else:
+                    os.environ["GITHUB_STEP_SUMMARY"] = previous
+            printed = [line for line in captured.getvalue().splitlines() if line.startswith("::warning::")]
+            written = open(summary, encoding="utf-8").read() if os.path.isfile(summary) else ""
+        if exit_code != code:
+            problems += fail(f"a {status} early-access case printing {out!r} exited {exit_code}, not {code}")
+        if printed != [f"::warning::{line}" for line in warnings]:
+            problems += fail(f"a {status} early-access case printing {out!r} warned {printed}, not {warnings}")
+        if any(line not in written for line in warnings) or (not warnings and written):
+            problems += fail(f"the step summary for {out!r} reads {written!r}")
+    source = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin", "src", "functionalTest",
+                          "kotlin", "io", "github", "zeuspizza", "yoriwake", "gradle", "TestJvmRangeFunctionalTest.kt")
+    with open(source, encoding="utf-8") as handle:
+        if f'"{matrix_check.EARLY_ACCESS_WIDER}"' not in handle.read():
+            problems += fail(f"TestJvmRangeFunctionalTest does not print {matrix_check.EARLY_ACCESS_WIDER}")
+    return problems
+
+
 def matrix_dispatch_problems(text):
     """What would let a dispatch test something unchecked."""
     problems = []
@@ -1971,6 +2017,30 @@ def gradle_tasks(job):
     return calls
 
 
+# The files a rehearsal lists, built again by a tag at the rehearsal's version to compare with its
+# attestations; and the release version's build of them when the comparison matched, with the checks
+# that read the shipped files.
+REHEARSAL_FILES = [":plugin:publishAllPublicationsToBuildLocalRepository",
+                   ":maven:publishMavenPluginPublicationToBuildLocalRepository", ":plugin:bundleAgent", ":plugin:mergeSbom"]
+RELEASE_ONLY = REHEARSAL_FILES + [":plugin:checkSbom", ":agent:verifyNoRuntimeDependencies", ":maven:checkShadedStrings"]
+FULL_BUILD_IF = "github.event_name == 'workflow_dispatch' || steps.decision.outputs.decision != 'rehearsed'"
+RELEASE_ONLY_IF = "github.event_name == 'push' && steps.decision.outputs.decision == 'rehearsed'"
+
+
+def _named_step(job, name):
+    """The text of the step with this name in a job's text, up to the next step; empty if none."""
+    match = re.search(rf"^      - name: {re.escape(name)}\n(?:(?!      - ).*\n)*", job, re.MULTILINE)
+    return re.sub(r"(?:\n *#.*|\n\s*)+$", "\n", match.group(0)) if match else ""
+
+
+def _uploaded(job, artifact):
+    """The text of the upload-artifact step that saves this artifact; empty if none."""
+    for step in re.split(r"\n(?=      - )", job):
+        if "actions/upload-artifact@" in step and f"name: {artifact}\n" in step + "\n":
+            return step
+    return ""
+
+
 def release_problems(text):
     """What makes a release ship bytes other than the tested ones, or hand a key or an attesting
     token to a runner that does not need it."""
@@ -1994,27 +2064,27 @@ def release_problems(text):
     if found:
         return found
     allowed = {
-        "verify": [["build", ":maven:functionalTest"]],
+        "verify": [REHEARSAL_FILES, ["build", ":maven:functionalTest"], RELEASE_ONLY],
         "publish": [[":plugin:signReleaseRepository"], [":plugin:publishReleaseRepository"]],
         "attest": [],
-        "publish-maven": [],
+        "publish-maven": [[":plugin:signReleaseRepository"]],
         "github-release": [],
     }
-    # Each key on the one job that uses it: Central's token never beside the signing key.
+    # Each upload job signs what it uploads, and holds only its own registry's credential.
     keys = {"publish": {"SIGNING_KEY", "SIGNING_PASSWORD", "GRADLE_PUBLISH_KEY", "GRADLE_PUBLISH_SECRET"},
-            "publish-maven": {"CENTRAL_USERNAME", "CENTRAL_PASSWORD"}}
+            "publish-maven": {"SIGNING_KEY", "SIGNING_PASSWORD", "CENTRAL_USERNAME", "CENTRAL_PASSWORD"}}
     for name, job in jobs.items():
         if gradle_tasks(job) != allowed.get(name, []):
             found.append(f"`{name}` runs Gradle tasks {gradle_tasks(job)}; expected {allowed.get(name, [])}")
         read = set(re.findall(r"secrets\.(?!GITHUB_TOKEN)(\w+)", job))
         if read and (name not in keys or not read <= keys[name]):
-            found.append(f"`{name}` reads {sorted(read)}; only `publish` holds keys, and `publish-maven` "
-                         "only Central's token")
+            found.append(f"`{name}` reads {sorted(read)}; only `publish` and `publish-maven` hold keys, the "
+                         "Portal's key never beside Central's token")
         if name != "attest" and re.search(r"id-token:\s*write|attestations:\s*write", job):
             found.append(f"`{name}` can attest; only `attest` may")
         if name != "github-release" and re.search(r"contents:\s*write", job):
             found.append(f"`{name}` can write the repository; only `github-release` may")
-        if name not in ("verify", "publish") and "setup-gradle" in job:
+        if name not in ("verify", "publish", "publish-maven") and "setup-gradle" in job:
             found.append(f"`{name}` sets up Gradle, and with it a cache; it runs no build")
     # The tasks `verify` names gate the tag only when none is excluded again and a failure fails the job.
     for call in re.findall(r"\./gradlew\b[^\n]*", jobs["verify"]):
@@ -2022,7 +2092,7 @@ def release_problems(text):
             found.append(f"`verify` runs `{call.strip()}`, which excludes a task or carries on past a failure")
     if "continue-on-error" in jobs["verify"]:
         found.append("`verify` carries on past a failed step")
-    for name, needs in (("attest", "verify"), ("publish", "attest"), ("publish-maven", "publish"),
+    for name, needs in (("attest", "verify"), ("publish", "attest"), ("publish-maven", "attest"),
                         ("github-release", "publish"), ("github-release", "publish-maven")):
         line = re.search(r"^    needs: (.*)$", jobs[name], re.MULTILINE)
         if not line or needs not in re.findall(r"[\w-]+", line.group(1)):
@@ -2034,6 +2104,29 @@ def release_problems(text):
     if not re.search(r"- name: a rehearsal runs on a release line's candidate\n"
                      r"        if: github\.event_name == 'workflow_dispatch'\n", verify):
         found.append("`verify`'s check of a dispatch's branch and candidate does not run on a dispatch")
+    full = _named_step(verify, "build and test")
+    if f"        if: {FULL_BUILD_IF}\n" not in full:
+        found.append(f"`verify`'s full build does not run on every dispatch and every tag no rehearsal vouched for "
+                     f"(`if: {FULL_BUILD_IF}`)")
+    if f"        if: {RELEASE_ONLY_IF}\n" not in _named_step(verify, "build the release files without the suites"):
+        found.append(f"`verify` builds a release without its suites on something other than a matched rehearsal "
+                     f"(`if: {RELEASE_ONLY_IF}`)")
+    if "-PreleaseVersion=0.0.0-rehearsal" not in _named_step(verify, "build the files a rehearsal lists"):
+        found.append("`verify` compares files of another version than the rehearsal's")
+    decision = _named_step(verify, "did a green run of this commit test these files")
+    if not decision.startswith("      - name: did a green run of this commit test these files\n"
+                               "        id: decision\n        if: github.event_name == 'push'\n"):
+        found.append("`verify` has no decision step named `decision`, limited to a tag push")
+    if "          set +e\n" not in decision or not decision.rstrip().endswith("exit 0"):
+        found.append("`verify`'s decision step can fail the job; a failed lookup means the full build")
+    for needed in ('--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"', '--source-digest "$head"',
+                   '--signer-digest "$head"', "--deny-self-hosted-runners", "head=$(git rev-parse HEAD)",
+                   "decision=rehearsed", '[ "$verified" -eq "$total" ]'):
+        if needed not in decision:
+            found.append(f"`verify`'s decision step lacks `{needed}`, so a file no green run of this commit "
+                         "tested could pass for tested")
+    if "is not of version $version" not in _named_step(verify, "collect the release files"):
+        found.append("`verify` collects files without refusing one of another version, such as the comparison build's")
     check = verify.find("main|release/*) ;;")
     if check < 0 or check > verify.find("./gradlew build"):
         found.append("`verify` builds a dispatch without first refusing one off `main` or `release/*`")
@@ -2049,14 +2142,35 @@ def release_problems(text):
     for needed in ("-Pyoriwake.sign", "ORG_GRADLE_PROJECT_signingKey", "sha256sum -c SHA256SUMS"):
         if needed not in publish:
             found.append(f"`publish` lacks `{needed}`")
-    if publish.find("name: release-signatures") > publish.find(":plugin:publishReleaseRepository"):
+    kept = _uploaded(publish, "portal-signatures")
+    if not kept or publish.find(kept) > publish.find(":plugin:publishReleaseRepository"):
         found.append("`publish` saves the signatures only after the upload that cannot be taken back")
     central = jobs["publish-maven"]
     if "environment: release" not in central:
         found.append("`publish-maven` is not bound to the `release` environment")
-    for needed in ("sha256sum -c SHA256SUMS", "name: release-signatures", "central_bundle.py", "--signed"):
+    if "cache-disabled: true" not in central:
+        found.append("`publish-maven` restores a Gradle cache beside the keys")
+    for needed in ("sha256sum -c SHA256SUMS", "central_bundle.py", "--signed", "-Pyoriwake.sign",
+                   "ORG_GRADLE_PROJECT_signingKey", '-Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository"'):
         if needed not in central:
             found.append(f"`publish-maven` lacks `{needed}`, so it could upload files nobody signed or checked")
+    if "--no-daemon" not in _named_step(central, "sign"):
+        found.append("`publish-maven` signs with a Gradle daemon that outlives the step, beside Central's token")
+    kept = _uploaded(central, "central-signatures")
+    if not kept or central.find(kept) < central.find("- name: sign") or central.find(kept) > central.find("- name: upload"):
+        found.append("`publish-maven` saves its signatures only after the upload that cannot be taken back")
+    for name, job, artifact in (("publish", publish, "portal-signatures"), ("publish-maven", central, "central-signatures")):
+        if "overwrite: true" not in _uploaded(job, artifact):
+            found.append(f"a re-run of `{name}` cannot replace a failed attempt's `{artifact}`")
+        if "        id: published\n" not in job:
+            found.append(f"`{name}` does not first check whether its version is already published")
+        after = job[job.find("        id: published\n"):].split("\n      - ")[1:]
+        for step in after:
+            if "        if: steps.published.outputs.published != 'true'\n" not in step + "\n":
+                found.append(f"`{name}` runs `{step.splitlines()[0]}` on a version already published")
+    for artifact in ("portal-signatures", "central-signatures"):
+        if f"name: {artifact}\n" not in jobs["github-release"]:
+            found.append(f"`github-release` attaches the jars without `{artifact}`")
     if not re.search(r"      - name: the Maven Central bundle is complete\n        run: >-\n"
                      r"          python3 scripts/central_bundle\.py release/repository ", jobs["verify"]):
         found.append("`verify` does not check the Maven Central bundle, so a tag finds a refusal first")
@@ -2095,7 +2209,10 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
         "publish unsigned": text.replace("-Pyoriwake.sign\n", "\n").replace("-Pyoriwake.sign ", ""),
         "publish uploads its own build": (lambda at: text[:at] + text[at:].replace(
             "$GITHUB_WORKSPACE/release/repository", "$GITHUB_WORKSPACE/plugin/build/local-repository", 1))(
-            text.rfind('-Pyoriwake.repository="')),
+            text.find(":plugin:publishReleaseRepository")),
+        "Central signs its own build": (lambda at: text[:at] + text[at:].replace(
+            "$GITHUB_WORKSPACE/release/repository", "$GITHUB_WORKSPACE/plugin/build/local-repository", 1))(
+            text.find("  publish-maven:\n")),
         "publish skips the attestation": text.replace("    needs: attest\n", "    needs: verify\n", 1),
         "publish restores a cache": text.replace("cache-disabled: true", "cache-read-only: true", 1),
         "a pull request starts it": text.replace("on:\n", "on:\n  pull_request:\n", 1),
@@ -2110,16 +2227,17 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
         "a rehearsal on a tag ref publishes": text.replace(
             "    needs: attest\n    if: github.event_name == 'push'\n",
             "    needs: attest\n    if: startsWith(github.ref, 'refs/tags/v')\n", 1),
-        "a rehearsal uploads to Central": text.replace(
-            "    needs: publish\n    if: github.event_name == 'push'\n", "    needs: publish\n", 1),
+        "a rehearsal uploads to Central": (lambda at: text[:at] + text[at:].replace(
+            "    needs: attest\n    if: github.event_name == 'push'\n", "    needs: attest\n", 1))(
+            text.find("  publish-maven:\n")),
         "a rehearsal makes a GitHub release": text.replace(
             "    needs: [publish, publish-maven]\n    if: github.event_name == 'push'\n",
             "    needs: [publish, publish-maven]\n", 1),
         "the GitHub release skips Central": text.replace(
             "    needs: [publish, publish-maven]\n", "    needs: publish\n", 1),
-        "Central's job holds the signing key": text.replace(
+        "Central's job holds the Portal key": text.replace(
             "          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}\n",
-            "          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}\n          K: ${{ secrets.SIGNING_KEY }}\n", 1),
+            "          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}\n          K: ${{ secrets.GRADLE_PUBLISH_KEY }}\n", 1),
         "the Portal's job holds Central's token": text.replace(
             "          GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}\n",
             "          GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}\n          C: ${{ secrets.CENTRAL_PASSWORD }}\n", 1),
@@ -2137,6 +2255,44 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
         "the release ignores a failed build": text.replace(
             '-PreleaseVersion="$VERSION" --console=plain\n', '-PreleaseVersion="$VERSION" --console=plain || true\n', 1),
         "a rehearsal runs anywhere": text.replace("            main|release/*) ;;\n", "", 1),
+        "a rehearsal skips its tests": text.replace(
+            f"        if: {FULL_BUILD_IF}\n", "        if: steps.decision.outputs.decision != 'rehearsed'\n", 1),
+        "a tag skips its tests without a rehearsal": text.replace(
+            f"        if: {RELEASE_ONLY_IF}\n", "        if: github.event_name == 'push'\n", 1),
+        "a tag skips its tests whatever was decided": text.replace(f"        if: {RELEASE_ONLY_IF}\n", "", 1),
+        "the release-only build drops the SBOM check": text.replace(" :plugin:checkSbom", "", 1),
+        "the decision step fails the job": text.replace("          set +e\n", "", 1),
+        "the decision step stops on a red lookup": text.replace("          exit 0\n", "          test $decision = rehearsed\n", 1),
+        "the lookup trusts any commit": text.replace(' --source-digest "$head"', "", 1),
+        "the lookup trusts any workflow": text.replace(
+            ' \\\n                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"', "", 1),
+        "the lookup trusts self-hosted runners": text.replace(" --deny-self-hosted-runners --format json", " --format json", 1),
+        "one attested file is enough": text.replace('[ "$verified" -eq "$total" ]', '[ "$verified" -gt 0 ]', 1),
+        "the comparison builds the release version": text.replace(
+            "          -PreleaseVersion=0.0.0-rehearsal --console=plain\n", '          -PreleaseVersion="$VERSION" --console=plain\n', 1),
+        "the comparison build's files reach the release": text.replace(
+            '              *) echo "$file is not of version $version"; exit 1 ;;\n', "              *) ;;\n", 1),
+        "Central skips the attestation": (lambda at: text[:at] + text[at:].replace("    needs: attest\n", "    needs: verify\n", 1))(
+            text.find("  publish-maven:\n")),
+        "Central restores a cache": (lambda at: text[:at] + text[at:].replace("cache-disabled: true", "cache-read-only: true", 1))(
+            text.find("  publish-maven:\n")),
+        "Central signs under a daemon": text.replace(" --no-daemon", "", 1),
+        "Central uploads unsigned": (lambda at: text[:at] + text[at:].replace(" -Pyoriwake.sign", "", 1))(
+            text.find("  publish-maven:\n")),
+        "the Portal keeps its signatures after the upload": (lambda step: text.replace(step, "", 1).replace(
+            "\n  # Beside `publish`, on the same", step + "\n  # Beside `publish`, on the same", 1))(
+            _uploaded(release_jobs(text)["publish"], "portal-signatures") + "\n"),
+        "Central keeps its signatures after the upload": (lambda step: text.replace(step, "", 1).replace(
+            "  # Made after the Portal", step + "\n  # Made after the Portal", 1))(
+            _uploaded(release_jobs(text)["publish-maven"], "central-signatures") + "\n"),
+        "the GitHub release skips the Portal's signatures": text.replace(
+            "          name: portal-signatures\n          path: release/repository\n", "          name: x\n          path: x\n", 1),
+        "the GitHub release skips Central's signatures": text.replace(
+            "          name: central-signatures\n          path: release/repository\n", "          name: x\n          path: x\n", 1),
+        "a re-run cannot replace the Portal's signatures": text.replace("          overwrite: true\n", "", 1),
+        "the Portal does not check first": text.replace("        id: published\n", "", 1),
+        "the Portal uploads a published version again": text.replace(
+            "      - name: publish\n        if: steps.published.outputs.published != 'true'\n", "      - name: publish\n", 1),
         "a rehearsal runs any commit": text.replace('[ "$CANDIDATE" = "$GITHUB_SHA" ] ||', "true ||", 1),
     }
     for what, mutant in mutants.items():
@@ -2147,10 +2303,10 @@ def case_a_release_that_rebuilds_or_spreads_a_key_is_reported():
     return problems
 
 
-def verify_step(text, name):
-    """The script of the `verify` step with this name, or None."""
-    step = re.search(rf"- name: {re.escape(name)}\n(?:        (?!run:).*\n)*        run: \|\n((?:          .*\n)+)",
-                     release_jobs(text)["verify"])
+def verify_step(text, name, job="verify"):
+    """The script of the step with this name in a job (`verify` unless named), or None."""
+    step = re.search(rf"- name: {re.escape(name)}\n(?:        (?!run:).*\n)*        run: \|\n((?:          .*\n|\n)+)",
+                     release_jobs(text)[job])
     return "\n".join(line[10:] for line in step.group(1).splitlines()) + "\n" if step else None
 
 
@@ -2210,6 +2366,162 @@ def case_the_changelog_check_finds_exactly_the_section_it_is_given():
                                ("## [9.8.7]", False)):
             if (_run_step(script, cwd=tmp, SECTION=section) == 0) != found:
                 problems += fail(f"the CHANGELOG check {'missed' if found else 'found'} {section!r}")
+    return problems
+
+
+def _stub(directory, name, body):
+    path = os.path.join(directory, name)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(f"#!{sys.executable}\n" + body)
+    os.chmod(path, 0o755)
+
+
+# Answers as `gh attestation verify` does, for files named in STUB_KNOWN only, and only when asked
+# for this repository's release workflow at STUB_HEAD on GitHub-hosted runners. Each file is vouched
+# for by a run numbered by its name's length, so the summary has more than one run to name.
+STUB_GH = r"""import json, os, sys
+args = sys.argv[1:]
+if os.environ.get("STUB_DOWN"):
+    sys.exit("error connecting to api.github.com")
+head, repo = os.environ["STUB_HEAD"], "zeuspizza/yoriwake"
+def flag(name):
+    return args[args.index(name) + 1] if name in args else None
+if (args[:2] != ["attestation", "verify"] or flag("--repo") != repo or flag("--source-digest") != head
+        or flag("--signer-digest") != head or "--deny-self-hosted-runners" not in args
+        or flag("--signer-workflow") != repo + "/.github/workflows/release.yml"):
+    sys.exit("stub asked something else: " + " ".join(args))
+name = os.path.basename(args[2])
+if os.environ.get("STUB_NO_RUN"):
+    print("[]")
+    sys.exit(0)
+if name not in os.environ["STUB_KNOWN"].split():
+    sys.exit("no attestations found for subject")
+uri = "https://github.com/zeuspizza/yoriwake/actions/runs/%d/attempts/%d"
+print(json.dumps([{"verificationResult": {"signature": {"certificate": {"runInvocationURI": uri % (len(name) % 2, k)}}}}
+                  for k in (1, 2)]))
+"""
+
+
+def _decide(known, down=False, gh=True, missing=(), no_run=False):
+    """Runs the tag's decision step on a fake build of version 0.0.0-rehearsal; returns its exit code,
+    its output file, its summary and its log."""
+    with open(RELEASE, encoding="utf-8") as handle:
+        script = verify_step(handle.read(), "did a green run of this commit test these files")
+    with tempfile.TemporaryDirectory() as tmp:
+        v = "0.0.0-rehearsal"
+        files = [f"plugin/build/local-repository/io/github/zeuspizza/yoriwake-gradle-plugin/{v}/yoriwake-gradle-plugin-{v}.jar",
+                 f"plugin/build/local-repository/io/github/zeuspizza/yoriwake-gradle-plugin/{v}/yoriwake-gradle-plugin-{v}.pom",
+                 f"plugin/build/local-repository/io/github/zeuspizza/yoriwake-gradle-plugin/maven-metadata.xml",
+                 f"maven/build/local-repository/io/github/zeuspizza/yoriwake-maven-plugin/{v}/yoriwake-maven-plugin-{v}.jar",
+                 f"plugin/build/sbom/yoriwake-gradle-plugin-{v}.cdx.json", "plugin/build/bundled-agent/yoriwake-agent.jar"]
+        for name in files:
+            if os.path.basename(name) in missing:
+                continue
+            os.makedirs(os.path.join(tmp, os.path.dirname(name)), exist_ok=True)
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as handle:
+                handle.write(name)
+        subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "c"],
+                       cwd=tmp, check=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True, text=True).stdout.strip()
+        bin_dir, temp = os.path.join(tmp, "bin"), os.path.join(tmp, "runner")
+        os.makedirs(bin_dir)
+        os.makedirs(temp)
+        _stub(bin_dir, "gh", STUB_GH if gh else "import sys\nsys.exit(127)\n")
+        output, summary = os.path.join(tmp, "output"), os.path.join(tmp, "summary")
+        ran = subprocess.run(["bash", "-eu", "-c", script], cwd=tmp, capture_output=True, text=True,
+                             env={**os.environ, "PATH": bin_dir + os.pathsep + os.environ["PATH"],
+                                  "RUNNER_TEMP": temp, "GITHUB_OUTPUT": output, "GITHUB_STEP_SUMMARY": summary,
+                                  "GITHUB_REPOSITORY": "zeuspizza/yoriwake", "STUB_HEAD": head,
+                                  "STUB_KNOWN": " ".join(known), **({"STUB_DOWN": "1"} if down else {}),
+                                  **({"STUB_NO_RUN": "1"} if no_run else {})})
+        read = lambda path: open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+        return ran.returncode, read(output), read(summary), ran.stdout + ran.stderr
+
+
+def case_a_tag_skips_its_tests_only_when_a_green_run_of_its_commit_attested_every_file():
+    v = "0.0.0-rehearsal"
+    every = [f"yoriwake-gradle-plugin-{v}.jar", f"yoriwake-gradle-plugin-{v}.pom", f"yoriwake-maven-plugin-{v}.jar",
+             f"yoriwake-gradle-plugin-{v}.cdx.json", "yoriwake-agent.jar"]
+    problems = 0
+    code, output, summary, log = _decide(every)
+    runs = re.findall(r"^- (\S+)$", summary, re.MULTILINE)
+    if code or output != "decision=rehearsed\n":
+        problems += fail(f"every file attested gave {code} {output!r}: {log}")
+    if sorted(runs) != ["https://github.com/zeuspizza/yoriwake/actions/runs/0",
+                        "https://github.com/zeuspizza/yoriwake/actions/runs/1"]:
+        problems += fail(f"the summary does not name each vouching run once: {summary!r}")
+    for what, kwargs, named in (
+            ("one file refused", {"known": every[1:]}, every[0]),
+            ("an extra file nobody attested", {"known": every[:2] + every[3:]}, every[2]),
+            ("a file the comparison did not build", {"known": every, "missing": ("yoriwake-agent.jar",)},
+             "yoriwake-agent.jar: not built"),
+            ("the lookup unanswered", {"known": every, "down": True}, "error connecting"),
+            ("a lookup that names no run", {"known": every, "no_run": True}, "verified, but no run named"),
+            ("gh missing", {"known": every, "gh": False}, "not attested")):
+        code, output, summary, log = _decide(**kwargs)
+        if code or output != "decision=full\n":
+            problems += fail(f"{what} gave exit {code} and {output!r}; expected exit 0 and the full build: {log}")
+        elif named not in log:
+            problems += fail(f"{what}: the log does not name {named!r}: {log}")
+        elif "Tests run in full" not in summary:
+            problems += fail(f"{what}: the summary does not say the tests ran in full: {summary!r}")
+    return problems
+
+
+def case_a_release_collects_only_its_own_versions_files():
+    with open(RELEASE, encoding="utf-8") as handle:
+        script = verify_step(handle.read(), "collect the release files")
+    if script is None:
+        return fail("release.yml: `verify` has no step collecting the release files")
+    problems = 0
+    for stray, accepted in ((None, True), ("0.0.0-rehearsal", False)):
+        with tempfile.TemporaryDirectory() as tmp:
+            versions = ["9.8.7"] + ([stray] if stray else [])
+            for v in versions:
+                for name in (f"plugin/build/local-repository/io/github/zeuspizza/yoriwake-gradle-plugin/{v}/yoriwake-gradle-plugin-{v}.jar",
+                             f"maven/build/local-repository/io/github/zeuspizza/yoriwake-maven-plugin/{v}/yoriwake-maven-plugin-{v}-sources.jar"):
+                    os.makedirs(os.path.join(tmp, os.path.dirname(name)), exist_ok=True)
+                    open(os.path.join(tmp, name), "w").close()
+            for name in ("plugin/build/sbom/yoriwake-gradle-plugin-9.8.7.cdx.json", "plugin/build/bundled-agent/yoriwake-agent.jar"):
+                os.makedirs(os.path.join(tmp, os.path.dirname(name)), exist_ok=True)
+                open(os.path.join(tmp, name), "w").close()
+            bin_dir = os.path.join(tmp, "bin")
+            os.makedirs(bin_dir)
+            _stub(bin_dir, "sha256sum", "import sys\nfor name in sys.stdin.read().split():\n    print('0' * 64 + '  ' + name)\n")
+            got = _run_step(script, cwd=tmp, VERSION="9.8.7", PATH=bin_dir + os.pathsep + os.environ["PATH"]) == 0
+            if got != accepted:
+                problems += fail(f"files of 9.8.7{' and ' + stray if stray else ''} were "
+                                 f"{'refused' if accepted else 'collected'}")
+    return problems
+
+
+def case_an_upload_job_re_run_after_its_registry_published_ends_green_before_signing():
+    with open(RELEASE, encoding="utf-8") as handle:
+        text = handle.read()
+    problems = 0
+    checks = (("publish", "is this version on the Portal already",
+               (("https://plugins-artifacts.gradle.org/io.github.zeuspizza/x.pom", 0, True),
+                ("https://repo.maven.apache.org/maven2/io/github/zeuspizza/x.pom", 0, False),
+                ("", 6, False))),
+              ("publish-maven", "is this version on Central already",
+               (('{"published": true}', 0, True), ('{"published": false}', 0, False), ("Bad Gateway", 22, False))))
+    for job, name, answers in checks:
+        script = verify_step(text, name, job)
+        if script is None:
+            problems += fail(f"release.yml: `{job}` has no step named {name!r}")
+            continue
+        for answer, rc, published in answers:
+            with tempfile.TemporaryDirectory() as tmp:
+                _stub(tmp, "curl", f"import sys\nsys.stdout.write({answer!r})\nsys.exit({rc})\n")
+                _stub(tmp, "base64", "import base64, sys\nprint(base64.b64encode(sys.stdin.buffer.read()).decode())\n")
+                output = os.path.join(tmp, "output")
+                code = _run_step(script, PATH=tmp + os.pathsep + os.environ["PATH"], GITHUB_OUTPUT=output,
+                                 GITHUB_REF_NAME="v9.8.7", CENTRAL_USERNAME="u", CENTRAL_PASSWORD="p")
+                said = open(output, encoding="utf-8").read() if os.path.exists(output) else ""
+            if code or said != f"published={'true' if published else 'false'}\n":
+                problems += fail(f"`{job}` read {answer!r} (curl exit {rc}) as exit {code} and {said!r}; "
+                                 f"expected published={str(published).lower()}")
     return problems
 
 
@@ -3185,12 +3497,16 @@ CASES = (
     case_a_cell_with_two_tasks_results_fails,
     case_the_early_access_job_is_dispatched_bounded_and_read_only,
     case_the_early_access_check_passes_only_when_its_test_passed,
+    case_the_early_access_check_warns_on_a_wider_run_and_still_passes,
     case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job,
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
     case_a_tag_releases_its_version_and_a_dispatch_rehearses,
     case_a_rehearsal_runs_only_on_a_release_lines_candidate,
     case_the_changelog_check_finds_exactly_the_section_it_is_given,
     case_security_names_the_release_key,
+    case_a_tag_skips_its_tests_only_when_a_green_run_of_its_commit_attested_every_file,
+    case_a_release_collects_only_its_own_versions_files,
+    case_an_upload_job_re_run_after_its_registry_published_ends_green_before_signing,
     case_a_sweep_of_every_project_can_be_asked_for,
     case_a_sweep_without_inputs_runs_the_full_arm_of_every_project,
     case_a_record_job_archives_the_checkout_the_plan_names,

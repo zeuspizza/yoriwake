@@ -33,7 +33,12 @@ The latest release. Fixes ship as a patch on the latest minor version; upgrade t
 
 From 0.3.0, each release is built and tested once by `release.yml` on the version's tag, and those
 same files are attested, signed and uploaded; from 0.4.0 they include the Maven plugin's, uploaded
-to Maven Central. You can check, for a version `<version>`:
+to Maven Central. From 0.5.0 a tag run either tests its own files, or first rebuilds a rehearsal's
+`0.0.0-rehearsal` files and checks each one byte for byte against an attestation by a green run of
+`release.yml` at the same commit, then builds the release version without running the suites
+again: those files differ from the tested ones only by the version string, and are tested at that
+version locally before the tag. The run's summary names the runs it relied on. You can check, for
+a version `<version>`:
 
 1. **The jar is the one the release built.** Download it from the Plugin Portal, and `SHA256SUMS`
    from the [GitHub release](https://github.com/zeuspizza/yoriwake/releases):
