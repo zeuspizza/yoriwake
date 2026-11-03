@@ -1183,16 +1183,10 @@ private fun frameworkFilter(test: Test): String? {
  * [names] as listed, after checking that each names something and not everything: an empty entry
  * or one of only `*` fails the build, naming [property].
  */
-internal fun validNames(names: List<String>, property: String, owner: String): List<String> =
-    names.map(String::trim).onEach { entry ->
-        if (entry.isEmpty() || entry.all { it == '*' }) {
-            val problem = if (entry.isEmpty()) "names nothing" else "matches every name"
-            throw org.gradle.api.InvalidUserDataException(
-                "[yoriwake] $owner: $property holds '$entry', which $problem. List names, in which `*` " +
-                    "matches any characters."
-            )
-        }
-    }
+internal fun validNames(names: List<String>, property: String, owner: String): List<String> {
+    EnvironmentFingerprint.invalidNames(names, property, owner)?.let { throw org.gradle.api.InvalidUserDataException(it) }
+    return names.map(String::trim)
+}
 
 /**
  * What [test] says of its test JVM before starting it; see [EnvironmentFingerprint.View]. The OS is

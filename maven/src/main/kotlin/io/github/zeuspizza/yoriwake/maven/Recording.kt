@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.wiring.ParallelismDetector
+import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
 import io.github.zeuspizza.yoriwake.gradle.wiring.ranMarker
@@ -76,6 +77,10 @@ internal class Recording(
 
     /** Each module's pinned tests, read before anything runs so that a pattern it cannot use fails the build. */
     private val pins = session.projects.associate { it.id to Settings.alwaysRunOf(it, session) }
+
+    /** Each module's environment lists and whether it records one test at a time, read now for the same reason. */
+    private val environments = session.projects.associate { it.id to Settings.environmentOf(it, session) }
+    private val sequential = session.projects.associate { it.id to Settings.recordSequentiallyOf(it, session) }
 
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
@@ -137,6 +142,9 @@ internal class Recording(
         // file for the test JVM to read, which then refuses and runs every test.
         File(mapDir, AgentContract.RUN_FILE).delete()
         File(mapDir, AgentContract.CHANGE_SET_FILE).delete()
+        // An earlier run's, killed before its decode, would make this run's decode leave the map alone.
+        val parallelMarker = parallelRefusalMarker(CoverageDecoder.recordsDir(mapDir))
+        parallelMarker.delete()
         val configuration = execution.configuration ?: Xpp3Dom("configuration")
         // Nothing runs, so nothing of the last run's is cleared and the map is not touched.
         if (skipsTests(project, execution, configuration)) return
@@ -145,7 +153,8 @@ internal class Recording(
         val agentMissing = !reachesJacoco(project, configuration)
         // For the audit, before the declines below, so a declined execution still says what it runs
         // on and why it was declined. A module from a repository is this invocation's, not the build's.
-        Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })
+        val framework = frameworkOf(project)
+        Audit.TaskFacts.write(mapDir, framework, parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })
         // A module of this reactor that this invocation did not build comes from a repository, as
         // whatever was installed last: its bytes are not the checkout's.
         val reactor = session.allProjects.associateBy { "${it.groupId}:${it.artifactId}" }
@@ -160,10 +169,18 @@ internal class Recording(
             return
         }
         // Tests interleaved in one JVM share its one JaCoCo agent, and their coverage would blend.
-        inJvm?.let { where ->
+        // Under recordSequentially on the JUnit Platform, a run asked only to record turns the engines'
+        // parallel switches off, found or not, and any other run keeps them and captures nothing.
+        val covered = sequential[project.id] == true && framework == Audit.TaskFacts.PLATFORM
+        val recordsSequentially = covered && selection.asksRecording
+        val keepsParallelism = inJvm.takeIf { covered && !selection.asksRecording }
+        if (inJvm != null && !covered) {
             log.warn(
                 "[yoriwake] $name declined, ${RefusalKind.IN_JVM_PARALLELISM.token}: its tests may run concurrently in one JVM " +
-                    "($where); every test runs and nothing is captured"
+                    "($inJvm); every test runs and nothing is captured" +
+                    if (sequential[project.id] == true) {
+                        ". -D${SettingNames.RECORD_SEQUENTIALLY} covers JUnit Jupiter and Vintage on the JUnit Platform only"
+                    } else ""
             )
             return
         }
@@ -213,7 +230,9 @@ internal class Recording(
         )
         // One index listing for this execution's digests, never kept past it: a later execution reads afresh.
         val text = TrackedText(root)
-        val environment = fingerprints(project, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }), text)
+        // On the configuration as the POM set it, before the parallel switches below, so a flagged
+        // selecting run, which keeps them on, compares equal to the capture.
+        val environment = fingerprints(project, execution, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }), text)
         val undated = undatedBy(project, execution, configuration)
         val hostArguments = arguments(resolved(project, host).orEmpty())
         val kind = selection.apply(
@@ -233,6 +252,8 @@ internal class Recording(
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
+        if (recordsSequentially) recordOneAtATime(name, mapDir, configuration, properties, inJvm)
+        keepsParallelism?.let { keepParallelism(name, mapDir, parallelMarker, properties, it) }
         execution.configuration = configuration
         writeAtomically(runFile, buildString {
             properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
@@ -299,6 +320,50 @@ internal class Recording(
     private fun parameter(project: MavenProject, configuration: Xpp3Dom, name: String, property: String): String? =
         configuration.getChild(name)?.value?.trim()?.takeUnless { it.isEmpty() || it.startsWith("\${") }
             ?: Declines.property(project, session, property)
+
+    /**
+     * Turns Jupiter's and Vintage's parallel switches off for this run as launcher configuration
+     * parameters, which outrank system properties, the user properties Surefire promotes and a
+     * `junit-platform.properties` file. Surefire hands the launcher only its
+     * `<properties><configurationParameters>`. The test JVM confirms it before recording.
+     */
+    private fun recordOneAtATime(name: String, mapDir: File, configuration: Xpp3Dom, properties: Properties, source: String?) {
+        val switches = ParallelismDetector.SWITCHES.joinToString("\n") { "$it=false" }
+        val holder = child(configuration, "properties")
+        // The `<property><name/><value/></property>` form, when the POM used it for these parameters.
+        val parameters = holder.children.firstOrNull { it.name == "property" && it.getChild("name")?.value?.trim() == "configurationParameters" }
+            ?.let { child(it, "value") }
+            ?: child(holder, "configurationParameters")
+        // The last of a name given twice wins.
+        parameters.value = listOfNotNull(parameters.value?.takeIf(String::isNotBlank), switches).joinToString("\n")
+        properties.setProperty(AgentContract.PARALLELISM_OVERRIDE_PROPERTY, "true")
+        properties.setProperty(AgentContract.PARALLELISM_PROPERTY, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
+        Audit.TaskFacts.recordParallelismOverride(mapDir, AgentContract.PARALLELISM_RECORDED_SEQUENTIALLY)
+        source?.let {
+            log.info(
+                "[yoriwake] $name: recording one test at a time (-D${SettingNames.RECORD_SEQUENTIALLY}): parallel execution " +
+                    "via $it is turned off for this run, and each test JVM confirms it before recording"
+            )
+        }
+    }
+
+    /**
+     * Runs a flagged suite's tests with its own parallel scheduling and captures nothing: no records
+     * directory, and the marker on which the decode leaves the map exactly as it was. The build's
+     * JaCoCo agent stays, as the build set it.
+     */
+    private fun keepParallelism(name: String, mapDir: File, marker: File, properties: Properties, source: String) {
+        runCatching { writeAtomically(marker, "$source\n") }.onFailure {
+            log.warn("[yoriwake] $name: could not record that this run captures nothing ($it); nothing is captured either way")
+        }
+        properties.setProperty(AgentContract.RECORDS_DIR_PROPERTY, "")
+        properties.setProperty(AgentContract.PARALLELISM_PROPERTY, AgentContract.PARALLELISM_KEPT_NOT_CAPTURED)
+        Audit.TaskFacts.recordParallelismOverride(mapDir, AgentContract.PARALLELISM_KEPT_NOT_CAPTURED)
+        log.info(
+            "[yoriwake] $name: tests run in parallel as configured (via $source), so this run captures nothing; " +
+                "only a recording run records the map, one test at a time"
+        )
+    }
 
     /** This execution's selection-record stamp; see [MavenStamp]. */
     private fun stampOf(
@@ -392,6 +457,7 @@ internal class Recording(
     /** Records what the decode compares the next run against; returns this run's environment, null when unreadable. */
     private fun fingerprints(
         project: MavenProject,
+        execution: MojoExecution,
         mapDir: File,
         configuration: Xpp3Dom,
         classpath: List<File>,
@@ -415,6 +481,11 @@ internal class Recording(
                 project.getPlugin("org.apache.maven.plugins:maven-toolchains-plugin") != null
             val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()
                 .associate { it.name to it.value.orEmpty() }
+            // Surefire promotes the invocation's user properties to the test JVM's system properties,
+            // after the POM's; the core compares a name given twice by every value.
+            val userProperties = if (promotesUserProperties(project, execution, configuration)) {
+                session.userProperties.stringPropertyNames().sorted().map { "-D$it=${session.userProperties.getProperty(it)}" }
+            } else emptyList()
             val view = EnvironmentFingerprint.View(
                 // Maven's own JVM forks the tests unless the POM names another, whose version nobody read.
                 if (otherJdk) null else System.getProperty("java.runtime.version"),
@@ -422,17 +493,33 @@ internal class Recording(
                 jvm, System.getProperty("os.name"), System.getProperty("os.arch"),
                 // As Gradle's JVM arguments carry its system properties.
                 hostArguments + configuration.getChild("systemPropertyVariables")?.children.orEmpty()
-                    .map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" },
+                    .map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" } + userProperties,
                 environment,
+                // A map recorded before user properties were compared stored none of them, and would
+                // otherwise match a run under a property it never saw.
+                plain = mapOf(USER_PROPERTIES_COMPONENT to "compared"),
             )
+            val lists = environments[project.id] ?: Settings.Environment(emptyList(), emptyList())
             val rules = EnvironmentFingerprint.Rules(
-                emptyList(), emptyList(), root.path,
+                lists.systemPropertyIgnore, lists.environmentInclude, root.path,
                 session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path,
                 System.getProperty("user.home"),
             )
             EnvironmentFingerprint.writePending(mapDir, view, rules)
             view to rules
         }.onFailure { log.debug("[yoriwake] ${project.artifactId}: no environment fingerprint recorded ($it)") }.getOrNull()
+    }
+
+    /**
+     * Whether Surefire or Failsafe hands the fork the invocation's user properties: always before
+     * 3.4.0, and from then unless `promoteUserPropertiesToSystemProperties` is false.
+     */
+    private fun promotesUserProperties(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom): Boolean {
+        val value = resolved(project, configuration.getChild("promoteUserPropertiesToSystemProperties")?.value)?.trim()
+        if (!value.equals("false", ignoreCase = true)) return true
+        val version = execution.version.orEmpty().split('.', '-').map { it.toIntOrNull() ?: 0 }
+        val major = version.getOrElse(0) { 0 }
+        return major < 3 || (major == 3 && version.getOrElse(1) { 0 } < 4)
     }
 
     /**
@@ -560,6 +647,9 @@ internal class Recording(
         fun isBuildState(path: String) = path == DEVELOCITY_WORKSPACE_ID || path.endsWith("/$DEVELOCITY_WORKSPACE_ID")
         const val FAILSAFE = "maven-failsafe-plugin"
         const val INTERNAL_LOADED = "yoriwake.internal.loaded"
+
+        /** The fingerprint component saying the invocation's user properties are compared. */
+        private const val USER_PROPERTIES_COMPONENT = "maven.user-properties"
         /** The lifecycle phases that run Surefire or Failsafe, or come after them. */
         private val TEST_PHASES = setOf(
             "test", "prepare-package", "package", "pre-integration-test", "integration-test", "post-integration-test",

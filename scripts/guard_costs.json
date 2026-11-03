@@ -9,7 +9,8 @@
   "functional/InJvmParallelismCharacterizationTest",
   "functional/KoverFunctionalTest",
   "functional/ObservationFunctionalTest",
-  "maven/ReleasedDependenciesFunctionalTest"
+  "maven/ReleasedDependenciesFunctionalTest",
+  "maven/SequentialRecordingFunctionalTest"
  ],
  "classes": {
   "functional/AuditAndExplainFunctionalTest": {"baseline": 55, "guard": 50},
@@ -63,6 +64,7 @@
   "maven/ForkingFunctionalTest": {"baseline": 60, "guard": 83},
   "maven/MapProvenanceFunctionalTest": {"baseline": 67, "guard": 38},
   "maven/ReleasedDependenciesFunctionalTest": {"baseline": 130, "guard": 130},
-  "maven/SelectionFunctionalTest": {"baseline": 458, "guard": 486}
+  "maven/SelectionFunctionalTest": {"baseline": 458, "guard": 486},
+  "maven/SequentialRecordingFunctionalTest": {"baseline": 70, "guard": 70}
  }
 }

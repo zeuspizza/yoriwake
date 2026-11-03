@@ -13,4 +13,7 @@ internal object SettingNames {
     const val TRUSTED_MAPS = "yoriwake.trustedMaps"
     const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
     const val RECORD_SEQUENTIALLY = "yoriwake.recordSequentially"
+    const val MEASURE_TOLL = "yoriwake.audit.measureToll"
+    const val INSTRUMENTED_SECONDS = "yoriwake.audit.instrumentedSeconds"
+    const val UNINSTRUMENTED_SECONDS = "yoriwake.audit.uninstrumentedSeconds"
 }

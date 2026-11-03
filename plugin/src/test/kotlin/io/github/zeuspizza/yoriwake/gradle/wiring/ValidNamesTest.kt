@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.wiring
 
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import org.gradle.api.InvalidUserDataException
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -21,5 +22,12 @@ class ValidNamesTest {
             assertContains(failure.message.orEmpty(), "environmentInclude")
             assertContains(failure.message.orEmpty(), ":app")
         }
+    }
+
+    @Test
+    fun `the check both hosts share accepts a pattern and refuses an empty entry or only stars`() {
+        assertEquals(null, EnvironmentFingerprint.invalidNames(listOf("DB_*", "build.number"), "environmentInclude", "lib"))
+        assertContains(EnvironmentFingerprint.invalidNames(listOf("DB_*", ""), "environmentInclude", "lib").orEmpty(), "names nothing")
+        assertContains(EnvironmentFingerprint.invalidNames(listOf("**"), "systemPropertyIgnore", "lib").orEmpty(), "lib: systemPropertyIgnore")
     }
 }

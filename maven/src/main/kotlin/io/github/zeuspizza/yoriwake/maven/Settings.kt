@@ -2,6 +2,8 @@ package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
+import io.github.zeuspizza.yoriwake.gradle.SettingNames
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import org.apache.maven.MavenExecutionException
@@ -24,6 +26,9 @@ internal class Settings(
     /** A selecting run runs everything once this many builds or days passed since the last full run. */
     val schedule: Schedule.Limits = Schedule.Limits(null, null),
 ) {
+
+    /** What a module's environment fingerprint compares beyond the fixed variables, and leaves out. */
+    class Environment(val systemPropertyIgnore: List<String>, val environmentInclude: List<String>)
 
     companion object {
         const val PLUGIN_KEY = "io.github.zeuspizza:yoriwake-maven-plugin"
@@ -74,6 +79,49 @@ internal class Settings(
                     configuration?.getChild("alwaysRun")?.children?.map { it.value.orEmpty() }.orEmpty(),
                     "${project.artifactId}'s <alwaysRun>",
                 )
+        }
+
+        /**
+         * [project]'s `<systemPropertyIgnore>` and `<environmentInclude>`, one name per child element,
+         * read where `<alwaysRun>` is. A module with no plugin entry of its own (its parent is not the
+         * reactor's root) takes the root's, so a variable the root lists is still compared there.
+         * An entry that names nothing or everything fails the build.
+         */
+        fun environmentOf(project: MavenProject, session: MavenSession): Environment {
+            val configuration = moduleConfiguration(project, session)
+            fun names(list: String): List<String> {
+                val element = configuration?.getChild(list) ?: return emptyList()
+                if (element.childCount == 0 && !element.value.isNullOrBlank()) {
+                    throw MavenExecutionException(
+                        "[yoriwake] ${project.artifactId}: $list holds text, not names; list one name per child element, " +
+                            "as <$list><name>${element.value.trim()}</name></$list>.",
+                        null as Throwable?,
+                    )
+                }
+                val names = element.children.map { it.value.orEmpty() }
+                EnvironmentFingerprint.invalidNames(names, list, project.artifactId)?.let {
+                    throw MavenExecutionException(it, null as Throwable?)
+                }
+                return names.map(String::trim)
+            }
+            return Environment(names("systemPropertyIgnore"), names("environmentInclude"))
+        }
+
+        /**
+         * Whether [project]'s recording runs turn in-JVM parallel execution off and record one test at
+         * a time: `-Dyoriwake.recordSequentially` over the module's `<recordSequentially>`.
+         */
+        fun recordSequentiallyOf(project: MavenProject, session: MavenSession): Boolean =
+            session.userProperties.getProperty(SettingNames.RECORD_SEQUENTIALLY)?.let { parseFlag("-D${SettingNames.RECORD_SEQUENTIALLY}", it) }
+                ?: moduleConfiguration(project, session)?.getChild("recordSequentially")?.value
+                    ?.let { parseFlag("${project.artifactId}'s <recordSequentially>", it.trim()) }
+                ?: false
+
+        /** The module's own plugin entry, else the reactor root's, never a sibling's that `-pl` happened to put first. */
+        private fun moduleConfiguration(project: MavenProject, session: MavenSession): Xpp3Dom? {
+            val root = session.request.multiModuleProjectDirectory?.absoluteFile
+            val top = session.allProjects.firstOrNull { it.basedir?.absoluteFile == root } ?: session.topLevelProject
+            return (project.getPlugin(PLUGIN_KEY) ?: top?.getPlugin(PLUGIN_KEY))?.configuration as? Xpp3Dom
         }
 
         private fun checked(patterns: List<String>, source: String): List<String> {

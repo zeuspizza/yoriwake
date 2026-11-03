@@ -787,15 +787,46 @@ class AuditTest {
     }
 
     @Test
-    fun `on Maven the unmeasured toll names no script, since the one there is runs only Gradle`(@TempDir dir: File) {
+    fun `on Maven the unmeasured toll names the script and the Maven run it times`(@TempDir dir: File) {
         paybackMap(dir, tests = 10, nanosEach = 1_000_000_000, workers = 2)
 
         val gradle = Audit.audit(dir, ":app:test", "test").text()
-        val maven = Audit.audit(dir, "lib surefire:test (default-test)", "mvn verify", tollScript = false).text()
+        val maven = Audit.audit(dir, "lib surefire:test (default-test)", "mvn verify", maven = true).text()
 
         assertContains(gradle, "run scripts/measure-toll.sh, which times `test` twice")
         assertContains(maven, "UNMEASURED")
-        assertFalse("measure-toll.sh" in maven, maven)
+        assertContains(maven, "run scripts/measure-toll.sh, which times `mvn verify` twice")
+    }
+
+    @Test
+    fun `a toll is read from the two timings, and a missing or garbled one is a failed run`() {
+        assertEquals(null, Audit.Toll.from(false, "12", "10", Audit.DEFAULT_NOISE_FLOOR, "-D"))
+
+        val measured = assertNotNull(Audit.Toll.from(true, "12", "10", Audit.DEFAULT_NOISE_FLOOR, "-D"))
+        assertEquals(0.2, assertNotNull(measured.share), 1e-9)
+
+        val missing = assertNotNull(Audit.Toll.from(true, "12", null, Audit.DEFAULT_NOISE_FLOOR, "-D"))
+        assertEquals("uninstrumented", missing.failedRun)
+        assertContains(missing.failureDetail.orEmpty(), "-Dyoriwake.audit.uninstrumentedSeconds")
+        assertFalse("-P" in missing.failureDetail.orEmpty(), missing.failureDetail)
+
+        val garbled = assertNotNull(Audit.Toll.from(true, "12s", "10", Audit.DEFAULT_NOISE_FLOOR, "-P"))
+        assertEquals("instrumented", garbled.failedRun)
+        assertContains(garbled.failureDetail.orEmpty(), "'12s'")
+    }
+
+    @Test
+    fun `on Maven an in-JVM parallel suite on the Platform is told to record one test at a time`(@TempDir dir: File) {
+        Audit.TaskFacts.write(dir, Audit.TaskFacts.PLATFORM, parallelism = "configurationParameters")
+        val platform = Audit.blockers(Audit.TaskFacts.read(dir), scopeRefusal = null, maven = true)
+            .single { it.token == Audit.BlockerKind.IN_JVM_PARALLELISM.token }
+        Audit.TaskFacts.write(dir, "TestNG", parallelism = "TestNG's parallel")
+        val testng = Audit.blockers(Audit.TaskFacts.read(dir), scopeRefusal = null, maven = true)
+            .single { it.token == Audit.BlockerKind.IN_JVM_PARALLELISM.token }
+
+        assertContains(platform.remedy.orEmpty(), "-Dyoriwake.recordSequentially")
+        assertContains(platform.remedy.orEmpty(), "JUnit Platform only")
+        assertFalse("recordSequentially" in testng.remedy.orEmpty(), testng.remedy)
     }
 
     @Test

@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.report
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
@@ -300,6 +301,40 @@ internal object Audit {
             /** A failed run is never a time. */
             fun failed(run: String, detail: String) =
                 Toll(null, null, DEFAULT_NOISE_FLOOR, run, detail)
+
+            /**
+             * The two timings the payback verdict needs, as a host's properties hand them over, or
+             * null when [measure] is not set. The audit cannot run them itself, so they arrive from
+             * `scripts/measure-toll.sh`; [flag] is how the host spells a property on its command
+             * line (`-P`, `-D`), so the failure names what to pass.
+             */
+            fun from(measure: Boolean, instrumented: String?, uninstrumented: String?, floor: Double, flag: String): Toll? {
+                if (!measure) return null
+                if (instrumented == null || uninstrumented == null) {
+                    return failed(
+                        if (instrumented == null) "instrumented" else "uninstrumented",
+                        "no timing was supplied for it. Run scripts/measure-toll.sh, which times both " +
+                            "runs and calls this audit back with them, or pass " +
+                            "$flag${SettingNames.INSTRUMENTED_SECONDS} and $flag${SettingNames.UNINSTRUMENTED_SECONDS} " +
+                            "yourself. The audit cannot run them itself: " +
+                            if (flag == "-P") {
+                                "a nested build on this project would wait for file locks this build is holding."
+                            } else {
+                                "it reads the map and runs no test."
+                            },
+                    )
+                }
+                val instrumentedSeconds = instrumented.toDoubleOrNull()
+                val uninstrumentedSeconds = uninstrumented.toDoubleOrNull()
+                if (instrumentedSeconds == null || uninstrumentedSeconds == null) {
+                    return failed(
+                        if (instrumentedSeconds == null) "instrumented" else "uninstrumented",
+                        "its timing was not a number: " +
+                            "'${if (instrumentedSeconds == null) instrumented else uninstrumented}'.",
+                    )
+                }
+                return measured(instrumentedSeconds, uninstrumentedSeconds, floor)
+            }
         }
     }
 

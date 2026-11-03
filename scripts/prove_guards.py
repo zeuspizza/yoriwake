@@ -4713,6 +4713,34 @@ MUTATIONS = [
      '            val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()',
      '            val environment = emptyMap<String, String>() + configuration.getChild("environmentVariables")?.children.orEmpty()',
      maven_suite, "another time zone in Maven's environment runs every test"),
+    # Surefire hands the test JVM every user property of the invocation, after the POM's.
+    ("a Maven selecting run compares no user property", MAVEN_RECORDING,
+     '.map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" } + userProperties,',
+     '.map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" },',
+     maven_suite, "another value of a user property runs every test"),
+    # A map recorded before user properties were compared stored none, and would match any.
+    ("a Maven fingerprint does not say it compares user properties", MAVEN_RECORDING,
+     '                plain = mapOf(USER_PROPERTIES_COMPONENT to "compared"),',
+     '                plain = emptyMap(),',
+     maven_suite, "a map recorded before user properties were compared runs every test once"),
+    ("a Maven module's systemPropertyIgnore is not handed to the comparison", MAVEN_RECORDING,
+     "                lists.systemPropertyIgnore, lists.environmentInclude, root.path,",
+     "                emptyList(), lists.environmentInclude, root.path,",
+     maven_suite, "a user property left out by systemPropertyIgnore narrows"),
+    ("a Maven module's environmentInclude is not handed to the comparison", MAVEN_RECORDING,
+     "                lists.systemPropertyIgnore, lists.environmentInclude, root.path,",
+     "                lists.systemPropertyIgnore, emptyList(), root.path,",
+     maven_suite, "a listed variable with another value runs every test"),
+    # Under recordSequentially a recording run turns the engines' parallel switches off and records;
+    # any other run keeps them on and must record nothing.
+    ("a flagged Maven recording run of a parallel suite declines", MAVEN_RECORDING,
+     "        val recordsSequentially = covered && selection.asksRecording",
+     "        val recordsSequentially = false",
+     maven_suite, "a flagged recording run of a parallel suite records it one test at a time"),
+    ("a flagged Maven recording run leaves the parallel switches on", MAVEN_RECORDING,
+     '        parameters.value = listOfNotNull(parameters.value?.takeIf(String::isNotBlank), switches).joinToString("\\n")',
+     "        parameters.value = parameters.value",
+     maven_suite, "parallelism turned on on the command line is turned off too"),
     ("a Maven selecting run never compares the environment", MAVEN_SELECTION,
      "        if (environment != null) {",
      "        if (environment != null && false) {",
@@ -4798,7 +4826,7 @@ MUTATIONS = [
     # Maven records the framework its executions run on, or every audit lists `framework-unknown`,
     # whose remedy no Maven run can clear.
     ("Maven records no framework for the audit", MAVEN_RECORDING,
-     "        Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })\n",
+     "        Audit.TaskFacts.write(mapDir, framework, parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })\n",
      "",
      maven_suite, "an execution on JUnit 4 alone audits as off the Platform with a Maven remedy"),
     # A run declined because its argLine drops the JaCoCo agent says so to the audit, which can
@@ -4855,10 +4883,11 @@ MUTATIONS = [
      "        facts.framework == null && maven && scopeRefusal != null -> Unit\n",
      "        false -> Unit\n",
      unit_suite, "on Maven a declined execution names its decline, not a framework no run of it records"),
-    ("the Maven audit sends the user to a toll script that runs only Gradle", AUDIT_RENDER,
-     "        if (script) {\n",
-     "        if (true) {\n",
-     unit_suite, "on Maven the unmeasured toll names no script, since the one there is runs only Gradle"),
+    # Two timings answer the payback question on Maven as on Gradle.
+    ("the Maven audit passes no toll", MAVEN_AUDIT,
+     "toll = toll, blockers = blockers, maven = true)",
+     "toll = null, blockers = blockers, maven = true)",
+     maven_suite, "an audit given two timings answers the payback question"),
     # The harness's Maven build seam (bench/maven_build.py and run.py's dispatch to it).
     ("a Maven arm reads an earlier arm's reports as its own", MAVEN_HARNESS,
      "    fresh = [p for p in glob.glob(pattern) if os.path.getmtime(p) >= since]",
@@ -5428,12 +5457,15 @@ def _report(index, fired, refusal, timing=None):
 
 
 def _place(units, count, shards):
-    """Each (weight, name, guards) unit, heaviest first, to the shard with the least weight so far,
-    then the fewest units, then the lowest index; returns each shard's weight, and each unit with
-    the shard it went to."""
+    """Each (weight, name, guards) unit, heaviest first, to a shard that holds no other chunk of its
+    class (two would pay the class's baseline twice in one tree and break its run of guards), then
+    the least weight so far, then the fewest units, then the lowest index; returns each shard's
+    weight, and each unit with the shard it went to."""
     load, held, placed = [0.0] * count, [0] * count, []
+    names = [set() for _ in range(count)]
     for unit in sorted(units, key=lambda unit: (-unit[0], unit[1])):
-        lightest = min(range(count), key=lambda i: (load[i], held[i], i))
+        lightest = min(range(count), key=lambda i: (unit[1] in names[i], load[i], held[i], i))
+        names[lightest].add(unit[1])
         load[lightest] += unit[0]
         held[lightest] += 1
         shards[lightest].extend(unit[2])

@@ -38,11 +38,54 @@ class AuditAndExplainFunctionalTest {
         assertContains(output, "[yoriwake] app surefire:test (default-test): ")
         val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-lib-") }
         assertTrue(File(map, "audit.json").isFile, "no audit.json in $map")
-        // The run recorded its framework, and no script here measures Maven's toll.
+        // The run recorded its framework, and the script that measures the toll times Maven's run.
         val lib = output.substringAfter("[yoriwake] lib surefire:test (default-test): ").substringBefore("[yoriwake] app surefire:test")
         assertContains(lib, "UNMEASURED")
         assertFalse("framework-unknown" in lib, lib)
-        assertFalse("measure-toll.sh" in output, output)
+        assertContains(lib, "run scripts/measure-toll.sh, which times `mvn verify` twice")
+    }
+
+    @Test
+    fun `an audit given two timings answers the payback question`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+
+        val output = FunctionalMaven.run(
+            maven, project, "yoriwake:audit", "-pl", "lib", "-Dyoriwake.audit.measureToll",
+            "-Dyoriwake.audit.instrumentedSeconds=12", "-Dyoriwake.audit.uninstrumentedSeconds=10",
+        ).succeeded().output
+
+        assertFalse("UNMEASURED" in output, output)
+        assertContains(output, "Measured toll: 20.0%")
+        assertContains(output, "without JaCoCo's own cost")
+    }
+
+    @Test
+    fun `an audit of several executions refuses one invocation's timings`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+
+        val output = FunctionalMaven.run(
+            maven, project, "yoriwake:audit", "-Dyoriwake.audit.measureToll",
+            "-Dyoriwake.audit.instrumentedSeconds=12", "-Dyoriwake.audit.uninstrumentedSeconds=10",
+        ).succeeded().output
+
+        assertContains(output, "the two timings are of the whole invocation")
+        assertFalse("Measured toll" in output, output)
+    }
+
+    @Test
+    fun `an audit asked to measure with one timing reports a failed run`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+
+        val output = FunctionalMaven.run(
+            maven, project, "yoriwake:audit", "-pl", "lib", "-Dyoriwake.audit.measureToll", "-Dyoriwake.audit.instrumentedSeconds=12",
+        ).succeeded().output
+
+        assertContains(output, "the uninstrumented run did not complete")
+        assertContains(output, "-Dyoriwake.audit.uninstrumentedSeconds")
+        assertFalse("-Pyoriwake" in output, output)
     }
 
     /** What yoriwake printed, without Maven's own lines. */
@@ -53,7 +96,6 @@ class AuditAndExplainFunctionalTest {
         val printed = yoriwakeLines(output)
         for (gradle in listOf(
             "framework-unknown", "narrowPlainRunners", "-Pyoriwake", "init.gradle", "`jacoco` plugin", "jacoco extension",
-            "recordSequentially",
         )) {
             assertFalse(gradle in printed, printed)
         }
