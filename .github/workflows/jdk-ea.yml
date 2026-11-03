@@ -3,7 +3,8 @@ name: early-access JDK
 # Runs the test-JVM range test on the newest early-access JDK, so a JDK whose class files the
 # bundled ASM or the host's JaCoCo cannot read is known to be refused by name before it ships. What
 # the test expects is computed from the ceilings this commit carries: narrowing within every
-# ceiling, the named refusal above one. Anything else fails the job.
+# ceiling, the named refusal above one. Anything else fails the job, except tests run beyond the
+# prediction: the safe direction, reported as a warning.
 #
 # Dispatched on each release candidate (`RELEASING.md`), never on a schedule.
 on:

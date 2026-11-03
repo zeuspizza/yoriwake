@@ -642,6 +642,52 @@ def case_the_early_access_check_passes_only_when_its_test_passed():
     return problems
 
 
+def case_the_early_access_check_warns_on_a_wider_run_and_still_passes():
+    """Tests run beyond the prediction are the safe direction: the release records them, the job
+    stays green; a skipped case still fails whatever it printed."""
+    import contextlib
+    import io
+
+    problems = 0
+    marker = f"{matrix_check.EARLY_ACCESS_WIDER} dev.sample.AaNativeTest=NATIVE_LOAD"
+    case = '<testcase name="test JVM on the newest early-access JDK(File)" classname="io.example.TestJvmRangeFunctionalTest">'
+    for status, out, code, warnings in (
+        ("passed", f"noise\n{marker}\n", 0, [marker]),
+        ("passed", "noise\n", 0, []),
+        ("skipped", f"{marker}\n", 1, [marker]),
+    ):
+        with tempfile.TemporaryDirectory() as root:
+            body = case + ("<skipped/>" if status == "skipped" else "") + "</testcase>"
+            with open(os.path.join(root, "TEST-io.example.TestJvmRangeFunctionalTest.xml"), "w", encoding="utf-8") as handle:
+                handle.write(f'<testsuite name="x">{body}<system-out><![CDATA[{out}]]></system-out></testsuite>')
+            summary = os.path.join(root, "summary.md")
+            captured = io.StringIO()
+            previous = os.environ.get("GITHUB_STEP_SUMMARY")
+            os.environ["GITHUB_STEP_SUMMARY"] = summary
+            try:
+                with contextlib.redirect_stdout(captured):
+                    exit_code = matrix_check.main(["early-access", root])
+            finally:
+                if previous is None:
+                    del os.environ["GITHUB_STEP_SUMMARY"]
+                else:
+                    os.environ["GITHUB_STEP_SUMMARY"] = previous
+            printed = [line for line in captured.getvalue().splitlines() if line.startswith("::warning::")]
+            written = open(summary, encoding="utf-8").read() if os.path.isfile(summary) else ""
+        if exit_code != code:
+            problems += fail(f"a {status} early-access case printing {out!r} exited {exit_code}, not {code}")
+        if printed != [f"::warning::{line}" for line in warnings]:
+            problems += fail(f"a {status} early-access case printing {out!r} warned {printed}, not {warnings}")
+        if any(line not in written for line in warnings) or (not warnings and written):
+            problems += fail(f"the step summary for {out!r} reads {written!r}")
+    source = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin", "src", "functionalTest",
+                          "kotlin", "io", "github", "zeuspizza", "yoriwake", "gradle", "TestJvmRangeFunctionalTest.kt")
+    with open(source, encoding="utf-8") as handle:
+        if f'"{matrix_check.EARLY_ACCESS_WIDER}"' not in handle.read():
+            problems += fail(f"TestJvmRangeFunctionalTest does not print {matrix_check.EARLY_ACCESS_WIDER}")
+    return problems
+
+
 def matrix_dispatch_problems(text):
     """What would let a dispatch test something unchecked."""
     problems = []
@@ -3185,6 +3231,7 @@ CASES = (
     case_a_cell_with_two_tasks_results_fails,
     case_the_early_access_job_is_dispatched_bounded_and_read_only,
     case_the_early_access_check_passes_only_when_its_test_passed,
+    case_the_early_access_check_warns_on_a_wider_run_and_still_passes,
     case_the_release_ships_the_tested_bytes_and_keeps_each_key_on_its_job,
     case_a_release_that_rebuilds_or_spreads_a_key_is_reported,
     case_a_tag_releases_its_version_and_a_dispatch_rehearses,

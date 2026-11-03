@@ -33,6 +33,9 @@ TABLE_HEADING = "### Supported matrix"
 REFERENCE_CELL = "linux/9.8.0/21"
 IDENTITY_TEST = "MatrixCellIdentityTest.the builds run on the Gradle and daemon JDK this cell asks for"
 EARLY_ACCESS_TEST = "TestJvmRangeFunctionalTest.test JVM on the newest early-access JDK"
+# The line the early-access case prints for tests it ran beyond the ceilings' prediction: the safe
+# direction, so a warning for the release to record rather than a failure.
+EARLY_ACCESS_WIDER = "yoriwake-early-access-wider"
 
 CELL_LINE = re.compile(
     r"^\s*-\s*\{\s*os:\s*(\w+),\s*runner:\s*([\w.-]+),\s*gradle:\s*'([\d.]+)',\s*task:\s*\w+,"
@@ -272,6 +275,12 @@ def early_access_problems(directory):
     return [] if status == "passed" else [f"{EARLY_ACCESS_TEST}: {status}, so the early-access JDK was not tested"]
 
 
+def early_access_wider(directory):
+    """The early-access case's lines naming tests it ran beyond what the ceilings predict."""
+    _, output = read_results(directory) if os.path.isdir(directory) else ({}, "")
+    return [line.strip() for line in output.splitlines() if line.strip().startswith(EARLY_ACCESS_WIDER + " ")]
+
+
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
@@ -291,6 +300,12 @@ def main(argv=None):
     if args.command == "early-access":
         # Before the table check: drift there fails pull requests, not the weekly early-access run.
         problems = early_access_problems(args.results)
+        for line in early_access_wider(args.results):
+            print(f"::warning::{line}")
+            summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary:
+                with open(summary, "a", encoding="utf-8") as handle:
+                    handle.write(f"Wider than the ceilings predict: `{line}`\n")
         for problem in problems:
             print(f"FAIL: {problem}")
         return 1 if problems else 0
