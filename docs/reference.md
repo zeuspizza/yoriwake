@@ -350,8 +350,9 @@ every user property of the invocation (`-Dfeature=off`, `.mvn/maven.config`), wh
 Failsafe hand the test JVM unless `promoteUserPropertiesToSystemProperties` is `false` (3.4.0 and
 newer). A selecting run with a `-D` the recording run did not have, or with another value, runs
 everything, naming the property: `-Dtest`, `-DskipITs` or an IDE's injected properties too. A
-per-build value such as CI-friendly `-Drevision=1.0.$BUILD` belongs in `<systemPropertyIgnore>`.
-The variables are Maven's own environment and the execution's `<environmentVariables>`.
+per-build value, such as the CI-friendly `revision` set to `1.0.$BUILD`, belongs in
+`<systemPropertyIgnore>`. The variables are Maven's own environment and the execution's
+`<environmentVariables>`.
 
 Property and variable values are never stored, printed or logged: each is kept as a SHA-256 digest
 salted with 32 random bytes the map's first recording created (`fingerprint-salt`). Before a value
