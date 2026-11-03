@@ -611,6 +611,24 @@ def _heavy_classes(mutations):
     return classes
 
 
+def case_two_chunks_of_a_class_on_one_shard_are_one_cut():
+    """A shard that takes two chunks of a split class runs them as one run of its table order."""
+    failures = 0
+    classes = _heavy_classes(pg.MUTATIONS)
+    for count in range(2, 13):
+        split, _loads = pg.partition(pg.MUTATIONS, count)
+        held = sorted(m[0] for shard in split for m in shard)
+        if held != sorted(m[0] for m in pg.MUTATIONS):
+            failures += fail(f"{count} shards do not hold every guard exactly once")
+        for (suite, name), guards in classes.items():
+            labels = [m[0] for m in guards]
+            for shard in split:
+                part = [m[0] for m in shard if m[0] in labels]
+                if part and labels[labels.index(part[0]):labels.index(part[0]) + len(part)] != part:
+                    failures += fail(f"{suite}/{name} is not a cut on one of {count} shards: {part}")
+    return failures
+
+
 def case_a_class_stays_whole_unless_it_outweighs_a_shard_share():
     """Each worker pays a class's baseline once, so scattering a class's guards costs time."""
     failures = 0
@@ -1075,6 +1093,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_cold_worker_trees_compile_one_at_a_time_before_the_guards,
          case_a_tree_that_does_not_compile_names_the_compiler_errors,
          case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one,
+         case_two_chunks_of_a_class_on_one_shard_are_one_cut,
          case_a_class_stays_whole_unless_it_outweighs_a_shard_share,
          case_a_maven_class_pays_its_baseline_in_each_worker_that_runs_it,
          case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median,
