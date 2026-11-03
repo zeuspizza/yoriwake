@@ -53,16 +53,15 @@ dependencies {
 
 
 // The jar doubles as a -javaagent so it can obtain Instrumentation.
+val agentManifest = mapOf(
+    "Premain-Class" to "io.github.zeuspizza.yoriwake.agent.capture.LoadedClassRecorder",
+    // The read hooks rewrite six JDK entry points that are loaded before premain runs.
+    "Can-Retransform-Classes" to "true",
+    // Conditional reviewed libraries wrap a native method to see each call to it.
+    "Can-Set-Native-Method-Prefix" to "true",
+)
 tasks.jar {
-    manifest {
-        attributes(
-            "Premain-Class" to "io.github.zeuspizza.yoriwake.agent.capture.LoadedClassRecorder",
-            // The read hooks rewrite six JDK entry points that are loaded before premain runs.
-            "Can-Retransform-Classes" to "true",
-            // Conditional reviewed libraries wrap a native method to see each call to it.
-            "Can-Set-Native-Method-Prefix" to "true",
-        )
-    }
+    manifest { attributes(agentManifest) }
 }
 
 java {
@@ -98,6 +97,17 @@ dependencies {
     "captureScriptImplementation"("org.junit.platform:junit-platform-launcher")
     "captureScriptImplementation"("junit:junit:4.13.2")
     "captureScriptImplementation"("org.testng:testng:7.10.2")
+    // The agent attached through premain installs its hooks with ASM, unrelocated here.
+    "captureScriptRuntimeOnly"("org.ow2.asm:asm:9.10.1")
+}
+
+// The agent's manifest and no classes: attached with -javaagent, it starts premain from the
+// scripts' class path, so the classes that run are the ones the coverage report reads, not the
+// shaded jar's relocated copies.
+val premainAgentJar by tasks.registering(Jar::class) {
+    manifest { attributes(agentManifest) }
+    archiveFileName = "premain-agent.jar"
+    destinationDirectory = layout.buildDirectory.dir("premainAgent")
 }
 
 // Classes on the boot class path, which the JDK's own loader defines from no file of the image.
@@ -181,6 +191,9 @@ dependencies {
     captureCoverageAgent("org.jacoco:org.jacoco.agent:$jacocoVersion:runtime") { isTransitive = false }
 }
 val captureScriptCoverage = layout.buildDirectory.file("jacoco/captureScript.exec")
+// A JVM started with the agent attached takes the coverage agent's data into its records, as a
+// host's capture takes JaCoCo's; its test copies those records here, for the gate to read too.
+val premainRecords = layout.buildDirectory.dir("jacoco/premainRecords")
 
 tasks.test {
     useJUnitPlatform()
@@ -190,12 +203,21 @@ tasks.test {
     val coverageAgent: FileCollection = captureCoverageAgent
     inputs.files(coverageAgent).withPropertyName("captureCoverageAgent")
     outputs.file(captureCoverage).withPropertyName("captureScriptCoverage")
-    doFirst { captureCoverage.get().asFile.delete() }
+    val records = premainRecords
+    outputs.dir(records).withPropertyName("premainRecords")
+    doFirst {
+        captureCoverage.get().asFile.delete()
+        records.get().asFile.deleteRecursively()
+    }
+    val premainAgent = premainAgentJar.flatMap { it.archiveFile }
+    inputs.file(premainAgent).withPropertyName("premainAgent")
     jvmArgumentProviders += CommandLineArgumentProvider {
         listOf(
             "-Dyoriwake.script.coverageAgent=-javaagent:" + coverageAgent.singleFile.absolutePath +
                 "=destfile=" + captureCoverage.get().asFile.absolutePath +
                 ",includes=io.github.zeuspizza.yoriwake.agent.*,jmx=false",
+            "-Dyoriwake.script.premainAgent=" + premainAgent.get().asFile.absolutePath,
+            "-Dyoriwake.script.premainRecords=" + records.get().asFile.absolutePath,
         )
     }
     // AgentContractTest checks this page, so an edit to it alone must rerun the tests.
@@ -276,7 +298,7 @@ configurations.configureEach {
 // evidence of safety.
 tasks.jacocoTestReport {
     dependsOn(tasks.test)
-    executionData.from(captureScriptCoverage)
+    executionData.from(captureScriptCoverage, premainRecords.map { it.asFileTree })
     reports {
         xml.required = true
         html.required = true
@@ -287,13 +309,13 @@ tasks.jacocoTestReport {
 // the change whose tests raise it. It flags unexecuted code; the guards prove the capture rules.
 tasks.jacocoTestCoverageVerification {
     dependsOn(tasks.test)
-    executionData.from(captureScriptCoverage)
+    executionData.from(captureScriptCoverage, premainRecords.map { it.asFileTree })
     violationRules {
         rule {
             element = "BUNDLE"
             limit {
                 counter = "LINE"
-                minimum = "0.81".toBigDecimal()
+                minimum = "0.89".toBigDecimal()
             }
         }
     }
