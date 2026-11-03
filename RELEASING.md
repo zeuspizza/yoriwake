@@ -61,7 +61,7 @@ no minutes against a budget.
 
 | # | Step | Who | Actions minutes |
 |---|---|---|---|
-| 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest` |
+| 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest`, and a tag of this same commit then publishes without running the suites again |
 | 1 | `./gradlew build :maven:functionalTest` and `./gradlew build :maven:functionalTest -PreleaseVersion=<version>` pass. The build runs the functional suite on Gradle 8.14 and 9; `:maven:functionalTest` runs the Maven plugin's. | maintainer | none, run locally |
 | 1b | `python3 scripts/check_reproducible.py <candidate> <version>` passes: two fresh clones build the same Gradle plugin jar, its nested agent jar, and the Maven plugin's jar, sources jar and javadoc jar. | maintainer, locally | none |
 | 2 | Every guard (see [CONTRIBUTING.md](CONTRIBUTING.md#the-guards)) fires at the candidate: `.github/workflows/guards.yml` dispatched on it is green. | maintainer dispatches | none on this public repository; its wall time is the run's own |
@@ -74,6 +74,7 @@ no minutes against a budget.
 | 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so steps 1a-6 stand; if anything else differs, the gates it touches run again on the final candidate. After a minor's entry merges, every open pull request that touches `CHANGELOG.md` is updated from `main` before it is merged: its lines under the old `## [Unreleased]` would otherwise squash under the new version, and only the updated diff lets its changelog check see that. | maintainer | none |
 | 7b | `.github/workflows/matrix.yml`, dispatched from the final candidate's branch (`main` or `release/<major>.<minor>`) with the final candidate's SHA, is green in every job, so every row of the [supported matrix](docs/reference.md#supported-matrix) ran on the commit that is tagged. The run's link is recorded with the release. A cell red only on a newly bumped Gradle: revert the bump, which makes a new candidate, and open an issue for that Gradle version; a row never leaves the table because a bump failed. | maintainer dispatches | none on this public repository; about 1.5 hours of wall time, an estimate until a run measures it |
 | 7c | `.github/workflows/jdk-ea.yml`, dispatched from the same branch, is green: the newest early-access JDK did what the candidate's ceilings predict. | maintainer dispatches | none on this public repository; under 30 minutes |
+| 7d | Optional: `.github/workflows/release.yml`, dispatched as in step 1a on the final candidate, beside 7b and 7c, is green in `build and test` and `attest`. With it, the tag run publishes minutes after the tag; without it, the tag run builds and tests in full first. | maintainer dispatches | none on this public repository; its wall time is step 1a's |
 | 8 | If the Portal description or tags changed: `./gradlew :plugin:publishPlugins --validate-only -PreleaseVersion=<version>` with the Portal keys. | maintainer | none |
 
 A gate that fails, or a confirmed finding left unfixed, stops the release. A campaign finding is open
@@ -86,17 +87,24 @@ release waits for every one.
    `git tag -a v<version> <final candidate> -m v<version> && git push origin v<version>`. For a
    patch, also push the release branch: `git push origin release/<major>.<minor>`. A repository
    ruleset lets only the maintainer create `v*` tags, since a tag is what starts a release.
-2. `release.yml` builds and tests the tag once, then attests the files that build produced, then
-   waits for a maintainer to approve the `release` environment, which holds the Portal key
-   (`GRADLE_PUBLISH_KEY`, `GRADLE_PUBLISH_SECRET`), the Central token (`CENTRAL_USERNAME`,
-   `CENTRAL_PASSWORD`) and the signing key (`SIGNING_KEY`, `SIGNING_PASSWORD`) and accepts only `v*`
-   tags. Approve it. `publish to the Gradle Plugin Portal` signs those same files and uploads the
-   Gradle plugin; then `publish to Maven Central`, in the same environment, bundles the Maven
-   plugin's signed files, uploads them and waits up to an hour for Central to publish them. Nothing
-   after the tested build builds anything.
-3. A red `publish to Maven Central` leaves the Portal's version standing: re-run that job alone,
-   within GitHub's 30-day re-run limit. A re-run that finds the version already on Central stops
-   green. While the Portal reviews the new version, merge only documentation changes.
+2. `release.yml` first rebuilds, as version `0.0.0-rehearsal`, every file a rehearsal lists, and
+   asks GitHub whether `release.yml` at this same commit attested each one, which it does only after
+   `build and test` passed on them. If every one was (step 7d, or step 1a when nothing changed since),
+   it builds the release version without running the suites again, with the checks that read the
+   shipped files, and its summary names the runs it relied on; otherwise it builds and tests in
+   full. Either way it then attests the files that build produced and waits for a maintainer to
+   approve the `release` environment, which holds the Portal key (`GRADLE_PUBLISH_KEY`,
+   `GRADLE_PUBLISH_SECRET`), the Central token (`CENTRAL_USERNAME`, `CENTRAL_PASSWORD`) and the
+   signing key (`SIGNING_KEY`, `SIGNING_PASSWORD`) and accepts only `v*` tags. Approve it once:
+   `publish to the Gradle Plugin Portal` and `publish to Maven Central` then run side by side, each
+   signing those same files and uploading its plugin; the Central job waits up to an hour for Central
+   to publish. Nothing after the build that `attest` vouches for builds anything.
+3. A red upload job leaves the other registry's version standing. Re-run the failed job alone,
+   within GitHub's 30-day re-run limit; a re-run that finds its version already published stops
+   green. A Portal re-run while the Portal still reviews the version uploads again and is refused:
+   wait for the review first. A refusal that repeats on a re-run leaves the other registry holding
+   the version for good, since neither takes a version back: the fix ships as the next patch, on
+   both. While the Portal reviews the new version, merge only documentation changes.
 4. The last job, once both uploads are green, creates the GitHub release from the tag, with the
    `CHANGELOG.md` section as the notes and the Gradle plugin jar and the Maven plugin jar, each with
    its signature, the agent jar, the SBOM and `SHA256SUMS` attached. It is marked latest unless a
