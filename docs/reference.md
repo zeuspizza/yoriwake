@@ -345,6 +345,14 @@ What it compares:
 - `TZ`, `LANG` and `LC_ALL`, and the environment variables `environmentInclude` lists, as
   `env:<name>`. A listed name is compared whether or not it is set.
 
+On Maven the system properties are the `argLine`'s `-D` arguments, `systemPropertyVariables`, and
+every user property of the invocation (`-Dfeature=off`, `.mvn/maven.config`), which Surefire and
+Failsafe hand the test JVM unless `promoteUserPropertiesToSystemProperties` is `false` (3.4.0 and
+newer). A selecting run with a `-D` the recording run did not have, or with another value, runs
+everything, naming the property: `-Dtest`, `-DskipITs` or an IDE's injected properties too. A
+per-build value such as CI-friendly `-Drevision=1.0.$BUILD` belongs in `<systemPropertyIgnore>`.
+The variables are Maven's own environment and the execution's `<environmentVariables>`.
+
 Property and variable values are never stored, printed or logged: each is kept as a SHA-256 digest
 salted with 32 random bytes the map's first recording created (`fingerprint-salt`). Before a value
 is digested, the root project's directory, the Gradle user home and the user's home directory are
@@ -1560,19 +1568,36 @@ the Gradle plugin.
 
 - **Flags** are user properties with the Gradle names: `-Dyoriwake.select`, `-Dyoriwake.observe`,
   `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.trustedMaps`,
-  `-Dyoriwake.isolatedCapture`, and `-Dyoriwake.alwaysRun=<glob>[,<glob>…]` for one run. The off
-  switch is `-Dyoriwake.enabled=false`; Gradle's `yoriwake.disabled` is not read here.
+  `-Dyoriwake.isolatedCapture`, `-Dyoriwake.recordSequentially`, the audit's
+  `-Dyoriwake.audit.measureToll` with its two timings, and `-Dyoriwake.alwaysRun=<glob>[,<glob>…]`
+  for one run. The off switch is `-Dyoriwake.enabled=false`; Gradle's `yoriwake.disabled` is not
+  read here.
 - **Settings** go in the plugin's `<configuration>`, read from the first module of the build that
   declares the plugin, usually the root POM: `<enabled>`, `<fullRunBranches>` (one `<branch>`
   each), `largeChangeThreshold`, `fullRunEveryBuilds`, `fullRunEveryDays`. `<alwaysRun>` (one
   `<pattern>` each) is read per module, beside `-Dyoriwake.alwaysRun`; a pattern that pins every
-  test fails the build, as on Gradle.
+  test fails the build, as on Gradle. `<environmentInclude>` and `<systemPropertyIgnore>` (one name
+  per child element, `<variable>DB_MODE</variable>`, `<property>build.*</property>`) and
+  `<recordSequentially>` are read per module too, a module that inherits no plugin entry taking the
+  root's; `-Dyoriwake.recordSequentially` overrides `<recordSequentially>`.
+
+  ```xml
+  <configuration>
+    <environmentInclude><variable>DB_MODE</variable></environmentInclude>
+    <systemPropertyIgnore><property>build.*</property></systemPropertyIgnore>
+    <recordSequentially>true</recordSequentially>
+  </configuration>
+  ```
+
 - **`-Dtest`** (or `-Dit.test` for Failsafe) makes a selecting run run every test it names
   (`tests-named`), as `--tests` does on Gradle.
 - **Not on Maven**: `pathIgnore`, `notReadByTests`, `dependsOn` (a test's `yoriwake-depends-on:`
-  tag still selects it), `environmentInclude` and `systemPropertyIgnore` (the [environment
-  fingerprint](#the-environment-fingerprint) compares its defaults), `narrowPlainRunners`,
-  `recordSequentially` and the audit's `measureToll`.
+  tag still selects it) and `narrowPlainRunners`.
+- **Recording a parallel suite**: under `recordSequentially`, a recording run turns Jupiter's and
+  Vintage's parallel switches off through `<properties><configurationParameters>`, which outrank
+  every other route, and each test JVM confirms it before recording. Any other run keeps the
+  suite's scheduling, selects as usual and records nothing; the build's JaCoCo agent stays on, so
+  it still pays the toll.
 - **Maps** live under `.yoriwake/yoriwake/` at the reactor root, one per execution, and survive
   `mvn clean`; yoriwake writes a `.gitignore` into `.yoriwake/`. Surefire and Failsafe executions
   of a module keep separate maps.
@@ -1598,8 +1623,8 @@ the Gradle plugin.
   - no JaCoCo agent execution for its goal, or an `argLine` that drops the agent
     (`no-jacoco-plugin`), a skipped one (`jacoco-disabled`), or no packages found in the reactor's
     sources (`no-packages-derived`);
-  - tests that may run concurrently in one JVM (`in-jvm-parallelism`); `recordSequentially` does
-    not exist here;
+  - tests that may run concurrently in one JVM (`in-jvm-parallelism`), unless `recordSequentially`
+    covers them: JUnit Jupiter and Vintage on the JUnit Platform only;
   - an execution Develocity distributes or selects for (`develocity-test-distribution`,
     `develocity-test-selection`, `develocity-undetermined`), and every execution while the Apache
     build cache extension is on (`maven-build-cache`; `-Dmaven.build.cache.enabled=false` turns it
@@ -1627,15 +1652,18 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.narrowPlainRunners` | Let a selecting run of a plain JUnit 4 task leave out whole test classes. Overrides the build's `narrowPlainRunners`; `=false` turns it off. See [Narrowing plain JUnit 4 by class](#narrowing-plain-junit-4-by-class). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
-| `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. |
-| `yoriwake.audit.instrumentedSeconds=<s>` | With `measureToll`: a full instrumented run's duration. |
-| `yoriwake.audit.uninstrumentedSeconds=<s>` | With `measureToll`: the same run with `yoriwake.disabled`. |
+| `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. `-D` on Maven. |
+| `yoriwake.audit.instrumentedSeconds=<s>` | With `measureToll`: a full instrumented run's duration. `-D` on Maven. |
+| `yoriwake.audit.uninstrumentedSeconds=<s>` | With `measureToll`: the same run with `yoriwake.disabled` (`-Dyoriwake.enabled=false` on Maven). |
 
 `yoriwake.internal.*` properties exist for this project's own measurements and are unsupported:
 they may change or disappear in any release.
 
 [`scripts/measure-toll.sh`](../scripts/measure-toll.sh) `<dir> <task>` runs both timed builds and
-then the audit with them. It runs your suite twice.
+then the audit with them. It runs your suite twice. On a Maven build (a `pom.xml` and no Gradle
+wrapper) it takes a goal, `<dir> verify [-pl <module>]`, runs `./mvnw` or `mvn`, and calls
+`mvn yoriwake:audit`; both runs keep the build's JaCoCo agent, so the toll leaves JaCoCo's own
+cost out.
 
 The extension, `yoriwake { }` in the build script of each project that applies the plugin:
 

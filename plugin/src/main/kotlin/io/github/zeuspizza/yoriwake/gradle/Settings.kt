@@ -66,9 +66,9 @@ internal class Settings(lookup: (String) -> String?) {
         const val ALWAYS_RUN = "yoriwake.alwaysRun"
         const val NARROW_PLAIN_RUNNERS = "yoriwake.narrowPlainRunners"
         const val TRUSTED_MAPS = SettingNames.TRUSTED_MAPS
-        const val MEASURE_TOLL = "yoriwake.audit.measureToll"
-        const val INSTRUMENTED_SECONDS = "yoriwake.audit.instrumentedSeconds"
-        const val UNINSTRUMENTED_SECONDS = "yoriwake.audit.uninstrumentedSeconds"
+        const val MEASURE_TOLL = SettingNames.MEASURE_TOLL
+        const val INSTRUMENTED_SECONDS = SettingNames.INSTRUMENTED_SECONDS
+        const val UNINSTRUMENTED_SECONDS = SettingNames.UNINSTRUMENTED_SECONDS
 
         const val LOADED = "yoriwake.internal.loaded"
         const val CLASS_GRANULARITY = "yoriwake.internal.select.classGranularity"

@@ -68,8 +68,8 @@ internal fun Audit.audit(
     blockers: List<Blocker> = emptyList(),
     /** See [Payback.ConfigureCost]. Null when the build could not count it. */
     configureCost: Payback.ConfigureCost? = null,
-    /** Whether `scripts/measure-toll.sh` can time this host's runs; it runs only Gradle. */
-    tollScript: Boolean = true,
+    /** Whether this is a Maven execution, whose toll keeps the build's own JaCoCo agent on both sides. */
+    maven: Boolean = false,
 ): Result {
     val provenance = provenance(mapDir)
     fun refuse(headline: String, counts: Counts = NO_COUNTS, vararg detail: String) = Result(
@@ -187,7 +187,7 @@ internal fun Audit.audit(
     // No toll given: report narrowing only, and state that the toll is unmeasured.
     if (toll == null) {
         return Result(
-            State.NARROWING_ONLY, shape, described + unmeasuredToll(captureTask, tollScript),
+            State.NARROWING_ONLY, shape, described + unmeasuredToll(captureTask),
             counts, distribution, provenance, blockers, recordedTime,
         )
     }
@@ -249,6 +249,11 @@ internal fun Audit.audit(
             "of what it would save.",
         "This toll was NOT written into the map. It is a property of this machine at this " +
             "moment, and a cached one becomes another project's borrowed number.",
+    ) + listOfNotNull(
+        if (maven) {
+            "Both runs keep the build's own JaCoCo agent, which yoriwake adopts and does not own, so " +
+                "this toll is what yoriwake adds over the build as configured, without JaCoCo's own cost."
+        } else null,
     ) + Payback.paybackLines(recordedTime, distribution, toll, configureCost)
     // `recordedTime` on both, so `audit.json` agrees with the prose beside it.
     return if (predicted < 1.0) {
@@ -521,7 +526,12 @@ internal fun Audit.blockers(
                 Audit.BlockerKind.IN_JVM_PARALLELISM,
                 "in-JVM parallel execution is enabled via $source, and the plugin refuses to " +
                     "capture under it",
-                if (maven) {
+                if (maven && facts.framework == TaskFacts.PLATFORM) {
+                    "record the map one test at a time with -D${SettingNames.RECORD_SEQUENTIALLY} (or " +
+                        "`<recordSequentially>true</recordSequentially>`), which covers JUnit Jupiter and " +
+                        "Vintage on the JUnit Platform only; selecting runs keep the parallel scheduling. " +
+                        "Parallel forks (`forkCount`) are unaffected."
+                } else if (maven) {
                     "no remedy on Maven while its tests run concurrently in one JVM: they would " +
                         "share one coverage agent, so per-test attribution would blend them. Turn " +
                         "in-JVM parallel execution off for the runs you want captured; parallel " +

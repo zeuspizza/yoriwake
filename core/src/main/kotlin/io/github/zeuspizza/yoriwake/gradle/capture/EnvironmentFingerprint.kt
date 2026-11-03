@@ -53,7 +53,8 @@ internal object EnvironmentFingerprint {
     /**
      * What the daemon sees of the test JVM before it starts: the launcher's runtime version and
      * vendor (null when it has no metadata), the executable the task names, the daemon's OS and
-     * architecture, every argument the JVM starts with, and the task's environment.
+     * architecture, every argument the JVM starts with, and the task's environment. [plain] holds
+     * components a host stores as they are, such as what its view compares that an older one did not.
      */
     data class View(
         val jdkVersion: String?,
@@ -63,6 +64,7 @@ internal object EnvironmentFingerprint {
         val osArch: String?,
         val jvmArgs: List<String>,
         val environment: Map<String, String>,
+        val plain: Map<String, String> = emptyMap(),
     ) : Serializable {
         private companion object {
             private const val serialVersionUID = 1L
@@ -105,6 +107,16 @@ internal object EnvironmentFingerprint {
         }
     }
 
+    /**
+     * Why [names], listed under [property] by [owner], cannot be used, or null when each names
+     * something and not everything: an empty entry or one of only `*` is refused.
+     */
+    fun invalidNames(names: List<String>, property: String, owner: String): String? {
+        val entry = names.map(String::trim).firstOrNull { entry -> entry.isEmpty() || entry.all { it == '*' } } ?: return null
+        val problem = if (entry.isEmpty()) "names nothing" else "matches every name"
+        return "[yoriwake] $owner: $property holds '$entry', which $problem. List names, in which `*` matches any characters."
+    }
+
     /** One fingerprint, and the property names an ignore entry left out of it. */
     class Computed(val components: Map<String, String>, val ignored: List<String>)
 
@@ -134,6 +146,7 @@ internal object EnvironmentFingerprint {
         }
         components[OS_NAME] = view.osName ?: "unknown"
         components[OS_ARCH] = view.osArch ?: "unknown"
+        components.putAll(view.plain)
         val ignored = sortedSetOf<String>()
         // A name given more than once is compared by every value it is given. Which one a test sees
         // cannot be told from the order: Gradle lists the properties it sets first, ahead of

@@ -1,12 +1,15 @@
 package io.github.zeuspizza.yoriwake.maven
 
+import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.report.audit
 import io.github.zeuspizza.yoriwake.gradle.report.blockers
 import io.github.zeuspizza.yoriwake.gradle.report.write
+import org.apache.maven.MavenExecutionException
 import org.apache.maven.execution.MavenSession
 import org.apache.maven.plugin.AbstractMojo
+import org.apache.maven.plugin.MojoExecutionException
 import org.apache.maven.plugins.annotations.Mojo
 import org.apache.maven.plugins.annotations.Parameter
 import java.io.File
@@ -15,6 +18,8 @@ import java.io.File
  * `mvn yoriwake:audit`: whether selection would pay off for each Surefire and Failsafe execution of
  * the reactor, read from its map alone, as Gradle's `yoriwakeAudit` does. Runs no test and changes no
  * map; writes `audit.json` beside each map. `-Dyoriwake.execution=<id>` audits one execution id.
+ * `-Dyoriwake.audit.measureToll` with the two timings `scripts/measure-toll.sh` takes answers the
+ * payback question.
  */
 @Mojo(name = "audit", aggregator = true, threadSafe = true)
 class AuditMojo : AbstractMojo() {
@@ -34,6 +39,19 @@ class AuditMojo : AbstractMojo() {
             log.info("[yoriwake] no Surefire or Failsafe execution${execution?.let { " with id $it" } ?: ""} to audit")
             return
         }
+        val properties = session.userProperties
+        val toll = Audit.Toll.from(
+            properties.getProperty(SettingNames.MEASURE_TOLL)?.let {
+                try {
+                    Settings.parseFlag(SettingNames.MEASURE_TOLL, it)
+                } catch (refused: MavenExecutionException) {
+                    throw MojoExecutionException(refused.message)
+                }
+            } == true,
+            properties.getProperty(SettingNames.INSTRUMENTED_SECONDS),
+            properties.getProperty(SettingNames.UNINSTRUMENTED_SECONDS),
+            Audit.DEFAULT_NOISE_FLOOR, "-D",
+        )
         for (each in audited) {
             val mapDir = MapLocation.forTask(home, each.key)
             // Declined as a run would decline it, so the audit gives the decline's remedy.
@@ -44,7 +62,7 @@ class AuditMojo : AbstractMojo() {
                 ?: BuildCache.decline(session)
                 ?: JacocoAdoption.decline(each.project, agentGoal, session)
             val blockers = Audit.blockers(Audit.TaskFacts.read(mapDir), scopeRefusal = declined, maven = true)
-            val result = Audit.audit(mapDir, each.name, "mvn verify", blockers = blockers, tollScript = false)
+            val result = Audit.audit(mapDir, each.name, "mvn verify", toll = toll, blockers = blockers, maven = true)
             Audit.write(mapDir, result)
             log.info("[yoriwake] ${each.name}: ${result.state.token} -- ${result.headline}")
             result.lines.forEach { log.info("[yoriwake]   $it") }

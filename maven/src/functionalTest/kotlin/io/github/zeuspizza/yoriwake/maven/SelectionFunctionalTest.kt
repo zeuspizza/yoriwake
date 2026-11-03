@@ -72,7 +72,10 @@ class SelectionFunctionalTest {
         assertTrue(File(map, "observation.json").isFile, "no observation.json in $map")
     }
 
-    /** The demo with commons-lang3 on `lib`'s test classpath at `${lang3.version}`, 3.17.0 unless set; captured. */
+    /**
+     * The demo with commons-lang3 on `lib`'s test classpath at `${lang3.version}`, 3.17.0 unless set,
+     * the property left out of the environment comparison; captured.
+     */
     private fun capturedWithLang3(dir: File): File = committed(dir).also { project ->
         File(project, "lib/pom.xml").edit {
             it.replace(
@@ -83,6 +86,8 @@ class SelectionFunctionalTest {
             )
         }
         git(project, "commit", "-q", "-am", "commons-lang3")
+        // Surefire hands the test JVM the property too; left out, so the classpath answers.
+        configured(project, "<systemPropertyIgnore><property>lang3.version</property></systemPropertyIgnore>")
         FunctionalMaven.run(maven, project, "verify").succeeded()
         File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
         git(project, "commit", "-q", "-am", "an edit")

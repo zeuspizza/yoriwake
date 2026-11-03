@@ -20,6 +20,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A code of conduct, an accessibility statement and a pull request template. Map: left alone.
 - SECURITY.md shows how to rebuild a release from its tag and compare it, byte for byte. Map: left alone.
 - A test that should have run and did not is reported through its own issue form. Map: left alone.
+- Maven reads `environmentInclude`, `systemPropertyIgnore`, `recordSequentially`; its audit takes the measured toll. Map: left alone.
 
 ### Changed
 
@@ -31,6 +32,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A pull request from a fork may name the AI tool that assisted it, as CONTRIBUTING asks. Map: left alone.
 - A file only a dependency jar's manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
 - A file a `VENDOR.JAR` or other non-`.jar` manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
+- Maven compares the user properties the test JVM receives. Map: repaired on the next build, one full run per Maven execution.
 
 ## [0.4.0] - 2026-10-29
 

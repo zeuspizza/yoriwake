@@ -139,7 +139,8 @@ tests need pinning.
 
 It also does not pay everywhere. Recording costs extra time, Gradle configuration and JVM start do
 not shrink, and on short suites it is usually slower, not faster. To weigh the recording cost on
-your build, run `./gradlew yoriwakeAuditTest -Pyoriwake.audit.measureToll` with the two timings
+your build, run `./gradlew yoriwakeAuditTest -Pyoriwake.audit.measureToll` (or
+`mvn yoriwake:audit -Dyoriwake.audit.measureToll`) with the two timings
 [`scripts/measure-toll.sh`](scripts/measure-toll.sh) takes.
 
 Not supported or declined: Gradle Isolated Projects, TestNG in-JVM parallelism, and Gradle below
