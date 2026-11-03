@@ -61,7 +61,7 @@ no minutes against a budget.
 
 | # | Step | Who | Actions minutes |
 |---|---|---|---|
-| 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest`, and a tag of this same commit then publishes without running the suites again |
+| 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest` |
 | 1 | `./gradlew build :maven:functionalTest` and `./gradlew build :maven:functionalTest -PreleaseVersion=<version>` pass. The build runs the functional suite on Gradle 8.14 and 9; `:maven:functionalTest` runs the Maven plugin's. | maintainer | none, run locally |
 | 1b | `python3 scripts/check_reproducible.py <candidate> <version>` passes: two fresh clones build the same Gradle plugin jar, its nested agent jar, and the Maven plugin's jar, sources jar and javadoc jar. | maintainer, locally | none |
 | 2 | Every guard (see [CONTRIBUTING.md](CONTRIBUTING.md#the-guards)) fires at the candidate: `.github/workflows/guards.yml` dispatched on it is green. | maintainer dispatches | none on this public repository; its wall time is the run's own |
@@ -89,7 +89,7 @@ release waits for every one.
    ruleset lets only the maintainer create `v*` tags, since a tag is what starts a release.
 2. `release.yml` first rebuilds, as version `0.0.0-rehearsal`, every file a rehearsal lists, and
    asks GitHub whether `release.yml` at this same commit attested each one, which it does only after
-   `build and test` passed on them. If every one was (step 7d, or step 1a when nothing changed since),
+   `build and test` passed on them. If every one was (step 7d: step 1a's rehearsal never qualifies, since step 7 makes a new commit),
    it builds the release version without running the suites again, with the checks that read the
    shipped files, and its summary names the runs it relied on; otherwise it builds and tests in
    full. Either way it then attests the files that build produced and waits for a maintainer to

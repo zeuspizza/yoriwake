@@ -2341,6 +2341,9 @@ if (args[:2] != ["attestation", "verify"] or flag("--repo") != repo or flag("--s
         or flag("--signer-workflow") != repo + "/.github/workflows/release.yml"):
     sys.exit("stub asked something else: " + " ".join(args))
 name = os.path.basename(args[2])
+if os.environ.get("STUB_NO_RUN"):
+    print("[]")
+    sys.exit(0)
 if name not in os.environ["STUB_KNOWN"].split():
     sys.exit("no attestations found for subject")
 uri = "https://github.com/zeuspizza/yoriwake/actions/runs/%d/attempts/%d"
@@ -2349,7 +2352,7 @@ print(json.dumps([{"verificationResult": {"signature": {"certificate": {"runInvo
 """
 
 
-def _decide(known, down=False, gh=True, missing=()):
+def _decide(known, down=False, gh=True, missing=(), no_run=False):
     """Runs the tag's decision step on a fake build of version 0.0.0-rehearsal; returns its exit code,
     its output file, its summary and its log."""
     with open(RELEASE, encoding="utf-8") as handle:
@@ -2380,7 +2383,8 @@ def _decide(known, down=False, gh=True, missing=()):
                              env={**os.environ, "PATH": bin_dir + os.pathsep + os.environ["PATH"],
                                   "RUNNER_TEMP": temp, "GITHUB_OUTPUT": output, "GITHUB_STEP_SUMMARY": summary,
                                   "GITHUB_REPOSITORY": "zeuspizza/yoriwake", "STUB_HEAD": head,
-                                  "STUB_KNOWN": " ".join(known), **({"STUB_DOWN": "1"} if down else {})})
+                                  "STUB_KNOWN": " ".join(known), **({"STUB_DOWN": "1"} if down else {}),
+                                  **({"STUB_NO_RUN": "1"} if no_run else {})})
         read = lambda path: open(path, encoding="utf-8").read() if os.path.exists(path) else ""
         return ran.returncode, read(output), read(summary), ran.stdout + ran.stderr
 
@@ -2403,6 +2407,7 @@ def case_a_tag_skips_its_tests_only_when_a_green_run_of_its_commit_attested_ever
             ("a file the comparison did not build", {"known": every, "missing": ("yoriwake-agent.jar",)},
              "yoriwake-agent.jar: not built"),
             ("the lookup unanswered", {"known": every, "down": True}, "error connecting"),
+            ("a lookup that names no run", {"known": every, "no_run": True}, "verified, but no run named"),
             ("gh missing", {"known": every, "gh": False}, "not attested")):
         code, output, summary, log = _decide(**kwargs)
         if code or output != "decision=full\n":
