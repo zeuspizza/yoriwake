@@ -176,8 +176,9 @@ internal object ClasspathFiles {
      * unless a root or build directory holding it lies deeper, as a checkout in the user's home does.
      *
      * Named by their path, which names their content or version, and never read: Gradle's module
-     * cache wherever it lies (a read-only cache included, keyed alike), generated Gradle API jars and
-     * wrapper distributions, what the plugin itself writes under [PROJECT_CACHE_DIR], and a released
+     * cache wherever it lies (a read-only cache included, keyed alike), generated Gradle API jars,
+     * wrapper distributions, Gradle's transform cache (whose directory is a hash of the transform's
+     * input, parameters and implementation, so a fresh user home running it again keeps the path), what the plugin itself writes under [PROJECT_CACHE_DIR], and a released
      * version in the Maven repository. A SNAPSHOT there is read whole, as is any other entry under a
      * home. `mavenLocal()` under the user's home is keyed by its path and read by content. Any other
      * entry, such as the jar of a build this one includes or an absolute `files(...)`, is keyed
@@ -444,10 +445,12 @@ internal object ClasspathFiles {
 
     /**
      * Layouts under the Gradle user home whose paths name what they hold: the module cache by each
-     * file's SHA-1, the others by Gradle's version.
+     * file's SHA-1, the transform cache by a hash of what produced the file, the others by Gradle's
+     * version.
      */
     private val NAMED_LAYOUTS = listOf(
         Regex("^caches/modules-2/"),
+        Regex("^caches/[^/]+/transforms/"),
         Regex("^caches/[^/]+/generated-gradle-jars/"),
         Regex("^wrapper/dists/"),
     )

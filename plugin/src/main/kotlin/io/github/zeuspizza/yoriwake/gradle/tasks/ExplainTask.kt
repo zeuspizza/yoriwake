@@ -314,7 +314,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     ChangeDetection.outsideRoot(git, rootDir, resolvedBase.ref)?.toSet() ?: changed.toSet(),
                 )
             }
-            val count = LargeChange.counted(changed, ignore)
+            val count = LargeChange.counted(changed, ignore, notReadByTests.getOrElse(emptyList()))
             LargeChange.refusal(count, largeChangeThreshold.get(), resolvedBase.ref)?.let { reason ->
                 logger.lifecycle("[yoriwake] $taskPath would run everything: $reason")
                 writeUnanswered(

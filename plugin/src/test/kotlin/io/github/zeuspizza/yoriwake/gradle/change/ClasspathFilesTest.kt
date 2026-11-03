@@ -644,6 +644,54 @@ class ClasspathFilesTest {
         assertEquals(mapOf("dependency:<maven-repository>/org/apache/commons/lang3/3.18.0-SNAPSHOT/lang3-3.18.0-SNAPSHOT.jar" to "changed"), moved.files)
     }
 
+    private fun transformed(hash: String) = "caches/8.14/transforms/$hash/transformed/a.jar"
+
+    @Test
+    fun `a transformed jar is named by its path, whatever bytes Gradle writes there again`(@TempDir base: File) {
+        val machine = Machine(base)
+        val output = jar(File(machine.gradleHome, transformed("abc")), 0L, "a.txt" to "one")
+        val before = found(machine.table(output))
+
+        assertEquals("named", before["dependency:<gradle-user-home>/${transformed("abc")}"], before.toString())
+
+        jar(output, 1L, "a.txt" to "two")
+
+        assertTrue(ClasspathFiles.compare(before, found(machine.table(output))).isEmpty)
+    }
+
+    @Test
+    fun `a transformed jar under another hash moves the table, one row gone and one appeared`(@TempDir base: File) {
+        val machine = Machine(base)
+        val before = found(machine.table(jar(File(machine.gradleHome, transformed("abc")), 0L, "a.txt" to "one")))
+
+        val moved = ClasspathFiles.compare(before, found(machine.table(jar(File(machine.gradleHome, transformed("def")), 0L, "a.txt" to "one"))))
+
+        assertEquals("gone", moved.files["dependency:<gradle-user-home>/${transformed("abc")}"], moved.files.toString())
+        assertEquals("appeared", moved.files["dependency:<gradle-user-home>/${transformed("def")}"], moved.files.toString())
+    }
+
+    @Test
+    fun `transformed jars from two Gradle user homes and two roots compare equal`(@TempDir base: File) {
+        val tables = listOf("one", "two").map { name ->
+            val machine = Machine(File(base, name))
+            found(machine.table(jar(File(machine.gradleHome, transformed("abc")), name.length.toLong(), "a.txt" to name)))
+        }
+
+        assertEquals(tables[0], tables[1])
+    }
+
+    @Test
+    fun `a jar elsewhere under the Gradle user home is still read whole`(@TempDir base: File) {
+        val machine = Machine(base)
+        val accessors = jar(File(machine.gradleHome, "caches/8.14/kotlin-dsl/accessors/abc/a.jar"), 0L, "a.txt" to "one")
+        val before = found(machine.table(accessors))
+
+        jar(accessors, 0L, "a.txt" to "two")
+
+        val moved = ClasspathFiles.compare(before, found(machine.table(accessors)))
+        assertEquals(mapOf("dependency:<gradle-user-home>/caches/8.14/kotlin-dsl/accessors/abc/a.jar" to "changed"), moved.files)
+    }
+
     @Test
     fun `the agent jar is no dependency, whether or not it is written or on the classpath`(@TempDir base: File) {
         val machine = Machine(base)

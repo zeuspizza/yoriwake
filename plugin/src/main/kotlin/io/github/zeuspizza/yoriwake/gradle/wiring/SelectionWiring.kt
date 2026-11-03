@@ -153,6 +153,7 @@ internal fun TestTaskWiring.configureSelection(
     ) { base, changed ->
         LargeChange.counted(
             changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),
+            notReadByTests,
         )
     }
     val (widened, stamp, paths) = when (settled) {

@@ -243,7 +243,8 @@ internal object SelectionRecord {
      * one, so the same resolution on another machine digests alike.
      *
      * A file or directory outside [rootDir] is digested by its content too, unless it is in Gradle's
-     * module cache, whose paths name their content: a snapshot in a local repository or an included
+     * module cache or its transform cache, whose paths name their content and the transform's inputs:
+     * a snapshot in a local repository or an included
      * build elsewhere can change at the same path between two runs at one commit. What is under
      * [rootDir] is digested by the content of each file of a directory and each entry of a jar,
      * never a jar whole: the commit and a clean tree do not fix a file generated from git state, a
@@ -262,11 +263,15 @@ internal object SelectionRecord {
         val named = files.map { file ->
             // The walk reads only what is beneath the root, so the root itself would be named only.
             if (file.absoluteFile == rootDir.absoluteFile) return unmatched("the build's root directory is on it")
+            val inHome = file.relativeToOrNull(gradleUserHome)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath
+            // Before the root, as the classpath-files table does, for a Gradle user home kept in the checkout.
+            // A fresh Gradle user home runs a transform again, and its output need not come out byte for
+            // byte alike; the workspace's name is a hash of the transform's inputs.
+            if (inHome != null && TRANSFORM_CACHE.containsMatchIn(inHome)) return@map "gradle:$inHome"
             file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let {
                 built += file
                 return@map "root:$it"
             }
-            val inHome = file.relativeToOrNull(gradleUserHome)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath
             if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
             (inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath) + " " + contentDigest(file)
         }
@@ -286,6 +291,9 @@ internal object SelectionRecord {
     private fun unmatchedReason(digest: String) = digest.takeIf { it.startsWith(UNMATCHED) }?.substringAfter(' ', "")
 
     private const val UNMATCHED = "unmatched:"
+
+    /** Gradle's immutable transform workspaces under its user home. */
+    private val TRANSFORM_CACHE = Regex("^caches/[^/]+/transforms/")
 
     /** A file's bytes, or a directory's files by relative path and bytes; `absent` when neither. */
     private fun contentDigest(file: File): String {

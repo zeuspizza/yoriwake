@@ -142,7 +142,7 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - a change touching startup coverage, which no single test owns;
 - more changed paths than `largeChangeThreshold` (5,000 by default) against the base the run was
   asked about, with untracked files and the working tree's drift, less the paths `pathIgnore` takes
-  out (`large-change`). A change that
+  out and those `notReadByTests` lists (`large-change`). A change that
   size selects almost everything or forces anyway, so the run skips the analysis and records the
   map. The count does not grow with the map's age. The default is Datadog's published bound;
   whether the analysis saved is worth it at that size is unmeasured;
@@ -261,7 +261,15 @@ naming it (`classpath-files-changed`). A jar or directory a walked jar's manifes
 names is on the test JVM's class path too, so it counts the same way, its class files included,
 wherever it lies but in Gradle's module cache. A dependency jar or directory that moved runs
 everything (`dependencies-changed`), naming it: one in Gradle's module cache by its path, which
-names its content, and every other one by its content. A file a dependency read by its content names
+names its content, one in Gradle's transform cache by its path, which names the transform's input,
+parameters and implementation, and every other one by its content. A transform rerun on a fresh
+machine may write other bytes at the same path, and they run nothing. The limits: a transform
+that reads something it does not declare (an environment variable, an `@Internal` parameter's
+file) or whose declared input normalization leaves out something its output carries keeps its
+path across that change, as Gradle's own up-to-date check does; what a transformed jar's manifest
+`Class-Path` names is not compared; and a transform whose input path differs between machines,
+under Gradle's default absolute-path normalization, writes under another path there and runs
+everything once. A file a dependency read by its content names
 in its manifest `Class-Path`, such as a `lib/a.jar` beside a vendor jar, counts the same way, by its
 content, whether it is there or not.
 
