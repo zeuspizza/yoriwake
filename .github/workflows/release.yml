@@ -5,10 +5,16 @@ name: release
 # requires a maintainer's approval and accepts only `v*` tags, so a workflow on any other ref cannot
 # reach them.
 #
-# What ships is what was tested: `verify` builds and tests once and hands its files on; no later job
-# builds anything. `attest` vouches for those files, `publish` signs them and uploads the Gradle
-# plugin to the Portal, `publish-maven` uploads the Maven plugin to Central, and `github-release`
-# attaches them to the GitHub release.
+# What ships is what was tested: `verify` builds once and hands its files on; no later job builds
+# anything. On a tag, it first rebuilds the files of version `0.0.0-rehearsal` and asks GitHub whether
+# this workflow, at this same commit, attested each one: it does so only after `build and test` passed
+# on them in an earlier run. If every one was, the suites are not run again and `verify` builds the
+# release version, which differs from those files only by the version string, with the checks that
+# read the shipped files; otherwise it builds and tests in full. `attest` vouches for the files
+# `verify` hands on. Then, behind one approval and side by side, `publish` signs them and uploads the
+# Gradle plugin to the Portal and `publish-maven` signs them and uploads the Maven plugin to Central;
+# either re-runs alone, and a re-run that finds its version published ends green. `github-release`
+# attaches the files to the GitHub release once both are done.
 #
 # Dispatched from `main` or `release/<major>.<minor>` on the candidate, it is a rehearsal: `verify` and
 # `attest` run as a tag runs them, on version `0.0.0-rehearsal`, so a step that would break the
@@ -38,6 +44,10 @@ jobs:
   verify:
     name: build and test
     runs-on: ubuntu-24.04
+    # `attestations: read` lets a tag ask which files a rehearsal of its commit attested.
+    permissions:
+      contents: read
+      attestations: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -87,9 +97,89 @@ jobs:
         run: |
           awk -v s="$SECTION" 'index($0, s) == 1 {found = 1} END {exit !found}' CHANGELOG.md ||
             { echo "CHANGELOG.md has no section $SECTION"; exit 1; }
-      # `build` leaves the Maven plugin's own suite out; a tag publishes it only after that suite passed.
+      # A tag first rebuilds, at the rehearsal's version, every file a rehearsal lists. The build is
+      # reproducible, so these files equal a rehearsal's of this commit byte for byte when its tests
+      # ran on this same code. They stay outside `release/`.
+      - name: build the files a rehearsal lists
+        if: github.event_name == 'push'
+        run: >-
+          ./gradlew :plugin:publishAllPublicationsToBuildLocalRepository
+          :maven:publishMavenPluginPublicationToBuildLocalRepository :plugin:bundleAgent :plugin:mergeSbom
+          -PreleaseVersion=0.0.0-rehearsal --console=plain
+      # "rehearsed" only when `release.yml` at this very commit attested every one of those files, and
+      # it attests only after `build and test` passed on them; anything else, a failed lookup
+      # included, is "full" and the tag tests in full. The step never fails the job.
+      - name: did a green run of this commit test these files
+        id: decision
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          head=$(git rev-parse HEAD)
+          dir="$RUNNER_TEMP/rehearsal"
+          rm -rf "$dir" && mkdir -p "$dir" &&
+            cp -R plugin/build/local-repository "$dir/repository" &&
+            cp -R maven/build/local-repository/. "$dir/repository/" &&
+            cp plugin/build/sbom/yoriwake-gradle-plugin-0.0.0-rehearsal.cdx.json plugin/build/bundled-agent/yoriwake-agent.jar "$dir/"
+          (cd "$dir" && find repository -type f ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' \
+            ! -name 'maven-metadata.xml*' | sort && echo yoriwake-agent.jar && echo yoriwake-gradle-plugin-0.0.0-rehearsal.cdx.json) \
+            > "$RUNNER_TEMP/compared"
+          total=0 verified=0
+          : > "$RUNNER_TEMP/runs"
+          while read -r file; do
+            total=$((total + 1))
+            if [ ! -f "$dir/$file" ]; then echo "$file: not built"; continue; fi
+            if ! printf '%s' "$head" | grep -Eqx '[0-9a-f]{40}'; then echo "$file: no commit to compare with"; continue; fi
+            if gh attestation verify "$dir/$file" --repo "$GITHUB_REPOSITORY" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+                --source-digest "$head" --signer-digest "$head" --deny-self-hosted-runners --format json \
+                > "$RUNNER_TEMP/attestation.json" 2> "$RUNNER_TEMP/attestation.err"; then
+              runs=$(python3 -c '
+          import json, re, sys
+          for a in json.load(sys.stdin):
+              uri = a["verificationResult"]["signature"]["certificate"]["runInvocationURI"]
+              print(re.sub(r"/attempts/[0-9]+$", "", uri))' < "$RUNNER_TEMP/attestation.json" | sort -u)
+              if [ -n "$runs" ]; then
+                echo "$file: attested by $(echo $runs)"
+                echo "$runs" >> "$RUNNER_TEMP/runs"
+                verified=$((verified + 1))
+              else
+                echo "$file: verified, but no run named"
+              fi
+            else
+              echo "$file: not attested at $head: $(head -c 300 "$RUNNER_TEMP/attestation.err")"
+            fi
+          done < "$RUNNER_TEMP/compared"
+          if [ "$total" -gt 2 ] && [ "$verified" -eq "$total" ]; then
+            decision=rehearsed
+            {
+              echo "Tests not run again: release.yml at $head attested each of the $total files of this commit's"
+              echo "\`0.0.0-rehearsal\` build after its tests passed, in these runs:"
+              echo
+              sort -u "$RUNNER_TEMP/runs" | sed 's/^/- /'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            decision=full
+            echo "Tests run in full: $verified of $total files of this commit's \`0.0.0-rehearsal\` build were attested by a green run of it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "decision: $decision"
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+          exit 0
+      # `build` leaves the Maven plugin's own suite out; a tag publishes it only after that suite passed,
+      # here or in the rehearsal whose files the step above matched.
       - name: build and test
+        if: github.event_name == 'workflow_dispatch' || steps.decision.outputs.decision != 'rehearsed'
         run: ./gradlew build :maven:functionalTest -PreleaseVersion="$VERSION" --console=plain
+      # The suites ran on the rehearsal's files, which differ from these only by the version string; the
+      # checks that read the shipped files run again on these.
+      - name: build the release files without the suites
+        if: github.event_name == 'push' && steps.decision.outputs.decision == 'rehearsed'
+        run: >-
+          ./gradlew :plugin:publishAllPublicationsToBuildLocalRepository
+          :maven:publishMavenPluginPublicationToBuildLocalRepository :plugin:bundleAgent :plugin:mergeSbom
+          :plugin:checkSbom :agent:verifyNoRuntimeDependencies :maven:checkShadedStrings
+          -PreleaseVersion="$VERSION" --console=plain
       # The local repository the published-plugin test resolved the plugin from, the SBOM, and the
       # agent jar as it sits inside the plugin jar, each listed with its SHA-256.
       - name: collect the release files
@@ -103,6 +193,13 @@ jobs:
           cd release
           find repository -type f ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' \
             ! -name 'maven-metadata.xml*' | sort > files
+          # Only this version's files: a tag's comparison build of `0.0.0-rehearsal` never ships.
+          while read -r file; do
+            case "$file" in
+              */"$version"/*-"$version".*|*/"$version"/*-"$version"-*) ;;
+              *) echo "$file is not of version $version"; exit 1 ;;
+            esac
+          done < files
           echo "yoriwake-agent.jar" >> files
           echo "yoriwake-gradle-plugin-$version.cdx.json" >> files
           xargs sha256sum < files > SHA256SUMS
@@ -157,6 +254,8 @@ jobs:
           subject-path: ${{ steps.files.outputs.jar }}
           sbom-path: ${{ steps.files.outputs.sbom }}
 
+  # Beside `publish-maven`, behind the same approval: each signs the files it uploads, so a refusal
+  # by one registry neither holds up nor undoes the other, and either job re-runs alone.
   publish:
     name: publish to the Gradle Plugin Portal
     needs: attest
@@ -185,9 +284,25 @@ jobs:
           path: release
       - name: check the files against their checksums
         run: cd release && sha256sum -c SHA256SUMS
+      # A re-run after the Portal took the version ends here, green: the Portal refuses a version
+      # twice. Its own artifact host serves a published version's pom; for any other version the
+      # Portal redirects to Maven Central instead. An unanswered check carries on, and the upload's
+      # own refusal decides.
+      - name: is this version on the Portal already
+        id: published
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          pom="https://plugins.gradle.org/m2/io/github/zeuspizza/yoriwake-gradle-plugin/$version/yoriwake-gradle-plugin-$version.pom"
+          location=$(curl -sS -o /dev/null --retry 3 --connect-timeout 20 --max-time 60 -w '%{redirect_url}' "$pom") ||
+            location=""
+          case "$location" in
+            https://plugins-artifacts.gradle.org/*) echo "the Portal already has $version"; echo "published=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "published=false" >> "$GITHUB_OUTPUT" ;;
+          esac
       # Signs the downloaded files; nothing is built here. The plugin reads the key from these
       # variables, so no key appears on a command line.
       - name: sign
+        if: steps.published.outputs.published != 'true'
         env:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
@@ -195,15 +310,21 @@ jobs:
           ./gradlew :plugin:signReleaseRepository -PreleaseVersion="${GITHUB_REF_NAME#v}"
           -Pyoriwake.sign -Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository" --console=plain
       # Kept before the upload, which cannot be taken back: if a later step fails, the signatures
-      # for the release that is already public are not lost.
+      # for the release that is already public are not lost. Only the Portal's files; a re-run that
+      # did not publish replaces a failed attempt's.
       # github-release reads it too, and a re-run of it within GitHub's 30-day limit.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.published.outputs.published != 'true'
         with:
-          name: release-signatures
-          path: release/repository/**/*.asc
+          name: portal-signatures
+          path: |
+            release/repository/**/*.asc
+            !release/repository/**/yoriwake-maven-plugin/**
           if-no-files-found: error
           retention-days: 30
+          overwrite: true
       - name: publish
+        if: steps.published.outputs.published != 'true'
         env:
           GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}
           GRADLE_PUBLISH_SECRET: ${{ secrets.GRADLE_PUBLISH_SECRET }}
@@ -212,11 +333,12 @@ jobs:
           -PreleaseVersion="${GITHUB_REF_NAME#v}" -Pyoriwake.sign
           -Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository" --console=plain
 
-  # After the Portal, on the files `publish` signed: a Central refusal leaves the Portal's version
-  # standing, and this job alone re-runs. It holds the Central token, never the signing key.
+  # Beside `publish`, on the same attested files, which it signs itself. It holds the signing key and
+  # Central's token, never the Portal's key; Gradle runs without a daemon, so no Gradle process is
+  # alive when the token is used.
   publish-maven:
     name: publish to Maven Central
-    needs: publish
+    needs: attest
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     environment: release
@@ -225,25 +347,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      # No cache at all, as in `publish`: this job holds a key.
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-disabled: true
+          add-job-summary: on-failure
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
           path: release
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-signatures
-          path: release/repository
       - name: check the files against their checksums
         run: cd release && sha256sum -c SHA256SUMS
-      - name: bundle
-        run: >-
-          python3 scripts/central_bundle.py release/repository io.github.zeuspizza yoriwake-maven-plugin
-          "${GITHUB_REF_NAME#v}" central-bundle.zip --signed
-      # Published without a manual release in the Portal's UI; the status is read until Central says
-      # PUBLISHED or FAILED, so the job's colour is Central's verdict. A re-run finds a version
-      # Central already published and stops there: Central refuses the same version twice. A status
-      # read that fails is read again; only Central's own FAILED, or an hour, ends the wait red.
-      - name: upload
+      # A re-run finds a version Central already published and stops there, green: Central refuses
+      # the same version twice. An unanswered check carries on, and the upload's own refusal decides.
+      - name: is this version on Central already
+        id: published
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
@@ -252,13 +374,52 @@ jobs:
             { echo "the release environment has no CENTRAL_USERNAME and CENTRAL_PASSWORD"; exit 1; }
           token=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
           echo "::add-mask::$token"
-          api=https://central.sonatype.com/api/v1/publisher
           version="${GITHUB_REF_NAME#v}"
           published=$(curl --fail-with-body -sS --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
             -H "Authorization: Bearer $token" \
-            "$api/published?namespace=io.github.zeuspizza&name=yoriwake-maven-plugin&version=$version" |
-            python3 -c 'import json,sys; print(json.load(sys.stdin)["published"])')
-          if [ "$published" = True ]; then echo "Central already has $version"; exit 0; fi
+            "https://central.sonatype.com/api/v1/publisher/published?namespace=io.github.zeuspizza&name=yoriwake-maven-plugin&version=$version" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["published"])') || published=unreadable
+          if [ "$published" = True ]; then
+            echo "Central already has $version"; echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Central's answer: $published"; echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: sign
+        if: steps.published.outputs.published != 'true'
+        env:
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: >-
+          ./gradlew :plugin:signReleaseRepository -PreleaseVersion="${GITHUB_REF_NAME#v}"
+          -Pyoriwake.sign -Pyoriwake.repository="$GITHUB_WORKSPACE/release/repository" --no-daemon --console=plain
+      # Kept before the upload, which cannot be taken back, as in `publish`; only the Maven plugin's.
+      # github-release reads it too, and a re-run of it within GitHub's 30-day limit.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.published.outputs.published != 'true'
+        with:
+          name: central-signatures
+          path: release/repository/**/yoriwake-maven-plugin/**/*.asc
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: bundle
+        if: steps.published.outputs.published != 'true'
+        run: >-
+          python3 scripts/central_bundle.py release/repository io.github.zeuspizza yoriwake-maven-plugin
+          "${GITHUB_REF_NAME#v}" central-bundle.zip --signed
+      # Published without a manual release in the Portal's UI; the status is read until Central says
+      # PUBLISHED or FAILED, so the job's colour is Central's verdict. A status read that fails is
+      # read again; only Central's own FAILED, or an hour, ends the wait red.
+      - name: upload
+        if: steps.published.outputs.published != 'true'
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+        run: |
+          token=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
+          echo "::add-mask::$token"
+          api=https://central.sonatype.com/api/v1/publisher
+          version="${GITHUB_REF_NAME#v}"
           id=$(curl --fail-with-body -sS --connect-timeout 20 --max-time 300 -X POST -H "Authorization: Bearer $token" \
             -F bundle=@central-bundle.zip "$api/upload?publishingType=AUTOMATIC&name=yoriwake-maven-plugin-$version")
           echo "deployment $id"
@@ -294,7 +455,11 @@ jobs:
           path: release
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-signatures
+          name: portal-signatures
+          path: release/repository
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: central-signatures
           path: release/repository
       - name: create the release
         env:
