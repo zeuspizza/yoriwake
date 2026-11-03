@@ -3227,6 +3227,14 @@ MUTATIONS = [
      "            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),",
      "            changed, pathIgnoreDeclaration(project, emptyList(), sourceDirs, listOf(base), changed, buildMemo),",
      functional_suite, "paths pathIgnore takes out are not counted"),
+    ("the large-change threshold counts paths notReadByTests lists", SELECTION_WIRING,
+     "            notReadByTests,\n",
+     "",
+     functional_suite, "paths notReadByTests lists are not counted"),
+    ("yoriwakeExplain counts paths notReadByTests lists", EXPLAIN_TASK,
+     "            val count = LargeChange.counted(changed, ignore, notReadByTests.getOrElse(emptyList()))",
+     "            val count = LargeChange.counted(changed, ignore)",
+     functional_suite, "paths notReadByTests lists are not counted"),
     ("the provenance check is not registered", SELECTION_WIRING,
      "        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)\n",
      "",
@@ -4685,6 +4693,16 @@ MUTATIONS = [
      "        if (environment != null) {",
      "        if (environment != null && false) {",
      maven_suite, "a map recorded on another JDK runs every test, names both versions, and the next run narrows"),
+    # Gradle names an immutable transform workspace by a hash of what produced it, so a fresh user
+    # home running the transform again writes other bytes at the same path.
+    ("a transformed dependency is read by its bytes", CLASSPATH_FILES,
+     '        Regex("^caches/[^/]+/transforms/"),\n',
+     "",
+     functional_suite, "a transformed dependency Gradle writes again with other bytes selects as before"),
+    ("the complement's stamp reads a transformed dependency by its bytes", SELECTION_RECORD,
+     '            if (inHome != null && TRANSFORM_CACHE.containsMatchIn(inHome)) return@map "gradle:$inHome"\n',
+     "",
+     unit_suite, "the classpath digest names a transformed jar by its path, and reads one elsewhere under the Gradle home"),
     ("a SNAPSHOT in the Maven repository is named by its path", CLASSPATH_FILES,
      '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH',
      "                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH",
@@ -5463,11 +5481,21 @@ def partition(mutations, count):
             units.append((_class_weight(suite, name, len(chunk)) / slots[suite],
                           f"{suite}/{name or ''}", chunk))
     shards = [[] for _ in range(count)]
-    wall, placed = _place(units, count, shards)
+    _load, placed = _place(units, count, shards)
+    # Chunks of one class are near-equal, so they are dealt to the shards they went to in order: a
+    # shard that took two of them holds adjacent ones, one cut of the class rather than two.
+    went = {}
+    for index, (_weight, name, _chunk) in placed:
+        went.setdefault(name, []).append(index)
+    shards = [[] for _ in range(count)]
+    wall = [0.0] * count
     parts = [{"functional": 0.0, "maven": 0.0} for _ in range(count)]
-    for index, (weight, name, _chunk) in placed:
+    for name, indices in went.items():
         suite = name.split("/", 1)[0]
-        parts[index][suite] += weight * slots[suite]
+        for index, (weight, _name, chunk) in zip(sorted(indices), [unit for unit in units if unit[1] == name]):
+            shards[index].extend(chunk)
+            wall[index] += weight
+            parts[index][suite] += weight * slots[suite]
     cost = {fn: c for _n, fn, c in SUITES}
     rest, _placed = _place([(cost.get(m[4], 0), m[0], [m]) for m in other], count, shards)
     order = {m[0]: i for i, m in enumerate(mutations)}

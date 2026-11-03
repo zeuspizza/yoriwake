@@ -92,6 +92,21 @@ class LargeChangeFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `paths notReadByTests lists are not counted`(@TempDir dir: File) {
+        captured(dir, threshold(3, """notReadByTests.add("written/*")"""))
+        changeAlpha(dir)
+        // Untracked, as a tree the build writes into the checkout is.
+        (1..4).forEach { File(dir, "written/$it.txt").apply { parentFile.mkdirs() }.writeText("$it\n") }
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-P${Settings.BASE}=HEAD").build().output
+        val explained = runner(dir, "yoriwakeExplainTest", "-P${Settings.BASE}=HEAD").build().output
+
+        assertNotEquals("large-change", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, ":test: narrowing")
+        assertFalse("would run everything" in explained, explained)
+    }
+
+    @Test
     fun `yoriwakeExplain reports the same refusal`(@TempDir dir: File) {
         captured(dir, threshold(1))
         changeAlpha(dir)
