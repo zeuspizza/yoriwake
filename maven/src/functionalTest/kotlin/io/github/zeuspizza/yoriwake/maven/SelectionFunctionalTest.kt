@@ -265,14 +265,18 @@ class SelectionFunctionalTest {
 
     @Test
     fun `a selecting run that stops after a failure leaves no record, so a complement runs every test`(@TempDir dir: File) {
-        val project = captured(dir)
+        // Left out of the environment comparison, so the selecting run narrows rather than running everything.
+        val project = committed(dir).also {
+            configured(it, "<systemPropertyIgnore><property>surefire.skipAfterFailureCount</property></systemPropertyIgnore>")
+            FunctionalMaven.run(maven, it, "verify").succeeded()
+        }
         editGreeter(project)
         val stopAfter = "-Dsurefire.skipAfterFailureCount=1"
-        assertContains(
-            FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", stopAfter)
-                .succeeded().output,
-            "in dev.demo.lib.GreeterTest",
-        )
+        val selecting = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", stopAfter)
+            .succeeded().output
+        val selected = selecting.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+        assertContains(selected, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in selected, selecting)
 
         // The same property, so the stamps agree and only the missing record can refuse.
         val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", stopAfter).succeeded().output
