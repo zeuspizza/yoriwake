@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.DecodeRun
@@ -71,6 +72,8 @@ internal class Recording(
         val reports: File,
         val isolated: Boolean,
         val kind: RunPlan.Kind,
+        /** The JaCoCo agent's scope as the fork is handed it, serialized; null when unreadable. */
+        val effectiveScope: String?,
     )
 
     private val selection = Selection(session, root, log).also { it.validate() }
@@ -236,7 +239,7 @@ internal class Recording(
         val undated = undatedBy(project, execution, configuration)
         val hostArguments = arguments(resolved(project, host).orEmpty())
         val kind = selection.apply(
-            name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath),
+            name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath, configuration),
             environment, undated, isolated,
             stamp = { stampOf(project, key, configuration, classpath, hostArguments, text) },
             stopsAfterFailure = parameter(
@@ -259,7 +262,8 @@ internal class Recording(
             properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
             append(AgentContract.RUN_FILE_END).append('\n')
         })
-        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind)
+        val scope = EffectiveScope.fromAgentArguments(hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()))
+        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize())
     }
 
     private fun decode(project: MavenProject, execution: MojoExecution, key: String, run: Run) {
@@ -282,12 +286,12 @@ internal class Recording(
             loadedScope = reactorPackages,
             datesTheMap = run.undatedReason == null,
             undatedReason = run.undatedReason.orEmpty(),
-            effectiveScope = null,
+            effectiveScope = run.effectiveScope,
             isolated = run.isolated,
             scheduleSet = selection.schedules,
             rootDir = root,
             mapDir = run.mapDir,
-            facts = view(project, classpath),
+            facts = view(project, classpath, execution.configuration),
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
             loadedFlag = "-D${INTERNAL_LOADED}",
@@ -300,7 +304,8 @@ internal class Recording(
         ).run()
     }
 
-    private fun view(project: MavenProject, classpath: List<File>): ClasspathView = classpathView(session, root, project, classpath)
+    private fun view(project: MavenProject, classpath: List<File>, configuration: Xpp3Dom?): ClasspathView =
+        classpathView(session, root, project, classpath, configuration)
 
     /**
      * The framework Surefire runs [project]'s tests on, as it picks a provider from the resolved test
@@ -528,8 +533,7 @@ internal class Recording(
      */
     private fun reachesJacoco(project: MavenProject, configuration: Xpp3Dom): Boolean {
         val agent = Regex("""-javaagent:("[^"]*|\S*)(jacocoagent|org\.jacoco\.agent)""")
-        val toolOptions = configuration.getChild("environmentVariables")?.getChild("JAVA_TOOL_OPTIONS")?.value ?: System.getenv("JAVA_TOOL_OPTIONS")
-        return listOfNotNull(resolvedArgLine(project, configuration), toolOptions).any(agent::containsMatchIn)
+        return listOfNotNull(resolvedArgLine(project, configuration), toolOptionsOf(configuration)).any(agent::containsMatchIn)
     }
 
     /** The argLine the fork will get, its `${x}` and `@{x}` resolved as Maven and Surefire resolve them. */

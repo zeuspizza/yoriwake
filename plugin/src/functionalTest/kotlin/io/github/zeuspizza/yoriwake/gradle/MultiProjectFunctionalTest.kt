@@ -66,9 +66,8 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
      *
      * `:alpha` does not depend on `:beta`, so nothing beta ships can be in alpha's test JVM.
      *
-     * The change is beta's Vue component, not its Java source. A sibling path is dropped only when
-     * nothing alpha compiled names it, and alpha's bytecode names `java`, `dev` and `Thing.java` --
-     * ancestors and the basename of beta's `Thing.java` -- so that change is kept and forces.
+     * The change is a new Kotlin source in beta. A sibling's class source is dropped only when
+     * nothing alpha compiled holds a path to it of two or more segments.
      *
      * The second half: beta's build script still forces, because another module's script can change
      * this task's dependencies.
@@ -210,6 +209,99 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
         val output = runner(dir, ":alpha:test", "-Pyoriwake.select").buildAndFail().output
 
         assertContains(output, "GoldenTest > golden() FAILED")
+    }
+
+    /** Two modules with a `Thing.java` each under one package root, and a test in alpha. */
+    private fun twoJavaModules(dir: File, alphaTest: String) {
+        File(dir, "settings.gradle.kts").writeText(
+            """
+            rootProject.name = "multi"
+            include("alpha", "beta")
+            """.trimIndent()
+        )
+        val module = """
+            plugins { java; jacoco; id("io.github.zeuspizza.yoriwake") }
+            repositories { mavenCentral() }
+            dependencies {
+                testImplementation(platform("org.junit:junit-bom:5.11.4"))
+                testImplementation("org.junit.jupiter:junit-jupiter")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            }
+            tasks.test { useJUnitPlatform() }
+        """.trimIndent()
+        listOf("alpha", "beta").forEach { name ->
+            File(dir, "$name/build.gradle.kts").apply { parentFile.mkdirs() }.writeText(module)
+            File(dir, "$name/src/main/java/dev/$name/Thing.java").apply { parentFile.mkdirs() }
+                .writeText("package dev.$name; public class Thing { public int n() { return 1; } }")
+        }
+        File(dir, "alpha/src/test/java/dev/alpha/ThingTest.java").apply { parentFile.mkdirs() }.writeText(alphaTest)
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit",
+            "--allow-empty", "-m", "base")
+        git(dir, "add", ".")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
+    }
+
+    /**
+     * Alpha's classes hold `java` (`java/lang/Object`), the package root `dev` and the file name
+     * `Thing.java`, every single name in beta's source path. None of them is a path to it.
+     */
+    @Test
+    fun `a change to a Java class in a module this task cannot see selects nothing`(@TempDir dir: File) {
+        twoJavaModules(
+            dir,
+            """
+            package dev.alpha;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ThingTest { @Test void n() { assertEquals(1, new Thing().n()); } }
+            """.trimIndent(),
+        )
+        runner(dir, ":alpha:test").build()
+
+        File(dir, "beta/src/main/java/dev/beta/Thing.java")
+            .writeText("package dev.beta; public class Thing { public int n() { return 2; } }")
+        File(dir, "alpha/build/test-results").deleteRecursively()
+
+        val output = runner(dir, ":alpha:test", "-Pyoriwake.select").build().output
+
+        assertContains(output, "1 in modules that are not on this task's classpath")
+        assertContains(output, "[yoriwake] of 1 tests discovered: skipped=1")
+    }
+
+    /**
+     * A test that reads a sibling's source by the path relative to that module, as an architecture
+     * or golden test might: the path it holds is a trailing part of the source's, and that keeps it.
+     * The change breaks the test, so a skip is a passing build and a run is a failing one.
+     */
+    @Test
+    fun `a sibling's Java source a test reads by its module-relative path still selects that test`(@TempDir dir: File) {
+        twoJavaModules(
+            dir,
+            """
+            package dev.alpha;
+            import org.junit.jupiter.api.Test;
+            import java.nio.file.Files;
+            import java.nio.file.Path;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class ThingTest {
+                @Test void reads() throws Exception {
+                    Path beta = Path.of("..", "beta");
+                    assertTrue(Files.readString(beta.resolve("src/main/java/dev/beta/Thing.java")).contains("return 1;"));
+                }
+            }
+            """.trimIndent(),
+        )
+        runner(dir, ":alpha:test").build()
+
+        File(dir, "beta/src/main/java/dev/beta/Thing.java")
+            .writeText("package dev.beta; public class Thing { public int n() { return 2; } }")
+        File(dir, "alpha/build/test-results").deleteRecursively()
+
+        val output = runner(dir, ":alpha:test", "-Pyoriwake.select").buildAndFail().output
+
+        assertContains(output, "ThingTest > reads() FAILED")
     }
 
     /**

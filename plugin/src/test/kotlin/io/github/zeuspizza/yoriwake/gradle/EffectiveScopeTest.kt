@@ -71,4 +71,38 @@ class EffectiveScopeTest {
             EffectiveScope.readFrom(extension),
         )
     }
+
+    private val agent = "-javaagent:/x/org.jacoco.agent-0.8.12-runtime.jar"
+
+    @Test
+    fun `reads includes and excludes off the JaCoCo agent a command line hands the JVM`() {
+        val scope = EffectiveScope.fromAgentArguments(
+            listOf("-Xmx1g", "$agent=destfile=/t/jacoco.exec,includes=dev.demo.*:dev.demo.lib.*,excludes=dev.demo.gen.*"),
+        )
+
+        assertEquals(EffectiveScope(listOf("dev.demo.*", "dev.demo.lib.*"), listOf("dev.demo.gen.*")), scope)
+    }
+
+    @Test
+    fun `an agent without includes instruments everything`() {
+        assertEquals(EffectiveScope(emptyList(), emptyList()), EffectiveScope.fromAgentArguments(listOf("$agent=destfile=/t/jacoco.exec")))
+        assertEquals(EffectiveScope(emptyList(), emptyList()), EffectiveScope.fromAgentArguments(listOf(agent)))
+    }
+
+    @Test
+    fun `an agent whose path holds a space reads the same`() {
+        // Surefire hands the fork a quoted argument whole, its quotes removed.
+        val scope = EffectiveScope.fromAgentArguments(
+            listOf("-javaagent:/my repo/org.jacoco.agent-0.8.12-runtime.jar=destfile=/t/jacoco.exec,includes=dev.demo.*"),
+        )
+
+        assertEquals(EffectiveScope(listOf("dev.demo.*"), emptyList()), scope)
+    }
+
+    @Test
+    fun `no agent, two agents or an option that does not read is no scope`() {
+        assertNull(EffectiveScope.fromAgentArguments(listOf("-Xmx1g", "-javaagent:/x/other-agent.jar=includes=a.*")))
+        assertNull(EffectiveScope.fromAgentArguments(listOf("$agent=includes=a.*", "$agent=includes=b.*")))
+        assertNull(EffectiveScope.fromAgentArguments(listOf("$agent=destfile=/t/jacoco.exec,dumponexit")))
+    }
 }

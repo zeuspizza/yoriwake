@@ -36,6 +36,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Paths `notReadByTests` lists no longer count toward `largeChangeThreshold`, as in 0.3. Map: left alone.
 - A released Maven jar, a generated Gradle API jar and a Gradle distribution's jar are compared by content. Map: repaired on the next build, which runs every test once.
 - Maven compares the user properties the test JVM receives. Map: repaired on the next build, one full run per Maven execution.
+- An edit to a module a test task does not reach leaves its tests out, on Maven too, whatever its package names. Map: left alone.
+- A Maven capture records its JaCoCo scope. Map: left alone.
 
 ## [0.4.0] - 2026-10-29
 

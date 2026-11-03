@@ -362,6 +362,163 @@ class SelectionFunctionalTest {
         assertFalse("app surefire:test (default-test) selecting against" in output, output)
     }
 
+    /** The selecting line of [module]'s Surefire execution, up to its end. */
+    private fun selectingLine(output: String, module: String): String =
+        output.substringAfter("[yoriwake] $module surefire:test (default-test) selecting against ", "").substringBefore("\n")
+
+    @Test
+    fun `a change in a module this execution cannot see selects nothing`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        // Neither depends on lib, and their classes hold `java`, `dev` and `demo`: single names of
+        // the changed path, never a path to it.
+        listOf("kotlin", "modp").forEach { module ->
+            assertContains(selectingLine(output, module), "1 in modules that are not on this task's classpath", message = output)
+        }
+        assertFalse("Running dev.demo.kt.AreaTest" in output, output)
+        assertFalse("Running dev.demo.modp.ModTest" in output, output)
+        assertContains(output, "Running dev.demo.lib.GreeterTest")
+        assertFalse("Running dev.demo.lib.CounterTest" in output, output)
+    }
+
+    @Test
+    fun `a change in a module this execution does depend on still selects its tests`(@TempDir dir: File) {
+        val project = captured(dir)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib,app", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "app"), output)
+        assertContains(output, "Running dev.demo.app.AppTest")
+    }
+
+    @Test
+    fun `a module's pom edit still forces executions off its classpath`(@TempDir dir: File) {
+        val project = captured(dir)
+        File(project, "lib/pom.xml").edit { it.replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <!-- touched -->") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "kotlin", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertContains(selectingLine(output, "kotlin"), "1 paths coverage cannot see", message = output)
+        assertContains(output, "Running dev.demo.kt.AreaTest")
+    }
+
+    /**
+     * modp, which does not depend on lib, with [configuration] in its Surefire's `<configuration>`
+     * and [test] beside its own; committed and captured.
+     */
+    private fun modpWith(dir: File, configuration: String, test: Pair<String, String>): File = committed(dir).also { project ->
+        File(project, "modp/pom.xml").edit {
+            it.replace(
+                "<artifactId>modp</artifactId>",
+                "<artifactId>modp</artifactId>\n  <build><plugins>$configuration</plugins></build>",
+            )
+        }
+        File(project, "modp/src/test/java/dev/demo/modp/${test.first}.java").writeText(test.second)
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "modp reaches lib")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+    }
+
+    /** A modp test that loads lib's Greeter by name, so only the classes added to its classpath reach it. */
+    private val greeterByName = "LibByNameTest" to """
+        package dev.demo.modp;
+
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+
+        import org.junit.jupiter.api.Test;
+
+        class LibByNameTest {
+            @Test
+            void greets() throws Exception {
+                Object greeter = Class.forName("dev.demo.lib.Greeter").getConstructor().newInstance();
+                assertEquals("Hello, Ada", greeter.getClass().getMethod("greet", String.class).invoke(greeter, "Ada"));
+            }
+        }
+    """.trimIndent()
+
+    private fun surefireAdding(element: String) =
+        "<plugin><artifactId>maven-surefire-plugin</artifactId><configuration><additionalClasspathElements>" +
+            "<additionalClasspathElement>$element</additionalClasspathElement></additionalClasspathElements></configuration></plugin>"
+
+    @Test
+    fun `a sibling's classes added to the fork's classpath keep its edits`(@TempDir dir: File) {
+        val project = modpWith(dir, surefireAdding("\${project.basedir}/../lib/target/classes"), greeterByName)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "modp", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
+        assertContains(output, "Running dev.demo.modp.LibByNameTest")
+    }
+
+    @Test
+    fun `a sibling on the fork's classpath through an unresolvable expression keeps its edits`(@TempDir dir: File) {
+        val project = modpWith(dir, surefireAdding("\${project.parent.basedir}/lib/target/classes"), greeterByName)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "modp", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
+        assertContains(output, "Running dev.demo.modp.LibByNameTest")
+    }
+
+    @Test
+    fun `a sibling a plugin copies into the build keeps its edits`(@TempDir dir: File) {
+        val copy = """
+            <plugin>
+              <artifactId>maven-dependency-plugin</artifactId>
+              <version>3.8.1</version>
+              <executions><execution>
+                <id>copy-lib</id>
+                <phase>generate-test-resources</phase>
+                <goals><goal>copy</goal></goals>
+                <configuration>
+                  <artifactItems><artifactItem>
+                    <groupId>dev.demo</groupId><artifactId>lib</artifactId><version>1.0</version>
+                  </artifactItem></artifactItems>
+                  <outputDirectory>${'$'}{project.build.directory}/copied</outputDirectory>
+                  <stripVersion>true</stripVersion>
+                </configuration>
+              </execution></executions>
+            </plugin>
+        """.trimIndent()
+        val reader = "CopiedLibTest" to """
+            package dev.demo.modp;
+
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+            import java.util.jar.JarFile;
+            import org.junit.jupiter.api.Test;
+
+            class CopiedLibTest {
+                @Test
+                void holdsGreeter() throws Exception {
+                    try (JarFile jar = new JarFile("target/copied/lib.jar")) {
+                        assertNotNull(jar.getEntry("dev/demo/lib/Greeter.class"));
+                    }
+                }
+            }
+        """.trimIndent()
+        val project = modpWith(dir, copy, reader)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib,modp", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
+        assertContains(output, "Running dev.demo.modp.CopiedLibTest")
+    }
+
     @Test
     fun `a scheduled full run falls due after fullRunEveryBuilds builds`(@TempDir dir: File) {
         val project = committed(dir)

@@ -221,6 +221,7 @@ MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Chain
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
 MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
+MAVEN_CLASSPATH_VIEWS = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ClasspathViews.kt"
 MAVEN_BUILD_CACHE = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/BuildCache.kt"
 MAVEN_DEVELOCITY = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/DevelocityDetection.kt"
 MAVEN_AUDIT = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/AuditMojo.kt"
@@ -3974,6 +3975,16 @@ MUTATIONS = [
      "            owner != null && owner.second !in present && isClassSource(path, owner.first)",
      '            owner != null && owner.second !in present && path.startsWith("${owner.first}/src/")',
      functional_suite, "a resource of a module off the classpath the build script hands a test by path forces the run"),
+    # A test reads a sibling's source by a path it holds, often relative to that module.
+    ("a class source off the classpath is named by none of its trailing parts", TASK_ARTIFACTS,
+     "            (2 until segments.size).flatMapTo(forms) { n ->",
+     "            (2 until 2).flatMapTo(forms) { n ->",
+     functional_suite, "a sibling's Java source a test reads by its module-relative path still selects that test"),
+    # Classes the fork is handed by path put that module in its JVM, whatever its dependencies say.
+    ("Maven reads no path in the fork's added classpath elements", MAVEN_CLASSPATH_VIEWS,
+     "    ) + added?.children.orEmpty().mapNotNull { it.value }",
+     "    )",
+     maven_suite, "a sibling's classes added to the fork's classpath keep its edits"),
     # The two exemptions from that: an IDE's state, and what the build declares unread.
     ("an IDE state directory is a change again", NOT_READ,
      '    private val IDE_STATE_DIRECTORIES = setOf(".idea", ".vscode", ".fleet")',

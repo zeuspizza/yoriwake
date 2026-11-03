@@ -29,6 +29,11 @@ guess.
   revision in a manifest) runs everything when it changed; see [Generated files on the test
   classpath](#generated-files-on-the-test-classpath). A build-directory file off the classpath,
   put there by hand or by a build step, is never seen as a change.
+- **Other modules.** A changed Java or Kotlin source under `src/` of a module the test task does
+  not reach is left out of its change set, unless one of the task's compiled classes holds a path
+  to it of two or more segments: `../beta/src/main/java/dev/beta/Thing.java`,
+  `src/main/java/dev/beta/Thing.java`, `beta/src` or its output's `beta/build` all keep it. A test that builds the path from
+  single names or walks the tree to it is not seen. The module's other files keep counting.
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
   now and always runs one the map has never seen.
@@ -803,6 +808,11 @@ Three things differ:
     (`Files.size`, `File.length`, `Files.exists`), such as a test that keeps a class file under a
     byte budget. The agent sees a file opened, not its attributes read; a test that also opens or
     loads the class is seen.
+- **Another module's source a test finds without holding its path.** A Java or Kotlin source of a
+  module the test task does not reach counts only when one of the task's classes holds a path to
+  it of two or more segments. A test that joins single names (`Path.of("..", "beta", "src", ...)`)
+  or walks the tree to the file is skipped when nothing else selects it. Write the path from the
+  module, or from `src`, as one string, or pin the test.
 - **Build output a test reads by path.** A file under a build directory that is not on the test
   runtime classpath, such as a fixture under `build/` a test opens with `File`, is build state and
   never a change, so one generated from git state, the clock or the environment can change while
@@ -1618,6 +1628,12 @@ the Gradle plugin.
 - **CI**: cache `.yoriwake/` as the [recipe](#without-the-action) caches `.gradle/yoriwake`, leaving
   out `.yoriwake/yoriwake/*/raw` and `.yoriwake/yoriwake/*/selection.tsv`. yoriwake-action runs
   Gradle only.
+- **Other modules**: an execution reaches a reactor module its build names anywhere: a dependency
+  of any scope, an annotation processor path, a plugin, extension or plugin dependency, coordinates
+  in any plugin's configuration, or a path into it, or above it, among what the fork is handed: its
+  `argLine`, added classpath, classes directories, working directory, system properties and
+  environment, and the invocation's `-D` properties. Edits to the others' sources are left out as
+  on Gradle. An expression there that the build's properties cannot resolve leaves them in.
 - **`-pl` and `-am`**: a module built against a module of the same reactor that this invocation
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.

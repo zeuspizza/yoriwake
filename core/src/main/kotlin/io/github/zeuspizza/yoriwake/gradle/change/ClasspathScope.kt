@@ -5,7 +5,8 @@ package io.github.zeuspizza.yoriwake.gradle.change
  * can name them.
  *
  * A module not on the classpath puts no class in the JVM, but a test can still read its files by
- * path, so a source drops only when no compiled class of this task names it. Only a Java or Kotlin
+ * path, so a source drops only when no compiled class of this task holds a path to it of two or
+ * more segments (`TaskArtifacts.Naming.CLASS_SOURCE`). Only a Java or Kotlin
  * source under an absent module's `src` may drop. Its other files keep forcing, like build scripts
  * and everything else: a test or the build can read a resource without naming it, found by a
  * pattern, by walking a directory, or handed over by path.

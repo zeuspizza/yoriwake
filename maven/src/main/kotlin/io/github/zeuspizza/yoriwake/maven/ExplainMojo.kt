@@ -16,6 +16,7 @@ import org.apache.maven.plugins.annotations.Mojo
 import org.apache.maven.plugins.annotations.Parameter
 import org.apache.maven.plugins.annotations.ResolutionScope
 import org.apache.maven.project.MavenProject
+import org.codehaus.plexus.util.xml.Xpp3Dom
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.nio.file.Files
@@ -73,7 +74,7 @@ class ExplainMojo : AbstractMojo() {
             var worked: Pair<SelectingStep.Worked, String>? = null
             selection.apply(
                 name, copy, project.basedir.relativeTo(root).invariantSeparatorsPath,
-                classpathView(session, root, project, classpath),
+                classpathView(session, root, project, classpath, each.execution.configuration as? Xpp3Dom),
                 environment = null, undated = null, isolatedCapture = false,
                 stamp = { error("an explanation writes no selection record") },
                 stopsAfterFailure = true,

@@ -153,24 +153,24 @@ class ClasspathScopeTest {
     }
 
     @Test
-    fun `a sibling path in real bytecode is kept, and so is every path under its ancestors`(
+    fun `a sibling resource in real bytecode is kept, and a source sharing only its single names drops`(
         @TempDir dir: File,
     ) {
         // The rule the lambda stands in for, end to end: a test class holding the relative path it
         // reads, as `Path.of("../ui/src/main/resources/golden/flow.json")` compiles to. It names
-        // `src` too, so another module's Kotlin source is kept with it -- the price of matching a
-        // path assembled from parts, paid on purpose.
+        // `src` and `main` too, but a class source counts as named only by a path of two or more
+        // segments, so another module's Kotlin source still drops.
         File(dir, "pkg").mkdirs()
         File(dir, "pkg/GoldenTest.class")
             .writeBytes("..../ui/src/main/resources/golden/flow.json..".toByteArray())
         val paths = listOf("ui/src/main/resources/golden/flow.json", "webserver/src/main/kotlin/Flow.kt")
 
-        val result = ClasspathScope.restrict(
-            paths, modules, onlyCore, TaskArtifacts(listOf(dir), emptyList())::pathsNamedInClasses,
-        )
+        val result = ClasspathScope.restrict(paths, modules, onlyCore) { candidates ->
+            TaskArtifacts(listOf(dir), emptyList()).pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE)
+        }
 
-        assertEquals(paths, result.kept)
-        assertTrue(result.dropped.isEmpty())
+        assertEquals(listOf("ui/src/main/resources/golden/flow.json"), result.kept)
+        assertEquals(listOf("webserver/src/main/kotlin/Flow.kt"), result.dropped)
     }
 
     @Test

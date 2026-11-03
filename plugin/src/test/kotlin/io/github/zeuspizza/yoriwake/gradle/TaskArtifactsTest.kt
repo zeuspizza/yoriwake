@@ -185,6 +185,38 @@ class TaskArtifactsTest {
     }
 
     @Test
+    fun `a class source is named by a path of two or more segments, never by a single name`(@TempDir dir: File) {
+        // `java`, a package root and a file name are in almost every class of a Java build: as
+        // needles they would keep every sibling's source.
+        val source = "m50/src/main/java/m259/m50/C7.java"
+        fun named(held: String, naming: TaskArtifacts.Naming = TaskArtifacts.Naming.CLASS_SOURCE): Boolean {
+            val classes = File(dir, held.hashCode().toString()).apply { mkdirs() }
+            classFile(classes, "Reader", "..$held..".toByteArray())
+            return TaskArtifacts(listOf(classes), emptyList()).pathsNamedInClasses(listOf(source), naming).isNotEmpty()
+        }
+
+        listOf(source, "m50/C7.java", "src/main/java/m259/m50/C7.java", "m50/src", "m50/src/main/java/m259").forEach {
+            assertTrue(named(it), it)
+        }
+        listOf("java", "m259", "m50", "C7.java").forEach { assertFalse(named(it), it) }
+        // The module's build output, which a test can read without depending on the module.
+        listOf("m50/target/classes", "../m50/build/libs").forEach { assertTrue(named(it), it) }
+        // The default still counts single names, for paths assembled from them at runtime.
+        listOf("java", "m259", "C7.java").forEach { assertTrue(named(it, TaskArtifacts.Naming.ANCESTORS), it) }
+    }
+
+    @Test
+    fun `a nested module's source is named from the module's own name on`(@TempDir dir: File) {
+        File(dir, "pkg").mkdirs()
+        File(dir, "pkg/Reader.class").writeBytes("..../beta/src/main/java..".toByteArray())
+
+        val named = TaskArtifacts(listOf(dir), emptyList())
+            .pathsNamedInClasses(listOf("services/beta/src/main/java/dev/Thing.java"), TaskArtifacts.Naming.CLASS_SOURCE)
+
+        assertEquals(setOf("services/beta/src/main/java/dev/Thing.java"), named)
+    }
+
+    @Test
     fun `a class file too large to read counts as naming everything`(@TempDir dir: File) {
         // "Too big to read" must not read as "the name does not appear".
         val classes = File(dir, "pkg").apply { mkdirs() }
