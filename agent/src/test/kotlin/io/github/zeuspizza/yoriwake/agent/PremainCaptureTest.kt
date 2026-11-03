@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.agent
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.writeSoloOrder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -93,7 +94,8 @@ class PremainCaptureTest {
                 it[1] == AgentContract.TOUCH_RESOURCE || it[1] == AgentContract.TOUCH_ALL ||
                     it[1] == AgentContract.TOUCH_LOOKUP && it[2] == AgentContract.FIRST_TOUCH_ANY
             }
-            .groupBy({ it[0] }, { "    ${it[1]} ${it[2]}" })
+            // Fields are escaped, so a Windows path's backslashes read doubled until unescaped.
+            .groupBy({ it[0] }, { "    ${it[1]} ${Tsv.unescape(it[2])}" })
         val out = mutableListOf<String>()
         for (row in File(worker, AgentContract.INDEX_FILE).readLines().filter { it.isNotEmpty() }) {
             val columns = row.split('\t', limit = 5)
