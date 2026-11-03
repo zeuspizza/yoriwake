@@ -618,15 +618,84 @@ class ClasspathFilesTest {
         assertTrue(table.values.none { it == ClasspathFiles.UNREADABLE }, table.toString())
     }
 
+    private val releasedJar = "org/apache/commons/lang3/3.17.0/lang3-3.17.0.jar"
+
     @Test
-    fun `a released Maven repository jar is named by its path and never read`(@TempDir base: File) {
+    fun `a released Maven repository jar overwritten with other bytes moves its row`(@TempDir base: File) {
         val machine = Machine(base)
-        val lang3 = jar(File(machine.repository, "org/apache/commons/lang3/3.17.0/lang3-3.17.0.jar"), 0L, "a.txt" to "a")
+        val lang3 = jar(File(machine.repository, releasedJar), 0L, "a.txt" to "a")
         val before = found(machine.table(lang3))
+        assertTrue(ClasspathFiles.compare(before, found(machine.table(lang3))).isEmpty)
 
         jar(lang3, 0L, "a.txt" to "b")
 
-        assertTrue(ClasspathFiles.compare(before, found(machine.table(lang3))).isEmpty)
+        assertEquals(
+            mapOf("dependency:<maven-repository>/$releasedJar" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(lang3))).files,
+        )
+    }
+
+    @Test
+    fun `the same released Maven jar on two machines compares equal`(@TempDir base: File) {
+        val tables = listOf("one", "two").map { name ->
+            val machine = Machine(File(base, name))
+            found(machine.table(jar(File(machine.repository, releasedJar), 0L, "a.txt" to "a")))
+        }
+
+        assertEquals(tables[0], tables[1])
+    }
+
+    private val generatedJar = "caches/8.14.2/generated-gradle-jars/gradle-api-8.14.2.jar"
+
+    @Test
+    fun `a generated Gradle jar with other bytes moves its row, and the same jar under two Gradle user homes compares equal`(
+        @TempDir base: File,
+    ) {
+        val tables = listOf("one", "two").map { name ->
+            val machine = Machine(File(base, name))
+            found(machine.table(jar(File(machine.gradleHome, generatedJar), 0L, "a.txt" to "a")))
+        }
+        assertEquals(tables[0], tables[1])
+
+        val machine = Machine(File(base, "one"))
+        val generated = jar(File(machine.gradleHome, generatedJar), 0L, "a.txt" to "b")
+
+        assertEquals(
+            mapOf("dependency:<gradle-user-home>/$generatedJar" to "changed"),
+            ClasspathFiles.compare(tables[0], found(machine.table(generated))).files,
+        )
+    }
+
+    @Test
+    fun `a wrapper distribution's jar with other bytes moves its row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val relative = "wrapper/dists/gradle-8.14.2-bin/abc123/gradle-8.14.2/lib/gradle-core-8.14.2.jar"
+        val distribution = jar(File(machine.gradleHome, relative), 0L, "a.txt" to "a")
+        val before = found(machine.table(distribution))
+
+        jar(distribution, 0L, "a.txt" to "b")
+
+        assertEquals(
+            mapOf("dependency:<gradle-user-home>/$relative" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(distribution))).files,
+        )
+    }
+
+    @Test
+    fun `a released version in mavenLocal under the user's home moves with its entries, not their timestamps`(@TempDir base: File) {
+        val machine = Machine(base)
+        val relative = ".m2/repository/$releasedJar"
+        val local = jar(File(machine.home, relative), 0L, "a.txt" to "a")
+        val before = found(machine.table(local))
+
+        jar(local, 1_000_000_000_000L, "a.txt" to "a")
+        assertTrue(ClasspathFiles.compare(before, found(machine.table(local))).isEmpty)
+
+        jar(local, 0L, "a.txt" to "b")
+        assertEquals(
+            mapOf("dependency:<home>/$relative" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(local))).files,
+        )
     }
 
     @Test
@@ -824,19 +893,37 @@ class ClasspathFilesTest {
     }
 
     @Test
-    fun `a SNAPSHOT and a mavenLocal jar follow their manifests, a released and a module-cache jar do not`(@TempDir base: File) {
+    fun `a SNAPSHOT and a mavenLocal jar follow their manifests, a module-cache jar does not`(@TempDir base: File) {
         val machine = Machine(base)
         val snapshot = jar(File(machine.repository, "org/s/1-SNAPSHOT/s-1-SNAPSHOT.jar"), 0L, manifest("s.txt"))
         val local = jar(File(machine.home, ".m2/repository/org/l/1/l-1.jar"), 0L, manifest("l.txt"))
-        val released = jar(File(machine.repository, "org/r/1/r-1.jar"), 0L, manifest("r.txt"))
         val cached = jar(File(machine.gradleHome, moduleJar), 0L, manifest("c.txt"))
 
-        val named = dependencies(machine.table(snapshot, local, released, cached)).keys.filter { "Class-Path" in it }
+        val named = dependencies(machine.table(snapshot, local, cached)).keys.filter { "Class-Path" in it }
 
         assertEquals(
             listOf(
                 "dependency:<home>/.m2/repository/org/l/1/l-1.jar Class-Path l.txt",
                 "dependency:<maven-repository>/org/s/1-SNAPSHOT/s-1-SNAPSHOT.jar Class-Path s.txt",
+            ),
+            named,
+        )
+    }
+
+    @Test
+    fun `a released Maven jar, a generated Gradle jar and a distribution's jar follow their manifests`(@TempDir base: File) {
+        val machine = Machine(base)
+        val released = jar(File(machine.repository, "org/r/1/r-1.jar"), 0L, manifest("r.txt"))
+        val generated = jar(File(machine.gradleHome, generatedJar), 0L, manifest("g.txt"))
+        val distribution = jar(File(machine.gradleHome, "wrapper/dists/gradle-8.14.2-bin/abc123/gradle-8.14.2/lib/d.jar"), 0L, manifest("d.txt"))
+
+        val named = dependencies(machine.table(released, generated, distribution)).keys.filter { "Class-Path" in it }
+
+        assertEquals(
+            listOf(
+                "dependency:<gradle-user-home>/$generatedJar Class-Path g.txt",
+                "dependency:<gradle-user-home>/wrapper/dists/gradle-8.14.2-bin/abc123/gradle-8.14.2/lib/d.jar Class-Path d.txt",
+                "dependency:<maven-repository>/org/r/1/r-1.jar Class-Path r.txt",
             ),
             named,
         )

@@ -175,11 +175,12 @@ internal object ClasspathFiles {
      * directory. An entry under one is a dependency, a local repository inside the checkout included,
      * unless a root or build directory holding it lies deeper, as a checkout in the user's home does.
      *
-     * Named by their path, which names their content or version, and never read: Gradle's module
-     * cache wherever it lies (a read-only cache included, keyed alike), generated Gradle API jars and
-     * wrapper distributions, what the plugin itself writes under [PROJECT_CACHE_DIR], and a released
-     * version in the Maven repository. A SNAPSHOT there is read whole, as is any other entry under a
-     * home. `mavenLocal()` under the user's home is keyed by its path and read by content. Any other
+     * Named by their path and never read: Gradle's module cache wherever it lies (a read-only cache
+     * included, keyed alike), whose paths carry each file's SHA-1, and what the plugin itself writes
+     * under [PROJECT_CACHE_DIR]. Every other entry under a home is read whole: a released version in
+     * the Maven repository, a generated Gradle API jar or a wrapper distribution's jar can be replaced
+     * in place, its path unchanged. `mavenLocal()` under the user's home is keyed by its path and read
+     * by content. Any other
      * entry, such as the jar of a build this one includes or an absolute `files(...)`, is keyed
      * `dependency:<outside>/<name>`, with `#2`, `#3` for a name repeated in classpath order, since
      * its path differs between machines, and read by content: a jar entry by entry (a rebuilt jar
@@ -238,8 +239,6 @@ internal object ClasspathFiles {
                     // What the plugin itself writes there, from its own bytes by a `doFirst` that may run
                     // after this: read, it would be absent at one end and present at the other.
                     home.key == PROJECT_CACHE_DIR -> NAMED_BY_PATH
-                    // A released version's path names it; a SNAPSHOT is replaced in place.
-                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH
                     home.key == USER_HOME -> contentDigest(entry)
                     else -> wholeDigest(entry)
                 }
@@ -442,14 +441,9 @@ internal object ClasspathFiles {
     /** What a classpath entry that does not exist records. */
     private const val ABSENT = "absent"
 
-    /**
-     * Layouts under the Gradle user home whose paths name what they hold: the module cache by each
-     * file's SHA-1, the others by Gradle's version.
-     */
+    /** Layouts under the Gradle user home whose paths name what they hold: the module cache, by each file's SHA-1. */
     private val NAMED_LAYOUTS = listOf(
         Regex("^caches/modules-2/"),
-        Regex("^caches/[^/]+/generated-gradle-jars/"),
-        Regex("^wrapper/dists/"),
     )
 
     /** A file's bytes, or a directory's files by relative path and bytes; [ABSENT] when neither. */

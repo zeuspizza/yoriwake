@@ -183,4 +183,73 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
             assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         }
     }
+
+    /** Before Beta by name; reads the resource only the jar under the Gradle user home holds. */
+    private val homeJarTest = "src/test/java/dev/sample/AbHomeJarTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertNotNull;
+        class AbHomeJarTest {
+            @Test void reads() { assertNotNull(getClass().getResource("/home-jar.properties")); }
+        }
+    """.trimIndent()
+
+    /**
+     * A jar at [relative] under the TestKit Gradle user home, on the test runtime classpath, captured;
+     * [test] then gets the jar and deletes [cleanup] (relative to that home) afterwards. Gradle writes
+     * these layouts only on events a test cannot stage cheaply, so the jar is put there directly.
+     */
+    private fun withHomeJar(dir: File, relative: String, cleanup: String, test: (File) -> Unit) {
+        val home = FunctionalGradle.testKitDir()
+        val homeJar = File(home, relative)
+        try {
+            jar(homeJar, null, "home-jar.properties" to "flavor=a\n")
+            val onClasspath = "dependencies { testRuntimeOnly(files(\"${homeJar.invariantSeparatorsPath}\")) }"
+            captured(dir, fromProjectProperty + "\n" + onClasspath, homeJarTest)
+            test(homeJar)
+        } finally {
+            File(home, cleanup).deleteRecursively()
+        }
+    }
+
+    private fun assertHomeJarRanEverything(dir: File, output: String, name: String) {
+        assertTrue("dev.sample.AbHomeJarTest" in ranTests(dir), output)
+        assertEquals("dependencies-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.lines().any { it.startsWith("[yoriwake] :test: ") && name in it }, output)
+    }
+
+    @Test
+    fun `a generated Gradle jar replaced in place runs every test`(@TempDir dir: File) {
+        val version = "yoriwake-test-${System.nanoTime()}"
+        withHomeJar(dir, "caches/$version/generated-gradle-jars/gradle-api-$version.jar", "caches/$version") { homeJar ->
+            jar(homeJar, null, "home-jar.properties" to "flavor=b\n")
+            changeBeta(dir)
+
+            assertHomeJarRanEverything(dir, select(dir), "gradle-api-$version.jar")
+        }
+    }
+
+    @Test
+    fun `a wrapper distribution's jar replaced in place runs every test`(@TempDir dir: File) {
+        val name = "yoriwake-test-${System.nanoTime()}"
+        withHomeJar(dir, "wrapper/dists/$name-bin/abc123/$name/lib/gradle-core-$name.jar", "wrapper/dists/$name-bin") { homeJar ->
+            jar(homeJar, null, "home-jar.properties" to "flavor=b\n")
+            changeBeta(dir)
+
+            assertHomeJarRanEverything(dir, select(dir), "gradle-core-$name.jar")
+        }
+    }
+
+    @Test
+    fun `a test task on the Gradle API selects as before when nothing changed`(@TempDir dir: File) {
+        captured(dir, fromProjectProperty + "\ndependencies { testImplementation(gradleApi()) }")
+        changeBeta(dir)
+
+        repeat(2) {
+            val output = select(dir)
+
+            assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+            assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        }
+    }
 }
