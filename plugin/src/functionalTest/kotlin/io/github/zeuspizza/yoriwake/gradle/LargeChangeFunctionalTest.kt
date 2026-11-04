@@ -64,8 +64,9 @@ class LargeChangeFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `an old map does not push a small change over the threshold`(@TempDir dir: File) {
-        captured(dir, threshold(3, """notReadByTests.add("notes/*")"""))
-        (1..4).forEach { File(dir, "notes/$it.txt").apply { parentFile.mkdirs() }.writeText("$it\n") }
+        captured(dir, threshold(3))
+        // An IDE's state: the selection drops it as no change, and the count still counts it.
+        (1..4).forEach { File(dir, ".idea/$it.xml").apply { parentFile.mkdirs() }.writeText("<$it/>\n") }
         commit(dir, "four paths since the capture")
         changeAlpha(dir)
 
