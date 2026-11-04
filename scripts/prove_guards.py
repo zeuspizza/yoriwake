@@ -806,19 +806,51 @@ SUITE_NAMES = {suite: name for name, suite, _cost in SUITES}
 
 # What one run of each functional and Maven class costs on a GitHub runner, for balancing the
 # shards: the registry's one figure per suite cannot tell a 30s class from a 1,200s one. Keyed
-# `<suite>/<Class>`, each with the seconds of its baseline and of one guard's run, measured by an
-# every-guard run on CI. `scripts/guard_costs.py derive` rewrites the file from such a run's
-# results; it is not edited by hand. Classes no run has timed yet are listed under `estimated`.
+# `<suite>/<Class>`, each with the seconds of its baseline and of one guard's run, measured by a
+# guard run on CI. `scripts/guard_costs.py derive` rewrites the file from such a run's results; it
+# is not edited by hand. Classes no run has timed yet are listed under `estimated`. The same run's
+# figures for every other suite (`suites`) and for a cold tree's compile (`warm_up`, by mode) project
+# a shard's whole job, not only the classes it is balanced by; `suites` is keyed `<mode>/<suite>`.
 COSTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guard_costs.json")
 _COSTS = {}
+_TABLE = {}
+# The suites the cost table weighs by class.
+CLASS_SUITES = ("functional", "maven")
+
+
+def _cost_table():
+    """The whole cost table, read once."""
+    if not _TABLE:
+        with open(COSTS_FILE, encoding=ENCODING) as handle:
+            _TABLE.update(json.load(handle))
+    return _TABLE
 
 
 def class_costs():
     """The cost table's classes, read once."""
     if not _COSTS:
-        with open(COSTS_FILE, encoding=ENCODING) as handle:
-            _COSTS.update(json.load(handle)["classes"])
+        _COSTS.update(_cost_table()["classes"])
     return _COSTS
+
+
+def suite_cost(name, mode):
+    """The (baseline, guard) seconds of one guard's run of a suite the table does not weigh by
+    class, in a step of `mode`: measured on CI in that mode, else in the other, else the registry's
+    seconds for both."""
+    suites = _cost_table().get("suites", {})
+    cost = suites.get(f"{mode}/{name}") or next(
+        (cost for key, cost in sorted(suites.items()) if key.split("/", 1)[1] == name), None)
+    if cost is None:
+        seconds = next(c for n, _fn, c in SUITES if n == name)
+        return seconds, seconds
+    return cost["baseline"], cost["guard"]
+
+
+def warm_up_cost(mode):
+    """The seconds a step of `mode` spends compiling its cold trees before any guard: measured for
+    that mode, else for the other (an every-guard run has measured none yet), else none."""
+    warm = _cost_table().get("warm_up", {})
+    return warm.get(mode, next(iter(warm.values()), 0))
 
 
 # The fast set: what runs on every pull request, so it must stay well inside a runner's patience.
@@ -5594,13 +5626,99 @@ def in_shard(mutations, shard):
     return partition(mutations, count)[0][index - 1]
 
 
-def shard_projections(mutations, count):
-    """One line per shard: its guards and projected weights, so the balance reads before a dispatch."""
+# What a shard's job spends outside its guard steps: checkout, the JDK, Gradle's setup and the
+# artifact upload: under a minute as measured.
+JOB_SETUP = 60
+GUARDS_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               ".github", "workflows", "guards.yml")
+
+
+def step_projection(mutations, mode, first=True):
+    """The seconds one `prove_guards.py` step over `mutations` takes on CI, by its phases as it runs
+    them: the cold trees' compile (a later step of the same job finds them compiled), the parallel
+    phase, the functional classes two at a time, and the suites that run alone. The parallel phase
+    is the longer of the Gradle lock's queue and all its work spread over `JOBS` workers."""
+    count, by_class = {}, {}
+    for m in mutations:
+        name = SUITE_NAMES[m[4]]
+        if name in CLASS_SUITES:
+            key = (name, _class_of(m[4], m[5]))
+            by_class[key] = by_class.get(key, 0) + 1
+        else:
+            count[name] = count.get(name, 0) + 1
+    functional = sum(_class_weight(suite, name, n) for (suite, name), n in by_class.items()
+                     if suite == "functional")
+    locked = sum(_class_weight(suite, name, n) for (suite, name), n in by_class.items() if suite == "maven")
+    unlocked = serial = 0
+    for name, n in count.items():
+        baseline, guard = suite_cost(name, mode)
+        if name in EXCLUSIVE_SUITES:
+            serial += baseline + n * guard
+        elif _locked(name):
+            locked += baseline + n * guard
+        else:
+            # Each worker that runs one of the suite's guards baselines it first.
+            unlocked += min(n, JOBS) * baseline + n * guard
+    # One functional class has nothing to pair with: it runs with the serial guards, in one tree.
+    if sum(1 for suite, _name in by_class if suite == "functional") > 1:
+        functional /= ALONE_SLOTS
+    else:
+        serial, functional = serial + functional, 0
+    phases = {"warm_up": warm_up_cost(mode) if first and warm_up_tasks(mutations) else 0,
+              "parallel": max(locked, (locked + unlocked) / JOBS), "functional": functional,
+              "serial": serial}
+    return {**phases, "total": sum(phases.values())}
+
+
+def job_projection(steps):
+    """The seconds a shard's job takes: its setup, then each step's projection."""
+    return JOB_SETUP + sum(step["total"] for step in steps)
+
+
+def job_limit(job):
+    """The `timeout-minutes` of `job` in the guards workflow, or None."""
+    try:
+        with open(GUARDS_WORKFLOW, encoding=ENCODING) as handle:
+            text = handle.read()
+    except OSError:
+        return None
+    found = re.search(rf"^  {re.escape(job)}:\n(?:    .*\n|\s*\n)*?    timeout-minutes: (\d+)$", text, re.M)
+    return int(found.group(1)) if found else None
+
+
+def phases_text(step):
+    """A step projection's phases, in minutes."""
+    return ", ".join(f"{name.replace('_', '-')} {step[name] / 60:.1f}"
+                     for name in ("warm_up", "parallel", "functional", "serial"))
+
+
+def shard_projections(mutations, count, mode="full", first=True, job=None):
+    """One line per shard: its guards and projected weights, so the balance reads before a dispatch,
+    and its step's projection on CI. With `job`, the step is that job's only one, and the line gives
+    the job's projection and its margin to the job's limit."""
     shards, loads = partition(mutations, count)
-    return [f"shard {i + 1}/{count}: {len(shard)} guard(s), ~{load['wall'] / 60:.0f} min projected on "
-            f"CI (functional ~{load['functional']:.0f}s over {ALONE_SLOTS} trees, Maven "
-            f"~{load['maven']:.0f}s), other ~{load['other']:.0f}s by the registry"
-            for i, (shard, load) in enumerate(zip(shards, loads))]
+    limit = job_limit(job) if job else None
+    lines = []
+    for i, (shard, load) in enumerate(zip(shards, loads)):
+        step = step_projection(shard, mode, first)
+        line = (f"shard {i + 1}/{count}: {len(shard)} guard(s), ~{load['wall'] / 60:.0f} min projected on "
+                f"CI (functional ~{load['functional']:.0f}s over {ALONE_SLOTS} trees, Maven "
+                f"~{load['maven']:.0f}s), other ~{load['other']:.0f}s by the registry; step "
+                f"~{step['total'] / 60:.0f} min ({phases_text(step)})")
+        if job:
+            minutes = job_projection([step]) / 60
+            line += f"; job ~{minutes:.0f} min"
+            if limit:
+                line += f", {limit - minutes:.0f} min under {job}'s {limit}"
+        lines.append(line)
+    return lines
+
+
+def _step_on_ci(args):
+    """Where these flags' step sits in the CI job that runs them: `--changed` is the pull request's
+    second step, after fast mode; every guard is the whole of its job."""
+    whole = args.mode == "full" and not args.changed and not args.guard
+    return {"mode": args.mode, "first": not args.changed, "job": "full-shard" if whole else None}
 
 
 def parse_shard(text):
@@ -5772,7 +5890,7 @@ def _main(args, held):
         print(f"{len(selected)} of {len(MUTATIONS)} guards selected, written to "
               f"{args.list_selection}; none was run.")
         if shard:
-            for line in shard_projections(selected, shard[1]):
+            for line in shard_projections(selected, shard[1], **_step_on_ci(args)):
                 print(line)
         return 0
     if args.changed and not selected:
@@ -5796,7 +5914,7 @@ def _main(args, held):
                 for m in held_there:
                     print(f"  {m[0]} is shard {i + 1}'s")
             return 0
-        projection = shard_projections(whole, shard[1])[shard[0] - 1]
+        projection = shard_projections(whole, shard[1], **_step_on_ci(args))[shard[0] - 1]
     held["ran"] = selected
 
     # STRUCTURALLY. The baseline set is DERIVED from the mutations about to run rather than

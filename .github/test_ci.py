@@ -1284,12 +1284,20 @@ def case_every_guard_job_runs_all_its_shards_under_its_required_name():
     return problems
 
 
-def guard_costs_problems(text):
-    """What keeps the every-guard check from reporting its shards' time or keeping their costs,
-    above all on a run where a shard failed, which is when the time matters."""
-    block = _job_block(text, "full")
+# What each guard check runs of `scripts/guard_costs.py`: both report their shards' jobs, and the
+# every-guard check also keeps the costs its run measured.
+GUARD_COST_STEPS = {
+    "full": ("guard_costs.py report shards\n", "guard_costs.py derive shards", "name: guard-costs"),
+    "fast": ("guard_costs.py report shards --file fast.json --file changed.json",),
+}
+
+
+def guard_costs_problems(text, job="full"):
+    """What keeps a guard check from reporting its shards' time or keeping their costs, above all on
+    a run where a shard failed, which is when the time matters."""
+    block = _job_block(text, job)
     if block is None:
-        return ["the full job is gone"]
+        return [f"the {job} job is gone"]
     steps = block.split("\n      - ")
     download = [step for step in steps if "download-artifact@" in step]
     checkout = [step for step in steps if "actions/checkout@" in step]
@@ -1299,28 +1307,53 @@ def guard_costs_problems(text):
         problems.append("the shards' download is not `id: shards` with `if: always()`")
     if not checkout or "if: always()" not in checkout[0]:
         problems.append("the checkout does not run when a shard failed")
-    for what in ("guard_costs.py report shards", "guard_costs.py derive shards", "name: guard-costs"):
+    check = next((i for i, step in enumerate(steps) if "guard_shards.py check" in step), None)
+    for what in GUARD_COST_STEPS[job]:
         step = next((step for step in costs if what in step), None)
         if step is None:
-            problems.append(f"no step runs `{what}`")
+            problems.append(f"no step runs `{what.strip()}`")
         elif "if: always() && steps.shards.outcome == 'success'" not in step:
-            problems.append(f"`{what}` is not gated on the shards' download alone")
+            problems.append(f"`{what.strip()}` is not gated on the shards' download alone")
         elif "continue-on-error: true" not in step:
-            problems.append(f"`{what}` can fail the required check, though it only reports")
+            problems.append(f"`{what.strip()}` can fail the required check, though it only reports")
+        elif check is None or steps.index(step) < check:
+            problems.append(f"`{what.strip()}` runs before the shard check, which it must not delay")
     return problems
 
 
-def case_the_every_guard_check_reports_and_keeps_its_measured_costs():
+def _step_holding(block, text):
+    """The step of a job block that holds `text`, from its `- ` line to the next step."""
+    starts = [i for i in range(len(block)) if block.startswith("\n      - ", i)] + [len(block)]
+    at = block.index(text)
+    begin = max(i for i in starts if i < at)
+    return block[begin:min(i for i in starts if i > at)]
+
+
+def case_each_guard_check_reports_its_shards_and_the_every_guard_one_keeps_their_costs():
     with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
         text = handle.read()
-    problems = guard_costs_problems(text)
-    if problems:
-        return sum(fail(f"guards.yml: {problem}") for problem in problems)
-    if not guard_costs_problems(text.replace("        if: always() && steps.shards.outcome == 'success'\n", "", 1)):
-        return fail("a derive step that runs only on success was not reported")
-    if not guard_costs_problems(text.replace("        continue-on-error: true\n", "", 1)):
-        return fail("a cost step that can fail the required check was not reported")
-    return 0
+    failures = 0
+    for job in GUARD_COST_STEPS:
+        problems = guard_costs_problems(text, job)
+        if problems:
+            failures += sum(fail(f"guards.yml {job}: {problem}") for problem in problems)
+            continue
+        block = _job_block(text, job)
+        report = _step_holding(block, GUARD_COST_STEPS[job][0])
+        check = _step_holding(block, "guard_shards.py check")
+        mutants = {
+            "runs only on success": block.replace(report, report.replace(
+                "        if: always() && steps.shards.outcome == 'success'\n", "", 1), 1),
+            "can fail the required check": block.replace(report, report.replace(
+                "        continue-on-error: true\n", "", 1), 1),
+            "runs before the shard check": block.replace(report, "", 1).replace(check, report + check, 1),
+        }
+        for what, mutant in mutants.items():
+            if mutant == block:
+                failures += fail(f"{job}: the mutant whose report step {what} changed nothing")
+            elif not guard_costs_problems(text.replace(block, mutant, 1), job):
+                failures += fail(f"{job}: a report step that {what} was not reported")
+    return failures
 
 
 def case_guard_results_with_timings_read_as_those_without():
@@ -3460,7 +3493,7 @@ CASES = (
     case_guard_shards_that_partition_the_selection_and_fire_pass,
     case_every_way_a_selected_guard_can_go_unproved_fails,
     case_every_guard_job_runs_all_its_shards_under_its_required_name,
-    case_the_every_guard_check_reports_and_keeps_its_measured_costs,
+    case_each_guard_check_reports_its_shards_and_the_every_guard_one_keeps_their_costs,
     case_guard_results_with_timings_read_as_those_without,
     case_finds_a_map_under_a_task_directory_it_could_not_predict,
     case_find_map_prints_a_readable_file_because_the_workflow_greps_it,
