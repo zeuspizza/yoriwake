@@ -149,7 +149,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false') }}
     runs-on: ubuntu-24.04
-    # With the Maven costs measured, shards project 89 to 134 minutes, and a measured run went past
+    # With the Maven costs measured, shards project about two hours, and a measured run went past
     # its projection when those costs were still low; the limit matches the fast shard's.
     timeout-minutes: 165
     strategy:
