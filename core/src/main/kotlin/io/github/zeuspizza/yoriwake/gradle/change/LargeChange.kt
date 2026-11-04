@@ -6,7 +6,8 @@ package io.github.zeuspizza.yoriwake.gradle.change
  * run anyway and only cost time. Counted over the change the run was asked about (against the
  * requested base, untracked files and the working tree's drift), not the one widened to the map's
  * age, so an aging map cannot turn a small change into a full run on every build. Paths
- * `pathIgnore` takes out are not counted.
+ * `pathIgnore` takes out are not counted, nor those the build's `notReadByTests` lists, which the
+ * selection drops as no change.
  */
 internal object LargeChange {
 
@@ -14,12 +15,15 @@ internal object LargeChange {
     const val DEFAULT_THRESHOLD = 5_000
 
     /**
-     * The paths [changed] counts once [declaration] has taken its matches out. Whether a compiled
-     * class names a path is not known before compiling, so none is taken as named: the count only
-     * decides whether to analyse, and the analysis keeps a named path in the change set.
+     * The paths [changed] counts once [declaration] has taken its matches out, and then the paths
+     * [notReadByTests] matches. Whether a compiled class names a path is not known before
+     * compiling, so none is taken as named: the count only decides whether to analyse, and the
+     * analysis keeps a named path in the change set.
      */
-    fun counted(changed: List<String>, declaration: PathIgnore.Declaration?): Int =
-        PathIgnore.apply(changed.distinct(), declaration) { emptySet() }.kept.size
+    fun counted(changed: List<String>, declaration: PathIgnore.Declaration?, notReadByTests: List<String> = emptyList()): Int {
+        val declared = NotRead.declared(notReadByTests)
+        return PathIgnore.apply(changed.distinct(), declaration) { emptySet() }.kept.count { !declared(it) }
+    }
 
     /** Why [count] changed paths against [base] are not selected on, or null at or below [threshold]. */
     fun refusal(count: Int, threshold: Int, base: String): String? =

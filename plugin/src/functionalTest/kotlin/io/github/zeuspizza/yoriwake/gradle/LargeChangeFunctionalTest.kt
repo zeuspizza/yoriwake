@@ -64,8 +64,9 @@ class LargeChangeFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `an old map does not push a small change over the threshold`(@TempDir dir: File) {
-        captured(dir, threshold(3, """notReadByTests.add("notes/*")"""))
-        (1..4).forEach { File(dir, "notes/$it.txt").apply { parentFile.mkdirs() }.writeText("$it\n") }
+        captured(dir, threshold(3))
+        // An IDE's state: the selection drops it as no change, and the count still counts it.
+        (1..4).forEach { File(dir, ".idea/$it.xml").apply { parentFile.mkdirs() }.writeText("<$it/>\n") }
         commit(dir, "four paths since the capture")
         changeAlpha(dir)
 
@@ -85,6 +86,21 @@ class LargeChangeFunctionalTest : FunctionalTestSupport() {
 
         val output = runner(dir, "test", "-Pyoriwake.select", "-P${Settings.BASE}=HEAD~1").build().output
         val explained = runner(dir, "yoriwakeExplainTest", "-P${Settings.BASE}=HEAD~1").build().output
+
+        assertNotEquals("large-change", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, ":test: narrowing")
+        assertFalse("would run everything" in explained, explained)
+    }
+
+    @Test
+    fun `paths notReadByTests lists are not counted`(@TempDir dir: File) {
+        captured(dir, threshold(3, """notReadByTests.add("written/*")"""))
+        changeAlpha(dir)
+        // Untracked, as a tree the build writes into the checkout is.
+        (1..4).forEach { File(dir, "written/$it.txt").apply { parentFile.mkdirs() }.writeText("$it\n") }
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-P${Settings.BASE}=HEAD").build().output
+        val explained = runner(dir, "yoriwakeExplainTest", "-P${Settings.BASE}=HEAD").build().output
 
         assertNotEquals("large-change", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertContains(output, ":test: narrowing")

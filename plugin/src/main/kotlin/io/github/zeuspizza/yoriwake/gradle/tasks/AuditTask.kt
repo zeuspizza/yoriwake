@@ -189,7 +189,10 @@ internal abstract class AuditTask : DefaultTask() {
                 task.mapDir = mapDir
                 task.auditFile.set(File(mapDir, Audit.AUDIT_FILE))
                 task.scopeRefusal = scopeRefusal
-                task.toll = tollFrom(settings, Audit.DEFAULT_NOISE_FLOOR)
+                task.toll = Audit.Toll.from(
+                    settings.measureToll, settings.instrumentedSeconds, settings.uninstrumentedSeconds,
+                    Audit.DEFAULT_NOISE_FLOOR, "-P",
+                )
                 // The adopter's own forced-run share, never a default.
                 task.forcedShare.set(settings.forcedShare)
                 // Null when the plugin declined this task. The audit never reaches
@@ -204,39 +207,6 @@ internal abstract class AuditTask : DefaultTask() {
                     configureCost?.let(task.configureCost::set)
                 }
             }
-        }
-
-        /**
-         * Reads the two timings the payback verdict needs. It cannot run them: a nested `./gradlew`
-         * would wait on file locks the outer build holds, forever. They arrive as properties, e.g.
-         * from `scripts/measure-toll.sh`.
-         */
-        private fun tollFrom(settings: Settings, floor: Double): Audit.Toll? {
-            if (!settings.measureToll) {
-                return null
-            }
-            val instrumented = settings.instrumentedSeconds
-            val uninstrumented = settings.uninstrumentedSeconds
-            if (instrumented == null || uninstrumented == null) {
-                return Audit.Toll.failed(
-                    if (instrumented == null) "instrumented" else "uninstrumented",
-                    "no timing was supplied for it. Run scripts/measure-toll.sh, which times both " +
-                        "runs and calls this task back with them, or pass " +
-                        "-P${Settings.INSTRUMENTED_SECONDS} and -P${Settings.UNINSTRUMENTED_SECONDS} " +
-                        "yourself. This task cannot run them itself: a nested build on this " +
-                        "project would wait for file locks this build is holding.",
-                )
-            }
-            val instrumentedSeconds = instrumented.toDoubleOrNull()
-            val uninstrumentedSeconds = uninstrumented.toDoubleOrNull()
-            if (instrumentedSeconds == null || uninstrumentedSeconds == null) {
-                return Audit.Toll.failed(
-                    if (instrumentedSeconds == null) "instrumented" else "uninstrumented",
-                    "its timing was not a number: " +
-                        "'${if (instrumentedSeconds == null) instrumented else uninstrumented}'.",
-                )
-            }
-            return Audit.Toll.measured(instrumentedSeconds, uninstrumentedSeconds, floor)
         }
     }
 }

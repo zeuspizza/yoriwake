@@ -24,4 +24,12 @@ class LargeChangeTest {
         assertEquals(4, LargeChange.counted(changed, null))
         assertEquals(2, LargeChange.counted(changed, declaration))
     }
+
+    @Test
+    fun `paths notReadByTests lists are not counted, others are`() {
+        val changed = listOf("written/a.txt", "written/deep/b.txt", "src/main/java/A.java")
+
+        assertEquals(3, LargeChange.counted(changed, null))
+        assertEquals(1, LargeChange.counted(changed, null, listOf("written/*")))
+    }
 }

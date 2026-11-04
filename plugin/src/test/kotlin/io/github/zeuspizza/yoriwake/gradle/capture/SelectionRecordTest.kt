@@ -270,6 +270,39 @@ class SelectionRecordTest {
     }
 
     @Test
+    fun `the classpath digest names a transformed jar by its path, and reads one elsewhere under the Gradle home`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val transformed = { hash: String ->
+            File(home, "caches/8.14/transforms/$hash/transformed/a.jar").apply { parentFile.mkdirs(); if (!exists()) writeText("a") }
+        }
+        val digest = { file: File -> SelectionRecord.classpathDigest(listOf(file), here, home) }
+        val before = digest(transformed("abc"))
+
+        transformed("abc").writeText("b")
+        assertEquals(before, digest(transformed("abc")))
+        assertNotEquals(before, digest(transformed("def")))
+
+        val accessors = File(home, "caches/8.14/kotlin-dsl/accessors/abc/a.jar").apply { parentFile.mkdirs(); writeText("a") }
+        val read = digest(accessors)
+        accessors.writeText("b")
+        assertNotEquals(read, digest(accessors))
+    }
+
+    @Test
+    fun `the classpath digest names a transformed jar by its path in a Gradle user home inside the checkout`(@TempDir root: File) {
+        val here = File(root, "here")
+        val home = File(here, ".gradle")
+        val transformed = File(home, "caches/8.14/transforms/abc/transformed/a.jar").apply { parentFile.mkdirs(); writeText("a") }
+        val digest = { SelectionRecord.classpathDigest(listOf(transformed), here, home) }
+        val before = digest()
+
+        transformed.writeText("b")
+
+        assertEquals(before, digest())
+    }
+
+    @Test
     fun `the classpath digest follows what the build generated into a directory under it`(@TempDir root: File) {
         val home = File(root, "home/.gradle")
         val here = File(root, "here")

@@ -32,23 +32,23 @@ SCRIPT = os.path.join(checkout.ROOT, "scripts", "measure-toll.sh")
 SUMMARY = "664 tests completed, 4 failed, 2 skipped"
 
 
-def _outcome_function():
-    """The real `outcome()` from the script, so these tests cannot drift from it."""
+def _outcome_function(name="outcome"):
+    """The real function [name] from the script, so these tests cannot drift from it."""
     with open(SCRIPT, encoding="utf-8") as handle:
         text = handle.read()
-    match = re.search(r"^outcome\(\) \{.*?^\}", text, re.MULTILINE | re.DOTALL)
+    match = re.search(r"^" + name + r"\(\) \{.*?^\}", text, re.MULTILINE | re.DOTALL)
     if not match:
-        raise AssertionError("could not find outcome() in scripts/measure-toll.sh")
+        raise AssertionError(f"could not find {name}() in scripts/measure-toll.sh")
     return match.group(0)
 
 
-def _signature(log_text):
-    """What the shipping `outcome()` makes of one arm's log."""
+def _signature(log_text, name="outcome"):
+    """What the shipping `outcome()`, or the function [name], makes of one arm's log."""
     scratch = tempfile.mkdtemp(prefix="yoriwake-toll-tests-")
     try:
         with open(os.path.join(scratch, "arm.log"), "w", encoding="utf-8") as handle:
             handle.write(log_text)
-        script = f'log_dir="{scratch}"\n{_outcome_function()}\noutcome arm\n'
+        script = f'log_dir="{scratch}"\n{_outcome_function(name)}\n{name} arm\n'
         done = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
         return done.stdout
     finally:
@@ -130,12 +130,43 @@ def case_a_green_arm_yields_no_signature():
     return failures
 
 
+# What Surefire prints per test class and per module; the elapsed time differs between runs.
+SUREFIRE = ("[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.031 s -- in dev.demo.lib.GreeterTest\n"
+            "[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in dev.demo.lib.CounterTest\n"
+            "[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0\n")
+
+
+def case_maven_summaries_compare_equal_whatever_their_order():
+    """Two Maven arms that ran the same tests, timed and ordered differently, are the same work."""
+    failures = 0
+    left = _signature(SUREFIRE, "maven_outcome")
+    lines = SUREFIRE.splitlines(keepends=True)
+    right = _signature(lines[1].replace("0.004", "0.120") + lines[0] + lines[2], "maven_outcome")
+    if left != right or not left.strip():
+        print(f"  FAIL: the same Maven work did not compare equal: {left!r} vs {right!r}")
+        failures += 1
+    return failures
+
+
+def case_a_maven_failure_count_is_visible():
+    """A Maven arm with one more failure is other work."""
+    failures = 0
+    green = _signature(SUREFIRE, "maven_outcome")
+    red = _signature(SUREFIRE.replace("Tests run: 2, Failures: 0", "Tests run: 2, Failures: 1"), "maven_outcome")
+    if green == red:
+        print(f"  FAIL: Maven arms with different failure counts compared equal: {green!r}")
+        failures += 1
+    return failures
+
+
 CASES = (case_arms_that_failed_alike_compare_equal,
          case_a_different_failure_count_is_visible,
          case_the_same_count_of_different_tests_is_visible,
          case_task_order_does_not_decide_the_verdict,
          case_ansi_colour_does_not_decide_the_verdict,
-         case_a_green_arm_yields_no_signature)
+         case_a_green_arm_yields_no_signature,
+         case_maven_summaries_compare_equal_whatever_their_order,
+         case_a_maven_failure_count_is_visible)
 
 
 def main():

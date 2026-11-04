@@ -108,6 +108,9 @@ internal class Selection(private val session: MavenSession, private val root: Fi
     /** Whether this invocation asked to select; a recording run asks git nothing more. */
     val asksSelection: Boolean get() = asked.select
 
+    /** Whether this invocation asked only to record: no select, observe or complement, whatever the run becomes. */
+    val asksRecording: Boolean get() = !asked.select && !asked.observe && asked.complement == null
+
     /**
      * Settles one execution's run and writes what its test JVM needs into [properties]. Returns what
      * the run is: [RunPlan.Kind.SELECT] keeps no records unless it ran everything, and an

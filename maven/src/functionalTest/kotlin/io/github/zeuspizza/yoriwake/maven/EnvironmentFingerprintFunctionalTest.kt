@@ -11,7 +11,8 @@ import kotlin.test.assertFalse
 
 /**
  * A selecting run on Maven in another environment than the capture's runs every test and says what
- * differs: the test JVM's arguments, Maven's own environment, and the JDK the map was recorded on.
+ * differs: the test JVM's arguments, the user properties Surefire hands it, Maven's own environment
+ * and the variables the POM lists, and the JDK the map was recorded on.
  */
 class EnvironmentFingerprintFunctionalTest {
 
@@ -28,19 +29,28 @@ class EnvironmentFingerprintFunctionalTest {
     }
 
     /**
-     * The demo, `lib`'s argLine passing `-Dfeature=${feature}` beside JaCoCo's agent, committed and
-     * captured with [arguments] and Maven's process [environment]; then a Greeter edit committed.
+     * The demo, `lib`'s argLine passing [argLine] beside JaCoCo's agent and its Surefire configured
+     * with [surefire], the yoriwake plugin with [yoriwake], committed and captured with [arguments]
+     * and Maven's process [environment]; then a Greeter edit committed.
      */
-    private fun captured(dir: File, vararg arguments: String, environment: Map<String, String> = emptyMap()): File =
+    private fun captured(
+        dir: File,
+        vararg arguments: String,
+        environment: Map<String, String> = emptyMap(),
+        argLine: String = "-Dfeature=${'$'}{feature}",
+        surefire: String = "",
+        yoriwake: String = "",
+    ): File =
         FunctionalMaven.copy(FunctionalMaven.demo, dir).also { project ->
             File(project, "lib/pom.xml").edit {
                 it.replace(
                     "<artifactId>lib</artifactId>",
                     "<artifactId>lib</artifactId><build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId>" +
-                        "<configuration><argLine>@{argLine} -Dfeature=${'$'}{feature}</argLine></configuration>" +
+                        "<configuration><argLine>@{argLine} $argLine</argLine>$surefire</configuration>" +
                         "</plugin></plugins></build>",
                 )
             }
+            configureYoriwake(project, yoriwake)
             File(project, ".gitignore").writeText("target/\n")
             git(project, "init", "-q")
             git(project, "add", ".")
@@ -48,6 +58,14 @@ class EnvironmentFingerprintFunctionalTest {
             FunctionalMaven.run(maven, project, "verify", "-Dfeature=on", *arguments, environment = environment).succeeded()
             editGreeter(project)
         }
+
+    /** The root POM's yoriwake plugin, configured with [configuration]. */
+    private fun configureYoriwake(project: File, configuration: String) {
+        if (configuration.isEmpty()) return
+        File(project, "pom.xml").edit {
+            it.replace("<extensions>true</extensions>", "<extensions>true</extensions><configuration>$configuration</configuration>")
+        }
+    }
 
     private fun editGreeter(project: File) {
         File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
@@ -77,24 +95,28 @@ class EnvironmentFingerprintFunctionalTest {
      * written it, under the id its block then hashes to; returns the version it replaced.
      */
     private fun recordJdk(map: File, version: String): String {
+        var replaced = ""
+        rewriteBlock(map) { components ->
+            replaced = components.single { it.first == "jdk.version" }.second
+            components.map { if (it.first == "jdk.version") it.first to version else it }
+        }
+        return replaced
+    }
+
+    /**
+     * Rewrites the map's one fingerprint block through [transform], as a capture that recorded the
+     * result would have written it, under the id the block then hashes to.
+     */
+    private fun rewriteBlock(map: File, transform: (List<Pair<String, String>>) -> List<Pair<String, String>>) {
         val fingerprints = File(map, "environment-fingerprints.tsv")
         val rows = fingerprints.readLines().filter(String::isNotBlank).map { Tsv.split(it).toList() }
-        val jdk = rows.single { it[1] == "jdk.version" }
-        val block = rows.filter { it[0] == jdk[0] }.map { if (it === jdk) listOf(it[1], version) else listOf(it[1], it[2]) }
+        val old = rows.map { it[0] }.distinct().single()
+        val block = transform(rows.map { it[1] to it[2] })
         val id = MessageDigest.getInstance("SHA-256")
-            .digest(block.joinToString("") { Tsv.join(it[0], it[1]) + "\n" }.toByteArray(Charsets.UTF_8))
+            .digest(block.joinToString("") { Tsv.join(it.first, it.second) + "\n" }.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }.take(16)
-        fingerprints.writeText(
-            rows.joinToString("") { row ->
-                when {
-                    row === jdk -> Tsv.join(id, row[1], version)
-                    row[0] == jdk[0] -> Tsv.join(id, row[1], row[2])
-                    else -> Tsv.join(*row.toTypedArray())
-                } + "\n"
-            },
-        )
-        File(map, "environment.tsv").apply { writeText(readText().replace(jdk[0], id)) }
-        return jdk[2]
+        fingerprints.writeText(block.joinToString("") { Tsv.join(id, it.first, it.second) + "\n" })
+        File(map, "environment.tsv").apply { writeText(readText().replace(old, id)) }
     }
 
     private fun refusalLine(output: String) = output.lines().single { "differs from the one the map was recorded in" in it }
@@ -122,14 +144,17 @@ class EnvironmentFingerprintFunctionalTest {
 
     @Test
     fun `another value of a property the argLine passes runs every test`(@TempDir dir: File) {
-        val project = captured(dir)
+        // A literal in the argLine, so no user property carries it: only the argLine path can see it change.
+        val project = captured(dir, argLine = "-Dmode=fast")
+        File(project, "lib/pom.xml").edit { it.replace("-Dmode=fast", "-Dmode=slow") }
+        git(project, "commit", "-q", "-am", "another mode")
 
-        val output = selecting(project, feature = "off")
+        val output = selecting(project)
 
         assertRanEverything(project, output)
         val line = refusalLine(output)
-        assertContains(line, "sys:feature")
-        assertFalse(Regex("""\b(on|off)\b""").containsMatchIn(line), line)
+        assertContains(line, "sys:mode")
+        assertFalse(Regex("""\b(fast|slow)\b""").containsMatchIn(line), line)
     }
 
     @Test
@@ -156,5 +181,179 @@ class EnvironmentFingerprintFunctionalTest {
         File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello,\" + \" \"", "\"Hello\" + \", \"") }
         git(project, "commit", "-q", "-am", "another edit")
         assertNarrowed(selecting(project))
+    }
+
+    @Test
+    fun `another value of a user property runs every test`(@TempDir dir: File) {
+        // Nothing in the POM passes it: Surefire hands the fork every user property of the invocation.
+        val project = captured(dir, argLine = "")
+
+        val output = selecting(project, feature = "off")
+
+        assertRanEverything(project, output)
+        val line = refusalLine(output)
+        assertContains(line, "sys:feature")
+        assertFalse(Regex("""\b(on|off)\b""").containsMatchIn(line), line)
+        val stored = File(libMap(project), "environment-fingerprints.tsv").readText()
+        assertFalse(Regex("""\t(on|off)\n""").containsMatchIn(stored), stored)
+    }
+
+    @Test
+    fun `the same user properties narrow as before`(@TempDir dir: File) {
+        val project = captured(dir, argLine = "")
+
+        assertNarrowed(selecting(project))
+    }
+
+    @Test
+    fun `a user property left out by systemPropertyIgnore narrows`(@TempDir dir: File) {
+        val project = captured(
+            dir, "-Dbuild.number=1", argLine = "",
+            yoriwake = "<systemPropertyIgnore><property>build.*</property></systemPropertyIgnore>",
+        )
+
+        val output = selecting(project, "-Dbuild.number=2")
+
+        assertNarrowed(output)
+        assertEquals("build.number", notes(project)["fingerprint-ignored"], output)
+    }
+
+    @Test
+    fun `an ignored property in the argLine narrows`(@TempDir dir: File) {
+        val project = captured(
+            dir, "-Dbuild.number=1", argLine = "-Dbuild.number=${'$'}{build.number}",
+            yoriwake = "<systemPropertyIgnore><property>build.*</property></systemPropertyIgnore>",
+        )
+
+        val output = selecting(project, "-Dbuild.number=2")
+
+        assertNarrowed(output)
+        assertEquals("build.number", notes(project)["fingerprint-ignored"], output)
+    }
+
+    @Test
+    fun `a listed variable with another value runs every test`(@TempDir dir: File) {
+        val project = captured(
+            dir, environment = mapOf("DB_MODE" to "memory"),
+            yoriwake = "<environmentInclude><variable>DB_MODE</variable></environmentInclude>",
+        )
+
+        val output = selecting(project, environment = mapOf("DB_MODE" to "postgres"))
+
+        assertRanEverything(project, output)
+        val line = refusalLine(output)
+        assertContains(line, "env:DB_MODE")
+        assertFalse("memory" in line || "postgres" in line, line)
+    }
+
+    @Test
+    fun `a listed variable set through environmentVariables is compared`(@TempDir dir: File) {
+        val project = captured(
+            dir, surefire = "<environmentVariables><DB_MODE>memory</DB_MODE></environmentVariables>",
+            yoriwake = "<environmentInclude><variable>DB_*</variable></environmentInclude>",
+        )
+        File(project, "lib/pom.xml").edit { it.replace("<DB_MODE>memory</DB_MODE>", "<DB_MODE>postgres</DB_MODE>") }
+        git(project, "commit", "-q", "-am", "another database")
+
+        val output = selecting(project)
+
+        assertRanEverything(project, output)
+        assertContains(refusalLine(output), "env:DB_MODE")
+    }
+
+    @Test
+    fun `a map recorded before user properties were compared runs every test once`(@TempDir dir: File) {
+        val project = captured(dir)
+        rewriteBlock(libMap(project)) { components -> components.filterNot { it.first == "maven.user-properties" } }
+
+        val output = selecting(project)
+
+        assertRanEverything(project, output)
+        assertContains(refusalLine(output), "maven.user-properties")
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello,\" + \" \"", "\"Hello\" + \", \"") }
+        git(project, "commit", "-q", "-am", "another edit")
+        assertNarrowed(selecting(project))
+    }
+
+    @Test
+    fun `a module whose parent is not the root compares a variable the root lists`(@TempDir dir: File) {
+        val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
+        // lib's own parent is outside the reactor, so it inherits no yoriwake plugin entry.
+        File(project, "lib/pom.xml").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>dev.demo</groupId>
+              <artifactId>lib</artifactId>
+              <version>1.0</version>
+              <properties>
+                <maven.compiler.release>17</maven.compiler.release>
+                <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+              </properties>
+              <dependencies>
+                <dependency>
+                  <groupId>org.junit.jupiter</groupId>
+                  <artifactId>junit-jupiter</artifactId>
+                  <version>5.11.4</version>
+                  <scope>test</scope>
+                </dependency>
+              </dependencies>
+              <build>
+                <plugins>
+                  <plugin><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version></plugin>
+                  <plugin><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
+                  <plugin><artifactId>maven-surefire-plugin</artifactId><version>3.5.6</version></plugin>
+                  <plugin><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version></plugin>
+                  <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>0.8.12</version>
+                    <executions><execution><id>prepare-agent</id><goals><goal>prepare-agent</goal></goals></execution></executions>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """.trimIndent()
+        )
+        configureYoriwake(project, "<environmentInclude><variable>DB_MODE</variable></environmentInclude>")
+        File(project, ".gitignore").writeText("target/\n")
+        git(project, "init", "-q")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "demo")
+        FunctionalMaven.run(maven, project, "verify", "-Dfeature=on", environment = mapOf("DB_MODE" to "memory")).succeeded()
+        editGreeter(project)
+
+        // The whole reactor: with `-pl lib` alone, no module of the build declares the extension.
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", "-Dfeature=on",
+            environment = mapOf("DB_MODE" to "postgres"),
+        ).succeeded().output
+
+        assertRanEverything(project, output)
+        assertContains(refusalLine(output.substringAfter("[yoriwake] lib surefire:test").substringBefore("[yoriwake] app surefire:test")), "env:DB_MODE")
+    }
+
+    @Test
+    fun `an entry of only a star fails the build before any test runs`(@TempDir dir: File) {
+        val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
+        configureYoriwake(project, "<systemPropertyIgnore><property>*</property></systemPropertyIgnore>")
+
+        val result = FunctionalMaven.run(maven, project, "verify")
+
+        assertFalse(result.exitCode == 0, result.output)
+        assertContains(result.output, "demo-maven: systemPropertyIgnore holds '*', which matches every name")
+        assertFalse("Tests run:" in result.output, result.output)
+    }
+
+    @Test
+    fun `an empty entry fails the build, naming the list`(@TempDir dir: File) {
+        val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)
+        configureYoriwake(project, "<environmentInclude><variable> </variable></environmentInclude>")
+
+        val result = FunctionalMaven.run(maven, project, "verify")
+
+        assertFalse(result.exitCode == 0, result.output)
+        assertContains(result.output, "demo-maven: environmentInclude holds '', which names nothing")
     }
 }

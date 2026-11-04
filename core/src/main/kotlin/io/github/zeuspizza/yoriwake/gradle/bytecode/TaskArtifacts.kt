@@ -181,13 +181,30 @@ internal class TaskArtifacts(
             }
         }.getOrDefault(emptyList())
 
+    /** Which strings in a class count as naming a path; see [pathsNamedInClasses]. */
+    enum class Naming {
+        /** The path and its file name: a directory name such as `docs` is in too many classes. */
+        FILE_NAME,
+
+        /** The path, its file name, and every ancestor directory, whole or by its last name. */
+        ANCESTORS,
+
+        /**
+         * For a Java or Kotlin source: the path, an ancestor directory, a part from its module's
+         * name on, a trailing part ending in its file name, or its module's `build` or `target`,
+         * each of two or more segments. A single name such as `java`, a package
+         * root or `Thing.java` is in almost every class, and a class's own name holds no `.java`.
+         */
+        CLASS_SOURCE,
+    }
+
     /**
      * Which of these repository paths any compiled class on the classpath can name; a test can only
-     * read a file it can name. An ancestor counts as a hit, for paths assembled at runtime. Known
-     * limit: a test that walks the repository from its root names nothing. Without [ancestors], only
-     * the path and its file name count: a directory name such as `docs` is in too many classes.
+     * read a file it can name. [naming] says what counts as naming one; an ancestor counts for paths
+     * assembled at runtime. Known limit: a test that walks the repository from its root names
+     * nothing, and under [Naming.CLASS_SOURCE] neither does one that joins single names.
      */
-    fun pathsNamedInClasses(paths: Collection<String>, ancestors: Boolean = true): Set<String> {
+    fun pathsNamedInClasses(paths: Collection<String>, naming: Naming = Naming.ANCESTORS): Set<String> {
         if (paths.isEmpty()) {
             return emptySet()
         }
@@ -198,14 +215,7 @@ internal class TaskArtifacts(
         // A non-ASCII path counts as named: class files hold modified UTF-8, so its bytes vary.
         val unsearchable = paths.filterTo(mutableSetOf()) { path -> path.any { it.code > 127 } }
         val needlesByPath = (paths - unsearchable).associateWith { path ->
-            val forms = mutableSetOf(path, path.substringAfterLast('/'))
-            var parent = if (ancestors) path.substringBeforeLast('/', "") else ""
-            while (parent.isNotEmpty()) {
-                forms += parent
-                forms += parent.substringAfterLast('/')
-                parent = parent.substringBeforeLast('/', "")
-            }
-            forms.filter { it.isNotEmpty() }.map { it.toByteArray(Charsets.ISO_8859_1) }
+            needles(path, naming).filter { it.isNotEmpty() }.map { it.toByteArray(Charsets.ISO_8859_1) }
         }
         if (needlesByPath.isEmpty()) {
             return unsearchable
@@ -219,6 +229,35 @@ internal class TaskArtifacts(
             }
         }
         return found + unsearchable
+    }
+
+    private fun needles(path: String, naming: Naming): Set<String> {
+        if (naming == Naming.CLASS_SOURCE) {
+            val segments = path.split('/')
+            val forms = mutableSetOf(path)
+            (2 until segments.size).flatMapTo(forms) { n ->
+                listOf(segments.take(n).joinToString("/"), segments.takeLast(n).joinToString("/"))
+            }
+            // From the module's own name on, as `../beta/src/main/java` names a nested module, and
+            // its build output, which a test can read by path without depending on the module.
+            val src = segments.indexOf("src")
+            if (src > 0) {
+                (src until segments.size).mapTo(forms) { end -> segments.subList(src - 1, end + 1).joinToString("/") }
+                listOf(segments.subList(0, src).joinToString("/"), segments[src - 1]).forEach { module ->
+                    forms += "$module/build"
+                    forms += "$module/target"
+                }
+            }
+            return forms
+        }
+        val forms = mutableSetOf(path, path.substringAfterLast('/'))
+        var parent = if (naming == Naming.ANCESTORS) path.substringBeforeLast('/', "") else ""
+        while (parent.isNotEmpty()) {
+            forms += parent
+            forms += parent.substringAfterLast('/')
+            parent = parent.substringBeforeLast('/', "")
+        }
+        return forms
     }
 
     private fun searchClasses(

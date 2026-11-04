@@ -79,6 +79,29 @@ internal data class EffectiveScope(val includes: List<String>, val excludes: Lis
             return EffectiveScope(includes, excludes)
         }
 
+        /**
+         * The scope JaCoCo's agent is handed on a JVM's command line, from its `includes` and
+         * `excludes` options, as a host without a JaCoCo extension (Maven) hands it. Null when no
+         * argument loads JaCoCo's agent, more than one does, or its options do not read.
+         */
+        fun fromAgentArguments(arguments: List<String>): EffectiveScope? {
+            val agent = arguments.filter { it.startsWith("-javaagent:") && JACOCO_AGENT.containsMatchIn(it) }
+                .singleOrNull() ?: return null
+            val options = agent.substring(JACOCO_AGENT.find(agent)!!.range.last + 1).substringAfter('=', "")
+            val values = mutableMapOf<String, String>()
+            if (options.isNotEmpty()) {
+                for (option in options.split(',')) {
+                    val (key, value) = option.split('=', limit = 2).takeIf { it.size == 2 } ?: return null
+                    values[key] = value
+                }
+            }
+            fun list(key: String) = values[key]?.split(':')?.filter(String::isNotEmpty).orEmpty()
+            return EffectiveScope(list("includes"), list("excludes"))
+        }
+
+        /** JaCoCo's agent jar, by its file name as `prepare-agent` resolves it. */
+        private val JACOCO_AGENT = Regex("""(?:jacocoagent|org\.jacoco\.agent)[^/\\=]*\.jar""")
+
         private fun patterns(jacoco: Any, getter: String): List<String>? = runCatching {
             val value = jacoco.javaClass.methods.first { it.name == getter }.invoke(jacoco)
             @Suppress("UNCHECKED_CAST")

@@ -221,6 +221,7 @@ MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Chain
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
 MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
+MAVEN_CLASSPATH_VIEWS = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ClasspathViews.kt"
 MAVEN_BUILD_CACHE = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/BuildCache.kt"
 MAVEN_DEVELOCITY = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/DevelocityDetection.kt"
 MAVEN_AUDIT = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/AuditMojo.kt"
@@ -2814,6 +2815,30 @@ MUTATIONS = [
      "            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())",
      "            is Walk.Found -> walk",
      functional_suite, "a dependency version bumped in a properties file the build loads runs every test"),
+    # A path does not pin a released version's bytes: a copy, an install of the same version or a
+    # redeployed release downloaded afresh replaces it in place.
+    ("a released Maven version copied over is named by its path", CLASSPATH_FILES,
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
+     maven_suite, "a released dependency copied over in the local repository runs every test"),
+    ("a released Maven version installed again is named by its path", CLASSPATH_FILES,
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
+     maven_suite, "a released dependency installed again at the same version runs every test"),
+    ("a redeployed released Maven version is named by its path", CLASSPATH_FILES,
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
+     maven_suite, "a released dependency redeployed and downloaded afresh runs every test"),
+    # Gradle generates its API jars on each machine and unpacks a distribution keyed by its URL:
+    # either can change in place under the Gradle user home.
+    ("a generated Gradle jar is named by its path", CLASSPATH_FILES,
+     '        Regex("^caches/modules-2/"),\n',
+     '        Regex("^caches/modules-2/"),\n        Regex("^caches/[^/]+/generated-gradle-jars/"),\n',
+     functional_suite, "a generated Gradle jar replaced in place runs every test"),
+    ("a wrapper distribution's jar is named by its path", CLASSPATH_FILES,
+     '        Regex("^caches/modules-2/"),\n',
+     '        Regex("^caches/modules-2/"),\n        Regex("^wrapper/dists/"),\n',
+     functional_suite, "a wrapper distribution's jar replaced in place runs every test"),
     ("a dependency's manifest Class-Path is not followed by the classpath-files table", CLASSPATH_FILES,
      "            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)\n",
      "",
@@ -3227,6 +3252,14 @@ MUTATIONS = [
      "            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),",
      "            changed, pathIgnoreDeclaration(project, emptyList(), sourceDirs, listOf(base), changed, buildMemo),",
      functional_suite, "paths pathIgnore takes out are not counted"),
+    ("the large-change threshold counts paths notReadByTests lists", SELECTION_WIRING,
+     "            notReadByTests,\n",
+     "",
+     functional_suite, "paths notReadByTests lists are not counted"),
+    ("yoriwakeExplain counts paths notReadByTests lists", EXPLAIN_TASK,
+     "            val count = LargeChange.counted(changed, ignore, notReadByTests.getOrElse(emptyList()))",
+     "            val count = LargeChange.counted(changed, ignore)",
+     functional_suite, "paths notReadByTests lists are not counted"),
     ("the provenance check is not registered", SELECTION_WIRING,
      "        refuseAnUnverifiedMap(project, test, mapDir, listed.digest, jacoco, changeSetFile, observing)\n",
      "",
@@ -3942,6 +3975,16 @@ MUTATIONS = [
      "            owner != null && owner.second !in present && isClassSource(path, owner.first)",
      '            owner != null && owner.second !in present && path.startsWith("${owner.first}/src/")',
      functional_suite, "a resource of a module off the classpath the build script hands a test by path forces the run"),
+    # A test reads a sibling's source by a path it holds, often relative to that module.
+    ("a class source off the classpath is named by none of its trailing parts", TASK_ARTIFACTS,
+     "            (2 until segments.size).flatMapTo(forms) { n ->",
+     "            (2 until 2).flatMapTo(forms) { n ->",
+     functional_suite, "a sibling's Java source a test reads by its module-relative path still selects that test"),
+    # Classes the fork is handed by path put that module in its JVM, whatever its dependencies say.
+    ("Maven reads no path in the fork's added classpath elements", MAVEN_CLASSPATH_VIEWS,
+     "    ) + added?.children.orEmpty().mapNotNull { it.value }",
+     "    )",
+     maven_suite, "a sibling's classes added to the fork's classpath keep its edits"),
     # The two exemptions from that: an IDE's state, and what the build declares unread.
     ("an IDE state directory is a change again", NOT_READ,
      '    private val IDE_STATE_DIRECTORIES = setOf(".idea", ".vscode", ".fleet")',
@@ -4681,13 +4724,51 @@ MUTATIONS = [
      '            val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()',
      '            val environment = emptyMap<String, String>() + configuration.getChild("environmentVariables")?.children.orEmpty()',
      maven_suite, "another time zone in Maven's environment runs every test"),
+    # Surefire hands the test JVM every user property of the invocation, after the POM's.
+    ("a Maven selecting run compares no user property", MAVEN_RECORDING,
+     '.map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" } + userProperties,',
+     '.map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" },',
+     maven_suite, "another value of a user property runs every test"),
+    # A map recorded before user properties were compared stored none, and would match any.
+    ("a Maven fingerprint does not say it compares user properties", MAVEN_RECORDING,
+     '                plain = mapOf(USER_PROPERTIES_COMPONENT to "compared"),',
+     '                plain = emptyMap(),',
+     maven_suite, "a map recorded before user properties were compared runs every test once"),
+    ("a Maven module's systemPropertyIgnore is not handed to the comparison", MAVEN_RECORDING,
+     "                lists.systemPropertyIgnore, lists.environmentInclude, root.path,",
+     "                emptyList(), lists.environmentInclude, root.path,",
+     maven_suite, "a user property left out by systemPropertyIgnore narrows"),
+    ("a Maven module's environmentInclude is not handed to the comparison", MAVEN_RECORDING,
+     "                lists.systemPropertyIgnore, lists.environmentInclude, root.path,",
+     "                lists.systemPropertyIgnore, emptyList(), root.path,",
+     maven_suite, "a listed variable with another value runs every test"),
+    # Under recordSequentially a recording run turns the engines' parallel switches off and records;
+    # any other run keeps them on and must record nothing.
+    ("a flagged Maven recording run of a parallel suite declines", MAVEN_RECORDING,
+     "        val recordsSequentially = covered && selection.asksRecording",
+     "        val recordsSequentially = false",
+     maven_suite, "a flagged recording run of a parallel suite records it one test at a time"),
+    ("a flagged Maven recording run leaves the parallel switches on", MAVEN_RECORDING,
+     '        parameters.value = listOfNotNull(parameters.value?.takeIf(String::isNotBlank), switches).joinToString("\\n")',
+     "        parameters.value = parameters.value",
+     maven_suite, "parallelism turned on on the command line is turned off too"),
     ("a Maven selecting run never compares the environment", MAVEN_SELECTION,
      "        if (environment != null) {",
      "        if (environment != null && false) {",
      maven_suite, "a map recorded on another JDK runs every test, names both versions, and the next run narrows"),
+    # Gradle names an immutable transform workspace by a hash of what produced it, so a fresh user
+    # home running the transform again writes other bytes at the same path.
+    ("a transformed dependency is read by its bytes", CLASSPATH_FILES,
+     '        Regex("^caches/[^/]+/transforms/"),\n',
+     "",
+     functional_suite, "a transformed dependency Gradle writes again with other bytes selects as before"),
+    ("the complement's stamp reads a transformed dependency by its bytes", SELECTION_RECORD,
+     '            if (inHome != null && TRANSFORM_CACHE.containsMatchIn(inHome)) return@map "gradle:$inHome"\n',
+     "",
+     unit_suite, "the classpath digest names a transformed jar by its path, and reads one elsewhere under the Gradle home"),
     ("a SNAPSHOT in the Maven repository is named by its path", CLASSPATH_FILES,
-     '                    home.key == MAVEN_REPOSITORY && "-SNAPSHOT" !in relative -> NAMED_BY_PATH',
-     "                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH",
+     '                    home.key == USER_HOME -> contentDigest(entry)\n',
+     '                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',
      maven_suite, "a SNAPSHOT dependency replaced in the repository runs every test"),
     # The map's age, not the merge-base: the change set is the union of the diffs against the
     # widened base and against the stamp, so a merge-base of the base with itself changes nothing.
@@ -4756,7 +4837,7 @@ MUTATIONS = [
     # Maven records the framework its executions run on, or every audit lists `framework-unknown`,
     # whose remedy no Maven run can clear.
     ("Maven records no framework for the audit", MAVEN_RECORDING,
-     "        Audit.TaskFacts.write(mapDir, frameworkOf(project), parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })\n",
+     "        Audit.TaskFacts.write(mapDir, framework, parallelism = inJvm, agentNotOnArgLine = agentMissing.takeIf { it })\n",
      "",
      maven_suite, "an execution on JUnit 4 alone audits as off the Platform with a Maven remedy"),
     # A run declined because its argLine drops the JaCoCo agent says so to the audit, which can
@@ -4813,10 +4894,11 @@ MUTATIONS = [
      "        facts.framework == null && maven && scopeRefusal != null -> Unit\n",
      "        false -> Unit\n",
      unit_suite, "on Maven a declined execution names its decline, not a framework no run of it records"),
-    ("the Maven audit sends the user to a toll script that runs only Gradle", AUDIT_RENDER,
-     "        if (script) {\n",
-     "        if (true) {\n",
-     unit_suite, "on Maven the unmeasured toll names no script, since the one there is runs only Gradle"),
+    # Two timings answer the payback question on Maven as on Gradle.
+    ("the Maven audit passes no toll", MAVEN_AUDIT,
+     "toll = toll, blockers = blockers, maven = true)",
+     "toll = null, blockers = blockers, maven = true)",
+     maven_suite, "an audit given two timings answers the payback question"),
     # The harness's Maven build seam (bench/maven_build.py and run.py's dispatch to it).
     ("a Maven arm reads an earlier arm's reports as its own", MAVEN_HARNESS,
      "    fresh = [p for p in glob.glob(pattern) if os.path.getmtime(p) >= since]",
@@ -5386,12 +5468,15 @@ def _report(index, fired, refusal, timing=None):
 
 
 def _place(units, count, shards):
-    """Each (weight, name, guards) unit, heaviest first, to the shard with the least weight so far,
-    then the fewest units, then the lowest index; returns each shard's weight, and each unit with
-    the shard it went to."""
+    """Each (weight, name, guards) unit, heaviest first, to a shard that holds no other chunk of its
+    class (two would pay the class's baseline twice in one tree and break its run of guards), then
+    the least weight so far, then the fewest units, then the lowest index; returns each shard's
+    weight, and each unit with the shard it went to."""
     load, held, placed = [0.0] * count, [0] * count, []
+    names = [set() for _ in range(count)]
     for unit in sorted(units, key=lambda unit: (-unit[0], unit[1])):
-        lightest = min(range(count), key=lambda i: (load[i], held[i], i))
+        lightest = min(range(count), key=lambda i: (unit[1] in names[i], load[i], held[i], i))
+        names[lightest].add(unit[1])
         load[lightest] += unit[0]
         held[lightest] += 1
         shards[lightest].extend(unit[2])
@@ -5463,11 +5548,21 @@ def partition(mutations, count):
             units.append((_class_weight(suite, name, len(chunk)) / slots[suite],
                           f"{suite}/{name or ''}", chunk))
     shards = [[] for _ in range(count)]
-    wall, placed = _place(units, count, shards)
+    _load, placed = _place(units, count, shards)
+    # Chunks of one class are near-equal, so they are dealt to the shards they went to in order: a
+    # shard that took two of them holds adjacent ones, one cut of the class rather than two.
+    went = {}
+    for index, (_weight, name, _chunk) in placed:
+        went.setdefault(name, []).append(index)
+    shards = [[] for _ in range(count)]
+    wall = [0.0] * count
     parts = [{"functional": 0.0, "maven": 0.0} for _ in range(count)]
-    for index, (weight, name, _chunk) in placed:
+    for name, indices in went.items():
         suite = name.split("/", 1)[0]
-        parts[index][suite] += weight * slots[suite]
+        for index, (weight, _name, chunk) in zip(sorted(indices), [unit for unit in units if unit[1] == name]):
+            shards[index].extend(chunk)
+            wall[index] += weight
+            parts[index][suite] += weight * slots[suite]
     cost = {fn: c for _n, fn, c in SUITES}
     rest, _placed = _place([(cost.get(m[4], 0), m[0], [m]) for m in other], count, shards)
     order = {m[0]: i for i, m in enumerate(mutations)}

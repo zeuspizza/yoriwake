@@ -196,7 +196,9 @@ abstract class MavenBreakAttempt {
         git(project, "init", "-q")
         git(project, "add", ".")
         git(project, "commit", "-q", "-m", "base")
-        FunctionalMaven.run(maven, project, "verify").succeeded()
+        // The selecting run's KEEP_GOING too: the test JVM receives every user property, and the
+        // environment comparison would otherwise run everything.
+        FunctionalMaven.run(maven, project, "verify", KEEP_GOING).succeeded()
         val captured = ranTests(project)
         check(passed(project, target) == true) { "$target did not pass when the map was recorded; ran $captured" }
         // Selection keeps or skips each method, but a report speaks for the whole class: a skipped
