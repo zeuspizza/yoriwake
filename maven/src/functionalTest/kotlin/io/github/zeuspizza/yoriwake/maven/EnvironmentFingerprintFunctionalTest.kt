@@ -30,8 +30,8 @@ class EnvironmentFingerprintFunctionalTest {
 
     /**
      * The demo, `lib`'s argLine passing [argLine] beside JaCoCo's agent and its Surefire configured
-     * with [surefire], the yoriwake plugin with [yoriwake], committed and captured with [arguments]
-     * and Maven's process [environment]; then a Greeter edit committed.
+     * with [surefire], the yoriwake plugin with [yoriwake], [setup] run on it, committed and captured
+     * with [arguments] and Maven's process [environment]; then a Greeter edit committed.
      */
     private fun captured(
         dir: File,
@@ -40,6 +40,7 @@ class EnvironmentFingerprintFunctionalTest {
         argLine: String = "-Dfeature=${'$'}{feature}",
         surefire: String = "",
         yoriwake: String = "",
+        setup: (File) -> Unit = {},
     ): File =
         FunctionalMaven.copy(FunctionalMaven.demo, dir).also { project ->
             File(project, "lib/pom.xml").edit {
@@ -51,6 +52,7 @@ class EnvironmentFingerprintFunctionalTest {
                 )
             }
             configureYoriwake(project, yoriwake)
+            setup(project)
             File(project, ".gitignore").writeText("target/\n")
             git(project, "init", "-q")
             git(project, "add", ".")
@@ -155,6 +157,96 @@ class EnvironmentFingerprintFunctionalTest {
         val line = refusalLine(output)
         assertContains(line, "sys:mode")
         assertFalse(Regex("""\b(fast|slow)\b""").containsMatchIn(line), line)
+    }
+
+    @Test
+    fun `another value in Surefire's systemProperties runs every test`(@TempDir dir: File) {
+        val project = captured(dir, argLine = "", surefire = "<systemProperties><mode>fast</mode></systemProperties>")
+        File(project, "lib/pom.xml").edit { it.replace("<mode>fast</mode>", "<mode>slow</mode>") }
+        git(project, "commit", "-q", "-am", "another mode")
+
+        val output = selecting(project)
+
+        assertRanEverything(project, output)
+        val line = refusalLine(output)
+        assertContains(line, "sys:mode")
+        assertFalse(Regex("""\b(fast|slow)\b""").containsMatchIn(line), line)
+    }
+
+    @Test
+    fun `another value in Surefire's systemProperties written as name and value runs every test`(@TempDir dir: File) {
+        val project = captured(
+            dir, argLine = "",
+            surefire = "<systemProperties><property><name>mode</name><value>fast</value></property></systemProperties>",
+        )
+        File(project, "lib/pom.xml").edit { it.replace("<value>fast</value>", "<value>slow</value>") }
+        git(project, "commit", "-q", "-am", "another mode")
+
+        val output = selecting(project)
+
+        assertRanEverything(project, output)
+        assertContains(refusalLine(output), "sys:mode")
+    }
+
+    /**
+     * `lib`'s Surefire naming, by a path relative to the module, a `local.properties` beside the
+     * checkout that holds [content] at the capture, or is a directory when null. Outside the
+     * checkout, so no change to the tree says it changed: only the file's own properties can.
+     */
+    private fun capturedWithFile(dir: File, content: String?, yoriwake: String = ""): File =
+        captured(dir, argLine = "", surefire = SYSTEM_PROPERTIES_FILE, yoriwake = yoriwake) {
+            val file = File(dir, "local.properties")
+            if (content == null) file.mkdirs() else file.writeText(content)
+        }
+
+    @Test
+    fun `another value in the systemPropertiesFile runs every test`(@TempDir dir: File) {
+        val project = capturedWithFile(dir, "mode=fast\n")
+        File(dir, "local.properties").writeText("mode=slow\n")
+
+        val output = selecting(project)
+
+        assertRanEverything(project, output)
+        val line = refusalLine(output)
+        assertContains(line, "sys:mode")
+        assertFalse(Regex("""\b(fast|slow)\b""").containsMatchIn(line), line)
+        val stored = File(libMap(project), "environment-fingerprints.tsv").readText()
+        assertFalse(Regex("""\t(fast|slow)\n""").containsMatchIn(stored), stored)
+    }
+
+    @Test
+    fun `an ignored property in the systemPropertiesFile narrows`(@TempDir dir: File) {
+        val project = capturedWithFile(dir, "mode=fast\n", yoriwake = "<systemPropertyIgnore><property>mode</property></systemPropertyIgnore>")
+        File(dir, "local.properties").writeText("mode=slow\n")
+
+        val output = selecting(project)
+
+        assertNarrowed(output)
+        assertEquals("mode", notes(project)["fingerprint-ignored"], output)
+    }
+
+    @Test
+    fun `a systemPropertiesFile that cannot be read runs every test`(@TempDir dir: File) {
+        val project = capturedWithFile(dir, null)
+
+        val output = selecting(project)
+
+        assertRanEverything(project, output)
+        assertContains(refusalLine(output), "sys:@systemPropertiesFile")
+    }
+
+    @Test
+    fun `an absent systemPropertiesFile narrows`(@TempDir dir: File) {
+        val project = captured(dir, argLine = "", surefire = SYSTEM_PROPERTIES_FILE)
+
+        assertNarrowed(selecting(project))
+    }
+
+    @Test
+    fun `the same systemPropertiesFile narrows as before`(@TempDir dir: File) {
+        val project = capturedWithFile(dir, "mode=fast\n")
+
+        assertNarrowed(selecting(project))
     }
 
     @Test
@@ -355,5 +447,9 @@ class EnvironmentFingerprintFunctionalTest {
 
         assertFalse(result.exitCode == 0, result.output)
         assertContains(result.output, "demo-maven: environmentInclude holds '', which names nothing")
+    }
+
+    private companion object {
+        const val SYSTEM_PROPERTIES_FILE = "<systemPropertiesFile>../../local.properties</systemPropertiesFile>"
     }
 }

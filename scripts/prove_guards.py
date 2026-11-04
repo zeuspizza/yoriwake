@@ -222,6 +222,7 @@ MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Reco
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
 MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
 MAVEN_CLASSPATH_VIEWS = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ClasspathViews.kt"
+MAVEN_FORK_SYSTEM_PROPERTIES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ForkSystemProperties.kt"
 MAVEN_BUILD_CACHE = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/BuildCache.kt"
 MAVEN_DEVELOCITY = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/DevelocityDetection.kt"
 MAVEN_AUDIT = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/AuditMojo.kt"
@@ -4717,8 +4718,8 @@ MUTATIONS = [
     # one is core's: no one-line Maven change hides a replaced SNAPSHOT, since a wrong repository
     # home reads the jar by its content anyway.
     ("a Maven selecting run compares no argLine property", MAVEN_RECORDING,
-     '                hostArguments + configuration.getChild("systemPropertyVariables")?.children.orEmpty()',
-     '                emptyList<String>() + configuration.getChild("systemPropertyVariables")?.children.orEmpty()',
+     '                hostArguments + forkSystemProperties(project, execution, configuration)',
+     '                emptyList<String>() + forkSystemProperties(project, execution, configuration)',
      maven_suite, "another value of a property the argLine passes runs every test"),
     ("a Maven selecting run compares none of Maven's environment", MAVEN_RECORDING,
      '            val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()',
@@ -4726,9 +4727,26 @@ MUTATIONS = [
      maven_suite, "another time zone in Maven's environment runs every test"),
     # Surefire hands the test JVM every user property of the invocation, after the POM's.
     ("a Maven selecting run compares no user property", MAVEN_RECORDING,
-     '.map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" } + userProperties,',
-     '.map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" },',
+     '.map { "-D${it.name}=${valueOf(project, it)}" } + userProperties,',
+     '.map { "-D${it.name}=${valueOf(project, it)}" },',
      maven_suite, "another value of a user property runs every test"),
+    # Surefire also hands the fork its deprecated <systemProperties> and the file systemPropertiesFile names.
+    ("a Maven fingerprint reads no systemProperties", MAVEN_FORK_SYSTEM_PROPERTIES,
+     "        if (name != null) properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES, name, value.orEmpty())",
+     "        if (false) properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES, name!!, value.orEmpty())",
+     maven_suite, "another value in Surefire's systemProperties runs every test"),
+    ("a Maven fingerprint reads no systemPropertiesFile", MAVEN_FORK_SYSTEM_PROPERTIES,
+     "    systemPropertiesFile(project, session, configuration, failsafe)?.takeIf(File::exists)?.let { file ->",
+     "    systemPropertiesFile(project, session, configuration, failsafe)?.takeIf { false }?.let { file ->",
+     maven_suite, "another value in the systemPropertiesFile runs every test"),
+    ("an unreadable Maven systemPropertiesFile reads as nothing", MAVEN_FORK_SYSTEM_PROPERTIES,
+     '            properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, "@systemPropertiesFile", UUID.randomUUID().toString())',
+     '            UUID.randomUUID()',
+     maven_suite, "a systemPropertiesFile that cannot be read runs every test"),
+    ("a Maven complement stamp reads no systemPropertiesFile", MAVEN_RECORDING,
+     "            forkSystemProperties(project, execution, configuration).filter { it.source != ForkSystemProperty.SYSTEM_PROPERTY_VARIABLES }",
+     "            forkSystemProperties(project, execution, configuration).filter { it.source == ForkSystemProperty.SYSTEM_PROPERTIES }",
+     maven_suite, "a complement run with another value in the systemPropertiesFile runs everything"),
     # A map recorded before user properties were compared stored none, and would match any.
     ("a Maven fingerprint does not say it compares user properties", MAVEN_RECORDING,
      '                plain = mapOf(USER_PROPERTIES_COMPONENT to "compared"),',

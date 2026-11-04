@@ -241,7 +241,7 @@ internal class Recording(
         val kind = selection.apply(
             name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath, configuration),
             environment, undated, isolated,
-            stamp = { stampOf(project, key, configuration, classpath, hostArguments, text) },
+            stamp = { stampOf(project, execution, key, configuration, classpath, hostArguments, text) },
             stopsAfterFailure = parameter(
                 project, configuration, "skipAfterFailureCount",
                 if (execution.artifactId == FAILSAFE) "failsafe.skipAfterFailureCount" else "surefire.skipAfterFailureCount",
@@ -373,6 +373,7 @@ internal class Recording(
     /** This execution's selection-record stamp; see [MavenStamp]. */
     private fun stampOf(
         project: MavenProject,
+        execution: MojoExecution,
         key: String,
         configuration: Xpp3Dom,
         classpath: List<File>,
@@ -394,7 +395,10 @@ internal class Recording(
                 .map { "$group $it" }
         } + listOf("groups", "excludedGroups", "test", "classpathDependencyScopeExclude").mapNotNull { name ->
             parameter(project, configuration, name, name)?.let { "$name $it" }
-        },
+        } +
+            // Beside the map, which keeps one value per name: the other sources Surefire reads its system properties from.
+            forkSystemProperties(project, execution, configuration).filter { it.source != ForkSystemProperty.SYSTEM_PROPERTY_VARIABLES }
+                .map { "${it.source} ${it.name}=${valueOf(project, it)}" },
         text,
     )
 
@@ -497,8 +501,8 @@ internal class Recording(
                 if (otherJdk) null else System.getProperty("java.vendor"),
                 jvm, System.getProperty("os.name"), System.getProperty("os.arch"),
                 // As Gradle's JVM arguments carry its system properties.
-                hostArguments + configuration.getChild("systemPropertyVariables")?.children.orEmpty()
-                    .map { "-D${it.name}=${resolved(project, it.value).orEmpty()}" } + userProperties,
+                hostArguments + forkSystemProperties(project, execution, configuration)
+                    .map { "-D${it.name}=${valueOf(project, it)}" } + userProperties,
                 environment,
                 // A map recorded before user properties were compared stored none of them, and would
                 // otherwise match a run under a property it never saw.
@@ -539,6 +543,14 @@ internal class Recording(
     /** The argLine the fork will get, its `${x}` and `@{x}` resolved as Maven and Surefire resolve them. */
     private fun resolvedArgLine(project: MavenProject, configuration: Xpp3Dom): String =
         resolved(project, configuration.getChild("argLine")?.value ?: "\${argLine}").orEmpty()
+
+    /** What Surefire hands the fork from its configuration as system properties; see [forkSystemProperties]. */
+    private fun forkSystemProperties(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom) =
+        forkSystemProperties(project, session, configuration, execution.artifactId == FAILSAFE)
+
+    /** [property]'s value as the fork gets it: the POM's resolved, a file's as written. */
+    private fun valueOf(project: MavenProject, property: ForkSystemProperty): String =
+        if (property.fromPom) resolved(project, property.value).orEmpty() else property.value
 
     private fun resolved(project: MavenProject, value: String?): String? =
         value?.let { Regex("""[$@]\{([^}]+)}""").replace(it) { m -> Declines.property(project, session, m.groupValues[1]).orEmpty() } }
