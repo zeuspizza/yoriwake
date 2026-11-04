@@ -2030,7 +2030,12 @@ RELEASE_ONLY_IF = "github.event_name == 'push' && steps.decision.outputs.decisio
 def _named_step(job, name):
     """The text of the step with this name in a job's text, up to the next step; empty if none."""
     match = re.search(rf"^      - name: {re.escape(name)}\n(?:(?!      - ).*\n)*", job, re.MULTILINE)
-    return re.sub(r"(?:\n *#.*|\n\s*)+$", "\n", match.group(0)) if match else ""
+    if not match:
+        return ""
+    lines = match.group(0).split("\n")
+    while lines and (not lines[-1].strip() or lines[-1].lstrip(" ").startswith("#")):
+        lines.pop()
+    return "\n".join(lines) + "\n"
 
 
 def _uploaded(job, artifact):
