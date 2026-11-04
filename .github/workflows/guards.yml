@@ -8,9 +8,10 @@ name: guards
 # Each guard job runs in 8 shards of the selected guards, balanced by the costs CI measured
 # (scripts/guard_costs.json) with a functional or Maven class's guards together (`--shard I/N`),
 # and a check job under the job's required name: every shard succeeded, and every guard the check
-# selects itself fired in exactly one shard (.github/guard_shards.py). The every-guard check also
-# reports each shard's projected and measured time, and uploads the cost table its run measured;
-# the release check commits it.
+# selects itself fired in exactly one shard (.github/guard_shards.py). Both checks also report
+# each shard's projected and measured job and the margin to its limit (scripts/guard_costs.py
+# report); the every-guard check uploads the cost table its run measured, and the release check
+# commits it.
 on:
   pull_request:
     branches: [main]
@@ -69,8 +70,9 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true' }}
     runs-on: ubuntu-24.04
-    # A full shard's limit plus the fast step that runs first (7 to 12 minutes): `--changed` selects
-    # every guard when a change edits all of them.
+    # `--changed` selects every guard when a change edits all of them. The cost table projects that
+    # job (the fast step, then every guard) at 133 min for the worst shard; the largest shortfall of
+    # a projection on a measured pull-request run was 19 %, which puts it at 159.
     timeout-minutes: 165
     strategy:
       fail-fast: false
@@ -125,10 +127,14 @@ jobs:
         run: |
           echo "a shard of the pull request's guards did not succeed: ${{ needs.fast-shard.result }}"
           exit 1
+      # Always, so a failed or timed-out shard's timings are still reported.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: always()
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - id: shards
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: always()
         with:
           pattern: guards-pr-*
           path: shards
@@ -143,14 +149,19 @@ jobs:
           python3 .github/guard_shards.py check fast.json shards --count 8 --file fast.json || status=1
           python3 .github/guard_shards.py check changed.json shards --count 8 --file changed.json || status=1
           exit $status
+      # Reporting only: a failure here must not decide the required check.
+      - name: the shards' projected and measured job, and its margin to the limit
+        if: always() && steps.shards.outcome == 'success'
+        continue-on-error: true
+        run: python3 scripts/guard_costs.py report shards --file fast.json --file changed.json
 
   full-shard:
     name: guards, every one (shard ${{ matrix.shard }}/8)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false') }}
     runs-on: ubuntu-24.04
-    # With the Maven costs measured, shards project about two hours, and a measured run went past
-    # its projection when those costs were still low; the limit matches the fast shard's.
+    # The cost table projects the worst shard at 124 min; the largest shortfall of a projection on a
+    # measured every-guard run was 26 %, which puts it at 157.
     timeout-minutes: 165
     strategy:
       fail-fast: false
@@ -209,7 +220,7 @@ jobs:
           python3 scripts/prove_guards.py --mode full --list-selection full.json
           python3 .github/guard_shards.py check full.json shards --count 8 --file full.json
       # Reporting only: a failure here or in the upload must not decide the required check.
-      - name: the shards' projected and measured time, and the costs they measured
+      - name: the shards' projected and measured job, and the costs they measured
         if: always() && steps.shards.outcome == 'success'
         continue-on-error: true
         env:

@@ -735,6 +735,86 @@ def case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other():
     return failures
 
 
+@contextlib.contextmanager
+def _cost_table(table):
+    """`table` as the cost table while the block runs, the checked-in one after."""
+    saved = dict(pg._TABLE), dict(pg._COSTS)
+    pg._TABLE.clear(), pg._COSTS.clear()
+    pg._TABLE.update(table)
+    try:
+        yield
+    finally:
+        pg._TABLE.clear(), pg._COSTS.clear()
+        pg._TABLE.update(saved[0]), pg._COSTS.update(saved[1])
+
+
+def _of(suite, count, test_class=None):
+    """The first `count` guards of `suite`, of one class when it is named."""
+    found = [m for m in pg.MUTATIONS if m[4] is suite
+             and (test_class is None or pg._class_of(m[4], m[5]) == test_class)]
+    assert len(found) >= count, (suite.__name__, test_class, len(found))
+    return found[:count]
+
+
+def case_a_step_is_projected_as_the_phases_it_runs():
+    """The parallel phase is the Gradle lock's queue unless the unlocked work outlasts it spread
+    over the workers; the configuration guards and the break suite run alone; only a cold step
+    compiles."""
+    failures = 0
+    table = {"classes": {"maven/SelectionFunctionalTest": {"baseline": 100, "guard": 50}},
+             "suites": {"full/unit": {"baseline": 40, "guard": 30}, "full/configuration guards":
+                        {"baseline": 20, "guard": 10}, "full/break": {"baseline": 60, "guard": 40},
+                        "fast/unit": {"baseline": 90, "guard": 70}},
+             "warm_up": {"fast": 180}}
+    with _cost_table(table):
+        maven = _of(pg.maven_suite, 3, "SelectionFunctionalTest")
+        step = pg.step_projection(maven, "full", first=False)
+        if step["parallel"] != pg._class_weight("maven", "SelectionFunctionalTest", 3) or step["total"] != step["parallel"]:
+            failures += fail(f"locked Maven guards alone: {step}")
+        unit = _of(pg.unit_suite, 20)
+        step = pg.step_projection(maven[:1] + unit, "full", first=False)
+        unlocked = pg.JOBS * 40 + 20 * 30
+        if step["parallel"] != (150 + unlocked) / pg.JOBS:
+            failures += fail(f"unlocked work that outlasts the lock's queue: {step['parallel']} for {unlocked}s unlocked")
+        if pg.step_projection(unit, "fast", first=False)["parallel"] != (pg.JOBS * 90 + 20 * 70) / pg.JOBS:
+            failures += fail("a fast step's suite is not weighed by its fast-mode figures")
+        alone = _of(pg.guard_suite, 2) + _of(pg.break_suite, 1)
+        step = pg.step_projection(alone, "full", first=False)
+        if step["serial"] != 20 + 2 * 10 + 60 + 40 or step["parallel"] != 0:
+            failures += fail(f"configuration and break guards are not in the serial phase: {step}")
+        if pg.step_projection(unit, "fast")["warm_up"] != 180 or pg.step_projection(unit, "fast", first=False)["warm_up"]:
+            failures += fail("only a step that starts cold pays the warm-up")
+        if pg.step_projection(unit, "full")["warm_up"] != 180:
+            failures += fail("a mode without a measured warm-up does not take the other mode's")
+    with _cost_table({"classes": {}}):
+        registry = {n: c for n, _fn, c in pg.SUITES}
+        if pg.suite_cost("agent", "full") != (registry["agent"], registry["agent"]) or pg.warm_up_cost("full") != 0:
+            failures += fail("a table without suites or warm-up does not fall back to the registry")
+    with _cost_table({"classes": {}, "suites": {"full/agent": {"baseline": 3, "guard": 4}}}):
+        if pg.suite_cost("agent", "fast") != (3, 4):
+            failures += fail("a suite measured in one mode is not used for the other")
+    return failures
+
+
+def case_every_shards_job_is_its_steps_plus_setup_and_the_limit_is_the_workflows():
+    failures = 0
+    split, _loads = pg.partition(pg.MUTATIONS, 8)
+    lines = pg.shard_projections(pg.MUTATIONS, 8, job="full-shard")
+    limit = pg.job_limit("full-shard")
+    if not limit or not pg.job_limit("fast-shard") or pg.job_limit("no-such-job") is not None:
+        failures += fail(f"the shard jobs' limits: {limit}, {pg.job_limit('fast-shard')}")
+    for shard, line in zip(split, lines):
+        step = pg.step_projection(shard, "full")
+        if abs(step["total"] - sum(step[p] for p in ("warm_up", "parallel", "functional", "serial"))) > 1e-6:
+            failures += fail(f"a step is not the sum of its phases: {step}")
+        minutes = pg.job_projection([step]) / 60
+        if f"; job ~{minutes:.0f} min, {limit - minutes:.0f} min under full-shard's {limit}" not in line:
+            failures += fail(f"the job and its margin: {line}")
+    if any("; job ~" in line for line in pg.shard_projections(pg.MUTATIONS, 8, first=False)):
+        failures += fail("a step that is not its job's only one was given a job's margin")
+    return failures
+
+
 def case_a_worker_pays_a_class_baseline_once_and_times_each_run():
     """`derive` reads a guard's seconds and its baseline's apart: one baseline per class per tree."""
     failures = 0
@@ -1098,6 +1178,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_maven_class_pays_its_baseline_in_each_worker_that_runs_it,
          case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median,
          case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other,
+         case_a_step_is_projected_as_the_phases_it_runs,
+         case_every_shards_job_is_its_steps_plus_setup_and_the_limit_is_the_workflows,
          case_a_worker_pays_a_class_baseline_once_and_times_each_run,
          case_a_wait_for_the_lock_is_not_counted_as_a_guards_seconds,
          case_a_shard_that_is_not_one_of_n_refuses,
