@@ -144,14 +144,17 @@ class EnvironmentFingerprintFunctionalTest {
 
     @Test
     fun `another value of a property the argLine passes runs every test`(@TempDir dir: File) {
-        val project = captured(dir)
+        // A literal in the argLine, so no user property carries it: only the argLine path can see it change.
+        val project = captured(dir, argLine = "-Dmode=fast")
+        File(project, "lib/pom.xml").edit { it.replace("-Dmode=fast", "-Dmode=slow") }
+        git(project, "commit", "-q", "-am", "another mode")
 
-        val output = selecting(project, feature = "off")
+        val output = selecting(project)
 
         assertRanEverything(project, output)
         val line = refusalLine(output)
-        assertContains(line, "sys:feature")
-        assertFalse(Regex("""\b(on|off)\b""").containsMatchIn(line), line)
+        assertContains(line, "sys:mode")
+        assertFalse(Regex("""\b(fast|slow)\b""").containsMatchIn(line), line)
     }
 
     @Test
