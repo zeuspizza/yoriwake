@@ -56,7 +56,7 @@ jobs:
         with:
           cache-read-only: true
           add-job-summary: on-failure
-      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - uses: github/codeql-action/init@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -71,6 +71,6 @@ jobs:
           --no-daemon --no-build-cache --no-configuration-cache --rerun-tasks
           -Pkotlin.compiler.execution.strategy=in-process --console=plain
           -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g"
-      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         with:
           category: /language:${{ matrix.language }}
