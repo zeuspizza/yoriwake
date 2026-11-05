@@ -133,8 +133,9 @@ selected guards, balanced by the costs CI measured with a functional or Maven cl
 together (`--shard I/8`, with the same `--mode` and `--changed` as the job, reproduces one), and a
 check job under the job's name fails unless every guard the run selects fired in exactly one shard.
 The costs are `scripts/guard_costs.json`. Every run's `--results` records each guard's seconds, and
-the every-guard check prints each shard's projected and measured time and uploads the table its
-run measured as the `guard-costs` artifact; the release check commits it
+both checks print each shard's projected and measured job and its margin to the job's limit, and
+the every-guard check uploads the table its run measured as the `guard-costs` artifact; the release
+check commits it
 (`scripts/guard_costs.py derive` writes it from the shards' results). A separate check fails a
 pull request that removes a guard, or changes its target, fragment, suite or expected test, or
 takes a suite out of fast mode, until a maintainer approves it.

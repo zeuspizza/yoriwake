@@ -573,6 +573,34 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a complement run with another value in the systemPropertiesFile runs everything`(@TempDir dir: File) {
+        // Beside the checkout, so no change to the tree says it changed.
+        val project = committed(dir)
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId><build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId>" +
+                    "<configuration><systemPropertiesFile>../../local.properties</systemPropertiesFile></configuration>" +
+                    "</plugin></plugins></build>",
+            )
+        }
+        git(project, "commit", "-q", "-am", "a properties file")
+        File(dir, "local.properties").writeText("mode=fast\n")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        editGreeter(project)
+        val selected = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+        assertContains(selected, "in dev.demo.lib.GreeterTest")
+        File(dir, "local.properties").writeText("mode=slow\n")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement").succeeded().output
+
+        assertContains(output, "differs from this run in")
+        assertContains(output, "configuration")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
     fun `with a trusted-map list a complement reading this build's own record runs everything`(@TempDir dir: File) {
         val project = selectedOnce(dir)
         File(project, "trusted.txt").writeText("")

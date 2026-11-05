@@ -358,8 +358,10 @@ What it compares:
 - `TZ`, `LANG` and `LC_ALL`, and the environment variables `environmentInclude` lists, as
   `env:<name>`. A listed name is compared whether or not it is set.
 
-On Maven the system properties are the `argLine`'s `-D` arguments, `systemPropertyVariables`, and
-every user property of the invocation (`-Dfeature=off`, `.mvn/maven.config`), which Surefire and
+On Maven the system properties are the `argLine`'s `-D` arguments, `<systemProperties>`, the
+properties in the file `systemPropertiesFile` names (a file that exists and cannot be read makes the
+environment differ; an absent one hands the test JVM nothing), `systemPropertyVariables`, and every
+user property of the invocation (`-Dfeature=off`, `.mvn/maven.config`), which Surefire and
 Failsafe hand the test JVM unless `promoteUserPropertiesToSystemProperties` is `false` (3.4.0 and
 newer). A selecting run with a `-D` the recording run did not have, or with another value, runs
 everything, naming the property: `-Dtest`, `-DskipITs` or an IDE's injected properties too. A
