@@ -603,8 +603,8 @@ Tested with Kover 0.9.8 on Gradle 8.14 and 9.8.0.
 
 ### Supported matrix
 
-A release supports what its functional suite ran, green, on the commit the release was tagged
-from. Each cell is one job of `.github/workflows/matrix.yml`: an operating system, a Gradle version
+A release supports what its functional suite ran, green, on the release's gate commit, and again
+on the candidate when its build files or dependency versions changed after it. Each cell is one job of `.github/workflows/matrix.yml`: an operating system, a Gradle version
 and the JDK Gradle's daemon runs on, written `<os>/<gradle>/<jdk>` below. Each row names the cells
 that ran it and the tests that prove it, and a check on every pull request keeps the table and the
 cells in step.

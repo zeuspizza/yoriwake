@@ -38,7 +38,7 @@ published version cannot be taken back, so no `v*` tag exists until every gate b
 - **Minor.** A commit of `main` with every change for the release merged. Before it, a pull request
   moves the functional suite's 9.x version to Gradle's newest release, with the cells of
   `.github/workflows/matrix.yml` and the reference's [supported matrix](docs/reference.md#supported-matrix).
-  Step 7b's dispatched `matrix.yml` run proves the commit that is tagged; no workflow runs on a
+  Step 7b's dispatched `matrix.yml` run proves the gate commit; no workflow runs on a
   schedule.
 - **Patch.** A commit on `release/<major>.<minor>`, which is pushed with each patch's tag. Step 7b
   is its matrix run, as for a minor. If the
@@ -50,31 +50,62 @@ published version cannot be taken back, so no `v*` tag exists until every gate b
   carries only cherry-picked fixes and the changelog commit of step 7:
   `git log v<previous>..<candidate>` lists nothing else.
 
-Write the candidate's full SHA down before the first gate. Every gate runs on that SHA; a fix found
-by a gate makes a new candidate, and the gates it touches run again on it.
+Every gate runs once, on the **gate commit**: a commit of the release line (`main` for a minor,
+`release/<major>.<minor>` for a patch) whose full SHA is written down before the first gate. A fix
+a gate finds is merged and makes the candidate. The candidate re-runs only what its diff from the
+gate commit touches, so the week of fixes between the two is not paid for twice:
+
+```bash
+git diff --no-renames --name-only <gate commit> <candidate>   # any change
+git diff --no-renames --name-only <gate commit> <candidate> -- \
+  plugin/src/main core/src/main agent/src/main maven/src/main \
+  '*build.gradle.kts' settings.gradle.kts gradle.properties gradle/ '*libs.versions.toml' \
+  LICENSE NOTICE                                              # product code
+git diff --no-renames --name-only <gate commit> <candidate> -- \
+  '*build.gradle.kts' settings.gradle.kts gradle.properties gradle/ '*libs.versions.toml' \
+  core/src/main/resources                                     # build files, versions, ceilings
+```
+
+- **Product code changed:** step 1a, step 2 (every guard) and step 3b over the families the diff
+  touched, each at the candidate; a sweep with `tier=auto` and `base=<gate commit>` in step 4.
+  The source paths are those `.github/ci.py` treats as product code, plus the build files: a
+  dependency, shading or bundling change alters what ships. The wrapper's Gradle compiles and
+  packages the jars, and `LICENSE` and `NOTICE` are copied into them.
+- **Build files, dependency versions or JDK ceilings changed** (the third command: Gradle files,
+  the wrapper, a version catalog, `core/src/main/resources`, where ASM's and JaCoCo's ceilings
+  live): also step 7b's `matrix.yml` and step 7c's `jdk-ea.yml` at the candidate, since a Gradle,
+  JDK or ASM/JaCoCo change is what they exist to prove.
+- **Any other change** (tests, documentation, CI, scripts): step 1a alone, and the break suites
+  when the diff touches one.
+- **No change, or `CHANGELOG.md` alone:** nothing; the gate commit's runs stand.
+- A change merged after the gate commit that no gate reviewed gets steps 3 and 5 over
+  `<gate commit>..<candidate>`.
+- A re-run that fails stops the release; its fix makes a new candidate, decided the same way
+  against the last candidate whose runs were green.
 
 ## Checklist
 
-In order, at the candidate. Each step names who runs it and what it costs in GitHub Actions minutes;
+In order, at the gate commit, and again at the candidate where the diff above says so. Each step names who runs it and what it costs
+in GitHub Actions minutes;
 a step that has neither is removed. CI on this repository is public, so its standard runners cost
 no minutes against a budget.
 
 | # | Step | Who | Actions minutes |
 |---|---|---|---|
-| 1a | `.github/workflows/release.yml`, dispatched from the candidate's branch with the candidate's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on the candidate, as version `0.0.0-rehearsal`. The run's link is recorded with the release. First, because it is the cheapest gate to fail. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest` |
-| 1 | `./gradlew build :maven:functionalTest` and `./gradlew build :maven:functionalTest -PreleaseVersion=<version>` pass. The build runs the functional suite on Gradle 8.14 and 9; `:maven:functionalTest` runs the Maven plugin's. | maintainer | none, run locally |
-| 1b | `python3 scripts/check_reproducible.py <candidate> <version>` passes: two fresh clones build the same Gradle plugin jar, its nested agent jar, and the Maven plugin's jar, sources jar and javadoc jar. | maintainer, locally | none |
-| 2 | Every guard (see [CONTRIBUTING.md](CONTRIBUTING.md#the-guards)) fires at the candidate: `.github/workflows/guards.yml` dispatched on it is green. | maintainer dispatches | none on this public repository; its wall time is the run's own |
-| 3 | One code review of the whole release diff, `v<previous>..<candidate>`, so interactions between changes are seen. It also asks whether upgrading needs anything beyond the CHANGELOG's map lines (a map format change, a renamed or removed property or flag, a changed CI recipe or cache path); if so, the release notes and the reference's "Upgrading and your map" get a short "what you do" paragraph. Each confirmed finding is fixed in its own pull request, which repeats steps 1a, 1 and 2 for what it touches. | maintainer | none |
-| 3b | An adversarial campaign at the candidate, following the private campaign playbook: agents try to make a selecting run skip a test that should run, in every area of the code the release changed and one other in rotation, reading each rule's code for its boundary as well as writing attempts from known shapes. Its record passes the campaign check. Each attempt that held stays in a break suite (`./gradlew :plugin:breakAttempts`, which then passes on Gradle 8.14 and 9, or the Maven plugin's `./gradlew :maven:breakAttempts`, which then passes); each skipped test it finds is fixed in its own pull request, test first, with a fix that forces or widens and a mutation check that removes the fix, which repeats steps 1a to 3 for what it touches; or the maintainer accepts it as a limit documented in [docs/reference.md](docs/reference.md). | maintainer; agents run the attempts | none, run locally; one Gradle or Maven build at a time |
-| 4 | A reduced benchmark on real projects at the candidate: whether each test that should have run did run is the same as at the previous release, or each difference is explained by a merged change. | maintainer | none, run locally; about 20 minutes |
+| 1a | `.github/workflows/release.yml`, dispatched from the release line with the gate commit's full SHA, is green in `build and test` and `attest`, with `publish to the Gradle Plugin Portal`, `publish to Maven Central` and `github release` skipped: every step before publishing ran on that commit, as version `0.0.0-rehearsal`. The run's link is recorded with the release. A candidate whose `release.yml` has no dispatch (a patch on a line released before 0.4) records it as not available. | maintainer dispatches | none on this public repository; its wall time is one `build and test` job plus `attest` |
+| 1 | No local build: `verify.yml` on the push to `main` is green (its `unit and agent suites`, `functional on Gradle 8.14` and `functional on Gradle 9` jobs and `coverage gate` run everything `./gradlew build` runs, and `unit and agent suites` also runs `:maven:functionalTest`), and step 1a's `build and test` ran `./gradlew build :maven:functionalTest -PreleaseVersion=0.0.0-rehearsal`. The release's own version is built by the tag run's `build and test`, which re-runs the checks that read the shipped files before anything publishes. A push that changes only documentation skips `verify`; the rehearsal builds it in full. | maintainer reads | none |
+| 1b | `python3 scripts/check_reproducible.py <final candidate> <version>` passes: two fresh clones build the same Gradle plugin jar, its nested agent jar, and the Maven plugin's jar, sources jar and javadoc jar. No workflow runs it. | maintainer, locally | none |
+| 2 | Every guard (see [CONTRIBUTING.md](CONTRIBUTING.md#the-guards)) fires: `.github/workflows/guards.yml` dispatched on the gate commit is green; dispatched again on the candidate when product code changed. | maintainer dispatches | none on this public repository; its wall time is the run's own |
+| 3 | One code review of the whole release diff, `v<previous>..<gate commit>`, so interactions between changes are seen. It also asks whether upgrading needs anything beyond the CHANGELOG's map lines (a map format change, a renamed or removed property or flag, a changed CI recipe or cache path); if so, the release notes and the reference's "Upgrading and your map" get a short "what you do" paragraph. Each confirmed finding is fixed in its own pull request, which runs `verify` and the guards it touches (every guard when it changes product code) and is reviewed before it merges. | maintainer | none |
+| 3b | An adversarial campaign at the gate commit, following the private campaign playbook: agents try to make a selecting run skip a test that should run, in every area of the code the release changed and one other in rotation, reading each rule's code for its boundary as well as writing attempts from known shapes. Its record passes the campaign check. Each attempt that held stays in a break suite (`./gradlew :plugin:breakAttempts`, which then passes on Gradle 8.14 and 9, or the Maven plugin's `./gradlew :maven:breakAttempts`, which then passes); each skipped test it finds is fixed in its own pull request, test first, with a fix that forces or widens and a mutation check that removes the fix; or the maintainer accepts it as a limit documented in [docs/reference.md](docs/reference.md). A candidate with product code changed runs it again over the families that diff touched. The break suites run locally, since no workflow runs them. | maintainer; agents run the attempts | none, run locally; one Gradle or Maven build at a time |
+| 4 | A benchmark on real projects: `.github/workflows/sweep.yml` dispatched on the gate commit; whether each test that should have run did run is the same as at the previous release, or each difference is explained by a merged change. A candidate with product code changed dispatches it again with `tier=auto` and `base=<gate commit>`. | maintainer dispatches | none on this public repository; its wall time is the run's own |
 | 5 | Every new flag, DSL property, token and file is documented in [docs/reference.md](docs/reference.md) or [docs/contract.md](docs/contract.md). | maintainer | none |
 | 5b | The README's Gradle and Maven snippets and the reference's CI examples (`YORIWAKE_VERSION`, the action's tag) name `<version>`. A minor sets them in a pull request merged before the candidate is cut, so step 7's diff stays `CHANGELOG.md` alone; a patch leaves the release branch's as they are, and its pull request on `main` after the release sets them. | maintainer | none |
 | 6 | Each native library in [the reviewed list](docs/reference.md#native-libraries) is compared with its latest major release; a re-review issue is opened for each that moved. | maintainer | none |
-| 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so steps 1a-6 stand; if anything else differs, the gates it touches run again on the final candidate. After a minor's entry merges, every open pull request that touches `CHANGELOG.md` is updated from `main` before it is merged: its lines under the old `## [Unreleased]` would otherwise squash under the new version, and only the updated diff lets its changelog check see that. | maintainer | none |
-| 7b | `.github/workflows/matrix.yml`, dispatched from the final candidate's branch (`main` or `release/<major>.<minor>`) with the final candidate's SHA, is green in every job, so every row of the [supported matrix](docs/reference.md#supported-matrix) ran on the commit that is tagged. The run's link is recorded with the release. A cell red only on a newly bumped Gradle: revert the bump, which makes a new candidate, and open an issue for that Gradle version; a row never leaves the table because a bump failed. | maintainer dispatches | none on this public repository; about 1.5 hours of wall time, an estimate until a run measures it |
-| 7c | `.github/workflows/jdk-ea.yml`, dispatched from the same branch, is green: the newest early-access JDK refused or narrowed as the candidate's ceilings predict, and skipped no test that must run. A warning that it ran tests beyond the prediction leaves the run green; it is recorded with the release and gets an issue. | maintainer dispatches | none on this public repository; under 30 minutes |
-| 7d | Optional: `.github/workflows/release.yml`, dispatched as in step 1a on the final candidate, beside 7b and 7c, is green in `build and test` and `attest`. With it, the tag run publishes minutes after the tag; without it, the tag run builds and tests in full first. | maintainer dispatches | none on this public repository; its wall time is step 1a's |
+| 7 | `CHANGELOG.md`: `## [Unreleased]` becomes `## [<version>]` with the date, and the entry states one effect on an existing map, the strongest of any change in it: discarded over repaired over left alone. This change makes the final candidate, the commit that is tagged and recorded: for a minor it reaches `main` through a pull request, for a patch it is committed on the release branch. Before tagging, `git diff --stat <candidate> <final candidate>` lists only `CHANGELOG.md`, so every earlier run stands; if anything else differs, what it touches runs again on the final candidate, as the candidate rule above says. After a minor's entry merges, every open pull request that touches `CHANGELOG.md` is updated from `main` before it is merged: its lines under the old `## [Unreleased]` would otherwise squash under the new version, and only the updated diff lets its changelog check see that. | maintainer | none |
+| 7b | `.github/workflows/matrix.yml`, dispatched from the release line with the gate commit's SHA, is green in every job, so every row of the [supported matrix](docs/reference.md#supported-matrix) ran on the release's code. Dispatched again on the candidate when its build files or dependency versions changed. The run's link is recorded with the release. A cell red only on a newly bumped Gradle: revert the bump, which makes a new candidate, and open an issue for that Gradle version; a row never leaves the table because a bump failed. | maintainer dispatches | none on this public repository; about 1.5 hours of wall time, an estimate until a run measures it |
+| 7c | `.github/workflows/jdk-ea.yml`, dispatched from the same line on the gate commit, and again on a candidate whose build files, dependency versions or JDK ceilings changed, is green: the newest early-access JDK refused or narrowed as the code's ceilings predict, and skipped no test that must run. A warning that it ran tests beyond the prediction leaves the run green; it is recorded with the release and gets an issue. | maintainer dispatches | none on this public repository; under 30 minutes |
+| 7d | Optional: `.github/workflows/release.yml`, dispatched as in step 1a on the final candidate, is green in `build and test` and `attest`. With it, the tag run publishes minutes after the tag; without it, the tag run builds and tests in full first. | maintainer dispatches | none on this public repository; its wall time is step 1a's |
 | 8 | If the Portal description or tags changed: `./gradlew :plugin:publishPlugins --validate-only -PreleaseVersion=<version>` with the Portal keys. | maintainer | none |
 
 A gate that fails, or a confirmed finding left unfixed, stops the release. A campaign finding is open
@@ -152,7 +183,7 @@ releases that read it exist:
 3. Dispatch `.github/workflows/jdk-ea.yml` and check it is green.
 4. One CHANGELOG line names the JDK and the map's effect.
 
-`jdk-ea.yml` is also dispatched on each release candidate, beside `matrix.yml` (step 7b).
+`jdk-ea.yml` is also dispatched in each release's gates, beside `matrix.yml` (step 7b).
 
 ## A silent skip
 
