@@ -16,6 +16,7 @@ a function that asserted would be collected by pytest and pass however many chec
 """
 
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -2829,6 +2830,7 @@ def _sweep_merge(root, plan, arm="full", split_bytes=None):
     bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
     os.makedirs(bin_dir, exist_ok=True)
     os.makedirs(bench, exist_ok=True)
+    shutil.copy(os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "sweep_parts.py"), bench)
     with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
         handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{root}/gh-args"\necho "$*" >> "{root}/gh-calls"\n')
     os.chmod(os.path.join(bin_dir, "gh"), 0o755)
@@ -2922,15 +2924,23 @@ def case_each_release_asset_of_a_sweep_stays_under_github_s_limit():
         calls = open(os.path.join(root, "gh-calls")).read().splitlines()
         if calls[-1] != "release upload sweep-7 sweep-7.tar.gz":
             problems += fail(f"the tarball, which marks a complete upload, is not uploaded last: {calls}")
-        if any(path.startswith("evidence") for path in listed):
+        if any(path.startswith("evidence/") for path in listed):
             problems += fail("the tarball still holds the evidence")
+        tree = os.path.join(root, "unpacked-tarball")
+        os.makedirs(tree)
+        subprocess.run(["tar", "-xzf", os.path.join(root, "sweep-7.tar.gz"), "-C", tree], check=True)
+        listing = [line.split("\t")[0] for line in
+                   open(os.path.join(tree, "evidence-parts.tsv")).read().splitlines()] \
+            if os.path.exists(os.path.join(tree, "evidence-parts.tsv")) else None
+        if listing != parts:
+            problems += fail(f"the tarball's manifest lists {listing}, not the parts {parts}")
         if sorted(evidence) != ["evidence/", "evidence/shard-okio-1-of-2-e.tar.gz",
                                 "evidence/shard-okio-2-of-2-e.tar.gz"]:
             problems += fail(f"the parts put together hold {evidence}")
     return problems
 
 
-def _replay(root, split):
+def _replay(root, split, damage=None):
     """sweep.yml's replay step over a published sweep 5 holding demo's rows and evidence, in one
     tarball or with its evidence split; what `replay_decisions.py` found in bench/."""
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
@@ -2938,12 +2948,20 @@ def _replay(root, split):
     bin_dir, assets = os.path.join(root, "bin"), os.path.join(root, "assets")
     for directory in (bin_dir, assets, os.path.join(root, "bench")):
         os.makedirs(directory)
+    shutil.copy(os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "sweep_parts.py"),
+                os.path.join(root, "bench"))
     _earlier_release(assets, 5, "demo", split)
     os.rename(os.path.join(assets, "asset-5.tar.gz"), os.path.join(assets, "sweep-5.tar.gz"))
     if split:
         for k, suffix in ((1, "aaa"), (2, "aab")):
             os.rename(os.path.join(assets, f"asset-{50 + k}.tar.gz"),
                       os.path.join(assets, f"sweep-5-evidence.tar.part-{suffix}"))
+        last = os.path.join(assets, "sweep-5-evidence.tar.part-aab")
+        if damage == "missing":
+            os.remove(last)
+        elif damage == "short":
+            with open(last, "r+b") as handle:
+                handle.truncate(100)
     shutil.rmtree(os.path.join(assets, "tree-5"))
     with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
         handle.write("#!/bin/sh\ncase $2 in\n  list) echo sweep-5 ;;\n"
@@ -2958,6 +2976,33 @@ def _replay(root, split):
                      "for d, _, fs in os.walk('bench') for f in fs))\n")
     env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", "")}
     return subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+
+
+def case_a_missing_or_short_evidence_part_fails_its_reader_before_it_extracts():
+    """A part that never uploaded, or broke off, would otherwise extract part of the evidence and
+    go unnoticed: the reader checks every part against the tarball's manifest first."""
+    problems = 0
+    for damage in ("missing", "short"):
+        with tempfile.TemporaryDirectory() as root:
+            done = _replay(root, True, damage)
+            if done.returncode == 0 or "sweep-5-evidence.tar.part-aab" not in done.stderr \
+                    or os.path.isdir(os.path.join(root, "published", "evidence")):
+                problems += fail(f"the replay of a sweep with a {damage} part: exit {done.returncode}, "
+                                 f"{done.stderr!r}")
+        with tempfile.TemporaryDirectory() as root:
+            _earlier_release(root, 52, "okio", split=True)
+            release = _draft("sweep-5", "2026-10-02T00:00:00Z", 52, split=True)
+            if damage == "missing":
+                release["assets"] = [a for a in release["assets"] if not a["name"].endswith("aab")]
+            else:
+                with open(os.path.join(root, "asset-522.tar.gz"), "r+b") as handle:
+                    handle.truncate(100)
+            done = _sweep_completion_merge(root, [release], {})
+            if done.returncode == 0 or "sweep-5-evidence.tar.part-aab" not in done.stderr \
+                    or os.path.exists(os.path.join(root, "gh-args")):
+                problems += fail(f"a completion of a sweep with a {damage} part: exit "
+                                 f"{done.returncode}, {done.stderr!r}")
+    return problems
 
 
 def case_the_replay_reads_a_sweep_s_evidence_from_its_tarball_or_its_parts():
@@ -3047,6 +3092,7 @@ def _sweep_completion_merge(root, releases, missing_after):
     bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
     os.makedirs(bin_dir)
     os.makedirs(bench)
+    shutil.copy(os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "sweep_parts.py"), bench)
     with open(os.path.join(root, "releases.json"), "w", encoding="utf-8") as handle:
         json.dump(releases, handle)
     with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
@@ -3084,9 +3130,10 @@ def _sweep_completion_merge(root, releases, missing_after):
     return subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
 
 
-def _earlier_release(root, asset, project, split=False):
+def _earlier_release(root, asset, project, split=False, tag="sweep-5"):
     """An earlier run's release holding one merged project and its evidence: in one tarball, or
-    with `split`, the evidence in two parts, assets `asset * 10 + 1` and `+ 2`."""
+    with `split`, the evidence in two parts, assets `asset * 10 + 1` and `+ 2`, which the
+    tarball's manifest lists."""
     tree = os.path.join(root, f"tree-{asset}")
     for directory in (f"art/{project}", "evidence", "merged"):
         os.makedirs(os.path.join(tree, directory))
@@ -3097,15 +3144,18 @@ def _earlier_release(root, asset, project, split=False):
         handle.write("evidence " * 1000)
     subprocess.run(["tar", "-czf", os.path.join(tree, "evidence", f"{project}.tar.gz"), "-C",
                     os.path.join(tree, "kept"), project], check=True)
-    subprocess.run(["tar", "-czf", os.path.join(root, f"asset-{asset}.tar.gz"), "-C", tree, "art",
-                    "merged"] + ([] if split else ["evidence"]), check=True)
     if split:
         evidence = subprocess.run(["tar", "-cf", "-", "-C", tree, "evidence"], check=True,
                                   capture_output=True).stdout
         half = len(evidence) // 2
-        for k, part in ((1, evidence[:half]), (2, evidence[half:])):
-            with open(os.path.join(root, f"asset-{asset * 10 + k}.tar.gz"), "wb") as handle:
-                handle.write(part)
+        with open(os.path.join(tree, "evidence-parts.tsv"), "w", encoding="utf-8") as manifest:
+            for k, suffix, part in ((1, "aaa", evidence[:half]), (2, "aab", evidence[half:])):
+                with open(os.path.join(root, f"asset-{asset * 10 + k}.tar.gz"), "wb") as handle:
+                    handle.write(part)
+                manifest.write(f"{tag}-evidence.tar.part-{suffix}\t{len(part)}\t"
+                               f"{hashlib.sha256(part).hexdigest()}\n")
+    subprocess.run(["tar", "-czf", os.path.join(root, f"asset-{asset}.tar.gz"), "-C", tree, "art",
+                    "merged"] + (["evidence-parts.tsv"] if split else ["evidence"]), check=True)
 
 
 def _draft(tag, created, asset, draft=True, split=False):
@@ -3141,7 +3191,7 @@ def case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft():
                     _draft("sweep-5", "2026-10-04T00:00:00Z", 53, draft=False, split=split)]
         with tempfile.TemporaryDirectory() as root:
             for asset, project in ((51, "stale"), (52, "okio"), (53, "published"), (6, "other")):
-                _earlier_release(root, asset, project, split)
+                _earlier_release(root, asset, project, split, "sweep-6" if asset == 6 else "sweep-5")
             done = _sweep_completion_merge(root, releases, {})
             if done.returncode:
                 problems += fail(f"a completion's merge failed: {done.stdout} {done.stderr}")
@@ -3670,6 +3720,7 @@ CASES = (
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
     case_each_release_asset_of_a_sweep_stays_under_github_s_limit,
     case_the_replay_reads_a_sweep_s_evidence_from_its_tarball_or_its_parts,
+    case_a_missing_or_short_evidence_part_fails_its_reader_before_it_extracts,
     case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
     case_every_measuring_step_samples_the_machine_until_it_ends,
     case_no_guest_build_writes_to_the_run_page,
