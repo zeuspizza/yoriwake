@@ -370,7 +370,8 @@ class SelectionFilterTest {
     }
 
     @Test
-    fun `a suite keeps only the member class that reported a test at run time`(@TempDir dir: File) {
+    fun `a suite runs whole when a member class reported a test at run time`(@TempDir dir: File) {
+        // The map cannot tell which listed test reported it: vintage files it under its own class.
         val suite = "[engine:junit-vintage]/[runner:com.acme.AllTests]"
         val records = arrayOf(
             vintage(suite, "[test:com.acme.Inner]/[test:m(com.acme.Inner)]", "com.acme.Other"),
@@ -383,8 +384,8 @@ class SelectionFilterTest {
             vintageLeaf(dir, "$suite/[test:com.acme.Inner]/[test:m(com.acme.Inner)]", *records),
         )
         assertEquals(
-            false,
-            vintageLeaf(File(dir, "plain"), "$suite/[test:com.acme.Plain]/[test:m(com.acme.Plain)]", *records).first,
+            true to "CLASS_RUNS_WHOLE",
+            vintageLeaf(File(dir, "plain"), "$suite/[test:com.acme.Plain]/[test:m(com.acme.Plain)]", *records),
         )
     }
 

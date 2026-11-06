@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.breaking
 
 import io.github.zeuspizza.yoriwake.gradle.FunctionalGradle
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -548,5 +549,91 @@ class EnginesAndContainersAttempts : BreakAttempt() {
         ) { changeCodec(it) }
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: a listed vintage test the change cannot reach runs whole when
+    // the map recorded a run-time test under its runner. Vintage files a run-time test under the
+    // listed suite description of the test's own class when the runner has one, not under the
+    // runner, so the map names that suite. A listed test outside it may be the one that reports the
+    // run-time test, and leaving it out stops the runner from reporting it.
+    @Test
+    fun `a test a vintage runner reports at run time under a suite of its class is selected through its runner`(@TempDir dir: File) {
+        // Gradle 9 files the listed test under the runner's class beside the one it reports at run
+        // time, and a target's result must hold one test case.
+        assumeTrue(FunctionalGradle.version == "8.14", "runs in the 8.14 suite only")
+        val runner = source(
+            "src/test/java/dev/sample/GroupingRunner.java",
+            """
+            package dev.sample;
+            import org.junit.runner.Description;
+            import org.junit.runner.Runner;
+            import org.junit.runner.manipulation.Filter;
+            import org.junit.runner.manipulation.Filterable;
+            import org.junit.runner.manipulation.NoTestsRemainException;
+            import org.junit.runner.notification.Failure;
+            import org.junit.runner.notification.RunNotifier;
+            /** Groups listed tests under one suite per class; a feature reports its iterations as it runs them. */
+            public class GroupingRunner extends Runner implements Filterable {
+                private final Class<?> type;
+                private final Description feature = Description.createTestDescription(Other.class, "feature");
+                private final Description listed = Description.createTestDescription(Other.class, "listed");
+                private boolean featureKept = true;
+                private boolean listedKept = true;
+                public GroupingRunner(Class<?> type) { this.type = type; }
+                @Override public Description getDescription() {
+                    Description root = Description.createSuiteDescription("grouped");
+                    if (featureKept) root.addChild(feature);
+                    Description group = Description.createSuiteDescription(type);
+                    if (listedKept) group.addChild(listed);
+                    root.addChild(group);
+                    return root;
+                }
+                @Override public void filter(Filter filter) throws NoTestsRemainException {
+                    featureKept &= filter.shouldRun(feature);
+                    listedKept &= filter.shouldRun(listed);
+                    if (!featureKept && !listedKept) throw new NoTestsRemainException();
+                }
+                @Override public void run(RunNotifier notifier) {
+                    if (featureKept) {
+                        notifier.fireTestStarted(feature);
+                        new Other().one();
+                        notifier.fireTestFinished(feature);
+                        Description iteration = Description.createTestDescription(type, "reverses");
+                        notifier.fireTestStarted(iteration);
+                        try {
+                            if (!"cba".equals(new Codec().encode("abc"))) throw new AssertionError("not reversed");
+                        } catch (Throwable failure) {
+                            notifier.fireTestFailure(new Failure(iteration, failure));
+                        }
+                        notifier.fireTestFinished(iteration);
+                    }
+                    if (listedKept) {
+                        notifier.fireTestStarted(listed);
+                        new Other().one();
+                        notifier.fireTestFinished(listed);
+                    }
+                }
+            }
+            """,
+        )
+        val target = source(
+            "src/test/java/dev/sample/A1GroupedTest.java",
+            "package dev.sample;\n@org.junit.runner.RunWith(GroupingRunner.class)\npublic class A1GroupedTest {}",
+        )
+        val build = minimalBuild.replace(
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n" +
+                "testImplementation(\"junit:junit:4.13.2\")\ntestRuntimeOnly(\"org.junit.vintage:junit-vintage-engine\")",
+        ).replace("tasks.test { useJUnitPlatform() }", "tasks.test { useJUnitPlatform(); forkEvery = 1 }")
+        val result = attempt(
+            dir, "dev.sample.A1GroupedTest", Aim.Row("CLASS_RUNS_WHOLE"),
+            listOf(codec, other, first, runner, target, codecTest),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        // The listed test runs after the run-time one, in its JVM, so its own row is
+        // SHARES_JVM_WITH_CHANGE; the feature that reports the run-time test is kept whole.
+        assertOutcome(Outcome.OFF_TARGET, result)
+        assertTrue("(CLASS_RUNS_WHOLE, [class-runs-whole])" in result.why, result.why)
     }
 }
