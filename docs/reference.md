@@ -14,12 +14,12 @@ guess.
   `.gradle/yoriwake/<task>-<hash>/`. It is plain text with no machine-specific field, one
   directory per test task, outside `build/` so `clean` leaves it alone.
 - **Change detection.** With `-Pyoriwake.select`, the plugin diffs the working tree against a base
-  commit (the merge base with your branch's upstream by default; `origin/main`, `origin/master`,
-  `main`, `master` as fallbacks) and widens that base back to the commit the map was captured at.
-  Uncommitted, untracked and gitignored files count too, by content, so an edited ignored fixture
-  selects the tests that read it. A changed git submodule counts as its path whatever its `ignore`
-  setting, or that of a submodule nested in it, untracked files in it included, its own build
-  output too. Build state does not: `.gradle/`, `.kotlin/`, the build
+  commit (the merge base with your branch's upstream by default, then with `origin/HEAD`;
+  `origin/main`, `origin/master`, `main`, `master` as fallbacks) and widens that base back to the
+  commit the map was captured at. Uncommitted, untracked and gitignored files count too, by content,
+  so an edited ignored fixture selects the tests that read it. A changed git submodule counts as its
+  path whatever its `ignore` setting, or that of a submodule nested in it, untracked files in it
+  included, its own build output too. Build state does not: `.gradle/`, `.kotlin/`, the build
   directories of this build's projects, and a `build/` directory beside any other Gradle build
   script (`buildSrc`, an included build, a project a TestKit test wrote). A change reaches a test
   that reads such a file through the tracked sources that produce it. A non-class file the build
@@ -89,10 +89,11 @@ Files in the map directory that are meant to be read:
   [the contract](contract.md#decision-rules).
 - `explain.json`: written by `yoriwakeExplain<Task>`. Carries `fullRunKind` and `refusalKind` as
   tokens, so a script can branch on the cause without matching English. `forcingPathOrigins` lists
-  the paths that force the run, each with `written-during-capture`, `generated-in-sources`,
-  `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists every path `pathIgnore`
-  left out, with its entry and what the map says about it (`read`, `not-read` or
-  `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its protection.
+  the paths that force the run, the first 40 in sorted order, each with `written-during-capture`,
+  `generated-in-sources`, `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists
+  every path `pathIgnore` left out, with its entry and what the map says about it (`read`,
+  `not-read` or `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its
+  protection.
   `parallelismUnconfirmed` says why the last run's test JVM recorded nothing, when it found its
   tests may run concurrently.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
@@ -1141,12 +1142,13 @@ To bound how old a restored map may be, put a period in the key rather than prun
 example the ISO week: one full run at each rollover.
 
 To bound how long a map can go without a full run on any branch, set `fullRunEveryBuilds` or
-`fullRunEveryDays`, or both; they are off by default. Once a `Test` task has executed that many times,
-or that many days have passed, since its last full run, its next selecting run runs every test as
-`full-run-scheduled`, naming the limit reached, and records like a run without the flag. Running every
-test for any reason, a full run that is not dated included, starts the count again. The count and the
-time live beside the map, so builds count per copy of the map: a pull request build restored from the
-default branch's entry starts from the saved count and saves nothing. On those builds days is the
+`fullRunEveryDays`, or both; they are off by default. A `Test` task's selecting run that is its
+`fullRunEveryBuilds`-th build since its last full run, or that comes `fullRunEveryDays` days or more
+after it, runs every test as `full-run-scheduled`, naming the limit reached, and records like a run
+without the flag. Running every test for any reason, a full run that is not dated included, starts
+the count again. The count and the time live beside the map, so builds count per copy of the map: a
+pull request build restored from the default branch's entry starts from the saved count and saves
+nothing. On those builds days is the
 limit that means what it says. A count or time that cannot be read is due, as is a map recorded before
 either was written, so enabling a limit costs each task one full run. The cache key's period bounds
 how old a restored entry may be; the schedule bounds how long a map can hide a gap. With
@@ -1700,7 +1702,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `enabled` | `Boolean` | `true` | `false` leaves the build entirely alone, as `-Pyoriwake.disabled` does. |
 | `alwaysRun` | `List<String>` | empty | Tests that may never be skipped: a class, a method (`Class.method`), or a glob. |
 | `fullRunBranches` | `List<String>` | empty | Branches on which a selecting run runs every test and records the map instead. See [When to refresh](#when-to-refresh). |
-| `fullRunEveryBuilds` | `Int` | unset | Run every test once a task has executed this many times since its last full run. |
+| `fullRunEveryBuilds` | `Int` | unset | Run every test on a task's Nth build since its last full run, N being this value. |
 | `fullRunEveryDays` | `Int` | unset | Run every test once this many days have passed since a task's last full run; with both set, whichever comes first. |
 | `notReadByTests` | `List<String>` | empty | Deprecated: use `pathIgnore`. Globs of files no test or build reads: a changed one is no change. |
 | `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. See [Paths no test reads](#paths-no-test-reads). |

@@ -2416,7 +2416,7 @@ def _stub(directory, name, body):
 
 # Answers as `gh attestation verify` does, for files named in STUB_KNOWN only, and only when asked
 # for this repository's release workflow at STUB_HEAD on GitHub-hosted runners. Each file is vouched
-# for by a run numbered by its name's length, so the summary has more than one run to name.
+# for by a run numbered by its name's length's parity, so the summary has more than one run to name.
 STUB_GH = r"""import json, os, sys
 args = sys.argv[1:]
 if os.environ.get("STUB_DOWN"):

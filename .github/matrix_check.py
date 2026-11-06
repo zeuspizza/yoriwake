@@ -298,7 +298,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.command == "early-access":
-        # Before the table check: drift there fails pull requests, not the weekly early-access run.
+        # Before the table check: drift there fails pull requests, not the early-access run.
         problems = early_access_problems(args.results)
         for line in early_access_wider(args.results):
             print(f"::warning::{line}")
