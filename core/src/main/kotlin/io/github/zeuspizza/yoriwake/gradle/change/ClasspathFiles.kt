@@ -178,11 +178,11 @@ internal object ClasspathFiles {
      * Named by their path and never read: Gradle's module cache wherever it lies (a read-only cache
      * included, keyed alike), whose paths carry each file's SHA-1, Gradle's transform cache (whose
      * directory is a hash of the transform's input, parameters and implementation, so a fresh user
-     * home running it again keeps the path), and what the plugin itself writes under
-     * [PROJECT_CACHE_DIR]. Every other entry under a home is read whole: a released version in the
-     * Maven repository, a generated Gradle API jar or a wrapper distribution's jar can be replaced
-     * in place, its path unchanged. `mavenLocal()` under the user's home is keyed by its path and read
-     * by content. Any other
+     * home running it again keeps the path). The plugin's own agent jar gets no row. Every other
+     * entry under a home is read whole: a released version in the Maven repository, a generated
+     * Gradle API jar or a wrapper distribution's jar can be replaced in place, its path unchanged.
+     * `mavenLocal()` under the user's home and what a build keeps under [PROJECT_CACHE_DIR] are
+     * keyed by their path and read by content. Any other
      * entry, such as the jar of a build this one includes or an absolute `files(...)`, is keyed
      * `dependency:<outside>/<name>`, with `#2`, `#3` for a name repeated in classpath order, since
      * its path differs between machines, and read by content: a jar entry by entry (a rebuilt jar
@@ -238,9 +238,8 @@ internal object ClasspathFiles {
             } else if (home != null && relative != null && (home.key != USER_HOME || relative.startsWith(MAVEN_LOCAL))) {
                 val digest = when {
                     home.key == GRADLE_USER_HOME && NAMED_LAYOUTS.any { it.containsMatchIn(relative) } -> NAMED_BY_PATH
-                    // What the plugin itself writes there, from its own bytes by a `doFirst` that may run
-                    // after this: read, it would be absent at one end and present at the other.
-                    home.key == PROJECT_CACHE_DIR -> NAMED_BY_PATH
+                    // A jar the build writes there itself is made again on each fresh checkout.
+                    home.key == PROJECT_CACHE_DIR -> contentDigest(entry)
                     home.key == USER_HOME -> contentDigest(entry)
                     else -> wholeDigest(entry)
                 }

@@ -35,6 +35,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A dependency jar Gradle transforms again on a fresh machine no longer runs everything. Map: repaired on the next build, where one is used.
 - Paths `notReadByTests` lists no longer count toward `largeChangeThreshold`, as in 0.3. Map: left alone.
 - A released Maven jar, a generated Gradle API jar and a Gradle distribution's jar are compared by content. Map: repaired on the next build, which runs every test once.
+- A jar the build keeps under the project's `.gradle` is compared by content. Map: repaired on the next build, where one is used.
 - Maven compares the user properties the test JVM receives. Map: repaired on the next build, one full run per Maven execution.
 - An edit to a module a test task does not reach leaves its tests out, on Maven too, whatever its package names. Map: left alone.
 - A Maven capture records its JaCoCo scope. Map: left alone.

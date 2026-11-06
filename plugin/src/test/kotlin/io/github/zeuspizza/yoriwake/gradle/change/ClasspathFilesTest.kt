@@ -682,6 +682,20 @@ class ClasspathFilesTest {
     }
 
     @Test
+    fun `a jar the build keeps under the project cache directory with other bytes moves its row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val tool = jar(File(machine.root, ".gradle/tools/tool.jar"), 0L, "a.txt" to "a")
+        val before = found(machine.table(tool))
+
+        jar(tool, 0L, "a.txt" to "b")
+
+        assertEquals(
+            mapOf("dependency:<project-cache-dir>/tools/tool.jar" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(tool))).files,
+        )
+    }
+
+    @Test
     fun `a released version in mavenLocal under the user's home moves with its entries, not their timestamps`(@TempDir base: File) {
         val machine = Machine(base)
         val relative = ".m2/repository/$releasedJar"

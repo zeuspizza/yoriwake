@@ -2872,6 +2872,11 @@ MUTATIONS = [
      '        Regex("^caches/modules-2/"),\n',
      '        Regex("^caches/modules-2/"),\n        Regex("^wrapper/dists/"),\n',
      functional_suite, "a wrapper distribution's jar replaced in place runs every test"),
+    # A build may keep a jar it fetches under its project cache directory and replace it there.
+    ("a jar under the project cache directory is named by its path", CLASSPATH_FILES,
+     '                    home.key == PROJECT_CACHE_DIR -> contentDigest(entry)\n',
+     '                    home.key == PROJECT_CACHE_DIR -> NAMED_BY_PATH\n',
+     functional_suite, "a jar the build keeps under its project cache directory replaced in place runs every test"),
     ("a dependency's manifest Class-Path is not followed by the classpath-files table", CLASSPATH_FILES,
      "            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)\n",
      "",
