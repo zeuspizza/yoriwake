@@ -161,8 +161,10 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false') }}
     runs-on: ubuntu-24.04
     # The cost table projects the worst shard at 126.8 min; the largest shortfall of a projection on
-    # a measured every-guard run was 26 %, which puts it at 160.
-    timeout-minutes: 165
+    # a measured every-guard run was 26 %, which puts it at 160. Two release dry-run attempts were cut
+    # at 165 on slow runners whose Maven downloads timed out, and measured shards ran up to 45 % over
+    # their projection (184 min), so the limit leaves room above that.
+    timeout-minutes: 200
     strategy:
       fail-fast: false
       matrix:
