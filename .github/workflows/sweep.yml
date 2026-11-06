@@ -217,13 +217,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -eu
+          set -euo pipefail
           ./gradlew :agent:jar --console=plain
           tag=$(gh release list --json tagName,isDraft \
                   --jq '[.[] | select(.isDraft | not) | .tagName | select(startswith("sweep-"))][0]')
           [ -n "$tag" ] || { echo "no published sweep to replay"; exit 1; }
-          gh release download "$tag" --pattern 'sweep-*.tar.gz' --dir published
-          tar -xzf published/sweep-*.tar.gz -C published
+          gh release download "$tag" --pattern "$tag*" --dir published
+          tar -xzf "published/$tag.tar.gz" -C published
+          # A sweep whose evidence is split over parts lists them in its tarball, and each is
+          # checked before any is extracted; an older sweep holds the evidence in its tarball.
+          if [ -f published/evidence-parts.tsv ]; then
+            python3 bench/sweep_parts.py cat published/evidence-parts.tsv published \
+              | tar -xf - -C published
+          fi
           mkdir -p bench/results bench/logs
           cp published/merged/*.json bench/results/
           rm -f bench/results/sweep.json
@@ -274,7 +280,7 @@ jobs:
           COMPLETES: ${{ inputs.completes }}
           REPO: ${{ github.repository }}
         run: |
-          set -eu
+          set -euo pipefail
           names=$(jq -r '.[].project' <<< "$PLAN")
           declared=()
           mkdir -p evidence
@@ -327,17 +333,28 @@ jobs:
             # The earlier run's newest draft: each merge attempt of a run adds a draft under the
             # same tag, and the last saw the most artifacts. A tag names none of them alone, and
             # `gh release download` takes only a tag, so the asset is fetched by its id.
+            # Its tarball and, from a sweep whose evidence is split, the evidence parts.
             export TAG="sweep-$COMPLETES"
             gh api --paginate "repos/$REPO/releases" --jq '.[] | select(.draft and .tag_name == env.TAG)
-              | {at: .created_at, asset: .assets[]} | select(.asset.name == env.TAG + ".tar.gz")
-              | [.at, .asset.id] | @tsv' > drafts.tsv
-            asset=$(sort -r drafts.tsv | head -n 1 | cut -f 2)
-            [ -n "$asset" ] || { echo "run $COMPLETES has no draft release $TAG to complete"; exit 1; }
-            gh api -H 'Accept: application/octet-stream' "repos/$REPO/releases/assets/$asset" \
-              > previous.tar.gz
-            mkdir -p previous
-            tar -xzf previous.tar.gz -C previous
-            rm previous.tar.gz
+              | select(any(.assets[]; .name == env.TAG + ".tar.gz")) | {at: .created_at, asset: .assets[]}
+              | select(.asset.name == env.TAG + ".tar.gz"
+                       or (.asset.name | startswith(env.TAG + "-evidence.tar.part-")))
+              | [.at, .asset.name, .asset.id] | @tsv' > drafts.tsv
+            newest=$(cut -f 1 drafts.tsv | sort -r | head -n 1)
+            [ -n "$newest" ] || { echo "run $COMPLETES has no draft release $TAG to complete"; exit 1; }
+            awk -F '\t' -v at="$newest" '$1 == at { print $2 "\t" $3 }' drafts.tsv | sort > assets.tsv
+            fetch() { gh api -H 'Accept: application/octet-stream' "repos/$REPO/releases/assets/$1"; }
+            mkdir -p previous previous-parts
+            fetch "$(awk -F '\t' -v n="$TAG.tar.gz" '$1 == n { print $2 }' assets.tsv)" \
+              | tar -xzf - -C previous
+            awk -F '\t' -v n="$TAG.tar.gz" '$1 != n' assets.tsv > parts.tsv
+            while IFS=$'\t' read -r name id; do fetch "$id" > "previous-parts/$name"; done < parts.tsv
+            # The parts the tarball lists, each checked before any is extracted.
+            if [ -f previous/evidence-parts.tsv ]; then
+              python3 bench/sweep_parts.py cat previous/evidence-parts.tsv previous-parts \
+                | tar -xf - -C previous
+              rm -r previous-parts
+            fi
             completes=(--completes previous)
           fi
           python3 bench/merge.py art --planned $names "${missing_args[@]+"${missing_args[@]}"}" \
@@ -358,17 +375,23 @@ jobs:
             mapfile -t partial < <(jq -r '.missing | to_entries[] | "\(.key)=\(.value)"' \
               "$(find merged -name sweep.json)")
           fi
-          # The merged results and each job's evidence (its maps and decision records), not the
-          # guests' checkouts.
-          tar -czf "sweep-$RUN.tar.gz" merged art evidence
+          # The merged results, then each job's evidence (its maps and decision records, not the
+          # guests' checkouts) in parts: a release asset must stay under 2 GiB, and the evidence
+          # outgrew one in November 2026. The parts in name order are one tar.
+          tar -cf - evidence | split -b 1073741824 -a 3 - "sweep-$RUN-evidence.tar.part-"
+          python3 bench/sweep_parts.py manifest "sweep-$RUN"-evidence.tar.part-* > evidence-parts.tsv
+          tar -czf "sweep-$RUN.tar.gz" merged art evidence-parts.tsv
           if [ "${#partial[@]}" -gt 0 ]; then
             title="${title%)}, PARTIAL)"
             notes="$notes
 
           Missing, so this is not the planned sweep: $(printf '%s; ' "${partial[@]}")"
           fi
+          # The tarball last: a draft holding it holds every part, so a completion never reads a
+          # draft whose upload broke off.
           gh release create "sweep-$RUN" --draft --title "$title" \
-            --notes "$notes" "sweep-$RUN.tar.gz"
+            --notes "$notes" "sweep-$RUN"-evidence.tar.part-*
+          gh release upload "sweep-$RUN" "sweep-$RUN.tar.gz"
           if [ "${#declared[@]}" -gt 0 ]; then
             echo "::error::missing from this sweep: $(printf '%s; ' "${declared[@]}")"
             exit 1
