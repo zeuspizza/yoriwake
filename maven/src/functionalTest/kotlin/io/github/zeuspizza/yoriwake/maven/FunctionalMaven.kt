@@ -1,7 +1,6 @@
 package io.github.zeuspizza.yoriwake.maven
 
 import java.io.File
-import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
@@ -11,8 +10,8 @@ import kotlin.test.fail
 /**
  * Real Maven over a copy of a fixture, with the plugin as this build published it.
  *
- * Each distribution is downloaded once into the Gradle user home and checked against the SHA-512
- * Apache publishes, pinned here. Every build gets a `user.home` of its own, so nothing in the
+ * Each distribution is downloaded once from Maven Central into the Gradle user home, which CI keeps
+ * between runs, and checked against the SHA-512 Apache publishes, pinned here. Every build gets a `user.home` of its own, so nothing in the
  * machine's `~/.m2` reaches it; the local repository is shared, so each library downloads once.
  */
 object FunctionalMaven {
@@ -119,10 +118,7 @@ object FunctionalMaven {
         try {
             val name = "apache-maven-$version-bin.tar.gz"
             val archive = File(staging, name)
-            val major = version.substringBefore('.')
-            val connection = URI("https://archive.apache.org/dist/maven/maven-$major/$version/binaries/$name").toURL()
-                .openConnection().apply { connectTimeout = 30_000; readTimeout = 60_000 }
-            connection.getInputStream().use { input -> archive.outputStream().use { input.copyTo(it) } }
+            DistributionFetch.fetch(version, archive)
             val actual = MessageDigest.getInstance("SHA-512").digest(archive.readBytes()).joinToString("") { "%02x".format(it) }
             if (actual != expected) fail("Maven $version's archive has SHA-512 $actual, not the published $expected")
             val unpacked = ProcessBuilder("tar", "xzf", name).directory(staging).inheritIO().start().waitFor()

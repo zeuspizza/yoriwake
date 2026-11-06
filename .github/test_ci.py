@@ -552,6 +552,86 @@ def case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_repo
     return problems
 
 
+MAVEN_PINS = "maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt"
+
+
+def maven_distribution_cache_problems(text):
+    """Each job that runs the Maven functional suite, on its own or under the guards, without first
+    restoring its distributions.
+
+    A timed-out fetch of one distribution once failed the suite whole; kept between runs, each is
+    fetched once. The cache must be keyed on the file that pins the versions, so a new one is fetched.
+    """
+    problems = []
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("jobs:")), len(lines))
+    heads = [(i, m.group(1)) for i, line in enumerate(lines)
+             if i > start and (m := re.match(r"^  ([\w-]+):\s*$", line))]
+    for n, (head, name) in enumerate(heads):
+        job = lines[head:heads[n + 1][0] if n + 1 < len(heads) else len(lines)]
+        runs = [k for k, line in enumerate(job) if re.search(r":maven:(functionalTest|breakAttempts)\b", line)
+                # The guards run the suite; listing or comparing them runs nothing.
+                or ("scripts/prove_guards.py" in line
+                    and not any(flag in line for flag in ("--list-selection", "--against")))]
+        if not runs:
+            continue
+        cached = False
+        for k, line in enumerate(job[:runs[0]]):
+            if "actions/cache@" not in line:
+                continue
+            step = []
+            for later in job[k + 1:runs[0]]:
+                if later.lstrip().startswith("- "):
+                    break
+                step.append(later.strip())
+            if ("path: ~/.gradle/yoriwake-maven-distributions" in step
+                    and any(s.startswith("key:") and f"hashFiles('{MAVEN_PINS}')" in s for s in step)):
+                cached = True
+        if not cached:
+            problems.append(f"job {name} runs the Maven functional suite without first restoring "
+                            f"~/.gradle/yoriwake-maven-distributions keyed on {MAVEN_PINS}")
+    return problems
+
+
+def case_every_job_running_the_maven_suite_restores_its_distributions():
+    """The release builds from fresh downloads, each checked against its SHA-512, rather than run
+    binaries a cache restored, so it is left out."""
+    problems = 0
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
+        if name == "release.yml":
+            continue
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in maven_distribution_cache_problems(handle.read()):
+                problems += fail(f"{name}: {problem}")
+    return problems
+
+
+def case_a_maven_suite_job_without_the_distribution_cache_is_reported():
+    problems = 0
+    cache = ("      - uses: actions/cache@0123456789012345678901234567890123456789 # v6.1.0\n"
+             "        with:\n          path: ~/.gradle/yoriwake-maven-distributions\n"
+             f"          key: maven-distributions-${{{{ hashFiles('{MAVEN_PINS}') }}}}\n")
+    suite = "      - run: ./gradlew build :maven:functionalTest\n"
+    job = "jobs:\n  build:\n    steps:\n"
+    if maven_distribution_cache_problems(job + cache + suite):
+        problems += fail(f"a cached job was reported: {maven_distribution_cache_problems(job + cache + suite)}")
+    if not maven_distribution_cache_problems(job + suite):
+        problems += fail("a job without the cache passed")
+    if not maven_distribution_cache_problems(job + suite + cache):
+        problems += fail("a cache restored after the suite passed")
+    if not maven_distribution_cache_problems(job + cache.replace(MAVEN_PINS, "other.kt") + suite):
+        problems += fail("a cache keyed on another file passed")
+    if not maven_distribution_cache_problems(job + "      - run: python3 scripts/prove_guards.py --mode fast\n"):
+        problems += fail("a guard job without the cache passed")
+    if maven_distribution_cache_problems(job + "      - run: python3 scripts/prove_guards.py --list-selection a.json\n"):
+        problems += fail("a job that only lists the guards was required to cache")
+    if maven_distribution_cache_problems(job + "      - run: python3 scripts/prove_guards.py --against base\n"):
+        problems += fail("a job that only compares the guards was required to cache")
+    if maven_distribution_cache_problems(job + "      - run: ./gradlew build\n"):
+        problems += fail("a job that runs no Maven suite was required to cache")
+    return problems
+
+
 def case_a_tag_pin_is_reported():
     problems = 0
     if not unpinned_uses("    steps:\n      - uses: actions/checkout@v7\n"):
@@ -3518,6 +3598,8 @@ CASES = (
     case_every_map_consumer_runs_its_capture_jdk,
     case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
     case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_reported,
+    case_every_job_running_the_maven_suite_restores_its_distributions,
+    case_a_maven_suite_job_without_the_distribution_cache_is_reported,
     case_the_reference_table_and_the_matrix_cells_agree,
     case_a_table_that_drifts_from_the_cells_is_reported,
     case_a_malformed_row_or_axis_is_reported,

@@ -90,6 +90,12 @@ jobs:
         with:
           # A guard that fires fails a build by design; the shard's results tell what failed.
           add-job-summary: never
+      # The Maven suite's distributions, as in verify: fetched once and kept between runs.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/yoriwake-maven-distributions
+          key: maven-distributions-${{ hashFiles('maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt') }}
+          restore-keys: maven-distributions-
       - run: |
           mkdir -p results
           python3 scripts/prove_guards.py --mode fast --shard ${{ matrix.shard }}/8 --results results/fast.json
@@ -177,6 +183,12 @@ jobs:
         with:
           # A guard that fires fails a build by design; the shard's results tell what failed.
           add-job-summary: never
+      # The Maven suite's distributions, as in verify: fetched once and kept between runs.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/yoriwake-maven-distributions
+          key: maven-distributions-${{ hashFiles('maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt') }}
+          restore-keys: maven-distributions-
       - run: |
           mkdir -p results
           python3 scripts/prove_guards.py --mode full --shard ${{ matrix.shard }}/8 --results results/full.json
