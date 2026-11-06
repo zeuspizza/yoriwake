@@ -523,6 +523,34 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a selecting run whose test task turns on fail-fast in an action after the last look leaves no record`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    val failFirst = providers.gradleProperty("failFirst").isPresent
+                    gradle.taskGraph.whenReady {
+                        val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                        actions.add(own, Action<Task> { (this as Test).failFast = failFirst })
+                    }
+                }
+            """.trimIndent(),
+        )
+        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
+            "package dev.sample;\npublic class Alpha { public int twice(int n) { return n * 3; } }\n"
+        )
+        commit(dir, "break alpha")
+        val selecting = runner(dir, "test", SELECT, BASE, "-PfailFirst").buildAndFail()
+        assertTrue("dev.sample.XrayTest" in ranTests(dir), selecting.output)
+        assertEquals(null, selectionRecord(dir), "a run an action after the last look made fail-fast left a record")
+
+        val output = runner(dir, "test", COMPLEMENT).buildAndFail().output
+
+        assertEquals(everyTest, ranTests(dir), output)
+        assertEquals("complement-no-record", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    @Test
     fun `a record from another Java runtime runs every test uncaptured, noting the mismatch`(@TempDir dir: File) {
         selected(dir)
         val record = File(mapDir(dir), AgentContract.SELECTION_FILE)

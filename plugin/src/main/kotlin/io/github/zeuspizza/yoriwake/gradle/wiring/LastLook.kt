@@ -10,6 +10,9 @@ import org.gradle.api.Action
 import org.gradle.api.Describable
 import org.gradle.api.Task
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestListener
+import org.gradle.api.tasks.testing.TestResult
 import java.io.File
 
 /**
@@ -22,9 +25,9 @@ import java.io.File
  * applied, and moved next to the task's own action once every build script has run (see [moveLast]).
  * When the run still narrows, or still leaves out what a selecting run ran, and a file moved since
  * it was compared, the whole suite runs. A selecting run's record also carries the configuration its
- * test JVM starts with, and leaves no record when fail-fast is on by now; a complement whose
- * configuration differs from that one runs every test. [agentArgument] is the plugin's own
- * `-javaagent` argument, which the configuration leaves out.
+ * test JVM starts with, and leaves no record when fail-fast is on by now or once its tests start; a
+ * complement whose configuration differs from that one runs every test. [agentArgument] is the
+ * plugin's own `-javaagent` argument, which the configuration leaves out.
  */
 internal class LastLook(private val mapDir: File, private val agentArgument: String?) : Action<Task> {
 
@@ -66,7 +69,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
 
     /**
      * A selecting run's start, given the configuration its test JVM starts with; none when the
-     * task's own `doFirst` actions turned fail-fast on, as at the start.
+     * task's own `doFirst` actions turned fail-fast on, as at the start, or an action after this one
+     * did (see [FailFastOnceStarted]).
      */
     private fun finishStart(test: Test) {
         if (!File(mapDir, SelectionRecord.START_FILE).isFile) return
@@ -75,8 +79,32 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             test.logger.info("[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record")
             return
         }
-        addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }
-            ?.let { test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be completed ($it), so this run leaves no selection record") }
+        val failure = addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }
+        if (failure != null) {
+            test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be completed ($failure), so this run leaves no selection record")
+            return
+        }
+        test.addTestListener(FailFastOnceStarted(test, mapDir))
+    }
+
+    /**
+     * Drops a selecting run's start when its tests begin with fail-fast on: an action the build
+     * placed between this one and the task's own can still turn it on, and none can once the tests
+     * have started.
+     */
+    private class FailFastOnceStarted(private val test: Test, private val mapDir: File) : TestListener {
+        override fun beforeSuite(suite: TestDescriptor) {
+            if (suite.parent != null || !test.failFast) return
+            if (runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }.getOrDefault(false)) {
+                test.logger.info("[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record")
+            }
+        }
+
+        override fun afterSuite(suite: TestDescriptor, result: TestResult) {}
+
+        override fun beforeTest(testDescriptor: TestDescriptor) {}
+
+        override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {}
     }
 
     internal class Compared(
