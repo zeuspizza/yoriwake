@@ -74,7 +74,10 @@ class ExplainMojo : AbstractMojo() {
             var worked: Pair<SelectingStep.Worked, String>? = null
             selection.apply(
                 name, copy, project.basedir.relativeTo(root).invariantSeparatorsPath,
-                classpathView(session, root, project, classpath, each.execution.configuration as? Xpp3Dom),
+                classpathView(
+                    session, root, project, classpath, each.execution.configuration as? Xpp3Dom,
+                    each.plugin.artifactId == Recording.FAILSAFE,
+                ),
                 environment = null, undated = null, isolatedCapture = false,
                 stamp = { error("an explanation writes no selection record") },
                 stopsAfterFailure = true,

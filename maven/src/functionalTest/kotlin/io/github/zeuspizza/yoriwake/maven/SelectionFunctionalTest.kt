@@ -416,9 +416,15 @@ class SelectionFunctionalTest {
 
     /**
      * modp, which does not depend on lib, with [configuration] in its Surefire's `<configuration>`
-     * and [test] beside its own; committed and captured.
+     * and [test] and [files] beside its own; committed and captured with [capture] on the command line.
      */
-    private fun modpWith(dir: File, configuration: String, test: Pair<String, String>): File = committed(dir).also { project ->
+    private fun modpWith(
+        dir: File,
+        configuration: String,
+        test: Pair<String, String>,
+        files: Map<String, String> = emptyMap(),
+        capture: List<String> = emptyList(),
+    ): File = committed(dir).also { project ->
         File(project, "modp/pom.xml").edit {
             it.replace(
                 "<artifactId>modp</artifactId>",
@@ -426,9 +432,10 @@ class SelectionFunctionalTest {
             )
         }
         File(project, "modp/src/test/java/dev/demo/modp/${test.first}.java").writeText(test.second)
+        files.forEach { (path, text) -> File(project, path).writeText(text) }
         git(project, "add", ".")
         git(project, "commit", "-q", "-m", "modp reaches lib")
-        FunctionalMaven.run(maven, project, "verify").succeeded()
+        FunctionalMaven.run(maven, project, "verify", *capture.toTypedArray()).succeeded()
     }
 
     /** A modp test that loads lib's Greeter by name, so only the classes added to its classpath reach it. */
@@ -474,6 +481,70 @@ class SelectionFunctionalTest {
 
         assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
         assertContains(output, "Running dev.demo.modp.LibByNameTest")
+    }
+
+    /** A modp test that reads lib's sources through the path the system property `lib.dir` holds, naming no file of lib. */
+    private val libDirReader = "LibDirTest" to """
+        package dev.demo.modp;
+
+        import static org.junit.jupiter.api.Assertions.assertTrue;
+
+        import java.io.File;
+        import org.junit.jupiter.api.Test;
+
+        class LibDirTest {
+            @Test
+            void readsLib() {
+                assertTrue(new File(System.getProperty("lib.dir")).isDirectory());
+            }
+        }
+    """.trimIndent()
+
+    private fun surefireConfigured(configuration: String) =
+        "<plugin><artifactId>maven-surefire-plugin</artifactId><configuration>$configuration</configuration></plugin>"
+
+    /** Edits lib's Greeter and runs modp alone, selecting; asserts modp's path into lib kept the edit. */
+    private fun assertLibDirKeepsEdits(project: File, vararg select: String) {
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "modp", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", *select)
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
+        assertContains(output, "Running dev.demo.modp.LibDirTest")
+    }
+
+    @Test
+    fun `a sibling's path in systemProperties keeps its edits`(@TempDir dir: File) {
+        val configuration = surefireConfigured("<systemProperties><lib.dir>../lib/src/main/java</lib.dir></systemProperties>")
+        assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader))
+    }
+
+    @Test
+    fun `a sibling's path in systemProperties' property form keeps its edits`(@TempDir dir: File) {
+        val configuration = surefireConfigured(
+            "<systemProperties><property><name>lib.dir</name><value>../lib/src/main/java</value></property></systemProperties>",
+        )
+        assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader))
+    }
+
+    @Test
+    fun `a sibling's path in the systemPropertiesFile keeps its edits`(@TempDir dir: File) {
+        val configuration = surefireConfigured("<systemPropertiesFile>\${project.basedir}/fork.properties</systemPropertiesFile>")
+        val files = mapOf("modp/fork.properties" to "lib.dir=../lib/src/main/java\n")
+        assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader, files))
+    }
+
+    @Test
+    fun `a sibling's path in systemPropertyVariables keeps its edits`(@TempDir dir: File) {
+        val configuration = surefireConfigured("<systemPropertyVariables><lib.dir>../lib/src/main/java</lib.dir></systemPropertyVariables>")
+        assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader))
+    }
+
+    @Test
+    fun `a sibling's path in a user property keeps its edits`(@TempDir dir: File) {
+        val property = "-Dlib.dir=../lib/src/main/java"
+        assertLibDirKeepsEdits(modpWith(dir, "", libDirReader, capture = listOf(property)), property)
     }
 
     @Test
