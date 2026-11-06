@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 /** A distribution's fetch outlasts a slow network and gives up on an archive that is not there. */
-class DistributionFetchTest {
+class DistributionFetchFunctionalTest {
 
     private val pauses = mutableListOf<Long>()
 
