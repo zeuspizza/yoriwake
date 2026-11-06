@@ -240,8 +240,8 @@ internal class TaskArtifacts(
             }
             // From the module's own name on, as `../beta/src/main/java` names a nested module, and
             // its build output, which a test can read by path without depending on the module.
-            val src = segments.indexOf("src")
-            if (src > 0) {
+            // Every `src` counts: a module kept under a directory named `src` has two.
+            segments.indices.filter { it > 0 && segments[it] == "src" }.forEach { src ->
                 (src until segments.size).mapTo(forms) { end -> segments.subList(src - 1, end + 1).joinToString("/") }
                 listOf(segments.subList(0, src).joinToString("/"), segments[src - 1]).forEach { module ->
                     forms += "$module/build"

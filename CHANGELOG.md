@@ -38,6 +38,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Maven compares the user properties the test JVM receives. Map: repaired on the next build, one full run per Maven execution.
 - An edit to a module a test task does not reach leaves its tests out, on Maven too, whatever its package names. Map: left alone.
 - A Maven capture records its JaCoCo scope. Map: left alone.
+- An edit to a module kept under a directory named `src` stays a change for a test holding its path. Map: left alone.
 - Maven compares the system properties Surefire's `systemProperties` and `systemPropertiesFile` give the tests. Map: repaired on the next build, where a POM uses them.
 
 ## [0.4.0] - 2026-10-29
