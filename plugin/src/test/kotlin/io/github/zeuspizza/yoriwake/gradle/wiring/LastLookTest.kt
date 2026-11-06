@@ -20,10 +20,11 @@ class LastLookTest {
     fun `what a comparing action hands over reads back as written`(@TempDir dir: File) {
         val digests = mapOf("app/build/resources/test/a\tb.txt" to "d1", "lib/build/libs/x.jar!/new\nline" to "d2")
 
-        LastLook.write(dir, File("/repo"), listOf("/out/app"), classes = true, digests)
+        LastLook.write(dir, File("/repo"), listOf("/out/app"), classes = true, digests, gradleUserHome = File("/gradle\thome"))
         val read = LastLook.read(LastLook.handOver(dir).readText())!!
 
         assertEquals(File("/repo").absolutePath, read.rootDir.absolutePath)
+        assertEquals(File("/gradle\thome").absolutePath, read.gradleUserHome?.absolutePath)
         assertEquals(listOf("/out/app"), read.buildDirs)
         assertEquals(true, read.classes)
         assertEquals(digests, read.digests)
