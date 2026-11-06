@@ -4238,8 +4238,16 @@ MUTATIONS = [
      "JvmArgFiles.expand(test.allJvmArgs, test.workingDir)", "test.allJvmArgs",
      functional_suite, "another value of a system property from a JVM argument file runs everything"),
     ("an argument file that cannot be read sets nothing", JVM_ARG_FILES,
-     '            ?: return listOf("-D@$path=${UUID.randomUUID()}")', "            ?: return emptyList()",
+     '            ?: return listOf("-D$unreadable$path=${UUID.randomUUID()}")', "            ?: return emptyList()",
      unit_suite, "an argument file that cannot be read matches no other run"),
+    ("a VM options file is not read for the fingerprint", JVM_ARG_FILES,
+     "            if (!argument.startsWith(VM_OPTIONS_FILE)) listOf(argument)", "            if (true) listOf(argument)",
+     unit_suite, "a VM options file is read as the JVM reads it, also when an argument file names it"),
+    ("a VM options file that cannot be read sets nothing", JVM_ARG_FILES,
+     "            else listOf(argument) + read(argument.removePrefix(VM_OPTIONS_FILE), workingDir, VM_OPTIONS_FILE, ::vmOptions)",
+     "            else listOf(argument) + read(argument.removePrefix(VM_OPTIONS_FILE), workingDir, VM_OPTIONS_FILE, ::vmOptions)"
+     ".filterNot { it.startsWith(\"-D$VM_OPTIONS_FILE\") }",
+     unit_suite, "a VM options file that cannot be read matches no other run"),
     # Gradle lists the properties it sets ahead of an argument file and sets them after the JVM
     # starts, so the last value on the list is not always the one a test sees.
     ("a property given twice is compared by its last value only", ENVIRONMENT_FINGERPRINT,

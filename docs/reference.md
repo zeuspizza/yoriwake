@@ -351,10 +351,12 @@ What it compares:
   metadata, the `executable` path), and the OS and architecture. These are stored as they are and
   named with both values: `jdk.version was 17.0.9+9 when the map was recorded and is 21.0.4+7 now`;
 - every system property the task passes to the test JVM, `-D` arguments, argument providers and
-  JVM argument files (`@file`, read as the `java` launcher reads them) included, Gradle's own
+  JVM argument files (`@file`, read as the `java` launcher reads them) and the file
+  `-XX:VMOptionsFile` names (read as the JVM reads it) included, Gradle's own
   (`file.encoding`, `user.language`, `user.country`, `user.variant`) included, yoriwake's
   excluded, as `sys:<name>`. A property given more than once is compared by every value; an
-  argument file that cannot be read when the run starts makes the environment differ;
+  argument file or VM options file that cannot be read when the run starts makes the environment
+  differ;
 - `TZ`, `LANG` and `LC_ALL`, and the environment variables `environmentInclude` lists, as
   `env:<name>`. A listed name is compared whether or not it is set.
 

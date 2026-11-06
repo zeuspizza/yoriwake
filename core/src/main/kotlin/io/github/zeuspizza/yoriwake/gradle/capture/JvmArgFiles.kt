@@ -5,15 +5,17 @@ import java.util.UUID
 
 /**
  * The JVM arguments a test JVM starts with once the `java` launcher has replaced each `@file`
- * argument with the arguments that file holds, read by the launcher's own rules. A system property
- * passed that way is set in the test JVM like one passed directly, so the fingerprint must see it.
+ * argument with the arguments that file holds, read by the launcher's own rules, and the JVM has read
+ * the options of the file `-XX:VMOptionsFile` names, by its own. A system property passed either way
+ * is set in the test JVM like one passed directly, so the fingerprint must see it.
  */
 internal object JvmArgFiles {
 
     /**
-     * [arguments] with every argument file expanded, a relative one resolved against [workingDir],
-     * the test JVM's. A file that cannot be read becomes a property no other run can match, so the
-     * environment reads as changed: what it would have set is unknown.
+     * [arguments] with every argument file expanded, and every VM options file's options following
+     * the argument that names it, a relative path resolved against [workingDir], the test JVM's. A
+     * file that cannot be read becomes a property no other run can match, so the environment reads
+     * as changed: what it would have set is unknown.
      */
     fun expand(arguments: List<String>, workingDir: File?): List<String> {
         val expanded = ArrayList<String>(arguments.size)
@@ -26,18 +28,58 @@ internal object JvmArgFiles {
                 }
                 // `@@x` is the literal argument `@x`.
                 argument.startsWith("@@") -> expanded += argument.substring(1)
-                else -> expanded += read(argument.substring(1), workingDir)
+                else -> expanded += read(argument.substring(1), workingDir, "@", ::tokens)
             }
         }
-        return expanded
+        // The launcher hands the JVM what the argument files hold, so they can name an options file.
+        return expanded.flatMap { argument ->
+            if (!argument.startsWith(VM_OPTIONS_FILE)) listOf(argument)
+            else listOf(argument) + read(argument.removePrefix(VM_OPTIONS_FILE), workingDir, VM_OPTIONS_FILE, ::vmOptions)
+        }
     }
 
-    private fun read(path: String, workingDir: File?): List<String> {
+    private fun read(path: String, workingDir: File?, unreadable: String, split: (String) -> List<String>): List<String> {
         val file = File(path).let { if (it.isAbsolute || workingDir == null) it else File(workingDir, path) }
         // Every byte reaches the digest as it is, whatever the file's encoding.
         val text = runCatching { file.readBytes().toString(Charsets.ISO_8859_1) }.getOrNull()
-            ?: return listOf("-D@$path=${UUID.randomUUID()}")
-        return tokens(text)
+            ?: return listOf("-D$unreadable$path=${UUID.randomUUID()}")
+        return split(text)
+    }
+
+    private const val VM_OPTIONS_FILE = "-XX:VMOptionsFile="
+
+    /**
+     * The options a VM options file holds, as HotSpot splits them (`Arguments::parse_options_buffer`):
+     * whitespace separates them, and `"` or `'` quote up to the same quote, also mid-option. It knows
+     * no comments and no escapes.
+     */
+    fun vmOptions(text: String): List<String> {
+        val options = mutableListOf<String>()
+        val option = StringBuilder()
+        var started = false
+        var quote: Char? = null
+        for (c in text) {
+            val open = quote
+            when {
+                open != null && c == open -> quote = null
+                open != null -> option.append(c)
+                c in VM_WHITESPACE -> {
+                    if (started) options += option.toString()
+                    option.setLength(0)
+                    started = false
+                }
+                c == '"' || c == '\'' -> {
+                    quote = c
+                    started = true
+                }
+                else -> {
+                    option.append(c)
+                    started = true
+                }
+            }
+        }
+        if (started) options += option.toString()
+        return options
     }
 
     /**
@@ -98,6 +140,9 @@ internal object JvmArgFiles {
     }
 
     private const val WHITESPACE = " \t\u000c\n\r"
+
+    /** C's `isspace`, which HotSpot splits a VM options file at. */
+    private const val VM_WHITESPACE = " \t\u000b\u000c\n\r"
 
     private val ESCAPES = mapOf('n' to '\n', 'r' to '\r', 't' to '\t', 'f' to '\u000c')
 }

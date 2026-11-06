@@ -32,6 +32,7 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
             providers.gradleProperty("jvm").orNull?.let { executable = it }
             providers.gradleProperty("build").orNull?.let { systemProperty("build.number", it) }
             providers.gradleProperty("args").orNull?.let { jvmArgs("@" + it) }
+            providers.gradleProperty("options").orNull?.let { jvmArgs("-XX:VMOptionsFile=" + it) }
         }
         yoriwake {
             providers.gradleProperty("include").orNull?.let { environmentInclude.add(it) }
@@ -174,6 +175,22 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         assertEquals(both, ranTests(dir), output)
         assertEquals("environment-changed", decisionNotes(dir)["refusal-kind"], output)
         assertContains(refusalLine(output), "sys:from.file")
+    }
+
+    @Test
+    fun `another value of a system property from a VM options file runs everything`(@TempDir root: File) {
+        // Outside the checkout, so editing it changes no path of the change set.
+        val options = File(root, "options/test.options").apply { parentFile.mkdirs() }
+        options.writeText("-Dfrom.options=one\n")
+        val dir = File(root, "project")
+        recorded(dir, "-Poptions=${options.absolutePath}")
+        options.writeText("-Dfrom.options=two\n")
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Poptions=${options.absolutePath}").build().output
+
+        assertEquals(both, ranTests(dir), output)
+        assertEquals("environment-changed", decisionNotes(dir)["refusal-kind"], output)
+        assertContains(refusalLine(output), "sys:from.options")
     }
 
     @Test
