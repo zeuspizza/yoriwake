@@ -180,4 +180,152 @@ class OtherModulesJarsAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: a Java source of a module off this task's classpath stays in
+    // the change set only when a compiled class holds a path to it of two or more segments; the
+    // module's own `build` directory is one such form, for a test that reads its output by path.
+    // The test names nothing else of the source's path: not its file name, nor a part of it.
+    @Test
+    fun `a test that reads a sibling's compiled class by path keeps that sibling's source change forcing`(@TempDir dir: File) {
+        val beta = source("beta/build.gradle.kts", "plugins { java }")
+        val thing = source(
+            "beta/src/main/java/dev/beta/Thing.java",
+            "package dev.beta;\npublic class Thing { public String v() { return \"v1\"; } }",
+        )
+        val outputTest = source(
+            "src/test/java/dev/sample/A1BuildOutputTest.java",
+            """
+            package dev.sample;
+            import java.nio.charset.StandardCharsets;
+            import java.nio.file.Files;
+            import java.nio.file.Paths;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class A1BuildOutputTest {
+                @Test void compiledFromTheFirstVersion() throws Exception {
+                    byte[] bytes = Files.readAllBytes(Paths.get("beta/build/classes/java/main/dev/beta/Thing.class"));
+                    assertTrue(new String(bytes, StandardCharsets.ISO_8859_1).contains("v1"));
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1BuildOutputTest", Aim.Forced("no-coverage-for-changed"),
+            listOf(settings("beta"), beta, thing, codec, other, first, outputTest, codecTest, classOrderByName),
+            buildScript = rootBuild(extra = "dependsOn(\":beta:classes\")"),
+        ) {
+            changeCodec(it)
+            File(it, thing.first).writeText(File(it, thing.first).readText().replace("v1", "v2"))
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the same two-segment rule, at its shortest trailing part, the
+    // package's last name and the file name; every other name the test holds is a single segment,
+    // which does not count. The source declares constants only, so once kept it cannot be mapped
+    // to a class at all.
+    @Test
+    fun `a sibling's constants interface a test reads by its last two path segments forces the run`(@TempDir dir: File) {
+        val beta = source("beta/build.gradle.kts", "plugins { java }")
+        val limits = source(
+            "beta/src/main/java/dev/beta/Limits.java",
+            """
+            package dev.beta;
+            public interface Limits {
+                int MAX = 3;
+            }
+            """,
+        )
+        val limitsTest = source(
+            "src/test/java/dev/sample/A1LimitsTest.java",
+            """
+            package dev.sample;
+            import java.nio.file.Files;
+            import java.nio.file.Path;
+            import java.nio.file.Paths;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class A1LimitsTest {
+                @Test void maxIsThree() throws Exception {
+                    Path source = Paths.get("beta").resolve("src").resolve("main").resolve("java").resolve("dev")
+                        .resolve("beta/Limits.java");
+                    assertTrue(Files.readString(source).contains("MAX = 3;"));
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1LimitsTest", Aim.Forced("unmappable-paths"),
+            listOf(settings("beta"), beta, limits, codec, other, first, limitsTest, codecTest, classOrderByName),
+            buildScript = rootBuild(),
+        ) {
+            changeCodec(it)
+            File(it, limits.first).writeText(File(it, limits.first).readText().replace("MAX = 3;", "MAX = 4;"))
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a classpath entry is the build's own output, compared entry by
+    // entry, when it lies under the root or under a module's build directory, and is not under a
+    // directory dependencies come from. A sibling whose build directory lies outside the root is
+    // only output by the second test; its jar stamps `git describe --dirty` into its manifest.
+    @Test
+    fun `a sibling jar built outside the root whose manifest stamps git describe runs the test that reads it`(@TempDir dir: File) {
+        val outside = File(dir.parentFile, "${dir.name}-lib-build")
+        val lib = source(
+            "lib/build.gradle.kts",
+            """
+            plugins { `java-library` }
+            layout.buildDirectory.set(file("${'$'}{rootDir.parentFile}/${'$'}{rootDir.name}-lib-build"))
+            tasks.jar {
+                val describe = providers.exec { commandLine("git", "describe", "--always", "--dirty") }
+                    .standardOutput.asText.map { it.trim() }
+                inputs.property("describe", describe)
+                manifest { attributes("Implementation-Version" to describe.get()) }
+            }
+            """,
+        )
+        val libClass = source("lib/src/main/java/dev/lib/Lib.java", "package dev.lib;\npublic class Lib {}")
+        val revisionTest = source(
+            "src/test/java/dev/sample/A1RevisionTest.java",
+            """
+            package dev.sample;
+            import java.io.InputStream;
+            import java.net.URL;
+            import java.util.Enumeration;
+            import java.util.jar.Manifest;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertFalse;
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+            class A1RevisionTest {
+                @Test void builtFromACleanTree() throws Exception {
+                    String version = null;
+                    Enumeration<URL> manifests = getClass().getClassLoader().getResources("META-INF/MANIFEST.MF");
+                    while (manifests.hasMoreElements()) {
+                        URL manifest = manifests.nextElement();
+                        if (!manifest.toString().contains("-lib-build/libs/")) continue;
+                        try (InputStream in = manifest.openStream()) {
+                            version = new Manifest(in).getMainAttributes().getValue("Implementation-Version");
+                        }
+                    }
+                    assertNotNull(version);
+                    assertFalse(version.endsWith("-dirty"), version);
+                }
+            }
+            """,
+        )
+        try {
+            val result = attempt(
+                dir, "dev.sample.A1RevisionTest", Aim.Forced("classpath-files-changed"),
+                listOf(settings("lib"), lib, libClass, codec, other, first, revisionTest, codecTest, classOrderByName),
+                buildScript = rootBuild(dependencies = "testImplementation(project(\":lib\"))"),
+            ) { changeCodec(it) }
+
+            assertOutcome(Outcome.HELD_BY_FORCE, result)
+        } finally {
+            outside.deleteRecursively()
+        }
+    }
 }

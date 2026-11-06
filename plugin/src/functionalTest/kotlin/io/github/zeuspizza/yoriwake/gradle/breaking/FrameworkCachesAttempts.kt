@@ -293,16 +293,22 @@ class FrameworkCachesAttempts : BreakAttempt() {
             "src/test/java/dev/sample/A1LibraryTest.java",
             """
             package dev.sample;
-            import java.io.File;
+            import java.nio.file.Files;
+            import java.nio.file.Path;
             import java.util.function.Consumer;
             import java.util.stream.Stream;
             import org.junit.jupiter.api.Test;
-            import static org.junit.jupiter.api.Assertions.assertThrows;
             class A1LibraryTest {
-                @Test void loads() {
+                // A copy of the JDK's zip library under another name: a load that succeeds, since
+                // only a library the JDK opened is judged as loaded.
+                @Test void loads() throws Exception {
+                    Path home = Path.of(System.getProperty("java.home"));
+                    Path zip = home.resolve("lib").resolve(System.mapLibraryName("zip"));
+                    if (!Files.exists(zip)) zip = home.resolve("bin").resolve(System.mapLibraryName("zip"));
+                    Path copy = Files.createTempDirectory("lib").resolve(System.mapLibraryName("acmecodec"));
+                    Files.copy(zip, copy);
                     Consumer<String> load = System::load;
-                    String absent = new File(System.getProperty("java.io.tmpdir"), "libacmecodec.so").getAbsolutePath();
-                    assertThrows(UnsatisfiedLinkError.class, () -> Stream.of(absent).forEach(load));
+                    Stream.of(copy.toString()).forEach(load);
                 }
             }
             """,
@@ -401,6 +407,55 @@ class FrameworkCachesAttempts : BreakAttempt() {
         ) {
             val file = File(it, ktCodec.first)
             file.writeText(file.readText().replace("same(s).reversed()", "same(s).reversed() + \"-x9\""))
+        }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: fixtures. Row: FC5. A subclass mock overrides what it can; made final, the method is
+    // no longer overridden and the real one answers. The test creates the mock without running a
+    // constructor and calls only overridden methods, so no line of the mocked class runs in it;
+    // creating the mock still records the class in the test's coverage, which reaches the change.
+    @Test
+    fun `a mock whose method the change makes final selects the test that only calls the mock`(@TempDir dir: File) {
+        val pricing = source(
+            "src/main/java/dev/sample/Pricing.java",
+            "package dev.sample;\npublic class Pricing { public String label() { return \"list\"; } }",
+        )
+        val mocking = source(
+            "src/test/java/dev/sample/A2MockTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertNull;
+            import static org.mockito.Mockito.mock;
+            class A2MockTest { @Test void unstubbed() { assertNull(mock(Pricing.class).label()); } }
+            """,
+        )
+        val real = source(
+            "src/test/java/dev/sample/A9PricingTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A9PricingTest { @Test void lists() { assertEquals("list", new Pricing().label()); } }
+            """,
+        )
+        // The subclass mock maker: the inline one attaches an agent to the test JVM, which dates
+        // every later test by itself.
+        val mockMaker = "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker" to "mock-maker-subclass\n"
+        val mockitoBuild = minimalBuild.replace(
+            "testRuntimeOnly(",
+            "testImplementation(\"org.mockito:mockito-core:5.14.2\")\n    testRuntimeOnly(",
+        )
+
+        val result = attempt(
+            dir, "dev.sample.A2MockTest", Aim.Row("reaches-change"),
+            listOf(other, pricing, first, spacer, mocking, real, mockMaker, classOrderByName),
+            buildScript = mockitoBuild,
+        ) {
+            val file = File(it, pricing.first)
+            file.writeText(file.readText().replace("public String label", "public final String label"))
         }
 
         assertOutcome(Outcome.HELD_BY_RULE, result)

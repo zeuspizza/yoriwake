@@ -306,4 +306,38 @@ class GitAndMapAgeAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: the change set lists every untracked path but those the host
+    // calls build state, and only Maven names one, Develocity's workspace id. Here a Gradle build
+    // writes a file at that path, untracked, on its first build, and a test reads it: on Gradle it
+    // is no build state, and an edit to it is a path the map cannot see.
+    @Test
+    fun `an untracked file at the path Maven treats as build state forces on Gradle when a test reads it`(@TempDir dir: File) {
+        val build = minimalBuild + """
+
+            File(rootDir, ".mvn/.develocity/develocity-workspace-id").takeUnless { it.isFile }
+                ?.apply { parentFile.mkdirs(); writeText("workspace-1") }
+        """.trimIndent()
+        val reader = source(
+            "src/test/java/dev/sample/A9WorkspaceTest.java",
+            """
+            package dev.sample;
+            import java.nio.file.Files;
+            import java.nio.file.Paths;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A9WorkspaceTest {
+                @Test void readsTheWorkspaceId() throws Exception {
+                    assertEquals("workspace-1", Files.readString(Paths.get(".mvn/.develocity/develocity-workspace-id")));
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A9WorkspaceTest", Aim.Forced("unmappable-paths"), listOf(codec, other, first, reader, classOrderByName),
+            buildScript = build,
+        ) { File(it, ".mvn/.develocity/develocity-workspace-id").writeText("workspace-2") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }
