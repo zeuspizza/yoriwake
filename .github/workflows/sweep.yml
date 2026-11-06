@@ -22,7 +22,8 @@ name: sweep
 # refused before measuring unless the selector's sources are the earlier run's, and the merge
 # refuses rows measured under another selector or grammar (bench/merge.py --completes).
 #
-# Dispatched in each release check on the candidate, never on a schedule: a full sweep of every
+# Dispatched in each release check on the gate commit, and again on a candidate whose diff touches
+# product code (`RELEASING.md`), never on a schedule: a full sweep of every
 # project takes about 7.5 to 10 hours.
 on:
   workflow_dispatch:
