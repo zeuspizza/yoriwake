@@ -71,8 +71,11 @@ internal fun reactorModulesNamed(
     if (!configurations.all { namedIn(it, reactor, written, named) { value -> resolve(project, session, value) } }) return null
 
     // What the fork is handed by path: its arguments, classes, working directory, system properties
-    // and environment, and what every JVM reads. A system properties file's values are literal.
+    // and environment, and what every JVM reads. A system properties file's values are literal; a
+    // file whose path cannot be resolved, or that cannot be read, hands over properties unknown here.
+    configuration?.getChild(ForkSystemProperty.SYSTEM_PROPERTIES_FILE)?.value?.let { resolve(project, session, it) ?: return null }
     val forked = forkSystemProperties(project, session, configuration, failsafe)
+    if (forked.any { it.name == ForkSystemProperty.UNREADABLE_FILE }) return null
     val added = configuration?.getChild("additionalClasspathElements")
     val values = listOfNotNull(
         configuration?.getChild("argLine")?.value,

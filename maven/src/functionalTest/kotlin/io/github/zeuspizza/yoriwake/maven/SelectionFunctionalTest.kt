@@ -536,6 +536,13 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a systemPropertiesFile named through an unresolvable expression keeps a sibling's edits`(@TempDir dir: File) {
+        val configuration = surefireConfigured("<systemPropertiesFile>\${project.parent.basedir}/modp/fork.properties</systemPropertiesFile>")
+        val files = mapOf("modp/fork.properties" to "lib.dir=../lib/src/main/java\n")
+        assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader, files))
+    }
+
+    @Test
     fun `a sibling's path in systemPropertyVariables keeps its edits`(@TempDir dir: File) {
         val configuration = surefireConfigured("<systemPropertyVariables><lib.dir>../lib/src/main/java</lib.dir></systemPropertyVariables>")
         assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader))
