@@ -169,8 +169,9 @@ jobs:
     # The cost table projects the worst shard at 126.8 min; the largest shortfall of a projection on
     # a measured every-guard run was 26 %, which puts it at 160. Two release dry-run attempts were cut
     # at 165 on slow runners whose Maven downloads timed out, and measured shards ran up to 45 % over
-    # their projection (184 min), so the limit leaves room above that.
-    timeout-minutes: 200
+    # their projection (184 min), so the limit leaves room above that. With 0.5's attempts and the
+    # classes they grew, three shards of one run met 200 and a fourth took 199.
+    timeout-minutes: 260
     strategy:
       fail-fast: false
       matrix:
