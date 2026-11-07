@@ -242,6 +242,30 @@ class ComplementRunsAttempts : BreakAttempt() {
                 doFirst { (this as Test).failFast = failFastAsked }
             }
         """.trimIndent()
+        failFastAttempt(dir, build)
+    }
+
+    // Track: code reading. Boundary: the last look reads fail-fast again right before the tests
+    // run, from an action placed next to the task's own once every build script has run; every
+    // doFirst runs before it, one added later too, since doFirst prepends. Here the build inserts
+    // an action of its own into the task's list, between the last look and the task's own action
+    // (a doLast of the plugin's follows the task's own, so the list's end is past it).
+    @Test
+    fun `a selecting run whose test task turns on fail-fast in an action after the last look leaves no record`(@TempDir dir: File) {
+        val build = minimalBuild + """
+
+            tasks.test {
+                val failFastAsked = providers.gradleProperty("failFirst").isPresent
+                gradle.taskGraph.whenReady {
+                    val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                    actions.add(own, Action<Task> { (this as Test).failFast = failFastAsked })
+                }
+            }
+        """.trimIndent()
+        failFastAttempt(dir, build)
+    }
+
+    private fun failFastAttempt(dir: File, build: String) {
         fun failing(name: String) = source(
             "src/test/java/dev/sample/$name.java",
             """
