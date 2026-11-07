@@ -15,6 +15,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+**Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.
+
 ### Added
 
 - A code of conduct, an accessibility statement and a pull request template. Map: left alone.

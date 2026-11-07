@@ -1854,6 +1854,23 @@ format versioning.
   `notReadByTests` still works and warns that it is deprecated; `pathIgnore` replaces it.
 - **Maven** builds are new: see [Maven](#maven).
 
+### From 0.4.0 to 0.5.0
+
+- **Your map is repaired on the next build.** The format stays at 7, and the files a trusted-map
+  digest covers are unchanged. A Maven map recorded on 0.4.0 does not say its user properties were
+  compared, so each Maven execution's first selecting run on 0.5.0 runs everything once. A Gradle
+  task's first selecting run runs every test once where a released Maven jar, a generated Gradle API
+  jar or a Gradle distribution's jar is on the classpath, or a dependency jar's manifest
+  `Class-Path` names a file.
+- **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.5.0`, one ordinary cache miss.
+- **What runs changes without a new flag (Maven):** the user properties of the invocation
+  (`-Dfeature=off`, `.mvn/maven.config`) and Surefire's `systemProperties` and
+  `systemPropertiesFile` are now compared. A selecting run whose `-D` values differ from the
+  recording run's (`-Dtest`, `-DskipITs`, an IDE's injected properties, a CI-friendly
+  revision with a build number) runs everything, naming the property, until the per-build ones are
+  listed in `<systemPropertyIgnore>`. `<systemPropertyIgnore>` and `<environmentInclude>` take one
+  child element per name; text placed directly in them, ignored before, now fails the build.
+
 ## Prior art
 
 - **[Develocity Predictive Test Selection](https://docs.develocity.ai/predictive-test-selection/)**
