@@ -74,7 +74,8 @@ internal fun reactorModulesNamed(
     // What the fork is handed by path: its arguments, classes, working directory, system properties
     // and environment, and what every JVM reads. A system properties file's values are literal; a
     // file whose path cannot be resolved, or that cannot be read, hands over properties unknown here.
-    configuration?.getChild(ForkSystemProperty.SYSTEM_PROPERTIES_FILE)?.value?.let { resolve(project, session, it) ?: return null }
+    // The parameter's default, an unset property such as `surefire.systemPropertiesFile`, names no file.
+    configuration?.getChild(ForkSystemProperty.SYSTEM_PROPERTIES_FILE)?.value?.let { resolveForFork(project, session, it) ?: return null }
     val forked = forkSystemProperties(project, session, configuration, failsafe)
     if (forked.any { it.name == ForkSystemProperty.UNREADABLE_FILE }) return null
     val added = configuration?.getChild("additionalClasspathElements")
