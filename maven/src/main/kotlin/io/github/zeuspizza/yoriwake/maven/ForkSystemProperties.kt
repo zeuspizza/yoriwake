@@ -16,6 +16,9 @@ internal class ForkSystemProperty(val source: String, val name: String, val valu
         const val SYSTEM_PROPERTIES = "systemProperties"
         const val SYSTEM_PROPERTIES_FILE = "systemPropertiesFile"
         const val SYSTEM_PROPERTY_VARIABLES = "systemPropertyVariables"
+
+        /** The name of the one entry a named file that cannot be read gives. */
+        const val UNREADABLE_FILE = "@systemPropertiesFile"
     }
 }
 
@@ -43,7 +46,7 @@ internal fun forkSystemProperties(
     systemPropertiesFile(project, session, configuration, failsafe)?.takeIf(File::exists)?.let { file ->
         val read = runCatching { file.inputStream().use { Properties().apply { load(it) } } }.getOrNull()
         if (read == null) {
-            properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, "@systemPropertiesFile", UUID.randomUUID().toString())
+            properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, ForkSystemProperty.UNREADABLE_FILE, UUID.randomUUID().toString())
         } else {
             read.stringPropertyNames().sorted().forEach {
                 properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, it, read.getProperty(it))

@@ -10,7 +10,7 @@ import java.io.File
 /**
  * What the shared rules ask of an execution's classpath, from Maven's model of the reactor.
  * [configuration] is the execution's own, whose fork arguments and added classpath can reach
- * another module's files.
+ * another module's files; [failsafe] is whether Failsafe runs it, which names the properties it reads.
  */
 internal fun classpathView(
     session: MavenSession,
@@ -18,6 +18,7 @@ internal fun classpathView(
     project: MavenProject,
     classpath: List<File>,
     configuration: Xpp3Dom?,
+    failsafe: Boolean,
 ): ClasspathView =
     object : ClasspathView {
         override val rootDir = root
@@ -31,7 +32,7 @@ internal fun classpathView(
         override fun testOutputFiles(): Set<File> = setOf(File(project.build.testOutputDirectory))
         override fun compileTimeFiles(): Set<File> =
             runCatching { project.compileClasspathElements.map(::File).toSet() }.getOrDefault(emptySet())
-        override fun declaredModules(): Set<String>? = reactorModulesNamed(session, root, project, configuration)
+        override fun declaredModules(): Set<String>? = reactorModulesNamed(session, root, project, configuration, failsafe)
         override fun jacocoVersion(): String? = project.getPlugin(JacocoAdoption.JACOCO)?.version.orEmpty()
         override fun jacocoSetting(): String = "jacoco-maven-plugin `<version>`"
         override fun testJvm(): Int? = null
@@ -44,7 +45,13 @@ internal fun classpathView(
  * in the execution's fork arguments or added classpath. Naming one more than the build uses only
  * drops less. Null when coordinates or a fork value it reads cannot be resolved here.
  */
-internal fun reactorModulesNamed(session: MavenSession, root: File, project: MavenProject, configuration: Xpp3Dom?): Set<String>? {
+internal fun reactorModulesNamed(
+    session: MavenSession,
+    root: File,
+    project: MavenProject,
+    configuration: Xpp3Dom?,
+    failsafe: Boolean,
+): Set<String>? {
     val reactor = session.allProjects.associateBy { "${it.groupId}:${it.artifactId}" }
     val named = mutableSetOf<MavenProject>()
     fun coordinates(groupId: String?, artifactId: String?) {
@@ -64,7 +71,11 @@ internal fun reactorModulesNamed(session: MavenSession, root: File, project: Mav
     if (!configurations.all { namedIn(it, reactor, written, named) { value -> resolve(project, session, value) } }) return null
 
     // What the fork is handed by path: its arguments, classes, working directory, system properties
-    // and environment, and what every JVM reads.
+    // and environment, and what every JVM reads. A system properties file's values are literal; a
+    // file whose path cannot be resolved, or that cannot be read, hands over properties unknown here.
+    configuration?.getChild(ForkSystemProperty.SYSTEM_PROPERTIES_FILE)?.value?.let { resolve(project, session, it) ?: return null }
+    val forked = forkSystemProperties(project, session, configuration, failsafe)
+    if (forked.any { it.name == ForkSystemProperty.UNREADABLE_FILE }) return null
     val added = configuration?.getChild("additionalClasspathElements")
     val values = listOfNotNull(
         configuration?.getChild("argLine")?.value,
@@ -75,16 +86,15 @@ internal fun reactorModulesNamed(session: MavenSession, root: File, project: Mav
         toolOptionsOf(configuration),
         configuration?.getChild("environmentVariables")?.getChild("JDK_JAVA_OPTIONS")?.value ?: System.getenv("JDK_JAVA_OPTIONS"),
     ) + added?.children.orEmpty().mapNotNull { it.value } +
-        listOf("systemPropertyVariables", "environmentVariables").flatMap { group ->
-            configuration?.getChild(group)?.children.orEmpty().mapNotNull { it.value }
-        } +
+        forked.filter { it.fromPom }.map { it.value } +
+        configuration?.getChild("environmentVariables")?.children.orEmpty().mapNotNull { it.value } +
         // Surefire hands the invocation's user properties to the fork as system properties.
         session.userProperties.stringPropertyNames().map { session.userProperties.getProperty(it) }
     // yoriwake's own agent and run file, which wiring adds under the reactor root.
     val ours = File(root, Recording.MAPS_HOME).toPath().normalize()
     val dirs = session.allProjects.map { it to it.basedir.toPath().normalize() }
-    for (value in values) {
-        val text = resolveForFork(project, session, value) ?: return null
+    for ((value, literal) in values.map { it to false } + forked.filterNot { it.fromPom }.map { it.value to true }) {
+        val text = if (literal) value else resolveForFork(project, session, value) ?: return null
         PATH.findAll(text).forEach { piece ->
             val path = File(piece.value).let { if (it.isAbsolute) it else File(project.basedir, piece.value) }.toPath().normalize()
             // A directory above a module, such as the reactor root, hands over every module under it.
