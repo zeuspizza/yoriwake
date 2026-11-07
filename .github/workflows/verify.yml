@@ -79,6 +79,14 @@ jobs:
         with:
           # The release signing check's refusals fail builds by design; its steps tell what failed.
           add-job-summary: never
+      # The Maven suite's distributions, fetched once and kept: setup-gradle's cache leaves them out.
+      # Keyed on the file that pins their versions and SHA-512s; an older set still restores, so a
+      # new version is the only fetch.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/yoriwake-maven-distributions
+          key: maven-distributions-${{ hashFiles('maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt') }}
+          restore-keys: maven-distributions-
       # The plugin's coverage gate needs the functional suites, which run in the shards below; the
       # coverage job gates on this job's unit-test data and theirs. The Maven suite runs here, once.
       - run: ./gradlew build :agent:jacocoTestReport :maven:functionalTest -x :plugin:functionalTest -x :plugin:functionalTestGradle9 -Pyoriwake.functional.coverage=false --console=plain
