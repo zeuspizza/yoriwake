@@ -10,9 +10,15 @@ import java.io.InputStream
 import java.net.SocketTimeoutException
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.test.fail
 
-/** A distribution's fetch outlasts a slow network and gives up on an archive that is not there. */
+/**
+ * A distribution's fetch outlasts a slow network and gives up on an archive that is not there; a
+ * cached archive is used only when it matches its SHA-512.
+ */
 class DistributionFetchFunctionalTest {
 
     private val pauses = mutableListOf<Long>()
@@ -53,5 +59,56 @@ class DistributionFetchFunctionalTest {
         }
 
         assertEquals(emptyList(), pauses)
+    }
+
+    @Test
+    fun `a cached archive that does not match its SHA-512 is deleted with its tree and fetched again`(@TempDir dir: File) {
+        val archive = File(dir, "archive.tar.gz").apply { writeText("tampered") }
+        val home = File(dir, "apache-maven").apply { File(this, "bin").mkdirs() }
+        val good = File(dir, "good").apply { writeText("archive") }
+        val fetched = mutableListOf<String>()
+
+        DistributionFetch.ensureArchive("3.9.16", archive, home, DistributionFetch.sha512(good)) { version, target ->
+            fetched += version
+            target.writeText("archive")
+        }
+
+        assertEquals(listOf("3.9.16"), fetched)
+        assertEquals("archive", archive.readText())
+        assertFalse(home.exists())
+    }
+
+    @Test
+    fun `a cached archive that matches its SHA-512 is kept with its tree`(@TempDir dir: File) {
+        val archive = File(dir, "archive.tar.gz").apply { writeText("archive") }
+        val home = File(dir, "apache-maven").apply { File(this, "bin").mkdirs() }
+
+        DistributionFetch.ensureArchive("3.9.16", archive, home, DistributionFetch.sha512(archive)) { _, _ -> fail("fetched again") }
+
+        assertTrue(File(home, "bin").isDirectory)
+    }
+
+    @Test
+    fun `a fetched archive that does not match its SHA-512 is refused`(@TempDir dir: File) {
+        val archive = File(dir, "archive.tar.gz")
+        val good = File(dir, "good").apply { writeText("archive") }
+
+        assertFailsWith<IllegalStateException> {
+            DistributionFetch.ensureArchive("3.9.16", archive, File(dir, "apache-maven"), DistributionFetch.sha512(good)) { _, target ->
+                target.writeText("tampered")
+            }
+        }
+        assertFalse(archive.exists())
+    }
+
+    @Test
+    fun `a cached tree is kept when its archive cannot be fetched again`(@TempDir dir: File) {
+        val archive = File(dir, "archive.tar.gz")
+        val home = File(dir, "apache-maven").apply { File(this, "bin").mkdirs() }
+
+        assertFailsWith<IOException> {
+            DistributionFetch.ensureArchive("3.9.16", archive, home, "0") { _, _ -> throw SocketTimeoutException("Read timed out") }
+        }
+        assertTrue(File(home, "bin").isDirectory)
     }
 }

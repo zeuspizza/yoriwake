@@ -5,6 +5,9 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 
 /**
  * Downloads a Maven distribution's archive from Maven Central, retrying a fetch the network cut
@@ -41,6 +44,35 @@ internal object DistributionFetch {
                 if (attempt == pauses.size) throw IOException("Maven $version: ${pauses.size + 1} fetches of $uri failed", failed)
                 pause(pauses[attempt])
             }
+        }
+    }
+
+    fun sha512(file: File): String =
+        MessageDigest.getInstance("SHA-512").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+
+    /**
+     * Leaves at [archive] [version]'s archive with SHA-512 [expected]. One already there is kept
+     * only when it matches; otherwise the archive is fetched again and checked, and only then are
+     * [home], the tree unpacked from the old one, and the old archive replaced. A cache restored
+     * from elsewhere is used only after this check.
+     */
+    fun ensureArchive(
+        version: String,
+        archive: File,
+        home: File,
+        expected: String,
+        download: (String, File) -> Unit = { v, target -> fetch(v, target) },
+    ) {
+        if (archive.isFile && sha512(archive) == expected) return
+        val fresh = File.createTempFile("download-", ".tar.gz", archive.parentFile)
+        try {
+            download(version, fresh)
+            val actual = sha512(fresh)
+            check(actual == expected) { "Maven $version's archive has SHA-512 $actual, not the published $expected" }
+            home.deleteRecursively()
+            Files.move(fresh.toPath(), archive.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } finally {
+            fresh.delete()
         }
     }
 
