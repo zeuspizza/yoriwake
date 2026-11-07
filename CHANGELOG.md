@@ -42,6 +42,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - An edit to a module a test task does not reach leaves its tests out, on Maven too, whatever its package names. Map: left alone.
 - A module whose sources another module compiles in by a source or resource root counts as reached. Map: left alone.
 - A Maven capture records its JaCoCo scope. Map: left alone.
+- An edit to a module under a directory named `src`, or with its own build directory, stays a change for a test holding its path. Map: left alone.
 - Maven compares the system properties Surefire's `systemProperties` and `systemPropertiesFile` give the tests. Map: repaired on the next build, where a POM uses them.
 
 ## [0.4.0] - 2026-10-29

@@ -335,6 +335,46 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
     }
 
     /**
+     * A sibling whose build directory is `out`, not `build`: a test that loads its compiled
+     * classes by that path reads the edit, though alpha does not depend on beta.
+     */
+    @Test
+    fun `a sibling's own build directory a test reads by path keeps its source edits`(@TempDir dir: File) {
+        twoJavaModules(
+            dir,
+            """
+            package dev.alpha;
+            import org.junit.jupiter.api.Test;
+            import java.net.URL;
+            import java.net.URLClassLoader;
+            import java.nio.file.Path;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ThingTest {
+                @Test void reads() throws Exception {
+                    URL classes = Path.of("..", "beta/out/classes/java/main").toUri().toURL();
+                    try (URLClassLoader loader = new URLClassLoader(new URL[] { classes }, null)) {
+                        Object thing = loader.loadClass("dev.beta.Thing").getDeclaredConstructor().newInstance();
+                        assertEquals(1, thing.getClass().getMethod("n").invoke(thing));
+                    }
+                }
+            }
+            """.trimIndent(),
+        )
+        File(dir, "beta/build.gradle.kts").appendText("\nlayout.buildDirectory = file(\"out\")\n")
+        File(dir, ".gitignore").appendText(System.lineSeparator() + "out/")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-am", "out")
+        runner(dir, ":beta:classes", ":alpha:test").build()
+
+        File(dir, "beta/src/main/java/dev/beta/Thing.java")
+            .writeText("package dev.beta; public class Thing { public int n() { return 2; } }")
+        File(dir, "alpha/build/test-results").deleteRecursively()
+
+        val output = runner(dir, ":beta:classes", ":alpha:test", "-Pyoriwake.select").buildAndFail().output
+
+        assertContains(output, "ThingTest > reads() FAILED")
+    }
+
+    /**
      * The other half of the classpath rule, and the one that can fail silently.
      *
      * `:alpha` depends on `:beta` here, and alpha's test exercises beta's class. If presence
