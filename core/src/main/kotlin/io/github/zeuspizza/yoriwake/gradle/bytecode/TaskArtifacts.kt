@@ -129,6 +129,12 @@ internal class TaskArtifacts(
     // They are read under MAX_SCAN_BYTES, and anything not found when it runs out counts as named.
     private val otherJars = jars - ownJars.toSet()
 
+    private val buildDirPaths = moduleBuildDirs.map { it.replace(File.separatorChar, '/') }
+
+    /** Each module build directory's part below [moduleDir] (`out` for `<root>/beta/out`). */
+    private fun buildDirsBelow(moduleDir: String): List<String> =
+        buildDirPaths.mapNotNull { dir -> dir.substringAfterLast("/$moduleDir/", "").ifEmpty { null } }
+
     /**
      * Every compiled class a changed source file produced, nested and file classes included, since
      * the file is judged as a whole. Null when nothing could be searched: a refusal, not "none".
@@ -243,9 +249,11 @@ internal class TaskArtifacts(
             // Every `src` counts: a module kept under a directory named `src` has two.
             segments.indices.filter { it > 0 && segments[it] == "src" }.forEach { src ->
                 (src until segments.size).mapTo(forms) { end -> segments.subList(src - 1, end + 1).joinToString("/") }
-                listOf(segments.subList(0, src).joinToString("/"), segments[src - 1]).forEach { module ->
-                    forms += "$module/build"
-                    forms += "$module/target"
+                val moduleDir = segments.subList(0, src).joinToString("/")
+                // A build directory the module sets itself (`out`) is read by path like the default.
+                val below = listOf("build", "target") + buildDirsBelow(moduleDir)
+                listOf(moduleDir, segments[src - 1]).forEach { module ->
+                    below.forEach { forms += "$module/$it" }
                 }
             }
             return forms

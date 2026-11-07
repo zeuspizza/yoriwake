@@ -4017,6 +4017,10 @@ MUTATIONS = [
      '            segments.indices.filter { it > 0 && segments[it] == "src" }.forEach { src ->',
      '            listOf(segments.indexOf("src")).filter { it > 0 }.forEach { src ->',
      unit_suite, "a module under a directory named src is named from its own name on"),
+    ("a module's own build directory is named only as build or target", TASK_ARTIFACTS,
+     '                val below = listOf("build", "target") + buildDirsBelow(moduleDir)',
+     '                val below = listOf("build", "target")',
+     unit_suite, "a module's own build directory is named from the module's name on"),
     # Classes the fork is handed by path put that module in its JVM, whatever its dependencies say.
     ("Maven reads no path in the fork's added classpath elements", MAVEN_CLASSPATH_VIEWS,
      "    ) + added?.children.orEmpty().mapNotNull { it.value }",
