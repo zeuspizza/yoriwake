@@ -119,7 +119,7 @@ internal fun classpathFacts(
         if (changedPaths == null ||
             reachesOutsideModule(ownDir, ownPath, changedPaths, facts.moduleDirs)
         ) {
-            resolvedProjectDependencies(project)
+            withSourceRootModules(project, facts.moduleDirs, resolvedProjectDependencies(project))
         } else {
             emptySet()
         }
@@ -196,6 +196,59 @@ internal fun resolvedProjectDependencies(project: Project): Set<String>? {
         if (!ok) complete = false
     }
     return if (complete) paths else null
+}
+
+/**
+ * [declared] with every module whose directory holds, or lies in, a source directory of [project]
+ * or of a module already named, until no new one is named: a sibling's sources compiled in that
+ * way end up in classes whose source file names no path to them. Null when either side is unknown.
+ */
+internal fun withSourceRootModules(project: Project, moduleDirs: Map<String, String>, declared: Set<String>?): Set<String>? {
+    val named = (declared ?: return null).toMutableSet()
+    val dirs = moduleDirs.map { (dir, path) -> project.rootDir.resolve(dir).toPath().normalize() to path }
+    val unread = ArrayDeque(listOf(project.path))
+    val read = mutableSetOf<String>()
+    while (unread.isNotEmpty()) {
+        val path = unread.removeFirst()
+        if (!read.add(path)) continue
+        // A module of another build is not in [moduleDirs], so none of its paths can drop.
+        val module = project.rootProject.findProject(path) ?: continue
+        for (source in sourceDirectories(module) ?: return null) {
+            val root = source.toPath().normalize()
+            dirs.filter { (dir, _) -> root.startsWith(dir) || dir.startsWith(root) }.forEach { (_, holder) -> named += holder }
+        }
+        unread += named - read
+    }
+    return named
+}
+
+/**
+ * Every source and resource directory of [project]'s source sets: Java's, and those the Kotlin and
+ * Android plugins keep, read by name since neither is on this plugin's classpath. Null when one
+ * cannot be read, or when either plugin's sets yield no directory, so a renamed property never
+ * reads as "no directories".
+ */
+internal fun sourceDirectories(project: Project): List<File>? = runCatching {
+    val found = mutableListOf<File>()
+    project.extensions.findByType(org.gradle.api.tasks.SourceSetContainer::class.java)?.forEach { found += it.allSource.srcDirs }
+    listOf("kotlin", "android").mapNotNull { project.extensions.findByName(it) }.forEach { extension ->
+        val sets = getter(extension, "getSourceSets") as? Iterable<*> ?: return null
+        val dirs = sets.flatMap { set ->
+            listOf("getKotlin", "getJava", "getResources").flatMap { kind ->
+                getter(set!!, kind)?.let { getter(it, "getSrcDirs") as Set<*> }.orEmpty().map { it as File }
+            }
+        }
+        if (dirs.isEmpty()) return null
+        found += dirs
+    }
+    found
+}.getOrNull()
+
+/** What [target]'s public getter [name] returns, or null when it has none. */
+private fun getter(target: Any, name: String): Any? {
+    val method = runCatching { target.javaClass.getMethod(name) }.getOrNull() ?: return null
+    method.trySetAccessible()
+    return method.invoke(target)
 }
 
 /**

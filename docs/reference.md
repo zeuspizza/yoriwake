@@ -33,7 +33,10 @@ guess.
   not reach is left out of its change set, unless one of the task's compiled classes holds a path
   to it of two or more segments: `../beta/src/main/java/dev/beta/Thing.java`,
   `src/main/java/dev/beta/Thing.java`, `beta/src` or its output's `beta/build` all keep it. A test that builds the path from
-  single names or walks the tree to it is not seen. The module's other files keep counting.
+  single names or walks the tree to it is not seen. The module's other files keep counting. A
+  module counts as reached when a source or resource directory of the tested module, or of a
+  module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`); a source
+  added on a compile task alone (`tasks.compileJava { source(...) }`) is not read.
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
   now and always runs one the map has never seen.
@@ -1636,8 +1639,10 @@ the Gradle plugin.
   of any scope, an annotation processor path, a plugin, extension or plugin dependency, coordinates
   in any plugin's configuration, or a path into it, or above it, among what the fork is handed: its
   `argLine`, added classpath, classes directories, working directory, system properties and
-  environment, and the invocation's `-D` properties. Edits to the others' sources are left out as
-  on Gradle. An expression there that the build's properties cannot resolve leaves them in.
+  environment, and the invocation's `-D` properties, or a source or resource root of its own or of
+  a module it reaches (build-helper's, the compiler's `compileSourceRoots`, `<sourceDirectory>`,
+  `<resources>`) that lies in it or above it. Edits to the others' sources are left out as on
+  Gradle. An expression there that the build's properties cannot resolve leaves them in.
 - **`-pl` and `-am`**: a module built against a module of the same reactor that this invocation
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.
