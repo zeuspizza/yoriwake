@@ -104,6 +104,35 @@ class TestJvmEnvironmentAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
+    // Track: code reading. Boundary: the fingerprint takes system properties from the task's `-D`
+    // arguments and from the `@file`s the java launcher expands. HotSpot itself reads more options
+    // from the file `-XX:VMOptionsFile` names, `-D` among them, so a property passed that way is set
+    // in the test JVM while the argument the fingerprint sees stays the same.
+    @Test
+    fun `a system property passed through a VM options file runs everything when it changed`(@TempDir dir: File) {
+        val build = buildWith(
+            """
+            dependsOn("stampOptions")
+            jvmArgs("-XX:VMOptionsFile=" + layout.buildDirectory.file("gen/test.options").get().asFile.absolutePath)
+            """,
+            after = """
+            tasks.register("stampOptions") {
+                val out = layout.buildDirectory.file("gen/test.options")
+                val state = treeState
+                inputs.property("state", state)
+                outputs.file(out)
+                doLast { out.get().asFile.apply { parentFile.mkdirs() }.writeText("-Dtree.state=" + state.get() + "\n") }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1TreeStateTest", Aim.Forced("environment-changed"),
+            listOf(codec, other, first, propertyTest, codecTest, classOrderByName), buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
     // Track: code reading. Boundary: the fingerprint reads the task's JVM arguments as Gradle hands
     // them to the test JVM, argument providers included, which are asked for their arguments only
     // when the task runs.
