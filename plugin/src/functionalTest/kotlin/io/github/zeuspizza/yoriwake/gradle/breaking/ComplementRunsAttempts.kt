@@ -290,6 +290,45 @@ class ComplementRunsAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_FORCE, Result(result.outcome, "${result.why}; the selecting run reported $selected"))
     }
 
+    // Track: code reading. Boundary: the last look digests the configuration the test JVM starts
+    // with after every doFirst the build adds, the plugin moving itself behind the ones that exist
+    // once every build script has run. Here the build adds its doFirst later, once the task graph is
+    // ready, and it adds a JVM argument provider from a property the complement run passes
+    // differently.
+    @Test
+    fun `a JVM argument provider a doFirst added once the task graph is ready sets from a property differently is a record mismatch`(@TempDir dir: File) {
+        val build = minimalBuild + """
+
+            tasks.test {
+                val flavor = providers.gradleProperty("flavor").getOrElse("a")
+                gradle.taskGraph.whenReady {
+                    doFirst { (this as Test).jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dflavor=${'$'}flavor") }) }
+                }
+            }
+        """.trimIndent()
+        val target = source(
+            "src/test/java/dev/sample/A9TargetTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A9TargetTest {
+                @Test void flavorA() {
+                    assertEquals("cba", new Codec().encode("abc"));
+                    assertEquals("a", System.getProperty("flavor"));
+                }
+            }
+            """,
+        )
+        val result = complementAttempt(
+            dir, "dev.sample.A9TargetTest", Aim.Forced(AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND),
+            listOf(codec, other, first, target, classOrderByName), build,
+            narrow = ::rewriteCodec, selecting = listOf("-Pflavor=a"), complementing = listOf("-Pflavor=b"),
+        )
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
     private fun forcedOf(notes: List<Map<String, String>>) = notes.flatMap { note ->
         listOfNotNull(note[AgentContract.REFUSAL_KIND_NOTE], note[AgentContract.FULL_RUN_KIND_NOTE]) +
             note[AgentContract.FORCING_KINDS_NOTE].orEmpty().split(',')

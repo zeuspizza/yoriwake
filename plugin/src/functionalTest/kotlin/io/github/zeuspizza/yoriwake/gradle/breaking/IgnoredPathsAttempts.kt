@@ -562,4 +562,137 @@ class IgnoredPathsAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
+
+    // Track: code reading. Boundary: SelectionFilter.declaresChangedPath unescapes each changed
+    // path, `%2C` back to a comma and `%25` back to a percent sign, in one pass. A file whose name
+    // holds `%2C` itself must come back as written, not as a comma, for a glob that spells the
+    // `%2C`; the glob leaves the rest of the name to a star, so no class holds the file name.
+    @Test
+    fun `a test that declares a dependency on a file named with an escaped comma runs when it changes`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1SizeTest", Aim.Row("declares-changed-path"),
+            listOf(
+                other, first, sizeChecker("docker/users%2Cv2.json", 11, tag = "yoriwake-depends-on:/docker/users%2C*.json"),
+                "docker/users%2Cv2.json" to "{\"rows\": 1}", classOrderByName,
+            ),
+            buildScript = ignoring("docker/**"),
+        ) { File(it, "docker/users%2Cv2.json").writeText("{\"rows\": 12}") }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: Selector.readsIgnored now counts a read below a declared path,
+    // for a link git tracks to a directory. A git submodule is the other declared path that is a
+    // directory: its path is the changed path, and a test reads the files below it.
+    @Test
+    fun `a test that reads a file of a declared submodule runs when the submodule changes`(
+        @TempDir dir: File,
+        @TempDir upstream: File,
+    ) {
+        File(upstream, "data.txt").writeText("one")
+        git(upstream, "init")
+        commit(upstream, "data")
+        git(dir, "init")
+        git(dir, "-c", "protocol.file.allow=always", "submodule", "add", upstream.absolutePath, "vendor/lib")
+        val result = attempt(
+            dir, "dev.sample.A1ReaderTest", Aim.Row("shares-jvm-ignored-path"),
+            listOf(other, first, reader("vendor/lib/data.txt", "one"), classOrderByName),
+            buildScript = ignoring("vendor/**"),
+        ) { File(it, "vendor/lib/data.txt").writeText("two") }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: a moved classpath file whose name holds a comma is handed to
+    // the read records now, escaped in the comma-joined list, where it used to force. A declared
+    // file named `NOTES,v2.md` the build copies onto the test classpath.
+    @Test
+    fun `a declared file with a comma in its name the build copies onto the test classpath runs the test that reads the copy`(
+        @TempDir dir: File,
+    ) {
+        val result = attempt(
+            dir, "dev.sample.A1ResourceTest", Aim.Row("shares-jvm-moved-classpath-file"),
+            listOf(other, first, resourceReader("NOTES,v2.md", "v1"), "NOTES,v2.md" to "v1", classOrderByName),
+            buildScript = ignoring("*.md", extra = """tasks.processTestResources { from("NOTES,v2.md") }"""),
+        ) { File(it, "NOTES,v2.md").writeText("v2") }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: build-file keeps a version catalog by its `.versions.toml`
+    // name or a `gradle` directory; a catalog the settings load from another name (`deps.toml`) is
+    // left out under `*.toml`, and only the comparison of the resolved jars stands between a
+    // version bump in it and the tests on that dependency.
+    @Test
+    fun `a dependency version bumped in a catalog of another name the settings load runs every test`(@TempDir dir: File) {
+        val versionTest = source(
+            "src/test/java/dev/sample/A1VersionTest.java",
+            """
+            package dev.sample;
+            import org.apache.commons.lang3.StringUtils;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1VersionTest {
+                @Test void pinned() { assertEquals("3.17.0", StringUtils.class.getPackage().getImplementationVersion()); }
+            }
+            """,
+        )
+        val settings = "settings.gradle.kts" to """
+            rootProject.name = "sample"
+            dependencyResolutionManagement { versionCatalogs { create("deps") { from(files("deps.toml")) } } }
+        """.trimIndent()
+        val result = attempt(
+            dir, "dev.sample.A1VersionTest", Aim.Forced("dependencies-changed"),
+            listOf(
+                settings, other, first, versionTest, classOrderByName,
+                "deps.toml" to "[libraries]\nlang3 = \"org.apache.commons:commons-lang3:3.17.0\"\n",
+            ),
+            buildScript = ignoring("*.toml", extra = "dependencies { testImplementation(deps.lang3) }"),
+        ) { File(it, "deps.toml").writeText("[libraries]\nlang3 = \"org.apache.commons:commons-lang3:3.16.0\"\n") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a declared file the build copies onto the test classpath is
+    // left out of the change set because the classpath comparison stands in for it; when the
+    // comparison cannot be made (the 200,000-file budget, spent here by a zip a build jar's
+    // manifest names), the run must force rather than trust the declaration.
+    @Test
+    fun `a declared file copied onto a classpath over the digest budget runs every test as unrecorded`(@TempDir dir: File) {
+        val build = "import java.util.zip.ZipEntry\nimport java.util.zip.ZipOutputStream\n" + ignoring(
+            "*.md",
+            extra = """
+                tasks.processTestResources { from("NOTES.md") }
+                val manyZip = tasks.register("manyZip") {
+                    val out = layout.buildDirectory.file("pointer/many.zip")
+                    outputs.file(out)
+                    doLast {
+                        val zip = out.get().asFile
+                        zip.parentFile.mkdirs()
+                        ZipOutputStream(zip.outputStream().buffered()).use { stream ->
+                            for (i in 0..200_000) {
+                                stream.putNextEntry(ZipEntry("many/C" + i + ".class"))
+                                stream.write('x'.code)
+                                stream.closeEntry()
+                            }
+                        }
+                    }
+                }
+                val pointerJar = tasks.register<Jar>("pointerJar") {
+                    dependsOn(manyZip)
+                    archiveFileName.set("pointer.jar")
+                    destinationDirectory.set(layout.buildDirectory.dir("pointer"))
+                    manifest { attributes("Class-Path" to "many.zip") }
+                }
+                dependencies { testRuntimeOnly(files(pointerJar)) }
+            """.trimIndent(),
+        )
+        val result = attempt(
+            dir, "dev.sample.A1ResourceTest", Aim.Forced("classpath-files-unrecorded"),
+            listOf(other, first, resourceReader("NOTES.md", "v1"), "NOTES.md" to "v1", classOrderByName),
+            buildScript = build,
+        ) { File(it, "NOTES.md").writeText("v2") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }

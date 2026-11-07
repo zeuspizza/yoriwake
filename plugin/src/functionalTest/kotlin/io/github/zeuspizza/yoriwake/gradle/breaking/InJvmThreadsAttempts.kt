@@ -261,4 +261,90 @@ class InJvmThreadsAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
+
+    /** The switches that run test classes concurrently in one JVM, as JVM arguments. */
+    private val concurrentClasses = "-Djunit.jupiter.execution.parallel.enabled=true " +
+        "-Djunit.jupiter.execution.parallel.mode.default=concurrent " +
+        "-Djunit.jupiter.execution.parallel.mode.classes.default=concurrent"
+
+    /** A test that runs beside the others, so the classes do interleave. */
+    private val slow = source(
+        "src/test/java/dev/sample/A1SlowTest.java",
+        """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class A1SlowTest { @Test void waits() throws Exception { Thread.sleep(500); assertEquals(1, new Other().one()); } }
+        """,
+    )
+
+    // Track: fixtures. Row: TH4. The build's detector reads the task's system properties, JVM
+    // arguments and junit-platform.properties; JAVA_TOOL_OPTIONS is none of them, so only the test
+    // JVM's own reading of the engines' configuration can keep the interleaved capture out of the map.
+    @Test
+    fun `in-JVM parallelism enabled through JAVA_TOOL_OPTIONS leaves no map to narrow from`(@TempDir dir: File) {
+        val build = minimalBuild.replace(
+            "tasks.test { useJUnitPlatform() }",
+            "tasks.test { useJUnitPlatform(); environment(\"JAVA_TOOL_OPTIONS\", \"$concurrentClasses\") }",
+        )
+        val result = attempt(
+            dir, "dev.sample.A9CodecTest", Aim.Forced("map-unusable"),
+            listOf(codec, other, first, slow, codecTest),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: fixtures. Row: TH4. An @argfile is one JVM argument to the detector, which looks for
+    // the switch only in arguments that start with -D; the launcher expands the file.
+    @Test
+    fun `in-JVM parallelism enabled through an argfile leaves no map to narrow from`(@TempDir dir: File) {
+        val build = minimalBuild.replace(
+            "tasks.test { useJUnitPlatform() }",
+            "tasks.test { useJUnitPlatform(); jvmArgs(\"@\" + file(\"src/test/parallel.args\").absolutePath) }",
+        )
+        val args = "src/test/parallel.args" to concurrentClasses.replace(" ", "\n") + "\n"
+        val result = attempt(
+            dir, "dev.sample.A9CodecTest", Aim.Forced("map-unusable"),
+            listOf(codec, other, first, slow, codecTest, args),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: fixtures. Row: TH4. A launcher session listener runs inside the test JVM before
+    // discovery, so nothing the build can read says what it switches on.
+    @Test
+    fun `in-JVM parallelism a launcher session listener switches on leaves no map to narrow from`(@TempDir dir: File) {
+        val listener = source(
+            "src/test/java/dev/sample/ParallelSession.java",
+            """
+            package dev.sample;
+            import org.junit.platform.launcher.LauncherSession;
+            import org.junit.platform.launcher.LauncherSessionListener;
+            public class ParallelSession implements LauncherSessionListener {
+                @Override public void launcherSessionOpened(LauncherSession session) {
+                    System.setProperty("junit.jupiter.execution.parallel.enabled", "true");
+                    System.setProperty("junit.jupiter.execution.parallel.mode.default", "concurrent");
+                    System.setProperty("junit.jupiter.execution.parallel.mode.classes.default", "concurrent");
+                }
+            }
+            """,
+        )
+        val registration = "src/test/resources/META-INF/services/org.junit.platform.launcher.LauncherSessionListener" to
+            "dev.sample.ParallelSession\n"
+        val build = minimalBuild.replace(
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+            "testImplementation(\"org.junit.platform:junit-platform-launcher\")",
+        )
+        val result = attempt(
+            dir, "dev.sample.A9CodecTest", Aim.Forced("map-unusable"),
+            listOf(codec, other, first, slow, codecTest, listener, registration),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }
