@@ -15,6 +15,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
+
 **Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.
 
 ### Added
@@ -224,7 +226,8 @@ First release. **Your map:** none exists yet; the first full run records one.
 - Pinning with `@Tag("yoriwake-always-run")`, `yoriwake { alwaysRun }` and `-Pyoriwake.alwaysRun`.
 - `-Pyoriwake.isolatedCapture`, which records the map with a fresh test JVM per test class.
 
-[Unreleased]: https://github.com/zeuspizza/yoriwake/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/zeuspizza/yoriwake/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/zeuspizza/yoriwake/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/zeuspizza/yoriwake/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/zeuspizza/yoriwake/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zeuspizza/yoriwake/compare/v0.1.0...v0.2.0

@@ -63,7 +63,7 @@ Apply the plugin next to `jacoco`, which it requires and scopes:
 plugins {
     java
     jacoco
-    id("io.github.zeuspizza.yoriwake") version "0.4.0"
+    id("io.github.zeuspizza.yoriwake") version "0.5.0"
 }
 ```
 
@@ -84,7 +84,7 @@ On Maven (from 0.4.0, on Maven Central), it is a build extension in the root POM
 <plugin>
   <groupId>io.github.zeuspizza</groupId>
   <artifactId>yoriwake-maven-plugin</artifactId>
-  <version>0.4.0</version>
+  <version>0.5.0</version>
   <extensions>true</extensions>
 </plugin>
 ```
