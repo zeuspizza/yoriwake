@@ -1,13 +1,14 @@
 name: supported matrix
 
 # Runs the functional suite on every Gradle, daemon JDK and operating system the reference's
-# supported matrix names, on one release candidate. A row of that table stands only on a green run
-# of this workflow on the commit the release is tagged from; `.github/test_ci.py` keeps the table
-# and the cell list below in step.
+# supported matrix names, on one commit of a release. A row of that table stands only on a green
+# run of this workflow on the release's gate commit, or on the candidate when its build files or
+# dependency versions changed after it (`RELEASING.md`); `.github/test_ci.py` keeps the table and
+# the cell list below in step.
 #
-# Dispatched in each release check, never on a schedule, from the candidate's own branch (`main` for
-# a minor, `release/<major>.<minor>` for a patch), so the workflow, the build and the table come from
-# one line of history. It costs hours of runner time, which is why no push or pull request starts it.
+# Dispatched in each release check, never on a schedule, from the release line (`main` for a minor,
+# `release/<major>.<minor>` for a patch), so the workflow, the build and the table come from one
+# line of history. It costs hours of runner time, which is why no push or pull request starts it.
 on:
   workflow_dispatch:
     inputs:

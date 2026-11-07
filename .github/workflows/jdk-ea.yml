@@ -6,7 +6,8 @@ name: early-access JDK
 # ceiling, the named refusal above one. Anything else fails the job, except tests run beyond the
 # prediction: the safe direction, reported as a warning.
 #
-# Dispatched on each release candidate (`RELEASING.md`), never on a schedule.
+# Dispatched in each release check on the gate commit, and again on a candidate whose build files,
+# dependency versions or JDK ceilings changed (`RELEASING.md`), never on a schedule.
 on:
   workflow_dispatch:
 

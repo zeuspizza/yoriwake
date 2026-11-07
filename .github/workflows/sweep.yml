@@ -1,6 +1,6 @@
 name: sweep
 
-# A benchmark sweep, on dispatch and weekly on `main`: never on a pull request, whose code would run
+# A benchmark sweep, on dispatch only: never on a pull request, whose code would run
 # with this workflow's time and, in the merge job, its write access.
 #
 # Each project records in one job (capture, baseline, preflight, the compile gate over its draw
@@ -14,15 +14,16 @@ name: sweep
 # What runs follows from what changed since `base` (bench/tier.py) unless `tier` names it: nothing,
 # an offline replay of the last published sweep's rows, the reduced arm, or every project. A full
 # sweep covers the projects `only` names: `demo` unless told otherwise, `all` for every project. A
-# dispatch that leaves `only` empty gets its default, `demo`; only a run with no inputs at all (a
-# schedule) sees it empty, and sweeps every project.
+# dispatch that leaves `only` empty gets its default, `demo`; an empty `only`, which no trigger
+# passes today, sweeps every project.
 #
 # A full sweep that lacked some projects is completed by a dispatch that re-runs them, with
 # `completes` naming its run: the draft release then holds both runs' projects as one sweep. It is
 # refused before measuring unless the selector's sources are the earlier run's, and the merge
 # refuses rows measured under another selector or grammar (bench/merge.py --completes).
 #
-# Dispatched in each release check on the candidate, never on a schedule: a full sweep of every
+# Dispatched in each release check on the gate commit, and again on a candidate whose diff touches
+# product code (`RELEASING.md`), never on a schedule: a full sweep of every
 # project takes about 7.5 to 10 hours.
 on:
   workflow_dispatch:
@@ -87,7 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          # A scheduled run has no inputs; it sweeps the full arm. A dispatch always carries a tier.
+          # A dispatch always carries a tier; the full arm only guards a run without inputs.
           TIER=${TIER:-full}
           # Refused here rather than after hours of measuring: a completion's rows join the earlier
           # run's only if both measured the same selector.
