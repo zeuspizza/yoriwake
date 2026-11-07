@@ -4830,7 +4830,7 @@ MUTATIONS = [
      "    systemPropertiesFile(project, session, configuration, failsafe)?.takeIf { false }?.let { file ->",
      maven_suite, "another value in the systemPropertiesFile runs every test"),
     ("an unreadable Maven systemPropertiesFile reads as nothing", MAVEN_FORK_SYSTEM_PROPERTIES,
-     '            properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, "@systemPropertiesFile", UUID.randomUUID().toString())',
+     '            properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, ForkSystemProperty.UNREADABLE_FILE, UUID.randomUUID().toString())',
      '            UUID.randomUUID()',
      maven_suite, "a systemPropertiesFile that cannot be read runs every test"),
     ("a Maven complement stamp reads no systemPropertiesFile", MAVEN_RECORDING,
