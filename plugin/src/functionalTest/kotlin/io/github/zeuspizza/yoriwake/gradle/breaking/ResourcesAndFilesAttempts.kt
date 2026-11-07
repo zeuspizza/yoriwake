@@ -1334,4 +1334,26 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
+
+    // Track: code reading. Boundary: the dependency rows read every classpath entry under the
+    // project cache directory (`.gradle/`) by its content, as every other dependency outside
+    // Gradle's two caches is; only the plugin's own agent jar gets no row. A build that keeps a
+    // tool jar it fetches under `.gradle/tools/` puts it on the test classpath, and a newer
+    // download replaces it at the same path.
+    @Test
+    fun `a jar the build keeps under its dot-gradle directory runs every test when it is replaced`(@TempDir dir: File) {
+        val tool = File(dir, ".gradle/tools/tool.jar")
+        manifestJar(tool, null, "tool.properties" to "flavor=a\n")
+        val build = buildWith("", after = "dependencies { testRuntimeOnly(files(\".gradle/tools/tool.jar\")) }")
+        val result = attempt(
+            dir, "dev.sample.A1ToolTest", Aim.Forced("dependencies-changed"),
+            listOf(codec, other, first, propertyTest("A1ToolTest", "tool.properties", "flavor", "a"), codecTest, classOrderByName),
+            buildScript = build,
+        ) {
+            changeCodec(it)
+            manifestJar(tool, null, "tool.properties" to "flavor=b\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }
