@@ -40,13 +40,21 @@ public final class Selector {
             this.runTimeReporters = runTimeReporters(knownTestIds);
         }
 
-        /** The ids under which the map recorded a test reported at run time, as vintage names one. */
+        /**
+         * The runners the map recorded reporting a test at run time, as vintage names one. Vintage
+         * files such a test under the suite its runner lists for the test's own class when there is
+         * one, which need not hold the listed test that reports it, so the whole runner counts.
+         */
         private static Set<String> runTimeReporters(Set<String> knownTestIds) {
             Set<String> reporters = new HashSet<>();
             for (String id : knownTestIds) {
                 int dynamic = id.indexOf("/[dynamic:");
                 if (dynamic > 0) {
-                    reporters.add(id.substring(0, dynamic));
+                    int runner = id.indexOf("/[runner:");
+                    int runnerEnd = runner < 0 ? -1 : id.indexOf("]/[", runner);
+                    reporters.add(runnerEnd >= 0 && runnerEnd < dynamic
+                            ? id.substring(0, runnerEnd + 1)
+                            : id.substring(0, dynamic));
                 }
             }
             return reporters;

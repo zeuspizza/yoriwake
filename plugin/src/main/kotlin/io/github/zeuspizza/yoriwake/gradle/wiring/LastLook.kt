@@ -10,6 +10,9 @@ import org.gradle.api.Action
 import org.gradle.api.Describable
 import org.gradle.api.Task
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestListener
+import org.gradle.api.tasks.testing.TestResult
 import java.io.File
 
 /**
@@ -22,9 +25,9 @@ import java.io.File
  * applied, and moved next to the task's own action once every build script has run (see [moveLast]).
  * When the run still narrows, or still leaves out what a selecting run ran, and a file moved since
  * it was compared, the whole suite runs. A selecting run's record also carries the configuration its
- * test JVM starts with, and leaves no record when fail-fast is on by now; a complement whose
- * configuration differs from that one runs every test. [agentArgument] is the plugin's own
- * `-javaagent` argument, which the configuration leaves out.
+ * test JVM starts with, and leaves no record when fail-fast is on by now or once its tests start; a
+ * complement whose configuration differs from that one runs every test. [agentArgument] is the
+ * plugin's own `-javaagent` argument, which the configuration leaves out.
  */
 internal class LastLook(private val mapDir: File, private val agentArgument: String?) : Action<Task> {
 
@@ -66,7 +69,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
 
     /**
      * A selecting run's start, given the configuration its test JVM starts with; none when the
-     * task's own `doFirst` actions turned fail-fast on, as at the start.
+     * task's own `doFirst` actions turned fail-fast on, as at the start, or an action after this one
+     * did (see [FailFastOnceStarted]).
      */
     private fun finishStart(test: Test) {
         if (!File(mapDir, SelectionRecord.START_FILE).isFile) return
@@ -75,8 +79,32 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             test.logger.info("[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record")
             return
         }
-        addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }
-            ?.let { test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be completed ($it), so this run leaves no selection record") }
+        val failure = addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }
+        if (failure != null) {
+            test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be completed ($failure), so this run leaves no selection record")
+            return
+        }
+        test.addTestListener(FailFastOnceStarted(test, mapDir))
+    }
+
+    /**
+     * Drops a selecting run's start when its tests begin with fail-fast on: an action the build
+     * placed between this one and the task's own can still turn it on, and none can once the tests
+     * have started.
+     */
+    private class FailFastOnceStarted(private val test: Test, private val mapDir: File) : TestListener {
+        override fun beforeSuite(suite: TestDescriptor) {
+            if (suite.parent != null || !test.failFast) return
+            if (runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }.getOrDefault(false)) {
+                test.logger.info("[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record")
+            }
+        }
+
+        override fun afterSuite(suite: TestDescriptor, result: TestResult) {}
+
+        override fun beforeTest(testDescriptor: TestDescriptor) {}
+
+        override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {}
     }
 
     internal class Compared(
@@ -86,6 +114,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
         val digests: Map<String, String>,
         /** [ClasspathFiles.table]'s homes when the comparing action compared a table; empty for a walk. */
         val homes: Map<String, File> = emptyMap(),
+        /** The Gradle user home a walk took Gradle's module cache from; null for a table or none. */
+        val gradleUserHome: File? = null,
     )
 
     companion object {
@@ -100,7 +130,10 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
          * dependencies, when the hand-over carries homes; else a complement's walk of build output.
          */
         internal fun again(classpath: Collection<File>, compared: Compared): ClasspathFiles.Walk =
-            if (compared.homes.isEmpty()) ClasspathFiles.walk(classpath, compared.buildDirs, compared.rootDir, classes = compared.classes)
+            if (compared.homes.isEmpty()) ClasspathFiles.walk(
+                classpath, compared.buildDirs, compared.rootDir, classes = compared.classes,
+                gradleUserHome = compared.gradleUserHome,
+            )
             else ClasspathFiles.table(classpath, compared.buildDirs, compared.rootDir, compared.homes)
 
         /**
@@ -178,7 +211,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
 
         /**
          * Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes], and
-         * the table's [homes] when it compared one.
+         * the table's [homes] when it compared one, or the walk's [gradleUserHome].
          */
         fun write(
             mapDir: File,
@@ -187,10 +220,12 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             classes: Boolean,
             digests: Map<String, String>,
             homes: Map<String, File> = emptyMap(),
+            gradleUserHome: File? = null,
         ) {
             val lines = listOf("root\t${Tsv.escape(rootDir.absolutePath)}", "classes\t$classes") +
                 buildDirs.map { "build\t${Tsv.escape(it)}" } +
                 homes.map { (name, home) -> "home\t${Tsv.escape(name)}\t${Tsv.escape(home.absolutePath)}" } +
+                listOfNotNull(gradleUserHome?.let { "gradle-user-home\t${Tsv.escape(it.absolutePath)}" }) +
                 digests.map { (path, digest) -> "file\t${Tsv.escape(path)}\t$digest" }
             writeAtomically(handOver(mapDir), lines.joinToString("\n", postfix = "\n$END\n"))
         }
@@ -204,6 +239,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             val buildDirs = mutableListOf<String>()
             val digests = mutableMapOf<String, String>()
             val homes = mutableMapOf<String, File>()
+            var gradleUserHome: File? = null
             for (line in lines.dropLast(1)) {
                 val parts = line.split('\t')
                 when {
@@ -212,10 +248,11 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                     parts.size == 2 && parts[0] == "build" -> buildDirs += Tsv.unescape(parts[1])
                     parts.size == 3 && parts[0] == "file" -> digests[Tsv.unescape(parts[1])] = parts[2]
                     parts.size == 3 && parts[0] == "home" -> homes[Tsv.unescape(parts[1])] = File(Tsv.unescape(parts[2]))
+                    parts.size == 2 && parts[0] == "gradle-user-home" -> gradleUserHome = File(Tsv.unescape(parts[1]))
                     else -> return null
                 }
             }
-            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes)
+            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes, gradleUserHome)
         }
 
         private const val END = "end"

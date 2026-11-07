@@ -16,6 +16,7 @@ a function that asserted would be collected by pytest and pass however many chec
 """
 
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -549,6 +550,86 @@ def case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_repo
         problems += fail("a read-only job was required to stop its daemons")
     if gradle_notice_problems("on: push\njobs:\n  scan:\n    steps:\n      - run: true\n"):
         problems += fail("a workflow that sets no Gradle up was required to carry the switch")
+    return problems
+
+
+MAVEN_PINS = "maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt"
+
+
+def maven_distribution_cache_problems(text):
+    """Each job that runs the Maven functional suite, on its own or under the guards, without first
+    restoring its distributions.
+
+    A timed-out fetch of one distribution once failed the suite whole; kept between runs, each is
+    fetched once. The cache must be keyed on the file that pins the versions, so a new one is fetched.
+    """
+    problems = []
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("jobs:")), len(lines))
+    heads = [(i, m.group(1)) for i, line in enumerate(lines)
+             if i > start and (m := re.match(r"^  ([\w-]+):\s*$", line))]
+    for n, (head, name) in enumerate(heads):
+        job = lines[head:heads[n + 1][0] if n + 1 < len(heads) else len(lines)]
+        runs = [k for k, line in enumerate(job) if re.search(r":maven:(functionalTest|breakAttempts)\b", line)
+                # The guards run the suite; listing or comparing them runs nothing.
+                or ("scripts/prove_guards.py" in line
+                    and not any(flag in line for flag in ("--list-selection", "--against")))]
+        if not runs:
+            continue
+        cached = False
+        for k, line in enumerate(job[:runs[0]]):
+            if "actions/cache@" not in line:
+                continue
+            step = []
+            for later in job[k + 1:runs[0]]:
+                if later.lstrip().startswith("- "):
+                    break
+                step.append(later.strip())
+            if ("path: ~/.gradle/yoriwake-maven-distributions" in step
+                    and any(s.startswith("key:") and f"hashFiles('{MAVEN_PINS}')" in s for s in step)):
+                cached = True
+        if not cached:
+            problems.append(f"job {name} runs the Maven functional suite without first restoring "
+                            f"~/.gradle/yoriwake-maven-distributions keyed on {MAVEN_PINS}")
+    return problems
+
+
+def case_every_job_running_the_maven_suite_restores_its_distributions():
+    """The release builds from fresh downloads, each checked against its SHA-512, rather than run
+    binaries a cache restored, so it is left out."""
+    problems = 0
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
+        if name == "release.yml":
+            continue
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in maven_distribution_cache_problems(handle.read()):
+                problems += fail(f"{name}: {problem}")
+    return problems
+
+
+def case_a_maven_suite_job_without_the_distribution_cache_is_reported():
+    problems = 0
+    cache = ("      - uses: actions/cache@0123456789012345678901234567890123456789 # v6.1.0\n"
+             "        with:\n          path: ~/.gradle/yoriwake-maven-distributions\n"
+             f"          key: maven-distributions-${{{{ hashFiles('{MAVEN_PINS}') }}}}\n")
+    suite = "      - run: ./gradlew build :maven:functionalTest\n"
+    job = "jobs:\n  build:\n    steps:\n"
+    if maven_distribution_cache_problems(job + cache + suite):
+        problems += fail(f"a cached job was reported: {maven_distribution_cache_problems(job + cache + suite)}")
+    if not maven_distribution_cache_problems(job + suite):
+        problems += fail("a job without the cache passed")
+    if not maven_distribution_cache_problems(job + suite + cache):
+        problems += fail("a cache restored after the suite passed")
+    if not maven_distribution_cache_problems(job + cache.replace(MAVEN_PINS, "other.kt") + suite):
+        problems += fail("a cache keyed on another file passed")
+    if not maven_distribution_cache_problems(job + "      - run: python3 scripts/prove_guards.py --mode fast\n"):
+        problems += fail("a guard job without the cache passed")
+    if maven_distribution_cache_problems(job + "      - run: python3 scripts/prove_guards.py --list-selection a.json\n"):
+        problems += fail("a job that only lists the guards was required to cache")
+    if maven_distribution_cache_problems(job + "      - run: python3 scripts/prove_guards.py --against base\n"):
+        problems += fail("a job that only compares the guards was required to cache")
+    if maven_distribution_cache_problems(job + "      - run: ./gradlew build\n"):
+        problems += fail("a job that runs no Maven suite was required to cache")
     return problems
 
 
@@ -2416,7 +2497,7 @@ def _stub(directory, name, body):
 
 # Answers as `gh attestation verify` does, for files named in STUB_KNOWN only, and only when asked
 # for this repository's release workflow at STUB_HEAD on GitHub-hosted runners. Each file is vouched
-# for by a run numbered by its name's length, so the summary has more than one run to name.
+# for by a run numbered by its name's length's parity, so the summary has more than one run to name.
 STUB_GH = r"""import json, os, sys
 args = sys.argv[1:]
 if os.environ.get("STUB_DOWN"):
@@ -2818,16 +2899,20 @@ def case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_
     return problems
 
 
-def _sweep_merge(root, plan, arm="full"):
+def _sweep_merge(root, plan, arm="full", split_bytes=None):
     """sweep.yml's merge step over `root/downloaded`, `merge.py` stubbed to record its arguments
-    and to refuse a reduced arm short of a member, as the real one does."""
+    and to refuse a reduced arm short of a member, as the real one does; `split_bytes` replaces
+    the evidence parts' size."""
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         merge = _sweep_step(handle.read(), "\n      - name: merge, and attach to a draft release")
+    if split_bytes:
+        merge = re.sub(r"(\| split -b )\d+", rf"\g<1>{split_bytes}", merge)
     bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
     os.makedirs(bin_dir, exist_ok=True)
     os.makedirs(bench, exist_ok=True)
+    shutil.copy(os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "sweep_parts.py"), bench)
     with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
-        handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{root}/gh-args"\n')
+        handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{root}/gh-args"\necho "$*" >> "{root}/gh-calls"\n')
     os.chmod(os.path.join(bin_dir, "gh"), 0o755)
     with open(os.path.join(bench, "merge.py"), "w", encoding="utf-8") as handle:
         handle.write(f"import json, os, sys\njson.dump(sys.argv[1:], open({root!r} + '/merge-args', 'w'))\n"
@@ -2889,6 +2974,126 @@ def case_a_failed_project_is_declared_missing_and_the_rest_still_merge():
         done = _sweep_merge(root, ("okio", "kafka"), arm="reduced")
         if done.returncode == 0 or os.path.exists(os.path.join(root, "gh-args")):
             problems += fail("a reduced arm short of a member was published")
+    return problems
+
+
+def case_each_release_asset_of_a_sweep_stays_under_github_s_limit():
+    """GitHub refuses a release asset of 2 GiB or more, and the 0.5.0 sweep's single tarball
+    outgrew it: the evidence goes up in parts under the limit, which put together in name order
+    are one tar holding all of it, and the tarball holds the merged results alone."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        merge = _sweep_step(handle.read(), "\n      - name: merge, and attach to a draft release")
+    size = re.search(r"\| split -b (\d+) ", merge)
+    if not size or not 0 < int(size.group(1)) < 2 ** 31:
+        problems += fail(f"the evidence is not split into parts under 2 GiB: {size and size.group(0)}")
+    with tempfile.TemporaryDirectory() as root:
+        _recorded(root, "okio", 2, (1, 2))
+        for k in (1, 2):
+            with open(os.path.join(root, "downloaded", f"shard-okio-{k}-of-2", "evidence", "e.tar.gz"),
+                      "w") as handle:
+                handle.write("evidence " * 1000)
+        # Parts small enough that this evidence takes several.
+        done = _sweep_merge(root, ("okio",), split_bytes=4000)
+        if done.returncode:
+            return problems + fail(f"the merge failed: {done.stdout} {done.stderr}")
+        listed, parts, evidence = _published(root, 7)
+        uploaded = open(os.path.join(root, "gh-args")).read().split("\n")
+        if len(parts) < 2 or any(name not in uploaded for name in ["sweep-7.tar.gz", *parts]):
+            problems += fail(f"the release does not carry the tarball and every part: {parts} {uploaded}")
+        calls = open(os.path.join(root, "gh-calls")).read().splitlines()
+        if calls[-1] != "release upload sweep-7 sweep-7.tar.gz":
+            problems += fail(f"the tarball, which marks a complete upload, is not uploaded last: {calls}")
+        if any(path.startswith("evidence/") for path in listed):
+            problems += fail("the tarball still holds the evidence")
+        tree = os.path.join(root, "unpacked-tarball")
+        os.makedirs(tree)
+        subprocess.run(["tar", "-xzf", os.path.join(root, "sweep-7.tar.gz"), "-C", tree], check=True)
+        listing = [line.split("\t")[0] for line in
+                   open(os.path.join(tree, "evidence-parts.tsv")).read().splitlines()] \
+            if os.path.exists(os.path.join(tree, "evidence-parts.tsv")) else None
+        if listing != parts:
+            problems += fail(f"the tarball's manifest lists {listing}, not the parts {parts}")
+        if sorted(evidence) != ["evidence/", "evidence/shard-okio-1-of-2-e.tar.gz",
+                                "evidence/shard-okio-2-of-2-e.tar.gz"]:
+            problems += fail(f"the parts put together hold {evidence}")
+    return problems
+
+
+def _replay(root, split, damage=None):
+    """sweep.yml's replay step over a published sweep 5 holding demo's rows and evidence, in one
+    tarball or with its evidence split; what `replay_decisions.py` found in bench/."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        script = _sweep_step(handle.read(), "\n      - name: replay the last published sweep")
+    bin_dir, assets = os.path.join(root, "bin"), os.path.join(root, "assets")
+    for directory in (bin_dir, assets, os.path.join(root, "bench")):
+        os.makedirs(directory)
+    shutil.copy(os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "sweep_parts.py"),
+                os.path.join(root, "bench"))
+    _earlier_release(assets, 5, "demo", split)
+    os.rename(os.path.join(assets, "asset-5.tar.gz"), os.path.join(assets, "sweep-5.tar.gz"))
+    if split:
+        for k, suffix in ((1, "aaa"), (2, "aab")):
+            os.rename(os.path.join(assets, f"asset-{50 + k}.tar.gz"),
+                      os.path.join(assets, f"sweep-5-evidence.tar.part-{suffix}"))
+        last = os.path.join(assets, "sweep-5-evidence.tar.part-aab")
+        if damage == "missing":
+            os.remove(last)
+        elif damage == "short":
+            with open(last, "r+b") as handle:
+                handle.truncate(100)
+    shutil.rmtree(os.path.join(assets, "tree-5"))
+    with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
+        handle.write("#!/bin/sh\ncase $2 in\n  list) echo sweep-5 ;;\n"
+                     f'  download) mkdir -p "$7"; for f in {assets}/*; do '
+                     'case ${f##*/} in $5) cp "$f" "$7/" ;; esac; done ;;\nesac\n')
+    os.chmod(os.path.join(bin_dir, "gh"), 0o755)
+    with open(os.path.join(root, "gradlew"), "w", encoding="utf-8") as handle:
+        handle.write("#!/bin/sh\n")
+    os.chmod(os.path.join(root, "gradlew"), 0o755)
+    with open(os.path.join(root, "bench", "replay_decisions.py"), "w", encoding="utf-8") as handle:
+        handle.write("import os\nprint(sorted(os.path.relpath(os.path.join(d, f), 'bench') "
+                     "for d, _, fs in os.walk('bench') for f in fs))\n")
+    env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", "")}
+    return subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+
+
+def case_a_missing_or_short_evidence_part_fails_its_reader_before_it_extracts():
+    """A part that never uploaded, or broke off, would otherwise extract part of the evidence and
+    go unnoticed: the reader checks every part against the tarball's manifest first."""
+    problems = 0
+    for damage in ("missing", "short"):
+        with tempfile.TemporaryDirectory() as root:
+            done = _replay(root, True, damage)
+            if done.returncode == 0 or "sweep-5-evidence.tar.part-aab" not in done.stderr \
+                    or os.path.isdir(os.path.join(root, "published", "evidence")):
+                problems += fail(f"the replay of a sweep with a {damage} part: exit {done.returncode}, "
+                                 f"{done.stderr!r}")
+        with tempfile.TemporaryDirectory() as root:
+            _earlier_release(root, 52, "okio", split=True)
+            release = _draft("sweep-5", "2026-10-02T00:00:00Z", 52, split=True)
+            if damage == "missing":
+                release["assets"] = [a for a in release["assets"] if not a["name"].endswith("aab")]
+            else:
+                with open(os.path.join(root, "asset-522.tar.gz"), "r+b") as handle:
+                    handle.truncate(100)
+            done = _sweep_completion_merge(root, [release], {})
+            if done.returncode == 0 or "sweep-5-evidence.tar.part-aab" not in done.stderr \
+                    or os.path.exists(os.path.join(root, "gh-args")):
+                problems += fail(f"a completion of a sweep with a {damage} part: exit "
+                                 f"{done.returncode}, {done.stderr!r}")
+    return problems
+
+
+def case_the_replay_reads_a_sweep_s_evidence_from_its_tarball_or_its_parts():
+    problems = 0
+    for split in (False, True):
+        with tempfile.TemporaryDirectory() as root:
+            done = _replay(root, split)
+            if done.returncode or "'logs/demo/kept.txt'" not in done.stdout or \
+                    "'results/demo.json'" not in done.stdout:
+                problems += fail(f"the replay of a {'split' if split else 'one-tarball'} sweep: "
+                                 f"exit {done.returncode}, {done.stdout} {done.stderr}")
     return problems
 
 
@@ -2967,6 +3172,7 @@ def _sweep_completion_merge(root, releases, missing_after):
     bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench")
     os.makedirs(bin_dir)
     os.makedirs(bench)
+    shutil.copy(os.path.join(os.path.dirname(WORKFLOWS), "..", "bench", "sweep_parts.py"), bench)
     with open(os.path.join(root, "releases.json"), "w", encoding="utf-8") as handle:
         json.dump(releases, handle)
     with open(os.path.join(bin_dir, "gh"), "w", encoding="utf-8") as handle:
@@ -2976,7 +3182,7 @@ def _sweep_completion_merge(root, releases, missing_after):
                      f"    subprocess.run(['jq', '-r', args[args.index('--jq') + 1], {root!r} + '/releases.json'], check=True)\n"
                      f"elif args[0] == 'api':\n"
                      f"    shutil.copyfileobj(open({root!r} + '/asset-' + args[-1].rsplit('/', 1)[1] + '.tar.gz', 'rb'), sys.stdout.buffer)\n"
-                     f"else:\n"
+                     f"elif args[:2] == ['release', 'create']:\n"
                      f"    json.dump(args, open({root!r} + '/gh-args', 'w'))\n")
     os.chmod(os.path.join(bin_dir, "gh"), 0o755)
     with open(os.path.join(bench, "merge.py"), "w", encoding="utf-8") as handle:
@@ -3004,54 +3210,91 @@ def _sweep_completion_merge(root, releases, missing_after):
     return subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
 
 
-def _earlier_release(root, asset, project):
-    """An earlier run's release tarball holding one merged project and its evidence."""
+def _earlier_release(root, asset, project, split=False, tag="sweep-5"):
+    """An earlier run's release holding one merged project and its evidence: in one tarball, or
+    with `split`, the evidence in two parts, assets `asset * 10 + 1` and `+ 2`, which the
+    tarball's manifest lists."""
     tree = os.path.join(root, f"tree-{asset}")
     for directory in (f"art/{project}", "evidence", "merged"):
         os.makedirs(os.path.join(tree, directory))
     open(os.path.join(tree, "art", project, "accepted.json"), "w").close()
-    open(os.path.join(tree, "evidence", f"{project}.tar.gz"), "w").close()
+    open(os.path.join(tree, "merged", f"{project}.json"), "w").close()
+    os.makedirs(os.path.join(tree, "kept", project))
+    with open(os.path.join(tree, "kept", project, "kept.txt"), "w") as handle:
+        handle.write("evidence " * 1000)
+    subprocess.run(["tar", "-czf", os.path.join(tree, "evidence", f"{project}.tar.gz"), "-C",
+                    os.path.join(tree, "kept"), project], check=True)
+    if split:
+        evidence = subprocess.run(["tar", "-cf", "-", "-C", tree, "evidence"], check=True,
+                                  capture_output=True).stdout
+        half = len(evidence) // 2
+        with open(os.path.join(tree, "evidence-parts.tsv"), "w", encoding="utf-8") as manifest:
+            for k, suffix, part in ((1, "aaa", evidence[:half]), (2, "aab", evidence[half:])):
+                with open(os.path.join(root, f"asset-{asset * 10 + k}.tar.gz"), "wb") as handle:
+                    handle.write(part)
+                manifest.write(f"{tag}-evidence.tar.part-{suffix}\t{len(part)}\t"
+                               f"{hashlib.sha256(part).hexdigest()}\n")
     subprocess.run(["tar", "-czf", os.path.join(root, f"asset-{asset}.tar.gz"), "-C", tree, "art",
-                    "evidence", "merged"], check=True)
+                    "merged"] + (["evidence-parts.tsv"] if split else ["evidence"]), check=True)
 
 
-def _draft(tag, created, asset, draft=True):
+def _draft(tag, created, asset, draft=True, split=False):
+    # The parts listed out of order: only their names say which comes first.
+    parts = [{"name": f"{tag}-evidence.tar.part-aab", "id": asset * 10 + 2},
+             {"name": f"{tag}-evidence.tar.part-aaa", "id": asset * 10 + 1}] if split else []
     return {"tag_name": tag, "draft": draft, "created_at": created,
-            "assets": [{"name": "notes.txt", "id": asset + 100}, {"name": f"{tag}.tar.gz", "id": asset}]}
+            "assets": [{"name": "notes.txt", "id": asset + 100}, *parts,
+                       {"name": f"{tag}.tar.gz", "id": asset}]}
+
+
+def _published(root, run):
+    """What a merge published for `run`: its tarball's listing and its evidence parts' listing."""
+    listed = subprocess.run(["tar", "-tzf", os.path.join(root, f"sweep-{run}.tar.gz")], check=True,
+                            capture_output=True, text=True).stdout.split()
+    parts = sorted(name for name in os.listdir(root) if name.startswith(f"sweep-{run}-evidence.tar.part-"))
+    evidence = b"".join(open(os.path.join(root, name), "rb").read() for name in parts)
+    evidence = subprocess.run(["tar", "-tf", "-"], input=evidence, check=True,
+                              capture_output=True).stdout.decode().split()
+    return listed, parts, evidence
 
 
 def case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft():
     """Each merge attempt of a run adds a draft under one tag; the newest saw the most artifacts.
-    The completed release holds both runs' projects and evidence, since the replay job reads one
-    tarball alone."""
+    The completed release holds both runs' projects and evidence, since the replay job reads it
+    alone. The earlier run's evidence is read from its tarball or, from a newer sweep, its parts."""
     problems = 0
-    # Not listed newest first, so only the dates say which draft is the newest.
-    releases = [_draft("sweep-6", "2026-10-03T00:00:00Z", 6), _draft("sweep-5", "2026-10-01T00:00:00Z", 51),
-                _draft("sweep-5", "2026-10-02T00:00:00Z", 52),
-                _draft("sweep-5", "2026-10-04T00:00:00Z", 53, draft=False)]
-    with tempfile.TemporaryDirectory() as root:
-        for asset, project in ((51, "stale"), (52, "okio"), (53, "published"), (6, "other")):
-            _earlier_release(root, asset, project)
-        done = _sweep_completion_merge(root, releases, {})
-        if done.returncode:
-            return fail(f"a completion's merge failed: {done.stdout} {done.stderr}")
-        merged = json.load(open(os.path.join(root, "merge-args")))
-        if merged[-2:] != ["--completes", "previous"]:
-            problems += fail(f"merge.py was not told what it completes: {merged}")
-        listed = subprocess.run(["tar", "-tzf", os.path.join(root, "sweep-7.tar.gz")], check=True,
-                                capture_output=True, text=True).stdout.split()
-        projects = sorted({path.split("/")[1] for path in listed if path.startswith("art/") and path.count("/") > 1})
-        if projects != ["demo", "okio"]:
-            problems += fail(f"the completed release's art/ holds {projects}, not demo and okio")
-        if "evidence/okio.tar.gz" not in listed:
-            problems += fail("the completed release lacks the earlier run's evidence")
-        created = json.load(open(os.path.join(root, "gh-args")))
-        title = created[created.index("--title") + 1]
-        if title != "Benchmark sweep 7 (full arm, completes 5)":
-            problems += fail(f"a complete completion is titled {title!r}")
+    for split in (False, True):
+        # Not listed newest first, so only the dates say which draft is the newest.
+        releases = [_draft("sweep-6", "2026-10-03T00:00:00Z", 6, split=split),
+                    _draft("sweep-5", "2026-10-01T00:00:00Z", 51, split=split),
+                    _draft("sweep-5", "2026-10-02T00:00:00Z", 52, split=split),
+                    _draft("sweep-5", "2026-10-04T00:00:00Z", 53, draft=False, split=split)]
+        with tempfile.TemporaryDirectory() as root:
+            for asset, project in ((51, "stale"), (52, "okio"), (53, "published"), (6, "other")):
+                _earlier_release(root, asset, project, split, "sweep-6" if asset == 6 else "sweep-5")
+            done = _sweep_completion_merge(root, releases, {})
+            if done.returncode:
+                problems += fail(f"a completion's merge failed: {done.stdout} {done.stderr}")
+                continue
+            merged = json.load(open(os.path.join(root, "merge-args")))
+            if merged[-2:] != ["--completes", "previous"]:
+                problems += fail(f"merge.py was not told what it completes: {merged}")
+            listed, _, evidence = _published(root, 7)
+            projects = sorted({path.split("/")[1] for path in listed
+                               if path.startswith("art/") and path.count("/") > 1})
+            if projects != ["demo", "okio"]:
+                problems += fail(f"the completed release's art/ holds {projects}, not demo and okio")
+            if "evidence/okio.tar.gz" not in evidence:
+                problems += fail(f"the completion of a {'split' if split else 'one-tarball'} sweep "
+                                 f"lacks the earlier run's evidence: {evidence}")
+            created = json.load(open(os.path.join(root, "gh-args")))
+            title = created[created.index("--title") + 1]
+            if title != "Benchmark sweep 7 (full arm, completes 5)":
+                problems += fail(f"a complete completion is titled {title!r}")
     with tempfile.TemporaryDirectory() as root:
         _earlier_release(root, 52, "okio")
-        done = _sweep_completion_merge(root, releases[2:3], {"kafka": "its record job failed"})
+        done = _sweep_completion_merge(root, [_draft("sweep-5", "2026-10-02T00:00:00Z", 52)],
+                                       {"kafka": "its record job failed"})
         created = json.load(open(os.path.join(root, "gh-args")))
         title, notes = created[created.index("--title") + 1], created[created.index("--notes") + 1]
         if title != "Benchmark sweep 7 (full arm, completes 5, PARTIAL)" or \
@@ -3518,6 +3761,8 @@ CASES = (
     case_every_map_consumer_runs_its_capture_jdk,
     case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
     case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_reported,
+    case_every_job_running_the_maven_suite_restores_its_distributions,
+    case_a_maven_suite_job_without_the_distribution_cache_is_reported,
     case_the_reference_table_and_the_matrix_cells_agree,
     case_a_table_that_drifts_from_the_cells_is_reported,
     case_a_malformed_row_or_axis_is_reported,
@@ -3555,6 +3800,9 @@ CASES = (
     case_a_completion_that_cannot_complete_is_refused_before_it_measures,
     case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft,
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
+    case_each_release_asset_of_a_sweep_stays_under_github_s_limit,
+    case_the_replay_reads_a_sweep_s_evidence_from_its_tarball_or_its_parts,
+    case_a_missing_or_short_evidence_part_fails_its_reader_before_it_extracts,
     case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
     case_every_measuring_step_samples_the_machine_until_it_ends,
     case_no_guest_build_writes_to_the_run_page,

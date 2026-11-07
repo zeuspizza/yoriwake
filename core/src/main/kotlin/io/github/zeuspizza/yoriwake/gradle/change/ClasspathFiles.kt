@@ -62,8 +62,9 @@ internal object ClasspathFiles {
      * What the manifest `Class-Path` of a walked jar, or of any other file walked whole, names is on
      * the test JVM's class path too, and on no classpath Gradle lists: the JDK's class loader opens
      * every class-path file as a jar, whatever its name. It is walked wherever it lies, but in
-     * Gradle's module cache, whose paths name their content, and with its class files, which the
-     * class-digest rule never reads.
+     * Gradle's module cache under [gradleUserHome] or the read-only cache, whose paths name their
+     * content, and with its class files, which the class-digest rule never reads. Without
+     * [gradleUserHome] nothing else it names is taken for the module cache.
      *
      * A copy of a tracked text file that git writes with `\r\n` in this checkout is digested with
      * its line endings as `\n` ([TrackedText]), so a checkout with other line-ending settings
@@ -77,6 +78,7 @@ internal object ClasspathFiles {
         classes: Boolean = false,
         text: TrackedText = TrackedText(rootDir),
         dependency: (File) -> Boolean = { false },
+        gradleUserHome: File? = null,
     ): Walk {
         val roots = buildDirs.map { File(it).absoluteFile } + rootDir.absoluteFile
         // Gradle's and the plugin's own state, such as the agent jar, is not the build's output.
@@ -137,7 +139,7 @@ internal object ClasspathFiles {
                                 if (named == null) {
                                     // Not resolved here, so it forces rather than guesses.
                                     digests["$jar Class-Path $token"] = UNREADABLE
-                                } else if (!inModuleCache(named) && seen.add(named)) {
+                                } else if (!inModuleCache(named, gradleUserHome) && seen.add(named)) {
                                     pending.addLast(named to true)
                                 }
                             }
@@ -156,7 +158,7 @@ internal object ClasspathFiles {
                     for ((token, named) in classPathOf(entry, manifest)) {
                         if (named == null) {
                             digests["$file Class-Path $token"] = UNREADABLE
-                        } else if (!inModuleCache(named) && seen.add(named)) {
+                        } else if (!inModuleCache(named, gradleUserHome) && seen.add(named)) {
                             pending.add(named to true)
                         }
                     }
@@ -178,11 +180,11 @@ internal object ClasspathFiles {
      * Named by their path and never read: Gradle's module cache wherever it lies (a read-only cache
      * included, keyed alike), whose paths carry each file's SHA-1, Gradle's transform cache (whose
      * directory is a hash of the transform's input, parameters and implementation, so a fresh user
-     * home running it again keeps the path), and what the plugin itself writes under
-     * [PROJECT_CACHE_DIR]. Every other entry under a home is read whole: a released version in the
-     * Maven repository, a generated Gradle API jar or a wrapper distribution's jar can be replaced
-     * in place, its path unchanged. `mavenLocal()` under the user's home is keyed by its path and read
-     * by content. Any other
+     * home running it again keeps the path). The plugin's own agent jar gets no row. Every other
+     * entry under a home is read whole: a released version in the Maven repository, a generated
+     * Gradle API jar or a wrapper distribution's jar can be replaced in place, its path unchanged.
+     * `mavenLocal()` under the user's home and what a build keeps under [PROJECT_CACHE_DIR] are
+     * keyed by their path and read by content. Any other
      * entry, such as the jar of a build this one includes or an absolute `files(...)`, is keyed
      * `dependency:<outside>/<name>`, with `#2`, `#3` for a name repeated in classpath order, since
      * its path differs between machines, and read by content: a jar entry by entry (a rebuilt jar
@@ -193,7 +195,7 @@ internal object ClasspathFiles {
      * it names, and what a named file names in turn, gets a row keyed `<the naming row's key>
      * Class-Path <token>`, read by content (a directory with each jar in it by its entries),
      * [ABSENT] when missing, since a file that later appears there shadows every later entry. A file on the classpath or already named, or in
-     * Gradle's module cache, gets none.
+     * Gradle's module cache under the [GRADLE_USER_HOME] home, gets none.
      */
     fun table(
         classpath: Collection<File>,
@@ -208,6 +210,7 @@ internal object ClasspathFiles {
         val state = File(root, ".gradle")
         fun File.holds(entry: File) = entry == this || entry.path.startsWith(path + File.separator)
         // The deepest first, so a home inside another (a Gradle user home under the user's) wins.
+        val gradleUserHome = homes[GRADLE_USER_HOME]
         val byDepth = homes.mapValues { it.value.absoluteFile }.entries.sortedByDescending { it.value.path.length }
         // A home counts only where it lies deeper than the root or build directory holding the entry:
         // a local repository inside the checkout holds dependencies, a checkout inside the user's home
@@ -238,9 +241,8 @@ internal object ClasspathFiles {
             } else if (home != null && relative != null && (home.key != USER_HOME || relative.startsWith(MAVEN_LOCAL))) {
                 val digest = when {
                     home.key == GRADLE_USER_HOME && NAMED_LAYOUTS.any { it.containsMatchIn(relative) } -> NAMED_BY_PATH
-                    // What the plugin itself writes there, from its own bytes by a `doFirst` that may run
-                    // after this: read, it would be absent at one end and present at the other.
-                    home.key == PROJECT_CACHE_DIR -> NAMED_BY_PATH
+                    // A jar the build writes there itself is made again on each fresh checkout.
+                    home.key == PROJECT_CACHE_DIR -> contentDigest(entry)
                     home.key == USER_HOME -> contentDigest(entry)
                     else -> wholeDigest(entry)
                 }
@@ -264,7 +266,7 @@ internal object ClasspathFiles {
             val manifest = runCatching { JarFile(jar, false).use { it.manifest } }.getOrNull()
             for ((token, named) in classPathOf(jar, manifest)) {
                 // A token that does not resolve is ignored by the JDK too, and an edit to it moves the jar's own row.
-                if (named == null || inModuleCache(named) || !seen.add(named)) continue
+                if (named == null || inModuleCache(named, gradleUserHome) || !seen.add(named)) continue
                 val key = "$referrer Class-Path $token"
                 rows[key] = if (named.isDirectory) {
                     runCatching { directoryDigest(named, ::contentDigest) }.getOrDefault(UNREADABLE)
@@ -275,7 +277,10 @@ internal object ClasspathFiles {
             }
         }
         rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
-        return when (val walk = walk(classpath, buildDirs, rootDir, maxFiles, text = text, dependency = { homeOf(it) != null })) {
+        return when (val walk = walk(
+            classpath, buildDirs, rootDir, maxFiles, text = text, dependency = { homeOf(it) != null },
+            gradleUserHome = gradleUserHome,
+        )) {
             is Walk.Refused -> walk
             is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())
         }
@@ -484,8 +489,15 @@ internal object ClasspathFiles {
         return sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
     }
 
-    /** Gradle's module cache, whose paths name their content. */
-    private fun inModuleCache(file: File) = "/caches/modules-2/" in file.invariantSeparatorsPath
+    /**
+     * Gradle's module cache, whose paths name their content: by where it lies, under
+     * [gradleUserHome] or the read-only cache `GRADLE_RO_DEP_CACHE` names, since any other
+     * directory may spell its path alike.
+     */
+    private fun inModuleCache(file: File, gradleUserHome: File?) =
+        gradleUserHome != null && file.startsWith(File(gradleUserHome.absoluteFile.normalize(), "caches/modules-2")) ||
+            System.getenv("GRADLE_RO_DEP_CACHE")?.takeIf(String::isNotEmpty)
+                ?.let { file.startsWith(File(File(it).absoluteFile.normalize(), "modules-2")) } == true
 
     private fun budgetSpent(maxFiles: Int) =
         Walk.Refused("the build-produced files on the classpath exceed the $maxFiles-file budget")

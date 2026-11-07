@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /** Builds with several projects: scope derivation and cross-module changes. */
 class MultiProjectFunctionalTest : FunctionalTestSupport() {
@@ -212,7 +213,7 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
     }
 
     /** Two modules with a `Thing.java` each under one package root, and a test in alpha. */
-    private fun twoJavaModules(dir: File, alphaTest: String) {
+    private fun twoJavaModules(dir: File, alphaTest: String, alphaScript: String = "") {
         File(dir, "settings.gradle.kts").writeText(
             """
             rootProject.name = "multi"
@@ -235,6 +236,7 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
                 .writeText("package dev.$name; public class Thing { public int n() { return 1; } }")
         }
         File(dir, "alpha/src/test/java/dev/alpha/ThingTest.java").apply { parentFile.mkdirs() }.writeText(alphaTest)
+        File(dir, "alpha/build.gradle.kts").appendText("\n$alphaScript")
         ignoreBuildOutputs(dir)
         git(dir, "init")
         git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit",
@@ -271,6 +273,34 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
     }
 
     /**
+     * Alpha compiles beta's sources through a source directory of its own, without depending on
+     * beta. The change breaks the test, so a skip is a passing build and a run is a failing one.
+     */
+    @Test
+    fun `a sibling's sources a srcDir compiles in keep their edits`(@TempDir dir: File) {
+        twoJavaModules(
+            dir,
+            """
+            package dev.alpha;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ThingTest { @Test void n() { assertEquals(1, new dev.beta.Thing().n()); } }
+            """.trimIndent(),
+            """sourceSets.main { java.srcDir("../beta/src/main/java") }""",
+        )
+        runner(dir, ":alpha:test").build()
+
+        File(dir, "beta/src/main/java/dev/beta/Thing.java")
+            .writeText("package dev.beta; public class Thing { public int n() { return 2; } }")
+        File(dir, "alpha/build/test-results").deleteRecursively()
+
+        val output = runner(dir, ":alpha:test", "-Pyoriwake.select").buildAndFail().output
+
+        assertFalse("1 in modules that are not on this task's classpath" in output, output)
+        assertContains(output, "ThingTest > n() FAILED")
+    }
+
+    /**
      * A test that reads a sibling's source by the path relative to that module, as an architecture
      * or golden test might: the path it holds is a trailing part of the source's, and that keeps it.
      * The change breaks the test, so a skip is a passing build and a run is a failing one.
@@ -300,6 +330,46 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
         File(dir, "alpha/build/test-results").deleteRecursively()
 
         val output = runner(dir, ":alpha:test", "-Pyoriwake.select").buildAndFail().output
+
+        assertContains(output, "ThingTest > reads() FAILED")
+    }
+
+    /**
+     * A sibling whose build directory is `out`, not `build`: a test that loads its compiled
+     * classes by that path reads the edit, though alpha does not depend on beta.
+     */
+    @Test
+    fun `a sibling's own build directory a test reads by path keeps its source edits`(@TempDir dir: File) {
+        twoJavaModules(
+            dir,
+            """
+            package dev.alpha;
+            import org.junit.jupiter.api.Test;
+            import java.net.URL;
+            import java.net.URLClassLoader;
+            import java.nio.file.Path;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ThingTest {
+                @Test void reads() throws Exception {
+                    URL classes = Path.of("..", "beta/out/classes/java/main").toUri().toURL();
+                    try (URLClassLoader loader = new URLClassLoader(new URL[] { classes }, null)) {
+                        Object thing = loader.loadClass("dev.beta.Thing").getDeclaredConstructor().newInstance();
+                        assertEquals(1, thing.getClass().getMethod("n").invoke(thing));
+                    }
+                }
+            }
+            """.trimIndent(),
+        )
+        File(dir, "beta/build.gradle.kts").appendText("\nlayout.buildDirectory = file(\"out\")\n")
+        File(dir, ".gitignore").appendText(System.lineSeparator() + "out/")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-am", "out")
+        runner(dir, ":beta:classes", ":alpha:test").build()
+
+        File(dir, "beta/src/main/java/dev/beta/Thing.java")
+            .writeText("package dev.beta; public class Thing { public int n() { return 2; } }")
+        File(dir, "alpha/build/test-results").deleteRecursively()
+
+        val output = runner(dir, ":beta:classes", ":alpha:test", "-Pyoriwake.select").buildAndFail().output
 
         assertContains(output, "ThingTest > reads() FAILED")
     }

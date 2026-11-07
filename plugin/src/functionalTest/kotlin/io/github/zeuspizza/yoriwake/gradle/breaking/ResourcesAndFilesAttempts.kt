@@ -1139,6 +1139,41 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
+    // Track: code reading. Boundary: the build-output walk follows what a walked jar's manifest
+    // `Class-Path` names wherever it lies, but in Gradle's module cache, whose paths name their
+    // content; it tells the cache by where it lies, under the Gradle user home. A configuration
+    // directory beside the checkout whose path only spells like the cache is not the cache.
+    @Test
+    fun `a directory spelled like Gradle's module cache that a build jar's manifest names forces the run when a file in it changes`(
+        @TempDir dir: File,
+        @TempDir outside: File,
+    ) {
+        val settings = File(outside, "caches/modules-2/conf/settings.properties")
+        settings.parentFile.mkdirs()
+        settings.writeText("mode=a\n")
+        val build = buildWith(
+            "",
+            after = """
+            val configJar = tasks.register<Jar>("configJar") {
+                archiveFileName.set("config.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("config"))
+                manifest { attributes("Class-Path" to "${urlOf(settings.parentFile, directory = true)}") }
+            }
+            dependencies { testRuntimeOnly(files(configJar)) }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1SettingsTest", Aim.Forced("classpath-files-changed"),
+            listOf(codec, other, first, propertyTest("A1SettingsTest", "settings.properties", "mode", "a"), codecTest, classOrderByName),
+            buildScript = build,
+        ) {
+            changeCodec(it)
+            settings.writeText("mode=b\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
     // Track: code reading. Boundary: what a walked jar's manifest names is walked with its class
     // files, which the walk otherwise skips, and they count against the 200,000-file budget. A
     // zip of 200,001 class files, named only by a build jar's manifest, spends it where the same
@@ -1264,6 +1299,94 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
         ) {
             changeCodec(it)
             manifestJar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=b\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the walk now reads the manifest of a classpath file it walks
+    // whole, not only of one named as an archive, since the JDK's class loader opens every
+    // class-path file as a jar; what that manifest names is walked with its class files and counts
+    // against the 200,000-file budget. A build file named `pointer.lib` names a zip of 200,001.
+    @Test
+    fun `a zip of class files only a build file without a jar name names spends the digest budget`(@TempDir dir: File) {
+        val budgetBuild = "import java.util.zip.ZipEntry\nimport java.util.zip.ZipOutputStream\n" + buildWith(
+            "",
+            after = """
+            val manyZip = tasks.register("manyZip") {
+                val out = layout.buildDirectory.file("pointer/many.zip")
+                outputs.file(out)
+                doLast {
+                    val zip = out.get().asFile
+                    zip.parentFile.mkdirs()
+                    ZipOutputStream(zip.outputStream().buffered()).use { stream ->
+                        for (i in 0..200_000) {
+                            stream.putNextEntry(ZipEntry("many/C" + i + ".class"))
+                            stream.write('x'.code)
+                            stream.closeEntry()
+                        }
+                    }
+                }
+            }
+            val pointerLib = tasks.register<Jar>("pointerLib") {
+                dependsOn(manyZip)
+                archiveFileName.set("pointer.lib")
+                destinationDirectory.set(layout.buildDirectory.dir("pointer"))
+                manifest { attributes("Class-Path" to "many.zip") }
+            }
+            dependencies { testRuntimeOnly(files(pointerLib)) }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A9CodecTest", Aim.Forced("classpath-files-unrecorded"),
+            listOf(codec, other, first, codecTest, classOrderByName), buildScript = budgetBuild,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: a moved classpath file whose name holds a comma is handed to
+    // the read records now, escaped in the comma-joined list, where it used to force. An entry of
+    // one of the build's own jars is handed as `<jar>!/<entry>`: here the entry's own name holds
+    // the comma, generated from git state.
+    @Test
+    fun `a generated jar entry with a comma in its name runs the test that reads it`(@TempDir dir: File) {
+        val build = infoBuild + "\n" + """
+            val infoJar = tasks.register<Jar>("infoJar") {
+                from(stampInfo) { rename { "build,info.properties" } }
+                archiveFileName.set("info.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("gen/jar"))
+                isPreserveFileTimestamps = false
+                isReproducibleFileOrder = true
+            }
+            dependencies { testRuntimeOnly(files(infoJar)) }
+        """.trimIndent()
+        val result = attempt(
+            dir, "dev.sample.A1InfoTest", Aim.Row("shares-jvm-moved-classpath-file"),
+            listOf(codec, other, first, propertyTest("A1InfoTest", "build,info.properties", "state", "clean"), codecTest, classOrderByName),
+            buildScript = build,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: the dependency rows read every classpath entry under the
+    // project cache directory (`.gradle/`) by its content, as every other dependency outside
+    // Gradle's two caches is; only the plugin's own agent jar gets no row. A build that keeps a
+    // tool jar it fetches under `.gradle/tools/` puts it on the test classpath, and a newer
+    // download replaces it at the same path.
+    @Test
+    fun `a jar the build keeps under its dot-gradle directory runs every test when it is replaced`(@TempDir dir: File) {
+        val tool = File(dir, ".gradle/tools/tool.jar")
+        manifestJar(tool, null, "tool.properties" to "flavor=a\n")
+        val build = buildWith("", after = "dependencies { testRuntimeOnly(files(\".gradle/tools/tool.jar\")) }")
+        val result = attempt(
+            dir, "dev.sample.A1ToolTest", Aim.Forced("dependencies-changed"),
+            listOf(codec, other, first, propertyTest("A1ToolTest", "tool.properties", "flavor", "a"), codecTest, classOrderByName),
+            buildScript = build,
+        ) {
+            changeCodec(it)
+            manifestJar(tool, null, "tool.properties" to "flavor=b\n")
         }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)

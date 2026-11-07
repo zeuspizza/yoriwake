@@ -14,12 +14,12 @@ guess.
   `.gradle/yoriwake/<task>-<hash>/`. It is plain text with no machine-specific field, one
   directory per test task, outside `build/` so `clean` leaves it alone.
 - **Change detection.** With `-Pyoriwake.select`, the plugin diffs the working tree against a base
-  commit (the merge base with your branch's upstream by default; `origin/main`, `origin/master`,
-  `main`, `master` as fallbacks) and widens that base back to the commit the map was captured at.
-  Uncommitted, untracked and gitignored files count too, by content, so an edited ignored fixture
-  selects the tests that read it. A changed git submodule counts as its path whatever its `ignore`
-  setting, or that of a submodule nested in it, untracked files in it included, its own build
-  output too. Build state does not: `.gradle/`, `.kotlin/`, the build
+  commit (the merge base with your branch's upstream by default, then with `origin/HEAD`;
+  `origin/main`, `origin/master`, `main`, `master` as fallbacks) and widens that base back to the
+  commit the map was captured at. Uncommitted, untracked and gitignored files count too, by content,
+  so an edited ignored fixture selects the tests that read it. A changed git submodule counts as its
+  path whatever its `ignore` setting, or that of a submodule nested in it, untracked files in it
+  included, its own build output too. Build state does not: `.gradle/`, `.kotlin/`, the build
   directories of this build's projects, and a `build/` directory beside any other Gradle build
   script (`buildSrc`, an included build, a project a TestKit test wrote). A change reaches a test
   that reads such a file through the tracked sources that produce it. A non-class file the build
@@ -33,7 +33,10 @@ guess.
   not reach is left out of its change set, unless one of the task's compiled classes holds a path
   to it of two or more segments: `../beta/src/main/java/dev/beta/Thing.java`,
   `src/main/java/dev/beta/Thing.java`, `beta/src` or its output's `beta/build` all keep it. A test that builds the path from
-  single names or walks the tree to it is not seen. The module's other files keep counting.
+  single names or walks the tree to it is not seen. The module's other files keep counting. A
+  module counts as reached when a source or resource directory of the tested module, or of a
+  module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`); a source
+  added on a compile task alone (`tasks.compileJava { source(...) }`) is not read.
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
   now and always runs one the map has never seen.
@@ -89,10 +92,11 @@ Files in the map directory that are meant to be read:
   [the contract](contract.md#decision-rules).
 - `explain.json`: written by `yoriwakeExplain<Task>`. Carries `fullRunKind` and `refusalKind` as
   tokens, so a script can branch on the cause without matching English. `forcingPathOrigins` lists
-  the paths that force the run, each with `written-during-capture`, `generated-in-sources`,
-  `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists every path `pathIgnore`
-  left out, with its entry and what the map says about it (`read`, `not-read` or
-  `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its protection.
+  the paths that force the run, the first 40 in sorted order, each with `written-during-capture`,
+  `generated-in-sources`, `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists
+  every path `pathIgnore` left out, with its entry and what the map says about it (`read`,
+  `not-read` or `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its
+  protection.
   `parallelismUnconfirmed` says why the last run's test JVM recorded nothing, when it found its
   tests may run concurrently.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
@@ -264,7 +268,7 @@ names them. A file that appeared or is gone, one outside the root project, a cla
 reads for (a map recorded by 0.2.0, a test JVM whose reads were not all observed) run everything,
 naming it (`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path`
 names is on the test JVM's class path too, so it counts the same way, its class files included,
-wherever it lies but in Gradle's module cache. A dependency jar or directory that moved runs
+wherever it lies but in Gradle's module cache under the Gradle user home. A dependency jar or directory that moved runs
 everything (`dependencies-changed`), naming it: one in Gradle's module cache by its path, which
 names its content, one in Gradle's transform cache by its path, which names the transform's input,
 parameters and implementation, and every other one by its content. A transform rerun on a fresh
@@ -351,10 +355,12 @@ What it compares:
   metadata, the `executable` path), and the OS and architecture. These are stored as they are and
   named with both values: `jdk.version was 17.0.9+9 when the map was recorded and is 21.0.4+7 now`;
 - every system property the task passes to the test JVM, `-D` arguments, argument providers and
-  JVM argument files (`@file`, read as the `java` launcher reads them) included, Gradle's own
+  JVM argument files (`@file`, read as the `java` launcher reads them) and the file
+  `-XX:VMOptionsFile` names (read as the JVM reads it) included, Gradle's own
   (`file.encoding`, `user.language`, `user.country`, `user.variant`) included, yoriwake's
   excluded, as `sys:<name>`. A property given more than once is compared by every value; an
-  argument file that cannot be read when the run starts makes the environment differ;
+  argument file or VM options file that cannot be read when the run starts makes the environment
+  differ;
 - `TZ`, `LANG` and `LC_ALL`, and the environment variables `environmentInclude` lists, as
   `env:<name>`. A listed name is compared whether or not it is set.
 
@@ -603,8 +609,8 @@ Tested with Kover 0.9.8 on Gradle 8.14 and 9.8.0.
 
 ### Supported matrix
 
-A release supports what its functional suite ran, green, on the commit the release was tagged
-from. Each cell is one job of `.github/workflows/matrix.yml`: an operating system, a Gradle version
+A release supports what its functional suite ran, green, on the release's gate commit, and again
+on the candidate when its build files or dependency versions changed after it. Each cell is one job of `.github/workflows/matrix.yml`: an operating system, a Gradle version
 and the JDK Gradle's daemon runs on, written `<os>/<gradle>/<jdk>` below. Each row names the cells
 that ran it and the tests that prove it, and a check on every pull request keeps the table and the
 cells in step.
@@ -953,7 +959,8 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
 - It does not make JUnit 3 `TestCase`s, or a custom `Runner` that bypasses the Platform,
   selectable. Where it does not apply, the run forces.
 - A runner the map recorded reporting a test at run time, one its description never listed, runs
-  whole on every selecting run, so each test it reports runs, even one the map has never seen.
+  whole on every selecting run, a suite with every member class, so each test it reports runs,
+  even one the map has never seen.
   `decisions.tsv` records its listed tests as `CLASS_RUNS_WHOLE`. A runner whose first such test
   appears after the map was recorded is judged by its listed tests until the next capture.
 - Robolectric suites are unverified. On some projects their classes fail Platform discovery, and
@@ -1141,12 +1148,13 @@ To bound how old a restored map may be, put a period in the key rather than prun
 example the ISO week: one full run at each rollover.
 
 To bound how long a map can go without a full run on any branch, set `fullRunEveryBuilds` or
-`fullRunEveryDays`, or both; they are off by default. Once a `Test` task has executed that many times,
-or that many days have passed, since its last full run, its next selecting run runs every test as
-`full-run-scheduled`, naming the limit reached, and records like a run without the flag. Running every
-test for any reason, a full run that is not dated included, starts the count again. The count and the
-time live beside the map, so builds count per copy of the map: a pull request build restored from the
-default branch's entry starts from the saved count and saves nothing. On those builds days is the
+`fullRunEveryDays`, or both; they are off by default. A `Test` task's selecting run that is its
+`fullRunEveryBuilds`-th build since its last full run, or that comes `fullRunEveryDays` days or more
+after it, runs every test as `full-run-scheduled`, naming the limit reached, and records like a run
+without the flag. Running every test for any reason, a full run that is not dated included, starts
+the count again. The count and the time live beside the map, so builds count per copy of the map: a
+pull request build restored from the default branch's entry starts from the saved count and saves
+nothing. On those builds days is the
 limit that means what it says. A count or time that cannot be read is due, as is a map recorded before
 either was written, so enabling a limit costs each task one full run. The cache key's period bounds
 how old a restored entry may be; the schedule bounds how long a map can hide a gap. With
@@ -1634,8 +1642,10 @@ the Gradle plugin.
   of any scope, an annotation processor path, a plugin, extension or plugin dependency, coordinates
   in any plugin's configuration, or a path into it, or above it, among what the fork is handed: its
   `argLine`, added classpath, classes directories, working directory, system properties and
-  environment, and the invocation's `-D` properties. Edits to the others' sources are left out as
-  on Gradle. An expression there that the build's properties cannot resolve leaves them in.
+  environment, and the invocation's `-D` properties, or a source or resource root of its own or of
+  a module it reaches (build-helper's, the compiler's `compileSourceRoots`, `<sourceDirectory>`,
+  `<resources>`) that lies in it or above it. Edits to the others' sources are left out as on
+  Gradle. An expression there that the build's properties cannot resolve leaves them in.
 - **`-pl` and `-am`**: a module built against a module of the same reactor that this invocation
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.
@@ -1700,7 +1710,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `enabled` | `Boolean` | `true` | `false` leaves the build entirely alone, as `-Pyoriwake.disabled` does. |
 | `alwaysRun` | `List<String>` | empty | Tests that may never be skipped: a class, a method (`Class.method`), or a glob. |
 | `fullRunBranches` | `List<String>` | empty | Branches on which a selecting run runs every test and records the map instead. See [When to refresh](#when-to-refresh). |
-| `fullRunEveryBuilds` | `Int` | unset | Run every test once a task has executed this many times since its last full run. |
+| `fullRunEveryBuilds` | `Int` | unset | Run every test on a task's Nth build since its last full run, N being this value. |
 | `fullRunEveryDays` | `Int` | unset | Run every test once this many days have passed since a task's last full run; with both set, whichever comes first. |
 | `notReadByTests` | `List<String>` | empty | Deprecated: use `pathIgnore`. Globs of files no test or build reads: a changed one is no change. |
 | `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. See [Paths no test reads](#paths-no-test-reads). |
@@ -1851,6 +1861,23 @@ format versioning.
   without analysing them (`large-change`; `largeChangeThreshold` moves the bound).
   `notReadByTests` still works and warns that it is deprecated; `pathIgnore` replaces it.
 - **Maven** builds are new: see [Maven](#maven).
+
+### From 0.4.0 to 0.5.0
+
+- **Your map is repaired on the next build.** The format stays at 7, and the files a trusted-map
+  digest covers are unchanged. A Maven map recorded on 0.4.0 does not say its user properties were
+  compared, so each Maven execution's first selecting run on 0.5.0 runs everything once. A Gradle
+  task's first selecting run runs every test once where a released Maven jar, a generated Gradle API
+  jar or a Gradle distribution's jar is on the classpath, or a dependency jar's manifest
+  `Class-Path` names a file.
+- **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.5.0`, one ordinary cache miss.
+- **What runs changes without a new flag (Maven):** the user properties of the invocation
+  (`-Dfeature=off`, `.mvn/maven.config`) and Surefire's `systemProperties` and
+  `systemPropertiesFile` are now compared. A selecting run whose `-D` values differ from the
+  recording run's (`-Dtest`, `-DskipITs`, an IDE's injected properties, a CI-friendly
+  revision with a build number) runs everything, naming the property, until the per-build ones are
+  listed in `<systemPropertyIgnore>`. `<systemPropertyIgnore>` and `<environmentInclude>` take one
+  child element per name; text placed directly in them, ignored before, now fails the build.
 
 ## Prior art
 

@@ -217,6 +217,34 @@ class TaskArtifactsTest {
     }
 
     @Test
+    fun `a module under a directory named src is named from its own name on`(@TempDir dir: File) {
+        // The first `src` of the path is the directory above the module, not the module's own.
+        val source = "src/modules/beta/src/main/java/dev/Thing.java"
+        listOf("../beta/src/main/java", "../beta/build/libs", "../beta/target/beta.jar").forEach { held ->
+            val classes = File(dir, held.hashCode().toString()).apply { mkdirs() }
+            classFile(classes, "Reader", "..$held..".toByteArray())
+
+            val named = TaskArtifacts(listOf(classes), emptyList())
+                .pathsNamedInClasses(listOf(source), TaskArtifacts.Naming.CLASS_SOURCE)
+
+            assertEquals(setOf(source), named, held)
+        }
+    }
+
+    @Test
+    fun `a module's own build directory is named from the module's name on`(@TempDir dir: File) {
+        // `out`, not `build` or `target`: where the module's output really goes.
+        val source = "beta/src/main/java/dev/Thing.java"
+        val classes = File(dir, "classes").apply { mkdirs() }
+        classFile(classes, "Reader", "..../beta/out/libs/beta.jar..".toByteArray())
+
+        val named = TaskArtifacts(listOf(classes), listOf(File(dir, "beta/out").absolutePath))
+            .pathsNamedInClasses(listOf(source), TaskArtifacts.Naming.CLASS_SOURCE)
+
+        assertEquals(setOf(source), named)
+    }
+
+    @Test
     fun `a class file too large to read counts as naming everything`(@TempDir dir: File) {
         // "Too big to read" must not read as "the name does not appear".
         val classes = File(dir, "pkg").apply { mkdirs() }

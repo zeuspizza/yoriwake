@@ -85,7 +85,8 @@ GUEST_OFF = ["-Dpts.enabled=false",
 # Gradle flags an arm passes that mean nothing to Maven: Maven reruns every goal it is asked for
 # and has no configuration cache.
 GRADLE_ONLY_NOOPS = ("--rerun-tasks", "--no-configuration-cache")
-# Plugin switches the arms pass with Gradle's `-P`, which Maven reads as user properties.
+# Plugin switches the arms pass with Gradle's `-P`, which `invocation` hands Maven as `-D` user
+# properties.
 PLUGIN_SWITCHES = ("-Pyoriwake.select", "-Pyoriwake.internal.loaded")
 
 # The id of the JaCoCo execution staging adds where the guest has none. An arm with the plugin off

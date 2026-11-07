@@ -368,6 +368,18 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a jar the build keeps under its project cache directory replaced in place runs every test`(@TempDir dir: File) {
+        val tool = File(dir, ".gradle/tools/tool.jar")
+        jar(tool, null, "home-jar.properties" to "flavor=a\n")
+        val onClasspath = "dependencies { testRuntimeOnly(files(\".gradle/tools/tool.jar\")) }"
+        captured(dir, fromProjectProperty + "\n" + onClasspath, homeJarTest)
+        jar(tool, null, "home-jar.properties" to "flavor=b\n")
+        changeBeta(dir)
+
+        assertHomeJarRanEverything(dir, select(dir), "tool.jar")
+    }
+
+    @Test
     fun `a test task on the Gradle API selects as before when nothing changed`(@TempDir dir: File) {
         captured(dir, fromProjectProperty + "\ndependencies { testImplementation(gradleApi()) }")
         changeBeta(dir)

@@ -66,6 +66,29 @@ class JvmArgFilesTest {
     }
 
     @Test
+    fun `a VM options file is read as the JVM reads it, also when an argument file names it`(@TempDir dir: File) {
+        // The JVM splits at whitespace and strips quotes; it knows no comments and no escapes.
+        File(dir, "test.options").writeText("-Dtree.state=clean\n  -Dquoted='a b'\"c\" #-Dnot.comment=1 -Dpath=C:\\x\n")
+        File(dir, "test.args").writeText("-XX:VMOptionsFile=test.options\n")
+
+        val direct = JvmArgFiles.expand(listOf("-Xmx1g", "-XX:VMOptionsFile=test.options", "-Dlast=2"), dir)
+        val nested = JvmArgFiles.expand(listOf("@test.args"), dir)
+
+        val options = listOf("-Dtree.state=clean", "-Dquoted=a bc", "#-Dnot.comment=1", "-Dpath=C:\\x")
+        assertEquals(listOf("-Xmx1g", "-XX:VMOptionsFile=test.options") + options + "-Dlast=2", direct)
+        assertEquals(listOf("-XX:VMOptionsFile=test.options") + options, nested)
+    }
+
+    @Test
+    fun `a VM options file that cannot be read matches no other run`(@TempDir dir: File) {
+        val first = JvmArgFiles.expand(listOf("-XX:VMOptionsFile=missing.options"), dir)
+        val second = JvmArgFiles.expand(listOf("-XX:VMOptionsFile=missing.options"), dir)
+
+        assertTrue(first.last().startsWith("-D-XX:VMOptionsFile=missing.options="), first.toString())
+        assertNotEquals(first, second)
+    }
+
+    @Test
     fun `an argument file that cannot be read matches no other run`(@TempDir dir: File) {
         val first = JvmArgFiles.expand(listOf("@missing.args"), dir)
         val second = JvmArgFiles.expand(listOf("@missing.args"), dir)

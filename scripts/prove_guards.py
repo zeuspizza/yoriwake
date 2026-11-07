@@ -2811,7 +2811,7 @@ MUTATIONS = [
      "                if (true) return",
      functional_suite, "a resource a doFirst from the root project's subprojects block writes runs the test that reads it"),
     ("a complement run hands the last look nothing to compare", SELECTION_WIRING,
-     "                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests) }",
+     "                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests, gradleUserHome = gradleUserHome) }",
      "                    runCatching { Unit }",
      functional_suite, "a classpath file the test task's doFirst writes from a property differently runs every test"),
     # The configuration and fail-fast are read again after the test task's own doFirst actions: a
@@ -2830,10 +2830,36 @@ MUTATIONS = [
      "                AgentJar.argument(AgentJar.locationUnder(cacheDir))",
      "                AgentJar.argument(AgentJar.locationUnder(cacheDir.parentFile))",
      functional_suite, "a complement in a fresh clone of the same commit leaves out what the selecting run ran"),
+    # The listener that drops the start once tests begin also sees a doFirst's fail-fast, so the
+    # check before it is proved only with the listener off too.
     ("a selecting run's doFirst fail-fast still leaves a record", LAST_LOOK,
-     "        if (test.failFast) {",
-     "        if (false) {",
+     "        if (test.failFast) {\n"
+     "            runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        val failure = addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }\n"
+     "        if (failure != null) {\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: the selection record's start could not be completed ($failure), so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        test.addTestListener(FailFastOnceStarted(test, mapDir))",
+     "        if (false) {\n"
+     "            runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        val failure = addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }\n"
+     "        if (failure != null) {\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: the selection record's start could not be completed ($failure), so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        Unit",
      functional_suite, "a selecting run whose test task's doFirst turns on fail-fast leaves no record"),
+    ("a selecting run's fail-fast set after the last look still leaves a record", LAST_LOOK,
+     "            if (suite.parent != null || !test.failFast) return",
+     "            if (true) return",
+     functional_suite, "a selecting run whose test task turns on fail-fast in an action after the last look leaves no record"),
     ("a manifest's Class-Path is not followed by the selecting walk", CLASSPATH_FILES,
      "                                    pending.addLast(named to true)",
      "                                    pending.size",
@@ -2872,6 +2898,11 @@ MUTATIONS = [
      '        Regex("^caches/modules-2/"),\n',
      '        Regex("^caches/modules-2/"),\n        Regex("^wrapper/dists/"),\n',
      functional_suite, "a wrapper distribution's jar replaced in place runs every test"),
+    # A build may keep a jar it fetches under its project cache directory and replace it there.
+    ("a jar under the project cache directory is named by its path", CLASSPATH_FILES,
+     '                    home.key == PROJECT_CACHE_DIR -> contentDigest(entry)\n',
+     '                    home.key == PROJECT_CACHE_DIR -> NAMED_BY_PATH\n',
+     functional_suite, "a jar the build keeps under its project cache directory replaced in place runs every test"),
     ("a dependency's manifest Class-Path is not followed by the classpath-files table", CLASSPATH_FILES,
      "            if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)\n",
      "",
@@ -2886,6 +2917,12 @@ MUTATIONS = [
      "                            pending.add(named to true)",
      "                            pending.size",
      functional_suite, "a jar an upper-case JAR a build jar's manifest names runs the test that reads it when it changed"),
+    # Gradle's module cache is told by where it lies, under the Gradle user home: any other
+    # directory may spell its path alike and hold what the tests read.
+    ("Gradle's module cache is told by a path that spells caches/modules-2", CLASSPATH_FILES,
+     '        gradleUserHome != null && file.startsWith(File(gradleUserHome.absoluteFile.normalize(), "caches/modules-2"))',
+     '        "/caches/modules-2/" in file.invariantSeparatorsPath',
+     functional_suite, "a directory a build jar's manifest names whose path only spells like Gradle's module cache runs the test that reads it when it changed"),
     # A task Develocity runs or chooses tests for is declined, and nothing of yoriwake's acts on it
     #: Test Distribution recorded half a suite's coverage even locally.
     ("Test Distribution is no longer detected", DEVELOCITY_DETECTION,
@@ -3203,12 +3240,12 @@ MUTATIONS = [
     # A complement leaves out a test only when it ran against identical classpath content: the
     # build's own outputs (generated resources, class files, jar entries) are digested by content.
     ("a complement's classpath digest names the build's outputs by path only again", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     ("a complement run leaves out tests that ran against another generated classpath file", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      functional_suite, "a file the build generates from a property differently runs every test"),
     # A walk that cannot vouch for every file must digest to a value no other run matches.
     ("a classpath walk that cannot vouch for every file digests alike in both runs", SELECTION_RECORD,
@@ -3216,8 +3253,8 @@ MUTATIONS = [
      "    private fun unmatched(reason: String) = \"$UNMATCHED $reason\"",
      unit_suite, "a classpath entry under the build that cannot be read digests to a value no run matches"),
     ("class files leave the complement's classpath digest", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text, gradleUserHome = gradleUserHome)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     # An unreadable selection record must not reach Gradle's configuration-time read.
     ("an unreadable selection record is handed to Gradle to read at configuration", SELECTION_WIRING,
@@ -3413,6 +3450,12 @@ MUTATIONS = [
      "            if (runTimeReporters.isEmpty()) {\n                return false;",
      "            if (true) {\n                return false;",
      agent_suite, "a vintage runner's listed test is kept when its run-time test reaches nothing"),
+    # Vintage files a run-time test under the suite its runner lists for the test's class, which
+    # need not hold the listed test that reports it.
+    ("a vintage runner's run-time test filed under a suite of its class keeps only that suite", SELECTOR,
+     "                    reporters.add(runnerEnd >= 0 && runnerEnd < dynamic",
+     "                    reporters.add(false",
+     agent_suite, "a runner that reported a test at run time under a suite of its class runs whole"),
     ("a Kotest spec stops recording that its engine runs it", RULES,
      "            found.add(Rule.ENGINE_RUNS_EVERYTHING);", "",
      agent_suite, "a Kotest spec records that its engine runs it whatever changed"),
@@ -4013,11 +4056,40 @@ MUTATIONS = [
      "            (2 until segments.size).flatMapTo(forms) { n ->",
      "            (2 until 2).flatMapTo(forms) { n ->",
      functional_suite, "a sibling's Java source a test reads by its module-relative path still selects that test"),
+    ("a module under a directory named src is named only from the path's first src", TASK_ARTIFACTS,
+     '            segments.indices.filter { it > 0 && segments[it] == "src" }.forEach { src ->',
+     '            listOf(segments.indexOf("src")).filter { it > 0 }.forEach { src ->',
+     unit_suite, "a module under a directory named src is named from its own name on"),
+    ("a module's own build directory is named only as build or target", TASK_ARTIFACTS,
+     '                val below = listOf("build", "target") + buildDirsBelow(moduleDir)',
+     '                val below = listOf("build", "target")',
+     unit_suite, "a module's own build directory is named from the module's name on"),
     # Classes the fork is handed by path put that module in its JVM, whatever its dependencies say.
     ("Maven reads no path in the fork's added classpath elements", MAVEN_CLASSPATH_VIEWS,
      "    ) + added?.children.orEmpty().mapNotNull { it.value }",
      "    )",
      maven_suite, "a sibling's classes added to the fork's classpath keep its edits"),
+    # A sibling's sources compiled in, or its files copied in, through a module's own roots.
+    ("Maven names no module by a source root", MAVEN_CLASSPATH_VIEWS,
+     "            dirs.filter { (_, dir) -> path.startsWith(dir) || dir.startsWith(path) }.forEach { (holder, _) -> named += holder }",
+     "            dirs.filter { false }.forEach { (holder, _) -> named += holder }",
+     maven_suite, "a sibling's sources a build-helper source root compiles in keep their edits"),
+    ("Maven reads no source root a plugin's configuration names", MAVEN_CLASSPATH_VIEWS,
+     "    val configured = module.buildPlugins.flatMap { plugin -> listOf(plugin.configuration) + plugin.executions.map { it.configuration } }.filterIsInstance<Xpp3Dom>().flatMap { rootValues(it, false) }",
+     "    val configured = emptyList<String>()",
+     maven_suite, "a sibling's sources the compiler's compileSourceRoots compiles in keep their edits"),
+    ("Maven reads no source root of the model", MAVEN_CLASSPATH_VIEWS,
+     "    val model = module.compileSourceRoots + module.testCompileSourceRoots + (module.build.resources + module.build.testResources).mapNotNull { it.directory }",
+     "    val model = emptyList<String>()",
+     maven_suite, "a sibling's sources a POM sourceDirectory compiles in keep their edits"),
+    ("Maven reads no source root of a module it reaches", MAVEN_CLASSPATH_VIEWS,
+     "        unread += named - read\n",
+     "\n",
+     maven_suite, "a sibling's sources a dependency compiles in keep their edits"),
+    ("Gradle names no module by a source directory", CLASSPATH_FACTS,
+     "            withSourceRootModules(project, facts.moduleDirs, resolvedProjectDependencies(project))",
+     "            resolvedProjectDependencies(project)",
+     functional_suite, "a sibling's sources a srcDir compiles in keep their edits"),
     # The two exemptions from that: an IDE's state, and what the build declares unread.
     ("an IDE state directory is a change again", NOT_READ,
      '    private val IDE_STATE_DIRECTORIES = setOf(".idea", ".vscode", ".fleet")',
@@ -4238,8 +4310,16 @@ MUTATIONS = [
      "JvmArgFiles.expand(test.allJvmArgs, test.workingDir)", "test.allJvmArgs",
      functional_suite, "another value of a system property from a JVM argument file runs everything"),
     ("an argument file that cannot be read sets nothing", JVM_ARG_FILES,
-     '            ?: return listOf("-D@$path=${UUID.randomUUID()}")', "            ?: return emptyList()",
+     '            ?: return listOf("-D$unreadable$path=${UUID.randomUUID()}")', "            ?: return emptyList()",
      unit_suite, "an argument file that cannot be read matches no other run"),
+    ("a VM options file is not read for the fingerprint", JVM_ARG_FILES,
+     "            if (!argument.startsWith(VM_OPTIONS_FILE)) listOf(argument)", "            if (true) listOf(argument)",
+     unit_suite, "a VM options file is read as the JVM reads it, also when an argument file names it"),
+    ("a VM options file that cannot be read sets nothing", JVM_ARG_FILES,
+     "            else listOf(argument) + read(argument.removePrefix(VM_OPTIONS_FILE), workingDir, VM_OPTIONS_FILE, ::vmOptions)",
+     "            else listOf(argument) + read(argument.removePrefix(VM_OPTIONS_FILE), workingDir, VM_OPTIONS_FILE, ::vmOptions)"
+     ".filterNot { it.startsWith(\"-D$VM_OPTIONS_FILE\") }",
+     unit_suite, "a VM options file that cannot be read matches no other run"),
     # Gradle lists the properties it sets ahead of an argument file and sets them after the JVM
     # starts, so the last value on the list is not always the one a test sees.
     ("a property given twice is compared by its last value only", ENVIRONMENT_FINGERPRINT,
@@ -4772,7 +4852,7 @@ MUTATIONS = [
      "    systemPropertiesFile(project, session, configuration, failsafe)?.takeIf { false }?.let { file ->",
      maven_suite, "another value in the systemPropertiesFile runs every test"),
     ("an unreadable Maven systemPropertiesFile reads as nothing", MAVEN_FORK_SYSTEM_PROPERTIES,
-     '            properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, "@systemPropertiesFile", UUID.randomUUID().toString())',
+     '            properties += ForkSystemProperty(ForkSystemProperty.SYSTEM_PROPERTIES_FILE, ForkSystemProperty.UNREADABLE_FILE, UUID.randomUUID().toString())',
      '            UUID.randomUUID()',
      maven_suite, "a systemPropertiesFile that cannot be read runs every test"),
     ("a Maven complement stamp reads no systemPropertiesFile", MAVEN_RECORDING,

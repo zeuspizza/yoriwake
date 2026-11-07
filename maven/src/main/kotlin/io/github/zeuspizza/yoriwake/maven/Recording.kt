@@ -239,7 +239,7 @@ internal class Recording(
         val undated = undatedBy(project, execution, configuration)
         val hostArguments = arguments(resolved(project, host).orEmpty())
         val kind = selection.apply(
-            name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, classpath, configuration),
+            name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, execution, classpath, configuration),
             environment, undated, isolated,
             stamp = { stampOf(project, execution, key, configuration, classpath, hostArguments, text) },
             stopsAfterFailure = parameter(
@@ -291,7 +291,7 @@ internal class Recording(
             scheduleSet = selection.schedules,
             rootDir = root,
             mapDir = run.mapDir,
-            facts = view(project, classpath, execution.configuration),
+            facts = view(project, execution, classpath, execution.configuration),
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
             loadedFlag = "-D${INTERNAL_LOADED}",
@@ -304,8 +304,8 @@ internal class Recording(
         ).run()
     }
 
-    private fun view(project: MavenProject, classpath: List<File>, configuration: Xpp3Dom?): ClasspathView =
-        classpathView(session, root, project, classpath, configuration)
+    private fun view(project: MavenProject, execution: MojoExecution, classpath: List<File>, configuration: Xpp3Dom?): ClasspathView =
+        classpathView(session, root, project, classpath, configuration, execution.artifactId == FAILSAFE)
 
     /**
      * The framework Surefire runs [project]'s tests on, as it picks a provider from the resolved test

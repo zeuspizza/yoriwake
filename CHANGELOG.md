@@ -15,6 +15,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+**Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.
+
 ### Added
 
 - A code of conduct, an accessibility statement and a pull request template. Map: left alone.
@@ -29,16 +31,24 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- Maven keeps a sibling's edits when `<systemProperties>` or `systemPropertiesFile` hands its path to tests. Map: left alone.
+- A selecting run an action turns fail-fast on just before its tests leaves no record. Map: left alone.
 - A pull request from a fork may name the AI tool that assisted it, as CONTRIBUTING asks. Map: left alone.
 - A file only a dependency jar's manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
 - A file a `VENDOR.JAR` or other non-`.jar` manifest `Class-Path` names is compared too. Map: repaired on the next build, where one is named.
+- A manifest-named path that only spells `caches/modules-2` is no longer taken for Gradle's cache. Map: repaired on the next build, where one is named.
 - A dependency jar Gradle transforms again on a fresh machine no longer runs everything. Map: repaired on the next build, where one is used.
 - Paths `notReadByTests` lists no longer count toward `largeChangeThreshold`, as in 0.3. Map: left alone.
 - A released Maven jar, a generated Gradle API jar and a Gradle distribution's jar are compared by content. Map: repaired on the next build, which runs every test once.
+- A jar the build keeps under the project's `.gradle` is compared by content. Map: repaired on the next build, where one is used.
 - Maven compares the user properties the test JVM receives. Map: repaired on the next build, one full run per Maven execution.
 - An edit to a module a test task does not reach leaves its tests out, on Maven too, whatever its package names. Map: left alone.
+- A module whose sources another module compiles in by a source or resource root counts as reached. Map: left alone.
 - A Maven capture records its JaCoCo scope. Map: left alone.
+- An edit to a module under a directory named `src`, or with its own build directory, stays a change for a test holding its path. Map: left alone.
+- A system property passed through `-XX:VMOptionsFile` is compared. Map: repaired on the next build, where one is used.
 - Maven compares the system properties Surefire's `systemProperties` and `systemPropertiesFile` give the tests. Map: repaired on the next build, where a POM uses them.
+- A vintage runner whose run-time test is filed under a suite of its class runs whole, not that suite alone. Map: left alone.
 
 ## [0.4.0] - 2026-10-29
 

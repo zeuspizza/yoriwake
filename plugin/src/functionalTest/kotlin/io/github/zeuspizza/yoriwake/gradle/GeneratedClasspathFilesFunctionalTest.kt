@@ -470,6 +470,32 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a directory a build jar's manifest names whose path only spells like Gradle's module cache runs the test that reads it when it changed`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        val conf = File(vendor, "caches/modules-2/conf").apply { mkdirs() }
+        File(conf, "vendor.properties").writeText("flavor=a\n")
+        val pointer = """
+            val pointerJar by tasks.registering(Jar::class) {
+                archiveFileName.set("pointer.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("extra"))
+                manifest { attributes("Class-Path" to "${conf.absoluteFile.toURI()}") }
+            }
+            dependencies { testRuntimeOnly(files(pointerJar)) }
+        """.trimIndent()
+        fixture(dir, pointer, vendorTest)
+        capture(dir)
+        File(conf, "vendor.properties").writeText("flavor=b\n")
+        editLegacy(dir)
+
+        val output = select(dir)
+
+        assertTrue("dev.sample.AcVendorTest" in ranTests(app(dir)), output)
+        assertEquals("classpath-files-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    @Test
     fun `an unchanged generated resource narrows as before`(@TempDir dir: File) {
         fixture(dir)
         capture(dir, "-Pinfo=a")

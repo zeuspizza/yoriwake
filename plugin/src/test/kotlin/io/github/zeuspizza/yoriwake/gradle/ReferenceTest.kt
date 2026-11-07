@@ -294,4 +294,10 @@ class ReferenceTest {
         }
         assertTrue(missing.isEmpty(), "reference.md's What it prints table quotes text the code does not print: $missing")
     }
+
+    @Test
+    fun `the upgrading section covers the move to 0_5_0`() {
+        val section = reference.substringAfter("## Upgrading and your map").substringBefore("\n## ")
+        assertTrue("### From 0.4.0 to 0.5.0" in section, "no upgrade note from 0.4.0 to 0.5.0")
+    }
 }

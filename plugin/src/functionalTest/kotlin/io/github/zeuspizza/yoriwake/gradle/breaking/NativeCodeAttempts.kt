@@ -86,18 +86,25 @@ class NativeCodeAttempts : BreakAttempt() {
         file.writeText(file.readText().replace("reverse()", "reverse().append(\"!\")"))
     }
 
-    /** A test that has [loader] load snappy-java's library file, which is not there to load. */
-    private fun loadingTest(name: String, loader: String) = source(
+    /**
+     * A test that has [loader] load a copy of the JDK's own zip library under snappy-java's file
+     * name: a load that succeeds, since only a library the JDK opened is judged as loaded.
+     */
+    private fun copyLoadingTest(name: String, loader: String) = source(
         "src/test/java/dev/sample/$name.java",
         """
         package dev.sample;
-        import java.io.File;
+        import java.nio.file.Files;
+        import java.nio.file.Path;
         import org.junit.jupiter.api.Test;
-        import static org.junit.jupiter.api.Assertions.assertThrows;
         class $name {
-            @Test void loads() {
-                String file = new File(System.getProperty("java.io.tmpdir"), System.mapLibraryName("snappyjava")).getAbsolutePath();
-                assertThrows(UnsatisfiedLinkError.class, () -> $loader.load(file));
+            @Test void loads() throws Exception {
+                Path home = Path.of(System.getProperty("java.home"));
+                Path zip = home.resolve("lib").resolve(System.mapLibraryName("zip"));
+                if (!Files.exists(zip)) zip = home.resolve("bin").resolve(System.mapLibraryName("zip"));
+                Path copy = Files.createTempDirectory("lib").resolve(System.mapLibraryName("snappyjava"));
+                Files.copy(zip, copy);
+                $loader.load(copy.toString());
             }
         }
         """,
@@ -121,7 +128,7 @@ class NativeCodeAttempts : BreakAttempt() {
             dir, "dev.sample.A2ReaderTest", Aim.Row("shares-jvm-unobserved"),
             listOf(
                 codec, other, first, loaderClass("SnappyLoaderShim"),
-                loadingTest("A1LoaderTest", "org.xerial.snappy.SnappyLoaderShim"), reader, codecTest, classOrderByName,
+                copyLoadingTest("A1LoaderTest", "org.xerial.snappy.SnappyLoaderShim"), reader, codecTest, classOrderByName,
             ),
             buildScript = copiedCodecBuild,
         ) { changeCodec(it) }
@@ -157,7 +164,7 @@ class NativeCodeAttempts : BreakAttempt() {
             dir, "dev.sample.A2ClassFileReaderTest", Aim.Row("shares-jvm-changed-class"),
             listOf(
                 codec, other, first, loaderClass("SnappyLoader"),
-                loadingTest("A1LoaderTest", "org.xerial.snappy.SnappyLoader"), classFileReader, codecTest, classOrderByName,
+                copyLoadingTest("A1LoaderTest", "org.xerial.snappy.SnappyLoader"), classFileReader, codecTest, classOrderByName,
             ),
         ) { changeCodec(it) }
 

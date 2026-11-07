@@ -167,6 +167,27 @@ class SelectorTest {
     }
 
     @Test
+    fun `a runner that reported a test at run time under a suite of its class runs whole`(@TempDir dir: File) {
+        // Vintage files the run-time test under the suite its runner lists for the test's class,
+        // not under the runner, while a test outside that suite may be the one that reports it.
+        val suite = "$growing/[test:com.acme.GrowingTest]"
+        val decision = decide(
+            map(
+                dir,
+                Triple("$growing/[test:feature(com.acme.Other)]", "SUCCESSFUL", "com.acme.Other"),
+                Triple("$suite/[test:listed(com.acme.Other)]", "SUCCESSFUL", "com.acme.Other"),
+                Triple("$suite/[dynamic:reverses(com.acme.GrowingTest)]", "SUCCESSFUL", "com.acme.A"),
+                test("com.acme.ATest", "com.acme.A"),
+            ),
+            changed = listOf("com.acme.A"),
+        )
+
+        assertTrue(decision.reportsAtRunTime("$growing/[test:feature(com.acme.Other)]"))
+        assertTrue(decision.reportsAtRunTime("$suite/[test:listed(com.acme.Other)]"))
+        assertFalse(decision.reportsAtRunTime("[engine:junit-vintage]/[runner:com.acme.Plain]/[test:m(com.acme.Plain)]"))
+    }
+
+    @Test
     fun `a runner with static records only does not run whole`(@TempDir dir: File) {
         val decision = decide(
             map(

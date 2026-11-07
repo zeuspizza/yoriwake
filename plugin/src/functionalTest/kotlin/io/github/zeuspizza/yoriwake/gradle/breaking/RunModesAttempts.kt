@@ -220,4 +220,20 @@ class RunModesAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: the large-change count leaves out the paths a notReadByTests
+    // glob matches whole, and counts untracked files. Here the build lists `written/*`, and the
+    // change adds untracked files in a sibling directory whose name only starts like it, beside
+    // files inside the listed tree.
+    @Test
+    fun `untracked files beside a notReadByTests tree, named like it, count toward the large-change threshold`(@TempDir dir: File) {
+        val build = minimalBuild + "\nyoriwake {\n    largeChangeThreshold = 3\n    notReadByTests.add(\"written/*\")\n}\n"
+        val result = attempt(dir, "dev.sample.A9CodecTest", Aim.Forced("large-change"), sample, buildScript = build) { dir ->
+            changeCodec(dir)
+            (1..4).forEach { File(dir, "written/$it.txt").apply { parentFile.mkdirs() }.writeText("$it\n") }
+            (1..3).forEach { File(dir, "written-out/$it.txt").apply { parentFile.mkdirs() }.writeText("$it\n") }
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }

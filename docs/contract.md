@@ -93,7 +93,7 @@ UTF-8, one entry per line unless stated.
 | `RESOURCE_TOUCH_FILE` | `resource-touch.tsv` | plugin | agent | `jvm \t sequence \t kind \t path`: the first record at or before which that JVM read the non-class file at `path`, relative to the root project as the classpath-file digests name it (a jar entry as `<jar>!/<entry>`, a whole archive by its own path). Kind `read` is a read by anything but the JDK's class loader, `loader` one by it; `*` as the path is every file. A JVM whose reads were recorded has a `recorded` row with sequence `0`, its path `sources` when the source files the JVM opened are among its reads (empty in a map recorded before they were); one without reads every file from its first record |
 | `JVM_MODE_FILE` | `jvm-mode.tsv` | plugin | plugin, people, tools | `jvm \t mode`: how that JVM was recorded, `isolated` or `shared` (see [Recording modes](#recording-modes)) |
 | `ENVIRONMENT_FILE` | `environment.tsv` | plugin | plugin, people, tools | `jvm \t fingerprint-id`: the environment that JVM was recorded in. A JVM that ran a test and has no row makes a selecting run run everything, as `environment-unrecorded` |
-| `ENVIRONMENT_FINGERPRINTS_FILE` | `environment-fingerprints.tsv` | plugin | plugin, people, tools | `fingerprint-id \t component \t value`, one block per environment: `jdk.version`, `jdk.vendor` (or `jdk.executable`), `os.name` and `os.arch` in plain text; `sys:<name>` and `env:<name>` as salted SHA-256 digests of their values, never the values. See [the environment fingerprint](reference.md#the-environment-fingerprint) |
+| `ENVIRONMENT_FINGERPRINTS_FILE` | `environment-fingerprints.tsv` | plugin | plugin, people, tools | `fingerprint-id \t component \t value`, one block per environment: `jdk.version`, `jdk.vendor` (or `jdk.executable`, or `jdk.unavailable`), `os.name` and `os.arch` in plain text, and under Maven `maven.user-properties`, the plain marker `compared` (the user properties themselves are `sys:<name>` rows); `sys:<name>` and `env:<name>` as salted SHA-256 digests of their values, never the values. See [the environment fingerprint](reference.md#the-environment-fingerprint) |
 | `DECISIONS_FILE` | `decisions.tsv` | agent | people, tools | `test \t verdict \t reason` rows after `#!key \t value` notes, then `#+` rule lines (see [Decision rules](#decision-rules)). Last writer wins |
 | `DECISIONS_PART_SUFFIX` | `.part` | agent | people, tools | Ends `decisions.tsv.<pid>-<writer>.part`, one per writer, same format |
 | `OBSERVATION_FILE` | `observation.json` | plugin | people, tools | After an observing run: the failing tests selection would have left out, and the recorded time of the tests it would have skipped. See [Observing before you select](reference.md#observing-before-you-select) |
@@ -378,7 +378,8 @@ root, `build-path` the module's `groupId:artifactId:packaging:version`, `classpa
 reactor root or the local repository, and `configuration` covers the invocation's user properties
 (which Surefire promotes to the test JVM), the execution's `systemPropertyVariables`, the host's own
 `argLine` and its `includes`, `excludes`, `groups`, `excludedGroups`, `test`,
-`additionalClasspathElements`, `classpathDependencyExcludes` and `classpathDependencyScopeExclude`.
+`additionalClasspathElements`, `classpathDependencyExcludes`, `classpathDependencyScopeExclude`,
+and the system properties its `systemProperties` and `systemPropertiesFile` set.
 
 A record of another version, or whose rows do not match `rows`, is unusable whole.
 

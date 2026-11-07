@@ -1,18 +1,16 @@
 package io.github.zeuspizza.yoriwake.maven
 
 import java.io.File
-import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.test.fail
 
 /**
  * Real Maven over a copy of a fixture, with the plugin as this build published it.
  *
- * Each distribution is downloaded once into the Gradle user home and checked against the SHA-512
- * Apache publishes, pinned here. Every build gets a `user.home` of its own, so nothing in the
+ * Each distribution is downloaded once from Maven Central into the Gradle user home, which CI keeps
+ * between runs, and checked against the SHA-512 Apache publishes, pinned here. Every build gets a `user.home` of its own, so nothing in the
  * machine's `~/.m2` reaches it; the local repository is shared, so each library downloads once.
  */
 object FunctionalMaven {
@@ -104,40 +102,42 @@ object FunctionalMaven {
         </settings>
     """.trimIndent()
 
+    /** The versions whose archive this JVM has checked against its SHA-512. */
+    private val checked = mutableSetOf<String>()
+
     /**
-     * The unpacked distribution of [version], downloaded and checked on first use. It is unpacked
-     * into a directory of its own and moved into place whole, so a download or unpacking cut short,
-     * or one racing another worktree's, never leaves a half distribution to be reused.
+     * The unpacked distribution of [version]. Its archive, kept beside it, is checked against the
+     * pinned SHA-512 before first use, whether just downloaded or restored from a cache; one that
+     * does not match is fetched again and the distribution unpacked afresh. It is unpacked into a
+     * directory of its own and moved into place whole, so an unpacking cut short, or one racing
+     * another worktree's, never leaves a half distribution to be reused.
      */
     @Synchronized
     private fun distribution(version: String): File {
         val home = File(distributions, "apache-maven-$version")
-        if (home.isDirectory) return home
+        if (version in checked) return home
         val expected = requireNotNull(sha512[version]) { "no SHA-512 pinned for Maven $version" }
         distributions.mkdirs()
-        val staging = Files.createTempDirectory(distributions.toPath(), "download-").toFile()
-        try {
-            val name = "apache-maven-$version-bin.tar.gz"
-            val archive = File(staging, name)
-            val major = version.substringBefore('.')
-            val connection = URI("https://archive.apache.org/dist/maven/maven-$major/$version/binaries/$name").toURL()
-                .openConnection().apply { connectTimeout = 30_000; readTimeout = 60_000 }
-            connection.getInputStream().use { input -> archive.outputStream().use { input.copyTo(it) } }
-            val actual = MessageDigest.getInstance("SHA-512").digest(archive.readBytes()).joinToString("") { "%02x".format(it) }
-            if (actual != expected) fail("Maven $version's archive has SHA-512 $actual, not the published $expected")
-            val unpacked = ProcessBuilder("tar", "xzf", name).directory(staging).inheritIO().start().waitFor()
-            val tree = File(staging, home.name)
-            check(unpacked == 0 && File(tree, "bin").isDirectory) { "could not unpack $name" }
+        val archive = File(distributions, "apache-maven-$version-bin.tar.gz")
+        DistributionFetch.ensureArchive(version, archive, home, expected)
+        if (!home.isDirectory) {
+            val staging = Files.createTempDirectory(distributions.toPath(), "unpack-").toFile()
             try {
-                Files.move(tree.toPath(), home.toPath(), StandardCopyOption.ATOMIC_MOVE)
-            } catch (raced: java.nio.file.FileAlreadyExistsException) {
-                // Another worktree's build put the same distribution in place first.
-            } catch (raced: java.nio.file.DirectoryNotEmptyException) {
-                // As above, on a platform that reports it this way.
+                val unpacked = ProcessBuilder("tar", "xzf", archive.path).directory(staging).inheritIO().start().waitFor()
+                val tree = File(staging, home.name)
+                check(unpacked == 0 && File(tree, "bin").isDirectory) { "could not unpack ${archive.name}" }
+                try {
+                    Files.move(tree.toPath(), home.toPath(), StandardCopyOption.ATOMIC_MOVE)
+                } catch (raced: java.nio.file.FileAlreadyExistsException) {
+                    // Another worktree's build put the same distribution in place first.
+                } catch (raced: java.nio.file.DirectoryNotEmptyException) {
+                    // As above, on a platform that reports it this way.
+                }
+            } finally {
+                staging.deleteRecursively()
             }
-        } finally {
-            staging.deleteRecursively()
         }
+        checked += version
         return home
     }
 }
