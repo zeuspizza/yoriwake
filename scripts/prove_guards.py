@@ -2830,9 +2830,31 @@ MUTATIONS = [
      "                AgentJar.argument(AgentJar.locationUnder(cacheDir))",
      "                AgentJar.argument(AgentJar.locationUnder(cacheDir.parentFile))",
      functional_suite, "a complement in a fresh clone of the same commit leaves out what the selecting run ran"),
+    # The listener that drops the start once tests begin also sees a doFirst's fail-fast, so the
+    # check before it is proved only with the listener off too.
     ("a selecting run's doFirst fail-fast still leaves a record", LAST_LOOK,
-     "        if (test.failFast) {",
-     "        if (false) {",
+     "        if (test.failFast) {\n"
+     "            runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        val failure = addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }\n"
+     "        if (failure != null) {\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: the selection record's start could not be completed ($failure), so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        test.addTestListener(FailFastOnceStarted(test, mapDir))",
+     "        if (false) {\n"
+     "            runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: --fail-fast drops the results of tests that finish after the first failure, so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        val failure = addLateConfiguration(mapDir) { configurationOf(test, agentArgument) }\n"
+     "        if (failure != null) {\n"
+     "            test.logger.info(\"[yoriwake] ${test.path}: the selection record's start could not be completed ($failure), so this run leaves no selection record\")\n"
+     "            return\n"
+     "        }\n"
+     "        Unit",
      functional_suite, "a selecting run whose test task's doFirst turns on fail-fast leaves no record"),
     ("a selecting run's fail-fast set after the last look still leaves a record", LAST_LOOK,
      "            if (suite.parent != null || !test.failFast) return",
