@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /** Builds with several projects: scope derivation and cross-module changes. */
 class MultiProjectFunctionalTest : FunctionalTestSupport() {
@@ -212,7 +213,7 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
     }
 
     /** Two modules with a `Thing.java` each under one package root, and a test in alpha. */
-    private fun twoJavaModules(dir: File, alphaTest: String) {
+    private fun twoJavaModules(dir: File, alphaTest: String, alphaScript: String = "") {
         File(dir, "settings.gradle.kts").writeText(
             """
             rootProject.name = "multi"
@@ -235,6 +236,7 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
                 .writeText("package dev.$name; public class Thing { public int n() { return 1; } }")
         }
         File(dir, "alpha/src/test/java/dev/alpha/ThingTest.java").apply { parentFile.mkdirs() }.writeText(alphaTest)
+        File(dir, "alpha/build.gradle.kts").appendText("\n$alphaScript")
         ignoreBuildOutputs(dir)
         git(dir, "init")
         git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit",
@@ -268,6 +270,34 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
 
         assertContains(output, "1 in modules that are not on this task's classpath")
         assertContains(output, "[yoriwake] of 1 tests discovered: skipped=1")
+    }
+
+    /**
+     * Alpha compiles beta's sources through a source directory of its own, without depending on
+     * beta. The change breaks the test, so a skip is a passing build and a run is a failing one.
+     */
+    @Test
+    fun `a sibling's sources a srcDir compiles in keep their edits`(@TempDir dir: File) {
+        twoJavaModules(
+            dir,
+            """
+            package dev.alpha;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ThingTest { @Test void n() { assertEquals(1, new dev.beta.Thing().n()); } }
+            """.trimIndent(),
+            """sourceSets.main { java.srcDir("../beta/src/main/java") }""",
+        )
+        runner(dir, ":alpha:test").build()
+
+        File(dir, "beta/src/main/java/dev/beta/Thing.java")
+            .writeText("package dev.beta; public class Thing { public int n() { return 2; } }")
+        File(dir, "alpha/build/test-results").deleteRecursively()
+
+        val output = runner(dir, ":alpha:test", "-Pyoriwake.select").buildAndFail().output
+
+        assertFalse("1 in modules that are not on this task's classpath" in output, output)
+        assertContains(output, "ThingTest > n() FAILED")
     }
 
     /**

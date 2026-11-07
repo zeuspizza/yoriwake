@@ -418,11 +418,11 @@ class SelectionFunctionalTest {
      * modp, which does not depend on lib, with [configuration] in its Surefire's `<configuration>`
      * and [test] beside its own; committed and captured.
      */
-    private fun modpWith(dir: File, configuration: String, test: Pair<String, String>): File = committed(dir).also { project ->
+    private fun modpWith(dir: File, configuration: String, test: Pair<String, String>, resources: String = ""): File = committed(dir).also { project ->
         File(project, "modp/pom.xml").edit {
             it.replace(
                 "<artifactId>modp</artifactId>",
-                "<artifactId>modp</artifactId>\n  <build><plugins>$configuration</plugins></build>",
+                "<artifactId>modp</artifactId>\n  <build>$resources<plugins>$configuration</plugins></build>",
             )
         }
         File(project, "modp/src/test/java/dev/demo/modp/${test.first}.java").writeText(test.second)
@@ -521,6 +521,176 @@ class SelectionFunctionalTest {
 
         assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
         assertContains(output, "Running dev.demo.modp.CopiedLibTest")
+    }
+
+    /** build-helper adding [root] as a source root of the module whose build holds it. */
+    private fun buildHelperAdding(root: String) = """
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>build-helper-maven-plugin</artifactId>
+          <version>3.6.0</version>
+          <executions><execution>
+            <id>add-sibling-source</id>
+            <phase>generate-sources</phase>
+            <goals><goal>add-source</goal></goals>
+            <configuration><sources><source>$root</source></sources></configuration>
+          </execution></executions>
+        </plugin>
+    """.trimIndent()
+
+    /** A modp test that calls lib's Greeter, which only a source root of modp's own compiles in. */
+    private val greeterCompiledIn = "CompiledGreeterTest" to """
+        package dev.demo.modp;
+
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+
+        import org.junit.jupiter.api.Test;
+
+        class CompiledGreeterTest {
+            @Test
+            void greets() {
+                assertEquals("Hello, Ada", new dev.demo.lib.Greeter().greet("Ada"));
+            }
+        }
+    """.trimIndent()
+
+    private fun selectsModp(project: File, test: String) {
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "modp", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
+        assertContains(output, "Running dev.demo.modp.$test")
+    }
+
+    @Test
+    fun `a sibling's sources a build-helper source root compiles in keep their edits`(@TempDir dir: File) {
+        val project = modpWith(dir, buildHelperAdding("\${project.basedir}/../lib/src/main/java"), greeterCompiledIn)
+        selectsModp(project, "CompiledGreeterTest")
+    }
+
+    @Test
+    fun `a sibling's sources the compiler's compileSourceRoots compiles in keep their edits`(@TempDir dir: File) {
+        // In the compile execution only: at plugin level it would replace testCompile's roots too.
+        val compiler = """
+            <plugin>
+              <artifactId>maven-compiler-plugin</artifactId>
+              <executions><execution>
+                <id>default-compile</id>
+                <configuration><compileSourceRoots>
+                  <compileSourceRoot>${'$'}{project.basedir}/src/main/java</compileSourceRoot>
+                  <compileSourceRoot>${'$'}{project.basedir}/../lib/src/main/java</compileSourceRoot>
+                </compileSourceRoots></configuration>
+              </execution></executions>
+            </plugin>
+        """.trimIndent()
+        val project = modpWith(dir, compiler, greeterCompiledIn)
+        selectsModp(project, "CompiledGreeterTest")
+    }
+
+    @Test
+    fun `a sibling's directory a POM resource root holds keeps its edits`(@TempDir dir: File) {
+        val reader = "GreeterSourceTest" to """
+            package dev.demo.modp;
+
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+            import org.junit.jupiter.api.Test;
+
+            class GreeterSourceTest {
+                @Test
+                void shipsGreeterSource() {
+                    assertNotNull(GreeterSourceTest.class.getResource("/dev/demo/lib/Greeter.java"));
+                }
+            }
+        """.trimIndent()
+        val resources = "<resources><resource><directory>\${project.basedir}/../lib/src/main/java</directory></resource></resources>"
+        val project = modpWith(dir, "", reader, resources)
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "modp", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
+    }
+
+    @Test
+    fun `a sibling's sources a POM sourceDirectory compiles in keep their edits`(@TempDir dir: File) {
+        // A module of its own, since the directory replaces the module's own sources.
+        val project = committed(dir).also { project ->
+            File(project, "pom.xml").edit { it.replace("<module>modp</module>", "<module>modp</module>\n    <module>mirror</module>") }
+            File(project, "mirror/pom.xml").also { it.parentFile.mkdirs() }.writeText(
+                File(project, "modp/pom.xml").readText().replace(
+                    "<artifactId>modp</artifactId>",
+                    "<artifactId>mirror</artifactId>\n  <build><sourceDirectory>\${project.basedir}/../lib/src/main/java</sourceDirectory></build>",
+                ),
+            )
+            File(project, "mirror/src/test/java/dev/demo/mirror/MirrorTest.java").also { it.parentFile.mkdirs() }.writeText(
+                greeterCompiledIn.second.replace("package dev.demo.modp;", "package dev.demo.mirror;").replace("CompiledGreeterTest", "MirrorTest"),
+            )
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "mirror compiles lib's sources")
+            FunctionalMaven.run(maven, project, "verify").succeeded()
+        }
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "mirror", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "mirror"), output)
+        assertContains(output, "Running dev.demo.mirror.MirrorTest")
+    }
+
+    @Test
+    fun `a sibling's sources a dependency compiles in keep their edits`(@TempDir dir: File) {
+        // lib compiles a class kept under modp, which neither lib nor app depends on.
+        val project = committed(dir).also { project ->
+            File(project, "lib/pom.xml").edit {
+                it.replace(
+                    "<artifactId>lib</artifactId>",
+                    "<artifactId>lib</artifactId>\n  <build><plugins>${buildHelperAdding("\${project.basedir}/../modp/src/shared/java")}</plugins></build>",
+                )
+            }
+            File(project, "modp/src/shared/java/dev/demo/shared/Shout.java").also { it.parentFile.mkdirs() }.writeText(
+                """
+                package dev.demo.shared;
+
+                public class Shout {
+                    public static String loud(String text) {
+                        return text.toUpperCase();
+                    }
+                }
+                """.trimIndent(),
+            )
+            File(project, "app/src/test/java/dev/demo/app/ShoutTest.java").writeText(
+                """
+                package dev.demo.app;
+
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+
+                import org.junit.jupiter.api.Test;
+
+                class ShoutTest {
+                    @Test
+                    void shouts() {
+                        assertEquals("HI", dev.demo.shared.Shout.loud("hi"));
+                    }
+                }
+                """.trimIndent(),
+            )
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "lib compiles a shared class")
+            FunctionalMaven.run(maven, project, "verify").succeeded()
+        }
+        File(project, "modp/src/shared/java/dev/demo/shared/Shout.java").edit { it.replace("text.toUpperCase()", "text.toUpperCase(java.util.Locale.ROOT)") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib,app", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "app"), output)
+        assertContains(output, "Running dev.demo.app.ShoutTest")
     }
 
     @Test

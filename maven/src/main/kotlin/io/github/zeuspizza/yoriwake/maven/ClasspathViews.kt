@@ -40,9 +40,10 @@ internal fun classpathView(
 
 /**
  * The ids of the reactor modules [project]'s build names, other than itself: by coordinates in a
- * dependency, a plugin, an extension or any plugin's configuration, or by a path into the module
- * in the execution's fork arguments or added classpath. Naming one more than the build uses only
- * drops less. Null when coordinates or a fork value it reads cannot be resolved here.
+ * dependency, a plugin, an extension or any plugin's configuration, by a path into the module
+ * in the execution's fork arguments or added classpath, or by a source or resource root of its own,
+ * or of a module it already names, that lies in the module. Naming one more than the build uses
+ * only drops less. Null when coordinates, a fork value or a root it reads cannot be resolved here.
  */
 internal fun reactorModulesNamed(session: MavenSession, root: File, project: MavenProject, configuration: Xpp3Dom?): Set<String>? {
     val reactor = session.allProjects.associateBy { "${it.groupId}:${it.artifactId}" }
@@ -93,8 +94,46 @@ internal fun reactorModulesNamed(session: MavenSession, root: File, project: Mav
             }
         }
     }
+    // A sibling's sources compiled in, or its files copied in, through a root of this module or of
+    // a module it reaches end up in classes whose source file names no path to them.
+    val unread = ArrayDeque(listOf(project))
+    val read = mutableSetOf<MavenProject>()
+    while (unread.isNotEmpty()) {
+        val module = unread.removeFirst()
+        if (!read.add(module)) continue
+        // Another module's lists may be growing in a parallel build (-T); a failed read is unknown.
+        for (root in runCatching { rootsOf(module, session) }.getOrNull() ?: return null) {
+            val path = File(root).let { if (it.isAbsolute) it else File(module.basedir, root) }.toPath().normalize()
+            dirs.filter { (_, dir) -> path.startsWith(dir) || dir.startsWith(path) }.forEach { (holder, _) -> named += holder }
+        }
+        unread += named - read
+    }
     return named.mapTo(mutableSetOf()) { it.id } - project.id
 }
+
+/**
+ * The directories [module] compiles sources or copies resources from: its model's, and those its
+ * build plugins' configuration names, which a run without the generating phases has not added to
+ * the model. Null when a configured one cannot be resolved here.
+ */
+private fun rootsOf(module: MavenProject, session: MavenSession): List<String>? {
+    val model = module.compileSourceRoots + module.testCompileSourceRoots + (module.build.resources + module.build.testResources).mapNotNull { it.directory }
+    val configured = module.buildPlugins.flatMap { plugin -> listOf(plugin.configuration) + plugin.executions.map { it.configuration } }.filterIsInstance<Xpp3Dom>().flatMap { rootValues(it, false) }
+    // Each value is one path, which may hold a space; one without a separator lands in the module.
+    return model + configured.mapNotNull { value -> (resolve(module, session, value) ?: return null).trim().ifEmpty { null } }
+}
+
+/** The values at any depth under an element that names source or resource roots in [node]. */
+private fun rootValues(node: Xpp3Dom, under: Boolean): List<String> {
+    val inside = under || node.name in ROOT_ELEMENTS
+    return listOfNotNull(node.value?.takeIf { inside }) + node.children.flatMap { rootValues(it, inside) }
+}
+
+/** Configuration elements the compiling plugins (compiler, build-helper, Kotlin, resources) name roots with. */
+private val ROOT_ELEMENTS = setOf(
+    "compileSourceRoots", "testCompileSourceRoots", "sources", "resources", "testResources",
+    "sourceDirs", "sourceDir", "sourceRoots", "testSourceRoots",
+)
 
 /** The `JAVA_TOOL_OPTIONS` the fork reads: its configured environment's, else Maven's own. */
 internal fun toolOptionsOf(configuration: Xpp3Dom?): String? =
