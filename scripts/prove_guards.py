@@ -3424,6 +3424,12 @@ MUTATIONS = [
      "            if (runTimeReporters.isEmpty()) {\n                return false;",
      "            if (true) {\n                return false;",
      agent_suite, "a vintage runner's listed test is kept when its run-time test reaches nothing"),
+    # Vintage files a run-time test under the suite its runner lists for the test's class, which
+    # need not hold the listed test that reports it.
+    ("a vintage runner's run-time test filed under a suite of its class keeps only that suite", SELECTOR,
+     "                    reporters.add(runnerEnd >= 0 && runnerEnd < dynamic",
+     "                    reporters.add(false",
+     agent_suite, "a runner that reported a test at run time under a suite of its class runs whole"),
     ("a Kotest spec stops recording that its engine runs it", RULES,
      "            found.add(Rule.ENGINE_RUNS_EVERYTHING);", "",
      agent_suite, "a Kotest spec records that its engine runs it whatever changed"),

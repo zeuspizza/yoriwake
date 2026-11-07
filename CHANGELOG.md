@@ -47,6 +47,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - An edit to a module under a directory named `src`, or with its own build directory, stays a change for a test holding its path. Map: left alone.
 - A system property passed through `-XX:VMOptionsFile` is compared. Map: repaired on the next build, where one is used.
 - Maven compares the system properties Surefire's `systemProperties` and `systemPropertiesFile` give the tests. Map: repaired on the next build, where a POM uses them.
+- A vintage runner whose run-time test is filed under a suite of its class runs whole, not that suite alone. Map: left alone.
 
 ## [0.4.0] - 2026-10-29
 
