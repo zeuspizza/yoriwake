@@ -1139,6 +1139,41 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
+    // Track: code reading. Boundary: the build-output walk follows what a walked jar's manifest
+    // `Class-Path` names wherever it lies, but in Gradle's module cache, whose paths name their
+    // content; it tells the cache by where it lies, under the Gradle user home. A configuration
+    // directory beside the checkout whose path only spells like the cache is not the cache.
+    @Test
+    fun `a directory spelled like Gradle's module cache that a build jar's manifest names forces the run when a file in it changes`(
+        @TempDir dir: File,
+        @TempDir outside: File,
+    ) {
+        val settings = File(outside, "caches/modules-2/conf/settings.properties")
+        settings.parentFile.mkdirs()
+        settings.writeText("mode=a\n")
+        val build = buildWith(
+            "",
+            after = """
+            val configJar = tasks.register<Jar>("configJar") {
+                archiveFileName.set("config.jar")
+                destinationDirectory.set(layout.buildDirectory.dir("config"))
+                manifest { attributes("Class-Path" to "${urlOf(settings.parentFile, directory = true)}") }
+            }
+            dependencies { testRuntimeOnly(files(configJar)) }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1SettingsTest", Aim.Forced("classpath-files-changed"),
+            listOf(codec, other, first, propertyTest("A1SettingsTest", "settings.properties", "mode", "a"), codecTest, classOrderByName),
+            buildScript = build,
+        ) {
+            changeCodec(it)
+            settings.writeText("mode=b\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
     // Track: code reading. Boundary: what a walked jar's manifest names is walked with its class
     // files, which the walk otherwise skips, and they count against the 200,000-file budget. A
     // zip of 200,001 class files, named only by a build jar's manifest, spends it where the same

@@ -275,7 +275,7 @@ internal object SelectionRecord {
             if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
             (inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath) + " " + contentDigest(file)
         }
-        val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text) }
+        val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Refused -> return unmatched(walk.reason)
             is ClasspathFiles.Walk.Found -> walk.digests

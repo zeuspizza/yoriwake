@@ -268,7 +268,7 @@ names them. A file that appeared or is gone, one outside the root project, a cla
 reads for (a map recorded by 0.2.0, a test JVM whose reads were not all observed) run everything,
 naming it (`classpath-files-changed`). A jar or directory a walked jar's manifest `Class-Path`
 names is on the test JVM's class path too, so it counts the same way, its class files included,
-wherever it lies but in Gradle's module cache. A dependency jar or directory that moved runs
+wherever it lies but in Gradle's module cache under the Gradle user home. A dependency jar or directory that moved runs
 everything (`dependencies-changed`), naming it: one in Gradle's module cache by its path, which
 names its content, one in Gradle's transform cache by its path, which names the transform's input,
 parameters and implementation, and every other one by its content. A transform rerun on a fresh

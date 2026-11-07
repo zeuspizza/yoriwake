@@ -222,7 +222,8 @@ class ClasspathFilesTest {
     @Test
     fun `a jar in Gradle's module cache a manifest names gives no rows`(@TempDir dir: File) {
         val root = File(dir, "project").apply { mkdirs() }
-        val cached = jar(File(dir, "home/caches/modules-2/files-2.1/g/a/1/0a/a.jar"), 0L, "a.txt" to "a")
+        val home = File(dir, "home")
+        val cached = jar(File(home, "caches/modules-2/files-2.1/g/a/1/0a/a.jar"), 0L, "a.txt" to "a")
         val path = jar(
             File(root, "build/libs/path.jar"), 0L,
             "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: ${cached.toURI()}\n",
@@ -230,8 +231,23 @@ class ClasspathFilesTest {
 
         assertEquals(
             setOf("build/libs/path.jar!/META-INF/MANIFEST.MF"),
-            files(ClasspathFiles.walk(listOf(path), listOf(), root)).keys,
+            files(ClasspathFiles.walk(listOf(path), listOf(), root, gradleUserHome = home)).keys,
         )
+    }
+
+    @Test
+    fun `a directory a manifest names whose path only spells like Gradle's module cache gives rows`(@TempDir dir: File) {
+        val root = File(dir, "project").apply { mkdirs() }
+        val conf = File(dir, "vendor/caches/modules-2/conf").apply { mkdirs() }
+        File(conf, "settings.properties").writeText("mode=a\n")
+        val path = jar(
+            File(root, "build/libs/path.jar"), 0L,
+            "META-INF/MANIFEST.MF" to "Manifest-Version: 1.0\nClass-Path: ${conf.toURI()}\n",
+        )
+
+        val digests = files(ClasspathFiles.walk(listOf(path), listOf(), root, gradleUserHome = File(dir, "home")))
+
+        assertTrue("../vendor/caches/modules-2/conf/settings.properties" in digests, digests.toString())
     }
 
     @Test
@@ -950,6 +966,20 @@ class ClasspathFilesTest {
         jar(sibling, 0L, "s.txt" to "t")
         assertEquals(
             mapOf("dependency:<outside>/vendor.jar Class-Path ." to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a dependency's manifest naming a directory that only spells like Gradle's module cache moves its row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("caches/modules-2/conf/"))
+        val settings = File(base, "vendor/caches/modules-2/conf/settings.properties").apply { parentFile.mkdirs(); writeText("mode=a\n") }
+        val before = found(machine.table(vendor))
+        settings.writeText("mode=b\n")
+
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path caches/modules-2/conf/" to "changed"),
             ClasspathFiles.compare(before, found(machine.table(vendor))).files,
         )
     }

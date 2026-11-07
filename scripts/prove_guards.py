@@ -2811,7 +2811,7 @@ MUTATIONS = [
      "                if (true) return",
      functional_suite, "a resource a doFirst from the root project's subprojects block writes runs the test that reads it"),
     ("a complement run hands the last look nothing to compare", SELECTION_WIRING,
-     "                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests) }",
+     "                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests, gradleUserHome = gradleUserHome) }",
      "                    runCatching { Unit }",
      functional_suite, "a classpath file the test task's doFirst writes from a property differently runs every test"),
     # The configuration and fail-fast are read again after the test task's own doFirst actions: a
@@ -2891,6 +2891,12 @@ MUTATIONS = [
      "                            pending.add(named to true)",
      "                            pending.size",
      functional_suite, "a jar an upper-case JAR a build jar's manifest names runs the test that reads it when it changed"),
+    # Gradle's module cache is told by where it lies, under the Gradle user home: any other
+    # directory may spell its path alike and hold what the tests read.
+    ("Gradle's module cache is told by a path that spells caches/modules-2", CLASSPATH_FILES,
+     '        gradleUserHome != null && file.startsWith(File(gradleUserHome.absoluteFile.normalize(), "caches/modules-2"))',
+     '        "/caches/modules-2/" in file.invariantSeparatorsPath',
+     functional_suite, "a directory a build jar's manifest names whose path only spells like Gradle's module cache runs the test that reads it when it changed"),
     # A task Develocity runs or chooses tests for is declined, and nothing of yoriwake's acts on it
     #: Test Distribution recorded half a suite's coverage even locally.
     ("Test Distribution is no longer detected", DEVELOCITY_DETECTION,
@@ -3208,12 +3214,12 @@ MUTATIONS = [
     # A complement leaves out a test only when it ran against identical classpath content: the
     # build's own outputs (generated resources, class files, jar entries) are digested by content.
     ("a complement's classpath digest names the build's outputs by path only again", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     ("a complement run leaves out tests that ran against another generated classpath file", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
-     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
+     "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      functional_suite, "a file the build generates from a property differently runs every test"),
     # A walk that cannot vouch for every file must digest to a value no other run matches.
     ("a classpath walk that cannot vouch for every file digests alike in both runs", SELECTION_RECORD,
@@ -3221,8 +3227,8 @@ MUTATIONS = [
      "    private fun unmatched(reason: String) = \"$UNMATCHED $reason\"",
      unit_suite, "a classpath entry under the build that cannot be read digests to a value no run matches"),
     ("class files leave the complement's classpath digest", SELECTION_RECORD,
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text)",
-     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
+     "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text, gradleUserHome = gradleUserHome)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
     # An unreadable selection record must not reach Gradle's configuration-time read.
     ("an unreadable selection record is handed to Gradle to read at configuration", SELECTION_WIRING,

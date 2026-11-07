@@ -408,6 +408,7 @@ internal fun TestTaskWiring.configureComplement(
     // A build directory outside the root holds build output the classpath stamp reads too, so the
     // last look compares it as well.
     val buildDirs = projectFacts(project, buildMemo).buildDirs.values.toList()
+    val gradleUserHome = project.gradle.gradleUserHomeDir
     val lastLook = LastLook.handOver(mapDir)
     test.doFirst {
         copy.delete()
@@ -418,11 +419,11 @@ internal fun TestTaskWiring.configureComplement(
                 .exceptionOrNull()?.let { "its copy could not be written ($it)" }
             // The build's own doFirst actions run after this: the last look compares the build's
             // output on the classpath again, as the classpath stamp read it.
-            ?: when (val walk = runCatching { ClasspathFiles.walk(test.classpath.files, buildDirs, rootDir, classes = true) }
+            ?: when (val walk = runCatching { ClasspathFiles.walk(test.classpath.files, buildDirs, rootDir, classes = true, gradleUserHome = gradleUserHome) }
                 .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
                 is ClasspathFiles.Walk.Refused -> "the build output on its classpath, which could not be digested (${walk.reason})"
                 is ClasspathFiles.Walk.Found ->
-                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests) }
+                    runCatching { LastLook.write(mapDir, rootDir, buildDirs, classes = true, walk.digests, gradleUserHome = gradleUserHome) }
                         .exceptionOrNull()?.let { "the build output on its classpath, which could not be written to ${lastLook.name} ($it)" }
             }
         if (mismatch != null) {
