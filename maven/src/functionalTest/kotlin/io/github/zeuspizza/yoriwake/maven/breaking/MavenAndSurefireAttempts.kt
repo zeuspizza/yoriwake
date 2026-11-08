@@ -841,15 +841,16 @@ class MavenAndSurefireAttempts : MavenBreakAttempt() {
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
-    // Track: code reading. Boundary: the working tree's listing reads tracked and untracked names
-    // alike, and a name that decoded to U+FFFD stops it, since it would read as a file that is
-    // always absent. Here the name is committed after the capture, so it reaches the listing as a
-    // tracked path, not as an ignored file.
+    // Track: code reading. Boundary: the working tree's listing reads the tracked files that differ
+    // from HEAD as well as the untracked ones, and a name that decoded to U+FFFD stops it, since it
+    // would read as a file that is always absent. Here the name is committed with the base, clean
+    // at the capture, and edited afterwards, so it reaches the listing as a changed tracked path.
     @Test
-    fun `a file whose name cannot be listed, committed after the capture, leaves no change set`(@TempDir dir: File) {
-        val result = attempt(dir, "dev.sample.BetaTest", Aim.Forced("no-change-set"), twoClasses, commit = true) { project ->
+    fun `a tracked file whose name cannot be listed, edited after the capture, leaves no change set`(@TempDir dir: File) {
+        val odd = "fixtures/\uFFFD.txt"
+        val result = attempt(dir, "dev.sample.BetaTest", Aim.Forced("no-change-set"), twoClasses + (odd to "x\n")) { project ->
             breakBeta(project)
-            File(project, "fixtures/�.txt").apply { parentFile.mkdirs() }.writeText("x")
+            File(project, odd).writeText("y\n")
         }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
