@@ -509,4 +509,50 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: a Java source of a module off this task's classpath stays in
+    // the change set only when a compiled class holds a path to it of two or more segments,
+    // `beta/src` among them; the forms from the module's own name on are built from the first
+    // `src` segment of the path. A module kept under a top-level `src/` directory (`src/beta`) puts
+    // that segment above the module, and a test holding `beta/src/...` reads its source.
+    @Test
+    fun `a sibling module's source under a top-level src directory a test reads from the module's name on still selects that test`(
+        @TempDir dir: File,
+    ) {
+        val settings = "settings.gradle.kts" to """
+            rootProject.name = "sample"
+            include("beta")
+            project(":beta").projectDir = file("src/beta")
+        """.trimIndent()
+        val thing = "src/beta/src/main/java/dev/beta/Thing.java"
+        val sourceReader = source(
+            "src/test/java/dev/sample/A1SiblingSourceTest.java",
+            """
+            package dev.sample;
+            import java.nio.file.Files;
+            import java.nio.file.Path;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class A1SiblingSourceTest {
+                @Test void reads() throws Exception {
+                    Path source = Path.of("src").resolve("beta/src/main/java/dev/beta").resolve("Thing.java");
+                    assertTrue(Files.readString(source).contains("return 1;"));
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1SiblingSourceTest", Aim.Forced("no-coverage-for-changed"),
+            listOf(
+                settings, "src/beta/build.gradle.kts" to "plugins { java }\n",
+                thing to "package dev.beta;\npublic class Thing { public int n() { return 1; } }\n",
+                other, first, sourceReader, alpha, alphaNameTest, classOrderByName,
+            ),
+        ) {
+            breakAlpha(it)
+            File(it, thing).writeText("package dev.beta;\npublic class Thing { public int n() { return 2; } }\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }

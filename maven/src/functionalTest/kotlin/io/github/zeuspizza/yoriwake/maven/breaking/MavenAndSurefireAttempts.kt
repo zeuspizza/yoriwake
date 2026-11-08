@@ -765,4 +765,52 @@ class MavenAndSurefireAttempts : MavenBreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: an edit to another module is dropped for an execution that
+    // neither has it on its classpath nor names it by coordinates or by a path in its fork's
+    // arguments, added classpath, system property variables or environment. Here a test loads a
+    // sibling's classes from a path Surefire hands it through the deprecated `<systemProperties>`.
+    @Test
+    fun `a sibling's classes loaded from a path in Surefire's systemProperties keep its edits`(@TempDir dir: File) {
+        val loader = source(
+            "b/src/test/java/dev/sample/LoaderTest.java",
+            """
+            package dev.sample;
+            import java.io.File;
+            import java.net.URL;
+            import java.net.URLClassLoader;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class LoaderTest {
+                @Test void doubles() throws Exception {
+                    File classes = new File(System.getProperty("alpha.classes"));
+                    try (URLClassLoader loader = new URLClassLoader(new URL[] { classes.toURI().toURL() }, LoaderTest.class.getClassLoader())) {
+                        Class<?> alpha = loader.loadClass("dev.sample.Alpha");
+                        assertEquals(2, alpha.getMethod("twice", int.class).invoke(alpha.getConstructor().newInstance(), 1));
+                    }
+                }
+            }
+            """,
+        )
+        val b = module(
+            "dev.sample", "b", "",
+            "<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration>" +
+                "<systemProperties><alpha.classes>\${project.basedir}/../a/target/classes</alpha.classes></systemProperties>" +
+                "</configuration></plugin></plugins></build>",
+        )
+        val sources = listOf(
+            "a/pom.xml" to module("dev.sample", "a", ""),
+            "b/pom.xml" to b,
+            "a/${oneClass.first}" to oneClass.second, "a/${oneTest.first}" to oneTest.second,
+            "b/${secondClass.first}" to secondClass.second, "b/${secondTest.first}" to secondTest.second, loader,
+        )
+
+        val result = attempt(dir, "dev.sample.LoaderTest", Aim.Row("reaches-change"), sources, reactor(minimalPom, "a", "b")) {
+            File(it, "a/src/main/java/dev/sample/Alpha.java").writeText(
+                "package dev.sample;\npublic class Alpha { public int twice(int n) { return n * 2 + 1; } }",
+            )
+        }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
 }
