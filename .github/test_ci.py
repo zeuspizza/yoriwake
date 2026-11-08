@@ -2035,7 +2035,8 @@ def case_no_test_kit_home_is_said_rather_than_silent():
 
 
 REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BADGE = os.path.join(".github", "badges", "coverage.json")
+README = "README.md"
+BADGE = re.compile(r'src="https://img\.shields\.io/badge/line%20coverage%20%28gated%29-([^"]+)-brightgreen"')
 GATED_MODULES = ("plugin", "agent")
 
 
@@ -2051,16 +2052,26 @@ def gate_minimums(root):
     return minimums
 
 
+def coverage_badge(message):
+    """The README's coverage badge for a message: a static shields.io badge, cached by GitHub's image proxy."""
+    from urllib.parse import quote
+
+    return f'src="https://img.shields.io/badge/line%20coverage%20%28gated%29-{quote(message, safe="")}-brightgreen"'
+
+
 def badge_problems(root):
     """The README's coverage badge claims the gates' minimums: what every commit on main meets."""
-    import json
+    from urllib.parse import unquote
 
     minimums = gate_minimums(root)
-    with open(os.path.join(root, BADGE), encoding="utf-8") as handle:
-        badge = json.load(handle)
+    with open(os.path.join(root, README), encoding="utf-8") as handle:
+        found = BADGE.findall(handle.read())
+    if len(found) != 1:
+        return fail(f"{README}: expected one line coverage badge, found {len(found)}")
+    message = unquote(found[0])
     expected = " · ".join(f"{module} ≥ {minimums[module]}%" for module in GATED_MODULES)
-    if badge.get("message") != expected:
-        return fail(f"{BADGE} says {badge.get('message')!r}, the build files' gates say {expected!r}")
+    if message != expected:
+        return fail(f"{README}'s coverage badge says {message!r}, the build files' gates say {expected!r}")
     return 0
 
 
@@ -2071,7 +2082,6 @@ def case_the_coverage_badge_states_the_gates_minimums():
 
 def case_a_badge_one_point_off_either_gate_is_reported():
     import io
-    import json
     from contextlib import redirect_stdout
 
     problems = 0
@@ -2083,10 +2093,9 @@ def case_a_badge_one_point_off_either_gate_is_reported():
                 os.makedirs(os.path.join(root, gated))
                 with open(os.path.join(root, gated, "build.gradle.kts"), "w", encoding="utf-8") as handle:
                     handle.write(f'minimum = "0.{minimums[gated]}".toBigDecimal()\n')
-            os.makedirs(os.path.dirname(os.path.join(root, BADGE)))
             message = " · ".join(f"{gated} ≥ {off[gated]}%" for gated in GATED_MODULES)
-            with open(os.path.join(root, BADGE), "w", encoding="utf-8") as handle:
-                json.dump({"schemaVersion": 1, "message": message}, handle)
+            with open(os.path.join(root, README), "w", encoding="utf-8") as handle:
+                handle.write(f"<img {coverage_badge(message)}>\n")
             printed = io.StringIO()
             with redirect_stdout(printed):
                 reported = badge_problems(root)

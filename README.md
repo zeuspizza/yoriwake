@@ -5,11 +5,11 @@
 <h1 align="center">yoriwake</h1>
 
 <p align="center">
-  <a href="https://plugins.gradle.org/plugin/io.github.zeuspizza.yoriwake"><img alt="Gradle Plugin Portal" src="https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Fplugins.gradle.org%2Fm2%2Fio%2Fgithub%2Fzeuspizza%2Fyoriwake%2Fio.github.zeuspizza.yoriwake.gradle.plugin%2Fmaven-metadata.xml&amp;label=gradle%20plugin"></a>
-  <a href="https://central.sonatype.com/artifact/io.github.zeuspizza/yoriwake-maven-plugin"><img alt="Maven Central" src="https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fio%2Fgithub%2Fzeuspizza%2Fyoriwake-maven-plugin%2Fmaven-metadata.xml&amp;label=maven%20plugin"></a>
+  <a href="https://plugins.gradle.org/plugin/io.github.zeuspizza.yoriwake"><img alt="Gradle Plugin Portal" src="https://img.shields.io/badge/gradle%20plugin-v0.5.0-orange"></a>
+  <a href="https://central.sonatype.com/artifact/io.github.zeuspizza/yoriwake-maven-plugin"><img alt="Maven Central" src="https://img.shields.io/badge/maven%20plugin-v0.5.0-orange"></a>
   <a href="LICENSE"><img alt="Licence: Apache-2.0" src="https://img.shields.io/badge/licence-Apache--2.0-blue"></a>
   <a href="https://github.com/zeuspizza/yoriwake/actions/workflows/verify.yml"><img alt="CI" src="https://github.com/zeuspizza/yoriwake/actions/workflows/verify.yml/badge.svg"></a>
-  <a href="CONTRIBUTING.md#coverage"><img alt="Line coverage, as the build gates it" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zeuspizza/yoriwake/main/.github/badges/coverage.json"></a>
+  <a href="CONTRIBUTING.md#coverage"><img alt="Line coverage, as the build gates it" src="https://img.shields.io/badge/line%20coverage%20%28gated%29-plugin%20%E2%89%A5%2094%25%20%C2%B7%20agent%20%E2%89%A5%2089%25-brightgreen"></a>
   <a href="SECURITY.md#verifying-a-release"><img alt="SLSA Build Level 2" src="https://slsa.dev/images/gh-badge-level2.svg"></a>
 </p>
 
