@@ -813,4 +813,45 @@ class MavenAndSurefireAttempts : MavenBreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
+
+    // Track: code reading. Boundary: JaCoCo's scope is derived from the package declarations of the
+    // reactor's main sources; a file that holds no code (an empty or wholly commented-out one)
+    // declares nothing and does not widen the scope. A reactor whose only main source is a retired,
+    // commented-out class derives no package, and the execution is declined.
+    @Test
+    fun `a reactor whose only main source is commented out derives no package and is declined`(@TempDir dir: File) {
+        val helper = "src/test/java/dev/sample/Helper.java"
+        val sources = listOf(
+            "src/main/java/dev/sample/Retired.java" to "// package dev.sample;\n// public class Retired { }\n",
+            helper to "package dev.sample;\nclass Helper { int twice(int n) { return n * 2; } }",
+            source(
+                "src/test/java/dev/sample/AlphaTest.java",
+                "package dev.sample;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\nclass AlphaTest { @Test void passes() { assertEquals(1, 1); } }",
+            ),
+            source(
+                "src/test/java/dev/sample/HelperTest.java",
+                "package dev.sample;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\nclass HelperTest { @Test void passes() { assertEquals(2, new Helper().twice(1)); } }",
+            ),
+        )
+
+        val result = attempt(dir, "dev.sample.HelperTest", Aim.Forced("no-packages-derived"), sources) { project ->
+            File(project, helper).writeText("package dev.sample;\nclass Helper { int twice(int n) { return n * 2 + 1; } }")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the working tree's listing reads tracked and untracked names
+    // alike, and a name that decoded to U+FFFD stops it, since it would read as a file that is
+    // always absent. Here the name is committed after the capture, so it reaches the listing as a
+    // tracked path, not as an ignored file.
+    @Test
+    fun `a file whose name cannot be listed, committed after the capture, leaves no change set`(@TempDir dir: File) {
+        val result = attempt(dir, "dev.sample.BetaTest", Aim.Forced("no-change-set"), twoClasses, commit = true) { project ->
+            breakBeta(project)
+            File(project, "fixtures/�.txt").apply { parentFile.mkdirs() }.writeText("x")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }

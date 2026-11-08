@@ -460,4 +460,72 @@ class FrameworkCachesAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
+
+    // Track: code reading. Boundary: a test's reach is the code that runs while it runs, whoever
+    // built what runs it. A context an earlier test caches hands a later test a method handle bound
+    // to the changed method, found by the class's name; the later test never names the class.
+    @Test
+    fun `a later test that invokes a method handle a context cached by name selects through its reach`(@TempDir dir: File) {
+        val pricing = source(
+            "src/main/java/dev/sample/Pricing.java",
+            "package dev.sample;\npublic class Pricing { public String label() { return \"list\"; } }",
+        )
+        val context = source(
+            "src/test/java/dev/sample/Context.java",
+            """
+            package dev.sample;
+            import java.lang.invoke.MethodHandle;
+            import java.lang.invoke.MethodHandles;
+            import java.lang.invoke.MethodType;
+            import java.util.Map;
+            import java.util.concurrent.ConcurrentHashMap;
+            final class Context {
+                private static final Map<String, MethodHandle> BEANS = new ConcurrentHashMap<>();
+                static void register(String className, String method) throws Throwable {
+                    Class<?> type = Class.forName(className);
+                    Object bean = type.getConstructor().newInstance();
+                    BEANS.put(method, MethodHandles.publicLookup()
+                        .findVirtual(type, method, MethodType.methodType(String.class)).bindTo(bean));
+                }
+                static String call(String method) throws Throwable { return (String) BEANS.get(method).invoke(); }
+            }
+            """,
+        )
+        val builder = source(
+            "src/test/java/dev/sample/A2BuildsContextTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            class A2BuildsContextTest { @Test void builds() throws Throwable { Context.register("dev.sample." + "Pricing", "label"); } }
+            """,
+        )
+        val user = source(
+            "src/test/java/dev/sample/A3UsesContextTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A3UsesContextTest { @Test void labels() throws Throwable { assertEquals("list", Context.call("label")); } }
+            """,
+        )
+        val real = source(
+            "src/test/java/dev/sample/A9PricingTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A9PricingTest { @Test void lists() { assertEquals("list", new Pricing().label()); } }
+            """,
+        )
+
+        val result = attempt(
+            dir, "dev.sample.A3UsesContextTest", Aim.Row("reaches-change"),
+            listOf(other, pricing, first, spacer, context, builder, user, real, classOrderByName),
+        ) {
+            val file = File(it, pricing.first)
+            file.writeText(file.readText().replace("return \"list\";", "return \"sale\";"))
+        }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
 }

@@ -347,4 +347,22 @@ class InJvmThreadsAttempts : BreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: the build's detector reads Jupiter's switch from
+    // junit-platform.properties with Kotlin's toBoolean, which does not trim, while the engines and
+    // the test JVM's read-back trim the value. A switch written with a trailing space is off to the
+    // detector and on in the test JVM, so only the read-back keeps the capture out of the map.
+    @Test
+    fun `parallelism switched on by a value with a trailing space leaves no map to narrow from`(@TempDir dir: File) {
+        val properties = "src/test/resources/junit-platform.properties" to
+            "junit.jupiter.execution.parallel.enabled=true \n" +
+            "junit.jupiter.execution.parallel.mode.default=concurrent\n" +
+            "junit.jupiter.execution.parallel.mode.classes.default=concurrent\n"
+        val result = attempt(
+            dir, "dev.sample.A9CodecTest", Aim.Forced("map-unusable"),
+            listOf(codec, other, first, slow, codecTest, properties),
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }
