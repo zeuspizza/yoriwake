@@ -7,8 +7,12 @@
 <p align="center">
   <a href="https://plugins.gradle.org/plugin/io.github.zeuspizza.yoriwake"><img alt="Gradle Plugin Portal" src="https://img.shields.io/badge/gradle%20plugin-v0.5.0-orange"></a>
   <a href="https://central.sonatype.com/artifact/io.github.zeuspizza/yoriwake-maven-plugin"><img alt="Maven Central" src="https://img.shields.io/badge/maven%20plugin-v0.5.0-orange"></a>
+  <a href="https://github.com/zeuspizza/yoriwake-action"><img alt="GitHub Action" src="https://img.shields.io/badge/action-v0.5.0-orange"></a>
+  <a href="docs/reference.md#supported-matrix"><img alt="Gradle 8.14+, Maven 3.9+" src="https://img.shields.io/badge/builds-gradle%208.14%2B%20%C2%B7%20maven%203.9%2B-informational"></a>
+  <a href="docs/reference.md#supported-matrix"><img alt="JDK 21+ for the build, 11+ for tests" src="https://img.shields.io/badge/jdk-21%2B%20build%20%C2%B7%2011%2B%20tests-informational"></a>
   <a href="LICENSE"><img alt="Licence: Apache-2.0" src="https://img.shields.io/badge/licence-Apache--2.0-blue"></a>
   <a href="https://github.com/zeuspizza/yoriwake/actions/workflows/verify.yml"><img alt="CI" src="https://github.com/zeuspizza/yoriwake/actions/workflows/verify.yml/badge.svg"></a>
+  <a href="https://github.com/zeuspizza/yoriwake/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/zeuspizza/yoriwake/actions/workflows/codeql.yml/badge.svg"></a>
   <a href="CONTRIBUTING.md#coverage"><img alt="Line coverage, as the build gates it" src="https://img.shields.io/badge/line%20coverage%20%28gated%29-plugin%20%E2%89%A5%2094%25%20%C2%B7%20agent%20%E2%89%A5%2089%25-brightgreen"></a>
   <a href="SECURITY.md#verifying-a-release"><img alt="SLSA Build Level 2" src="https://slsa.dev/images/gh-badge-level2.svg"></a>
 </p>
