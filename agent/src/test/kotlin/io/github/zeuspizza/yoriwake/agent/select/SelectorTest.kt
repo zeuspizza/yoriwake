@@ -1687,4 +1687,46 @@ class SelectorTest {
         assertContains(Selector.rules(map, change, true).forcingKinds(), AgentContract.TEST_JVM_UNSUPPORTED_KIND)
     }
 
+
+    // A file of only inline functions: its inlining classes stand in for it, so it may leave the
+    // change set only where nothing in the map shows a test depending on its own class.
+
+    @Test
+    fun `an inline-only file nothing covered, touched or loaded left no trace, with or without a union`(
+        @TempDir dir: File,
+    ) {
+        val noUnion = map(File(dir, "none"), test("A", "com.acme.Caller"))
+        val union = map(File(dir, "union"), test("A", "com.acme.Caller"), loaded = listOf("com.acme.Caller"))
+
+        assertTrue(Selector.leftNoTrace(noUnion, "com.acme.Inlines", listOf("com.acme.Inlines")))
+        assertTrue(Selector.leftNoTrace(union, "com.acme.Inlines", listOf("com.acme.Inlines")))
+    }
+
+    @Test
+    fun `an inline-only file whose class a test covered keeps its place in the change set`(@TempDir dir: File) {
+        // A Java caller runs the class's own copy of the function, with no SMAP to name it.
+        val m = map(dir, test("A", "com.acme.InlinesKt"))
+
+        assertFalse(Selector.leftNoTrace(m, "com.acme.Inlines", listOf("com.acme.Inlines")))
+    }
+
+    @Test
+    fun `an inline-only file whose class a capturing JVM touched keeps its place in the change set`(
+        @TempDir dir: File,
+    ) {
+        val m = map(
+            dir, test("A", "com.acme.Caller"),
+            positions = listOf("j\t1\t${id("A")}"),
+            firstTouches = listOf("j\t1\tcom.acme.InlinesKt"),
+        )
+
+        assertFalse(Selector.leftNoTrace(m, "com.acme.Inlines", listOf("com.acme.Inlines")))
+    }
+
+    @Test
+    fun `an inline-only file whose class the union holds keeps its place in the change set`(@TempDir dir: File) {
+        val m = map(dir, test("A", "com.acme.Caller"), loaded = listOf("com.acme.Caller", "com.acme.InlinesKt"))
+
+        assertFalse(Selector.leftNoTrace(m, "com.acme.Inlines", listOf("com.acme.Inlines")))
+    }
 }

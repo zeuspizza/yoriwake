@@ -214,4 +214,19 @@ class AbsenceEvidenceTest {
         }
         assertFalse(AbsenceEvidence.unannotated(provable, withHelper, everyPrefix).getValue(testClass).provable)
     }
+
+    @Test
+    fun `waiving the Kotlin refusal for inlined copies accounted for waives nothing else`() {
+        val kotlin = "io.github.zeuspizza.yoriwake.gradle.fixtures.OrdinaryKotlin"
+        val inScope = listOf(EffectiveScope(listOf("io.github.zeuspizza.yoriwake.gradle.fixtures.*"), emptyList()))
+        val elsewhere = listOf(EffectiveScope(listOf("com.elsewhere.*"), emptyList()))
+        fun waived(prefix: String, scopes: List<EffectiveScope> = inScope) =
+            AbsenceEvidence.assess(listOf(prefix), scopes, compiled, namedNowhere, inlinesAccountedFor = true)
+                .getValue(prefix)
+
+        assertFalse(assess(kotlin).provable, "a Kotlin class is refused unless its inlined copies are accounted for")
+        assertTrue(waived(kotlin).provable)
+        assertFalse(waived(kotlin, elsewhere).provable, "a class outside the scope had no probe to fire")
+        assertFalse(waived(constant).provable, "a constant is copied into consumers whatever the inliners say")
+    }
 }

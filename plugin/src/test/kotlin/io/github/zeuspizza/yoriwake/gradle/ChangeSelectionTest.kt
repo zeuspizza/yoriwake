@@ -1436,4 +1436,98 @@ class ChangeSelectionTest {
         assertEquals(RefusalKind.ANNOTATIONS_CHANGED, refusal?.refusalKind)
         assertEquals(nested, refusal?.refusalDetail)
     }
+
+    // A file of only inline functions whose class no test ran: the classes that inlined it stand
+    // in for it, so it leaves the change set the selector checks for coverage.
+
+    private val fixtures = "io.github.zeuspizza.yoriwake.gradle.fixtures"
+
+    private fun compiled(name: String): Pair<String, ByteArray> = name to checkNotNull(
+        javaClass.classLoader.getResourceAsStream(name.replace('.', '/') + ".class")
+    ) { "no class file for $name" }.use { it.readBytes() }
+
+    /** The inline function's own class and the class that inlined it, as kotlinc compiled them. */
+    private fun inlinedPair(dir: File): Pair<ClasspathFacts, Map<String, String>> {
+        val fileClass = compiled("$fixtures.KotlinShapesKt")
+        val facts = oneModule(dir, fileClass, compiled("$fixtures.InlinesSomethingElse"))
+        // KotlinShapes.kt also declares a constant, which forces unless the map recorded it as is.
+        return facts to mapOf(fileClass.first to Recordability.constantDigest(fileClass.second)!!)
+    }
+
+    /** The file class's annotations as the map recorded them, unchanged, so they force nothing. */
+    private val annotations: Map<String, String> by lazy {
+        val fileClass = compiled("$fixtures.KotlinShapesKt")
+        mapOf(fileClass.first to Recordability.annotationDigest(fileClass.second).value!!)
+    }
+
+    @Test
+    fun `an inline-only file whose inliners were found leaves the change set and keeps its inliners`(
+        @TempDir dir: File,
+    ) {
+        val (facts, constants) = inlinedPair(dir)
+
+        val widening = widenForInlining(
+            listOf("$fixtures.KotlinShapes"), facts, constants,
+            recordedAnnotations = annotations,
+            inlinedAway = setOf("$fixtures.KotlinShapes"),
+        )
+
+        assertFalse(widening.forces, widening.refusal)
+        assertEquals(listOf("$fixtures.InlinesSomethingElse"), widening.prefixes)
+        assertEquals(setOf("$fixtures.KotlinShapes"), widening.accountedByInliners)
+    }
+
+    @Test
+    fun `a changed file the daemon did not establish as inlined away keeps its place`(@TempDir dir: File) {
+        val (facts, constants) = inlinedPair(dir)
+
+        val widening = widenForInlining(
+            listOf("$fixtures.KotlinShapes"), facts, constants, recordedAnnotations = annotations,
+        )
+
+        assertEquals(listOf("$fixtures.InlinesSomethingElse", "$fixtures.KotlinShapes"), widening.prefixes)
+        assertEquals(emptySet(), widening.accountedByInliners)
+    }
+
+    @Test
+    fun `an inline-only file that nothing inlined keeps its place, beside one that something did`(
+        @TempDir dir: File,
+    ) {
+        // The scan answers for the whole change set; a file with no inliner of its own has nothing
+        // to stand in for it, so its absence from coverage still forces.
+        val (facts, constants) = inlinedPair(dir)
+
+        val widening = widenForInlining(
+            listOf("$fixtures.KotlinShapes", "$fixtures.Unused"), facts, constants,
+            recordedAnnotations = annotations,
+            inlinedAway = setOf("$fixtures.KotlinShapes", "$fixtures.Unused"),
+        )
+
+        assertEquals(listOf("$fixtures.InlinesSomethingElse", "$fixtures.Unused"), widening.prefixes)
+        assertEquals(setOf("$fixtures.KotlinShapes"), widening.accountedByInliners)
+    }
+
+    @Test
+    fun `an inline-only file inlined away is still a changed source to the bytes comparison`(
+        @TempDir dir: File,
+    ) {
+        // The edit recompiles the file's class; out of the change set, its moved digest would read
+        // as bytes that changed with no source behind them, and force.
+        val (facts, constants) = inlinedPair(dir)
+        val caller = compiled("$fixtures.InlinesSomethingElse")
+        val recorded = mapOf(
+            "$fixtures.KotlinShapesKt" to "the digest before the edit",
+            caller.first to Recordability.classDigest(caller.second).value!!,
+        )
+
+        val widening = widenForInlining(
+            listOf("$fixtures.KotlinShapes"), facts, constants,
+            digestRule = DigestRule(recorded, bytesAreFresh = true),
+            recordedAnnotations = annotations,
+            inlinedAway = setOf("$fixtures.KotlinShapes"),
+        )
+
+        assertEquals(setOf("$fixtures.KotlinShapesKt"), widening.digest!!.added)
+        assertEquals(emptySet(), widening.changedBytes)
+    }
 }

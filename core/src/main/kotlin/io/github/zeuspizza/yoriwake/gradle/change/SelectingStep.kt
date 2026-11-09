@@ -133,6 +133,7 @@ internal object SelectingStep {
             digestRule(mapDir, bytesAreFresh = true),
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = established.testClasses,
+            inlinedAway = established.inlinedAway,
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
@@ -158,6 +159,13 @@ internal object SelectingStep {
                 host.lifecycle(
                     "[yoriwake] ${host.name}: ${widening.inliners.size} class(es) inlined the changed " +
                         "sources and are selected with them"
+                )
+            }
+            if (widening.accountedByInliners.isNotEmpty()) {
+                host.lifecycle(
+                    "[yoriwake] ${host.name}: ${widening.accountedByInliners.size} changed file(s) declare " +
+                        "only inline functions that no test ran on their own, so the classes that " +
+                        "inlined them stand in for them: ${widening.accountedByInliners.joinToString()}"
                 )
             }
             widening.prefixes

@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Changed
+
+- Kotlin Multiplatform: a change to a `Platform.jvm.kt`-style file, or to a file of only `inline` functions, narrows. Map: left alone.
+
 ## [0.5.0] - 2026-11-07
 
 **Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.
