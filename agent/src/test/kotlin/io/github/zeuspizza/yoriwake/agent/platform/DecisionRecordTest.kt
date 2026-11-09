@@ -97,6 +97,28 @@ class DecisionRecordTest {
     }
 
     @Test
+    fun `a staging name the whole process would share is never used, so writers do not fight over one staging file`(
+        @TempDir dir: File,
+    ) {
+        // Deterministic where the threaded case below depends on two writes interleaving: a
+        // directory squats on the one staging name a process-wide scheme would give every writer.
+        val pid = ProcessHandle.current().pid()
+        File(dir, "${AgentContract.DECISIONS_FILE}.$pid.writing").mkdirs()
+        val captured = java.io.ByteArrayOutputStream()
+        val original = System.out
+        try {
+            System.setOut(java.io.PrintStream(captured, true))
+            DecisionRecord().apply { add("t:test", Verdict.REACHES_CHANGE) }.writeTo(dir)
+        } finally {
+            System.setOut(original)
+        }
+
+        val complaints = captured.toString().lines().filter { it.contains("could not write") }
+        assertTrue(complaints.isEmpty(), "the record staged under the process-wide name: ${complaints.take(2)}")
+        assertEquals(1, rows(dir).size)
+    }
+
+    @Test
     fun `two records writing one directory at once do not fight over one staging file`(
         @TempDir dir: File,
     ) {
