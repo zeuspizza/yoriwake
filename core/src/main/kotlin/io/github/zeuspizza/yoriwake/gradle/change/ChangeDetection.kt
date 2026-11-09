@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
+import io.github.zeuspizza.yoriwake.gradle.bytecode.InlinedSources
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -20,6 +21,11 @@ internal object ChangeDetection {
         val classPrefixes: Set<String>,
         val unmappablePaths: List<String>,
         val inlinableSourceChanged: Boolean = true,
+        /**
+         * Of [classPrefixes], those of Kotlin files that declare nothing but `inline` functions:
+         * every use of such a file is a copy in its caller, unless its own class ran.
+         */
+        val inlineOnly: Set<String> = emptySet(),
     )
 
     // Only Kotlin `inline` bodies are copied into callers and erase the edge. Anything not Java
@@ -32,6 +38,7 @@ internal object ChangeDetection {
         val prefixes = mutableSetOf<String>()
         val unmappable = mutableListOf<String>()
         var inlinable = false
+        val inlineOnly = mutableSetOf<String>()
         paths.map { it.replace('\\', '/') }.filter(String::isNotBlank).forEach { path ->
             val match = SOURCE_ROOT.matchEntire(path)
             if (match == null) {
@@ -41,12 +48,99 @@ internal object ChangeDetection {
                 // holder may never be loaded, so no rule downstream can see the effect.
                 unmappable += path
             } else {
-                prefixes += match.groups["fqn"]!!.value.replace('/', '.')
+                val fqn = match.groups["fqn"]!!.value
+                val prefix = if (path.endsWith(".kt")) InlinedSources.kotlinSourcePrefix(fqn) else fqn.replace('/', '.')
+                prefixes += prefix
                 prefixes += declaredTypes(projectDir, path)
                 inlinable = inlinable || INLINABLE_SOURCE.matches(path)
+                if (path.endsWith(".kt") && declaresOnlyInlineFunctions(projectDir, path)) {
+                    inlineOnly += prefix
+                }
             }
         }
-        return Change(prefixes, unmappable, inlinable)
+        return Change(prefixes, unmappable, inlinable, inlineOnly)
+    }
+
+    /**
+     * Whether a Kotlin file holds only a package, imports, file annotations and `inline fun`
+     * declarations, read line by line at the top level. An allowlist: anything else, or a file
+     * that does not read cleanly, is false. Such a file has no state and no initializer, so
+     * loading its class without executing it changes nothing a test can see.
+     */
+    private fun declaresOnlyInlineFunctions(projectDir: File?, path: String): Boolean {
+        val file = projectDir?.resolve(path)?.takeIf(File::isFile) ?: return false
+        val text = runCatching { file.readText() }.getOrNull() ?: return false
+        val code = codeOnly(text) ?: return false
+        var depth = 0
+        var declaresOne = false
+        for (line in code.lines()) {
+            val trimmed = line.trim()
+            if (depth == 0 && trimmed.isNotEmpty()) {
+                when {
+                    TOP_LEVEL_PREAMBLE.matches(trimmed) -> Unit
+                    INLINE_FUNCTION.containsMatchIn(trimmed) -> declaresOne = true
+                    else -> return false
+                }
+            }
+            for (char in line) {
+                when (char) {
+                    '{', '(', '[' -> depth++
+                    '}', ')', ']' -> depth--
+                    // A second top-level statement on the line would go unread.
+                    ';' -> if (depth == 0) return false
+                }
+                if (depth < 0) return false
+            }
+        }
+        return declaresOne && depth == 0
+    }
+
+    // An annotation alone on its line belongs to the next declaration, which is read on its own.
+    private val TOP_LEVEL_PREAMBLE = Regex("""(?:package|import)\s+[\w.*` ]+|@(?:file:)?[\w.]+(?:\([^)]*\))?""")
+
+    private val INLINE_FUNCTION = Regex(
+        """^(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:public|internal|private|suspend|operator|infix)\s+)*inline\s+""" +
+            """(?:(?:public|internal|private|suspend|operator|infix)\s+)*fun\b"""
+    )
+
+    /**
+     * [text] with its comments removed and every string or character literal emptied, line breaks
+     * kept, so a code sample in either reads as no code. Null when a literal or comment is open.
+     */
+    private fun codeOnly(text: String): String? {
+        val code = StringBuilder()
+        var index = 0
+        var blockCommentDepth = 0
+        while (index < text.length) {
+            val char = text[index]
+            when {
+                blockCommentDepth > 0 -> when {
+                    text.startsWith("/*", index) -> { blockCommentDepth++; index += 2 }
+                    text.startsWith("*/", index) -> { blockCommentDepth--; index += 2 }
+                    else -> { if (char == '\n') code.append('\n'); index++ }
+                }
+                text.startsWith("//", index) -> {
+                    val newline = text.indexOf('\n', index)
+                    index = if (newline < 0) text.length else newline
+                }
+                text.startsWith("/*", index) -> { blockCommentDepth = 1; index += 2 }
+                text.startsWith(RAW_STRING_DELIMITER, index) -> {
+                    val literal = rawStringRanges(text.substring(index)).firstOrNull() ?: return null
+                    if (literal.first != 0) return null
+                    code.append("\"\"")
+                    repeat(text.substring(index, index + literal.last + 1).count { it == '\n' }) { code.append('\n') }
+                    index += literal.last + 1
+                }
+                char == '"' || char == '\'' -> {
+                    val end = endOfLiteral(text, index, char)
+                    if (end - index < 2 || text[end - 1] != char) return null
+                    code.append("\"\"")
+                    index = end
+                }
+                else -> { code.append(char); index++ }
+            }
+        }
+        return if (blockCommentDepth == 0) code.toString() else null
     }
 
     // False when unreadable: such a file already falls back to a path-derived prefix.

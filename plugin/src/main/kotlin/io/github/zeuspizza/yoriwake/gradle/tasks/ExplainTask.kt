@@ -402,6 +402,7 @@ internal abstract class ExplainTask : DefaultTask() {
             digestRule(mapDir, bytesAreFresh = true),
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = found.testClasses,
+            inlinedAway = found.inlinedAway,
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),

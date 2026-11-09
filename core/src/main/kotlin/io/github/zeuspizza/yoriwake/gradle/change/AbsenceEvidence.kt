@@ -48,12 +48,15 @@ internal object AbsenceEvidence {
      *
      * @param scopes every scope the map's records were captured under. Empty makes every verdict a
      *   refusal.
+     * @param inlinesAccountedFor true when the caller accounts for every inlined copy of these
+     *   classes, which waives the refusal of Kotlin classes and nothing else.
      */
     fun assess(
         prefixes: Collection<String>,
         scopes: List<EffectiveScope>,
         compiled: CompiledClasses,
         namedInResources: NamedInResources,
+        inlinesAccountedFor: Boolean = false,
     ): Map<String, Verdict> {
         if (scopes.isEmpty()) {
             return prefixes.associateWith {
@@ -68,7 +71,7 @@ internal object AbsenceEvidence {
         val everyClass = classesByPrefix.values.filterNotNull().flatten().map { it.first }
         val named = namedInResources.matching(everyClass)
         return prefixes.associateWith { prefix ->
-            verdictFor(prefix, matchers, classesByPrefix[prefix], named)
+            verdictFor(prefix, matchers, classesByPrefix[prefix], named, inlinesAccountedFor)
         }
     }
 
@@ -77,6 +80,7 @@ internal object AbsenceEvidence {
         matchers: List<Pair<WildcardMatcher, WildcardMatcher?>>,
         classes: List<Pair<String, ByteArray>>?,
         namedInResources: Set<String>,
+        inlinesAccountedFor: Boolean,
     ): Verdict {
         if (classes.isNullOrEmpty()) {
             return Verdict(false, "no compiled class could be found for $prefix")
@@ -90,7 +94,7 @@ internal object AbsenceEvidence {
             if (matchers.any { (_, excludes) -> excludes != null && excludes.matches(name) }) {
                 return Verdict(false, "$name was excluded from instrumentation, so no probe existed")
             }
-            val recordable = Recordability.of(bytes)
+            val recordable = Recordability.of(bytes, inlinesAccountedFor)
             if (!recordable.recordable) {
                 return Verdict(false, "$name cannot be recorded: ${recordable.reason}")
             }

@@ -24,12 +24,15 @@ internal object Recordability {
 
     private const val KOTLIN_METADATA = "Lkotlin/Metadata;"
 
-    /** Reads one compiled class; any failure is a "no". */
-    fun of(classBytes: ByteArray): Verdict = runCatching {
+    /**
+     * Reads one compiled class; any failure is a "no". [inlinesAccountedFor] waives the Kotlin
+     * refusal, for a class whose inlined copies the caller has already accounted for.
+     */
+    fun of(classBytes: ByteArray, inlinesAccountedFor: Boolean = false): Verdict = runCatching {
         val visitor = Inspector()
         ClassReader(classBytes).accept(visitor, ClassReader.SKIP_FRAMES)
         when {
-            visitor.kotlin -> Verdict.no("it is Kotlin, whose inline members are copied into their call sites")
+            visitor.kotlin && !inlinesAccountedFor -> Verdict.no("it is Kotlin, whose inline members are copied into their call sites")
             visitor.constants -> Verdict.no("it declares a compile-time constant, which is inlined into every consumer")
             !visitor.executable -> Verdict.no("it carries no executable bytecode, so it has no probe to fire")
             else -> Verdict.YES

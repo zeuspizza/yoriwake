@@ -30,6 +30,13 @@ internal data class Established(
      * names, so their discovery-time loading opens no JVM-shared window.
      */
     val exemptTestClasses: Set<String> = emptySet(),
+    /**
+     * Changed files of only `inline` functions ([ChangeDetection.Change.inlineOnly]) whose class no
+     * test could have depended on unseen: it would have fired a probe had one executed it, the map
+     * records no coverage of it, no capturing JVM touched it, and a loaded-class union that speaks
+     * for it does not hold it. The classes that inlined one stand in for it; see [widenForInlining].
+     */
+    val inlinedAway: Set<String> = emptySet(),
 )
 
 internal fun establish(
@@ -55,7 +62,7 @@ internal fun establish(
         }
     } else {
         AbsenceEvidence.unannotated(
-            absenceVerdicts(report, mapDir, change, artifacts),
+            absenceVerdicts(report, mapDir, change.classPrefixes, artifacts),
             artifacts::classesFor,
         ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
     }
@@ -73,10 +80,28 @@ internal fun establish(
         own?.firstOrNull { (name, _) -> name == prefix }?.let { (_, bytes) -> Recordability.declaresTestMethod(bytes) } == true &&
             !artifacts.namedOutsideItself(prefix)
     }
+    // The same gates with the Kotlin refusal waived, which only the inlining classes can answer for.
+    val inlineOnly = change.inlineOnly.intersect(change.classPrefixes)
+    val inlinedAway = if (inlineOnly.isEmpty() || artifacts.runsCodeInUnobservedJvms()) {
+        emptySet()
+    } else {
+        val candidates = AbsenceEvidence.unannotated(
+            absenceVerdicts({}, mapDir, inlineOnly, artifacts, inlinesAccountedFor = true),
+            artifacts::classesFor,
+        ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
+            .filterValues { it.provable }.keys
+        if (candidates.isEmpty()) emptySet() else runCatching {
+            val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
+            candidates.filterTo(sortedSetOf()) { prefix ->
+                io.github.zeuspizza.yoriwake.agent.select.Selector.leftNoTrace(map, prefix, change.classPrefixes)
+            }
+        }.getOrDefault(emptySet())
+    }
     return Established(
         provable = verdicts.filterValues { it.provable }.keys,
         testClasses = testClasses,
         exemptTestClasses = exemptTestClasses,
+        inlinedAway = inlinedAway,
         refusals = verdicts
             .filterValues { !it.provable }
             .mapValues { (_, verdict) -> verdict.reason.orEmpty() },
@@ -105,6 +130,12 @@ internal class InlineWidening private constructor(
     val digest: DigestWidening? = null,
     /** Build-produced classpath files that moved, for the selector to run their readers. */
     val movedFiles: List<String> = emptyList(),
+    /**
+     * Changed files of only `inline` functions left out of [prefixes] because the classes that
+     * inlined them stand in for them ([Established.inlinedAway]). Still changed sources to
+     * [changedBytes]: their recompiled class moved, and that is no change of its own.
+     */
+    val accountedByInliners: Set<String> = emptySet(),
 ) {
     val forces: Boolean get() = refusal != null
 
@@ -115,22 +146,23 @@ internal class InlineWidening private constructor(
      */
     val changedBytes: Set<String>
         get() = digest?.added
-            ?.let { io.github.zeuspizza.yoriwake.agent.select.Selector.bytesOnly(it, prefixes) }
+            ?.let { io.github.zeuspizza.yoriwake.agent.select.Selector.bytesOnly(it, prefixes + accountedByInliners) }
             .orEmpty()
 
     fun withDigest(digest: DigestWidening?): InlineWidening =
         if (digest == null) this
-        else InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles)
+        else InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles, accountedByInliners)
 
     fun withMovedFiles(movedFiles: List<String>): InlineWidening =
-        InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles)
+        InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles, accountedByInliners)
 
     companion object {
         fun widened(
             prefixes: List<String>,
             inliners: Set<String>,
             digest: DigestWidening? = null,
-        ) = InlineWidening(prefixes, inliners, null, false, digest = digest)
+            accountedByInliners: Set<String> = emptySet(),
+        ) = InlineWidening(prefixes, inliners, null, false, digest = digest, accountedByInliners = accountedByInliners)
 
         fun refuse(
             reason: String,
@@ -389,6 +421,8 @@ internal fun widenForInlining(
     recordedAnnotations: Map<String, String>? = null,
     /** [Established.testClasses], whose test classes an annotation change does not force on. */
     ownTestClasses: Set<String> = emptySet(),
+    /** [Established.inlinedAway]: each one found inlined by some class leaves the prefixes. */
+    inlinedAway: Set<String> = emptySet(),
 ): InlineWidening {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -451,12 +485,20 @@ internal fun widenForInlining(
     annotationRefusal(prefixes, recordedAnnotations, ownTestClasses, artifacts::classesFor)
         ?.let { return it.withDigest(digest) }
     if (bytesUnknown) return bytesRefusal(digest)
+    // Asked per file, since the scan above answers for the change set as a whole. A scan that
+    // cannot answer keeps the file.
+    val accounted = if (inliners.isEmpty()) emptySet() else inlinedAway.filterTo(sortedSetOf()) { prefix ->
+        prefix in prefixes && runCatching {
+            (artifacts.classesInlining(listOf(prefix), exact = true) as? InlineScan.Found)?.classes?.isNotEmpty() == true
+        }.getOrDefault(false)
+    }
     // Digest-derived names stay out of the prefixes, which are also the anchor set for
     // `Selector.isNestedUnder`; they reach the selector as [InlineWidening.changedBytes].
     return InlineWidening.widened(
-        (prefixes + inliners).distinct().sorted(),
+        (prefixes - accounted + inliners).distinct().sorted(),
         inliners,
         digest,
+        accounted,
     )
 }
 
@@ -588,10 +630,11 @@ internal fun constantHolderRefusal(
 internal fun absenceVerdicts(
     report: (String) -> Unit,
     mapDir: File,
-    change: ChangeDetection.Change,
+    prefixes: Set<String>,
     artifacts: TaskArtifacts,
+    inlinesAccountedFor: Boolean = false,
 ): Map<String, AbsenceEvidence.Verdict> {
-    if (change.classPrefixes.isEmpty()) {
+    if (prefixes.isEmpty()) {
         return emptyMap()
     }
     val provenance = io.github.zeuspizza.yoriwake.agent.select.MapReader.scopeProvenanceOf(mapDir)
@@ -603,18 +646,18 @@ internal fun absenceVerdicts(
                 "does not mention still forces a full run. A full capture records it; a map " +
                 "built before this version of the plugin does not have it."
         )
-        return change.classPrefixes.associateWith {
+        return prefixes.associateWith {
             AbsenceEvidence.Verdict(false, "the map's instrumentation scope is $provenance")
         }
     }
     // The scopes the map was captured under, not this build's current configuration.
     val recorded = io.github.zeuspizza.yoriwake.agent.select.MapReader.recordedScopeOf(mapDir)
-        ?: return change.classPrefixes.associateWith {
+        ?: return prefixes.associateWith {
             AbsenceEvidence.Verdict(false, "the map records no instrumentation scope")
         }
     val scopes = EffectiveScope.parseAll(recorded)
     return AbsenceEvidence
-        .assess(change.classPrefixes, scopes, artifacts::classesFor, artifacts::namedInResources)
+        .assess(prefixes, scopes, artifacts::classesFor, artifacts::namedInResources, inlinesAccountedFor)
 }
 
 /**
