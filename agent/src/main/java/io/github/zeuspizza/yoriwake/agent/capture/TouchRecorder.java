@@ -145,7 +145,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             Map<String, String> modules = modulesOf(HostBuild.current().property(AgentContract.JAR_MODULES_PROPERTY));
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
                     this::childProcess, this::nativeCode, this::library, this::resolved, this::environmentRead,
-                    this::entry);
+                    this::entry, this::enumerated);
             if (modules != null && hooks.entries == null) {
                 recordJars(modules);
             }
@@ -306,12 +306,18 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 if (module != null && !loaderOpening(name)) {
                     reached(module);
                 }
-                if (name.endsWith(".class")) {
+                // Only a library jar's answer is the class path's; a child loader's jar answering the same
+                // name leaves the class path's miss standing.
+                if (module != null && name.endsWith(".class")) {
                     answered.add(name);
                 }
                 return;
             }
             if (module == null) {
+                return;
+            }
+            // The JDK's loader asks every jar it opens for its index (JDK 11 and 17); no test asked.
+            if (INDEX.equals(name) && byClassPathLoader()) {
                 return;
             }
             int slash = name.lastIndexOf('/');
@@ -329,12 +335,48 @@ public final class TouchRecorder implements CaptureSession.Touches {
         }
     }
 
+    /**
+     * The enumeration hooks' sink: code listed a jar's entries, as a classpath scanner does. Listing
+     * a module jar reaches it, whatever the scanner then reads or finds nothing to read.
+     */
+    void enumerated(Object zip) {
+        if (moduleJars == null || inside.get() != null) {
+            return;
+        }
+        inside.set(Boolean.TRUE);
+        try {
+            String module = modulePath(((ZipFile) zip).getName());
+            if (module != null) {
+                reached(module);
+            }
+        } catch (Throwable t) {
+            incomplete = "a jar listing could not be recorded: " + t;
+        } finally {
+            inside.remove();
+        }
+    }
+
+    private static final String INDEX = "META-INF/INDEX.LIST";
+
+    /** Whether the JDK's own class-path loader made the hooked call. Anything that cannot tell says no. */
+    private static boolean byClassPathLoader() {
+        try {
+            return StackWalker.getInstance().walk(frames -> frames.limit(24)
+                    .anyMatch(frame -> frame.getClassName().startsWith("jdk.internal.loader.")));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** A class defined from {@code domain}'s code source: when that is a module jar, the jar was reached. */
-    void definedFrom(ProtectionDomain domain, String internalName) {
+    void definedFrom(ProtectionDomain domain, String internalName, boolean byClassPath) {
         if (moduleJars == null) {
             return;
         }
-        answered.add(internalName + ".class");
+        // Only a definition by the class path's own loaders answers a class-path search.
+        if (byClassPath) {
+            answered.add(internalName + ".class");
+        }
         if (domain == null || inside.get() != null) {
             return;
         }
@@ -1159,7 +1201,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
                         } else {
                             recorder.loaded(name);
                         }
-                        recorder.definedFrom(domain, name);
+                        recorder.definedFrom(domain, name, loader == application || loader == platform);
                     }
                 }
             } catch (Throwable t) {

@@ -92,7 +92,7 @@ class DependencyRuleTest {
     private fun decide(
         paths: List<String>,
         current: ClasspathRecord.Record?,
-        jvmArguments: List<String> = emptyList(),
+        jvmArguments: List<String>? = emptyList(),
         configurations: Set<String>? = setOf("implementation", "runtimeClasspath", "testRuntimeClasspath"),
     ) = DependencyRule.decide(
         DependencyRule.Inputs(
@@ -101,7 +101,7 @@ class DependencyRuleTest {
                 git = ChangeDetection.directRunner(root),
                 raw = { ChangeDetection.rawGit(root, it) },
                 current = { current },
-                jvmArguments = { jvmArguments },
+                jvmArguments = { jvmArguments ?: error("unreadable") },
                 configurations = { configurations },
                 ownBuildFile = { it == "app/build.gradle.kts" },
             ),
@@ -396,5 +396,29 @@ class DependencyRuleTest {
 
         assertEquals(before["com/"], after["com/"])
         kotlin.test.assertNotEquals(before["com/x/"], after["com/x/"])
+    }
+
+    @Test
+    fun `a classpath that cannot be read now, or JVM arguments that cannot, force`() {
+        recordInMap(record(own, jsonOld, math))
+        bumpJson()
+
+        assertEquals(RefusalKind.CLASSPATH_UNRECORDED, assertIs<Verdict.Forced>(decide(listOf("gradle/libs.versions.toml"), null)).kind)
+        assertEquals(
+            RefusalKind.DEPENDENCY_IN_JVM_ARGUMENTS,
+            assertIs<Verdict.Forced>(decide(listOf("gradle/libs.versions.toml"), record(own, jsonNew, math), jvmArguments = null)).kind,
+        )
+    }
+
+    @Test
+    fun `a module whose digest could not be read counts as moved`() {
+        val recorded = record(own, jsonOld, math)
+        val unreadable = recorded.copy(entries = recorded.entries.map { if (it.identity == "dev.lib:lib-math") it.copy(digest = ClasspathFiles.UNREADABLE) else it })
+        // Unreadable at both ends, which is no evidence the jar stayed the same.
+        recordInMap(unreadable)
+        write("app/build.gradle.kts", script.replace("lib-math:1.0", "lib-math:1.1"))
+
+        val verdict = assertIs<Verdict.Accepted>(decide(listOf("app/build.gradle.kts"), unreadable))
+        assertEquals(listOf("dev.lib:lib-math"), verdict.modules)
     }
 }

@@ -166,6 +166,33 @@ class JarTouchTest {
     }
 
     @Test
+    fun `listing a module jar's entries reaches it, as a classpath scanner does`(@TempDir dir: File) {
+        val c = jar(dir, "c.jar", "lib/L.class")
+        val recorder = recorder(c)
+
+        ZipFile(c).use { zip -> recorder.enumerated(zip) }
+
+        assertEquals(listOf(AgentContract.TOUCH_JAR_REACHED to c.absolutePath), drained(recorder))
+    }
+
+    @Test
+    fun `a module list that is missing, unnamed or malformed gives none`(@TempDir dir: File) {
+        assertEquals(null, TouchRecorder.modulesOf(null))
+        assertEquals(null, TouchRecorder.modulesOf(""))
+        assertEquals(null, TouchRecorder.modulesOf(File(dir, "absent.tsv").path))
+        val malformed = File(dir, "malformed.tsv").apply { writeText("a\tb\tc\n") }
+        assertEquals(null, TouchRecorder.modulesOf(malformed.path))
+    }
+
+    @Test
+    fun `this JDK's jar listings call the holder first`() {
+        val hooks = ReadHooks.ENUMERATIONS.filter { hook ->
+            runCatching { Class.forName(hook[0].replace('/', '.')).getDeclaredMethod(hook[1]) }.isSuccess
+        }
+        assertTrue(hooks.any { it[0] == "java/util/jar/JarFile" && it[1] == "entries" })
+    }
+
+    @Test
     fun `a recorder told of no modules records no jar`(@TempDir dir: File) {
         val c = jar(dir, "c.jar", "lib/L.class")
         val recorder = TouchRecorder()

@@ -30,7 +30,7 @@ class ReadHooksInstallTest {
     private val ignored = Consumer<Any> { }
 
     private fun install(instrumentation: Instrumentation) =
-        ReadHooks.install(instrumentation, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored)
+        ReadHooks.install(instrumentation, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored)
 
     @Test
     fun `a JVM that cannot retransform reports every kind incomplete, saying why`() {
@@ -38,6 +38,7 @@ class ReadHooksInstallTest {
 
         val why = "this JVM cannot retransform classes"
         assertEquals(listOf(why, why, why), listOf(installed.reads, installed.lookups, installed.environment))
+        assertEquals(why, installed.entries, "without the entry hooks no library jar touch can be vouched for")
         assertFalse(installed.resolving)
         assertFalse("addTransformer" in calls)
     }

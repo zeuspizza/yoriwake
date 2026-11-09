@@ -196,6 +196,18 @@ final class ReadHooks {
         {"java/util/zip/ZipFile", "getEntry", "(Ljava/lang/String;Ljava/util/function/Function;)Ljava/util/zip/ZipEntry;", "e"},
     };
 
+    /**
+     * Where code lists a jar's entries rather than asking for one by name, as a classpath scanner
+     * does: the sink gets the zip. Each is hooked where this JDK declares it.
+     */
+    static final String[][] ENUMERATIONS = {
+        {"java/util/zip/ZipFile", "entries", "()Ljava/util/Enumeration;", "0"},
+        {"java/util/zip/ZipFile", "stream", "()Ljava/util/stream/Stream;", "0"},
+        {"java/util/jar/JarFile", "entries", "()Ljava/util/Enumeration;", "0"},
+        {"java/util/jar/JarFile", "stream", "()Ljava/util/stream/Stream;", "0"},
+        {"java/util/jar/JarFile", "versionedStream", "()Ljava/util/stream/Stream;", "0"},
+    };
+
     private ReadHooks() {}
 
     /** Why the hooks are not all in place, per kind; null when they are. */
@@ -234,7 +246,7 @@ final class ReadHooks {
     static Installed install(Instrumentation instrumentation, Consumer<Object> reads, Consumer<Object> lookups,
             Consumer<Object> defines, Consumer<Object> processes, Consumer<Object> natives,
             Consumer<Object> libraries, Consumer<Object> resolved, Consumer<Object> environment,
-            Consumer<Object> entries) {
+            Consumer<Object> entries, Consumer<Object> enumerations) {
         if (!instrumentation.isRetransformClassesSupported()) {
             String why = "this JVM cannot retransform classes";
             return new Installed(why, why, why);
@@ -266,6 +278,7 @@ final class ReadHooks {
             environment.accept(Boolean.TRUE);
             holder.getField("ENV").set(null, environment);
             holder.getField("ENTRY").set(null, entries);
+            holder.getField("ENUM").set(null, enumerations);
             addAll(readHooks, READS, "SINK", false);
             providerWhy = addProviderHooks(readHooks);
             addAll(lookupHooks, LOOKUPS, "LOOKUP", false);
@@ -275,6 +288,7 @@ final class ReadHooks {
             addAll(resolutionHooks, RESOLUTIONS, "RESOLVED", true);
             addAll(environmentHooks, ENVIRONMENT, "ENV", false);
             addAll(entryHooks, ENTRIES, "ENTRY", true);
+            addAll(entryHooks, ENUMERATIONS, "ENUM", true);
             for (String[] hook : NATIVES) {
                 // The API is absent before it existed; where its class exists every hook must hold.
                 if (load(hook[0]) != null) {
@@ -510,7 +524,7 @@ final class ReadHooks {
         writer.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_SUPER,
                 HOLDER, null, "java/lang/Object", null);
         for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "RESOLVED", "ENV",
-                "GUARD", "ENTRY"}) {
+                "GUARD", "ENTRY", "ENUM"}) {
             writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, field,
                     "L" + CONSUMER + ";", null, null).visitEnd();
         }
