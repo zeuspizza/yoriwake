@@ -15,6 +15,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+- `-Pyoriwake.mode=optimistic` (`-D` on Maven) selects without the shared-JVM change windows, loudly. Map: left alone.
+
 ## [0.5.0] - 2026-11-07
 
 **Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.

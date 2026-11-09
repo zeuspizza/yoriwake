@@ -1986,7 +1986,7 @@ MUTATIONS = [
     # first loaded, executed or read in that JVM. Each mutation below makes the rule go quiet, and
     # quiet is a later dependent test skipped.
     ("the selector stops selecting what ran after a changed class arrived in its JVM", SELECTOR,
-     "            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt)) {",
+     "            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt, loosened)) {",
      "            for (String id : new HashSet<String>()) {",
      agent_suite, "a test that ran after its JVM first loaded a changed class is selected"),
     # At, not after: a test that loads a class in its own window and executes none of it (a
@@ -3036,8 +3036,8 @@ MUTATIONS = [
     # ...and captures as a recording run does: taking a selecting run's capture decision leaves a
     # narrowed observation's map uncaptured, and the map it reports against stops refreshing.
     ("an observing run takes a selecting run's capture decision", SELECTING_STEP,
-     "    val decision = if (observing) OBSERVING_CAPTURE else decided\n",
-     "    val decision = if (false) OBSERVING_CAPTURE else decided\n",
+     "            observing -> OBSERVING_CAPTURE\n",
+     "            false -> OBSERVING_CAPTURE\n",
      functional_suite, "an observing run writes the map a recording run writes on the same state"),
     # A complement run leaves out a test only when the selecting run's record shows it ran to
     # an outcome under the same commit, tree, task, build, classpath, configuration and test JVM.
@@ -4213,8 +4213,8 @@ MUTATIONS = [
      "        boolean allSkipped = true;",
      agent_suite, "a class with no test runs"),
     ("a class is left out when any one of its tests is skipped", CLASS_VERDICTS,
-     "            allSkipped &= verdict == Verdict.SKIPPED;",
-     "            allSkipped |= verdict == Verdict.SKIPPED;",
+     "            allSkipped &= verdict == Verdict.SKIPPED || verdict == Verdict.LOOSENED;",
+     "            allSkipped |= verdict == Verdict.SKIPPED || verdict == Verdict.LOOSENED;",
      agent_suite, "one test reaching the change keeps the class"),
     ("a kept class's skipped tests are recorded as skipped", CLASS_VERDICTS,
      "                entry.setValue(Verdict.CLASS_GRANULARITY);",
@@ -4652,8 +4652,8 @@ MUTATIONS = [
      "`-Dpts.enabled=true`", "`-Dpts.enable=true`", reference_suite,
      "every -D flag the reference names is in the code"),
     ("the plugin reads a system property of the daemon", SETTINGS,
-     "            Settings { project.providers.gradleProperty(it).orNull }",
-     "            Settings { project.providers.gradleProperty(it).orNull ?: project.providers.systemProperty(it).orNull }",
+     "            return Settings({ project.providers.gradleProperty(it).orNull }, { passed[it] })",
+     "            return Settings({ project.providers.gradleProperty(it).orNull ?: project.providers.systemProperty(it).orNull }, { passed[it] })",
      reference_suite, "the plugin reads no undocumented -D flag"),
     ("the extension's enabled defaults to false", YORIWAKE_PLUGIN,
      "enabled.convention(true)", "enabled.convention(false)", reference_suite,
@@ -5089,6 +5089,30 @@ MUTATIONS = [
     ("staging adds a second JaCoCo agent beside the guest's", MAVEN_HARNESS,
      "    if not any(execution.agent_goal in other.agent_goals() for other in poms):",
      "    if True:", maven_harness_suite, "a reactor with its own agent gained a second"),
+    # -- optimistic mode ---------------------------------------------------------------------------
+    #
+    # A mode that runs fewer tests than the safe rule must stay inert unless asked for, drop nothing
+    # but its two windows, and never write the map.
+    ("optimistic mode applies whatever the run asked for", FILTER_RULE,
+     "        Strictness strictness = Strictness.of(property.apply(AgentContract.MODE_PROPERTY));",
+     "        Strictness strictness = Strictness.OPTIMISTIC;",
+     agent_suite, "on any map and change, the optimistic selection is the tests a kept rule runs"),
+    ("optimistic mode leaves out a test the map has never seen", SELECTOR,
+     "            if (!knownToMapAtClassGranularity(testId)) {",
+     "            if (!knownToMapAtClassGranularity(testId) && safe == null) {",
+     agent_suite, "each window the change opens is left out, and every other rule still runs its test"),
+    ("an optimistic run that runs everything captures", SELECTING_STEP,
+     "            host.optimistic -> CaptureDecision(",
+     "            false -> CaptureDecision(",
+     functional_suite, "a map of unknown age runs every test in optimistic mode and captures nothing"),
+    ("the Gradle run stops reading optimistic mode where it decides capture", SELECTION_WIRING,
+     "        get() = test.systemProperties[AgentContract.MODE_PROPERTY]?.toString() == Strictness.OPTIMISTIC.token()",
+     "        get() = false",
+     functional_suite, "a base git cannot diff against runs every test in optimistic mode and captures nothing"),
+    ("the Maven execution stops reading optimistic mode where it decides capture", MAVEN_SELECTION,
+     "            get() = properties.getProperty(AgentContract.MODE_PROPERTY) == Strictness.OPTIMISTIC.token()",
+     "            get() = false",
+     maven_suite, "a map of unknown age runs every test in optimistic mode and captures nothing"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.

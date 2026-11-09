@@ -74,6 +74,14 @@ internal abstract class DecodeTask : DefaultTask() {
     @get:Input
     abstract val scheduleSet: Property<Boolean>
 
+    /** Whether the run selected in optimistic mode, so the decode prints its warning. */
+    @get:Input
+    abstract val optimistic: Property<Boolean>
+
+    /** Whether the build lists a full-run branch or sets a scheduled full run, which the warning names. */
+    @get:Input
+    abstract val fullRunPolicy: Property<Boolean>
+
     @get:Internal("where git runs, not a set of files this task reads")
     lateinit var rootDir: File
 
@@ -120,6 +128,8 @@ internal abstract class DecodeTask : DefaultTask() {
                 override fun warn(message: String) = logger.warn(message)
                 override fun info(message: String) = logger.info(message)
             },
+            optimistic = optimistic.getOrElse(false),
+            fullRunPolicy = fullRunPolicy.getOrElse(false),
         ).run()
     }
 
@@ -145,6 +155,10 @@ internal abstract class DecodeTask : DefaultTask() {
         val afterTest: AfterTest,
         /** Whether a scheduled full run is configured, so the decode keeps its count. */
         val scheduleSet: Boolean = false,
+        /** Whether the run selects in optimistic mode. */
+        val optimistic: Boolean = false,
+        /** Whether the build lists a full-run branch or sets a scheduled full run. */
+        val fullRunPolicy: Boolean = false,
     )
 
     internal companion object {
@@ -183,6 +197,8 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.effectiveScope.set(wired.effectiveScope)
                 task.isolated.set(wired.isolated)
                 task.scheduleSet.set(wired.scheduleSet)
+                task.optimistic.set(wired.optimistic)
+                task.fullRunPolicy.set(wired.fullRunPolicy)
                 task.afterTest = wired.afterTest
                 // A File, not the property: wired as a property it carries the test task as its
                 // producer, which the configuration cache cannot store on this task. None when the

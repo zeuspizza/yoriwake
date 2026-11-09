@@ -151,6 +151,11 @@ public final class SelectionRun {
             if (pathsIgnored > 0) {
                 decisions.note(AgentContract.PATHS_IGNORED_NOTE, String.valueOf(pathsIgnored));
             }
+            // Whatever the outcome too: a reader of any figure leaves out a run that asked to loosen.
+            if (selectionRequested() && !observing() && !complementing()
+                    && Strictness.of(inputs().apply(AgentContract.MODE_PROPERTY)) == Strictness.OPTIMISTIC) {
+                decisions.note(AgentContract.MODE_NOTE, Strictness.OPTIMISTIC.token());
+            }
             // From the properties, not the decision, so a refused run with no tests still records why.
             String refusal = daemonRefusal();
             if (refusal != null) {

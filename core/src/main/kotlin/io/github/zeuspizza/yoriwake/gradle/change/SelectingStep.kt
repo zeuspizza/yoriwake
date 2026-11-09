@@ -67,6 +67,12 @@ internal object SelectingStep {
 
         /** What a person runs to explain this run without running it, which writes `explain.json`. */
         val explain: String
+
+        /**
+         * Whether this selecting run is in optimistic mode, which never captures: not when it narrows,
+         * and not on any fallback that runs every test.
+         */
+        val optimistic: Boolean get() = false
     }
 
     /** One run's change set and what it is judged against. */
@@ -260,6 +266,7 @@ internal object SelectingStep {
         host.lifecycle(
             "[yoriwake] ${host.name}: $reason, and the whole suite runs. $cause" + if (!clears) "." else "; " +
                 when {
+                    host.optimistic -> "a run without ${host.flag(SettingNames.MODE)}=optimistic clears it."
                     leftAlone != null -> "the next recording run clears it."
                     undated != null -> "this run's capture cannot clear it ($undated); a run without that does."
                     else -> "this run's capture clears it."
@@ -399,10 +406,19 @@ internal object SelectingStep {
      * coverage agent off with the listener on would record every test as covering nothing.
      *
      * An [observing] run runs every test and captures as a recording run does, whatever the decision
-     * says a selecting run would do.
+     * says a selecting run would do; an optimistic one never captures.
      */
     fun applyCapture(host: Host, mapDir: File, observing: Boolean, decided: CaptureDecision) {
-        val decision = if (observing) OBSERVING_CAPTURE else decided
+        val decision = when {
+            observing -> OBSERVING_CAPTURE
+            host.optimistic -> CaptureDecision(
+                capture = false, fullRun = decided.fullRun, mapCurrent = decided.mapCurrent,
+                reason = (if (decided.fullRun) "running everything" else "narrowing") +
+                    " in optimistic mode, which never captures, so nothing is instrumented and the map is left " +
+                    "exactly as it was.",
+            )
+            else -> decided
+        }
         // Written only when this run executes everything and captures, deleted otherwise, so a
         // stale marker never dates a map.
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))

@@ -30,6 +30,7 @@ public final class Selector {
         private Set<String> notKnownToPass = Collections.emptySet();
         private Set<String> sharedJvmOnly = Collections.emptySet();
         private volatile Rules rules;
+        private volatile Decision safe;
 
         private Decision(Set<String> selectedTestIds, String fullRunReason, FullRunKind fullRunKind,
                 Set<String> knownTestIds) {
@@ -118,6 +119,19 @@ public final class Selector {
 
         void attach(Rules computed) {
             this.rules = computed;
+        }
+
+        /**
+         * What {@link Strictness#SAFE} decides for the same run, when this decision loosened a rule
+         * and narrowed; null otherwise. A test it runs and this one leaves out is {@link
+         * Verdict#LOOSENED}.
+         */
+        public Decision safe() {
+            return safe;
+        }
+
+        void attachSafe(Decision decided) {
+            this.safe = decided;
         }
 
         /** Why nothing may be skipped, as one of a closed set; each value has a different remedy. */
@@ -291,6 +305,16 @@ public final class Selector {
      */
     public static Decision decide(
             MapReader.Result map, ChangeSet change, Collection<String> discoveredTestIds) {
+        return decide(map, change, discoveredTestIds, Strictness.SAFE);
+    }
+
+    /**
+     * Decides what to run, leaving out the windows {@code strictness} loosens. Every other rule,
+     * every full run and every refusal decide as under {@link Strictness#SAFE}.
+     */
+    public static Decision decide(MapReader.Result map, ChangeSet change, Collection<String> discoveredTestIds,
+            Strictness strictness) {
+        Set<Rule> loosened = strictness.loosened();
         Collection<String> changedClassPrefixes = change.changedClasses();
         Collection<String> unmappablePaths = change.unmappablePaths();
         Collection<String> absenceProvable = change.absenceProvable();
@@ -433,7 +457,7 @@ public final class Selector {
         Set<String> sharedJvmOnly = new HashSet<>();
         if (!changedClassPrefixes.isEmpty() || !changedBytes.isEmpty()) {
             Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), changedClassPrefixes, knownTestIds);
-            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt)) {
+            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt, loosened)) {
                 if (selected.add(id)) {
                     sharedJvmOnly.add(id);
                 }
@@ -657,7 +681,8 @@ public final class Selector {
      * <p>A test the map holds no position for runs: nothing says it ran before anything.
      */
     private static Set<String> ranAfterFirstTouch(MapReader.Result map, List<MapReader.Entry> tests,
-            Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt) {
+            Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt,
+            Set<Rule> loosened) {
         Map<String, Integer> firstTouchByJvm = new HashMap<>();
         List<String> dated = new ArrayList<>();
         for (String prefix : changedClassPrefixes) {
@@ -665,8 +690,18 @@ public final class Selector {
                 dated.add(prefix);
             }
         }
+        // Each touch opens the window Rules names it by; a loosened one opens none.
+        boolean unobserved = !loosened.contains(Rule.SHARES_JVM_UNOBSERVED);
+        boolean bytes = !loosened.contains(Rule.SHARES_JVM_CHANGED_BYTES);
+        boolean classes = !loosened.contains(Rule.SHARES_JVM_CHANGED_CLASS);
+        Set<String> openingBytes = bytes ? changedBytes : Collections.<String>emptySet();
         for (MapReader.FirstTouch touch : map.firstTouches()) {
-            if (touchesChange(touch.className(), dated, changedBytes, changedClassPrefixes)) {
+            String name = touch.className();
+            boolean opens = AgentContract.FIRST_TOUCH_ANY.equals(name)
+                    ? unobserved
+                    : openingBytes.contains(name)
+                            || classes && touchesChange(name, dated, Collections.<String>emptySet(), changedClassPrefixes);
+            if (opens) {
                 firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
             }
         }
@@ -674,12 +709,18 @@ public final class Selector {
         // its own first test.
         if (!exempt.isEmpty()) {
             for (MapReader.FirstTouch touch : map.namedTouches()) {
-                if (touchesChange(touch.className(), exempt, Collections.<String>emptySet(), changedClassPrefixes)) {
+                String name = touch.className();
+                boolean opens = AgentContract.FIRST_TOUCH_ANY.equals(name)
+                        ? unobserved
+                        : classes && touchesChange(name, exempt, Collections.<String>emptySet(), changedClassPrefixes);
+                if (opens) {
                     firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
                 }
             }
-            for (Map.Entry<String, Integer> first : ownFirstTests(map, tests, exempt).entrySet()) {
-                firstTouchByJvm.merge(first.getKey(), first.getValue(), Math::min);
+            if (classes) {
+                for (Map.Entry<String, Integer> first : ownFirstTests(map, tests, exempt).entrySet()) {
+                    firstTouchByJvm.merge(first.getKey(), first.getValue(), Math::min);
+                }
             }
         }
         Set<String> after = new HashSet<>();

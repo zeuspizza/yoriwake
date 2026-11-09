@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNMAPPABLE_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.select.PathGlob
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
@@ -821,6 +822,10 @@ private class GradleSelectingHost(
     override fun flag(name: String) = "-P$name"
 
     override val explain: String get() = ForcingPaths.explainTask(test.path)
+
+    // The property the wiring set for the test JVM, so the two cannot disagree.
+    override val optimistic: Boolean
+        get() = test.systemProperties[AgentContract.MODE_PROPERTY]?.toString() == Strictness.OPTIMISTIC.token()
 }
 
 /** [WorkingTree.drift] through a value source; one that could not be obtained is unlisted. */

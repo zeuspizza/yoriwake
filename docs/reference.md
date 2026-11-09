@@ -109,7 +109,8 @@ Files in the map directory that are meant to be read:
 
 ## When it refuses to select
 
-It forces a full run whenever it cannot prove a narrower one is safe, and says which cause:
+It forces a full run whenever it cannot prove a narrower one is safe, and says which cause.
+[Optimistic mode](#optimistic-mode) loosens none of these:
 
 - the map is missing, empty, unfinished, or from a different format version;
 - the map's age cannot be established (no capture stamp, or one that cannot be related to the
@@ -1577,6 +1578,71 @@ What it cannot see:
 - environment variables, which are in no stamp: a test that reads one runs with whatever the
   complement run has.
 
+## Optimistic mode
+
+`-Pyoriwake.mode=optimistic` beside `-Pyoriwake.select` runs fewer tests than the safe rule, and
+only because that invocation asked for it. It drops the two windows a change opens in a shared test
+JVM (`shares-jvm-changed-class` and `shares-jvm-changed-bytes`): a test that ran after the changed
+class or its recompiled bytes first reached its JVM, and that reaches the change by no other rule,
+is left out. Every other rule still runs its test: coverage of the change, a test the map has never
+seen or does not record as passing, a pin, the unobserved and unpositioned windows. Every full run
+and refusal stays.
+
+```
+./gradlew test -Pyoriwake.select -Pyoriwake.mode=optimistic
+```
+
+**When to use it:** an agent loop, or a daily CI job followed by a full run after merge. **When not
+to:** a release gate, or a suite that depends on state a changed class leaves in its JVM: a context
+built once and cached (Spring's test context, a `@WebMvcTest` slice), a static initialiser another
+test reads, reflection over a class, or a test that reads class files. That state is what the two
+windows exist for, and with them dropped such a test fails only on the full run.
+
+What it misses, measured: replayed offline from the per-test rules the 0.1.0 benchmark recorded
+(plugin `30be0e8`, 161 narrowed changes in 22 projects, all generated edits; no real commit was
+measured), it would have missed 2 of the 2,245 failures that one of the two windows selected
+(0.09%), both in kafka (2 of 8), which is a suite not to use it on. How far it narrows: on the
+100 such changes in single-JVM suites (13 projects), the median ran 19.1 percentage points less of
+the suite than the safe rule, but the answer is per suite, and 51 of the 100 is a thin margin: 34
+to 89 points on grpc-java, moshi, spring-framework, micronaut-core, opentelemetry-java and okio; at
+most 4 on spring-security, mockito, mockk, spring-boot, junit5, micrometer and
+spring-boot-webmvc-test, where the unobserved window selects nearly every test the two windows do.
+Shares of tests, not of time. On junit5, mockito, mockk, okio, spring-boot and spring-security,
+[recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm) narrowed to
+within 5 points of the mode and stays safe: try it first.
+
+What the run says and keeps:
+
+- Every test the safe rule runs and this run left out is `LOOSENED` (excluded) in `decisions.tsv`,
+  with its rule line unchanged; the record notes `mode` `optimistic`, and `explain.json` carries
+  `mode` and the `loosened` tests with their rules.
+- Each test task prints one line on every optimistic run, even when it left nothing out, summed
+  over its forks, and says when the build sets no full-run policy:
+
+  ```
+  [yoriwake] :test: optimistic mode: 3 tests the safe rule runs were left out (shares-jvm-changed-class, shares-jvm-changed-bytes). Keep a full run after merge, nightly or before a release.
+  ```
+
+- It never captures, dates or refreshes the map, not when it narrows and not when it runs
+  everything (a map of unknown age, a full-run kind, git failing to give a change set). A later
+  safe run selects as if it never ran. Its own records still update: `decisions.tsv`,
+  `selection.tsv`, the scheduled full run's count.
+- `yoriwakeExplain<Task> -Pyoriwake.mode=optimistic` reports the optimistic selection and lists
+  what it leaves out, with the rules that would have run each test.
+- On a recording, observing or complement run the flag has no effect, and the run says so. A
+  [full run requested or declined](#forcing-a-full-run) records and captures as usual, and says the
+  mode was ignored.
+
+The backstops are the [full-run branches and scheduled full runs](#forcing-a-full-run), and a
+[complement run](#running-what-a-selection-skipped) at the same commit, which runs every
+`LOOSENED` test. The value is read only from the command line: set in `gradle.properties` or
+`ORG_GRADLE_PROJECT_yoriwake_mode`, it fails the build, so a release gate cannot inherit it.
+`safe` is the default; any value but `safe` or `optimistic` fails the build. On Maven it is
+`-Dyoriwake.mode`, read as a typed user property only; set in `.mvn/maven.config`, `MAVEN_ARGS`, a
+`maven-user.properties`, a POM's `<properties>` or the plugin's `<configuration>`, it fails the
+build naming the place. The rules are the same there; the figures above are from Gradle builds, and
+no Maven build was measured.
+
 ## Maven
 
 yoriwake also runs in Maven builds, for Surefire's `test` and Failsafe's `integration-test`. It is a
@@ -1596,7 +1662,8 @@ the Gradle plugin.
 ```
 
 - **Flags** are user properties with the Gradle names: `-Dyoriwake.select`, `-Dyoriwake.observe`,
-  `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.trustedMaps`,
+  `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.mode` (command
+  line only; see [Optimistic mode](#optimistic-mode)), `-Dyoriwake.trustedMaps`,
   `-Dyoriwake.isolatedCapture`, `-Dyoriwake.recordSequentially`, the audit's
   `-Dyoriwake.audit.measureToll` with its two timings, and `-Dyoriwake.alwaysRun=<glob>[,<glob>…]`
   for one run. The off switch is `-Dyoriwake.enabled=false`; Gradle's `yoriwake.disabled` is not
@@ -1673,7 +1740,7 @@ the Gradle plugin.
 ## Properties and tasks
 
 Every property is a Gradle project property: `-P<name>` on the command line or in
-`gradle.properties`. A switch is on when bare (`-Pyoriwake.select`) or `true`, off when absent or
+`gradle.properties`, except `yoriwake.mode`, which only the command line may set. A switch is on when bare (`-Pyoriwake.select`) or `true`, off when absent or
 `false`; any other value fails the build.
 
 | Property | Meaning |
@@ -1682,6 +1749,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.fullRun` | On a selecting run, run every test and record the map instead. See [Forcing a full run](#forcing-a-full-run). |
 | `yoriwake.observe` | Run every test, record the map, and report what selection would have left out. Not with `yoriwake.select`. See [Observing before you select](#observing-before-you-select). |
 | `yoriwake.complement[=<dir>]` | Run every test but those the selecting run at this commit ran, from this build's record or from a saved `.gradle/yoriwake` in `<dir>`. Not a switch: bare or `true` reads this build's own record, `false` is off, any other value is a directory. Not with `yoriwake.select` or `yoriwake.observe`. See [Running what a selection skipped](#running-what-a-selection-skipped). |
+| `yoriwake.mode=safe\|optimistic` | On a selecting run, `optimistic` drops the shared-JVM windows the change opens and runs fewer tests than the safe rule. Command line only. See [Optimistic mode](#optimistic-mode). |
 | `yoriwake.base=<ref>` | What to diff against. Defaults to the merge base with the branch upstream, widened to the map's age. Must be a single commit, not a range. |
 | `yoriwake.alwaysRun=<glob>[,<glob>…]` | Tests that may never be skipped, for this run. |
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |
