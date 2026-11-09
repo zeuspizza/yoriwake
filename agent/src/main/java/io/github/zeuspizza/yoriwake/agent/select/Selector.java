@@ -610,7 +610,7 @@ public final class Selector {
             if (bytes.contains(name)) {
                 open(opened, Rule.SHARES_JVM_CHANGED_BYTES, touch);
             }
-            if (touchesChange(name, dated, Collections.<String>emptySet(), changed)
+            if (touchesChange(name, dated, changed)
                     && !AgentContract.FIRST_TOUCH_ANY.equals(name)) {
                 open(opened, Rule.SHARES_JVM_CHANGED_CLASS, touch);
             }
@@ -620,7 +620,7 @@ public final class Selector {
                 String name = named.className();
                 if (AgentContract.FIRST_TOUCH_ANY.equals(name)) {
                     open(opened, Rule.SHARES_JVM_UNOBSERVED, named);
-                } else if (touchesChange(name, exempt, Collections.<String>emptySet(), changed)) {
+                } else if (touchesChange(name, exempt, changed)) {
                     open(opened, Rule.SHARES_JVM_CHANGED_CLASS, named);
                 }
             }
@@ -700,7 +700,7 @@ public final class Selector {
             boolean opens = AgentContract.FIRST_TOUCH_ANY.equals(name)
                     ? unobserved
                     : openingBytes.contains(name)
-                            || classes && touchesChange(name, dated, Collections.<String>emptySet(), changedClassPrefixes);
+                            || classes && touchesChange(name, dated, changedClassPrefixes);
             if (opens) {
                 firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
             }
@@ -712,7 +712,7 @@ public final class Selector {
                 String name = touch.className();
                 boolean opens = AgentContract.FIRST_TOUCH_ANY.equals(name)
                         ? unobserved
-                        : classes && touchesChange(name, exempt, Collections.<String>emptySet(), changedClassPrefixes);
+                        : classes && touchesChange(name, exempt, changedClassPrefixes);
                 if (opens) {
                     firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
                 }
@@ -905,11 +905,7 @@ public final class Selector {
      * @param prefixes the changed prefixes to match against
      * @param changeSet every prefix of this change, the anchor set of the nested-class rule
      */
-    private static boolean touchesChange(String className, Collection<String> prefixes,
-            Set<String> changedBytes, Collection<String> changeSet) {
-        if (AgentContract.FIRST_TOUCH_ANY.equals(className) || changedBytes.contains(className)) {
-            return true;
-        }
+    private static boolean touchesChange(String className, Collection<String> prefixes, Collection<String> changeSet) {
         for (String prefix : prefixes) {
             if (matchesSourceFile(className, prefix, changeSet)) {
                 return true;

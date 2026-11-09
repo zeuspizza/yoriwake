@@ -2000,8 +2000,8 @@ MUTATIONS = [
      "            if (positions.isEmpty()) {\n                if (false) after.add(test.testId());",
      agent_suite, "a test the map holds no position for runs whenever something changed"),
     ("a JVM whose loads and reads were not all observed reads as touching nothing", SELECTOR,
-     "        if (AgentContract.FIRST_TOUCH_ANY.equals(className) || changedBytes.contains(className)) {",
-     "        if (changedBytes.contains(className)) {",
+     "        boolean unobserved = !loosened.contains(Rule.SHARES_JVM_UNOBSERVED);",
+     "        boolean unobserved = false;",
      agent_suite, "a JVM whose touches were not all observed selects every test that ran in it"),
     # The absence rule's side of it: a class a reader parsed was never loaded, so the loaded union
     # alone would call it untested.
