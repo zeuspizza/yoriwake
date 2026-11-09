@@ -329,6 +329,16 @@ class OptimisticModeFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a mode in gradle properties fails a build that configures no test task`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to orderedBuild, "gradle.properties" to "yoriwake.mode=optimistic\n", *contextSources)
+        committed(dir)
+
+        val output = runner(dir, "assemble").buildAndFail().output
+
+        assertContains(output, "yoriwake.mode=optimistic is set outside the command line")
+    }
+
+    @Test
     fun `a mode a later run sets only as a daemon property is refused though the command line set it before`(@TempDir dir: File) {
         capturedWithConfigChanged(dir)
         runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "-Pyoriwake.mode=optimistic").build()

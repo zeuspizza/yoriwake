@@ -110,6 +110,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
             return
         }
+        // Once enabled, on every project the plugin wires, whether or not a task of it is ever
+        // configured: a mode set where a release gate would inherit it fails the build.
+        settings.mode
         // Read with `enabled`, for the same reason.
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
         val narrowPlainRunners = settings.narrowPlainRunners ?: extension.narrowPlainRunners.getOrElse(false)

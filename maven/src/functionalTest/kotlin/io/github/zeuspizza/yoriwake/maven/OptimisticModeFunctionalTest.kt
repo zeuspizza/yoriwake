@@ -212,6 +212,8 @@ class OptimisticModeFunctionalTest {
         assertContains(result.output, "maven-user.properties")
     }
 
+    // The decline comes before the mode is read, so this shows only that no cached result of an
+    // optimistic execution can stand in for a later safe one: none is ever wired.
     @Test
     fun `with the Apache build cache on, an optimistic execution declines as every other does`(@TempDir dir: File) {
         val project = captured(dir)

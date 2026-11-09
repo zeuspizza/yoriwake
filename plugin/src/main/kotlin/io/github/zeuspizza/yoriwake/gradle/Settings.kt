@@ -114,8 +114,8 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
             if (value == null) return Strictness.SAFE
             if (passed != value) {
                 throw InvalidUserDataException(
-                    "[yoriwake] $MODE=$value is set outside the command line (a gradle.properties file or " +
-                        "ORG_GRADLE_PROJECT_${MODE.replace('.', '_')}). Optimistic mode runs fewer tests than " +
+                    "[yoriwake] $MODE=$value is set outside the command line (a gradle.properties file, " +
+                        "ORG_GRADLE_PROJECT_$MODE or -Dorg.gradle.project.$MODE). Optimistic mode runs fewer tests than " +
                         "the safe rule, so only the invocation that accepts that may ask for it: pass " +
                         "-P$MODE=optimistic on the command line, and remove it from there."
                 )
