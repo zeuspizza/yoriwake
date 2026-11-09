@@ -80,8 +80,9 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val explicitBase: Property<String>
 
-    /** The `-Pyoriwake.mode` this explanation decides under. */
+    /** The `-Pyoriwake.mode` this explanation decides under; unset is the safe rule. */
     @get:Input
+    @get:Optional
     abstract val mode: Property<String>
 
     /** What the run would decline under Develocity, encoded; empty when it would not. */
@@ -486,7 +487,8 @@ internal abstract class ExplainTask : DefaultTask() {
             )
             if (strictness != Strictness.SAFE) {
                 logger.lifecycle(
-                    "[yoriwake] $taskPath in optimistic mode leaves out ${loosened.size} tests the safe rule runs" +
+                    "[yoriwake] $taskPath in optimistic mode leaves out ${loosened.size} tests the safe rule runs " +
+                        "(pins, declared dependencies and whole-class runners are judged when the tests run)" +
                         loosened.take(REPORTED_REFUSALS).joinToString("") { (test, rules) -> "\n[yoriwake]     $test ($rules)" } +
                         (if (loosened.size > REPORTED_REFUSALS) "\n[yoriwake]     and ${loosened.size - REPORTED_REFUSALS} more" else "")
                 )

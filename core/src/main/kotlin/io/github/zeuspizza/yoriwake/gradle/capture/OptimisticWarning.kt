@@ -4,6 +4,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.agent.select.Verdict
+import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import java.io.File
 
 /**
@@ -17,10 +18,7 @@ internal object OptimisticWarning {
      * cannot be read whole: a count that may have lost rows is not printed as one.
      */
     fun loosened(mapDir: File): Int? {
-        val parts = mapDir.listFiles { file ->
-            file.name.startsWith("${AgentContract.DECISIONS_FILE}.") &&
-                file.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX)
-        }.orEmpty()
+        val parts = parts(mapDir)
         val loosened = HashSet<String>()
         for (part in parts) {
             val lines = runCatching { part.readLines() }.getOrNull() ?: return null
@@ -44,6 +42,22 @@ internal object OptimisticWarning {
         }
         return loosened.size
     }
+
+    /** The decline this run's decision records note, when it declined to select as it started, or null. */
+    fun declined(mapDir: File): String? = parts(mapDir).firstNotNullOfOrNull { part ->
+        runCatching { part.readLines() }.getOrDefault(emptyList())
+            .filter { it.startsWith(AgentContract.NOTE_PREFIX) }
+            .map { Tsv.split(it.removePrefix(AgentContract.NOTE_PREFIX)) }
+            .firstOrNull { it[0] == AgentContract.REFUSAL_KIND_NOTE && it.getOrNull(1) in DECLINES }
+            ?.let { "selection was declined (${it[1]})" }
+    }
+
+    private val DECLINES = setOf(RefusalKind.TESTS_NAMED, RefusalKind.DECLINE_UNDETERMINED).map { it.token }
+
+    private fun parts(mapDir: File): List<File> = mapDir.listFiles { file ->
+        file.name.startsWith("${AgentContract.DECISIONS_FILE}.") &&
+            file.name.endsWith(AgentContract.DECISIONS_PART_SUFFIX)
+    }.orEmpty().toList()
 
     /**
      * The line for [taskPath]. [fullRunPolicy] says whether the build lists a full-run branch or sets

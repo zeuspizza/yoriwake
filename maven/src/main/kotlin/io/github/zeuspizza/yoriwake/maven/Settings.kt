@@ -169,7 +169,8 @@ internal class Settings(
         private fun persistentMode(session: MavenSession): String? {
             val name = SettingNames.MODE
             val root = session.request.multiModuleProjectDirectory?.absoluteFile
-            val flag = Regex("""(^|\s)-D${Regex.escape(name)}(=|\s|$)""")
+            // `-Dname`, `-D name` and `--define name`, quoted or not, as Maven's command line takes them.
+            val flag = Regex("""(^|\s)["']?(-D\s*|--define[=\s]+)${Regex.escape(name)}(=|\s|["']|$)""")
             root?.let { File(it, ".mvn/maven.config") }?.takeIf(File::isFile)?.let { file ->
                 if (runCatching { file.readText() }.getOrDefault("").let(flag::containsMatchIn)) return file.path
             }

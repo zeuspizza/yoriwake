@@ -1630,8 +1630,9 @@ What the run says and keeps:
 - `yoriwakeExplain<Task> -Pyoriwake.mode=optimistic` reports the optimistic selection and lists
   what it leaves out, with the rules that would have run each test.
 - On a recording, observing or complement run the flag has no effect, and the run says so. A
-  [full run requested or declined](#forcing-a-full-run) records and captures as usual, and says the
-  mode was ignored.
+  [full run requested or declined](#forcing-a-full-run) records and captures as usual, and tests
+  named with `--tests` run as named; either says the mode was ignored. A `yoriwake.mode` a build
+  script hands the test JVM is overwritten with the run's own.
 
 The backstops are the [full-run branches and scheduled full runs](#forcing-a-full-run), and a
 [complement run](#running-what-a-selection-skipped) at the same commit, which runs every

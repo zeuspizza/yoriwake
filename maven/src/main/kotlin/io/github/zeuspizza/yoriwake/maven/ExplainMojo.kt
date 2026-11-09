@@ -118,7 +118,10 @@ class ExplainMojo : AbstractMojo() {
                 val selected = decision.selectedCount()
                 consoleLog.info("[yoriwake] $name would run $selected of $known known tests ${selectionShare(selected, known)}")
                 if (strictness != Strictness.SAFE) {
-                    consoleLog.info("[yoriwake] $name in optimistic mode leaves out ${loosened.size} tests the safe rule runs")
+                    consoleLog.info(
+                        "[yoriwake] $name in optimistic mode leaves out ${loosened.size} tests the safe rule runs " +
+                            "(pins and declared dependencies are judged when the tests run)"
+                    )
                     loosened.forEach { (test, rules) -> consoleLog.info("[yoriwake]     $test ($rules)") }
                 }
             }

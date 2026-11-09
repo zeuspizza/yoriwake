@@ -244,13 +244,16 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         trusted?.let { listed ->
             MapProvenance.verify(mapDir, listed[listedName]).refusal?.let { (refusal, reason) ->
                 host.lifecycle(
-                    "[yoriwake] ${host.name}: $reason, so the whole suite runs and records a new map. A map " +
-                        "narrows here only when -D${SettingNames.TRUSTED_MAPS} names its digest, as a run on the " +
+                    "[yoriwake] ${host.name}: $reason, so the whole suite runs and " +
+                        (if (host.optimistic) "the map is left for a run without -D${SettingNames.MODE}=optimistic to record. "
+                        else "records a new map. ") +
+                        "A map narrows here only when -D${SettingNames.TRUSTED_MAPS} names its digest, as a run on the " +
                         "default branch recorded it."
                 )
                 host.refuse(refusal, reason)
                 if (!explaining) {
-                    MapProvenance.clear(mapDir)
+                    // Optimistic mode never writes the map, so it leaves the untrusted one to a safe run to replace.
+                    if (!host.optimistic) MapProvenance.clear(mapDir)
                     SelectingStep.applyCapture(
                         host, mapDir, observing,
                         decideCapture(mapDir, mapUsable = false, fullRun = true, learnable = emptySet()),

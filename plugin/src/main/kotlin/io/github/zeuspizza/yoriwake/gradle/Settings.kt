@@ -93,7 +93,11 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
          */
         fun of(project: Project): Settings {
             val passed = project.gradle.startParameter.projectProperties
-            return Settings({ project.providers.gradleProperty(it).orNull }, { passed[it] })
+            // Read through a provider too, so the configuration cache keys on it: the start parameter
+            // is no input, and a cached entry made with the flag on the command line would otherwise
+            // serve a run that sets the same value only in the environment.
+            project.providers.environmentVariable("ORG_GRADLE_PROJECT_$MODE").orNull
+            return Settings({ project.providers.gradleProperty(it).orNull }) { passed[it] }
         }
 
         /**

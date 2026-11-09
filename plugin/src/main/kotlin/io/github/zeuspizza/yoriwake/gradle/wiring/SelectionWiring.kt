@@ -575,13 +575,16 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
         // A declined run leaves the map exactly as it was: no check, no clear.
         if (refusedAtExecution(test)) return@doFirst
         val (kind, reason) = MapProvenance.verify(mapDir, listed).refusal ?: return@doFirst
+        // Optimistic mode never writes the map, so it leaves the untrusted one to a safe run to replace.
+        val optimistic = test.systemProperties[AgentContract.MODE_PROPERTY]?.toString() == Strictness.OPTIMISTIC.token()
         test.logger.lifecycle(
-            "[yoriwake] ${test.path}: $reason, so the whole suite runs and records a new " +
-                "map. A map narrows here only when -P${Settings.TRUSTED_MAPS} names its digest, as a " +
+            "[yoriwake] ${test.path}: $reason, so the whole suite runs and " +
+                (if (optimistic) "the map is left for a run without -P${Settings.MODE}=optimistic to record. " else "records a new map. ") +
+                "A map narrows here only when -P${Settings.TRUSTED_MAPS} names its digest, as a " +
                 "run on the default branch recorded it."
         )
         refuse(test, kind, reason)
-        MapProvenance.clear(mapDir)
+        if (!optimistic) MapProvenance.clear(mapDir)
         runCatching { changeSetFile.delete() }
         applyCaptureDecision(
             test, mapDir, jacoco, observing,

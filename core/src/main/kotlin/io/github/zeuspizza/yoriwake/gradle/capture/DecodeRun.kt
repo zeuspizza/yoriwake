@@ -122,7 +122,12 @@ internal class DecodeRun(
         val undatedReason = undatedAtExecution ?: this.undatedReason
         // Before every return below, and only for a run that did work: one per task, every fork's rows summed.
         if (optimistic && marker.isFile) {
-            logger.warn(OptimisticWarning.line(taskPath, OptimisticWarning.loosened(mapDir), fullRunPolicy))
+            // A decline the run made as it started (named tests, Develocity) ignored the mode.
+            val declined = if (develocityDeclined.isFile) "Develocity declined it" else OptimisticWarning.declined(mapDir)
+            logger.warn(
+                declined?.let { "[yoriwake] $taskPath: optimistic mode was ignored: $it, so the run did not select." }
+                    ?: OptimisticWarning.line(taskPath, OptimisticWarning.loosened(mapDir), fullRunPolicy)
+            )
         }
         // Before every return below, so each of them leaves a report of this run.
         if (observing) {

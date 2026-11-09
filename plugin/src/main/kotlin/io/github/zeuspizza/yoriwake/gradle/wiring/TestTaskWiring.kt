@@ -391,6 +391,15 @@ internal class TestTaskWiring(internal val settings: Settings) {
         if (runPlan.asked != RunPlan.Kind.RECORD) declineNamedTests(test, mapDir, fromBuildScript, runPlan.observing)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, fromBuildScript)
         if (selecting) startSelectionRecord(project, test, mapDir, agent)
+        // Next to last, so its action runs before every other one: the mode the test JVM and every
+        // capture decision read is the one this run decided, whatever a build script set there.
+        val decidedMode = Strictness.OPTIMISTIC.token().takeIf { selecting && settings.mode == Strictness.OPTIMISTIC }
+        test.doFirst {
+            if (test.systemProperties[MODE_PROPERTY]?.toString() != decidedMode) {
+                // Absent is the safe rule, so a safe run's JVM gets none.
+                test.setSystemProperties(test.systemProperties - MODE_PROPERTY + listOfNotNull(decidedMode?.let { MODE_PROPERTY to it }))
+            }
+        }
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir, agent)
         // Decided at execution time, since Gradle applies --tests after afterEvaluate. `wholeTask`

@@ -286,4 +286,45 @@ class OptimisticModeFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(names("B1ContextFirstTest", "B2ContextLaterTest"), ranTests(dir), output)
     }
+
+    @Test
+    fun `a mode a build script hands the test JVM does not loosen a safe run`(@TempDir dir: File) {
+        capturedWithConfigChanged(
+            dir, orderedBuild.replace("useJUnitPlatform()", "useJUnitPlatform()\n    systemProperty(\"yoriwake.mode\", \"optimistic\")"),
+        )
+
+        runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build()
+
+        assertEquals(names("B1ContextFirstTest", "B2ContextLaterTest"), ranTests(dir))
+        assertFalse(AgentContract.MODE_NOTE in decisionNotes(dir))
+    }
+
+    @Test
+    fun `a map the trusted list does not name is left as it was in optimistic mode`(@TempDir dir: File) {
+        capturedWithConfigChanged(dir)
+        val trusted = File(dir.parentFile, "${dir.name}-trusted.txt").apply { writeText("") }
+        val before = mapDigest(dir)
+
+        val output = runner(
+            dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "-Pyoriwake.mode=optimistic",
+            "-Pyoriwake.trustedMaps=${trusted.absolutePath}",
+        ).build().output
+
+        assertEquals(names("B0UnrelatedTest", "B1ContextFirstTest", "B2ContextLaterTest"), ranTests(dir))
+        assertContains(output, "the map is left for a run without -Pyoriwake.mode=optimistic to record")
+        assertEquals(before, mapDigest(dir))
+    }
+
+    @Test
+    fun `tests named on an optimistic run say the mode was ignored`(@TempDir dir: File) {
+        capturedWithConfigChanged(dir)
+
+        val output = runner(
+            dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "-Pyoriwake.mode=optimistic",
+            "--tests", "dev.sample.B2ContextLaterTest",
+        ).build().output
+
+        assertEquals(names("B2ContextLaterTest"), ranTests(dir))
+        assertContains(output, "optimistic mode was ignored: selection was declined (tests-named)")
+    }
 }
