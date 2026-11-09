@@ -1640,13 +1640,21 @@ MUTATIONS = [
      "                    else -> Unit\n",
      unit_suite, "a file that declares anything beside its inline functions is not"),
     ("an inline-only file leaves the change set with no inliner of its own", SELECTION,
-     "            (artifacts.classesInlining(listOf(prefix)) as? InlineScan.Found)?.classes?.isNotEmpty() == true",
+     "            (artifacts.classesInlining(listOf(prefix), exact = true) as? InlineScan.Found)?.classes?.isNotEmpty() == true",
      "            true",
      unit_suite, "an inline-only file that nothing inlined keeps its place, beside one that something did"),
     ("an inline-only file inlined away is no changed source to the bytes comparison", SELECTION,
      "Selector.bytesOnly(it, prefixes + accountedByInliners)",
      "Selector.bytesOnly(it, prefixes)",
      unit_suite, "an inline-only file inlined away is still a changed source to the bytes comparison"),
+    ("the per-file inliner check takes a file whose name begins with the changed one's", TASK_ARTIFACTS,
+     "            prefixes.any { if (exact) ownedBy(name, it) else name.startsWith(it) }",
+     "            prefixes.any { name.startsWith(it) }",
+     unit_suite, "an inline-only file whose name begins another inlined file's keeps its place"),
+    ("a read of a dotted Kotlin source file stops answering to its change", SELECTOR,
+     "        return prefix.indexOf('_', fileStart) >= 0",
+     "        return false && prefix.indexOf('_', fileStart) >= 0",
+     agent_suite, "a test that read a dotted Kotlin source file runs when that file changes"),
     ("an inline-only file whose class a test covered leaves the change set", SELECTOR,
      "        if (!map.isUsable() || knownToMap(map.entries(), prefix, changedClassPrefixes)\n",
      "        if (!map.isUsable()\n",
@@ -2039,7 +2047,7 @@ MUTATIONS = [
     # alone would call it untested.
     ("a class only read as a class file is proven untested by its absence again", SELECTOR,
      "            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())\n"
-     "                    || matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {\n"
+     "                    || touchMatches(touch.className(), prefix, changedClassPrefixes)) {\n"
      "                return true;",
      "            if (false) {\n                return true;",
      agent_suite, "a class some JVM read the class file of is not proven untested by its absence"),

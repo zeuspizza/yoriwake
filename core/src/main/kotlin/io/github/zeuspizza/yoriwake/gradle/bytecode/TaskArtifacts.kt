@@ -574,6 +574,12 @@ internal class TaskArtifacts(
         prefixes: Collection<String>,
         /** False when no changed source could be inlined, so a missing SMAP is no blind spot. */
         inlinableSourceChanged: Boolean = true,
+        /**
+         * Whether an SMAP name must be the file of a prefix itself rather than start with it, for
+         * a caller asking which classes inlined one file: `pkg.PlatformUtils` did not inline
+         * `pkg.Platform`.
+         */
+        exact: Boolean = false,
     ): InlineScan {
         if (prefixes.isEmpty()) return InlineScan.Found(emptySet())
         // Own output only: walking the whole classpath delays the test JVM's start.
@@ -606,13 +612,13 @@ internal class TaskArtifacts(
                     " was not understood: " +
                     (bytes?.let { InlinedSources.diagnose(it) } ?: "its bytes could not be re-read")
             }
-            if (matches(scan.inlined, prefixes)) {
+            if (matches(scan.inlined, prefixes, exact)) {
                 found += classNameOf(root, entry)
             }
             null
         }?.let { return InlineScan.Refused(it.reason, InlineScan.Kind.INCOMPLETE) }
         for (jar in ownJars) {
-            val outcome = scanJar(jar, prefixes, found, evidence)
+            val outcome = scanJar(jar, prefixes, found, evidence, exact)
             if (outcome is InlineScan.Refused) return outcome
         }
         // Only when a changed source could be inlined, or a Java project with a few SMAP-less
@@ -863,9 +869,15 @@ internal class TaskArtifacts(
     private fun isOwnOutput(directory: File): Boolean =
         moduleBuildDirs.any { directory.absolutePath.startsWith(it + File.separator) }
 
-    private fun matches(inlined: Set<String>, prefixes: Collection<String>): Boolean =
+    private fun matches(inlined: Set<String>, prefixes: Collection<String>, exact: Boolean): Boolean =
         // Prefix, so `pkg.Inlined` matches `pkg.InlinedKt`; over-selecting is the safe direction.
-        inlined.isNotEmpty() && inlined.any { name -> prefixes.any { name.startsWith(it) } }
+        inlined.isNotEmpty() && inlined.any { name ->
+            prefixes.any { if (exact) ownedBy(name, it) else name.startsWith(it) }
+        }
+
+    /** `pkg.Foo`, `pkg.FooKt` and their nested classes: what the file of [prefix] compiles to. */
+    private fun ownedBy(name: String, prefix: String): Boolean =
+        name == prefix || name == prefix + "Kt" || name.startsWith("$prefix$") || name.startsWith("${prefix}Kt$")
 
     /** Whether the SMAP signal exists in this build at all, from bytes already being read. */
     private class SmapEvidence {
@@ -911,6 +923,7 @@ internal class TaskArtifacts(
         prefixes: Collection<String>,
         found: MutableSet<String>,
         evidence: SmapEvidence,
+        exact: Boolean,
     ): InlineScan = runCatching {
         ZipFile(jar).use { zip ->
             for (entry in zip.entries()) {
@@ -930,7 +943,7 @@ internal class TaskArtifacts(
                         InlineScan.Kind.INCOMPLETE,
                     )
                 }
-                if (matches(scan.inlined, prefixes)) {
+                if (matches(scan.inlined, prefixes, exact)) {
                     found += entry.name.removeSuffix(".class").replace('/', '.')
                 }
             }

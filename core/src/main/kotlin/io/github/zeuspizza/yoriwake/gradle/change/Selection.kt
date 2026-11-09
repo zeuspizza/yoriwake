@@ -489,7 +489,7 @@ internal fun widenForInlining(
     // cannot answer keeps the file.
     val accounted = if (inliners.isEmpty()) emptySet() else inlinedAway.filterTo(sortedSetOf()) { prefix ->
         prefix in prefixes && runCatching {
-            (artifacts.classesInlining(listOf(prefix)) as? InlineScan.Found)?.classes?.isNotEmpty() == true
+            (artifacts.classesInlining(listOf(prefix), exact = true) as? InlineScan.Found)?.classes?.isNotEmpty() == true
         }.getOrDefault(false)
     }
     // Digest-derived names stay out of the prefixes, which are also the anchor set for

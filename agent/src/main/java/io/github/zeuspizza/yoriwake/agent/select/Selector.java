@@ -870,11 +870,26 @@ public final class Selector {
             return true;
         }
         for (String prefix : prefixes) {
-            if (matchesSourceFile(className, prefix, changeSet)) {
+            if (touchMatches(className, prefix, changeSet)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * As {@link #matchesSourceFile(String, String, Collection)}, plus the name a read of the
+     * source file records: a Kotlin file's dotted name ({@code dev.jvm.Platform.jvm}) where the
+     * change set names it as Kotlin names its class ({@code dev.jvm.Platform_jvm}). A real
+     * {@code Foo_bar.kt} then also answers to a read of {@code Foo.bar}, which only selects more.
+     */
+    private static boolean touchMatches(String className, String prefix, Collection<String> changeSet) {
+        if (matchesSourceFile(className, prefix, changeSet)) {
+            return true;
+        }
+        int fileStart = prefix.lastIndexOf('.') + 1;
+        return prefix.indexOf('_', fileStart) >= 0
+                && className.equals(prefix.substring(0, fileStart) + prefix.substring(fileStart).replace('_', '.'));
     }
 
     /**
@@ -1052,7 +1067,7 @@ public final class Selector {
         for (MapReader.FirstTouch touch : map.firstTouches()) {
             // Read as a class file without being loaded is still read: a reader depends on it.
             if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())
-                    || matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {
+                    || touchMatches(touch.className(), prefix, changedClassPrefixes)) {
                 return true;
             }
         }

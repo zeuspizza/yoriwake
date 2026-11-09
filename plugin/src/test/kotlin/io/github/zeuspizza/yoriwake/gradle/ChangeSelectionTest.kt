@@ -1530,4 +1530,21 @@ class ChangeSelectionTest {
         assertEquals(setOf("$fixtures.KotlinShapesKt"), widening.digest!!.added)
         assertEquals(emptySet(), widening.changedBytes)
     }
+
+    @Test
+    fun `an inline-only file whose name begins another inlined file's keeps its place`(@TempDir dir: File) {
+        // `Kotlin.kt` is not inlined by a class that inlined `KotlinShapes.kt`: a name sharing its
+        // start must not stand in for it, or a file nothing inlined leaves the change set.
+        val (facts, constants) = inlinedPair(dir)
+
+        val widening = widenForInlining(
+            listOf("$fixtures.KotlinShapes", "$fixtures.Kotlin"), facts, constants,
+            recordedAnnotations = annotations,
+            inlinedAway = setOf("$fixtures.Kotlin"),
+        )
+
+        assertFalse(widening.forces, widening.refusal)
+        assertTrue("$fixtures.Kotlin" in widening.prefixes, "got ${widening.prefixes}")
+        assertEquals(emptySet(), widening.accountedByInliners)
+    }
 }

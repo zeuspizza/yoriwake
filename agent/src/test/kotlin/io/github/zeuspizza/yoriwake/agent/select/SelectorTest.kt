@@ -1729,4 +1729,30 @@ class SelectorTest {
 
         assertFalse(Selector.leftNoTrace(m, "com.acme.Inlines", listOf("com.acme.Inlines")))
     }
+
+    @Test
+    fun `a test that read a dotted Kotlin source file runs when that file changes`(@TempDir dir: File) {
+        // A source read records the file's dotted name; the change names it as Kotlin names its
+        // class, Platform_jvmKt. A test that only read the file must still be selected.
+        val m = map(
+            dir,
+            test("dev.jvm.A0Test", "dev.jvm.Other"),
+            test("dev.jvm.B1ReadsSourceTest", "dev.jvm.Other"),
+            test("dev.jvm.PlatformTest", "dev.jvm.Platform_jvmKt"),
+            positions = listOf(
+                "j\t2\t${placed("dev.jvm.A0Test")}",
+                "j\t4\t${placed("dev.jvm.B1ReadsSourceTest")}",
+                "k\t2\t${placed("dev.jvm.PlatformTest")}",
+            ),
+            firstTouches = listOf("j\t3\tdev.jvm.Platform.jvm", "k\t2\tdev.jvm.Platform_jvmKt"),
+        )
+
+        val decision = decide(m, changed = listOf("dev.jvm.Platform_jvm"))
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertTrue(decision.includes(placed("dev.jvm.B1ReadsSourceTest")))
+        assertFalse(decision.includes(placed("dev.jvm.A0Test")))
+        assertTrue(Selector.leftNoTrace(m, "dev.jvm.Platform_jvm", listOf("dev.jvm.Platform_jvm")).not(),
+            "a read of the file is a trace")
+    }
 }
