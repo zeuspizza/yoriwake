@@ -6,9 +6,11 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.ACCOUNTED_PROPE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.BASE_FLAG_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_BYTES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_CLASSES_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_JARS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEMPT_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.IGNORED_PATHS_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MISS_DIRECTORIES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MOVED_FILES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNMAPPABLE_PATHS_PROPERTY
@@ -87,6 +89,8 @@ internal object SelectingStep {
         val observing: Boolean,
         /** Which copies of tracked text files git wrote with `\r\n`; one per Maven execution, read once. */
         val text: TrackedText = TrackedText(rootDir),
+        /** What a dependency bump is judged against, when `narrowDependencies` is set; null leaves build files forcing. */
+        val dependencies: DependencyRule.Context? = null,
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -105,7 +109,15 @@ internal object SelectingStep {
         val classpathFacts = inputs.classpathFacts
         val against = inputs.against
         val changeSetFile = File(mapDir, AgentContract.CHANGE_SET_FILE)
-        val scoped = scopedChange(paths, classpathFacts, inputs.notReadByTests, inputs.ignore)
+        val dependency = inputs.dependencies?.let { context ->
+            DependencyRule.decide(DependencyRule.Inputs(rootDir, paths, against, mapDir, context))
+        }
+        val bump = dependency as? DependencyRule.Verdict.Accepted
+        reportDependencies(host, dependency)
+        val scoped = scopedChange(
+            if (bump == null) paths else paths - bump.paths.toSet(),
+            classpathFacts, inputs.notReadByTests, inputs.ignore,
+        )
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
         val established = establish(
             { message -> host.lifecycle("[yoriwake] ${host.name}: $message") },
@@ -116,7 +128,7 @@ internal object SelectingStep {
         // with no change behind it; read now, after the run's inputs are built, and again by the
         // host's last look, after the build's own last actions.
         var handedOver = true
-        val classpathFiles = classpathFilesRule(mapDir, classpathFacts, inputs.text) { compared ->
+        val classpathFiles = classpathFilesRule(mapDir, classpathFacts, inputs.text, bump?.discount ?: { false }) { compared ->
             handedOver = host.handOver(compared)
         }.let { verdict ->
             // Nothing for the last look to compare against, so nothing vouches for what the build's
@@ -146,6 +158,9 @@ internal object SelectingStep {
             val why = "$declaredHit changed, which dependsOn declares every test of this task depends on (${entry.second})"
             host.lifecycle("[yoriwake] ${host.name}: $why")
             host.refuse(RefusalKind.DECLARED_PATH_CHANGED, why)
+        }
+        if (dependency is DependencyRule.Verdict.Forced && declaredHit == null && !widening.forces) {
+            host.refuse(dependency.kind, dependency.reason)
         }
         val changed = if (widening.forces) {
             // Unknown, not "nothing": selection is switched off and everything executes, as
@@ -194,6 +209,13 @@ internal object SelectingStep {
                 OWN_TEST_CLASSES_PROPERTY to established.testClasses,
                 EXEMPT_TEST_CLASSES_PROPERTY to established.exemptTestClasses,
             ) + (
+                // Only when a bump was accepted, so a run without `narrowDependencies` hands over what it did.
+                if (bump == null || widening.forces) emptyMap()
+                else mapOf(
+                    CHANGED_JARS_PROPERTY to bump.modules.map(PathIgnore::escape),
+                    MISS_DIRECTORIES_PROPERTY to bump.directories.map(PathIgnore::escape),
+                )
+            ) + (
                 // Only when there is one, so a build without a declaration hands over what it did.
                 if (scoped.ignore.ignored.isEmpty()) emptyMap()
                 else mapOf(IGNORED_PATHS_PROPERTY to scoped.ignore.ignored.map(PathIgnore::encode))
@@ -222,7 +244,7 @@ internal object SelectingStep {
         )
         ForcingPaths.lines(host.name, forcing, host.explain, pathIgnore = host.flag(SettingNames.BASE) == "-P${SettingNames.BASE}").forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
 
-        val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths)
+        val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths, bump)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map
         // nothing, and widening would re-capture the suite on every inline change.
         val capture = decideCapture(
@@ -237,6 +259,21 @@ internal object SelectingStep {
         )
         applyCapture(host, mapDir, inputs.observing, capture)
         return Worked(scoped, established, widening, forcing, capture)
+    }
+
+    /** Says on the console what `narrowDependencies` made of the changed build files. */
+    private fun reportDependencies(host: Host, verdict: DependencyRule.Verdict?) {
+        val line = when (verdict) {
+            null, DependencyRule.Verdict.NotApplicable -> return
+            is DependencyRule.Verdict.Unaccepted ->
+                "${verdict.path} is not a dependency version bump narrowDependencies accepts (${verdict.why}), so it stays a path coverage cannot see"
+            is DependencyRule.Verdict.Forced -> "${verdict.reason}, so the whole suite runs"
+            is DependencyRule.Verdict.Accepted ->
+                "${verdict.paths.joinToString()} change dependency versions only: " +
+                    if (verdict.modules.isEmpty()) "no module on this task's classpath moved"
+                    else "${verdict.modules.size} module(s) moved (${verdict.modules.joinToString()}); the tests that reached them run"
+        }
+        host.lifecycle("[yoriwake] ${host.name}: $line")
     }
 
     /**

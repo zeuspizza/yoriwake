@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 990d645d..60df974c 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -6 +6 @@ kotlin = "2.3.21"
+-kotlinCompileTesting = "0.12.1"
++kotlinCompileTesting = "0.13.0"

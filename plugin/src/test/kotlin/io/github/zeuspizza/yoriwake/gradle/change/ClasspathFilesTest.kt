@@ -1110,4 +1110,27 @@ class ClasspathFilesTest {
         assertEquals(ClasspathFiles.UNREADABLE, digests["build/libs/VENDOR.JAR Class-Path %zz"])
         assertNotEquals(ClasspathFiles.UNREADABLE, digests["build/libs/VENDOR.JAR"])
     }
+
+    @Test
+    fun `each entry is keyed as the table keys its row, build output by the path its files are walked under`(@TempDir dir: File) {
+        val root = File(dir, "project").apply { mkdirs() }
+        val gradleHome = File(dir, "gradle-home")
+        val repository = File(dir, "m2")
+        val cached = jar(File(gradleHome, "caches/modules-2/files-2.1/g/a/1/0a/a.jar"), 0L, "a.txt" to "a")
+        val released = jar(File(repository, "g/b/1/b-1.jar"), 0L, "b.txt" to "b")
+        val elsewhere = jar(File(dir, "elsewhere/c.jar"), 0L, "c.txt" to "c")
+        val again = jar(File(dir, "other/c.jar"), 0L, "c.txt" to "d")
+        val underRoot = jar(File(root, "repo/g/d/1/d-1.jar"), 0L, "d.txt" to "d")
+        val classes = File(root, "app/build/classes").apply { mkdirs() }
+        val classpath = listOf(classes, cached, released, elsewhere, again, underRoot)
+        val homes = mapOf(ClasspathFiles.GRADLE_USER_HOME to gradleHome, ClasspathFiles.MAVEN_REPOSITORY to repository)
+
+        val keys = ClasspathFiles.keys(classpath, listOf(File(root, "app/build").path), root, homes)
+        val rows = found(ClasspathFiles.table(classpath, listOf(File(root, "app/build").path), root, homes))
+
+        assertEquals(classpath.map { it.absoluteFile }, keys.map { it.file })
+        for (key in keys.filter { it.read != ClasspathFiles.Read.BUILT }) assertTrue(key.key in rows, "${key.key} in $rows")
+        assertEquals(listOf("app/build/classes", "repo/g/d/1/d-1.jar"), keys.filter { it.read == ClasspathFiles.Read.BUILT }.map { it.key })
+        assertTrue(rows.keys.any { it.startsWith("repo/g/d/1/d-1.jar!/") }, rows.toString())
+    }
 }

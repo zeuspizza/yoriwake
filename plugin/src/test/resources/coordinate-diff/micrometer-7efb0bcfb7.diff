@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 67e5e144c..e31994abc 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -211 +211 @@ plugin-license = { module = "gradle.plugin.com.hierynomus.gradle.plugins:license
+-plugin-nebulaRelease = { module = "com.netflix.nebula:nebula-release-plugin", version = "21.1.0" }
++plugin-nebulaRelease = { module = "com.netflix.nebula:nebula-release-plugin", version = "21.1.3" }

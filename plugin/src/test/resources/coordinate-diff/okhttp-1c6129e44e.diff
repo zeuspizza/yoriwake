@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 3433702c3..25f2c8a30 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -48 +48 @@ playservices-safetynet = "18.1.0"
+-robolectric = "4.17-beta-3"
++robolectric = "4.17-beta-4"

@@ -455,6 +455,14 @@ public final class Selector {
                 }
             }
         }
+        if (!change.changedJars().isEmpty() || !change.missDirectories().isEmpty()) {
+            Map<String, Integer> opens = changedJarWindows(map, tests, change.changedJars(), change.missDirectories());
+            for (MapReader.Entry test : tests) {
+                if (ranInWindow(map, test, opens) && selected.add(test.testId())) {
+                    sharedJvmOnly.add(test.testId());
+                }
+            }
+        }
 
         return Decision.selecting(selected, knownTestIds, notKnownToPass(tests), sharedJvmOnly);
     }
@@ -560,9 +568,11 @@ public final class Selector {
             }
         }
         if (!changed.isEmpty() || !bytes.isEmpty() || !change.movedFiles().isEmpty()
-                || !change.ignoredPaths().isEmpty()) {
+                || !change.ignoredPaths().isEmpty() || !change.changedJars().isEmpty()
+                || !change.missDirectories().isEmpty()) {
             Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), changed, knownTestIds);
-            sharesJvm(map, tests, changed, bytes, change.movedFiles(), change.ignoredPaths(), exempt, byTest);
+            sharesJvm(map, tests, changed, bytes, change.movedFiles(), change.ignoredPaths(), exempt, byTest,
+                    change.changedJars(), change.missDirectories());
         }
         return new Rules(basis, forcing, byTest, knownTestIds);
     }
@@ -570,7 +580,8 @@ public final class Selector {
     /** {@link #ranAfterFirstTouch}, with each window kept apart by what opened it. */
     private static void sharesJvm(MapReader.Result map, List<MapReader.Entry> tests,
             Collection<String> changed, Set<String> bytes, Collection<String> moved, Collection<String> ignored,
-            Set<String> exempt, Map<String, EnumSet<Rule>> byTest) {
+            Set<String> exempt, Map<String, EnumSet<Rule>> byTest, Collection<String> jars,
+            Collection<String> missDirectories) {
         List<String> dated = new ArrayList<>();
         for (String prefix : changed) {
             if (!exempt.contains(prefix)) {
@@ -608,7 +619,11 @@ public final class Selector {
         if (!moved.isEmpty()) {
             opened.put(Rule.SHARES_JVM_MOVED_CLASSPATH_FILE, movedFileWindows(map, tests, moved));
         }
-        boolean unpositionedRun = !changed.isEmpty() || !bytes.isEmpty() || !moved.isEmpty();
+        boolean jarsChanged = !jars.isEmpty() || !missDirectories.isEmpty();
+        if (jarsChanged) {
+            opened.put(Rule.SHARES_JVM_CHANGED_JAR, changedJarWindows(map, tests, jars, missDirectories));
+        }
+        boolean unpositionedRun = !changed.isEmpty() || !bytes.isEmpty() || !moved.isEmpty() || jarsChanged;
         // An ignored path alone opens only its own window: the unobserved one belongs to the others.
         if (!unpositionedRun) {
             opened.remove(Rule.SHARES_JVM_UNOBSERVED);
@@ -722,6 +737,43 @@ public final class Selector {
         for (MapReader.FirstTouch read : reads.reads()) {
             if (readsMoved(read.className(), moved)) {
                 opens.merge(read.jvm(), read.sequence(), Math::min);
+            }
+        }
+        return opens;
+    }
+
+    /**
+     * Where each JVM's window for the library modules a dependency bump moved opens: at its first
+     * touch of one of their jars, at its first lookup of an absent name in a changed directory, or
+     * at the first touch of every jar or of every name; at its first record when its touches were not
+     * recorded, or the map records none. A module or directory no JVM touched opens none.
+     */
+    private static Map<String, Integer> changedJarWindows(MapReader.Result map, List<MapReader.Entry> tests,
+            Collection<String> jars, Collection<String> missDirectories) {
+        Map<String, Integer> opens = new HashMap<>();
+        MapReader.JarTouches touched = map.jarTouches();
+        MapReader.JarTouches missed = map.missTouches();
+        boolean directories = !missDirectories.isEmpty();
+        for (MapReader.Entry test : tests) {
+            for (MapReader.Position position : map.positionsOf(test.testId())) {
+                if (touched == null || !touched.recorded(position.jvm())
+                        || (directories && (missed == null || !missed.recorded(position.jvm())))) {
+                    opens.put(position.jvm(), 0);
+                }
+            }
+        }
+        if (touched != null) {
+            for (MapReader.FirstTouch touch : touched.touches()) {
+                if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className()) || jars.contains(touch.className())) {
+                    opens.merge(touch.jvm(), touch.sequence(), Math::min);
+                }
+            }
+        }
+        if (missed != null && directories) {
+            for (MapReader.FirstTouch touch : missed.touches()) {
+                if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className()) || missDirectories.contains(touch.className())) {
+                    opens.merge(touch.jvm(), touch.sequence(), Math::min);
+                }
             }
         }
         return opens;

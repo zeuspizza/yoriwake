@@ -200,6 +200,8 @@ internal fun classpathFilesRule(
     facts: ClasspathView,
     /** Which copies of tracked text files git wrote with `\r\n`; shared within one Maven execution. */
     text: TrackedText = TrackedText(facts.rootDir),
+    /** Rows a moved dependency module accounts for, which `narrowDependencies` judged already. */
+    discount: (String) -> Boolean = { false },
     walked: (Map<String, String>) -> Unit = {},
 ): ClasspathFilesVerdict {
     val recorded = CoverageDecoder.readClasspathFiles(mapDir)
@@ -215,7 +217,8 @@ internal fun classpathFilesRule(
     return when (walk) {
         is ClasspathFiles.Walk.Refused ->
             ClasspathFilesVerdict.Unrecorded("this task's classpath files could not be digested (${walk.reason})")
-        is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked)).let { moved ->
+        is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked)).let { all ->
+            val moved = ClasspathFiles.Moved(all.files.filterKeys { !discount(it) })
             val handed = moved.traceable(facts.rootDir)
             val dependencies = moved.files.filterKeys { it.startsWith(ClasspathFiles.DEPENDENCY_PREFIX) }
             when {
@@ -671,6 +674,7 @@ internal fun wouldRunEverything(
     established: Established,
     widening: InlineWidening,
     paths: List<String>,
+    bump: DependencyRule.Verdict.Accepted? = null,
 ): FullRunOutlook = runCatching {
     val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
     if (!map.isUsable) return FullRunOutlook(fullRun = true, mapUsable = false)
@@ -678,6 +682,7 @@ internal fun wouldRunEverything(
         fullRun = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(
             map,
             changeSet(changed.sorted(), paths, scoped, established, widening.changedBytes, widening.movedFiles)
+                .withChangedJars(bump?.modules.orEmpty(), bump?.directories.orEmpty())
                 .withDaemonRefusal(widening.refusal),
             emptyList(),
         ).isFullRun,

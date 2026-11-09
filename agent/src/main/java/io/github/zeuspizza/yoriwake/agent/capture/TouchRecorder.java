@@ -73,6 +73,21 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private final Map<String, Boolean> rootAliases = new java.util.concurrent.ConcurrentHashMap<>();
     /** Whether two paths name the same file: a bind mount or a drive alias of the root is one. */
     private final SameFile sameFile;
+    /**
+     * The library module jars this JVM records touches of, each under the path the plugin named it
+     * by, and under its resolved path; null when none were named or their entries cannot be seen.
+     */
+    private volatile Map<String, String> moduleJars;
+    /** The module path each jar or code-source path seen so far stands for, empty for none. */
+    private final Map<String, String> modulePathOf = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The module jars reached so far, so each is recorded once without the lock. */
+    private final Set<String> reachedJars = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Names looked up in a module jar and not found since the last drain, with their directories. */
+    private final Map<String, String> pendingMisses = new HashMap<>();
+    /** Class files found or classes defined since the last drain, which cancel a miss of the same name. */
+    private final Set<String> answered = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Directories a miss was recorded in; read without the lock, written under it. */
+    private final Set<String> missedDirectories = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** {@link java.nio.file.Files#isSameFile}, replaceable where no test can mount a directory. */
     interface SameFile {
@@ -127,8 +142,13 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 environmentIncomplete = unsupported;
                 return;
             }
+            Map<String, String> modules = modulesOf(HostBuild.current().property(AgentContract.JAR_MODULES_PROPERTY));
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
-                    this::childProcess, this::nativeCode, this::library, this::resolved, this::environmentRead);
+                    this::childProcess, this::nativeCode, this::library, this::resolved, this::environmentRead,
+                    this::entry);
+            if (modules != null && hooks.entries == null) {
+                recordJars(modules);
+            }
             resolving = hooks.resolving;
             guards = GuardHooks.install(instrumentation, this::guard, this::guardLost);
             incomplete = hooks.reads != null ? hooks.reads : JdkCode.imageAltered();
@@ -158,9 +178,177 @@ public final class TouchRecorder implements CaptureSession.Touches {
     @Override
     public List<String[]> drain() {
         synchronized (lock) {
+            // A class-path search misses in every jar before the one that holds the class, so a class
+            // miss that some jar or definition answered in the same window is no miss. A resource is
+            // looked for in every jar, and a new version that adds it changes the answer, so its miss
+            // always stands. A directory is written once, for the first miss that stands.
+            for (Map.Entry<String, String> miss : pendingMisses.entrySet()) {
+                String name = miss.getKey();
+                if (name.endsWith(".class") && answered.contains(name)) {
+                    continue;
+                }
+                String directory = miss.getValue();
+                if (missedDirectories.add(directory)) {
+                    pending.add(new String[] {AgentContract.TOUCH_MISSED, directory});
+                }
+            }
+            pendingMisses.clear();
+            answered.clear();
             List<String[]> drained = pending;
             pending = new ArrayList<>();
             return drained;
+        }
+    }
+
+    /**
+     * The module jars named in the file at {@code path}, one {@code path \t identity} row each, under
+     * the path as named and as resolved; null when there is no such file or it cannot be read.
+     */
+    static Map<String, String> modulesOf(String path) {
+        if (path == null || path.isEmpty()) {
+            return null;
+        }
+        try {
+            Map<String, String> modules = new HashMap<>();
+            for (String line : java.nio.file.Files.readAllLines(Paths.get(path), java.nio.charset.StandardCharsets.UTF_8)) {
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] row = io.github.zeuspizza.yoriwake.agent.contract.Tsv.split(line);
+                if (row.length != 2) {
+                    return null;
+                }
+                modules.put(row[0], row[0]);
+                try {
+                    modules.put(Paths.get(row[0]).toRealPath().toString(), row[0]);
+                } catch (IOException | RuntimeException unresolved) {
+                    // The path as named still matches a jar opened by it.
+                }
+            }
+            return modules;
+        } catch (IOException | RuntimeException unreadable) {
+            return null;
+        }
+    }
+
+    /**
+     * Records from here on which of {@code modules} ({@link #modulesOf}) this JVM reaches, and the
+     * absent names it looks up in them. Only once every entry hook is in place: a lookup unseen would
+     * leave a jar unreached.
+     */
+    void recordJars(Map<String, String> modules) {
+        moduleJars = modules;
+        touch(AgentContract.TOUCH_JARS_RECORDED, "");
+    }
+
+    /** The module path {@code path} stands for, or null when it is no module jar's. */
+    private String modulePath(String path) {
+        Map<String, String> modules = moduleJars;
+        if (modules == null || path == null) {
+            return null;
+        }
+        String direct = modules.get(path);
+        if (direct != null) {
+            return direct;
+        }
+        String known = modulePathOf.get(path);
+        if (known == null) {
+            known = "";
+            try {
+                String resolved = Paths.get(path).toAbsolutePath().toRealPath().toString();
+                String module = modules.get(resolved);
+                if (module != null) {
+                    known = module;
+                }
+            } catch (IOException | RuntimeException unresolved) {
+                // Asked again next time: the file may appear.
+                return null;
+            }
+            modulePathOf.put(path, known);
+        }
+        return known.isEmpty() ? null : known;
+    }
+
+    /** Records that this JVM reached the module jar at {@code module}, once. */
+    private void reached(String module) {
+        if (reachedJars.add(module)) {
+            touch(AgentContract.TOUCH_JAR_REACHED, module);
+        }
+    }
+
+    /**
+     * The entry hooks' sink: {zip, name, entry or null} for every lookup of a jar entry by name. A
+     * hit in a module jar reaches it; a miss there is kept until the window drains, and a hit
+     * anywhere answers a class miss of the same name.
+     */
+    void entry(Object looked) {
+        if (moduleJars == null || inside.get() != null) {
+            return;
+        }
+        inside.set(Boolean.TRUE);
+        try {
+            Object[] triple = (Object[]) looked;
+            String name = (String) triple[1];
+            boolean found = triple[2] != null;
+            String module = modulePath(((ZipFile) triple[0]).getName());
+            if (found) {
+                if (module != null) {
+                    reached(module);
+                }
+                if (name.endsWith(".class")) {
+                    answered.add(name);
+                }
+                return;
+            }
+            if (module == null) {
+                return;
+            }
+            int slash = name.lastIndexOf('/');
+            String directory = slash < 0 ? "/" : name.substring(0, slash + 1);
+            if (missedDirectories.contains(directory)) {
+                return;
+            }
+            synchronized (lock) {
+                pendingMisses.putIfAbsent(name, directory);
+            }
+        } catch (Throwable t) {
+            incomplete = "a jar entry lookup could not be recorded: " + t;
+        } finally {
+            inside.remove();
+        }
+    }
+
+    /** A class defined from {@code domain}'s code source: when that is a module jar, the jar was reached. */
+    void definedFrom(ProtectionDomain domain, String internalName) {
+        if (moduleJars == null) {
+            return;
+        }
+        answered.add(internalName + ".class");
+        if (domain == null || inside.get() != null) {
+            return;
+        }
+        inside.set(Boolean.TRUE);
+        try {
+            java.security.CodeSource source = domain.getCodeSource();
+            java.net.URL location = source == null ? null : source.getLocation();
+            if (location == null || !"file".equals(location.getProtocol())) {
+                return;
+            }
+            // Keyed by the URL, so each code source is turned into a path once.
+            String key = "url:" + location;
+            String module = modulePathOf.get(key);
+            if (module == null) {
+                String found = modulePath(new File(location.toURI()).getPath());
+                module = found == null ? "" : found;
+                modulePathOf.put(key, module);
+            }
+            if (!module.isEmpty()) {
+                reached(module);
+            }
+        } catch (Throwable t) {
+            incomplete = "a class's code source could not be recorded: " + t;
+        } finally {
+            inside.remove();
         }
     }
 
@@ -544,6 +732,10 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 Object[] pair = (Object[]) opened;
                 ZipFile zip = (ZipFile) pair[0];
                 ZipEntry entry = (ZipEntry) pair[1];
+                String module = modulePath(zip.getName());
+                if (module != null) {
+                    reached(module);
+                }
                 if (isClassOrSource(entry.getName())) {
                     if (!definingAClass()) {
                         touchNamed(AgentContract.TOUCH_READ, entry.getName());
@@ -950,10 +1142,13 @@ public final class TouchRecorder implements CaptureSession.Touches {
                     String name = className != null ? className : nameIn(bytes);
                     if (name == null) {
                         recorder.touch(AgentContract.TOUCH_ALL, UNNAMED);
-                    } else if (loader != application && loader != platform) {
-                        recorder.definedElsewhere(name);
                     } else {
-                        recorder.loaded(name);
+                        if (loader != application && loader != platform) {
+                            recorder.definedElsewhere(name);
+                        } else {
+                            recorder.loaded(name);
+                        }
+                        recorder.definedFrom(domain, name);
                     }
                 }
             } catch (Throwable t) {

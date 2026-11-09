@@ -96,6 +96,8 @@ refusal-kind	change-set-unreadable
 refusal-kind	class-file-unsupported
 refusal-kind	classpath-files-changed
 refusal-kind	classpath-files-unrecorded
+refusal-kind	classpath-reordered
+refusal-kind	classpath-unrecorded
 refusal-kind	complement-no-record
 refusal-kind	complement-record-mismatch
 refusal-kind	constant-changed
@@ -103,6 +105,10 @@ refusal-kind	constant-unrecorded
 refusal-kind	declared-path-changed
 refusal-kind	decline-undetermined
 refusal-kind	dependencies-changed
+refusal-kind	dependency-added
+refusal-kind	dependency-in-jvm-arguments
+refusal-kind	dependency-shadows
+refusal-kind	dependency-unlocated
 refusal-kind	develocity-test-distribution
 refusal-kind	develocity-test-selection
 refusal-kind	develocity-undetermined
@@ -160,6 +166,7 @@ row-rule	own-class-changed
 row-rule	reaches-change
 row-rule	shares-jvm-changed-bytes
 row-rule	shares-jvm-changed-class
+row-rule	shares-jvm-changed-jar
 row-rule	shares-jvm-ignored-path
 row-rule	shares-jvm-moved-classpath-file
 row-rule	shares-jvm-unobserved

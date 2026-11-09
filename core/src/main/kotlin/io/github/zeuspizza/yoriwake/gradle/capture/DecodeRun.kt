@@ -9,6 +9,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.JUnitXmlFailures
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.capture.SelectionRecord
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
@@ -99,6 +100,13 @@ internal class DecodeRun(
         // Read once and removed, so a later run never mistakes this run's walk for its own.
         val classpathFiles = pendingClasspathFiles(mapDir).let { file ->
             CoverageDecoder.readClasspathFilesFrom(file).also { runCatching { file.delete() } }
+        }
+        // The resolved classpath, read once and removed as the walk above.
+        val classpathRecord = ClasspathRecord.read(ClasspathRecord.pending(mapDir), ClasspathRecord.pendingDirs(mapDir))
+            .also { runCatching { ClasspathRecord.pending(mapDir).delete(); ClasspathRecord.pendingDirs(mapDir).delete() } }
+        // The test JVMs read it as they ran; machine paths, so it never stays beside the map.
+        val jarModules = File(mapDir, ClasspathRecord.MODULES_FILE).let { file ->
+            ClasspathRecord.readModules(file).also { runCatching { file.delete() } }
         }
         // The environment the test JVMs started in, read once and removed as the walk above.
         val environment = EnvironmentFingerprint.readPending(mapDir)
@@ -355,6 +363,8 @@ internal class DecodeRun(
                 environment = environment,
                 // Which classpath files each JVM read, by the paths the classpath digests name.
                 rootDir = rootDir,
+                jarModules = jarModules,
+                classpathRecord = classpathRecord,
             )
         }
         // A map we cannot write leaves the previous one alone; it never fails someone

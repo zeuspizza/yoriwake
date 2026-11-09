@@ -1388,6 +1388,58 @@ What it does not show:
 - A task off the JUnit Platform never asks the filter: its outcome is `not-decided`, and its tests
   are counted in `testsWithoutVerdict`.
 
+## Dependency bumps
+
+A changed build script or version catalog is a path coverage cannot see, so a commit that only
+bumps library versions runs every test. With `narrowDependencies = true` in the extension (or
+`-Pyoriwake.narrowDependencies` for one invocation), a selecting run narrows it instead: it runs
+the tests whose JVM reached a jar the bump moved. Off by default.
+
+A changed build file is accepted when every line it changes is one of these, identical to the line
+it replaces but for one version literal:
+
+- a value in a version catalog's `[versions]` (`lib-json = "1.1"`), or a `[libraries]` entry's own
+  `version`, or its `"group:name:version"` notation; any catalog under `gradle/`;
+- a `"group:name:version"` notation, alone on its line, inside a `dependencies { }` block of a
+  module's `build.gradle(.kts)`.
+
+The resolved test runtime classpath, compared with the one the map recorded, then says which
+libraries moved, transitive ones and BOM-managed ones included. Each moved or removed library runs
+every test that ran at or after its JVM first reached the library's jar (a class loaded from it, an
+entry found or read in it). A directory whose entry names the new version changed also runs every
+test that ran at or after its JVM first looked there for a name no jar held: a probe for an optional
+class, a scan for a service file. Each test so selected names the rule `shares-jvm-changed-jar` in
+`decisions.tsv`.
+
+Everything else still runs every test, saying why:
+
+- Any other change to a build file: a plugin, a `buildscript` or `settings` file, `buildSrc` or an
+  included build, a version held in a variable, a lockfile, verification metadata, a rich version
+  or range. The file stays a path coverage cannot see (`unmappable-paths`).
+- A catalog version key a `[plugins]` entry also uses, a library alias named in build logic, a
+  settings file or a `buildscript` block, or a version key a build script reads as a value
+  (`libs.versions.<key>`, `findVersion("<key>")`). Same token, naming the file.
+- A library new to the classpath (`dependency-added`): nothing recorded bounds what a new service
+  provider or auto-configuration does.
+- A changed classpath order (`classpath-reordered`), or a bumped library that now holds a class a
+  later classpath entry also holds (`dependency-shadows`).
+- A bumped coordinate on no runtime classpath of the task, or a notation in a configuration its
+  classpaths do not extend, such as an agent's or a code generator's (`dependency-unlocated`).
+- A bumped jar named in the test JVM's arguments or system properties, as a `-javaagent` is
+  (`dependency-in-jvm-arguments`).
+- A map recorded before the classpath was (`classpath-unrecorded`); the next capture records it.
+
+Own classes compiled against the new version that changed (an inlined constant, a Kotlin `inline`
+body) select their tests through the class digests, as any other bytecode change does.
+
+A test that first reaches a library during discovery or startup selects its whole JVM, so a shared
+test JVM narrows little: record with [`-Pyoriwake.isolatedCapture`](#recording-each-test-class-in-its-own-jvm)
+beside the flag. To see what it would leave out before trusting it, run
+`-Pyoriwake.observe -Pyoriwake.narrowDependencies` on your dependency-bump pull requests.
+
+Every capture records the libraries each JVM reached, whether or not the flag is set, so the map
+holds what the flag needs the first time it is set.
+
 ## Paths no test reads
 
 A change to documentation, a changelog or CI configuration is a changed path coverage cannot see,
@@ -1687,6 +1739,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.trustedMaps=<file>` | Narrow only from a map whose digest the file lists. See [Who can write the map you restore](#who-can-write-the-map-you-restore). |
 | `yoriwake.disabled` | Leave the build entirely alone: nothing scoped, injected, captured or selected. |
 | `yoriwake.narrowPlainRunners` | Let a selecting run of a plain JUnit 4 task leave out whole test classes. Overrides the build's `narrowPlainRunners`; `=false` turns it off. See [Narrowing plain JUnit 4 by class](#narrowing-plain-junit-4-by-class). |
+| `yoriwake.narrowDependencies` | Let a selecting run narrow a commit that only bumps library versions. Overrides the build's `narrowDependencies`; `=false` turns it off. See [Dependency bumps](#dependency-bumps). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. `-D` on Maven. |
@@ -1720,6 +1773,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `largeChangeThreshold` | `Int` | `5000` | Above this many changed paths, run every test without analysing the change. |
 | `narrowPlainRunners` | `Boolean` | `false` | Let a selecting run of a plain JUnit 4 task (`useJUnit()`) leave out whole test classes. |
 | `recordSequentially` | `Boolean` | `false` | Record in-JVM parallel suites one test at a time, so they can be selected on. |
+| `narrowDependencies` | `Boolean` | `false` | Let a selecting run narrow a commit that only bumps library versions. See [Dependency bumps](#dependency-bumps). |
 
 For example:
 

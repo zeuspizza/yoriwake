@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- `narrowDependencies` lets a commit that only bumps library versions run the tests that reached the moved jars. Map: left alone.
+
 ## [0.5.0] - 2026-11-07
 
 **Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.

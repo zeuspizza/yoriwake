@@ -151,6 +151,31 @@ public final class MapReader {
         }
     }
 
+    /**
+     * What each JVM reached of the library module jars, from {@link AgentContract#JAR_TOUCH_FILE} or
+     * {@link AgentContract#MISS_TOUCH_FILE}: the first sequence at or before which each module (or
+     * each directory, for a lookup of an absent name) was touched, and which JVMs recorded them.
+     */
+    public static final class JarTouches {
+        private final Set<String> recorded;
+        private final List<FirstTouch> touches;
+
+        JarTouches(Set<String> recorded, List<FirstTouch> touches) {
+            this.recorded = recorded;
+            this.touches = touches;
+        }
+
+        /** Whether this JVM's touches were recorded; one that was not reached everything. */
+        public boolean recorded(String jvm) {
+            return recorded.contains(jvm);
+        }
+
+        /** Each touch by module identity or directory, or {@code *} for every one, as a touch's class. */
+        public List<FirstTouch> touches() {
+            return touches;
+        }
+    }
+
     /** Whether a map records the instrumentation scope its records were captured under. */
     public enum ScopeProvenance {
         /**
@@ -193,6 +218,8 @@ public final class MapReader {
         private List<FirstTouch> firstTouches = Collections.emptyList();
         private List<FirstTouch> namedTouches = Collections.emptyList();
         private ResourceReads resourceReads;
+        private JarTouches jarTouches;
+        private JarTouches missTouches;
         private final String unusableReason;
         private final Reason reason;
 
@@ -283,6 +310,16 @@ public final class MapReader {
         /** The map's resource reads, or null when it records none or they cannot be read. */
         public ResourceReads resourceReads() {
             return resourceReads;
+        }
+
+        /** The library module jars each JVM reached; null when the map records none. */
+        public JarTouches jarTouches() {
+            return jarTouches;
+        }
+
+        /** The absent names each JVM looked up in a library module jar, by directory; null when the map records none. */
+        public JarTouches missTouches() {
+            return missTouches;
         }
 
         /** Whether the map records the scope its records were captured under. */
@@ -399,6 +436,8 @@ public final class MapReader {
         result.firstTouches = firstTouches;
         result.namedTouches = namedTouches;
         result.resourceReads = readResourceReads(new File(mapDir, AgentContract.RESOURCE_TOUCH_FILE));
+        result.jarTouches = readJarTouches(new File(mapDir, AgentContract.JAR_TOUCH_FILE));
+        result.missTouches = readJarTouches(new File(mapDir, AgentContract.MISS_TOUCH_FILE));
         result.instrumentationScope = scope;
         result.loadedClasses = loaded;
         result.loadedScope = loadedScope;
@@ -444,6 +483,39 @@ public final class MapReader {
             return null;
         }
         return new ResourceReads(recorded, sources, reads);
+    }
+
+    /**
+     * {@link AgentContract#JAR_TOUCH_FILE} or {@link AgentContract#MISS_TOUCH_FILE}. Null when the
+     * file is missing or malformed, so no JVM's touches are known.
+     */
+    private static JarTouches readJarTouches(File file) {
+        if (!file.isFile()) {
+            return null;
+        }
+        Set<String> recorded = new HashSet<>();
+        List<FirstTouch> touches = new ArrayList<>();
+        try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] parts = Tsv.split(line);
+                Integer sequence = parts.length == 3 ? parseSequence(parts[1]) : null;
+                if (sequence == null) {
+                    return null;
+                }
+                if (AgentContract.JARS_RECORDED.equals(parts[2])) {
+                    recorded.add(parts[0]);
+                } else {
+                    touches.add(new FirstTouch(parts[0], sequence, parts[2]));
+                }
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return new JarTouches(recorded, touches);
     }
 
     /** The recorded instrumentation scope, or empty (unknown) on any failure. */

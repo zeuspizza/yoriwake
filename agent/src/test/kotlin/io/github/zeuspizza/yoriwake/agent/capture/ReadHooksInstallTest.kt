@@ -30,7 +30,7 @@ class ReadHooksInstallTest {
     private val ignored = Consumer<Any> { }
 
     private fun install(instrumentation: Instrumentation) =
-        ReadHooks.install(instrumentation, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored)
+        ReadHooks.install(instrumentation, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored, ignored)
 
     @Test
     fun `a JVM that cannot retransform reports every kind incomplete, saying why`() {

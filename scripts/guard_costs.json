@@ -4,6 +4,7 @@
   {"run": 41672434468, "commit": "19708b71", "modes": ["fast"]}
  ],
  "estimated": [
+  "functional/DependencyBumpFunctionalTest",
   "functional/InJvmParallelismCharacterizationTest",
   "functional/KoverFunctionalTest"
  ],
@@ -70,6 +71,7 @@
   "functional/DecisionRulesFunctionalTest": {"baseline": 30, "guard": 28},
   "functional/DeclaredDependenciesFunctionalTest": {"baseline": 54, "guard": 36},
   "functional/DeclineFunctionalTest": {"baseline": 88, "guard": 51},
+  "functional/DependencyBumpFunctionalTest": {"baseline": 600, "guard": 500},
   "functional/DevelocityFunctionalTest": {"baseline": 102, "guard": 91},
   "functional/EnvironmentFingerprintFunctionalTest": {"baseline": 109, "guard": 72},
   "functional/FullRunRequestFunctionalTest": {"baseline": 93, "guard": 95},

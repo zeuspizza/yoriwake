@@ -489,6 +489,17 @@ public abstract class YoriwakeExtension {
      */
     public abstract val narrowPlainRunners: org.gradle.api.provider.Property<Boolean>
 
+    /**
+     * Lets a selecting run narrow a commit that only bumps library versions:
+     * `narrowDependencies = true`, or `-Pyoriwake.narrowDependencies` for one invocation. A version
+     * catalog value or a `group:name:version` notation in a module's `dependencies` block that
+     * changes nothing but the version is accepted; the resolved classpath, compared with the one the
+     * map recorded, says which libraries moved, and the tests whose JVM reached their jars run. Any
+     * other build change, a new library on the classpath, a changed classpath order and a version a
+     * plugin or the build logic also reads still run everything. Off by default.
+     */
+    public abstract val narrowDependencies: org.gradle.api.provider.Property<Boolean>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)
@@ -497,5 +508,7 @@ public abstract class YoriwakeExtension {
         largeChangeThreshold.convention(io.github.zeuspizza.yoriwake.gradle.change.LargeChange.DEFAULT_THRESHOLD)
         @Suppress("LeakingThis")
         narrowPlainRunners.convention(false)
+        @Suppress("LeakingThis")
+        narrowDependencies.convention(false)
     }
 }

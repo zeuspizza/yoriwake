@@ -234,6 +234,9 @@ EXPLAIN_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks
 ENVIRONMENT_FINGERPRINT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
 JVM_ARG_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
 CLASS_FILE_CEILING = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
+COORDINATE_DIFF = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/CoordinateDiff.kt"
+DEPENDENCY_RULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/DependencyRule.kt"
+CLASSPATH_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathRecord.kt"
 SCHEDULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/Schedule.kt"
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
 # with it, four columns left: the functions were members of `object Audit` and are now top level.
@@ -5089,6 +5092,47 @@ MUTATIONS = [
     ("staging adds a second JaCoCo agent beside the guest's", MAVEN_HARNESS,
      "    if not any(execution.agent_goal in other.agent_goals() for other in poms):",
      "    if True:", maven_harness_suite, "a reactor with its own agent gained a second"),
+    # A dependency bump selects the tests that reached the moved jars, and forces for all else.
+    ("the dependency classifier accepts a line of any shape", COORDINATE_DIFF,
+     '                } ?: return Verdict.Refused(path, after, "not a version change of a shape this rule knows")',
+     "                } ?: Bump(path, shape)",
+     functional_suite, "a build script edit that is no version bump runs every test, flag or not"),
+    ("a catalog version key a plugin shares is accepted", DEPENDENCY_RULE,
+     "                if (pluginsUsing(text, key)) return forced(",
+     "                if (false) return forced(",
+     functional_suite, "a version key a plugin shares runs every test, naming the plugin"),
+    ("a version a build script reads as a value is accepted", DEPENDENCY_RULE,
+     '                if (Regex("""versions\\.$dotted(?![A-Za-z0-9_])""").containsMatchIn(text) ||',
+     "                if (false &&",
+     functional_suite, "a version a build script expands into a resource runs every test, naming the script"),
+    ("a library new to the classpath is narrowed", DEPENDENCY_RULE,
+     "        if (added.isNotEmpty()) {\n            return Verdict.Forced(\n                RefusalKind.DEPENDENCY_ADDED,",
+     "        if (false) {\n            return Verdict.Forced(\n                RefusalKind.DEPENDENCY_ADDED,",
+     functional_suite, "a bump that puts a new library on the classpath runs every test"),
+    ("a bumped coordinate no classpath holds is narrowed", DEPENDENCY_RULE,
+     "                if (coordinate !in onClasspath) {",
+     "                if (false) {",
+     functional_suite, "a bump of a library only an agent configuration holds runs every test"),
+    ("a bump narrows without narrowDependencies", SELECTION_WIRING,
+     "    val dependencies = if (!narrowDependencies) null else {",
+     "    val dependencies = if (false) null else {",
+     functional_suite, "a catalog bump runs the tests that reached the moved jar, and only with the flag"),
+    ("a library jar under the root is taken for build output", CLASSPATH_RECORD,
+     "                identity != null -> Entry(MODULE,",
+     "                identity != null && read != ClasspathFiles.Read.BUILT -> Entry(MODULE,",
+     functional_suite, "a catalog bump runs the tests that reached the moved jar, and only with the flag"),
+    ("a resource miss is dropped, as an answered class miss is", TOUCH_RECORDER,
+     '                if (name.endsWith(".class") && answered.contains(name)) {',
+     '                if (!name.endsWith(".class") || answered.contains(name)) {',
+     agent_suite, "a resource two of three jars lack stands as a miss though the third holds it"),
+    ("a miss is deduplicated when it is looked up, not when it stands", TOUCH_RECORDER,
+     "            if (missedDirectories.contains(directory)) {",
+     "            if (!missedDirectories.add(directory)) {",
+     agent_suite, "a probe of an absent class after a class of its package loaded from a later jar still stands"),
+    ("a JVM whose jar touches were not recorded opens no window", SELECTOR,
+     "                if (touched == null || !touched.recorded(position.jvm())",
+     "                if (touched == null",
+     agent_suite, "a JVM whose touches were not recorded runs whole"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.

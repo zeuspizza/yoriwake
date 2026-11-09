@@ -24,6 +24,8 @@ public final class ChangeSet {
     private final String daemonRefusal;
     private final String testJvmUnsupported;
     private final String baseFlag;
+    private final Collection<String> changedJars;
+    private final Collection<String> missDirectories;
 
     private ChangeSet(
             Collection<String> changedClasses,
@@ -37,7 +39,9 @@ public final class ChangeSet {
             Collection<String> ignoredPaths,
             String daemonRefusal,
             String testJvmUnsupported,
-            String baseFlag) {
+            String baseFlag,
+            Collection<String> changedJars,
+            Collection<String> missDirectories) {
         this.changedClasses = changedClasses;
         this.unmappablePaths = unmappablePaths;
         this.accountedFor = accountedFor;
@@ -50,6 +54,8 @@ public final class ChangeSet {
         this.daemonRefusal = daemonRefusal;
         this.testJvmUnsupported = testJvmUnsupported;
         this.baseFlag = baseFlag;
+        this.changedJars = changedJars;
+        this.missDirectories = missDirectories;
     }
 
     /**
@@ -59,7 +65,8 @@ public final class ChangeSet {
     public static ChangeSet of(Collection<String> changedClasses, Collection<String> unmappablePaths) {
         return new ChangeSet(changedClasses, unmappablePaths, false, Collections.<String>emptySet(),
                 Collections.<String>emptySet(), Collections.<String>emptySet(), Collections.<String>emptySet(),
-                Collections.<String>emptySet(), Collections.<String>emptySet(), null, null, null);
+                Collections.<String>emptySet(), Collections.<String>emptySet(), null, null, null,
+                Collections.<String>emptySet(), Collections.<String>emptySet());
     }
 
     /**
@@ -69,13 +76,13 @@ public final class ChangeSet {
      */
     public ChangeSet withAccountedFor(boolean accountedFor) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     /** Prefixes for which the daemon's AbsenceEvidence holds; see {@code Selector.untested}. */
     public ChangeSet withAbsenceProvable(Collection<String> absenceProvable) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     /**
@@ -85,7 +92,7 @@ public final class ChangeSet {
      */
     public ChangeSet withOwnTestClasses(Collection<String> ownTestClasses) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     /**
@@ -95,7 +102,7 @@ public final class ChangeSet {
      */
     public ChangeSet withExemptTestClasses(Collection<String> exemptTestClasses) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     /**
@@ -106,7 +113,7 @@ public final class ChangeSet {
      */
     public ChangeSet withChangedBytes(Collection<String> changedBytes) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     /**
@@ -116,7 +123,7 @@ public final class ChangeSet {
      */
     public ChangeSet withMovedFiles(Collection<String> movedFiles) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     /**
@@ -125,7 +132,7 @@ public final class ChangeSet {
      */
     public ChangeSet withIgnoredPaths(Collection<String> ignoredPaths) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     /**
@@ -134,7 +141,7 @@ public final class ChangeSet {
      */
     public ChangeSet withDaemonRefusal(String daemonRefusal) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     public Collection<String> changedClasses() {
@@ -183,7 +190,7 @@ public final class ChangeSet {
      */
     public ChangeSet withTestJvmUnsupported(String testJvmUnsupported) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     public String testJvmUnsupported() {
@@ -196,10 +203,28 @@ public final class ChangeSet {
      */
     public ChangeSet withBaseFlag(String baseFlag) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
-                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag);
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
     }
 
     public String baseFlag() {
         return baseFlag;
+    }
+
+    /**
+     * Library modules a dependency bump moved, by identity, and the directories whose entry names it
+     * changed. Each module runs the tests from their JVM's first touch of its jar on, each directory
+     * from their JVM's first lookup of an absent name in it on.
+     */
+    public ChangeSet withChangedJars(Collection<String> changedJars, Collection<String> missDirectories) {
+        return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,
+                ownTestClasses, exemptTestClasses, changedBytes, movedFiles, ignoredPaths, daemonRefusal, testJvmUnsupported, baseFlag, changedJars, missDirectories);
+    }
+
+    public Collection<String> changedJars() {
+        return changedJars;
+    }
+
+    public Collection<String> missDirectories() {
+        return missDirectories;
     }
 }
