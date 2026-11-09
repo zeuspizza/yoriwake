@@ -83,15 +83,46 @@ internal object ClasspathRecord {
         return Record(entries, dirs)
     }
 
-    /** Each directory of the jar at [file] with the digest of its entry names; the file itself when not a jar. */
+    /**
+     * The key under which [directories] digests what the JDK's class loader takes from the jar's
+     * manifest when it opens the jar: its `Class-Path` and `Multi-Release`. Never a directory.
+     */
+    const val MANIFEST = "#manifest"
+
+    /**
+     * Each directory of the jar at [file] with the digest of the names directly in it, its
+     * subdirectories' names (`b/`) included, so a lookup of `a/b` or a scan of `a/` sees a new
+     * subdirectory; and [MANIFEST]. A file that is not a readable jar digests as unreadable.
+     */
     fun directories(file: File): Map<String, String> {
         if (!file.isFile) return mapOf("/" to ClasspathFiles.UNREADABLE)
-        val names = runCatching { ZipFile(file).use { zip -> zip.entries().asSequence().filterNot { it.isDirectory }.map { it.name }.toList() } }
-            .getOrElse { return mapOf("/" to ClasspathFiles.UNREADABLE) }
-        return names.groupBy { it.substringBeforeLast('/', "").let { dir -> if (dir.isEmpty()) "/" else "$dir/" } }
-            .mapValues { (_, inDir) -> digest(inDir.sorted().joinToString("\n")).take(16) }
-            .toSortedMap()
+        val read = runCatching {
+            java.util.jar.JarFile(file, false).use { jar ->
+                val names = jar.entries().asSequence().filterNot { it.isDirectory }.map { it.name }.toList()
+                val attributes = jar.manifest?.mainAttributes
+                names to listOf("Class-Path", "Multi-Release").joinToString("\n") { "$it=${attributes?.getValue(it).orEmpty()}" }
+            }
+        }.getOrElse { return mapOf("/" to ClasspathFiles.UNREADABLE) }
+        val (names, manifest) = read
+        val listed = sortedMapOf<String, MutableSet<String>>()
+        for (name in names) {
+            var child = name
+            var parent = parentOf(name)
+            listed.getOrPut(parent) { sortedSetOf() }.add(child.substringAfterLast('/').ifEmpty { child })
+            // Each directory above names the one below it.
+            while (parent != "/") {
+                child = parent
+                parent = parentOf(parent.removeSuffix("/"))
+                listed.getOrPut(parent) { sortedSetOf() }.add(child.removeSuffix("/").substringAfterLast('/') + "/")
+            }
+        }
+        val digests = listed.mapValuesTo(sortedMapOf()) { (_, inDir) -> digest(inDir.joinToString("\n")).take(16) }
+        digests[MANIFEST] = digest(manifest).take(16)
+        return digests
     }
+
+    /** The directory holding [name], `a/b/` or `/` for the jar's root. */
+    private fun parentOf(name: String) = name.substringBeforeLast('/', "").let { if (it.isEmpty()) "/" else "$it/" }
 
     fun write(entriesFile: File, dirsFile: File, record: Record) {
         writeAtomically(entriesFile, record.entries.joinToString("") { Tsv.join(it.kind, it.identity, it.key, it.digest) + "\n" })

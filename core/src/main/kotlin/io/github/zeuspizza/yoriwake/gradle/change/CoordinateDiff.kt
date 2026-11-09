@@ -54,7 +54,8 @@ internal object CoordinateDiff {
         if (dirs.any { it == "buildSrc" || it == "build-logic" }) return null
         if (includedBuilds.any { it.isNotEmpty() && (path.startsWith("$it/")) }) return null
         return when {
-            name.endsWith(".versions.toml") && dirs.lastOrNull() == "gradle" -> Shape.CATALOG
+            // The build's own catalogs, under the root's `gradle/`; one elsewhere is some other build's, or data.
+            name.endsWith(".versions.toml") && dirs == listOf("gradle") -> Shape.CATALOG
             name == "build.gradle" || name == "build.gradle.kts" -> Shape.SCRIPT
             else -> null
         }
@@ -73,7 +74,7 @@ internal object CoordinateDiff {
             when (shape) {
                 Shape.SCRIPT -> blocks(lines)
                 Shape.CATALOG -> sections(lines)
-                Shape.POM -> elements(lines)
+                Shape.POM -> pomElements(lines)
             }
         }
         val oldContext = context(oldLines)
@@ -162,11 +163,12 @@ internal object CoordinateDiff {
         return when (section) {
             "versions" -> {
                 if (!isVersion(newValue)) return null
-                val match = Regex("""^\s*$KEY\s*=\s*"[^"]*"\s*$""").matchEntire(after) ?: return null
+                // A dotted key (`lib.strictly`) is a rich version of another key; refused.
+                val match = Regex("""^\s*([A-Za-z0-9_-]+)\s*=\s*"[^"]*"\s*$""").matchEntire(after) ?: return null
                 Bump(path, Shape.CATALOG, versionKey = match.groupValues[1])
             }
             "libraries" -> {
-                val alias = Regex("""^\s*$KEY\s*=""").find(after)?.groupValues?.get(1) ?: return null
+                val alias = Regex("""^\s*([A-Za-z0-9_-]+)\s*=""").find(after)?.groupValues?.get(1) ?: return null
                 // `alias = "group:name:version"`
                 if (Regex("""^\s*$KEY\s*=\s*"[^"]*"\s*$""").matches(after)) {
                     val (_, oldCoordinate) = notationParts(quoted(before).getOrNull(0)) ?: return null
@@ -282,9 +284,7 @@ internal object CoordinateDiff {
      * dependency`; `?` marks a line whose elements cannot be told (a comment or CDATA spanning lines,
      * a tag split across lines), which refuses any hunk inside it.
      */
-    fun pomElements(lines: List<String>): List<String> = elements(lines)
-
-    private fun elements(lines: List<String>): List<String> {
+    fun pomElements(lines: List<String>): List<String> {
         val stack = ArrayDeque<String>()
         var unknown = false
         var inComment = false

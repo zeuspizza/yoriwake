@@ -44,3 +44,8 @@ internal fun classpathConfigurations(project: Project): Provider<Set<String>> = 
     project.configurations.filter { it.isCanBeResolved && isClasspathLike(it.name) }
         .flatMapTo(sortedSetOf()) { configuration -> configuration.hierarchy.map { it.name } }
 }
+
+/** Whether a changed path is the build script of a module whose directory is one of [moduleDirs]. */
+internal fun moduleScript(moduleDirs: Set<String>): (String) -> Boolean = { path ->
+    path.substringAfterLast('/') in setOf("build.gradle", "build.gradle.kts") && path.substringBeforeLast('/', "") in moduleDirs
+}

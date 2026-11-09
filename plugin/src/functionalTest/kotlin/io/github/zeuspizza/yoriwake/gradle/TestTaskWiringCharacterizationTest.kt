@@ -225,6 +225,7 @@ class TestTaskWiringCharacterizationTest {
             configured
               prop yoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
               prop yoriwake.internal.capture.root=<project>
+              prop yoriwake.jars.modules=<project>/.gradle/yoriwake/test-7f007aca/jar-modules.tsv
               prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
               jvmArgs []
             #0 Execute doFirst {} action
@@ -248,6 +249,9 @@ class TestTaskWiringCharacterizationTest {
             #11 Execute doFirst {} action
               +file .gradle/yoriwake/test-7f007aca/capture-head.pending
             #12 Execute doFirst {} action
+              +file .gradle/yoriwake/test-7f007aca/classpath-dirs.tsv.pending
+              +file .gradle/yoriwake/test-7f007aca/classpath.tsv.pending
+              +file .gradle/yoriwake/test-7f007aca/jar-modules.tsv
               +file .gradle/yoriwake/test-7f007aca/resource-digests.pending
             #13 Execute doFirst {} action
               +file .gradle/yoriwake-agent/yoriwake-agent.jar
@@ -267,6 +271,7 @@ class TestTaskWiringCharacterizationTest {
               prop yoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
               prop yoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
               prop yoriwake.internal.capture.root=<project>
+              prop yoriwake.jars.modules=<project>/.gradle/yoriwake/test-7f007aca/jar-modules.tsv
               prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
               prop yoriwake.project.dir=
               prop yoriwake.select=true
@@ -335,9 +340,11 @@ class TestTaskWiringCharacterizationTest {
             prop yoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
             prop yoriwake.internal.capture.owner=io.github.zeuspizza.yoriwake.agent.engines.PlatformEvents@<id>
             prop yoriwake.internal.capture.root=<project>
+            prop yoriwake.jars.modules=<project>/.gradle/yoriwake/test-7f007aca/jar-modules.tsv
             prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             arg -Dyoriwake.internal.capture.outputDir=<project>/.gradle/yoriwake/test-7f007aca/raw
             arg -Dyoriwake.internal.capture.root=<project>
+            arg -Dyoriwake.jars.modules=<project>/.gradle/yoriwake/test-7f007aca/jar-modules.tsv
             arg -Dyoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             arg -javaagent:<project>/.gradle/yoriwake-agent/yoriwake-agent.jar
             arg -javaagent:<project>/build/tmp/.cache/expanded/zip_<hash>/jacocoagent.jar=destfile=build/jacoco/test.exec,append=true,includes=dev.sample.*,exclclassloader=sun.reflect.DelegatingClassLoader:jdk.internal.reflect.DelegatingClassLoader,inclnolocationclasses=true,dumponexit=true,output=file,jmx=false
@@ -353,6 +360,7 @@ class TestTaskWiringCharacterizationTest {
             prop yoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
             prop yoriwake.internal.capture.outputDir=
             prop yoriwake.internal.capture.root=<project>
+            prop yoriwake.jars.modules=<project>/.gradle/yoriwake/test-7f007aca/jar-modules.tsv
             prop yoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             prop yoriwake.project.dir=
             prop yoriwake.run.token=<token>
@@ -362,6 +370,7 @@ class TestTaskWiringCharacterizationTest {
             arg -Dyoriwake.change.file=<project>/.gradle/yoriwake/test-7f007aca/change-set
             arg -Dyoriwake.internal.capture.outputDir
             arg -Dyoriwake.internal.capture.root=<project>
+            arg -Dyoriwake.jars.modules=<project>/.gradle/yoriwake/test-7f007aca/jar-modules.tsv
             arg -Dyoriwake.map.dir=<project>/.gradle/yoriwake/test-7f007aca
             arg -Dyoriwake.project.dir
             arg -Dyoriwake.run.token=<token>

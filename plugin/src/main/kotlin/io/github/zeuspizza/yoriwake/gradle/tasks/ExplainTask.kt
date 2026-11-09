@@ -35,6 +35,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.change.DependencyRule
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathConfigurations
 import io.github.zeuspizza.yoriwake.gradle.facts.moduleIdentities
+import io.github.zeuspizza.yoriwake.gradle.facts.moduleScript
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -413,6 +414,7 @@ internal abstract class ExplainTask : DefaultTask() {
                         },
                         jvmArguments = { held.jvmArguments.get() },
                         configurations = { held.configurations.get() },
+                        ownBuildFile = moduleScript(facts.moduleDirs.keys),
                     ),
                 )
             )

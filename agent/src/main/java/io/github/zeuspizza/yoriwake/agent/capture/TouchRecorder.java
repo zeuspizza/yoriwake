@@ -269,6 +269,17 @@ public final class TouchRecorder implements CaptureSession.Touches {
         return known.isEmpty() ? null : known;
     }
 
+    /**
+     * Whether looking up or reading {@code name} is the JDK's class loader opening a jar of the class
+     * path (its manifest, for {@code Class-Path} and {@code Multi-Release}) or defining a package from
+     * it: the class-path search does that for every jar it walks, whatever the class it looks for. What
+     * the loader takes from a manifest is compared by the daemon; a manifest read by anything else is a
+     * reach.
+     */
+    private static boolean loaderOpening(String name) {
+        return MANIFEST.equals(name) && loaderReadingManifest();
+    }
+
     /** Records that this JVM reached the module jar at {@code module}, once. */
     private void reached(String module) {
         if (reachedJars.add(module)) {
@@ -292,7 +303,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             boolean found = triple[2] != null;
             String module = modulePath(((ZipFile) triple[0]).getName());
             if (found) {
-                if (module != null) {
+                if (module != null && !loaderOpening(name)) {
                     reached(module);
                 }
                 if (name.endsWith(".class")) {
@@ -733,7 +744,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 ZipFile zip = (ZipFile) pair[0];
                 ZipEntry entry = (ZipEntry) pair[1];
                 String module = modulePath(zip.getName());
-                if (module != null) {
+                if (module != null && !loaderOpening(entry.getName())) {
                     reached(module);
                 }
                 if (isClassOrSource(entry.getName())) {

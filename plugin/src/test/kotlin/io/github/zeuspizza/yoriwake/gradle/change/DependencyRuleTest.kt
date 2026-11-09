@@ -103,6 +103,7 @@ class DependencyRuleTest {
                 current = { current },
                 jvmArguments = { jvmArguments },
                 configurations = { configurations },
+                ownBuildFile = { it == "app/build.gradle.kts" },
             ),
         )
     )
@@ -257,6 +258,54 @@ class DependencyRuleTest {
     }
 
     @Test
+    fun `a build script no module of this build owns, such as a test's fixture, is none of this rule's`() {
+        write("app/src/test/resources/fixture/build.gradle.kts", script)
+        git("add", "-A")
+        git("commit", "-q", "-m", "fixture")
+        write("app/src/test/resources/fixture/build.gradle.kts", script.replace("lib-math:1.0", "lib-math:1.1"))
+
+        assertEquals(Verdict.NotApplicable, decide(listOf("app/src/test/resources/fixture/build.gradle.kts"), null))
+    }
+
+    @Test
+    fun `a library entry naming the key in another form stays unaccepted`() {
+        write("gradle/libs.versions.toml", catalog + "\n\n[libraries.lib-table]\nmodule = \"dev.lib:lib-table\"\nversion.ref = 'lib-json'\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "table")
+        write("gradle/libs.versions.toml", File(root, "gradle/libs.versions.toml").readText().replace("lib-json = \"1.0\"", "lib-json = \"1.1\""))
+
+        assertIs<Verdict.Unaccepted>(decide(listOf("gradle/libs.versions.toml"), null))
+    }
+
+    @Test
+    fun `a bumped jar named in the JVM's arguments by its file name alone forces`() {
+        recordInMap(record(own, jsonOld, math))
+        bumpJson()
+
+        val verdict = assertIs<Verdict.Forced>(
+            decide(listOf("gradle/libs.versions.toml"), record(own, jsonNew, math), jvmArguments = listOf("-javaagent:lib/${jsonOld.name}"))
+        )
+        assertEquals(RefusalKind.DEPENDENCY_IN_JVM_ARGUMENTS, verdict.kind)
+    }
+
+    @Test
+    fun `a bumped jar whose manifest class path changed forces`() {
+        val withClassPath = File(root, "repo/lib-json-1.4.jar").also { target ->
+            java.util.jar.JarOutputStream(target.outputStream(), java.util.jar.Manifest().apply {
+                mainAttributes[java.util.jar.Attributes.Name.MANIFEST_VERSION] = "1.0"
+                mainAttributes[java.util.jar.Attributes.Name.CLASS_PATH] = "extra.jar"
+            }).use { it.putNextEntry(ZipEntry("lib/json/Json.class")); it.closeEntry() }
+        }
+        recordInMap(record(own, jsonOld, math))
+        bumpJson()
+
+        val verdict = assertIs<Verdict.Forced>(
+            decide(listOf("gradle/libs.versions.toml"), record(own, withClassPath, math, identities = identities + (withClassPath to "dev.lib:lib-json")))
+        )
+        assertEquals(RefusalKind.DEPENDENCY_ADDED, verdict.kind)
+    }
+
+    @Test
     fun `a build file that is no bump stays unaccepted`() {
         write("app/build.gradle.kts", script.replace("implementation(libs.lib.json)", "api(libs.lib.json)"))
 
@@ -292,6 +341,7 @@ class DependencyRuleTest {
                 current = { current },
                 jvmArguments = { emptyList() },
                 configurations = { null },
+                ownBuildFile = { it == "pom.xml" },
                 maven = DependencyRule.Maven(poms = { listOf("pom.xml") }, outsideParent = { outsideParent }),
             ),
         )
@@ -337,5 +387,14 @@ class DependencyRuleTest {
         bumpProperty(bom)
 
         assertContains(assertIs<Verdict.Unaccepted>(decidePom(null)).why, "BOM")
+    }
+
+    @Test
+    fun `a subdirectory a new version adds changes its parent's digest, which a scan of the parent looks up`() {
+        val before = ClasspathRecord.directories(jar("d/one.jar", "com/x/A.class"))
+        val after = ClasspathRecord.directories(jar("d/two.jar", "com/x/A.class", "com/x/sub/B.class"))
+
+        assertEquals(before["com/"], after["com/"])
+        kotlin.test.assertNotEquals(before["com/x/"], after["com/x/"])
     }
 }

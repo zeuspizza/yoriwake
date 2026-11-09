@@ -18,6 +18,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Added
 
 - `narrowDependencies` lets a commit that only bumps library versions run the tests that reached the moved jars. Map: left alone.
+- A trusted-map list written before this version names no map now; the default branch's next run writes one. Map: left alone.
 
 ## [0.5.0] - 2026-11-07
 

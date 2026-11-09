@@ -136,7 +136,7 @@ class DependencyBumpFunctionalTest : FunctionalTestSupport() {
         val withoutFlag = select(dir)
 
         assertEquals(all, ranTests(dir), withoutFlag)
-        assertContains(withoutFlag, "libs.versions.toml")
+        assertContains(withoutFlag, "1 paths coverage cannot see")
     }
 
     @Test

@@ -248,13 +248,9 @@ internal class Recording(
             current = { ClasspathRecord.of(classpath, identities, session.allProjects.map { it.build.directory }, root, dependencyHomes(session)) },
             jvmArguments = { forkSystemProperties(project, execution, configuration).map { valueOf(project, it) } + hostArguments },
             configurations = { null },
+            ownBuildFile = { path -> path in poms() },
             maven = DependencyRule.Maven(
-                // Every model file read this session that lies in the checkout: each module's, and its parents'.
-                poms = {
-                    session.allProjects.flatMap { module -> generateSequence(module) { it.parent }.mapNotNull { it.file } }
-                        .mapNotNull { pom -> pom.absoluteFile.relativeToOrNull(root.absoluteFile)?.invariantSeparatorsPath }
-                        .filterNot { it.startsWith("..") }.distinct()
-                },
+                poms = { poms() },
                 outsideParent = {
                     session.allProjects.any { module ->
                         val parent = module.parent ?: return@any false
@@ -291,6 +287,12 @@ internal class Recording(
         val scope = EffectiveScope.fromAgentArguments(hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()))
         running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize())
     }
+
+    /** Every model file read this session that lies in the checkout: each module's POM, and its parents'. */
+    private fun poms(): List<String> =
+        session.allProjects.flatMap { module -> generateSequence(module) { it.parent }.mapNotNull { it.file } }
+            .mapNotNull { pom -> pom.absoluteFile.relativeToOrNull(root.absoluteFile)?.invariantSeparatorsPath }
+            .filterNot { it.startsWith("..") }.distinct()
 
     /**
      * Each library module file of [project]'s resolved test classpath, with its identity, as the Gradle

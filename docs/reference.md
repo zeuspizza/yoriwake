@@ -1399,9 +1399,13 @@ A changed build file is accepted when every line it changes is one of these, ide
 it replaces but for one version literal:
 
 - a value in a version catalog's `[versions]` (`lib-json = "1.1"`), or a `[libraries]` entry's own
-  `version`, or its `"group:name:version"` notation; any catalog under `gradle/`;
+  `version`, or its `"group:name:version"` notation; any catalog in the root's `gradle/`;
 - a `"group:name:version"` notation, alone on its line, inside a `dependencies { }` block of a
-  module's `build.gradle(.kts)`.
+  module's own `build.gradle(.kts)`;
+- on Maven (`-Dyoriwake.narrowDependencies` or `<narrowDependencies>`), the `<version>` of a
+  dependency in a reactor POM's `<dependencies>` or `<dependencyManagement>`, or a `<properties>`
+  value that only such versions read, when no parent POM lies outside the checkout and no POM
+  imports a BOM.
 
 The resolved test runtime classpath, compared with the one the map recorded, then says which
 libraries moved, transitive ones and BOM-managed ones included. Each moved or removed library runs
@@ -1419,8 +1423,9 @@ Everything else still runs every test, saying why:
 - A catalog version key a `[plugins]` entry also uses, a library alias named in build logic, a
   settings file or a `buildscript` block, or a version key a build script reads as a value
   (`libs.versions.<key>`, `findVersion("<key>")`). Same token, naming the file.
-- A library new to the classpath (`dependency-added`): nothing recorded bounds what a new service
-  provider or auto-configuration does.
+- A library new to the classpath, or a bumped one whose manifest changes its `Class-Path` or
+  `Multi-Release` (`dependency-added`): nothing recorded bounds what a new service provider or
+  auto-configuration does.
 - A changed classpath order (`classpath-reordered`), or a bumped library that now holds a class a
   later classpath entry also holds (`dependency-shadows`).
 - A bumped coordinate on no runtime classpath of the task, or a notation in a configuration its

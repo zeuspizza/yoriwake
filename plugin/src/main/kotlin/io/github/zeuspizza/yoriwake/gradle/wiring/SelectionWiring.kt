@@ -71,6 +71,7 @@ import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathConfigurations
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.moduleIdentities
+import io.github.zeuspizza.yoriwake.gradle.facts.moduleScript
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
 import java.io.File
@@ -227,6 +228,7 @@ internal fun TestTaskWiring.configureSelection(
             current = { ClasspathRecord.of(classpath.files, identities.get(), buildDirs, rootDir, homes) },
             jvmArguments = { test.allJvmArgs + test.systemProperties.values.map { it.toString() } },
             configurations = { configurations.get() },
+            ownBuildFile = moduleScript(classpathFacts.moduleDirs.keys),
         )
     }
     test.doFirst {

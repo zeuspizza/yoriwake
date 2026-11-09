@@ -88,6 +88,16 @@ class ChangedJarSelectionTest {
     }
 
     @Test
+    fun `with a changed directory, a JVM whose misses were not recorded, or a map without the miss table, runs whole`(@TempDir dir: File) {
+        val unrecorded = decide(map(File(dir, "a").apply { mkdirs() }, listOf(recorded("j"), recorded("k")), listOf(recorded("j"))), listOf("dev.lib:x"), listOf("lib/math/"))
+        assertTrue(unrecorded.includes(id("OtherJvmTest")))
+        assertFalse(unrecorded.includes(id("EarlyTest")))
+
+        val absent = decide(map(File(dir, "b").apply { mkdirs() }, listOf(recorded("j"), recorded("k")), null), listOf("dev.lib:x"), listOf("lib/math/"))
+        assertTrue(listOf("EarlyTest", "JsonTest", "LateTest", "OtherJvmTest").all { absent.includes(id(it)) })
+    }
+
+    @Test
     fun `a module no test reached selects nothing`(@TempDir dir: File) {
         val decision = decide(map(dir, listOf(recorded("j"), recorded("k"), "j\t4\tdev.lib:lib-json")), listOf("dev.lib:unused"))
 

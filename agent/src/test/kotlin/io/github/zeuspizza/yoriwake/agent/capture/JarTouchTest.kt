@@ -156,6 +156,16 @@ class JarTouchTest {
     }
 
     @Test
+    fun `a manifest a test reads from a module jar reaches it, as the class loader opening the jar does not`(@TempDir dir: File) {
+        val c = jar(dir, "c.jar", "META-INF/MANIFEST.MF")
+        val recorder = recorder(c)
+
+        ZipFile(c).use { zip -> recorder.entry(arrayOf<Any?>(zip, "META-INF/MANIFEST.MF", zip.getEntry("META-INF/MANIFEST.MF"))) }
+
+        assertEquals(listOf(AgentContract.TOUCH_JAR_REACHED to c.absolutePath), drained(recorder))
+    }
+
+    @Test
     fun `a recorder told of no modules records no jar`(@TempDir dir: File) {
         val c = jar(dir, "c.jar", "lib/L.class")
         val recorder = TouchRecorder()

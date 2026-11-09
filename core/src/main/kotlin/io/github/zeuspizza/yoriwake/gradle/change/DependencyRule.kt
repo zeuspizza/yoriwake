@@ -34,6 +34,12 @@ internal object DependencyRule {
          * null when they cannot be told, which forces a bump in a build script.
          */
         val configurations: () -> Set<String>?,
+        /**
+         * Whether a changed module script or POM is one this build reads: a module's own build script
+         * or a reactor POM. One that only looks like it (a test's fixture, another build's) is data a
+         * test may read, and stays a path coverage cannot see.
+         */
+        val ownBuildFile: (String) -> Boolean,
         /** On Maven, the reactor's POMs, which are the only build files a bump may change; see [Maven]. */
         val maven: Maven? = null,
     )
@@ -82,7 +88,13 @@ internal object DependencyRule {
     fun decide(inputs: Inputs): Verdict {
         val maven = inputs.context.maven != null
         val includedBuilds = if (maven) emptyList() else includedBuilds(inputs.git)
-        val candidates = inputs.paths.filter { CoordinateDiff.shapeOf(it, includedBuilds, maven) != null }
+        val candidates = inputs.paths.filter { path ->
+            when (CoordinateDiff.shapeOf(path, includedBuilds, maven)) {
+                null -> false
+                CoordinateDiff.Shape.CATALOG -> true
+                else -> runCatching { inputs.context.ownBuildFile(path) }.getOrDefault(false)
+            }
+        }
         if (candidates.isEmpty()) return Verdict.NotApplicable
         val bumps = mutableListOf<CoordinateDiff.Bump>()
         val catalogs = mutableMapOf<String, String>()
@@ -144,10 +156,12 @@ internal object DependencyRule {
         val keys = bumps.mapNotNull { it.versionKey }.distinct()
         val aliases = (bumps.mapNotNull { it.alias } + keys.flatMap { key -> catalogs.values.flatMap { librariesUsing(it, key).keys } }).distinct()
         if (keys.isEmpty() && aliases.isEmpty()) return null
-        fun forced(why: String) = Verdict.Unaccepted(bumps.first { it.shape == CoordinateDiff.Shape.CATALOG }.path, why)
+        fun unaccepted(why: String) = Verdict.Unaccepted(bumps.first { it.shape == CoordinateDiff.Shape.CATALOG }.path, why)
         for ((path, text) in catalogs) {
             for (key in keys) {
-                if (pluginsUsing(text, key)) return forced("the version key `$key` is also a plugin's version in $path")
+                if (pluginsUsing(text, key)) {
+                    return unaccepted("the version key `$key` is also used outside a plain `[libraries]` entry in $path, as a plugin's version is")
+                }
             }
         }
         val sources = inputs.git.run(
@@ -163,7 +177,7 @@ internal object DependencyRule {
                 if (Regex("""versions\.$dotted(?![A-Za-z0-9_])""").containsMatchIn(text) ||
                     Regex("""findVersion\(\s*["']${Regex.escape(key)}["']""").containsMatchIn(text)
                 ) {
-                    return forced("$path reads the version `$key` as a value, which reaches a test through no classpath")
+                    return unaccepted("$path reads the version `$key` as a value, which reaches a test through no classpath")
                 }
             }
             val buildLogic = path.substringAfterLast('/').startsWith("settings.gradle") ||
@@ -172,7 +186,7 @@ internal object DependencyRule {
             for (alias in aliases) {
                 val accessor = Regex("""\.${Regex.escape(alias.replace('-', '.').replace('_', '.'))}(?![A-Za-z0-9_])""")
                 val named = if (buildLogic) accessor.containsMatchIn(text) else inBuildscript(text, accessor)
-                if (named) return forced("$path names the library `$alias` where the build itself is configured")
+                if (named) return unaccepted("$path names the library `$alias` where the build itself is configured")
             }
         }
         return null
@@ -256,7 +270,23 @@ internal object DependencyRule {
         Regex("""version\.ref\s*=\s*"${Regex.escape(key)}"""").containsMatchIn(line) ||
             Regex("""version\s*=\s*\{\s*ref\s*=\s*"${Regex.escape(key)}"""").containsMatchIn(line)
 
-    private fun pluginsUsing(catalog: String, key: String) = section(catalog, "plugins").any { refersTo(it, key) }
+    /**
+     * Whether [key] is named anywhere in [catalog] but a `[versions]` line and a `[libraries]` entry
+     * of the one inline form [librariesUsing] reads: by a plugin, a table-form entry
+     * (`[libraries.x]`), a single-quoted reference. Any of them reads the version where no classpath
+     * shows it, or where this rule cannot tell which library it is.
+     */
+    private fun pluginsUsing(catalog: String, key: String): Boolean {
+        val quoted = Regex("""["']${Regex.escape(key)}["']""")
+        var section = ""
+        for (line in catalog.lines()) {
+            Regex("""^\s*\[\s*([^\]]+?)\s*]""").find(line)?.let { section = it.groupValues[1]; return@let }
+            if (section == "versions" || !quoted.containsMatchIn(line)) continue
+            if (section == "libraries" && refersTo(line, key)) continue
+            return true
+        }
+        return false
+    }
 
     /** Alias to `group:name` of each `[libraries]` entry whose version is [key]. */
     private fun librariesUsing(catalog: String, key: String): Map<String, String?> =
@@ -334,7 +364,12 @@ internal object DependencyRule {
             return Verdict.Forced(RefusalKind.CLASSPATH_REORDERED, "the bump in ${candidates.joinToString()} changed this task's classpath order")
         }
         val gone = before.keys - now.keys
-        val moved = now.values.filter { entry -> before[entry.identity].let { it != null && (it.key != entry.key || it.digest != entry.digest) } }
+        // A digest that could not be read at either end never vouches for an unchanged jar.
+        val moved = now.values.filter { entry ->
+            before[entry.identity].let {
+                it != null && (it.key != entry.key || it.digest != entry.digest || entry.digest == ClasspathFiles.UNREADABLE)
+            }
+        }
         val arguments = runCatching { inputs.context.jvmArguments() }.getOrNull()
             ?: return Verdict.Forced(RefusalKind.DEPENDENCY_IN_JVM_ARGUMENTS, "the test JVM's arguments could not be read, so a bumped `-javaagent` cannot be ruled out")
         for (entry in moved) {
@@ -353,7 +388,17 @@ internal object DependencyRule {
         for (entry in moved) {
             val old = recorded.dirs[entry.identity].orEmpty()
             val new = current.dirs[entry.identity].orEmpty()
-            val changed = (old.keys + new.keys).filter { old[it] == null || old[it] != new[it] }
+            if (old[ClasspathRecord.MANIFEST] == null || old[ClasspathRecord.MANIFEST] != new[ClasspathRecord.MANIFEST]) {
+                return Verdict.Forced(
+                    RefusalKind.DEPENDENCY_ADDED,
+                    "the bumped ${entry.identity} changed what its manifest gives the class loader (`Class-Path`, " +
+                        "`Multi-Release`), or the map does not record it, so other files may be on the class path",
+                )
+            }
+            val changed = (old.keys + new.keys).filter { dir ->
+                dir != ClasspathRecord.MANIFEST &&
+                    (old[dir] == null || old[dir] != new[dir] || old[dir] == ClasspathFiles.UNREADABLE)
+            }
             directories += changed
             shadowed(entry, changed, current)?.let { return it }
         }
