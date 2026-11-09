@@ -128,6 +128,7 @@ class ReferenceTest {
         "\"user.home\"" to "replaced by a placeholder before a fingerprint value is digested",
         "\"os.name\"" to "part of the environment fingerprint",
         "\"os.arch\"" to "part of the environment fingerprint",
+        "\"org.gradle.project.\$MODE\"" to "Gradle's own spelling of -Pyoriwake.mode, read only to key the configuration cache",
     )
 
     @Test

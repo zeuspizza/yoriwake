@@ -197,4 +197,43 @@ class OptimisticModeFunctionalTest {
         assertContains(output, "B2ContextLaterTest")
         assertContains(output, "(shares-jvm-changed-class)")
     }
+
+    @Test
+    fun `on Maven 4 a mode in maven-user properties fails the build naming the file`(@TempDir dir: File) {
+        val maven4 = FunctionalMaven.MATRIX.last()
+        val project = captured(dir)
+        File(project, ".mvn").mkdirs()
+        File(project, ".mvn/maven-user.properties").writeText("yoriwake.mode=optimistic\n")
+
+        val result = FunctionalMaven.run(maven4, project, *select)
+
+        assertTrue(result.exitCode != 0, result.output)
+        assertContains(result.output, "yoriwake.mode is set in")
+        assertContains(result.output, "maven-user.properties")
+    }
+
+    @Test
+    fun `with the Apache build cache on, an optimistic execution declines as every other does`(@TempDir dir: File) {
+        val project = captured(dir)
+        File(project, ".mvn").mkdirs()
+        File(project, ".mvn/extensions.xml").writeText(
+            """
+            <extensions>
+              <extension>
+                <groupId>org.apache.maven.extensions</groupId>
+                <artifactId>maven-build-cache-extension</artifactId>
+                <version>1.3.0</version>
+              </extension>
+            </extensions>
+            """.trimIndent() + "\n"
+        )
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "the build cache")
+
+        repeat(2) {
+            val output = FunctionalMaven.run(maven, project, *select, "-Dyoriwake.mode=optimistic").succeeded().output
+            assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, maven-build-cache: ")
+            assertTrue(warnings(output).isEmpty(), output)
+        }
+    }
 }

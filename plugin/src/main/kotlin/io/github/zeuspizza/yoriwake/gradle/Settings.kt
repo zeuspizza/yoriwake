@@ -40,11 +40,15 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
     /** Asks a selecting run to run every test instead, as a recording run. */
     val fullRun: Boolean = parseFlag(FULL_RUN, lookup(FULL_RUN))
     val base: String? = lookup(BASE)
+    private val modeValue: String? = lookup(MODE)
+    private val modePassed: String? = commandLine(MODE)
+
     /**
      * `safe` (the default) or `optimistic`, which drops the shared-JVM windows the change opens. Read
      * only from the command line: set in a file a release gate also reads, it would loosen that run.
+     * Parsed when asked, so a disabled build never fails over it.
      */
-    val mode: Strictness = parseMode(lookup(MODE), commandLine(MODE))
+    val mode: Strictness get() = parseMode(modeValue, modePassed)
     val disabled: Boolean = parseFlag(DISABLED, lookup(DISABLED))
     val isolatedCapture: Boolean = parseFlag(ISOLATED_CAPTURE, lookup(ISOLATED_CAPTURE))
     /** Null when not passed, so the build's `recordSequentially` answers. */
@@ -93,10 +97,11 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
          */
         fun of(project: Project): Settings {
             val passed = project.gradle.startParameter.projectProperties
-            // Read through a provider too, so the configuration cache keys on it: the start parameter
+            // Read through providers too, so the configuration cache keys on them: the start parameter
             // is no input, and a cached entry made with the flag on the command line would otherwise
-            // serve a run that sets the same value only in the environment.
+            // serve a run that sets the same value only in the environment or a daemon property.
             project.providers.environmentVariable("ORG_GRADLE_PROJECT_$MODE").orNull
+            project.providers.systemProperty("org.gradle.project.$MODE").orNull
             return Settings({ project.providers.gradleProperty(it).orNull }) { passed[it] }
         }
 

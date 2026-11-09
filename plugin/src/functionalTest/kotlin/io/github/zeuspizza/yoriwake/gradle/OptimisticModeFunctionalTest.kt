@@ -327,4 +327,41 @@ class OptimisticModeFunctionalTest : FunctionalTestSupport() {
         assertEquals(names("B2ContextLaterTest"), ranTests(dir))
         assertContains(output, "optimistic mode was ignored: selection was declined (tests-named)")
     }
+
+    @Test
+    fun `a mode a later run sets only as a daemon property is refused though the command line set it before`(@TempDir dir: File) {
+        capturedWithConfigChanged(dir)
+        runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "-Pyoriwake.mode=optimistic").build()
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "-Dorg.gradle.project.yoriwake.mode=optimistic")
+            .buildAndFail().output
+
+        assertContains(output, "yoriwake.mode=optimistic is set outside the command line")
+    }
+
+    @Test
+    fun `a mode a later run sets only in the environment is refused though the command line set it before`(@TempDir dir: File) {
+        capturedWithConfigChanged(dir)
+        runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", "-Pyoriwake.mode=optimistic").build()
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD")
+            .withEnvironment(System.getenv() + ("ORG_GRADLE_PROJECT_yoriwake.mode" to "optimistic"))
+            .buildAndFail().output
+
+        assertContains(output, "yoriwake.mode=optimistic is set outside the command line")
+    }
+
+    @Test
+    fun `a disabled build ignores a mode set in gradle properties`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to orderedBuild, "gradle.properties" to "yoriwake.mode=optimistic\n", *contextSources)
+        committed(dir)
+
+        runner(dir, "test", "-Pyoriwake.disabled").build()
+        assertEquals(names("B0UnrelatedTest", "B1ContextFirstTest", "B2ContextLaterTest"), ranTests(dir))
+
+        File(dir, "build.gradle.kts").appendText("\nyoriwake { enabled = false }\n")
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test").build()
+        assertEquals(names("B0UnrelatedTest", "B1ContextFirstTest", "B2ContextLaterTest"), ranTests(dir))
+    }
 }

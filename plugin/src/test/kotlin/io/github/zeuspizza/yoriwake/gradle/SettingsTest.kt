@@ -105,14 +105,14 @@ class SettingsTest {
 
     @Test
     fun `an unknown mode fails the build naming the flag`() {
-        val failure = assertFailsWith<InvalidUserDataException> { settings(Settings.MODE to "fast") }
+        val failure = assertFailsWith<InvalidUserDataException> { settings(Settings.MODE to "fast").mode }
         assertContains(failure.message.orEmpty(), "-Pyoriwake.mode=fast")
     }
 
     @Test
     fun `a mode set outside the command line fails the build naming the flag`() {
         val failure = assertFailsWith<InvalidUserDataException> {
-            Settings(mapOf(Settings.MODE to "optimistic")::get) { null }
+            Settings(mapOf(Settings.MODE to "optimistic")::get) { null }.mode
         }
         assertContains(failure.message.orEmpty(), "yoriwake.mode=optimistic is set outside the command line")
     }
