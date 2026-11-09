@@ -1755,4 +1755,17 @@ class SelectorTest {
         assertTrue(Selector.leftNoTrace(m, "dev.jvm.Platform_jvm", listOf("dev.jvm.Platform_jvm")).not(),
             "a read of the file is a trace")
     }
+
+    @Test
+    fun `a read of a dotted Kotlin file whose name already holds an underscore is a trace of it`(@TempDir dir: File) {
+        // Foo_bar.jvm.kt compiles to Foo_bar_jvmKt; its read records dev.jvm.Foo_bar.jvm.
+        val m = map(
+            dir, test("dev.jvm.A0Test", "dev.jvm.Other"),
+            positions = listOf("j\t2\t${placed("dev.jvm.A0Test")}"),
+            firstTouches = listOf("j\t1\tdev.jvm.Foo_bar.jvm"),
+        )
+
+        assertFalse(Selector.leftNoTrace(m, "dev.jvm.Foo_bar_jvm", listOf("dev.jvm.Foo_bar_jvm")))
+        assertTrue(Selector.leftNoTrace(m, "dev.jvm.Foo_baz_jvm", listOf("dev.jvm.Foo_baz_jvm")))
+    }
 }

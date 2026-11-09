@@ -888,8 +888,11 @@ public final class Selector {
             return true;
         }
         int fileStart = prefix.lastIndexOf('.') + 1;
+        // The file name's dots read as `_`, so a `Foo_bar.jvm.kt` read matches `Foo_bar_jvm` too.
         return prefix.indexOf('_', fileStart) >= 0
-                && className.equals(prefix.substring(0, fileStart) + prefix.substring(fileStart).replace('_', '.'));
+                && className.length() > fileStart
+                && className.regionMatches(0, prefix, 0, fileStart)
+                && className.substring(fileStart).replace('.', '_').equals(prefix.substring(fileStart));
     }
 
     /**
