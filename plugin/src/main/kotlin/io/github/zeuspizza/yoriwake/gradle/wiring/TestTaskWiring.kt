@@ -9,6 +9,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NARROW_PLAIN_JU
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LOADED_DIR_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MAP_DIR_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MODE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OBSERVE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_OVERRIDE_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLELISM_PROPERTY
@@ -17,6 +18,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
@@ -108,6 +110,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
             return
         }
+        // Once enabled, on every project the plugin wires, whether or not a task of it is ever
+        // configured: a mode set where a release gate would inherit it fails the build.
+        settings.mode
         // Read with `enabled`, for the same reason.
         val alwaysRun = extension.alwaysRun.getOrElse(emptyList())
         val narrowPlainRunners = settings.narrowPlainRunners ?: extension.narrowPlainRunners.getOrElse(false)
@@ -295,6 +300,15 @@ internal class TestTaskWiring(internal val settings: Settings) {
             scheduled = { if (schedule.set) scheduleDue(project, mapDir, schedule) else null },
         )
         val selecting = runPlan.selecting
+        if (settings.mode == Strictness.OPTIMISTIC) {
+            if (selecting) {
+                // The test JVM's own copy: absent, it applies the safe rule.
+                test.systemProperty(MODE_PROPERTY, Strictness.OPTIMISTIC.token())
+            } else {
+                val line = modeIgnored(runPlan)
+                test.doFirst { test.logger.lifecycle("[yoriwake] ${test.path}: $line") }
+            }
+        }
         if (runPlan.observing) {
             // Beside the selecting properties configureSelection sets, or a decline's refusal.
             test.systemProperty(OBSERVE_PROPERTY, "true")
@@ -380,6 +394,15 @@ internal class TestTaskWiring(internal val settings: Settings) {
         if (runPlan.asked != RunPlan.Kind.RECORD) declineNamedTests(test, mapDir, fromBuildScript, runPlan.observing)
         reportResolvedConfiguration(project, test, mapDir, scopeOutcome, fromBuildScript)
         if (selecting) startSelectionRecord(project, test, mapDir, agent)
+        // Next to last, so its action runs before every other one: the mode the test JVM and every
+        // capture decision read is the one this run decided, whatever a build script set there.
+        val decidedMode = Strictness.OPTIMISTIC.token().takeIf { selecting && settings.mode == Strictness.OPTIMISTIC }
+        test.doFirst {
+            if (test.systemProperties[MODE_PROPERTY]?.toString() != decidedMode) {
+                // Absent is the safe rule, so a safe run's JVM gets none.
+                test.setSystemProperties(test.systemProperties - MODE_PROPERTY + listOfNotNull(decidedMode?.let { MODE_PROPERTY to it }))
+            }
+        }
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir, agent)
         // Decided at execution time, since Gradle applies --tests after afterEvaluate. `wholeTask`
@@ -409,6 +432,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 isolated = settings.isolatedCapture && !selecting,
                 afterTest = afterTest,
                 scheduleSet = schedule.set,
+                optimistic = selecting && settings.mode == Strictness.OPTIMISTIC,
+                fullRunPolicy = fullRunBranches.isNotEmpty() || schedule.set,
             ),
             fromBuildScript,
         )
@@ -699,6 +724,18 @@ internal class TestTaskWiring(internal val settings: Settings) {
      * At execution time because the in-JVM parallelism refusal, which switches capture off, is only
      * decided then; registered before [refuseInJvmParallelism] so it runs after it.
      */
+    /** Why `-Pyoriwake.mode=optimistic` changes nothing on a run of [runPlan]'s kind. */
+    private fun modeIgnored(runPlan: RunPlan): String {
+        val flag = "-P${Settings.MODE}=${Strictness.OPTIMISTIC.token()}"
+        return when {
+            runPlan.declines.isNotEmpty() && !runPlan.observing ->
+                "$flag is ignored: selection was declined, so this run records as a run without -P${Settings.SELECT} does."
+            runPlan.observing -> "$flag has no effect on an observing run, which runs every test."
+            runPlan.complementing -> "$flag has no effect on a complement run."
+            else -> "$flag has no effect without -P${Settings.SELECT}: this run runs every test and records."
+        }
+    }
+
     private fun isolateWhileCapturing(test: Test, runPlan: RunPlan) {
         if (!settings.isolatedCapture || runPlan.selecting) {
             return

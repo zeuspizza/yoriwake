@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNMAPPABLE_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.select.PathGlob
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
@@ -574,13 +575,16 @@ private fun TestTaskWiring.refuseAnUnverifiedMap(
         // A declined run leaves the map exactly as it was: no check, no clear.
         if (refusedAtExecution(test)) return@doFirst
         val (kind, reason) = MapProvenance.verify(mapDir, listed).refusal ?: return@doFirst
+        // Optimistic mode never writes the map, so it leaves the untrusted one to a safe run to replace.
+        val optimistic = test.systemProperties[AgentContract.MODE_PROPERTY]?.toString() == Strictness.OPTIMISTIC.token()
         test.logger.lifecycle(
-            "[yoriwake] ${test.path}: $reason, so the whole suite runs and records a new " +
-                "map. A map narrows here only when -P${Settings.TRUSTED_MAPS} names its digest, as a " +
+            "[yoriwake] ${test.path}: $reason, so the whole suite runs and " +
+                (if (optimistic) "the map is left for a run without -P${Settings.MODE}=optimistic to record. " else "records a new map. ") +
+                "A map narrows here only when -P${Settings.TRUSTED_MAPS} names its digest, as a " +
                 "run on the default branch recorded it."
         )
         refuse(test, kind, reason)
-        MapProvenance.clear(mapDir)
+        if (!optimistic) MapProvenance.clear(mapDir)
         runCatching { changeSetFile.delete() }
         applyCaptureDecision(
             test, mapDir, jacoco, observing,
@@ -821,6 +825,10 @@ private class GradleSelectingHost(
     override fun flag(name: String) = "-P$name"
 
     override val explain: String get() = ForcingPaths.explainTask(test.path)
+
+    // The property the wiring set for the test JVM, so the two cannot disagree.
+    override val optimistic: Boolean
+        get() = test.systemProperties[AgentContract.MODE_PROPERTY]?.toString() == Strictness.OPTIMISTIC.token()
 }
 
 /** [WorkingTree.drift] through a value source; one that could not be obtained is unlisted. */

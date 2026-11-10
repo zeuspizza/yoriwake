@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import org.gradle.api.InvalidUserDataException
 import org.junit.jupiter.api.Test
 import kotlin.test.assertContains
@@ -93,5 +94,26 @@ class SettingsTest {
     @Test
     fun `alwaysRun is split on commas and blanks are dropped`() {
         assertEquals(listOf("a.B", "c.*"), settings(Settings.ALWAYS_RUN to " a.B, ,c.* ").alwaysRun)
+    }
+
+    @Test
+    fun `the mode is safe unless the command line asks for optimistic, in any letter case`() {
+        assertEquals(Strictness.SAFE, settings().mode)
+        assertEquals(Strictness.SAFE, settings(Settings.MODE to "safe").mode)
+        assertEquals(Strictness.OPTIMISTIC, settings(Settings.MODE to "OPTIMISTIC").mode)
+    }
+
+    @Test
+    fun `an unknown mode fails the build naming the flag`() {
+        val failure = assertFailsWith<InvalidUserDataException> { settings(Settings.MODE to "fast").mode }
+        assertContains(failure.message.orEmpty(), "-Pyoriwake.mode=fast")
+    }
+
+    @Test
+    fun `a mode set outside the command line fails the build naming the flag`() {
+        val failure = assertFailsWith<InvalidUserDataException> {
+            Settings(mapOf(Settings.MODE to "optimistic")::get) { null }.mode
+        }
+        assertContains(failure.message.orEmpty(), "yoriwake.mode=optimistic is set outside the command line")
     }
 }

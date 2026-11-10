@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
@@ -10,6 +11,7 @@ import org.apache.maven.MavenExecutionException
 import org.apache.maven.execution.MavenSession
 import org.apache.maven.project.MavenProject
 import org.codehaus.plexus.util.xml.Xpp3Dom
+import java.io.File
 
 /**
  * What the build asks of yoriwake: the plugin's `<configuration>` in the POM, overridden by a user
@@ -134,6 +136,58 @@ internal class Settings(
                 throw MavenExecutionException("[yoriwake] $source: $message", null as Throwable?)
             }
             return kept
+        }
+
+        /**
+         * `-Dyoriwake.mode`: `safe` (the default) or `optimistic`, in any letter case, read only as a
+         * user property typed on the invocation. Found in a place every invocation reads (`.mvn/maven.config`,
+         * `MAVEN_ARGS`, a `maven-user.properties`, a module's `<properties>` or the plugin's
+         * `<configuration>`), it fails the build naming that place: a release gate would inherit it.
+         */
+        fun modeOf(session: MavenSession): Strictness {
+            val name = SettingNames.MODE
+            persistentMode(session)?.let { place ->
+                throw MavenExecutionException(
+                    "[yoriwake] $name is set in $place. Optimistic mode runs fewer tests than the safe rule, so only " +
+                        "the invocation that accepts that may ask for it: pass -D$name=optimistic on the command line, " +
+                        "and remove it from $place.",
+                    null as Throwable?,
+                )
+            }
+            val value = session.userProperties.getProperty(name) ?: return Strictness.SAFE
+            return when {
+                value.equals(Strictness.SAFE.token(), ignoreCase = true) -> Strictness.SAFE
+                value.equals(Strictness.OPTIMISTIC.token(), ignoreCase = true) -> Strictness.OPTIMISTIC
+                else -> throw MavenExecutionException(
+                    "[yoriwake] -D$name=$value is not a mode. Pass -D$name=safe or -D$name=optimistic.",
+                    null as Throwable?,
+                )
+            }
+        }
+
+        /** Where outside the command line `yoriwake.mode` is set, or null. */
+        private fun persistentMode(session: MavenSession): String? {
+            val name = SettingNames.MODE
+            val root = session.request.multiModuleProjectDirectory?.absoluteFile
+            // `-Dname`, `-D name` and `--define name`, quoted or not, as Maven's command line takes them.
+            val flag = Regex("""(^|\s)["']?(-D\s*|--define[=\s]+)${Regex.escape(name)}(=|\s|["']|$)""")
+            root?.let { File(it, ".mvn/maven.config") }?.takeIf(File::isFile)?.let { file ->
+                if (runCatching { file.readText() }.getOrDefault("").let(flag::containsMatchIn)) return file.path
+            }
+            System.getenv("MAVEN_ARGS")?.takeIf(flag::containsMatchIn)?.let { return "MAVEN_ARGS" }
+            val userHome = System.getProperty("user.home")?.let(::File)
+            listOfNotNull(root?.let { File(it, ".mvn/maven-user.properties") }, userHome?.let { File(it, ".m2/maven-user.properties") })
+                .filter(File::isFile)
+                .firstOrNull { file ->
+                    runCatching { java.util.Properties().apply { file.reader().use(::load) }.containsKey(name) }.getOrDefault(false)
+                }
+                ?.let { return it.path }
+            for (project in session.allProjects) {
+                if (project.originalModel?.properties?.containsKey(name) == true) return "${project.artifactId}'s <properties>"
+                val configuration = project.getPlugin(PLUGIN_KEY)?.configuration as? Xpp3Dom
+                if (configuration?.getChild("mode") != null) return "${project.artifactId}'s yoriwake <configuration>"
+            }
+            return null
         }
 
         /** As the Gradle plugin's: the bare property is true, anything but true or false fails the build. */

@@ -5,7 +5,9 @@
  ],
  "estimated": [
   "functional/InJvmParallelismCharacterizationTest",
-  "functional/KoverFunctionalTest"
+  "functional/KoverFunctionalTest",
+  "functional/OptimisticModeFunctionalTest",
+  "maven/OptimisticModeFunctionalTest"
  ],
  "suites": {
   "fast/ci": {"baseline": 13, "guard": 9},
@@ -88,6 +90,7 @@
   "functional/NamedTestsFunctionalTest": {"baseline": 129, "guard": 118},
   "functional/NestedLoaderFunctionalTest": {"baseline": 54, "guard": 47},
   "functional/ObservationFunctionalTest": {"baseline": 146, "guard": 124},
+  "functional/OptimisticModeFunctionalTest": {"baseline": 150, "guard": 150},
   "functional/PathIgnoreFunctionalTest": {"baseline": 68, "guard": 65},
   "functional/PlainRunnerSelectionFunctionalTest": {"baseline": 168, "guard": 129},
   "functional/RefusalFunctionalTest": {"baseline": 160, "guard": 108},
@@ -108,6 +111,7 @@
   "maven/FailsafeFunctionalTest": {"baseline": 85, "guard": 52},
   "maven/ForkingFunctionalTest": {"baseline": 61, "guard": 52},
   "maven/MapProvenanceFunctionalTest": {"baseline": 41, "guard": 40},
+  "maven/OptimisticModeFunctionalTest": {"baseline": 600, "guard": 600},
   "maven/ReleasedDependenciesFunctionalTest": {"baseline": 79, "guard": 65},
   "maven/SelectionFunctionalTest": {"baseline": 875, "guard": 912},
   "maven/SequentialRecordingFunctionalTest": {"baseline": 70, "guard": 59}

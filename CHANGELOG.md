@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- `-Pyoriwake.mode=optimistic` (`-D` on Maven) selects without the shared-JVM change windows, loudly. Map: left alone.
+
 ### Changed
 
 - Kotlin Multiplatform: a change to a `Platform.jvm.kt`-style file, or to a file of only `inline` functions, narrows. Map: left alone.

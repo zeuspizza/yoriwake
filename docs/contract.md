@@ -29,6 +29,7 @@ refuses the run as `change-set-unreadable`.
 | `LOADED_DIR_PROPERTY` | `yoriwake.loaded.out` | plugin → agent | Where to write loaded-class lists. Set only with `-Pyoriwake.internal.loaded` |
 | `JUNIT4_HOOK_PROPERTY` | `yoriwake.junit4.hook` | plugin → agent | `true` on a plain JUnit 4 (`useJUnit()`) task: capture through JUnit 4's `RunNotifier` |
 | `SELECT_PROPERTY` | `yoriwake.select` | plugin → agent | `true` to narrow; anything else runs everything |
+| `MODE_PROPERTY` | `yoriwake.mode` | plugin → agent | `optimistic` on a selecting run in optimistic mode, which drops the `shares-jvm-changed-class` and `shares-jvm-changed-bytes` windows; set only then. Absent or anything else is the safe rule |
 | `OBSERVE_PROPERTY` | `yoriwake.observe` | plugin → agent | `true` on an observing run: every test runs, and each row's selecting verdict is recorded as an observation line. Set beside `yoriwake.select`, which still decides that verdict |
 | `CLASS_GRANULARITY_PROPERTY` | `yoriwake.select.classGranularity` | plugin → agent | `true` rounds a selection up to whole classes |
 | `NARROW_PLAIN_RUNNERS_PROPERTY` | `yoriwake.plainRunners.narrow` | plugin → agent | The framework outside the JUnit Platform whose test classes a selecting run may leave out whole; an observing run records what it would leave out. Unset, its tests all run |
@@ -239,6 +240,7 @@ Lines in `decisions.tsv` that start with `#!`. Values are escaped: `\\`, `\t`, `
 | `OUTCOME_NOTE` | `outcome` | One of the five values below |
 | `FULL_RUN_KIND_NOTE` | `full-run-kind` | Which side forced, as a token |
 | `FULL_RUN_REASON_NOTE` | `full-run-reason` | Why, as prose |
+| `MODE_NOTE` | `mode` | `optimistic` on a selecting run in optimistic mode; absent on a safe run. A test the safe rule runs and that run left out is a `LOOSENED` row |
 | `REFUSAL_KIND_NOTE` | `refusal-kind` | The plugin's refusal token, when it refused |
 | `DECLINES_NOTE` | `declines` | Every decline that held, as `yoriwake.declines` carried it. Absent when none did |
 | `FINGERPRINT_IGNORED_NOTE` | `fingerprint-ignored` | The system properties `systemPropertyIgnore` left out of the environment comparison, as `yoriwake.fingerprint.ignored` carried it. Absent when it left none out |
@@ -408,7 +410,7 @@ different things in two categories. A test checks this table against the code, b
 | plain-filter | `hooked`, `unhooked`, `unsupported` | `decisions.tsv` (`plain-filter`) |
 | refusal-kind | `annotations-changed`, `annotations-unrecorded`, `bytes-unrecorded`, `change-set-stale`, `change-set-unreadable`, `class-file-unsupported`, `classpath-files-changed`, `classpath-files-unrecorded`, `complement-no-record`, `complement-record-mismatch`, `constant-changed`, `constant-unrecorded`, `declared-path-changed`, `decline-undetermined`, `dependencies-changed`, `develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`, `environment-changed`, `environment-unrecorded`, `full-run-branch`, `full-run-commit`, `full-run-requested`, `full-run-scheduled`, `in-jvm-parallelism`, `large-change`, `map-untrusted`, `map-unverified`, `no-change-set`, `reactor-module-from-repository`, `scan-exhausted`, `scan-refused`, `scan-threw`, `smap-absent`, `snapshot-absent`, `stamp-absent`, `stamp-unrelatable`, `test-jvm-unsupported`, `tests-named`, `unnamed` | `decisions.tsv` (`refusal-kind`), `explain.json` (`refusalKind`) and the console |
 | refusals-key | `(inline widening)` | `explain.json` (`refusals`) |
-| row-reason | `ALREADY_RAN`, `ALWAYS_RUN`, `CLASS_GRANULARITY`, `CLASS_RUNS_WHOLE`, `DAEMON_REFUSED`, `DECLARES_CHANGED_PATH`, `ENGINE_RUNS_EVERYTHING`, `FULL_RUN`, `NOT_ALREADY_RAN`, `NOT_IN_MAP`, `NOT_KNOWN_TO_PASS`, `OBSERVING`, `REACHES_CHANGE`, `SELECTION_FAILED`, `SELECTION_NOT_REQUESTED`, `SHARES_JVM_WITH_CHANGE`, `SKIPPED` | `decisions.tsv`, as a row's reason |
+| row-reason | `ALREADY_RAN`, `ALWAYS_RUN`, `CLASS_GRANULARITY`, `CLASS_RUNS_WHOLE`, `DAEMON_REFUSED`, `DECLARES_CHANGED_PATH`, `ENGINE_RUNS_EVERYTHING`, `FULL_RUN`, `LOOSENED`, `NOT_ALREADY_RAN`, `NOT_IN_MAP`, `NOT_KNOWN_TO_PASS`, `OBSERVING`, `REACHES_CHANGE`, `SELECTION_FAILED`, `SELECTION_NOT_REQUESTED`, `SHARES_JVM_WITH_CHANGE`, `SKIPPED` | `decisions.tsv`, as a row's reason |
 | row-rule | `always-run`, `changed-bytes`, `class-granularity`, `class-runs-whole`, `class-setup`, `declares-changed-path`, `engine-runs-everything`, `none`, `not-in-map`, `not-known-to-pass`, `own-class-changed`, `reaches-change`, `shares-jvm-changed-bytes`, `shares-jvm-changed-class`, `shares-jvm-ignored-path`, `shares-jvm-moved-classpath-file`, `shares-jvm-unobserved`, `shares-jvm-unpositioned`, `unknown` | `decisions.tsv`, in its `#+` rule lines |
 | row-verdict | `excluded`, `included` | `decisions.tsv`, as a row's verdict |
 | rules-basis | `complete`, `failed`, `from-refused-inputs`, `no-change-set`, `no-map` | `decisions.tsv` (`rules`) |

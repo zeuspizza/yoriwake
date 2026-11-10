@@ -66,6 +66,10 @@ internal class DecodeRun(
     private val logger: Log,
     /** Untracked paths the host's tools write, which leave the tree clean for the selection record. */
     private val buildState: (String) -> Boolean = { false },
+    /** Whether the run selected in optimistic mode, which prints its warning on every run. */
+    private val optimistic: Boolean = false,
+    /** Whether the build lists a full-run branch or sets a scheduled full run. */
+    private val fullRunPolicy: Boolean = false,
 ) {
 
     /** The host's console, at its three levels. */
@@ -116,6 +120,15 @@ internal class DecodeRun(
         val datesTheMap = undatedAtExecution == null && this.datesTheMap
         val wholeTask = undatedAtExecution == null && this.wholeTask
         val undatedReason = undatedAtExecution ?: this.undatedReason
+        // Before every return below, and only for a run that did work: one per task, every fork's rows summed.
+        if (optimistic && marker.isFile) {
+            // A decline the run made as it started (named tests, Develocity) ignored the mode.
+            val declined = if (develocityDeclined.isFile) "Develocity declined it" else OptimisticWarning.declined(mapDir)
+            logger.warn(
+                declined?.let { "[yoriwake] $taskPath: optimistic mode was ignored: $it, so the run did not select." }
+                    ?: OptimisticWarning.line(taskPath, OptimisticWarning.loosened(mapDir), fullRunPolicy)
+            )
+        }
         // Before every return below, so each of them leaves a report of this run.
         if (observing) {
             observe(taskPath, pending, when {

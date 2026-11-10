@@ -137,6 +137,7 @@ row-reason	DAEMON_REFUSED
 row-reason	DECLARES_CHANGED_PATH
 row-reason	ENGINE_RUNS_EVERYTHING
 row-reason	FULL_RUN
+row-reason	LOOSENED
 row-reason	NOT_ALREADY_RAN
 row-reason	NOT_IN_MAP
 row-reason	NOT_KNOWN_TO_PASS
