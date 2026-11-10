@@ -72,8 +72,10 @@ jobs:
     runs-on: ubuntu-24.04
     # `--changed` selects every guard when a change edits all of them. The cost table projects that
     # job (the fast step, then every guard) at 134.5 min for the worst shard; the largest shortfall
-    # of a projection on a measured pull-request run was 19 %, which puts it at 160.
-    timeout-minutes: 165
+    # of a projection on a measured pull-request run was 19 %, which puts it at 160. A change to the
+    # functional tests selects every functional and Maven guard; with 0.5's attempts four such shards
+    # took 149 to 156 min and four met 165.
+    timeout-minutes: 200
     strategy:
       fail-fast: false
       matrix:
