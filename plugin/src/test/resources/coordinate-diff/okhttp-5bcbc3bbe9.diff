@@ -1,0 +1,20 @@
+diff --git a/okhttp/build.gradle.kts b/okhttp/build.gradle.kts
+index 88dd16c3b..fdfcee580 100644
+--- a/okhttp/build.gradle.kts
++++ b/okhttp/build.gradle.kts
+@@ -37 +37 @@ val copyKotlinTemplates =
+-val generateIdnaMappingTableConfiguration: Configuration by configurations.creating
++val generateIdnaMappingTableConfiguration = configurations.create("generateIdnaMappingTableConfiguration")
+@@ -145 +145 @@ kotlin {
+-    val jvmTest by getting {
++    jvmTest {
+@@ -188 +188 @@ kotlin {
+-      val androidHostTest by getting {
++      named("androidHostTest") {
+@@ -239,3 +239,3 @@ project.applyOsgiMultiplatform(
+-val androidSignature by configurations.getting
+-val jvmSignature by configurations.getting
+-val checkstyleConfig by configurations.getting
++val androidSignature = configurations.getByName("androidSignature")
++val jvmSignature = configurations.getByName("jvmSignature")
++val checkstyleConfig = configurations.getByName("checkstyleConfig")

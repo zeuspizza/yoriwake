@@ -32,6 +32,11 @@ import io.github.zeuspizza.yoriwake.gradle.change.establish
 import io.github.zeuspizza.yoriwake.gradle.change.outsideRoot
 import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
 import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
+import io.github.zeuspizza.yoriwake.gradle.change.DependencyRule
+import io.github.zeuspizza.yoriwake.gradle.facts.classpathConfigurations
+import io.github.zeuspizza.yoriwake.gradle.facts.moduleIdentities
+import io.github.zeuspizza.yoriwake.gradle.facts.moduleScript
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -181,6 +186,17 @@ internal abstract class ExplainTask : DefaultTask() {
     // register.
     @get:Internal("the classpath this task reads, built by the tasks it depends on")
     var facts: ClasspathFacts? = null
+
+    /** What a dependency bump is judged against, as the run judges it; null when `narrowDependencies` is off. */
+    @get:Internal("read from the test task and the project's classpaths; the task is untracked")
+    var dependencies: DependencyFacts? = null
+
+    /** The parts of [DependencyRule.Context] the run takes from its build, held as configuration-cache-safe values. */
+    class DependencyFacts(
+        val identities: org.gradle.api.provider.Provider<Map<File, String>>,
+        val configurations: org.gradle.api.provider.Provider<Set<String>>,
+        val jvmArguments: org.gradle.api.provider.Provider<List<String>>,
+    )
 
     /** Set when the plugin declined the `Test` task, which leaves nothing to explain. */
     @get:Internal("the decline's sentence, printed as is")
@@ -392,14 +408,47 @@ internal abstract class ExplainTask : DefaultTask() {
                 if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
             )
         }
-        val scoped = scopedChange(paths, facts, notReadByTests.getOrElse(emptyList()), ignore)
+        // As the run decides it, before anything else reads the change set.
+        val bump = dependencies?.let { held ->
+            val verdict = DependencyRule.decide(
+                DependencyRule.Inputs(
+                    rootDir, paths, base, mapDir,
+                    DependencyRule.Context(
+                        git = git,
+                        raw = { ChangeDetection.rawGit(rootDir, it) },
+                        current = {
+                            ClasspathRecord.of(facts.classpath.files, held.identities.get(), facts.buildDirs.values, rootDir, facts.dependencyHomes)
+                        },
+                        jvmArguments = { held.jvmArguments.get() },
+                        configurations = { held.configurations.get() },
+                        ownBuildFile = moduleScript(facts.moduleDirs.keys),
+                    ),
+                )
+            )
+            when (verdict) {
+                is DependencyRule.Verdict.Unaccepted ->
+                    logger.lifecycle("[yoriwake] $taskPath: ${verdict.path} is not a dependency version bump narrowDependencies accepts (${verdict.why})")
+                is DependencyRule.Verdict.Forced -> {
+                    logger.lifecycle("[yoriwake] $taskPath would run everything: ${verdict.reason}")
+                    writeUnanswered(
+                        mapDir, taskPath, base,
+                        io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                        verdict.reason, refusalKind = verdict.kind.token, branch = branch,
+                    )
+                    return
+                }
+                else -> Unit
+            }
+            verdict as? DependencyRule.Verdict.Accepted
+        }
+        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore)
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         val found = establish(
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },
             mapDir, scoped.change, facts,
         )
         // As the run compares it: this task depends on what builds the classpath.
-        val classpathFiles = classpathFilesRule(mapDir, facts)
+        val classpathFiles = classpathFilesRule(mapDir, facts, discount = bump?.discount ?: { false })
         // Through the same helper as the run itself, or this would report a narrower
         // selection for any change to an inline function.
         val widening = widenForInlining(
@@ -426,12 +475,20 @@ internal abstract class ExplainTask : DefaultTask() {
         val change = changeSet(
             widening.prefixes.ifEmpty { scoped.change.classPrefixes.sorted() },
             paths, scoped, established, widening.changedBytes, widening.movedFiles,
-        ).withDaemonRefusal(widening.refusal)
+        ).withChangedJars(bump?.modules.orEmpty(), bump?.directories.orEmpty())
+            .withDaemonRefusal(widening.refusal)
         val decision = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(map, change, emptyList(), strictness)
         val loosened = if (strictness == Strictness.SAFE) emptyList() else loosenedTests(
             map, io.github.zeuspizza.yoriwake.agent.select.Selector.decide(map, change, emptyList(), Strictness.SAFE),
             decision, io.github.zeuspizza.yoriwake.agent.select.Selector.rules(map, change, true),
         )
+        bump?.let {
+            logger.lifecycle(
+                "[yoriwake] $taskPath: ${it.paths.joinToString()} change dependency versions only: " +
+                    if (it.modules.isEmpty()) "no module on this task's classpath moved"
+                    else "${it.modules.joinToString()} moved"
+            )
+        }
         logger.lifecycle(
             "[yoriwake] $taskPath vs $base: ${scoped.change.classPrefixes.size} changed classes, " +
                 "${scoped.change.unmappablePaths.size} paths coverage cannot see, " +
@@ -528,6 +585,7 @@ internal abstract class ExplainTask : DefaultTask() {
             environment: EnvironmentFingerprint.Rules,
             largeChange: Int,
             narrowPlainRunners: Boolean,
+            narrowDependencies: Boolean,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -578,6 +636,13 @@ internal abstract class ExplainTask : DefaultTask() {
                 // resolution.
                 val facts = classpathFacts(project, test, changedPaths = null)
                 task.facts = facts
+                if (narrowDependencies) {
+                    task.dependencies = DependencyFacts(
+                        moduleIdentities(project),
+                        classpathConfigurations(project),
+                        project.provider { test.allJvmArgs + test.systemProperties.values.map { it.toString() } },
+                    )
+                }
                 // What the test task compiles, so a changed source is read as the run will read
                 // it: stale class files would hide a changed constant and predict a narrower run.
                 task.dependsOn(facts.classpath, facts.testOutputs)

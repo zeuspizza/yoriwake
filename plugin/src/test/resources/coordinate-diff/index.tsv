@@ -1,0 +1,15 @@
+accepted	okhttp-1c6129e44e	okhttp	1c6129e44e1016a5dc1ccf423d91526d9ab391c7	gradle/libs.versions.toml
+accepted	junit5-35c56a8e02	junit5	35c56a8e02f6f2ae6c0ea3616097b1cfefe17d2a	gradle/libs.versions.toml
+accepted	ktlint-8eed459914	ktlint	8eed459914e94df25e78241853b8cb0860d79de3	gradle/libs.versions.toml
+accepted	moshi-110c863d80	moshi	110c863d80d0ace192389c0289789d958ac6c59b	gradle/libs.versions.toml
+accepted	micrometer-7efb0bcfb7	micrometer	7efb0bcfb7c97972d73534d953c0ea04a2edd999	gradle/libs.versions.toml
+accepted	micrometer-a0537a1a19	micrometer	a0537a1a193a2603633704b03f263b6f32b2135a	samples/micrometer-samples-jooq/build.gradle
+accepted	glide-9c9f56f29e	glide	9c9f56f29e63114c409184dd1e82b42b3f0063f7	integration/avif/build.gradle
+accepted	detekt-a063b0f2a5	detekt	a063b0f2a50d3ccefa35783fc23b3229a25f9de2	gradle/libs.versions.toml
+refused	okhttp-5bcbc3bbe9	okhttp	5bcbc3bbe90210e8f2064b733db02a16aa66ef35	okhttp/build.gradle.kts
+refused	junit5-ddb07ed075	junit5	ddb07ed075711fcf3029818b58ef5b7610519662	gradle/libs.versions.toml
+refused	ktlint-759b62b93a	ktlint	759b62b93afd173ce928071f0fceba0db02d2705	ktlint-cli/build.gradle.kts
+refused	moshi-c4c9bbe10d	moshi	c4c9bbe10d28567125bcff7142f6cf03cc75ab39	gradle/libs.versions.toml
+refused	micrometer-003c8eb9d5	micrometer	003c8eb9d5c22a49e8294aab64f4b765de96787f	implementations/micrometer-registry-otlp/build.gradle
+refused	glide-777b8b52ed	glide	777b8b52edf7726d731f882b83ac0bfc2806edd9	gradle/libs.versions.toml
+refused	detekt-34582e9e7c	detekt	34582e9e7c7007294d4ee8042a701ede1182998b	detekt-report-complexity/build.gradle.kts

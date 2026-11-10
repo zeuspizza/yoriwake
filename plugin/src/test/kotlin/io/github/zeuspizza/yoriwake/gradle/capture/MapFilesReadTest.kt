@@ -33,6 +33,7 @@ class MapFilesReadTest {
         "COUNT_FILE" to "the scheduled full run's count, rewritten by every decode; a changed one can only postpone " +
             "a full run, which selects as a build without the schedule does",
         "TIME_FILE" to "the scheduled full run's time, as COUNT_FILE",
+        "MODULES_FILE" to "the library jars a capturing run's test JVMs are told of, machine paths, deleted by the decode",
     )
 
     private val digestedByName = mapOf(
@@ -48,6 +49,8 @@ class MapFilesReadTest {
         "SNAPSHOT_FILE" to "worktree-snapshot", "MAP_SCHEMA_VERSION_FILE" to "schema-version",
         "ENVIRONMENT_FILE" to "environment.tsv", "ENVIRONMENT_FINGERPRINTS_FILE" to "environment-fingerprints.tsv",
         "SALT_FILE" to "fingerprint-salt",
+        "JAR_TOUCH_FILE" to "jar-touch.tsv", "MISS_TOUCH_FILE" to "miss-touch.tsv",
+        "ClasspathRecord.FILE" to "classpath.tsv", "DIRS_FILE" to "classpath-dirs.tsv",
     )
 
     private val mapFileUse = Regex("""File\(\s*mapDir\s*,\s*([A-Za-z_.]+|"[^"]*")""")

@@ -37,7 +37,9 @@ import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.change.Declarations
+import io.github.zeuspizza.yoriwake.gradle.change.DependencyRule
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.NotRead
@@ -67,7 +69,10 @@ import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.wouldRunEverything
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
+import io.github.zeuspizza.yoriwake.gradle.facts.classpathConfigurations
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
+import io.github.zeuspizza.yoriwake.gradle.facts.moduleIdentities
+import io.github.zeuspizza.yoriwake.gradle.facts.moduleScript
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
 import java.io.File
@@ -137,6 +142,7 @@ internal fun TestTaskWiring.configureSelection(
     projectDir: String,
     declarations: List<Declarations.Declaration>,
     largeChange: Int,
+    narrowDependencies: Boolean,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -211,6 +217,21 @@ internal fun TestTaskWiring.configureSelection(
     // Re-derived at execution, when the classpath is resolvable. Every doFirst runs before the
     // test JVM launches, so these properties are ones the JVM starts with.
     val declared = declarations.map { it.resolved to it.glob }
+    val dependencies = if (!narrowDependencies) null else {
+        val identities = moduleIdentities(project)
+        val configurations = classpathConfigurations(project)
+        val classpath = test.classpath
+        val buildDirs = classpathFacts.buildDirs.values.toList()
+        val homes = classpathFacts.dependencyHomes
+        DependencyRule.Context(
+            git = ChangeDetection.directRunner(rootDir),
+            raw = { ChangeDetection.rawGit(rootDir, it) },
+            current = { ClasspathRecord.of(classpath.files, identities.get(), buildDirs, rootDir, homes) },
+            jvmArguments = { test.allJvmArgs + test.systemProperties.values.map { it.toString() } },
+            configurations = { configurations.get() },
+            ownBuildFile = moduleScript(classpathFacts.moduleDirs.keys),
+        )
+    }
     test.doFirst {
         // Decided by a check below, which runs before this action and captures.
         if (refusedAtExecution(test)) {
@@ -220,7 +241,7 @@ internal fun TestTaskWiring.configureSelection(
         SelectingStep.run(
             SelectingStep.Inputs(
                 mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
-                notReadByTests, ignore, declared, observing,
+                notReadByTests, ignore, declared, observing, dependencies = dependencies,
             ),
             GradleSelectingHost(test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes),
         )

@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 2eae1364f..24a54a7b7 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -18 +18 @@ snapshotTests = "1.11.0"
+-surefire = "3.5.6"
++surefire = "3.6.0"

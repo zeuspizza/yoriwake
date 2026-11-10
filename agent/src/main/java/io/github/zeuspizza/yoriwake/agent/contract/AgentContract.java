@@ -116,6 +116,26 @@ public final class AgentContract {
     public static final String MOVED_FILES_PROPERTY = "yoriwake.change.movedFiles";
 
     /**
+     * Library modules on the classpath whose jar a dependency bump moved or removed, by identity,
+     * comma-separated and escaped as {@link #IGNORED_PATHS_PROPERTY}'s entries. Each selects the
+     * tests from their JVM's first touch of its jar on ({@link #JAR_TOUCH_FILE}).
+     */
+    public static final String CHANGED_JARS_PROPERTY = "yoriwake.change.jars";
+
+    /**
+     * Directories ({@code a/b/}, {@code /} for a jar's root) whose entry names a bumped module changed,
+     * as {@link #CHANGED_JARS_PROPERTY}. Each selects the tests from their JVM's first lookup of an
+     * absent name in it on ({@link #MISS_TOUCH_FILE}).
+     */
+    public static final String MISS_DIRECTORIES_PROPERTY = "yoriwake.change.missDirs";
+
+    /**
+     * A file of the library module jars on the test JVM's classpath, one {@code path \t identity} row
+     * each, whose touches and absent-name lookups the agent records.
+     */
+    public static final String JAR_MODULES_PROPERTY = "yoriwake.jars.modules";
+
+    /**
      * Changed paths the build's {@code pathIgnore} took out of the change set, comma-separated, each
      * as {@code <path> \t <entry>} with {@code %} and {@code ,} written as {@code %25} and {@code %2C}.
      * Each runs the tests from its first read on in every JVM whose reads the map recorded.
@@ -375,6 +395,25 @@ public final class AgentContract {
     /** The path of a {@link #RESOURCE_RECORDED} row whose JVM's reads include the source files it opened. */
     public static final String RESOURCE_RECORDED_SOURCES = "sources";
 
+    /**
+     * {@code jvm \t sequence \t module}: the first record sequence at or before which each JVM reached
+     * each library module's jar (a class defined from it, an entry found in it, an entry read, the
+     * file opened by other zip code), by the module's identity; {@link #FIRST_TOUCH_ANY} as the module
+     * stands for every one. Every JVM whose touches were recorded has a {@link #JARS_RECORDED} row at
+     * sequence 0; one without reached every jar from its first record.
+     */
+    public static final String JAR_TOUCH_FILE = "jar-touch.tsv";
+
+    /**
+     * {@code jvm \t sequence \t directory}: the first record sequence at or before which each JVM
+     * looked up a name in a library module jar that no jar held, by the name's directory; rows as
+     * {@link #JAR_TOUCH_FILE}'s.
+     */
+    public static final String MISS_TOUCH_FILE = "miss-touch.tsv";
+
+    /** The {@link #JAR_TOUCH_FILE} and {@link #MISS_TOUCH_FILE} value of a JVM whose touches were recorded. */
+    public static final String JARS_RECORDED = "#recorded";
+
     /** A first-touch class meaning "every class": the JVM's loads and reads were not all observed. */
     public static final String FIRST_TOUCH_ANY = "*";
 
@@ -480,6 +519,21 @@ public final class AgentContract {
 
     /** A touch kind: a jar was opened by something other than the JDK's own zip code; its path. */
     public static final String TOUCH_JAR = "jar";
+
+    /**
+     * A touch kind: a library module jar ({@link #JAR_MODULES_PROPERTY}) was reached, by a class
+     * defined from it, an entry found in it or read from it; its absolute path.
+     */
+    public static final String TOUCH_JAR_REACHED = "jar-reached";
+
+    /**
+     * A touch kind: a name was looked up in a library module jar and no jar held it in the same
+     * record window; the name's directory, {@code a/b/}, or {@code /} for the jar's root.
+     */
+    public static final String TOUCH_MISSED = "missed";
+
+    /** A touch kind: this JVM records {@link #TOUCH_JAR_REACHED} and {@link #TOUCH_MISSED}. */
+    public static final String TOUCH_JARS_RECORDED = "jars-recorded";
 
     /**
      * A touch kind: from here on not everything was observed (a hook missing, a child process
@@ -819,6 +873,13 @@ public final class AgentContract {
      * reads, a directory above it, or every file.
      */
     public static final String RULE_SHARES_JVM_IGNORED_PATH = "shares-jvm-ignored-path";
+
+    /**
+     * The test ran at or after its JVM first reached the jar of a library module a dependency bump
+     * moved or removed, or first looked up an absent name in a directory the bump changed, or in a
+     * JVM whose touches of library jars were not recorded.
+     */
+    public static final String RULE_SHARES_JVM_CHANGED_JAR = "shares-jvm-changed-jar";
 
     /**
      * The test ran at or after the point from which its JVM's touches were not all observed

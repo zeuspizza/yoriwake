@@ -1,0 +1,6 @@
+diff --git a/implementations/micrometer-registry-otlp/build.gradle b/implementations/micrometer-registry-otlp/build.gradle
+index df7291c03..f1a13e1cb 100644
+--- a/implementations/micrometer-registry-otlp/build.gradle
++++ b/implementations/micrometer-registry-otlp/build.gradle
+@@ -55,0 +56 @@ tasks.japicmp.dependsOn(shadowJar)
++tasks.testModules.dependsOn(shadowJar)

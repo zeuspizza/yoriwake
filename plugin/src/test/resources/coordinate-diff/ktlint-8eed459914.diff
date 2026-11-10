@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index da4ff9a2..35aa9c3c 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -42 +42 @@ assertj = "org.assertj:assertj-core:3.27.7"
+-sarif4k = "io.github.detekt.sarif4k:sarif4k:0.7.0"
++sarif4k = "io.github.detekt.sarif4k:sarif4k:0.8.0"

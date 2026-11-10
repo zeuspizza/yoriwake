@@ -45,6 +45,8 @@ public final class FilterRule {
             AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
             AgentContract.CHANGED_BYTES_PROPERTY,
             AgentContract.MOVED_FILES_PROPERTY,
+            AgentContract.CHANGED_JARS_PROPERTY,
+            AgentContract.MISS_DIRECTORIES_PROPERTY,
             AgentContract.IGNORED_PATHS_PROPERTY,
             AgentContract.REFUSED_PROPERTY,
             AgentContract.REFUSED_KIND_PROPERTY,
@@ -68,6 +70,8 @@ public final class FilterRule {
                     AgentContract.EXEMPT_TEST_CLASSES_PROPERTY,
                     AgentContract.CHANGED_BYTES_PROPERTY,
                     AgentContract.MOVED_FILES_PROPERTY,
+                    AgentContract.CHANGED_JARS_PROPERTY,
+                    AgentContract.MISS_DIRECTORIES_PROPERTY,
                     AgentContract.IGNORED_PATHS_PROPERTY,
                     AgentContract.BASE_FLAG_PROPERTY)));
 
@@ -149,6 +153,8 @@ public final class FilterRule {
                 .withExemptTestClasses(splitProperty(property, AgentContract.EXEMPT_TEST_CLASSES_PROPERTY))
                 .withChangedBytes(splitProperty(property, AgentContract.CHANGED_BYTES_PROPERTY))
                 .withMovedFiles(movedFiles(property))
+                .withChangedJars(escapedList(property, AgentContract.CHANGED_JARS_PROPERTY),
+                        escapedList(property, AgentContract.MISS_DIRECTORIES_PROPERTY))
                 .withIgnoredPaths(ignoredPaths(orEmpty(property, AgentContract.IGNORED_PATHS_PROPERTY)))
                 .withBaseFlag(property.apply(AgentContract.BASE_FLAG_PROPERTY))
                 // Answers before the map or change set is consulted, so a refused run cannot be
@@ -261,8 +267,13 @@ public final class FilterRule {
      * a name may start or end with a space and the daemon writes none around the commas.
      */
     public static List<String> movedFiles(UnaryOperator<String> property) {
+        return escapedList(property, AgentContract.MOVED_FILES_PROPERTY);
+    }
+
+    /** A comma-separated property whose items the daemon escaped, as written, untrimmed. */
+    public static List<String> escapedList(UnaryOperator<String> property, String name) {
         List<String> values = new ArrayList<>();
-        for (String item : orEmpty(property, AgentContract.MOVED_FILES_PROPERTY).split(",")) {
+        for (String item : orEmpty(property, name).split(",")) {
             if (!item.isEmpty()) {
                 values.add(unescape(item));
             }

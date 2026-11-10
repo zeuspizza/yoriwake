@@ -1,0 +1,8 @@
+diff --git a/detekt-report-complexity/build.gradle.kts b/detekt-report-complexity/build.gradle.kts
+index 9274794081..17ce6bc38e 100644
+--- a/detekt-report-complexity/build.gradle.kts
++++ b/detekt-report-complexity/build.gradle.kts
+@@ -7 +6,0 @@ dependencies {
+-    compileOnly(projects.detektPsiUtils)
+@@ -10 +8,0 @@ dependencies {
+-    testRuntimeOnly(projects.detektPsiUtils)

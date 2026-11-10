@@ -286,6 +286,55 @@ internal object ClasspathFiles {
         }
     }
 
+    /** How [table] reads a dependency entry for its row; [BUILT] marks build output, which has none. */
+    enum class Read { BUILT, NAMED, CONTENT, WHOLE }
+
+    /** One classpath entry with the key [table] gives it, and how its row is read. */
+    data class Key(val file: File, val key: String, val read: Read)
+
+    /**
+     * The key [table] gives each entry of [classpath], in classpath order: a dependency row's key, or
+     * for build output its path relative to [rootDir], under which [walk] keys its files. The
+     * plugin's own agent jar gets none. Keyed as [table] keys them, without reading anything.
+     */
+    fun keys(classpath: Collection<File>, buildDirs: Collection<String>, rootDir: File, homes: Map<String, File>): List<Key> {
+        val root = rootDir.absoluteFile
+        val roots = buildDirs.map { File(it).absoluteFile } + root
+        val state = File(root, ".gradle")
+        fun File.holds(entry: File) = entry == this || entry.path.startsWith(path + File.separator)
+        val byDepth = homes.mapValues { it.value.absoluteFile }.entries.sortedByDescending { it.value.path.length }
+        fun homeOf(entry: File) = byDepth.firstOrNull { (_, home) -> home.holds(entry) && home != entry }
+            ?.takeIf { (_, home) -> roots.none { it.holds(entry) && it.path.length >= home.path.length } }
+        val repeated = mutableMapOf<String, Int>()
+        val keys = mutableListOf<Key>()
+        for (entry in classpath.map(File::getAbsoluteFile).distinct()) {
+            if (entry.name == AgentJar.RESOURCE) continue
+            val home = homeOf(entry)
+            if (home == null && !state.holds(entry) && roots.any { it.holds(entry) }) {
+                keys += Key(entry, pathOf(rootDir, entry), Read.BUILT)
+                continue
+            }
+            val moduleCache = entry.invariantSeparatorsPath.substringAfter(MODULE_CACHE_FILES, "")
+            val relative = home?.let { entry.relativeTo(it.value).invariantSeparatorsPath }
+            keys += when {
+                moduleCache.isNotEmpty() -> Key(entry, "$DEPENDENCY_PREFIX$MODULE_CACHE/$moduleCache", Read.NAMED)
+                home != null && relative != null && (home.key != USER_HOME || relative.startsWith(MAVEN_LOCAL)) -> Key(
+                    entry, "$DEPENDENCY_PREFIX${home.key}/$relative",
+                    when {
+                        home.key == GRADLE_USER_HOME && NAMED_LAYOUTS.any { it.containsMatchIn(relative) } -> Read.NAMED
+                        home.key == PROJECT_CACHE_DIR || home.key == USER_HOME -> Read.CONTENT
+                        else -> Read.WHOLE
+                    },
+                )
+                else -> {
+                    val count = repeated.merge(entry.name, 1, Int::plus)!!
+                    Key(entry, "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}${if (count > 1) "#$count" else ""}", Read.CONTENT)
+                }
+            }
+        }
+        return keys
+    }
+
     /**
      * Each token of [manifest]'s `Class-Path` with the file it names, resolved against [jar] as the
      * JDK's class loader resolves it; null when it does not resolve. A URL that is not a `file:` one

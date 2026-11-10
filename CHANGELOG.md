@@ -17,6 +17,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Added
 
+- `narrowDependencies` lets a commit that only bumps library versions run the tests that reached the moved jars. Map: left alone.
+- A trusted-map list written before this version names no map now; the default branch's next run writes one. Map: left alone.
 - `-Pyoriwake.mode=optimistic` (`-D` on Maven) selects without the shared-JVM change windows, loudly. Map: left alone.
 
 ### Changed

@@ -119,6 +119,16 @@ internal class Settings(
                     ?.let { parseFlag("${project.artifactId}'s <recordSequentially>", it.trim()) }
                 ?: false
 
+        /**
+         * Whether [project]'s selecting runs narrow a POM change that only bumps dependency versions:
+         * `-Dyoriwake.narrowDependencies` over the module's `<narrowDependencies>`.
+         */
+        fun narrowDependenciesOf(project: MavenProject, session: MavenSession): Boolean =
+            session.userProperties.getProperty(SettingNames.NARROW_DEPENDENCIES)?.let { parseFlag("-D${SettingNames.NARROW_DEPENDENCIES}", it) }
+                ?: moduleConfiguration(project, session)?.getChild("narrowDependencies")?.value
+                    ?.let { parseFlag("${project.artifactId}'s <narrowDependencies>", it.trim()) }
+                ?: false
+
         /** The module's own plugin entry, else the reactor root's, never a sibling's that `-pl` happened to put first. */
         private fun moduleConfiguration(project: MavenProject, session: MavenSession): Xpp3Dom? {
             val root = session.request.multiModuleProjectDirectory?.absoluteFile

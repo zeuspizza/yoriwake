@@ -70,6 +70,9 @@ final class ReadHooks {
     /** The holder's method the return hooks call. */
     static final String LOADED = "loaded";
 
+    /** The holder's method the entry hooks call. */
+    static final String ENTRY = "entry";
+
     /**
      * Owner, method, descriptor, and what to pass: an argument slot, -1 for {this, argument 1}, -2
      * for null, or -3 for {argument 1, argument 2}. These open files without the file-system provider.
@@ -183,6 +186,28 @@ final class ReadHooks {
         {"java/lang/System", "getenv", "()Ljava/util/Map;", "-2"},
     };
 
+    /**
+     * Where every lookup of a jar entry by name ends, the JDK's class path and module path included:
+     * the sink gets {zip, name, entry or null} as the method returns, so a lookup that found nothing
+     * is told from one that did. The second is JDK 11's, where {@code JarFile} reaches it directly.
+     */
+    static final String[][] ENTRIES = {
+        {"java/util/zip/ZipFile", "getEntry", "(Ljava/lang/String;)Ljava/util/zip/ZipEntry;", "e"},
+        {"java/util/zip/ZipFile", "getEntry", "(Ljava/lang/String;Ljava/util/function/Function;)Ljava/util/zip/ZipEntry;", "e"},
+    };
+
+    /**
+     * Where code lists a jar's entries rather than asking for one by name, as a classpath scanner
+     * does: the sink gets the zip. Each is hooked where this JDK declares it.
+     */
+    static final String[][] ENUMERATIONS = {
+        {"java/util/zip/ZipFile", "entries", "()Ljava/util/Enumeration;", "0"},
+        {"java/util/zip/ZipFile", "stream", "()Ljava/util/stream/Stream;", "0"},
+        {"java/util/jar/JarFile", "entries", "()Ljava/util/Enumeration;", "0"},
+        {"java/util/jar/JarFile", "stream", "()Ljava/util/stream/Stream;", "0"},
+        {"java/util/jar/JarFile", "versionedStream", "()Ljava/util/stream/Stream;", "0"},
+    };
+
     private ReadHooks() {}
 
     /** Why the hooks are not all in place, per kind; null when they are. */
@@ -196,16 +221,19 @@ final class ReadHooks {
          * at {@link #LIBRARIES}, which counts a by-name attempt that found nothing as a load.
          */
         final boolean resolving;
+        /** The entry hooks report apart: missing them only leaves which library jars were reached unknown. */
+        final String entries;
 
         Installed(String reads, String lookups, String environment) {
-            this(reads, lookups, environment, false);
+            this(reads, lookups, environment, false, reads);
         }
 
-        Installed(String reads, String lookups, String environment, boolean resolving) {
+        Installed(String reads, String lookups, String environment, boolean resolving, String entries) {
             this.reads = reads;
             this.lookups = lookups;
             this.environment = environment;
             this.resolving = resolving;
+            this.entries = entries;
         }
     }
 
@@ -217,7 +245,8 @@ final class ReadHooks {
      */
     static Installed install(Instrumentation instrumentation, Consumer<Object> reads, Consumer<Object> lookups,
             Consumer<Object> defines, Consumer<Object> processes, Consumer<Object> natives,
-            Consumer<Object> libraries, Consumer<Object> resolved, Consumer<Object> environment) {
+            Consumer<Object> libraries, Consumer<Object> resolved, Consumer<Object> environment,
+            Consumer<Object> entries, Consumer<Object> enumerations) {
         if (!instrumentation.isRetransformClassesSupported()) {
             String why = "this JVM cannot retransform classes";
             return new Installed(why, why, why);
@@ -230,6 +259,7 @@ final class ReadHooks {
         List<String[]> libraryHooks = new ArrayList<>();
         List<String[]> resolutionHooks = new ArrayList<>();
         List<String[]> environmentHooks = new ArrayList<>();
+        List<String[]> entryHooks = new ArrayList<>();
         Injector injector;
         String providerWhy;
         try {
@@ -247,6 +277,8 @@ final class ReadHooks {
             // A value of no kind the sink records: it loads what the sink needs and records nothing.
             environment.accept(Boolean.TRUE);
             holder.getField("ENV").set(null, environment);
+            holder.getField("ENTRY").set(null, entries);
+            holder.getField("ENUM").set(null, enumerations);
             addAll(readHooks, READS, "SINK", false);
             providerWhy = addProviderHooks(readHooks);
             addAll(lookupHooks, LOOKUPS, "LOOKUP", false);
@@ -255,6 +287,8 @@ final class ReadHooks {
             addAll(libraryHooks, LIBRARIES, "LIBRARY", false);
             addAll(resolutionHooks, RESOLUTIONS, "RESOLVED", true);
             addAll(environmentHooks, ENVIRONMENT, "ENV", false);
+            addAll(entryHooks, ENTRIES, "ENTRY", true);
+            addAll(entryHooks, ENUMERATIONS, "ENUM", true);
             for (String[] hook : NATIVES) {
                 // The API is absent before it existed; where its class exists every hook must hold.
                 if (load(hook[0]) != null) {
@@ -263,7 +297,7 @@ final class ReadHooks {
             }
             List<String[]> all = new ArrayList<>();
             for (List<String[]> hooks : Arrays.asList(readHooks, lookupHooks, defineHooks, processHooks, nativeHooks,
-                    libraryHooks, resolutionHooks, environmentHooks)) {
+                    libraryHooks, resolutionHooks, environmentHooks, entryHooks)) {
                 all.addAll(hooks);
             }
             injector = new Injector(all);
@@ -294,7 +328,9 @@ final class ReadHooks {
         String environmentWhy = installed("environment", environmentHooks, injector, failed);
         // Missing, loads are judged at every attempt instead: wider, never narrower.
         boolean resolving = !resolutionHooks.isEmpty() && installed("resolution", resolutionHooks, injector, failed) == null;
-        return new Installed(readsWhy, lookupsWhy, environmentWhy, resolving);
+        String entriesWhy = entryHooks.isEmpty() ? "this JDK's ZipFile has no getEntry to hook"
+                : installed("entry", entryHooks, injector, failed);
+        return new Installed(readsWhy, lookupsWhy, environmentWhy, resolving, entriesWhy);
     }
 
     /** Each hook with the holder field its sink sits in; when {@code ifPresent}, only where this JDK has it. */
@@ -488,11 +524,12 @@ final class ReadHooks {
         writer.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_SUPER,
                 HOLDER, null, "java/lang/Object", null);
         for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "RESOLVED", "ENV",
-                "GUARD"}) {
+                "GUARD", "ENTRY", "ENUM"}) {
             writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, field,
                     "L" + CONSUMER + ";", null, null).visitEnd();
         }
         writeLoaded(writer);
+        writeEntry(writer);
         writer.visitEnd();
         return writer.toByteArray();
     }
@@ -535,6 +572,42 @@ final class ReadHooks {
         body.visitEnd();
     }
 
+    /**
+     * {@code static void entry(Object result, Object zip, Object name)}: {@code ENTRY} gets {zip,
+     * name, result}. The entry hooks call it, so the JDK method itself gains no branch and no frame.
+     */
+    private static void writeEntry(ClassWriter writer) {
+        MethodVisitor body = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, ENTRY,
+                "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", null, null);
+        body.visitCode();
+        Label done = new Label();
+        body.visitFieldInsn(Opcodes.GETSTATIC, HOLDER, "ENTRY", "L" + CONSUMER + ";");
+        body.visitVarInsn(Opcodes.ASTORE, 3);
+        body.visitVarInsn(Opcodes.ALOAD, 3);
+        body.visitJumpInsn(Opcodes.IFNULL, done);
+        body.visitVarInsn(Opcodes.ALOAD, 3);
+        body.visitInsn(Opcodes.ICONST_3);
+        body.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_0);
+        body.visitVarInsn(Opcodes.ALOAD, 1);
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_1);
+        body.visitVarInsn(Opcodes.ALOAD, 2);
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitInsn(Opcodes.DUP);
+        body.visitInsn(Opcodes.ICONST_2);
+        body.visitVarInsn(Opcodes.ALOAD, 0);
+        body.visitInsn(Opcodes.AASTORE);
+        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, CONSUMER, "accept", "(Ljava/lang/Object;)V", true);
+        body.visitLabel(done);
+        body.visitFrame(Opcodes.F_APPEND, 1, new Object[] {CONSUMER}, 0, null);
+        body.visitInsn(Opcodes.RETURN);
+        body.visitMaxs(5, 4);
+        body.visitEnd();
+    }
+
     /** Prepends the sink call to each hooked method, and records which it found. */
     private static final class Injector implements ClassFileTransformer {
         final Set<String> found = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -569,6 +642,9 @@ final class ReadHooks {
                         String[] hook = methods.get(name + descriptor);
                         if (hook != null && (access & (Opcodes.ACC_NATIVE | Opcodes.ACC_ABSTRACT)) == 0) {
                             here.add(className + '.' + name + descriptor);
+                            if (hook[0].equals("e")) {
+                                return new EntryCall(visitor);
+                            }
                             if (hook[0].startsWith("r")) {
                                 String[] slots = hook[0].substring(1).split(",");
                                 return new ReturnCall(visitor, Integer.parseInt(slots[0]), Integer.parseInt(slots[1]));
@@ -639,6 +715,33 @@ final class ReadHooks {
         @Override
         public void visitMaxs(int maxStack, int maxLocals) {
             super.visitMaxs(maxStack + 5, maxLocals);
+        }
+    }
+
+    /**
+     * Before each normal return of a jar entry lookup, {@code entry(result, this, name)} with the
+     * entry about to be returned, null when there is none. A throw finds nothing and reaches no return.
+     */
+    private static final class EntryCall extends MethodVisitor {
+        EntryCall(MethodVisitor visitor) {
+            super(Opcodes.ASM9, visitor);
+        }
+
+        @Override
+        public void visitInsn(int opcode) {
+            if (opcode == Opcodes.ARETURN) {
+                super.visitInsn(Opcodes.DUP);
+                super.visitVarInsn(Opcodes.ALOAD, 0);
+                super.visitVarInsn(Opcodes.ALOAD, 1);
+                super.visitMethodInsn(Opcodes.INVOKESTATIC, HOLDER, ENTRY,
+                        "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", false);
+            }
+            super.visitInsn(opcode);
+        }
+
+        @Override
+        public void visitMaxs(int maxStack, int maxLocals) {
+            super.visitMaxs(maxStack + 3, maxLocals);
         }
     }
 

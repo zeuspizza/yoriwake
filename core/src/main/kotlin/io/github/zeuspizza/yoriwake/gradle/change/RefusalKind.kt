@@ -186,6 +186,40 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
 
     /** More paths changed than `largeChangeThreshold`; raising it lifts this. */
     LARGE_CHANGE("large-change"),
+
+    /**
+     * With `narrowDependencies`, a dependency version bump put a module on the classpath that the map
+     * never saw: nothing observed bounds what a new service provider or auto-configuration does.
+     */
+    DEPENDENCY_ADDED("dependency-added"),
+
+    /** As [DEPENDENCY_ADDED], but the classpath's order changed, so another jar answers first. */
+    CLASSPATH_REORDERED("classpath-reordered"),
+
+    /**
+     * As [DEPENDENCY_ADDED], but a bumped module now holds a class a later classpath entry also
+     * holds: a test that found it there left no lookup to match.
+     */
+    DEPENDENCY_SHADOWS("dependency-shadows"),
+
+    /**
+     * As [DEPENDENCY_ADDED], but a bumped coordinate is on none of this task's classpaths, or is
+     * declared in a configuration they do not extend: it changes the test JVM some other way, such
+     * as an agent or a generator.
+     */
+    DEPENDENCY_UNLOCATED("dependency-unlocated"),
+
+    /**
+     * As [DEPENDENCY_ADDED], but a bumped module's jar is named in the test JVM's arguments or
+     * system properties, as a `-javaagent` is: it acts before anything is recorded.
+     */
+    DEPENDENCY_IN_JVM_ARGUMENTS("dependency-in-jvm-arguments"),
+
+    /**
+     * As [DEPENDENCY_ADDED], but the map records no resolved classpath to compare against, as a map
+     * recorded before it did. A capture fixes this.
+     */
+    CLASSPATH_UNRECORDED("classpath-unrecorded"),
     ;
 
     companion object {

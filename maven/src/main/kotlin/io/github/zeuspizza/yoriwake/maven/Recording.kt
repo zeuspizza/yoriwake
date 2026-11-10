@@ -16,6 +16,8 @@ import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
+import io.github.zeuspizza.yoriwake.gradle.change.DependencyRule
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -238,6 +240,25 @@ internal class Recording(
         val environment = fingerprints(project, execution, mapDir, configuration, classpath, arguments(host.let { resolved(project, it).orEmpty() }), text)
         val undated = undatedBy(project, execution, configuration)
         val hostArguments = arguments(resolved(project, host).orEmpty())
+        val identities = moduleIdentities(project)
+        recordClasspath(project, mapDir, classpath, identities, properties)
+        val dependencies = if (!Settings.narrowDependenciesOf(project, session)) null else DependencyRule.Context(
+            git = selection.git,
+            raw = { ChangeDetection.rawGit(root, it) },
+            current = { ClasspathRecord.of(classpath, identities, session.allProjects.map { it.build.directory }, root, dependencyHomes(session)) },
+            jvmArguments = { forkSystemProperties(project, execution, configuration).map { valueOf(project, it) } + hostArguments },
+            configurations = { null },
+            ownBuildFile = { path -> path in poms() },
+            maven = DependencyRule.Maven(
+                poms = { poms() },
+                outsideParent = {
+                    session.allProjects.any { module ->
+                        val parent = module.parent ?: return@any false
+                        parent.file?.absoluteFile?.startsWith(root.absoluteFile) != true
+                    }
+                },
+            ),
+        )
         val kind = selection.apply(
             name, mapDir, project.basedir.relativeTo(root).invariantSeparatorsPath, view(project, execution, classpath, configuration),
             environment, undated, isolated,
@@ -252,6 +273,7 @@ internal class Recording(
             namedTests = parameter(project, configuration, "test", if (execution.artifactId == FAILSAFE) "it.test" else "test")
                 ?.let { "tests were named with -D${if (execution.artifactId == FAILSAFE) "it.test" else "test"}=$it" },
             text = text,
+            dependencies = dependencies,
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
@@ -264,6 +286,43 @@ internal class Recording(
         })
         val scope = EffectiveScope.fromAgentArguments(hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()))
         running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize())
+    }
+
+    /** Every model file read this session that lies in the checkout: each module's POM, and its parents'. */
+    private fun poms(): List<String> =
+        session.allProjects.flatMap { module -> generateSequence(module) { it.parent }.mapNotNull { it.file } }
+            .mapNotNull { pom -> pom.absoluteFile.relativeToOrNull(root.absoluteFile)?.invariantSeparatorsPath }
+            .filterNot { it.startsWith("..") }.distinct()
+
+    /**
+     * Each library module file of [project]'s resolved test classpath, with its identity, as the Gradle
+     * plugin names them: `groupId:artifactId`, then `:classifier` and `@extension` when not a plain jar.
+     */
+    private fun moduleIdentities(project: MavenProject): Map<File, String> =
+        project.artifacts.orEmpty().mapNotNull { artifact ->
+            val file = artifact.file ?: return@mapNotNull null
+            val extension = artifact.artifactHandler?.extension ?: file.extension
+            val classifier = artifact.classifier.orEmpty()
+            file.absoluteFile to "${artifact.groupId}:${artifact.artifactId}" +
+                (if (classifier.isEmpty()) "" else ":$classifier") + (if (extension == "jar") "" else "@$extension")
+        }.toMap()
+
+    /**
+     * The resolved test classpath, for the decode to keep beside the map, and the library jars on it,
+     * for the agent to tell their touches apart; see [ClasspathRecord]. None recorded leaves a later
+     * bump forcing until a capture records one.
+     */
+    private fun recordClasspath(project: MavenProject, mapDir: File, classpath: List<File>, identities: Map<File, String>, properties: Properties) {
+        val modules = File(mapDir, ClasspathRecord.MODULES_FILE)
+        ClasspathRecord.pending(mapDir).delete()
+        ClasspathRecord.pendingDirs(mapDir).delete()
+        modules.delete()
+        properties.setProperty(AgentContract.JAR_MODULES_PROPERTY, modules.path)
+        runCatching {
+            val record = ClasspathRecord.of(classpath, identities, session.allProjects.map { it.build.directory }, root, dependencyHomes(session))
+            ClasspathRecord.write(ClasspathRecord.pending(mapDir), ClasspathRecord.pendingDirs(mapDir), record)
+            ClasspathRecord.writeModules(modules, record)
+        }.onFailure { log.debug("[yoriwake] ${project.artifactId}: no resolved classpath recorded ($it)") }
     }
 
     private fun decode(project: MavenProject, execution: MojoExecution, key: String, run: Run) {

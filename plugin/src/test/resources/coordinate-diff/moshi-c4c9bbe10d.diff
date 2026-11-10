@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 60df974c..9882540e 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -15 +15 @@ mavenPublish = { id = "com.vanniktech.maven.publish", version = "0.36.0" }
+-spotless = { id = "com.diffplug.spotless", version = "8.6.0" }
++spotless = { id = "com.diffplug.spotless", version = "8.7.0" }

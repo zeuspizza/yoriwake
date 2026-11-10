@@ -39,6 +39,10 @@ internal object MapProvenance {
         CoverageDecoder.CAPTURE_COMMIT_FILE,
         WorkingTree.SNAPSHOT_FILE,
         AgentContract.MAP_SCHEMA_VERSION_FILE,
+        AgentContract.JAR_TOUCH_FILE,
+        AgentContract.MISS_TOUCH_FILE,
+        io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.FILE,
+        io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.DIRS_FILE,
     ).sorted()
 
     /**
@@ -60,6 +64,15 @@ internal object MapProvenance {
                 "scope", "effective-scope", "loaded.txt", "loaded-provenance", "loaded-scope", "constants",
                 "class-digests", "annotation-digests", "resource-digests", "capture-commit",
                 "worktree-snapshot", "schema-version",
+            ),
+        ),
+        EarlierScheme(
+            "0.3.0 to 0.5.0",
+            listOf(
+                "coverage.tsv", "positions.tsv", "first-touch.tsv", "named-touch.tsv", "resource-touch.tsv",
+                "jvm-mode.tsv", "environment.tsv", "environment-fingerprints.tsv", "fingerprint-salt", "scope",
+                "effective-scope", "loaded.txt", "loaded-provenance", "loaded-scope", "constants", "class-digests",
+                "annotation-digests", "resource-digests", "capture-commit", "worktree-snapshot", "schema-version",
             ),
         ),
     )

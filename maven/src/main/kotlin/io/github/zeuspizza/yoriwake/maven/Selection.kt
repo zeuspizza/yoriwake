@@ -16,6 +16,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+import io.github.zeuspizza.yoriwake.gradle.change.DependencyRule
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
@@ -156,6 +157,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         worked: (SelectingStep.Worked, String) -> Unit = { _, _ -> },
         /** The execution's one reading of which copies of tracked text files git wrote with `\r\n`. */
         text: TrackedText = TrackedText(root),
+        /** What a dependency bump is judged against, with `narrowDependencies`; null leaves POMs forcing. */
+        dependencies: DependencyRule.Context? = null,
     ): RunPlan.Kind {
         val host = Host(name, properties)
         // Whatever the run kind, as on Gradle: an observing or complement run reports the pin too.
@@ -290,6 +293,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             SelectingStep.Inputs(
                 mapDir, root, paths, widened.ref, widened.origin, sourceDirs, view,
                 notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing, text = text,
+                dependencies = dependencies,
             ),
             host,
         )

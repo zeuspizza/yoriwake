@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index f1d553e9a..485ee7443 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -105 +105 @@ kotlin = { id = "org.jetbrains.kotlin.jvm", version = "2.4.10" }
+-nmcp-settings = { id = "com.gradleup.nmcp.settings", version = "1.6.1" }
++nmcp-settings = { id = "com.gradleup.nmcp.settings", version = "1.6.2" }

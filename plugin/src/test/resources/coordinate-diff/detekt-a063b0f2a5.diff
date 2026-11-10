@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index de247bd82d..8a37b6ccf2 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -60 +60 @@ opentest4j = { module = "org.opentest4j:opentest4j", version = "1.3.0" }
+-sarif4k = { module = "io.github.detekt.sarif4k:sarif4k", version = "0.6.0" }
++sarif4k = { module = "io.github.detekt.sarif4k:sarif4k", version = "0.8.0" }

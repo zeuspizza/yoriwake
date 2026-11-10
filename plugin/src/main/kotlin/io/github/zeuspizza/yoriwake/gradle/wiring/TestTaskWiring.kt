@@ -38,6 +38,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStartSource
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
+import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.change.Declarations
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
@@ -51,6 +52,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.head
 import io.github.zeuspizza.yoriwake.gradle.change.validated
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.dependencyHomes
+import io.github.zeuspizza.yoriwake.gradle.facts.moduleIdentities
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.fullRunBranches
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -132,6 +134,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             )
         }
         val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)
+        val narrowDependencies = settings.narrowDependencies ?: extension.narrowDependencies.getOrElse(false)
         val pathIgnore = PathIgnore.validated(extension.pathIgnore.getOrElse(emptyList()), project.path)
         val largeChange = extension.largeChangeThreshold.getOrElse(LargeChange.DEFAULT_THRESHOLD).also {
             if (it < 1) {
@@ -175,7 +178,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, narrowPlainRunners, recordSequentially) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, narrowPlainRunners, recordSequentially, narrowDependencies) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -192,7 +195,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, largeChange, narrowPlainRunners) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, largeChange, narrowPlainRunners, narrowDependencies) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -237,6 +240,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         largeChange: Int,
         narrowPlainRunners: Boolean,
         recordSequentially: Boolean,
+        narrowDependencies: Boolean,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
         val scopeOutcome = applyJacocoIncludes(project, test, scope)
@@ -381,7 +385,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
             configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, pathIgnore, environment,
-                projectDir, declarations.filter { it.task == test.name }, largeChange)
+                projectDir, declarations.filter { it.task == test.name }, largeChange, narrowDependencies)
         } else {
             declineSelection(test, mapDir, runPlan)
         }
@@ -530,10 +534,23 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val buildDirs = projectFacts(project, buildMemo).buildDirs.values.toList()
         val rootDir = project.rootDir
         val homes = dependencyHomes(project)
+        val identities = moduleIdentities(project)
+        val modules = File(mapDir, ClasspathRecord.MODULES_FILE)
+        test.systemProperty(AgentContract.JAR_MODULES_PROPERTY, modules.absolutePath)
         test.doFirst {
             pending.delete()
+            ClasspathRecord.pending(mapDir).delete()
+            ClasspathRecord.pendingDirs(mapDir).delete()
+            modules.delete()
             if (declinedUnderDevelocity(test)) return@doFirst
             if (selecting && !fullRunMarker.isFile) return@doFirst
+            // The resolved classpath, for a later bump to be compared with; none recorded leaves a
+            // bump forcing until a capture records one.
+            runCatching {
+                val record = ClasspathRecord.of(classpath.files, identities.get(), buildDirs, rootDir, homes)
+                ClasspathRecord.write(ClasspathRecord.pending(mapDir), ClasspathRecord.pendingDirs(mapDir), record)
+                ClasspathRecord.writeModules(modules, record)
+            }.onFailure { test.logger.info("[yoriwake] ${test.path}: no resolved classpath recorded ($it)") }
             val walk = runCatching { ClasspathFiles.table(classpath.files, buildDirs, rootDir, homes) }
                 .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
             when (walk) {

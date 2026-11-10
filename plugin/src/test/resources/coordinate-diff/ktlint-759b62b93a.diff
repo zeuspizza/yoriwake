@@ -1,0 +1,7 @@
+diff --git a/ktlint-cli/build.gradle.kts b/ktlint-cli/build.gradle.kts
+index 188404f6..e4860a89 100644
+--- a/ktlint-cli/build.gradle.kts
++++ b/ktlint-cli/build.gradle.kts
+@@ -15,0 +16,2 @@ tasks.shadowJar {
++    @Suppress("DEPRECATION") // This flag will be disabled and removed in the next major version of Shadow.
++    enableKotlinModuleRemapping = false
