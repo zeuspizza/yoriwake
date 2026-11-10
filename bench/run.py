@@ -2718,6 +2718,10 @@ DECISION_PART_SUFFIX = ".part"
 DECISION_RULES_PREFIX = "#+"
 DECISION_RULES_NOTE = "rules"
 DECISION_FORCING_KINDS_NOTE = "forcing-kinds"
+# `optimistic` on a record written in optimistic mode, which runs fewer tests than the safe rule by
+# request. Must match AgentContract.MODE_NOTE. Such a row is in no recall figure (`optimistic_row`).
+DECISION_MODE_NOTE = "mode"
+OPTIMISTIC_MODE = "optimistic"
 # The rules that share a JVM with the change rather than reach it by coverage, and the class
 # rounding, which is derived from other selections. Every other rule is part of the selection
 # coverage alone makes -- the one beneath a refusal, and the one a looser mode would start from.
@@ -3192,6 +3196,7 @@ def decision_fields(decisions, selected_distinct):
     if not decisions:
         return {
             "decision_outcome": None,
+            "decision_mode": None,
             "full_run_kind": None,
             "refusal_kind": None,
             "decision_record_version": None,
@@ -3208,6 +3213,8 @@ def decision_fields(decisions, selected_distinct):
     narrowed = notes.get("outcome") == "narrowed"
     return {
         "decision_outcome": notes.get("outcome"),
+        # Absent on a safe record: only optimistic mode writes the note.
+        "decision_mode": notes.get(DECISION_MODE_NOTE),
         "full_run_kind": notes.get("full-run-kind"),
         # WHICH refusal, where `full_run_kind` says only which SIDE refused. The daemon establishes
         # things the test JVM cannot -- a changed compile-time constant, an inline scan out of
@@ -3236,6 +3243,12 @@ def coverage_only(tokens):
     return any(not token.startswith(SHARES_JVM_RULE_PREFIX)
                and token not in (CLASS_GRANULARITY_RULE, CLASS_RUNS_WHOLE_RULE, RULE_NONE, RULE_UNKNOWN)
                for token in tokens)
+
+
+def optimistic_row(row):
+    """Whether the row's own record says it selected in optimistic mode: such a row leaves out tests
+    the safe rule runs on purpose, so a miss there is the mode's measured cost, never a recall figure."""
+    return row.get("decision_mode") == OPTIMISTIC_MODE
 
 
 def rule_fields(rules, notes):

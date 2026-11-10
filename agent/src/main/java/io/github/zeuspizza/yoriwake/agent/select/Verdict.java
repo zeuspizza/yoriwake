@@ -2,8 +2,8 @@ package io.github.zeuspizza.yoriwake.agent.select;
 
 /**
  * What the test-JVM filter did with one test, and which rule decided it: one row of
- * {@code decisions.tsv}. Only {@link #SKIPPED} and {@link #ALREADY_RAN} exclude; every other verdict
- * runs the test.
+ * {@code decisions.tsv}. Only {@link #SKIPPED}, {@link #LOOSENED} and {@link #ALREADY_RAN} exclude;
+ * every other verdict runs the test.
  */
 public enum Verdict {
     /** The daemon refused this run, so nothing is deselected. */
@@ -39,7 +39,12 @@ public enum Verdict {
     /** See {@link Selector.Decision.Reason#NOT_IN_MAP}. */
     NOT_IN_MAP,
     /** See {@link Selector.Decision.Reason#SKIPPED}. */
-    SKIPPED;
+    SKIPPED,
+    /**
+     * Left out by optimistic mode although the safe rule runs it: a rule reached the test and the
+     * invocation waived that rule, which {@link #SKIPPED} does not say.
+     */
+    LOOSENED;
 
     /** The selector's own reason, as the row it becomes. */
     public static Verdict of(Selector.Decision.Reason reason) {
@@ -55,7 +60,7 @@ public enum Verdict {
     }
 
     public boolean included() {
-        return this != SKIPPED && this != ALREADY_RAN;
+        return this != SKIPPED && this != LOOSENED && this != ALREADY_RAN;
     }
 
     /** The row's verdict column. */

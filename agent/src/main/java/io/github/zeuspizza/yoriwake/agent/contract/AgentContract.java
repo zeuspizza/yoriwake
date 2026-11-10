@@ -38,6 +38,12 @@ public final class AgentContract {
     public static final String SELECT_PROPERTY = "yoriwake.select";
 
     /**
+     * {@code optimistic} on a selecting run that drops the shared-JVM windows the change opens; set
+     * only then. Absent or anything else is the safe rule.
+     */
+    public static final String MODE_PROPERTY = "yoriwake.mode";
+
+    /**
      * {@code true} when this run executes every test and records, beside each row, the verdict a
      * selecting run of the same inputs would have given. Set beside {@link #SELECT_PROPERTY}, which
      * still decides what that verdict is.
@@ -689,6 +695,12 @@ public final class AgentContract {
     public static final String FULL_RUN_KIND_NOTE = "full-run-kind";
 
     public static final String FULL_RUN_REASON_NOTE = "full-run-reason";
+
+    /**
+     * {@code optimistic} on a selecting run in optimistic mode; absent on a safe one. A test that run
+     * left out and the safe rule runs is recorded {@code LOOSENED}.
+     */
+    public static final String MODE_NOTE = "mode";
 
     /**
      * The refusal token: copied from {@link #REFUSED_KIND_PROPERTY}, or raised by the agent itself

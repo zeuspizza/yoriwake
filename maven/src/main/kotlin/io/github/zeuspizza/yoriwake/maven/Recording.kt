@@ -360,6 +360,8 @@ internal class Recording(
                 override fun warn(message: String) = log.warn(message)
                 override fun info(message: String) = log.debug(message)
             },
+            optimistic = run.kind == RunPlan.Kind.SELECT && selection.optimistic,
+            fullRunPolicy = selection.fullRunPolicy,
         ).run()
     }
 

@@ -5,6 +5,7 @@
   "fullRun": true,
   "reason": "no map at no-map-here; this run will build one",
   "fullRunKind": "map-unusable",
+  "mode": "safe",
   "known": 0,
   "selected": 0,
   "changedClasses": 2,
@@ -34,6 +35,7 @@
   "digestRecorded": 4,
   "digestBytesStale": true,
   "digestAddedSample": ["com.acme.X", "com.acme.Y"],
+  "loosened": [],
   "refusals": [
     { "class": "com.acme.Other", "reason": "no bytes" },
     { "class": "com.acme.Thing", "reason": "a constant changed" }

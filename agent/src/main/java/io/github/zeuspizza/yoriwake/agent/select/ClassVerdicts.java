@@ -12,8 +12,8 @@ import java.util.function.UnaryOperator;
  * skip a class: from the tests the class holds now, a verdict for each and one answer for the class.
  *
  * <p>The class is left out only when it holds at least one test and every one is {@link
- * Verdict#SKIPPED}. Otherwise it runs whole, and a test that would have been skipped on its own is
- * recorded {@link Verdict#CLASS_GRANULARITY}. A class with no test runs, so whatever its runner
+ * Verdict#SKIPPED} or {@link Verdict#LOOSENED}. Otherwise it runs whole, and a test that would have
+ * been left out on its own is recorded {@link Verdict#CLASS_GRANULARITY}. A class with no test runs, so whatever its runner
  * does with it is not hidden.
  */
 public final class ClassVerdicts {
@@ -48,14 +48,14 @@ public final class ClassVerdicts {
         for (String id : ids) {
             Verdict verdict = verdictFor(inputs, decision, pinned, id, keepReason);
             verdicts.put(id, verdict);
-            allSkipped &= verdict == Verdict.SKIPPED;
+            allSkipped &= verdict == Verdict.SKIPPED || verdict == Verdict.LOOSENED;
         }
         if (allSkipped && keepReason == null) {
             return new ClassVerdicts(true, verdicts);
         }
         // Rounding up to the class only ever includes, so it cannot lose a failure.
         for (Map.Entry<String, Verdict> entry : verdicts.entrySet()) {
-            if (entry.getValue() == Verdict.SKIPPED) {
+            if (entry.getValue() == Verdict.SKIPPED || entry.getValue() == Verdict.LOOSENED) {
                 entry.setValue(Verdict.CLASS_GRANULARITY);
             }
         }

@@ -129,7 +129,7 @@ internal object InlinedSources {
                     index++
                     continue
                 }
-                byId[id] = path.removeSuffix(".kt").replace('/', '.')
+                byId[id] = if (path.endsWith(".kt")) kotlinSourcePrefix(path) else path.replace('/', '.')
                 index += 2
             } else {
                 // `<id> <filename>` with no path line: only the file name is known.
@@ -137,7 +137,8 @@ internal object InlinedSources {
                 if (id == null) {
                     unknown = true
                 } else {
-                    byId[id] = line.substringAfter(' ').trim().removeSuffix(".kt")
+                    val name = line.substringAfter(' ').trim()
+                    byId[id] = if (name.endsWith(".kt")) kotlinSourcePrefix(name) else name
                 }
                 index++
             }
@@ -147,6 +148,19 @@ internal object InlinedSources {
             unknown = true
         }
         return Files(byId.filterKeys { it != 1 }.values.filter { it.isNotEmpty() }.toSet(), unknown)
+    }
+
+    /**
+     * The class prefix of a Kotlin source path: `dev/jvm/Platform.jvm.kt` is `dev.jvm.Platform_jvm`,
+     * since Kotlin names a file's class after its file name with each dot made `_`
+     * (`Platform_jvmKt`). Change detection names a changed file the same way, or the classes that
+     * inlined a dotted file would never be found.
+     */
+    fun kotlinSourcePrefix(path: String): String {
+        val withoutExtension = path.removeSuffix(".kt")
+        val fileStart = withoutExtension.lastIndexOf('/') + 1
+        return withoutExtension.substring(0, fileStart).replace('/', '.') +
+            withoutExtension.substring(fileStart).replace('.', '_')
     }
 
     /** The leading integer of `<id> <filename>`, or null when it is not one. */

@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle
 
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import org.gradle.api.InvalidUserDataException
 import org.gradle.api.Project
 
@@ -13,8 +14,13 @@ import org.gradle.api.Project
  * `yoriwake.internal.*` flags drive diagnostics and experiments and are unsupported.
  *
  * @param lookup a Gradle property's raw value, or null when it is not set.
+ * @param commandLine a `-P` property's raw value as this invocation's command line passed it, or
+ *   null; a flag only the command line may set is refused from anywhere else.
  */
-internal class Settings(lookup: (String) -> String?) {
+internal class Settings(lookup: (String) -> String?, commandLine: (String) -> String?) {
+
+    /** Every flag as [lookup] answers it, the command line included. */
+    constructor(lookup: (String) -> String?) : this(lookup, lookup)
 
     val select: Boolean = parseFlag(SELECT, lookup(SELECT))
     /** Runs every test and records what a selecting run would have left out. */
@@ -34,6 +40,15 @@ internal class Settings(lookup: (String) -> String?) {
     /** Asks a selecting run to run every test instead, as a recording run. */
     val fullRun: Boolean = parseFlag(FULL_RUN, lookup(FULL_RUN))
     val base: String? = lookup(BASE)
+    private val modeValue: String? = lookup(MODE)
+    private val modePassed: String? = commandLine(MODE)
+
+    /**
+     * `safe` (the default) or `optimistic`, which drops the shared-JVM windows the change opens. Read
+     * only from the command line: set in a file a release gate also reads, it would loosen that run.
+     * Parsed when asked, so a disabled build never fails over it.
+     */
+    val mode: Strictness get() = parseMode(modeValue, modePassed)
     val disabled: Boolean = parseFlag(DISABLED, lookup(DISABLED))
     val isolatedCapture: Boolean = parseFlag(ISOLATED_CAPTURE, lookup(ISOLATED_CAPTURE))
     /** Null when not passed, so the build's `recordSequentially` answers. */
@@ -62,6 +77,7 @@ internal class Settings(lookup: (String) -> String?) {
         const val COMPLEMENT = SettingNames.COMPLEMENT
         const val FULL_RUN = SettingNames.FULL_RUN
         const val BASE = SettingNames.BASE
+        const val MODE = SettingNames.MODE
         const val DISABLED = "yoriwake.disabled"
         const val ISOLATED_CAPTURE = SettingNames.ISOLATED_CAPTURE
         const val RECORD_SEQUENTIALLY = SettingNames.RECORD_SEQUENTIALLY
@@ -78,9 +94,43 @@ internal class Settings(lookup: (String) -> String?) {
         const val COUNTERS = "yoriwake.internal.counters"
         const val FORCED_SHARE = "yoriwake.internal.payback.forcedShare"
 
-        /** Via `providers.gradleProperty`, which is allowed under Isolated Projects. */
-        fun of(project: Project): Settings =
-            Settings { project.providers.gradleProperty(it).orNull }
+        /**
+         * Via `providers.gradleProperty`, which is allowed under Isolated Projects and keys the
+         * configuration cache; the start parameter says only whether the command line passed it.
+         */
+        fun of(project: Project): Settings {
+            val passed = project.gradle.startParameter.projectProperties
+            // Read through providers too, so the configuration cache keys on them: the start parameter
+            // is no input, and a cached entry made with the flag on the command line would otherwise
+            // serve a run that sets the same value only in the environment or a daemon property.
+            project.providers.environmentVariable("ORG_GRADLE_PROJECT_$MODE").orNull
+            project.providers.systemProperty("org.gradle.project.$MODE").orNull
+            return Settings({ project.providers.gradleProperty(it).orNull }) { passed[it] }
+        }
+
+        /**
+         * [value] as `-P$MODE` asks: absent is safe; `safe` or `optimistic` in any letter case.
+         * Anything else, or a value [passed] does not hold because a file or the environment set it,
+         * fails the build naming the flag.
+         */
+        fun parseMode(value: String?, passed: String?): Strictness {
+            if (value == null) return Strictness.SAFE
+            if (passed != value) {
+                throw InvalidUserDataException(
+                    "[yoriwake] $MODE=$value is set outside the command line (a gradle.properties file, " +
+                        "ORG_GRADLE_PROJECT_$MODE or -Dorg.gradle.project.$MODE). Optimistic mode runs fewer tests than " +
+                        "the safe rule, so only the invocation that accepts that may ask for it: pass " +
+                        "-P$MODE=optimistic on the command line, and remove it from there."
+                )
+            }
+            return when {
+                value.equals(Strictness.SAFE.token(), ignoreCase = true) -> Strictness.SAFE
+                value.equals(Strictness.OPTIMISTIC.token(), ignoreCase = true) -> Strictness.OPTIMISTIC
+                else -> throw InvalidUserDataException(
+                    "[yoriwake] -P$MODE=$value is not a mode. Pass -P$MODE=safe or -P$MODE=optimistic."
+                )
+            }
+        }
 
         fun parseFlag(name: String, value: String?): Boolean = when {
             value == null -> false

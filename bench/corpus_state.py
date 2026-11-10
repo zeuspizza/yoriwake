@@ -206,7 +206,7 @@ def depths(rows):
 def examine(name, results_dir, qualified, project=None, root=None, shape_set="default"):
     """One project's verdict, with everything the published table needs to print beside it.
     `shape_set` is the set `results_dir` holds: `default` at the top, a named set in its own."""
-    entry = {"project": name, "rows": 0, "miss_possible": 0, "missed": 0, "unattributed_rows": 0,
+    entry = {"project": name, "rows": 0, "miss_possible": 0, "missed": 0, "unattributed_rows": 0, "optimistic_rows": 0,
              "container_failed": 0, "mutations_rejected": None,
              "depth": None, "targets_available": None, "reason": None, "grammar": None,
              "fixture": bool((project or {}).get("fixture"))}
@@ -228,7 +228,9 @@ def examine(name, results_dir, qualified, project=None, root=None, shape_set="de
 
     stamp = data.get("plugin_commit")
     digest = data.get("selector_digest")
-    rows = data.get("mutations") or []
+    # Optimistic-mode rows, by their own record, are in no recall figure.
+    rows = [row for row in data.get("mutations") or [] if not run.optimistic_row(row)]
+    entry["optimistic_rows"] = len(data.get("mutations") or []) - len(rows)
     # COUNTED BEFORE THE STALE RETURNS, so a stale file reports what it actually records rather than
     # the initialiser's zero. A recorded miss is evidence about a selector whether or not that
     # selector has since moved, and publishing `missed: 0` beside a file that names missed tests is

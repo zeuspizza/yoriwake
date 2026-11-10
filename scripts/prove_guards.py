@@ -165,6 +165,7 @@ JUNIT4_SELECTION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engin
 LOADED_CLASS_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/LoadedClassRecorder.java"
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
 CHANGE_DETECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
+INLINED_SOURCES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InlinedSources.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
 FILTER_RULE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/FilterRule.java"
 RULES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Rules.java"
@@ -1619,9 +1620,48 @@ MUTATIONS = [
     # names reach the selector as a separate set, and this mutation is the union returning on the
     # daemon side; the agent-side half is "changed bytes join the change set the selector anchors on".
     ("digest-derived names go back into the change set the selector anchors on", SELECTION,
-     "        (prefixes + inliners).distinct().sorted(),",
-     "        (prefixes + inliners + digest?.added.orEmpty()).distinct().sorted(),",
+     "        (prefixes - accounted + inliners).distinct().sorted(),",
+     "        (prefixes - accounted + inliners + digest?.added.orEmpty()).distinct().sorted(),",
      unit_suite, "a digest-derived name never reaches the change set the selector anchors on"),
+    # A Kotlin file whose name holds a dot (`Platform.jvm.kt`) compiles to `Platform_jvmKt`. Named
+    # by its path, the change matched no class and forced every multiplatform `actual` edit; the
+    # SMAP reader must name the file the same way, or the classes that inlined it are never found.
+    ("a dotted Kotlin file name maps to its raw path again", CHANGE_DETECTION,
+     "                val prefix = if (path.endsWith(\".kt\")) InlinedSources.kotlinSourcePrefix(fqn) else fqn.replace('/', '.')",
+     "                val prefix = fqn.replace('/', '.')",
+     unit_suite, "a dotted Kotlin file name maps to the class Kotlin names it"),
+    ("the SMAP reader names a dotted source file by its raw path again", INLINED_SOURCES,
+     "                byId[id] = if (path.endsWith(\".kt\")) kotlinSourcePrefix(path) else path.replace('/', '.')",
+     "                byId[id] = path.removeSuffix(\".kt\").replace('/', '.')",
+     unit_suite, "an SMAP naming a dotted source file names it the way a change to that file does"),
+    # A file of only `inline` functions leaves the change set when the classes that inlined it
+    # were found and its own class left no trace. The allowlist is what keeps a file with state or
+    # a plain function out of that rule; the per-file inliner check is what keeps a file nothing
+    # inlined from leaving with nobody standing in for it.
+    ("the only-inline allowlist accepts any top-level declaration", CHANGE_DETECTION,
+     "                    else -> return false\n",
+     "                    else -> Unit\n",
+     unit_suite, "a file that declares anything beside its inline functions is not"),
+    ("an inline-only file leaves the change set with no inliner of its own", SELECTION,
+     "            (artifacts.classesInlining(listOf(prefix), exact = true) as? InlineScan.Found)?.classes?.isNotEmpty() == true",
+     "            true",
+     unit_suite, "an inline-only file that nothing inlined keeps its place, beside one that something did"),
+    ("an inline-only file inlined away is no changed source to the bytes comparison", SELECTION,
+     "Selector.bytesOnly(it, prefixes + accountedByInliners)",
+     "Selector.bytesOnly(it, prefixes)",
+     unit_suite, "an inline-only file inlined away is still a changed source to the bytes comparison"),
+    ("the per-file inliner check takes a file whose name begins with the changed one's", TASK_ARTIFACTS,
+     "            prefixes.any { if (exact) ownedBy(name, it) else name.startsWith(it) }",
+     "            prefixes.any { name.startsWith(it) }",
+     unit_suite, "an inline-only file whose name begins another inlined file's keeps its place"),
+    ("a read of a dotted Kotlin source file stops answering to its change", SELECTOR,
+     "        return prefix.indexOf('_', fileStart) >= 0",
+     "        return false && prefix.indexOf('_', fileStart) >= 0",
+     agent_suite, "a test that read a dotted Kotlin source file runs when that file changes"),
+    ("an inline-only file whose class a test covered leaves the change set", SELECTOR,
+     "        if (!map.isUsable() || knownToMap(map.entries(), prefix, changedClassPrefixes)\n",
+     "        if (!map.isUsable()\n",
+     agent_suite, "an inline-only file whose class a test covered keeps its place in the change set"),
     # The other half of the same review. A test that fails alone twice of three is mostly a real
     # miss, and erasing it is a recall figure improving for the wrong reason.
     ("a majority that fails alone is erased from the miss count again", PY_ISOLATION,
@@ -1989,7 +2029,7 @@ MUTATIONS = [
     # first loaded, executed or read in that JVM. Each mutation below makes the rule go quiet, and
     # quiet is a later dependent test skipped.
     ("the selector stops selecting what ran after a changed class arrived in its JVM", SELECTOR,
-     "            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt)) {",
+     "            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt, loosened)) {",
      "            for (String id : new HashSet<String>()) {",
      agent_suite, "a test that ran after its JVM first loaded a changed class is selected"),
     # At, not after: a test that loads a class in its own window and executes none of it (a
@@ -2003,16 +2043,16 @@ MUTATIONS = [
      "            if (positions.isEmpty()) {\n                if (false) after.add(test.testId());",
      agent_suite, "a test the map holds no position for runs whenever something changed"),
     ("a JVM whose loads and reads were not all observed reads as touching nothing", SELECTOR,
-     "        if (AgentContract.FIRST_TOUCH_ANY.equals(className) || changedBytes.contains(className)) {",
-     "        if (changedBytes.contains(className)) {",
+     "        boolean unobserved = !loosened.contains(Rule.SHARES_JVM_UNOBSERVED);",
+     "        boolean unobserved = false;",
      agent_suite, "a JVM whose touches were not all observed selects every test that ran in it"),
     # The absence rule's side of it: a class a reader parsed was never loaded, so the loaded union
     # alone would call it untested.
     ("a class only read as a class file is proven untested by its absence again", SELECTOR,
      "            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())\n"
-     "                    || matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {\n"
-     "                return false;",
-     "            if (false) {\n                return false;",
+     "                    || touchMatches(touch.className(), prefix, changedClassPrefixes)) {\n"
+     "                return true;",
+     "            if (false) {\n                return true;",
      agent_suite, "a class some JVM read the class file of is not proven untested by its absence"),
     # A class defined from bytes no file holds (a proxy, a generated subclass) is seen only here;
     # one loaded from a class directory or a jar is also read through the read hooks.
@@ -3039,8 +3079,8 @@ MUTATIONS = [
     # ...and captures as a recording run does: taking a selecting run's capture decision leaves a
     # narrowed observation's map uncaptured, and the map it reports against stops refreshing.
     ("an observing run takes a selecting run's capture decision", SELECTING_STEP,
-     "    val decision = if (observing) OBSERVING_CAPTURE else decided\n",
-     "    val decision = if (false) OBSERVING_CAPTURE else decided\n",
+     "            observing -> OBSERVING_CAPTURE\n",
+     "            false -> OBSERVING_CAPTURE\n",
      functional_suite, "an observing run writes the map a recording run writes on the same state"),
     # A complement run leaves out a test only when the selecting run's record shows it ran to
     # an outcome under the same commit, tree, task, build, classpath, configuration and test JVM.
@@ -4216,8 +4256,8 @@ MUTATIONS = [
      "        boolean allSkipped = true;",
      agent_suite, "a class with no test runs"),
     ("a class is left out when any one of its tests is skipped", CLASS_VERDICTS,
-     "            allSkipped &= verdict == Verdict.SKIPPED;",
-     "            allSkipped |= verdict == Verdict.SKIPPED;",
+     "            allSkipped &= verdict == Verdict.SKIPPED || verdict == Verdict.LOOSENED;",
+     "            allSkipped |= verdict == Verdict.SKIPPED || verdict == Verdict.LOOSENED;",
      agent_suite, "one test reaching the change keeps the class"),
     ("a kept class's skipped tests are recorded as skipped", CLASS_VERDICTS,
      "                entry.setValue(Verdict.CLASS_GRANULARITY);",
@@ -4655,8 +4695,8 @@ MUTATIONS = [
      "`-Dpts.enabled=true`", "`-Dpts.enable=true`", reference_suite,
      "every -D flag the reference names is in the code"),
     ("the plugin reads a system property of the daemon", SETTINGS,
-     "            Settings { project.providers.gradleProperty(it).orNull }",
-     "            Settings { project.providers.gradleProperty(it).orNull ?: project.providers.systemProperty(it).orNull }",
+     "            return Settings({ project.providers.gradleProperty(it).orNull }) { passed[it] }",
+     "            return Settings({ project.providers.gradleProperty(it).orNull ?: project.providers.systemProperty(it).orNull }) { passed[it] }",
      reference_suite, "the plugin reads no undocumented -D flag"),
     ("the extension's enabled defaults to false", YORIWAKE_PLUGIN,
      "enabled.convention(true)", "enabled.convention(false)", reference_suite,
@@ -5133,6 +5173,30 @@ MUTATIONS = [
      "                if (touched == null || !touched.recorded(position.jvm())",
      "                if (touched == null",
      agent_suite, "a JVM whose touches were not recorded runs whole"),
+    # -- optimistic mode ---------------------------------------------------------------------------
+    #
+    # A mode that runs fewer tests than the safe rule must stay inert unless asked for, drop nothing
+    # but its two windows, and never write the map.
+    ("optimistic mode applies whatever the run asked for", FILTER_RULE,
+     "        Strictness strictness = Strictness.of(property.apply(AgentContract.MODE_PROPERTY));",
+     "        Strictness strictness = Strictness.OPTIMISTIC;",
+     agent_suite, "on any map and change, the optimistic selection is the tests a kept rule runs"),
+    ("optimistic mode leaves out a test the map has never seen", SELECTOR,
+     "            if (!knownToMapAtClassGranularity(testId)) {",
+     "            if (!knownToMapAtClassGranularity(testId) && safe == null) {",
+     agent_suite, "each window the change opens is left out, and every other rule still runs its test"),
+    ("an optimistic run that runs everything captures", SELECTING_STEP,
+     "            host.optimistic -> CaptureDecision(",
+     "            false -> CaptureDecision(",
+     functional_suite, "a map of unknown age runs every test in optimistic mode and captures nothing"),
+    ("the Gradle run stops reading optimistic mode where it decides capture", SELECTION_WIRING,
+     "        get() = test.systemProperties[AgentContract.MODE_PROPERTY]?.toString() == Strictness.OPTIMISTIC.token()",
+     "        get() = false",
+     functional_suite, "a base git cannot diff against runs every test in optimistic mode and captures nothing"),
+    ("the Maven execution stops reading optimistic mode where it decides capture", MAVEN_SELECTION,
+     "            get() = properties.getProperty(AgentContract.MODE_PROPERTY) == Strictness.OPTIMISTIC.token()",
+     "            get() = false",
+     maven_suite, "a map of unknown age runs every test in optimistic mode and captures nothing"),
 ]
 
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.

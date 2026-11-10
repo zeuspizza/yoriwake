@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
@@ -43,6 +44,7 @@ import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
 import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
+import io.github.zeuspizza.yoriwake.gradle.report.loosenedTests
 import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
@@ -82,6 +84,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val explicitBase: Property<String>
+
+    /** The `-Pyoriwake.mode` this explanation decides under; unset is the safe rule. */
+    @get:Input
+    @get:Optional
+    abstract val mode: Property<String>
 
     /** What the run would decline under Develocity, encoded; empty when it would not. */
     @get:Input
@@ -451,6 +458,7 @@ internal abstract class ExplainTask : DefaultTask() {
             digestRule(mapDir, bytesAreFresh = true),
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = found.testClasses,
+            inlinedAway = found.inlinedAway,
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
@@ -463,14 +471,16 @@ internal abstract class ExplainTask : DefaultTask() {
             found
         }
         val provable = established.provable + established.testClasses
-        val decision = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(
-            map,
-            changeSet(
-                widening.prefixes.ifEmpty { scoped.change.classPrefixes.sorted() },
-                paths, scoped, established, widening.changedBytes, widening.movedFiles,
-            ).withChangedJars(bump?.modules.orEmpty(), bump?.directories.orEmpty())
-                .withDaemonRefusal(widening.refusal),
-            emptyList(),
+        val strictness = Strictness.of(this.mode.orNull)
+        val change = changeSet(
+            widening.prefixes.ifEmpty { scoped.change.classPrefixes.sorted() },
+            paths, scoped, established, widening.changedBytes, widening.movedFiles,
+        ).withChangedJars(bump?.modules.orEmpty(), bump?.directories.orEmpty())
+            .withDaemonRefusal(widening.refusal)
+        val decision = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(map, change, emptyList(), strictness)
+        val loosened = if (strictness == Strictness.SAFE) emptyList() else loosenedTests(
+            map, io.github.zeuspizza.yoriwake.agent.select.Selector.decide(map, change, emptyList(), Strictness.SAFE),
+            decision, io.github.zeuspizza.yoriwake.agent.select.Selector.rules(map, change, true),
         )
         bump?.let {
             logger.lifecycle(
@@ -493,12 +503,17 @@ internal abstract class ExplainTask : DefaultTask() {
         )
         // Written before anything is logged, through the same function the run uses, so
         // the file never disagrees with the log or the run.
-        val capture = decideCapture(
+        val decided = decideCapture(
             mapDir,
             mapUsable = map.isUsable,
             fullRun = decision.isFullRun,
             learnable = scoped.change.classPrefixes,
             ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
+        )
+        // As the run applies it: optimistic mode never captures.
+        val capture = if (strictness == Strictness.SAFE) decided else decided.copy(
+            capture = false,
+            reason = "optimistic mode never captures, so nothing is instrumented and the map is left exactly as it was.",
         )
         // The last run's, since only a test JVM can see it: the next recording run meets it again.
         val unconfirmed = Audit.TaskFacts.read(mapDir).parallelismUnconfirmed?.also {
@@ -508,6 +523,8 @@ internal abstract class ExplainTask : DefaultTask() {
             mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing, branch,
             PathIgnoreReport.evidence(scoped.ignore, mapDir),
             unconfirmed,
+            mode = strictness.token(),
+            loosened = loosened,
         )
         ForcingPaths.lines(taskPath, forcing).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         if (decision.isFullRun) {
@@ -526,6 +543,14 @@ internal abstract class ExplainTask : DefaultTask() {
                 "[yoriwake] $taskPath would run $selected of $known known tests " +
                     selectionShare(selected, known)
             )
+            if (strictness != Strictness.SAFE) {
+                logger.lifecycle(
+                    "[yoriwake] $taskPath in optimistic mode leaves out ${loosened.size} tests the safe rule runs " +
+                        "(pins, declared dependencies and whole-class runners are judged when the tests run)" +
+                        loosened.take(REPORTED_REFUSALS).joinToString("") { (test, rules) -> "\n[yoriwake]     $test ($rules)" } +
+                        (if (loosened.size > REPORTED_REFUSALS) "\n[yoriwake]     and ${loosened.size - REPORTED_REFUSALS} more" else "")
+                )
+            }
             if (narrowsPlainJUnit4.getOrElse(false)) {
                 val (leftOut, classes) = plainClassesLeftOut(map, decision)
                 val named = leftOut.sorted()
@@ -582,6 +607,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     return@register
                 }
                 task.explicitBase.set(settings.base)
+                task.mode.set(settings.mode.token())
                 task.fullRunRequested.set(settings.fullRun)
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)

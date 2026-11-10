@@ -130,6 +130,7 @@ def case_the_rule_names_run_py_reads_are_the_ones_the_agent_writes():
         ("RULES_LINE_PREFIX", run.DECISION_RULES_PREFIX),
         ("RULES_NOTE", run.DECISION_RULES_NOTE),
         ("FORCING_KINDS_NOTE", run.DECISION_FORCING_KINDS_NOTE),
+        ("MODE_NOTE", run.DECISION_MODE_NOTE),
         ("RULE_CLASS_GRANULARITY", run.CLASS_GRANULARITY_RULE),
         ("RULE_CLASS_RUNS_WHOLE", run.CLASS_RUNS_WHOLE_RULE),
         ("RULE_NONE", run.RULE_NONE),

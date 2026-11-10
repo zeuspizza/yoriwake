@@ -2,10 +2,13 @@ package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.select.FilterRule
+import io.github.zeuspizza.yoriwake.agent.select.MapReader
 import io.github.zeuspizza.yoriwake.agent.select.Selector
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.change.SelectingStep
 import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
+import io.github.zeuspizza.yoriwake.gradle.report.loosenedTests
 import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
@@ -99,9 +102,14 @@ class ExplainMojo : AbstractMojo() {
             }
             val (step, base) = done
             val decision = FilterRule.decisionFrom(FilterRule.resolveInputs { properties.getProperty(it) }, copy)
+            val strictness = Strictness.of(properties.getProperty(AgentContract.MODE_PROPERTY))
+            val safe = decision.safe()
+            val loosened = if (safe == null) emptyList() else loosenedTests(MapReader.read(copy), safe, decision, decision.rules())
             writeExplanation(
                 mapDir, name, base, step.scoped, step.established, decision, step.widening, step.capture, step.forcing,
                 ignoredEvidence = PathIgnoreReport.evidence(step.scoped.ignore, mapDir),
+                mode = strictness.token(),
+                loosened = loosened,
             )
             if (decision.isFullRun) {
                 consoleLog.info("[yoriwake] $name would run everything: ${decision.fullRunReason()}")
@@ -109,6 +117,13 @@ class ExplainMojo : AbstractMojo() {
                 val known = decision.knownTests()
                 val selected = decision.selectedCount()
                 consoleLog.info("[yoriwake] $name would run $selected of $known known tests ${selectionShare(selected, known)}")
+                if (strictness != Strictness.SAFE) {
+                    consoleLog.info(
+                        "[yoriwake] $name in optimistic mode leaves out ${loosened.size} tests the safe rule runs " +
+                            "(pins and declared dependencies are judged when the tests run)"
+                    )
+                    loosened.forEach { (test, rules) -> consoleLog.info("[yoriwake]     $test ($rules)") }
+                }
             }
         } finally {
             copy.deleteRecursively()

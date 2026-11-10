@@ -144,15 +144,17 @@ class MultiplatformFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a changed inline function in commonMain runs everything`(@TempDir dir: File) {
+    fun `a changed inline function in commonMain runs the tests of the classes that inlined it`(@TempDir dir: File) {
         multiplatform(dir)
 
-        // Its callers are found, but the function's own class never runs, so no test covers it.
+        // The file holds only the inline function, whose own class never runs: JvmOnly, which
+        // inlined it, stands in for it.
         val output = selectAfter(dir, edit = {
             edit(dir, "src/commonMain/kotlin/dev/common/Inlines.kt", "n * 4", "n + n + n + n")
         })
 
-        assertFullRun(dir, "no-coverage-for-changed", output)
+        assertNarrowed(dir, setOf("B2JvmOnlyTest", "B3QuadTest", "B4LimitTest", "B5PlatformTest", "B6PlainTest"), output)
+        assertContains(output, "the classes that inlined them stand in for them: dev.common.Inlines")
     }
 
     @Test
@@ -167,15 +169,28 @@ class MultiplatformFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a change to a platform-suffixed file runs everything`(@TempDir dir: File) {
+    fun `a change to a platform-suffixed file runs the tests that ran it`(@TempDir dir: File) {
         multiplatform(dir)
 
-        // Platform.jvm.kt compiles to Platform_jvmKt, not the Platform.jvm its path names.
+        // Platform.jvm.kt compiles to Platform_jvmKt, the name its change must carry.
         val output = selectAfter(dir, edit = {
             edit(dir, "src/jvmMain/kotlin/dev/jvm/Platform.jvm.kt", "\"JVM\"", "\"J\" + \"VM\"")
         })
 
-        assertFullRun(dir, "no-coverage-for-changed", output)
+        assertNarrowed(dir, setOf("B5PlatformTest", "B6PlainTest"), output)
+    }
+
+    @Test
+    fun `a changed inline function in a platform-suffixed file runs the tests of the classes that inlined it`(
+        @TempDir dir: File,
+    ) {
+        multiplatform(dir)
+
+        val output = selectAfter(dir, edit = {
+            edit(dir, "src/jvmMain/kotlin/dev/jvm/Tags.jvm.kt", "\"t\"", "\"t\" + \"\"")
+        })
+
+        assertNarrowed(dir, setOf("B2JvmOnlyTest", "B3QuadTest", "B4LimitTest", "B5PlatformTest", "B6PlainTest"), output)
     }
 
     @Test

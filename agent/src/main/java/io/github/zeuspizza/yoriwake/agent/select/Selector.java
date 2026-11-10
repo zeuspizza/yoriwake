@@ -30,6 +30,7 @@ public final class Selector {
         private Set<String> notKnownToPass = Collections.emptySet();
         private Set<String> sharedJvmOnly = Collections.emptySet();
         private volatile Rules rules;
+        private volatile Decision safe;
 
         private Decision(Set<String> selectedTestIds, String fullRunReason, FullRunKind fullRunKind,
                 Set<String> knownTestIds) {
@@ -118,6 +119,19 @@ public final class Selector {
 
         void attach(Rules computed) {
             this.rules = computed;
+        }
+
+        /**
+         * What {@link Strictness#SAFE} decides for the same run, when this decision loosened a rule
+         * and narrowed; null otherwise. A test it runs and this one leaves out is {@link
+         * Verdict#LOOSENED}.
+         */
+        public Decision safe() {
+            return safe;
+        }
+
+        void attachSafe(Decision decided) {
+            this.safe = decided;
         }
 
         /** Why nothing may be skipped, as one of a closed set; each value has a different remedy. */
@@ -291,6 +305,16 @@ public final class Selector {
      */
     public static Decision decide(
             MapReader.Result map, ChangeSet change, Collection<String> discoveredTestIds) {
+        return decide(map, change, discoveredTestIds, Strictness.SAFE);
+    }
+
+    /**
+     * Decides what to run, leaving out the windows {@code strictness} loosens. Every other rule,
+     * every full run and every refusal decide as under {@link Strictness#SAFE}.
+     */
+    public static Decision decide(MapReader.Result map, ChangeSet change, Collection<String> discoveredTestIds,
+            Strictness strictness) {
+        Set<Rule> loosened = strictness.loosened();
         Collection<String> changedClassPrefixes = change.changedClasses();
         Collection<String> unmappablePaths = change.unmappablePaths();
         Collection<String> absenceProvable = change.absenceProvable();
@@ -433,7 +457,7 @@ public final class Selector {
         Set<String> sharedJvmOnly = new HashSet<>();
         if (!changedClassPrefixes.isEmpty() || !changedBytes.isEmpty()) {
             Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), changedClassPrefixes, knownTestIds);
-            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt)) {
+            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt, loosened)) {
                 if (selected.add(id)) {
                     sharedJvmOnly.add(id);
                 }
@@ -597,7 +621,7 @@ public final class Selector {
             if (bytes.contains(name)) {
                 open(opened, Rule.SHARES_JVM_CHANGED_BYTES, touch);
             }
-            if (touchesChange(name, dated, Collections.<String>emptySet(), changed)
+            if (touchesChange(name, dated, changed)
                     && !AgentContract.FIRST_TOUCH_ANY.equals(name)) {
                 open(opened, Rule.SHARES_JVM_CHANGED_CLASS, touch);
             }
@@ -607,7 +631,7 @@ public final class Selector {
                 String name = named.className();
                 if (AgentContract.FIRST_TOUCH_ANY.equals(name)) {
                     open(opened, Rule.SHARES_JVM_UNOBSERVED, named);
-                } else if (touchesChange(name, exempt, Collections.<String>emptySet(), changed)) {
+                } else if (touchesChange(name, exempt, changed)) {
                     open(opened, Rule.SHARES_JVM_CHANGED_CLASS, named);
                 }
             }
@@ -672,7 +696,8 @@ public final class Selector {
      * <p>A test the map holds no position for runs: nothing says it ran before anything.
      */
     private static Set<String> ranAfterFirstTouch(MapReader.Result map, List<MapReader.Entry> tests,
-            Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt) {
+            Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt,
+            Set<Rule> loosened) {
         Map<String, Integer> firstTouchByJvm = new HashMap<>();
         List<String> dated = new ArrayList<>();
         for (String prefix : changedClassPrefixes) {
@@ -680,8 +705,18 @@ public final class Selector {
                 dated.add(prefix);
             }
         }
+        // Each touch opens the window Rules names it by; a loosened one opens none.
+        boolean unobserved = !loosened.contains(Rule.SHARES_JVM_UNOBSERVED);
+        boolean bytes = !loosened.contains(Rule.SHARES_JVM_CHANGED_BYTES);
+        boolean classes = !loosened.contains(Rule.SHARES_JVM_CHANGED_CLASS);
+        Set<String> openingBytes = bytes ? changedBytes : Collections.<String>emptySet();
         for (MapReader.FirstTouch touch : map.firstTouches()) {
-            if (touchesChange(touch.className(), dated, changedBytes, changedClassPrefixes)) {
+            String name = touch.className();
+            boolean opens = AgentContract.FIRST_TOUCH_ANY.equals(name)
+                    ? unobserved
+                    : openingBytes.contains(name)
+                            || classes && touchesChange(name, dated, changedClassPrefixes);
+            if (opens) {
                 firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
             }
         }
@@ -689,12 +724,18 @@ public final class Selector {
         // its own first test.
         if (!exempt.isEmpty()) {
             for (MapReader.FirstTouch touch : map.namedTouches()) {
-                if (touchesChange(touch.className(), exempt, Collections.<String>emptySet(), changedClassPrefixes)) {
+                String name = touch.className();
+                boolean opens = AgentContract.FIRST_TOUCH_ANY.equals(name)
+                        ? unobserved
+                        : classes && touchesChange(name, exempt, changedClassPrefixes);
+                if (opens) {
                     firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
                 }
             }
-            for (Map.Entry<String, Integer> first : ownFirstTests(map, tests, exempt).entrySet()) {
-                firstTouchByJvm.merge(first.getKey(), first.getValue(), Math::min);
+            if (classes) {
+                for (Map.Entry<String, Integer> first : ownFirstTests(map, tests, exempt).entrySet()) {
+                    firstTouchByJvm.merge(first.getKey(), first.getValue(), Math::min);
+                }
             }
         }
         Set<String> after = new HashSet<>();
@@ -916,17 +957,31 @@ public final class Selector {
      * @param prefixes the changed prefixes to match against
      * @param changeSet every prefix of this change, the anchor set of the nested-class rule
      */
-    private static boolean touchesChange(String className, Collection<String> prefixes,
-            Set<String> changedBytes, Collection<String> changeSet) {
-        if (AgentContract.FIRST_TOUCH_ANY.equals(className) || changedBytes.contains(className)) {
-            return true;
-        }
+    private static boolean touchesChange(String className, Collection<String> prefixes, Collection<String> changeSet) {
         for (String prefix : prefixes) {
-            if (matchesSourceFile(className, prefix, changeSet)) {
+            if (touchMatches(className, prefix, changeSet)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * As {@link #matchesSourceFile(String, String, Collection)}, plus the name a read of the
+     * source file records: a Kotlin file's dotted name ({@code dev.jvm.Platform.jvm}) where the
+     * change set names it as Kotlin names its class ({@code dev.jvm.Platform_jvm}). A real
+     * {@code Foo_bar.kt} then also answers to a read of {@code Foo.bar}, which only selects more.
+     */
+    private static boolean touchMatches(String className, String prefix, Collection<String> changeSet) {
+        if (matchesSourceFile(className, prefix, changeSet)) {
+            return true;
+        }
+        int fileStart = prefix.lastIndexOf('.') + 1;
+        // The file name's dots read as `_`, so a `Foo_bar.jvm.kt` read matches `Foo_bar_jvm` too.
+        return prefix.indexOf('_', fileStart) >= 0
+                && className.length() > fileStart
+                && className.regionMatches(0, prefix, 0, fileStart)
+                && className.substring(fileStart).replace('.', '_').equals(prefix.substring(fileStart));
     }
 
     /**
@@ -1051,15 +1106,8 @@ public final class Selector {
             String prefix,
             Collection<String> absenceProvable,
             Collection<String> changedClassPrefixes) {
-        if (!absenceProvable.contains(prefix)) {
+        if (!absenceProvable.contains(prefix) || touched(map, prefix, changedClassPrefixes)) {
             return false;
-        }
-        for (MapReader.FirstTouch touch : map.firstTouches()) {
-            // Read as a class file without being loaded is still read: a reader depends on it.
-            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())
-                    || matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {
-                return false;
-            }
         }
         Set<String> loaded = map.loadedClasses();
         if (loaded == null) {
@@ -1078,6 +1126,44 @@ public final class Selector {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether a changed class left no trace in the map a test could depend on: no record covers
+     * it, no capturing JVM touched it, and a loaded-class union that speaks for it does not hold
+     * it. Unlike {@link #untested}, no union is required: the daemon asks this only of a file of
+     * nothing but {@code inline} functions whose inlining classes it found, which stand in for
+     * every use of it but a run of its own class, and it has proved such a run would have fired a
+     * probe. False for an unusable map.
+     */
+    public static boolean leftNoTrace(
+            MapReader.Result map, String prefix, Collection<String> changedClassPrefixes) {
+        if (!map.isUsable() || knownToMap(map.entries(), prefix, changedClassPrefixes)
+                || touched(map, prefix, changedClassPrefixes)) {
+            return false;
+        }
+        Set<String> loaded = map.loadedClasses();
+        if (loaded != null && map.unionSpeaksFor(prefix)) {
+            for (String name : loaded) {
+                if (matchesSourceFile(name, prefix, changedClassPrefixes)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Whether a capturing JVM loaded the class, or read its class or source file. */
+    private static boolean touched(
+            MapReader.Result map, String prefix, Collection<String> changedClassPrefixes) {
+        for (MapReader.FirstTouch touch : map.firstTouches()) {
+            // Read as a class file without being loaded is still read: a reader depends on it.
+            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())
+                    || touchMatches(touch.className(), prefix, changedClassPrefixes)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

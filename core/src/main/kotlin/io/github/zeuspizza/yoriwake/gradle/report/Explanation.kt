@@ -31,6 +31,10 @@ internal fun writeExplanation(
     ignoredEvidence: Map<String, PathIgnore.Evidence> = emptyMap(),
     /** Why the last run's test JVM captured nothing over in-JVM parallelism, or null. */
     parallelismUnconfirmed: String? = null,
+    /** The mode the explanation decided under, as `-Pyoriwake.mode` spells it. */
+    mode: String = io.github.zeuspizza.yoriwake.agent.select.Strictness.SAFE.token(),
+    /** Each test the safe rule runs and [mode] leaves out, with its rule line, from [loosenedTests]. */
+    loosened: List<Pair<String, String>> = emptyList(),
 ) {
     val known = decision.knownTests()
     val selected = if (decision.isFullRun) known else decision.selectedCount()
@@ -46,6 +50,7 @@ internal fun writeExplanation(
         append("""  "fullRunKind": """)
             .append(Json.string(decision.fullRunKind()?.token()))
             .append(',').append('\n')
+        append("""  "mode": ${Json.string(mode)},""").append('\n')
         append("""  "known": $known,""").append('\n')
         append("""  "selected": $selected,""").append('\n')
         append("""  "changedClasses": ${scoped.change.classPrefixes.size},""").append('\n')
@@ -116,6 +121,9 @@ internal fun writeExplanation(
         append("""  "digestAddedSample": """)
         append(Json.strings(widening.digest?.added.orEmpty().sorted().take(UNMAPPABLE_SAMPLE)))
         append(",").append('\n')
+        append("""  "loosened": [""")
+        append(loosened.joinToString(", ") { (test, rules) -> """{ "test": ${Json.string(test)}, "rules": ${Json.string(rules)} }""" })
+        append("],").append('\n')
         append("""  "refusals": [""").append('\n')
         append(
             established.refusals.entries.sortedBy { it.key }.joinToString(",\n") { (prefix, reason) ->
@@ -125,6 +133,27 @@ internal fun writeExplanation(
         append('\n').append("  ]\n").append("}\n")
     }
     runCatching { File(mapDir, EXPLANATION_FILE).also { it.parentFile.mkdirs() }.writeText(json) }
+}
+
+/**
+ * The tests of [map] that [safe] runs and [decision] leaves out, each with the rule line [rules]
+ * gives it, sorted; empty for a full run.
+ */
+internal fun loosenedTests(
+    map: io.github.zeuspizza.yoriwake.agent.select.MapReader.Result,
+    safe: io.github.zeuspizza.yoriwake.agent.select.Selector.Decision,
+    decision: io.github.zeuspizza.yoriwake.agent.select.Selector.Decision,
+    rules: io.github.zeuspizza.yoriwake.agent.select.Rules,
+): List<Pair<String, String>> {
+    if (decision.isFullRun) return emptyList()
+    return map.entries().map { it.testId() }
+        .filter {
+            it != io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNATTRIBUTED_RECORD_ID &&
+                !it.startsWith(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_SCOPED_RECORD_PREFIX)
+        }
+        .distinct().sorted()
+        .filter { safe.includes(it) && !decision.includes(it) }
+        .map { it to rules.tokensFor(it, io.github.zeuspizza.yoriwake.agent.select.Verdict.LOOSENED) }
 }
 
 /** Where `yoriwakeExplain` writes the decision for a machine to read. */

@@ -75,6 +75,22 @@ class AFigureHoldsOnePopulation(unittest.TestCase):
         self.assertEqual(code, 0, out)
 
 
+class OptimisticRowsAreInNoRecallFigure(unittest.TestCase):
+    """A row whose record says it selected in optimistic mode left tests out on request."""
+
+    def test_an_optimistic_row_s_miss_neither_fails_the_gate_nor_counts(self):
+        code, out = run_gate({"project": "p", "mutations": [
+            mutation(),
+            mutation(target="src/main/java/B.java::body::g", missed=["dev.BTest::b"], decision_mode="optimistic"),
+        ]})
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 optimistic-mode row(s) left out of recall", out)
+
+    def test_a_safe_row_s_miss_still_fails(self):
+        code, out = run_gate({"project": "p", "mutations": [mutation(missed=["dev.ATest::a"])]})
+        self.assertEqual(code, 1, out)
+
+
 class ForcedFullRunsAreNotNarrowing(unittest.TestCase):
     """A recorded reason means the selector declined; the counts do not get a vote."""
 

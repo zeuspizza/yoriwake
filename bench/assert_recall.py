@@ -312,6 +312,12 @@ def main(path, summary_path=None):
     # below, because a test that should have run and did not is a defect whatever shaped the sample.
     refused = (run.refused_families(results.get("rejected_mutations"), findings)
                if results.get("target_shapes") == run.POOL_SHAPES else {})
+    # OPTIMISTIC ROWS, by their own record: they leave out tests the safe rule runs on request, so
+    # a miss there is that mode's cost, and they count toward no recall figure and no gate on one.
+    optimistic = [f for f in findings if run.optimistic_row(f)]
+    if optimistic:
+        print(f"{results.get('project')}: {len(optimistic)} optimistic-mode row(s) left out of recall")
+    findings = [f for f in findings if not run.optimistic_row(f)]
     counted = [f for f in findings if f.get("kind") not in refused]
     forcing = results.get("target_shapes") == run.FORCING_SET
     checked = [f for f in findings if f.get("status") == "checked"]

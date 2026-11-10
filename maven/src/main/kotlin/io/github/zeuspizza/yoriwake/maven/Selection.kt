@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
@@ -58,6 +59,15 @@ internal class Selection(private val session: MavenSession, private val root: Fi
 
     private val settings by lazy { Settings.of(session) }
 
+    /** `-Dyoriwake.mode`, read once per invocation. */
+    private val mode by lazy { Settings.modeOf(session) }
+
+    /** Whether this invocation asked for optimistic mode; only a selecting execution applies it. */
+    val optimistic: Boolean get() = mode == Strictness.OPTIMISTIC
+
+    /** Whether the POM lists a full-run branch or schedules full runs, which the optimistic warning names. */
+    val fullRunPolicy: Boolean get() = settings.fullRunBranches.isNotEmpty() || settings.schedule.set
+
     /**
      * `-Dyoriwake.trustedMaps=<file>`'s digests by map directory name, or null when it is not set:
      * with a list, a map narrows only when the list names its digest. A list that cannot be read or
@@ -85,6 +95,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             throw MavenExecutionException(rejected.message, null as Throwable?)
         }
         trusted
+        mode
     }
 
     /** Whether the POM schedules full runs, so the decode counts the builds since the last one. */
@@ -169,6 +180,20 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             throw MavenExecutionException(rejected.message, null as Throwable?)
         }
         plan.notes.forEach { host.lifecycle("[yoriwake] $name: $it") }
+        // In the run file only when this execution selects: absent, the fork applies the safe rule.
+        if (optimistic) {
+            val flag = "-D${SettingNames.MODE}=${Strictness.OPTIMISTIC.token()}"
+            when {
+                plan.selecting && namedTests == null -> host.property(AgentContract.MODE_PROPERTY, Strictness.OPTIMISTIC.token())
+                plan.selecting || plan.declines.isNotEmpty() && !plan.observing ->
+                    host.lifecycle("[yoriwake] $name: $flag is ignored: selection was declined, so this run records.")
+                plan.observing -> host.lifecycle("[yoriwake] $name: $flag has no effect on an observing run, which runs every test.")
+                plan.complementing -> host.lifecycle("[yoriwake] $name: $flag has no effect on a complement run.")
+                else -> host.lifecycle(
+                    "[yoriwake] $name: $flag has no effect without -D${SettingNames.SELECT}: this run runs every test and records."
+                )
+            }
+        }
         // Never one of an earlier run's: a selecting run writes its own, a complement its own copy.
         File(mapDir, SelectionRecord.START_FILE).delete()
         File(mapDir, AgentContract.COMPLEMENT_RECORD_FILE).delete()
@@ -222,13 +247,16 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         trusted?.let { listed ->
             MapProvenance.verify(mapDir, listed[listedName]).refusal?.let { (refusal, reason) ->
                 host.lifecycle(
-                    "[yoriwake] ${host.name}: $reason, so the whole suite runs and records a new map. A map " +
-                        "narrows here only when -D${SettingNames.TRUSTED_MAPS} names its digest, as a run on the " +
+                    "[yoriwake] ${host.name}: $reason, so the whole suite runs and " +
+                        (if (host.optimistic) "the map is left for a run without -D${SettingNames.MODE}=optimistic to record. "
+                        else "records a new map. ") +
+                        "A map narrows here only when -D${SettingNames.TRUSTED_MAPS} names its digest, as a run on the " +
                         "default branch recorded it."
                 )
                 host.refuse(refusal, reason)
                 if (!explaining) {
-                    MapProvenance.clear(mapDir)
+                    // Optimistic mode never writes the map, so it leaves the untrusted one to a safe run to replace.
+                    if (!host.optimistic) MapProvenance.clear(mapDir)
                     SelectingStep.applyCapture(
                         host, mapDir, observing,
                         decideCapture(mapDir, mapUsable = false, fullRun = true, learnable = emptySet()),
@@ -405,5 +433,9 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         override fun flag(name: String) = "-D$name"
 
         override val explain = "mvn test-compile yoriwake:explain"
+
+        // The run file's answer, so the fork and this step cannot disagree.
+        override val optimistic: Boolean
+            get() = properties.getProperty(AgentContract.MODE_PROPERTY) == Strictness.OPTIMISTIC.token()
     }
 }

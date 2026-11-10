@@ -53,6 +53,7 @@ public final class FilterRule {
             AgentContract.CLASS_GRANULARITY_PROPERTY,
             AgentContract.ALWAYS_RUN_PROPERTY,
             AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY,
+            AgentContract.MODE_PROPERTY,
     };
 
     /**
@@ -163,7 +164,12 @@ public final class FilterRule {
                         System.getProperty("java.specification.version"),
                         property.apply(AgentContract.AGENT_ASM_CEILING_PROPERTY)));
         MapReader.Result map = MapReader.read(mapDir);
-        Selector.Decision decision = Selector.decide(map, change, Collections.<String>emptyList());
+        Strictness strictness = Strictness.of(property.apply(AgentContract.MODE_PROPERTY));
+        Selector.Decision decision = Selector.decide(map, change, Collections.<String>emptyList(), strictness);
+        if (strictness != Strictness.SAFE && !decision.isFullRun()) {
+            // The map is already read, so the second decision costs no parse.
+            decision.attachSafe(Selector.decide(map, change, Collections.<String>emptyList(), Strictness.SAFE));
+        }
         // After the decision and apart from it, so recording every rule cannot change what runs.
         try {
             // Unset, not empty: a daemon that refused before it had a change set sets no classes.
@@ -177,8 +183,8 @@ public final class FilterRule {
     }
 
     /**
-     * One test's verdict, as {@link SelectionFilter} records it. Covers the run-wide state and the
-     * selector's own reasons; pins, declared dependencies, class rounding, whole-class runners and
+     * One test's verdict, as {@link SelectionFilter} records it. Covers the run-wide state, the
+     * selector's own reasons and what optimistic mode left out; pins, declared dependencies, class rounding, whole-class runners and
      * complement runs need the descriptor, so the caller decides them.
      */
     public static Verdict verdictFor(UnaryOperator<String> property, Selector.Decision decision,
@@ -200,6 +206,11 @@ public final class FilterRule {
         // reports only while it runs.
         if (reason == Selector.Decision.Reason.SKIPPED && decision.reportsAtRunTime(id)) {
             return Verdict.CLASS_RUNS_WHOLE;
+        }
+        Selector.Decision safe = decision.safe();
+        if (reason == Selector.Decision.Reason.SKIPPED && safe != null
+                && reasonOf(safe, id, isTest) != Selector.Decision.Reason.SKIPPED) {
+            return Verdict.LOOSENED;
         }
         return Verdict.of(reason);
     }
