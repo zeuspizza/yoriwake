@@ -907,11 +907,29 @@ public final class Selector {
      */
     private static boolean touchesChange(String className, Collection<String> prefixes, Collection<String> changeSet) {
         for (String prefix : prefixes) {
-            if (matchesSourceFile(className, prefix, changeSet)) {
+            if (touchMatches(className, prefix, changeSet)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * As {@link #matchesSourceFile(String, String, Collection)}, plus the name a read of the
+     * source file records: a Kotlin file's dotted name ({@code dev.jvm.Platform.jvm}) where the
+     * change set names it as Kotlin names its class ({@code dev.jvm.Platform_jvm}). A real
+     * {@code Foo_bar.kt} then also answers to a read of {@code Foo.bar}, which only selects more.
+     */
+    private static boolean touchMatches(String className, String prefix, Collection<String> changeSet) {
+        if (matchesSourceFile(className, prefix, changeSet)) {
+            return true;
+        }
+        int fileStart = prefix.lastIndexOf('.') + 1;
+        // The file name's dots read as `_`, so a `Foo_bar.jvm.kt` read matches `Foo_bar_jvm` too.
+        return prefix.indexOf('_', fileStart) >= 0
+                && className.length() > fileStart
+                && className.regionMatches(0, prefix, 0, fileStart)
+                && className.substring(fileStart).replace('.', '_').equals(prefix.substring(fileStart));
     }
 
     /**
@@ -1036,15 +1054,8 @@ public final class Selector {
             String prefix,
             Collection<String> absenceProvable,
             Collection<String> changedClassPrefixes) {
-        if (!absenceProvable.contains(prefix)) {
+        if (!absenceProvable.contains(prefix) || touched(map, prefix, changedClassPrefixes)) {
             return false;
-        }
-        for (MapReader.FirstTouch touch : map.firstTouches()) {
-            // Read as a class file without being loaded is still read: a reader depends on it.
-            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())
-                    || matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {
-                return false;
-            }
         }
         Set<String> loaded = map.loadedClasses();
         if (loaded == null) {
@@ -1063,6 +1074,44 @@ public final class Selector {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether a changed class left no trace in the map a test could depend on: no record covers
+     * it, no capturing JVM touched it, and a loaded-class union that speaks for it does not hold
+     * it. Unlike {@link #untested}, no union is required: the daemon asks this only of a file of
+     * nothing but {@code inline} functions whose inlining classes it found, which stand in for
+     * every use of it but a run of its own class, and it has proved such a run would have fired a
+     * probe. False for an unusable map.
+     */
+    public static boolean leftNoTrace(
+            MapReader.Result map, String prefix, Collection<String> changedClassPrefixes) {
+        if (!map.isUsable() || knownToMap(map.entries(), prefix, changedClassPrefixes)
+                || touched(map, prefix, changedClassPrefixes)) {
+            return false;
+        }
+        Set<String> loaded = map.loadedClasses();
+        if (loaded != null && map.unionSpeaksFor(prefix)) {
+            for (String name : loaded) {
+                if (matchesSourceFile(name, prefix, changedClassPrefixes)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Whether a capturing JVM loaded the class, or read its class or source file. */
+    private static boolean touched(
+            MapReader.Result map, String prefix, Collection<String> changedClassPrefixes) {
+        for (MapReader.FirstTouch touch : map.firstTouches()) {
+            // Read as a class file without being loaded is still read: a reader depends on it.
+            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())
+                    || touchMatches(touch.className(), prefix, changedClassPrefixes)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

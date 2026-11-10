@@ -283,11 +283,16 @@ abstract class FunctionalTestSupport {
                 class JvmOnly {
                     fun name() = "jvm"
                     fun usesQuad(n: Int) = quad(n)
+                    fun usesTag() = tag()
                 }
             """.trimIndent(),
             "src/jvmMain/kotlin/dev/jvm/Platform.jvm.kt" to """
                 package dev.jvm
                 fun platformName() = "JVM"
+            """.trimIndent(),
+            "src/jvmMain/kotlin/dev/jvm/Tags.jvm.kt" to """
+                package dev.jvm
+                inline fun tag() = "t"
             """.trimIndent(),
             test("A0BystanderTest", "assertEquals(0, bystander())"),
             test("A5CommonThriceTest", "assertEquals(6, thrice(2))", sourceSet = "commonTest"),

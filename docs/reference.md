@@ -707,12 +707,17 @@ reads a multiplatform module by that directory layout, not through the Kotlin pl
   ran it; an edited `commonTest` class in a package the module's main code uses runs (one in a
   package of its own is a change no class answers to, and runs everything); a module, multiplatform
   or `java`, that depends on it runs its own tests that ran the change. A changed `expect` default
-  runs its callers through the `actual`'s class, whose bytes changed.
+  runs its callers through the `actual`'s class, whose bytes changed. A platform-suffixed file such
+  as `Platform.jvm.kt` is read as the class it compiles to, `Platform_jvmKt`. A changed `inline`
+  function in a file that declares nothing but `inline` functions runs the tests of the classes
+  that inlined it ([Kotlin](#kotlin)), as long as no test ran the file's own class, the class was
+  instrumented, and a loaded-class union, where there is one, does not hold it. A change in a
+  module with no JVM target, or in a module the plugin declines, leaves out the tests of every
+  task that does not reach that module.
 - **Runs everything:** a changed `const val`; a changed `inline` function whose file declares
-  nothing a test runs, since its callers are found ([Kotlin](#kotlin)) but its own class has no
-  coverage; a platform-suffixed file such as `Platform.jvm.kt`, which compiles to `Platform_jvmKt`
-  rather than the class its path names; a change in a non-JVM source set (`jsMain`, `nativeMain`),
-  in a module with no JVM target, or in a module the plugin declines.
+  nothing a test runs but something besides `inline` functions, or that no class inlined, since its
+  own class has no coverage; a change in a non-JVM source set (`jsMain`, `nativeMain`) of a module
+  the task tests.
 - **Declined** (`kotlin-multiplatform`): a JVM target with its own name, such as `jvm("desktop")`,
   whose sources are not under a `jvm*` directory.
 - **Not covered:** `withJava()` on a Kotlin Gradle plugin before 2.1.20, where the module also
@@ -977,6 +982,8 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   executing the declaring class and coverage records no edge. The plugin reads the
   `SourceDebugExtension` Kotlin emits for debuggers to find who inlined a changed file, and adds
   those callers to the change.
+- A changed file of nothing but `inline` functions, whose own class no test ran or loaded, is
+  answered by those callers alone: the run narrows to their tests rather than running everything.
 - A build whose Kotlin classes carry no `SourceDebugExtension` at all cannot answer that question,
   so any changed Kotlin source forces a full run. A change set of Java sources alone still narrows.
   The audit reports `smap-absent`.

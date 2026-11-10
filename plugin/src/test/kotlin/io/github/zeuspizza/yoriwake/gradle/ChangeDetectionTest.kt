@@ -656,6 +656,97 @@ class ChangeDetectionTest {
         assertEquals(1, first.asked.size)
         assertEquals(1, second.asked.size)
     }
+
+    @Test
+    fun `a dotted Kotlin file name maps to the class Kotlin names it`() {
+        // Platform.jvm.kt compiles its top-level functions to Platform_jvmKt; the dotted name
+        // matches no class, and a prefix no class answers to forces a full run.
+        val prefixes = ChangeDetection.split(listOf("src/jvmMain/kotlin/dev/shared/Platform.jvm.kt")).classPrefixes
+
+        assertEquals(setOf("dev.shared.Platform_jvm"), prefixes)
+    }
+
+    @Test
+    fun `a dotted Kotlin file still contributes the classes it declares`() {
+        val root = sourceTree("src/main/kotlin/a/Foo.android.kt" to "package a\n\nclass Foo { val n = 1 }\n")
+        try {
+            val prefixes = ChangeDetection.split(listOf("src/main/kotlin/a/Foo.android.kt"), root).classPrefixes
+
+            assertEquals(setOf("a.Foo_android", "a.Foo"), prefixes)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a dot in a Java file name is left as it is`() {
+        assertEquals(setOf("a.Foo.bar"), ChangeDetection.split(listOf("src/main/java/a/Foo.bar.java")).classPrefixes)
+        assertEquals(setOf("a.B"), ChangeDetection.split(listOf("src/main/kotlin/a/B.kt")).classPrefixes)
+    }
+
+    private fun inlineOnly(content: String): Set<String> {
+        val root = sourceTree("src/main/kotlin/a/Inlines.kt" to content)
+        try {
+            return ChangeDetection.split(listOf("src/main/kotlin/a/Inlines.kt"), root).inlineOnly
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a file of only inline functions is read as one`() {
+        assertEquals(
+            setOf("a.Inlines"),
+            inlineOnly(
+                "@file:Suppress(\"NOTHING_TO_INLINE\")\npackage a\n\nimport kotlin.math.max\n\n" +
+                    "/** Four times. */\ninline fun quad(n: Int) = n * 4\n\n" +
+                    "@PublishedApi\ninternal inline fun <reified T> named(): String {\n" +
+                    "    val name = T::class.simpleName\n    return \"\$name\"\n}\n\n" +
+                    "inline fun twice(\n    n: Int,\n): Int = max(n, n) * 2\n"
+            ),
+        )
+    }
+
+    @Test
+    fun `a file that declares anything beside its inline functions is not`() {
+        val head = "package a\n\ninline fun quad(n: Int) = n * 4\n"
+        listOf(
+            "fun plain(n: Int) = n + 1\n",
+            "fun String.shout() = uppercase()\n",
+            "fun <T> List<T>.second(): T = this[1]\n",
+            "val cache = mutableMapOf<String, Int>()\n",
+            "inline class Id(val v: Int)\n",
+            "@JvmInline value class Id(val v: Int)\n",
+            "class Foo\n",
+            "@Deprecated(\"old\") class Old(val v: Int)\n",
+            "typealias Name = String\n",
+            "expect inline fun platform(): String\n",
+            "inline val size get() = 1\n",
+            "inline fun one() = 1; fun two() = 2\n",
+            "inline fun three() =\n    3\n",
+        ).forEach { extra ->
+            assertEquals(emptySet(), inlineOnly(head + extra), "read as inline-only with: $extra")
+        }
+    }
+
+    @Test
+    fun `an inline function inside a raw string or a comment is not read as code`() {
+        // The sample is text: the file holds a plain function and nothing inline.
+        assertEquals(
+            emptySet(),
+            inlineOnly("package a\n\nfun plain() = \"\"\"\ninline fun sample() = 1\n\"\"\"\n"),
+        )
+        // Nor does a declaration inside one count against an inline function that returns it.
+        assertEquals(
+            setOf("a.Inlines"),
+            inlineOnly("package a\n\ninline fun sample() = \"\"\"\nval x = 1\n\"\"\"\n"),
+        )
+        // And a plain function in a comment does not hide the inline one.
+        assertEquals(
+            setOf("a.Inlines"),
+            inlineOnly("package a\n\n// fun plain() = 1\n/* val x = 2 */\ninline fun quad(n: Int) = n * 4\n"),
+        )
+    }
 }
 
 /**

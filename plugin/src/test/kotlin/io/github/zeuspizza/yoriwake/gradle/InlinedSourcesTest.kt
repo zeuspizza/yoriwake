@@ -174,4 +174,21 @@ class InlinedSourcesTest {
         assertFalse(scan.carriesSmap)
         assertTrue(scan.kotlin, "the whole-output question only applies to Kotlin output")
     }
+
+    @Test
+    fun `an SMAP naming a dotted source file names it the way a change to that file does`() {
+        // A change to Platform.jvm.kt is the prefix dev.shared.Platform_jvm; a table naming the
+        // dotted path must give that name, or the classes that inlined the file are never found.
+        val smap = listOf(
+            "SMAP", "Caller.kt", "Kotlin", "*S Kotlin", "*F",
+            "+ 1 Caller.kt", "dev/shared/Caller.kt",
+            "+ 2 Platform.jvm.kt", "dev/shared/Platform.jvm.kt",
+            "*L", "*E",
+        ).joinToString("\n")
+        val prefix = io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
+            .split(listOf("src/jvmMain/kotlin/dev/shared/Platform.jvm.kt")).classPrefixes.single()
+
+        assertEquals(setOf("dev.shared.Platform_jvm"), InlinedSources.parse(smap))
+        assertEquals(prefix, InlinedSources.parse(smap).single())
+    }
 }

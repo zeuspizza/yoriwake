@@ -165,6 +165,7 @@ JUNIT4_SELECTION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engin
 LOADED_CLASS_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/LoadedClassRecorder.java"
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
 CHANGE_DETECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
+INLINED_SOURCES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InlinedSources.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
 FILTER_RULE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/FilterRule.java"
 RULES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Rules.java"
@@ -1616,9 +1617,48 @@ MUTATIONS = [
     # names reach the selector as a separate set, and this mutation is the union returning on the
     # daemon side; the agent-side half is "changed bytes join the change set the selector anchors on".
     ("digest-derived names go back into the change set the selector anchors on", SELECTION,
-     "        (prefixes + inliners).distinct().sorted(),",
-     "        (prefixes + inliners + digest?.added.orEmpty()).distinct().sorted(),",
+     "        (prefixes - accounted + inliners).distinct().sorted(),",
+     "        (prefixes - accounted + inliners + digest?.added.orEmpty()).distinct().sorted(),",
      unit_suite, "a digest-derived name never reaches the change set the selector anchors on"),
+    # A Kotlin file whose name holds a dot (`Platform.jvm.kt`) compiles to `Platform_jvmKt`. Named
+    # by its path, the change matched no class and forced every multiplatform `actual` edit; the
+    # SMAP reader must name the file the same way, or the classes that inlined it are never found.
+    ("a dotted Kotlin file name maps to its raw path again", CHANGE_DETECTION,
+     "                val prefix = if (path.endsWith(\".kt\")) InlinedSources.kotlinSourcePrefix(fqn) else fqn.replace('/', '.')",
+     "                val prefix = fqn.replace('/', '.')",
+     unit_suite, "a dotted Kotlin file name maps to the class Kotlin names it"),
+    ("the SMAP reader names a dotted source file by its raw path again", INLINED_SOURCES,
+     "                byId[id] = if (path.endsWith(\".kt\")) kotlinSourcePrefix(path) else path.replace('/', '.')",
+     "                byId[id] = path.removeSuffix(\".kt\").replace('/', '.')",
+     unit_suite, "an SMAP naming a dotted source file names it the way a change to that file does"),
+    # A file of only `inline` functions leaves the change set when the classes that inlined it
+    # were found and its own class left no trace. The allowlist is what keeps a file with state or
+    # a plain function out of that rule; the per-file inliner check is what keeps a file nothing
+    # inlined from leaving with nobody standing in for it.
+    ("the only-inline allowlist accepts any top-level declaration", CHANGE_DETECTION,
+     "                    else -> return false\n",
+     "                    else -> Unit\n",
+     unit_suite, "a file that declares anything beside its inline functions is not"),
+    ("an inline-only file leaves the change set with no inliner of its own", SELECTION,
+     "            (artifacts.classesInlining(listOf(prefix), exact = true) as? InlineScan.Found)?.classes?.isNotEmpty() == true",
+     "            true",
+     unit_suite, "an inline-only file that nothing inlined keeps its place, beside one that something did"),
+    ("an inline-only file inlined away is no changed source to the bytes comparison", SELECTION,
+     "Selector.bytesOnly(it, prefixes + accountedByInliners)",
+     "Selector.bytesOnly(it, prefixes)",
+     unit_suite, "an inline-only file inlined away is still a changed source to the bytes comparison"),
+    ("the per-file inliner check takes a file whose name begins with the changed one's", TASK_ARTIFACTS,
+     "            prefixes.any { if (exact) ownedBy(name, it) else name.startsWith(it) }",
+     "            prefixes.any { name.startsWith(it) }",
+     unit_suite, "an inline-only file whose name begins another inlined file's keeps its place"),
+    ("a read of a dotted Kotlin source file stops answering to its change", SELECTOR,
+     "        return prefix.indexOf('_', fileStart) >= 0",
+     "        return false && prefix.indexOf('_', fileStart) >= 0",
+     agent_suite, "a test that read a dotted Kotlin source file runs when that file changes"),
+    ("an inline-only file whose class a test covered leaves the change set", SELECTOR,
+     "        if (!map.isUsable() || knownToMap(map.entries(), prefix, changedClassPrefixes)\n",
+     "        if (!map.isUsable()\n",
+     agent_suite, "an inline-only file whose class a test covered keeps its place in the change set"),
     # The other half of the same review. A test that fails alone twice of three is mostly a real
     # miss, and erasing it is a recall figure improving for the wrong reason.
     ("a majority that fails alone is erased from the miss count again", PY_ISOLATION,
@@ -2007,9 +2047,9 @@ MUTATIONS = [
     # alone would call it untested.
     ("a class only read as a class file is proven untested by its absence again", SELECTOR,
      "            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())\n"
-     "                    || matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {\n"
-     "                return false;",
-     "            if (false) {\n                return false;",
+     "                    || touchMatches(touch.className(), prefix, changedClassPrefixes)) {\n"
+     "                return true;",
+     "            if (false) {\n                return true;",
      agent_suite, "a class some JVM read the class file of is not proven untested by its absence"),
     # A class defined from bytes no file holds (a proxy, a generated subclass) is seen only here;
     # one loaded from a class directory or a jar is also read through the read hooks.
