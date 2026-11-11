@@ -274,6 +274,7 @@ internal class Recording(
                 ?.let { "tests were named with -D${if (execution.artifactId == FAILSAFE) "it.test" else "test"}=$it" },
             text = text,
             dependencies = dependencies,
+            narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"

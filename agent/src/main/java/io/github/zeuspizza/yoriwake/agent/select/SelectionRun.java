@@ -151,6 +151,17 @@ public final class SelectionRun {
             if (pathsIgnored > 0) {
                 decisions.note(AgentContract.PATHS_IGNORED_NOTE, String.valueOf(pathsIgnored));
             }
+            // Whatever the outcome too, and only when the flag was on: the daemon sets it then alone.
+            String linesOnly = inputs().apply(AgentContract.LINES_ONLY_PROPERTY);
+            if (linesOnly != null) {
+                int count = 0;
+                for (String prefix : linesOnly.split(",")) {
+                    if (!prefix.trim().isEmpty()) {
+                        count++;
+                    }
+                }
+                decisions.note(AgentContract.LINES_ONLY_NOTE, String.valueOf(count));
+            }
             // Whatever the outcome too: a reader of any figure leaves out a run that asked to loosen.
             if (selectionRequested() && !observing() && !complementing()
                     && Strictness.of(inputs().apply(AgentContract.MODE_PROPERTY)) == Strictness.OPTIMISTIC) {

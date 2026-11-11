@@ -109,6 +109,25 @@ internal object Recordability {
     }.getOrElse { Digest.refused("its bytecode could not be read: $it") }
 
     /**
+     * The class digest with line information left out and nothing else, so a comment-only edit
+     * leaves it as it was: everything [classDigest] feeds, minus the SMAP (and Kotlin's annotation
+     * copy of it) and the line elements of a coroutine's `DebugMetadata`, plus the local variable
+     * tables. A label only a line entry refers to is left out too, so joining two statements on one
+     * line changes nothing. A class carrying an attribute ASM does not know is refused: its content
+     * could differ where this cannot see.
+     */
+    fun lineDigest(classBytes: ByteArray): Digest = runCatching {
+        val sink = MessageDigest.getInstance(ALGORITHM)
+        ClassReader(classBytes).accept(DigestVisitor(sink, lines = true), ClassReader.SKIP_FRAMES)
+        Digest.of(hex(sink.digest()))
+    }.getOrElse { failure ->
+        Digest.refused(
+            if (failure is DigestVisitor.UnknownAttribute) failure.message.orEmpty()
+            else "its bytecode could not be read: $failure"
+        )
+    }
+
+    /**
      * A digest of every annotation the class declares, with its values, and nothing else: what a
      * framework's scan or reflective read can see without executing the class. A body-only edit
      * leaves it alone.

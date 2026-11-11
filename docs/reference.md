@@ -1453,6 +1453,73 @@ beside the flag. To see what it would leave out before trusting it, run
 Every capture records the libraries each JVM reached, whether or not the flag is set, so the map
 holds what the flag needs the first time it is set.
 
+## Line-only changes
+
+A comment edit is a changed source file, so every test that covers its classes runs. In Kotlin the
+same edit costs more: above a `suspend` function it moves the line numbers in the coroutine's
+`DebugMetadata` annotation and runs every test (`annotations-changed`), and in a file declaring an
+`inline` function it changes the SMAP of every class that inlined it. With
+`narrowLineOnlyChanges = true` in the extension (or `-Pyoriwake.narrowLineOnlyChanges` for one
+invocation; on Maven `-Dyoriwake.narrowLineOnlyChanges` or `<narrowLineOnlyChanges>`), a changed
+source whose compiled classes moved in line information only leaves the change set. Off by default.
+
+Line information is what the class's *line digest* leaves out: the line-number table, the SMAP and
+Kotlin's annotation copy of it, the `l` and `nl` elements of a coroutine's `DebugMetadata`, and the
+labels only a line entry refers to. Everything else is in it, the local variable table included,
+since frameworks read parameter names from it. A class carrying an attribute ASM does not know is
+never line-only.
+
+A line-only class forces nothing, and still runs every test that could have seen its line numbers
+or its text: each test at or after its JVM first built or was handed a stack trace element naming
+it (a throwable's trace however it is read, a thread's or a thread dump's, a stack walker frame's
+line or file, an element built by hand), or read its class or source file, and never before the
+class arrived in that JVM. Each test so selected names the rule `shares-jvm-lines-observed` in
+`decisions.tsv`, and `decisions.tsv` notes how many classes were line-only as `lines-only`. In a JVM
+whose stack traces were not recorded, the class runs what a changed class would there. A class
+whose bytes moved with no source change, in line information only (a class that inlined a
+line-only Kotlin function), is treated the same way. Optimistic mode does not loosen this window.
+
+A changed source stays changed when any of this cannot be established, and `explain.json` names
+the reason for each path in `keptChanged`, beside `linesOnly` and `linesOnlyPaths`:
+
+- `line-digests-absent`, `debug-touch-absent`: the map holds no line digests or debug touches, or
+  ones another capture wrote. The next capture records them.
+- `path-deleted`: the file is gone, and its class may linger in the output.
+- `class-unmatched`: a class it compiles to differs in more than line information, or cannot be
+  read; or a class whose line digest moved is one nothing still changed accounts for.
+- `class-vanished`: a class the map recorded for it is no longer compiled.
+- `walk-incomplete`: this build's output could not be walked whole.
+- `output-file-changed`: a file the build produced on the test classpath changed since the capture,
+  as an annotation processor can from a comment. A build that writes a timestamp there
+  (`build-info.properties`) never narrows.
+- `unobserved-jvms`: the task runs code in JVMs the agent cannot see.
+
+The stack hooks are checked against each JDK: every method and field of `java.base`,
+`java.management`, `jdk.management` and `jdk.jfr` whose descriptor names `StackTraceElement` is
+hooked or recorded as unreachable from Java, and a JDK where a required hook cannot be taken, or a
+native agent (`-agentlib`, `-agentpath`: a debugger) is attached, counts every class's lines as seen
+from the JVM's start. A flight recording's frame line counts every class from where it was read.
+Kotlin's `DebugMetadata` line elements count as line information because of what reads them: in
+kotlin-stdlib 2.1 to 2.4, `l` is read only to build a `StackTraceElement` (`getStackTraceElement`,
+which kotlinx-coroutines' stack recovery and debug probes call), and `nl` only by
+`getNextLineNumber`, which neither library calls: a debugger evaluates it.
+
+What it cannot see, besides what [coverage does not record](#what-coverage-does-not-record):
+
+- a test that reads a file of stack traces an earlier JVM wrote;
+- a deserialised throwable whose trace field is read by reflection rather than through
+  `getStackTrace`;
+- `DebugMetadata` read reflectively by name, outside the Kotlin libraries;
+- an observation of a line that depends on test order and that the recording run did not make.
+
+A compiler plugin that bakes a line number into code as a constant (Spock's condition positions,
+Kotlin's power-assert) changes the line digest itself, so its edits are never line-only.
+
+Suites that log exceptions, start child processes or load native code early narrow little: from
+that point on, every later test of the JVM runs. Every capture records the line digests and the
+debug touches whether or not the flag is set, so the map holds what the flag needs the first time
+it is set.
+
 ## Paths no test reads
 
 A change to documentation, a changelog or CI configuration is a changed path coverage cannot see,
@@ -1821,6 +1888,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.disabled` | Leave the build entirely alone: nothing scoped, injected, captured or selected. |
 | `yoriwake.narrowPlainRunners` | Let a selecting run of a plain JUnit 4 task leave out whole test classes. Overrides the build's `narrowPlainRunners`; `=false` turns it off. See [Narrowing plain JUnit 4 by class](#narrowing-plain-junit-4-by-class). |
 | `yoriwake.narrowDependencies` | Let a selecting run narrow a commit that only bumps library versions. Overrides the build's `narrowDependencies`; `=false` turns it off. See [Dependency bumps](#dependency-bumps). |
+| `yoriwake.narrowLineOnlyChanges` | Let a selecting run narrow an edit that changes only comments, blank lines or line breaks. Overrides the build's `narrowLineOnlyChanges`; `=false` turns it off. See [Line-only changes](#line-only-changes). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. `-D` on Maven. |
@@ -1855,6 +1923,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `narrowPlainRunners` | `Boolean` | `false` | Let a selecting run of a plain JUnit 4 task (`useJUnit()`) leave out whole test classes. |
 | `recordSequentially` | `Boolean` | `false` | Record in-JVM parallel suites one test at a time, so they can be selected on. |
 | `narrowDependencies` | `Boolean` | `false` | Let a selecting run narrow a commit that only bumps library versions. See [Dependency bumps](#dependency-bumps). |
+| `narrowLineOnlyChanges` | `Boolean` | `false` | Let a selecting run narrow an edit that changes only line information. See [Line-only changes](#line-only-changes). |
 
 For example:
 

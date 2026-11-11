@@ -12,18 +12,31 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.RecordComponentVisitor
 import org.objectweb.asm.TypePath
+import org.objectweb.asm.tree.JumpInsnNode
+import org.objectweb.asm.tree.LabelNode
+import org.objectweb.asm.tree.LookupSwitchInsnNode
+import org.objectweb.asm.tree.MethodNode
+import org.objectweb.asm.tree.TableSwitchInsnNode
 
 /**
  * Feeds one class file into a [MessageDigest], visit by visit. Constructed only by
- * `Recordability.classDigest`, which documents what belongs in a digest.
+ * `Recordability.classDigest` and `Recordability.lineDigest`, which document what belongs in each.
  *
  * Every callback the reader emits is fed or explicitly suppressed with a reason: one not
  * overridden contributes nothing, silently, and two different classes digest the same.
  * `visitFrame` is absent because the reader is given `SKIP_FRAMES`.
  *
  * Labels are fed by first-seen order, never by identity, whose `toString` names a heap address.
+ *
+ * With [lines], the line digest: the class digest's content plus every local variable, minus the
+ * SMAP, Kotlin's copy of it, `DebugMetadata`'s line elements, and every label no instruction,
+ * handler or local variable range refers to. An attribute ASM does not know refuses the class.
  */
-internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opcodes.ASM9) {
+internal class DigestVisitor(
+    private val sink: MessageDigest,
+    /** Whether this is the line digest. */
+    private val lines: Boolean = false,
+) : ClassVisitor(Opcodes.ASM9) {
 
     private val labels = HashMap<Label, Int>()
 
@@ -84,7 +97,8 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
      * `debug` is the SMAP, the only place a copied Kotlin `inline` body shows up, which is why the
      * reader does not set `SKIP_DEBUG`.
      */
-    override fun visitSource(source: String?, debug: String?) = feed("source", source, debug)
+    override fun visitSource(source: String?, debug: String?) =
+        if (!lines) feed("source", source, debug) else feed("source", source)
 
     override fun visitOuterClass(owner: String?, name: String?, descriptor: String?) =
         feed("outer", owner, name, descriptor)
@@ -99,9 +113,11 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
     override fun visitInnerClass(name: String?, outerName: String?, innerName: String?, access: Int) =
         feed("inner", name, outerName, innerName, access)
 
-    override fun visitAnnotation(descriptor: String?, visible: Boolean): AnnotationVisitor {
+    override fun visitAnnotation(descriptor: String?, visible: Boolean): AnnotationVisitor? {
+        // Kotlin's copy of the SMAP, which the line digest leaves out with the SMAP itself.
+        if (lines && descriptor == KOTLIN_SOURCE_DEBUG) return null
         feed("annotation", descriptor, visible)
-        return Values()
+        return if (lines && descriptor == DEBUG_METADATA) Values(LINE_ELEMENTS) else Values()
     }
 
     override fun visitTypeAnnotation(
@@ -115,7 +131,16 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
     }
 
     /** An unknown attribute, by name only: ASM does not expose its content to a visitor. */
-    override fun visitAttribute(attribute: Attribute?) = feed("attribute", attribute?.type)
+    override fun visitAttribute(attribute: Attribute?) = unknown("attribute", attribute)
+
+    /**
+     * An attribute's name is all the class digest can see of it. The line digest says a class
+     * matches, which a content it cannot see could make untrue, so it refuses instead.
+     */
+    private fun unknown(where: String, attribute: Attribute?) {
+        if (lines) throw UnknownAttribute(attribute?.type)
+        feed(where, attribute?.type)
+    }
 
     override fun visitRecordComponent(
         name: String?,
@@ -145,7 +170,28 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
         exceptions: Array<out String>?,
     ): MethodVisitor {
         feed("method", access, name, descriptor, signature, exceptions)
-        return Code()
+        if (!lines) return Code(null)
+        // Buffered, so which labels anything but a line entry refers to is known before any is fed.
+        return object : MethodNode(Opcodes.ASM9, access, name, descriptor, signature, exceptions) {
+            override fun visitEnd() {
+                val referenced = HashSet<Label>()
+                fun mark(node: LabelNode?) { node?.let { referenced += it.label } }
+                for (instruction in instructions) {
+                    when (instruction) {
+                        is JumpInsnNode -> mark(instruction.label)
+                        is TableSwitchInsnNode -> { mark(instruction.dflt); instruction.labels.forEach(::mark) }
+                        is LookupSwitchInsnNode -> { mark(instruction.dflt); instruction.labels.forEach(::mark) }
+                    }
+                }
+                tryCatchBlocks.orEmpty().forEach { mark(it.start); mark(it.end); mark(it.handler) }
+                localVariables.orEmpty().forEach { mark(it.start); mark(it.end) }
+                (visibleLocalVariableAnnotations.orEmpty() + invisibleLocalVariableAnnotations.orEmpty()).forEach { annotation ->
+                    annotation.start.forEach(::mark)
+                    annotation.end.forEach(::mark)
+                }
+                accept(Code(referenced))
+            }
+        }
     }
 
     /** A `module-info` header only; the descriptor declares no code a test outcome depends on. */
@@ -154,20 +200,25 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
         return null
     }
 
-    private inner class Values : AnnotationVisitor(Opcodes.ASM9) {
-        override fun visit(name: String?, value: Any?) = feed("value", name, value)
+    /** [skipped] names the top-level elements left out, and is empty below the top level. */
+    private inner class Values(private val skipped: Set<String> = emptySet()) : AnnotationVisitor(Opcodes.ASM9) {
+        override fun visit(name: String?, value: Any?) {
+            if (name in skipped) return
+            feed("value", name, value)
+        }
 
         override fun visitEnum(name: String?, descriptor: String?, value: String?) =
             feed("enum", name, descriptor, value)
 
         override fun visitAnnotation(name: String?, descriptor: String?): AnnotationVisitor {
             feed("nested", name, descriptor)
-            return this
+            return if (skipped.isEmpty()) this else Values()
         }
 
-        override fun visitArray(name: String?): AnnotationVisitor {
+        override fun visitArray(name: String?): AnnotationVisitor? {
+            if (name in skipped) return null
             feed("array", name)
-            return this
+            return if (skipped.isEmpty()) this else Values()
         }
     }
 
@@ -187,7 +238,7 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
             return Values()
         }
 
-        override fun visitAttribute(attribute: Attribute?) = feed("field.attribute", attribute?.type)
+        override fun visitAttribute(attribute: Attribute?) = unknown("field.attribute", attribute)
     }
 
     private inner class Component : RecordComponentVisitor(Opcodes.ASM9) {
@@ -206,10 +257,11 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
             return Values()
         }
 
-        override fun visitAttribute(attribute: Attribute?) = feed("record.attribute", attribute?.type)
+        override fun visitAttribute(attribute: Attribute?) = unknown("record.attribute", attribute)
     }
 
-    private inner class Code : MethodVisitor(Opcodes.ASM9) {
+    /** [referenced] is null for the class digest, which feeds every label. */
+    private inner class Code(private val referenced: Set<Label>?) : MethodVisitor(Opcodes.ASM9) {
         override fun visitParameter(name: String?, access: Int) = feed("parameter", name, access)
 
         override fun visitAnnotationDefault(): AnnotationVisitor {
@@ -244,7 +296,7 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
             return Values()
         }
 
-        override fun visitAttribute(attribute: Attribute?) = feed("method.attribute", attribute?.type)
+        override fun visitAttribute(attribute: Attribute?) = unknown("method.attribute", attribute)
 
         override fun visitCode() = feed("code")
 
@@ -276,7 +328,12 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
 
         override fun visitJumpInsn(opcode: Int, label: Label?) = feed("jump", opcode, id(label))
 
-        override fun visitLabel(label: Label?) = feed("label", id(label))
+        override fun visitLabel(label: Label?) {
+            // A label only a line entry marks marks no behaviour: joining two statements on one
+            // line removes one, and changes nothing else.
+            if (referenced != null && label !in referenced) return
+            feed("label", id(label))
+        }
 
         override fun visitLdcInsn(value: Any?) = feed("ldc", value)
 
@@ -324,7 +381,11 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
         /** Suppressed: a comment-only edit shifts lines and changes nothing a consumer observes. */
         override fun visitLineNumber(line: Int, start: Label?) = Unit
 
-        /** Suppressed: local variable names and their ranges. Renaming a local changes no caller. */
+        /**
+         * Suppressed from the class digest: renaming a local changes no caller. Fed to the line
+         * digest: frameworks read parameter names from this table when a class is compiled
+         * without `-parameters`, and a comment edit leaves it as it was.
+         */
         override fun visitLocalVariable(
             name: String?,
             descriptor: String?,
@@ -332,9 +393,11 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
             start: Label?,
             end: Label?,
             index: Int,
-        ) = Unit
+        ) {
+            if (lines) feed("local", name, descriptor, signature, id(start), id(end), index)
+        }
 
-        /** Suppressed: addressed by the local variable ranges [visitLocalVariable] suppresses. */
+        /** Suppressed from the class digest with the local variable ranges it addresses. */
         override fun visitLocalVariableAnnotation(
             typeRef: Int,
             typePath: TypePath?,
@@ -343,11 +406,31 @@ internal class DigestVisitor(private val sink: MessageDigest) : ClassVisitor(Opc
             index: IntArray?,
             descriptor: String?,
             visible: Boolean,
-        ): AnnotationVisitor? = null
+        ): AnnotationVisitor? {
+            if (!lines) return null
+            feed("local.annotation", typeRef, typePath, ids(start), ids(end), index, descriptor, visible)
+            return Values()
+        }
     }
+
+    /** Thrown by the line digest at an attribute ASM cannot show it. */
+    class UnknownAttribute(type: String?) : RuntimeException("it carries an attribute ASM does not know: $type")
 
     private companion object {
         /** Closes a record, so a record ending in an empty part is still a distinct record. */
         val RECORD = byteArrayOf(0x1e)
+
+        /** Kotlin's annotation copy of the SMAP, on classes that inline a function. */
+        const val KOTLIN_SOURCE_DEBUG = "Lkotlin/jvm/internal/SourceDebugExtension;"
+
+        /** On every coroutine continuation class. */
+        const val DEBUG_METADATA = "Lkotlin/coroutines/jvm/internal/DebugMetadata;"
+
+        /**
+         * Its elements that hold line numbers: `l`, each suspension point's line, and `nl`, the
+         * line after it. Read only to build a `StackTraceElement` and by a debugger; see the
+         * reference's line-only section.
+         */
+        val LINE_ELEMENTS = setOf("l", "nl")
     }
 }

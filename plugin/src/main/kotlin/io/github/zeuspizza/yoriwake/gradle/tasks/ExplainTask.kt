@@ -161,6 +161,10 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     abstract val narrowsPlainJUnit4: Property<Boolean>
 
+    /** The build's `narrowLineOnlyChanges`, as the run resolves it. */
+    @get:Input
+    abstract val narrowLineOnlyChanges: Property<Boolean>
+
     @get:Internal("where git runs, not a set of files this task reads")
     lateinit var rootDir: File
 
@@ -459,11 +463,15 @@ internal abstract class ExplainTask : DefaultTask() {
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = found.testClasses,
             inlinedAway = found.inlinedAway,
+            lineOnly = if (!narrowLineOnlyChanges.get()) null
+            else io.github.zeuspizza.yoriwake.gradle.change.LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
         ) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
         reportDigest(widening) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
+        io.github.zeuspizza.yoriwake.gradle.change.SelectingStep.reportLines(widening.lines)
+            .forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         // Named in the refusals so it prints and serialises beside every other reason.
         val established = if (widening.forces) {
             found.copy(refusals = found.refusals + (INLINE_REFUSAL_KEY to widening.refusal.orEmpty()))
@@ -473,8 +481,8 @@ internal abstract class ExplainTask : DefaultTask() {
         val provable = established.provable + established.testClasses
         val strictness = Strictness.of(this.mode.orNull)
         val change = changeSet(
-            widening.prefixes.ifEmpty { scoped.change.classPrefixes.sorted() },
-            paths, scoped, established, widening.changedBytes, widening.movedFiles,
+            widening.prefixes.ifEmpty { (scoped.change.classPrefixes - widening.lines?.prefixes.orEmpty()).sorted() },
+            paths, scoped, established, widening.changedBytes, widening.movedFiles, widening.lines,
         ).withChangedJars(bump?.modules.orEmpty(), bump?.directories.orEmpty())
             .withDaemonRefusal(widening.refusal)
         val decision = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(map, change, emptyList(), strictness)
@@ -586,6 +594,7 @@ internal abstract class ExplainTask : DefaultTask() {
             largeChange: Int,
             narrowPlainRunners: Boolean,
             narrowDependencies: Boolean,
+            narrowLineOnlyChanges: Boolean,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -598,6 +607,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.mapDir = mapDir
                 // Before the declined return: a required input left unset fails the task's validation.
                 task.largeChangeThreshold.set(largeChange)
+                task.narrowLineOnlyChanges.set(narrowLineOnlyChanges)
                 // Read when the entry is stored, after the build script chose the framework.
                 task.narrowsPlainJUnit4.set(project.provider {
                     narrowPlainRunners && test.options is org.gradle.api.tasks.testing.junit.JUnitOptions

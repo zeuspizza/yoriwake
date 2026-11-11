@@ -136,6 +136,8 @@ internal class InlineWidening private constructor(
      * [changedBytes]: their recompiled class moved, and that is no change of its own.
      */
     val accountedByInliners: Set<String> = emptySet(),
+    /** What `narrowLineOnlyChanges` made of the change set; null with the flag off. */
+    val lines: LineOnly? = null,
 ) {
     val forces: Boolean get() = refusal != null
 
@@ -146,15 +148,19 @@ internal class InlineWidening private constructor(
      */
     val changedBytes: Set<String>
         get() = digest?.added
+            ?.let { it - lines?.bytes.orEmpty() }
             ?.let { io.github.zeuspizza.yoriwake.agent.select.Selector.bytesOnly(it, prefixes + accountedByInliners) }
             .orEmpty()
 
     fun withDigest(digest: DigestWidening?): InlineWidening =
         if (digest == null) this
-        else InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles, accountedByInliners)
+        else InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles, accountedByInliners, lines)
 
     fun withMovedFiles(movedFiles: List<String>): InlineWidening =
-        InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles, accountedByInliners)
+        InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles, accountedByInliners, lines)
+
+    fun withLines(lines: LineOnly?): InlineWidening =
+        InlineWidening(prefixes, inliners, refusal, scanExhausted, refusalKind, refusalDetail, digest, movedFiles, accountedByInliners, lines)
 
     companion object {
         fun widened(
@@ -426,14 +432,31 @@ internal fun widenForInlining(
     ownTestClasses: Set<String> = emptySet(),
     /** [Established.inlinedAway]: each one found inlined by some class leaves the prefixes. */
     inlinedAway: Set<String> = emptySet(),
+    /** `narrowLineOnlyChanges`'s inputs; null with the flag off. */
+    lineOnly: LineOnlyRule? = null,
+): InlineWidening = widen(
+    prefixes, facts, recordedConstants, inlinableSourceChanged, digestRule, recordedAnnotations, ownTestClasses,
+    inlinedAway, lineOnly,
+).let { widening -> if (lineOnly == null) widening else widening.withLines(widening.lines ?: LineOnly.NONE) }
+
+private fun widen(
+    asked: Collection<String>,
+    facts: ClasspathView,
+    recordedConstants: Map<String, String>,
+    inlinableSourceChanged: Boolean,
+    digestRule: DigestRule?,
+    recordedAnnotations: Map<String, String>?,
+    ownTestClasses: Set<String>,
+    inlinedAway: Set<String>,
+    lineOnly: LineOnlyRule?,
 ): InlineWidening {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
     }.getOrNull()
     if (artifacts == null) {
-        if (prefixes.isEmpty() && digestRule != null) return bytesRefusal(null)
+        if (asked.isEmpty() && digestRule != null) return bytesRefusal(null)
         // An empty change set widens to nothing.
-        return if (prefixes.isEmpty()) InlineWidening.widened(emptyList(), emptySet())
+        return if (asked.isEmpty()) InlineWidening.widened(emptyList(), emptySet())
         else InlineWidening.refuse(
             INLINE_SCAN_REFUSAL,
             scanExhausted = true,
@@ -450,16 +473,20 @@ internal fun widenForInlining(
     // Computed before the refusals so a forced run still records what the comparison found.
     val digest = digestRule?.let { rule -> compareDigests(rule, artifacts) }
     val bytesUnknown = digest != null && digest.silence != null
+    // Before every rule that reads the changed classes: a class whose line digest matches has the
+    // same constants, annotations and inline bodies, and its inliners reach the bytes rule.
+    val lines = lineOnly?.let { classifyLineOnly(it, asked, artifacts, digest) }
+    val prefixes = asked - lines?.prefixes.orEmpty()
 
     if (prefixes.isEmpty()) {
         // No digest-derived prefixes: an empty change set nobody accounted for forces on its own
         // account, and one that was accounted for selects on the changed bytes alone.
-        return if (bytesUnknown) bytesRefusal(digest)
-        else InlineWidening.widened(emptyList(), emptySet(), digest)
+        return if (bytesUnknown) bytesRefusal(digest).withLines(lines)
+        else InlineWidening.widened(emptyList(), emptySet(), digest).withLines(lines)
     }
 
     constantHolderRefusal(prefixes, recordedConstants, artifacts::classesFor)
-        ?.let { return it.withDigest(digest) }
+        ?.let { return it.withDigest(digest).withLines(lines) }
 
     // The throwable is kept as the only account of why the scan failed.
     var threw: Throwable? = null
@@ -482,12 +509,12 @@ internal fun widenForInlining(
             kind = if (threw != null) RefusalKind.SCAN_THREW else kindOf(scan.kind),
             detail = scan.reason,
             digest = digest,
-        )
+        ).withLines(lines)
     }
     // Last, so every refusal above keeps its own token when both apply.
     annotationRefusal(prefixes, recordedAnnotations, ownTestClasses, artifacts::classesFor)
-        ?.let { return it.withDigest(digest) }
-    if (bytesUnknown) return bytesRefusal(digest)
+        ?.let { return it.withDigest(digest).withLines(lines) }
+    if (bytesUnknown) return bytesRefusal(digest).withLines(lines)
     // Asked per file, since the scan above answers for the change set as a whole. A scan that
     // cannot answer keeps the file.
     val accounted = if (inliners.isEmpty()) emptySet() else inlinedAway.filterTo(sortedSetOf()) { prefix ->
@@ -502,7 +529,7 @@ internal fun widenForInlining(
         inliners,
         digest,
         accounted,
-    )
+    ).withLines(lines)
 }
 
 /**
@@ -671,8 +698,10 @@ internal fun absenceVerdicts(
 internal fun accountedFor(
     paths: List<String>,
     scoped: ScopedChange,
+    /** [LineOnly.prefixes]: changed classes that left the change set as line-only, which accounts for them. */
+    linesOnly: Set<String> = emptySet(),
 ): Boolean = paths.isNotEmpty() &&
-    scoped.change.classPrefixes.isEmpty() &&
+    (scoped.change.classPrefixes - linesOnly).isEmpty() &&
     scoped.change.unmappablePaths.isEmpty()
 
 /**
@@ -688,9 +717,12 @@ internal fun changeSet(
     changedBytes: Collection<String>,
     /** [InlineWidening.movedFiles]. */
     movedFiles: Collection<String>,
+    /** [InlineWidening.lines]; null with `narrowLineOnlyChanges` off. */
+    lines: LineOnly? = null,
 ): io.github.zeuspizza.yoriwake.agent.select.ChangeSet =
     io.github.zeuspizza.yoriwake.agent.select.ChangeSet.of(changed, scoped.change.unmappablePaths.sorted())
-        .withAccountedFor(accountedFor(paths, scoped))
+        .withAccountedFor(accountedFor(paths, scoped, lines?.prefixes.orEmpty()))
+        .withLinesOnly(lines?.classes.orEmpty())
         .withAbsenceProvable(established.provable)
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
@@ -724,7 +756,7 @@ internal fun wouldRunEverything(
     FullRunOutlook(
         fullRun = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(
             map,
-            changeSet(changed.sorted(), paths, scoped, established, widening.changedBytes, widening.movedFiles)
+            changeSet(changed.sorted(), paths, scoped, established, widening.changedBytes, widening.movedFiles, widening.lines)
                 .withChangedJars(bump?.modules.orEmpty(), bump?.directories.orEmpty())
                 .withDaemonRefusal(widening.refusal),
             emptyList(),
@@ -871,7 +903,7 @@ internal fun annotationRefusal(
 }
 
 /** Whether [name] is a class the source behind [prefix] compiles to; mirrors `classesFor`, wider. */
-private fun compiledFrom(name: String, prefix: String): Boolean {
+internal fun compiledFrom(name: String, prefix: String): Boolean {
     if (name.substringBeforeLast('.', "") != prefix.substringBeforeLast('.', "")) return false
     val simple = prefix.substringAfterLast('.')
     val own = name.substringAfterLast('.')

@@ -10,6 +10,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_JARS_PR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CHANGED_PATHS_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEMPT_TEST_CLASSES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.IGNORED_PATHS_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.LINES_ONLY_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MISS_DIRECTORIES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.MOVED_FILES_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OWN_TEST_CLASSES_PROPERTY
@@ -97,6 +98,8 @@ internal object SelectingStep {
         val text: TrackedText = TrackedText(rootDir),
         /** What a dependency bump is judged against, when `narrowDependencies` is set; null leaves build files forcing. */
         val dependencies: DependencyRule.Context? = null,
+        /** Whether `narrowLineOnlyChanges` is on. */
+        val narrowLineOnlyChanges: Boolean = false,
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -152,11 +155,14 @@ internal object SelectingStep {
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = established.testClasses,
             inlinedAway = established.inlinedAway,
+            lineOnly = if (!inputs.narrowLineOnlyChanges) null else LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
         ) { message -> host.lifecycle("[yoriwake] ${host.name}: $message") }
         reportDigest(widening) { message -> host.lifecycle("[yoriwake] ${host.name}: $message") }
+        reportLines(widening.lines).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
+        val lines = widening.lines
 
         // The build declared that every test of this run depends on such a path, which coverage cannot see.
         val declaredHit = paths.firstOrNull { path -> inputs.declared.any { PathGlob.matches(it.first, path) } }
@@ -197,7 +203,7 @@ internal object SelectingStep {
         // force a full run.
         host.property(
             ACCOUNTED_PROPERTY,
-            accountedFor(paths, scoped).toString(),
+            accountedFor(paths, scoped, lines?.prefixes.orEmpty()).toString(),
         )
         // From a copy, before the change set is written and printed after it: it only explains
         // the run, and never changes what the test JVM is handed.
@@ -229,6 +235,10 @@ internal object SelectingStep {
                     CHANGED_JARS_PROPERTY to bump.modules.map(PathIgnore::escape),
                     MISS_DIRECTORIES_PROPERTY to bump.directories.map(PathIgnore::escape),
                 )
+            ) + (
+                // Only with the flag on, so a run without it hands over what it did.
+                if (lines == null) emptyMap()
+                else mapOf(LINES_ONLY_PROPERTY to if (widening.forces) emptySet() else lines.classes)
             ) + (
                 // Only when there is one, so a build without a declaration hands over what it did.
                 if (scoped.ignore.ignored.isEmpty()) emptyMap()
@@ -274,6 +284,29 @@ internal object SelectingStep {
         applyCapture(host, mapDir, inputs.observing, capture)
         return Worked(scoped, established, widening, forcing, capture)
     }
+
+    /** What `narrowLineOnlyChanges` made of the change set, for the console; nothing with the flag off. */
+    fun reportLines(lines: LineOnly?): List<String> = buildList {
+        if (lines == null) return@buildList
+        if (lines.paths.isNotEmpty() || lines.bytes.isNotEmpty()) {
+            add(
+                "${lines.paths.size} changed file(s) and ${lines.bytes.size} class(es) changed only in line " +
+                    "information, so they run only the tests whose JVM could have seen a line number or read the " +
+                    "class or source file: " + (lines.paths + lines.bytes).take(REPORTED).joinToString() +
+                    if (lines.paths.size + lines.bytes.size > REPORTED) ", ..." else ""
+            )
+        }
+        if (lines.kept.isNotEmpty()) {
+            add(
+                "${lines.kept.size} changed file(s) stay changed under narrowLineOnlyChanges: " +
+                    lines.kept.entries.take(REPORTED).joinToString { (path, why) ->
+                        "$path (${why.kind.token}${why.detail?.let { ": $it" } ?: ""})"
+                    } + if (lines.kept.size > REPORTED) ", ..." else ""
+            )
+        }
+    }
+
+    private const val REPORTED = 5
 
     /** Says on the console what `narrowDependencies` made of the changed build files. */
     private fun reportDependencies(host: Host, verdict: DependencyRule.Verdict?) {

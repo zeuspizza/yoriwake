@@ -159,6 +159,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         text: TrackedText = TrackedText(root),
         /** What a dependency bump is judged against, with `narrowDependencies`; null leaves POMs forcing. */
         dependencies: DependencyRule.Context? = null,
+        /** Whether `narrowLineOnlyChanges` is on for this module. */
+        narrowLineOnlyChanges: Boolean = false,
     ): RunPlan.Kind {
         val host = Host(name, properties)
         // Whatever the run kind, as on Gradle: an observing or complement run reports the pin too.
@@ -294,6 +296,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 mapDir, root, paths, widened.ref, widened.origin, sourceDirs, view,
                 notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing, text = text,
                 dependencies = dependencies,
+                narrowLineOnlyChanges = narrowLineOnlyChanges,
             ),
             host,
         )

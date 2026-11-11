@@ -73,6 +73,9 @@ final class ReadHooks {
     /** The holder's method the entry hooks call. */
     static final String ENTRY = "entry";
 
+    /** The holder's method the stack return hooks call. */
+    static final String STACK = "stack";
+
     /**
      * Owner, method, descriptor, and what to pass: an argument slot, -1 for {this, argument 1}, -2
      * for null, or -3 for {argument 1, argument 2}. These open files without the file-system provider.
@@ -208,6 +211,56 @@ final class ReadHooks {
         {"java/util/jar/JarFile", "versionedStream", "()Ljava/util/stream/Stream;", "0"},
     };
 
+    /**
+     * Every way a stack trace element reaches Java code with a line number in it, the sink getting
+     * the element, the elements or the declaring class's name: as each of these returns ({@code s}),
+     * or from an argument slot. The JDK builds most elements natively and fills them in, so a
+     * constructor sees only the ones code builds by hand; the rest are taken where the JDK hands
+     * them out. {@link #REQUIRED_STACKS} must all be found; the others are hooked where this JDK
+     * has them, and the per-JDK scan checks the two lists against every method and field of the
+     * JDK whose descriptor names {@code StackTraceElement}.
+     */
+    static final String[][] STACKS = {
+        // A throwable's trace, however it is read: getStackTrace, printStackTrace, serialisation.
+        {"java/lang/Throwable", "getOurStackTrace", "()[Ljava/lang/StackTraceElement;", "s"},
+        {"java/lang/Thread", "getStackTrace", "()[Ljava/lang/StackTraceElement;", "s"},
+        {"java/lang/Thread", "getAllStackTraces", "()Ljava/util/Map;", "s"},
+        // Built by hand: Kotlin's coroutine frames, a test's own, a management bean's decoding.
+        {"java/lang/StackTraceElement", "<init>",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V", "1"},
+        {"java/lang/StackTraceElement", "<init>",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+                + "Ljava/lang/String;I)V", "4"},
+        // A stack walker's frame: its line number and file name are read through this.
+        {"java/lang/StackFrameInfo", "toStackTraceElement", "()Ljava/lang/StackTraceElement;", "s"},
+        {"java/lang/ClassFrameInfo", "toStackTraceElement", "()Ljava/lang/StackTraceElement;", "s"},
+        {"java/lang/Thread", "asyncGetStackTrace", "()[Ljava/lang/StackTraceElement;", "s"},
+        {"java/lang/VirtualThread", "asyncGetStackTrace", "()[Ljava/lang/StackTraceElement;", "s"},
+        {"java/lang/VirtualThread", "tryGetStackTrace", "()[Ljava/lang/StackTraceElement;", "s"},
+        {"jdk/internal/vm/ThreadSnapshot", "stackTrace", "()[Ljava/lang/StackTraceElement;", "s"},
+        // A thread dump: the JVM builds these elements natively and calls these constructors, and
+        // ThreadInfo.toString and MonitorInfo.getLockedStackFrame reach them without a getter.
+        {"java/lang/management/MonitorInfo", "<init>", "(Ljava/lang/String;IILjava/lang/StackTraceElement;)V", "4"},
+        {"java/lang/management/ThreadInfo", "<init>",
+            "(Ljava/lang/Thread;ILjava/lang/Object;Ljava/lang/Thread;JJJJ[Ljava/lang/StackTraceElement;)V", "13"},
+        {"java/lang/management/ThreadInfo", "<init>",
+            "(Ljava/lang/Thread;ILjava/lang/Object;Ljava/lang/Thread;JJJJ[Ljava/lang/StackTraceElement;"
+                + "[Ljava/lang/Object;[I[Ljava/lang/Object;)V", "13"},
+        // A recording's frame hands out a line number with no element at all: the frame itself,
+        // which the sink takes as every class.
+        {"jdk/jfr/consumer/RecordedFrame", "getLineNumber", "()I", "0"},
+    };
+
+    /** The {@link #STACKS} every supported JDK has; one missing records no stack touch as complete. */
+    static final Set<String> REQUIRED_STACKS = new HashSet<>(Arrays.asList(
+            "java/lang/Throwable.getOurStackTrace()[Ljava/lang/StackTraceElement;",
+            "java/lang/Thread.getStackTrace()[Ljava/lang/StackTraceElement;",
+            "java/lang/Thread.getAllStackTraces()Ljava/util/Map;",
+            "java/lang/StackTraceElement.<init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V",
+            "java/lang/StackTraceElement.<init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+                    + "Ljava/lang/String;Ljava/lang/String;I)V",
+            "java/lang/management/MonitorInfo.<init>(Ljava/lang/String;IILjava/lang/StackTraceElement;)V"));
+
     private ReadHooks() {}
 
     /** Why the hooks are not all in place, per kind; null when they are. */
@@ -223,17 +276,20 @@ final class ReadHooks {
         final boolean resolving;
         /** The entry hooks report apart: missing them only leaves which library jars were reached unknown. */
         final String entries;
+        /** The stack hooks report apart: missing them only leaves which classes' lines were seen unknown. */
+        final String stacks;
 
         Installed(String reads, String lookups, String environment) {
-            this(reads, lookups, environment, false, reads);
+            this(reads, lookups, environment, false, reads, reads);
         }
 
-        Installed(String reads, String lookups, String environment, boolean resolving, String entries) {
+        Installed(String reads, String lookups, String environment, boolean resolving, String entries, String stacks) {
             this.reads = reads;
             this.lookups = lookups;
             this.environment = environment;
             this.resolving = resolving;
             this.entries = entries;
+            this.stacks = stacks;
         }
     }
 
@@ -246,7 +302,7 @@ final class ReadHooks {
     static Installed install(Instrumentation instrumentation, Consumer<Object> reads, Consumer<Object> lookups,
             Consumer<Object> defines, Consumer<Object> processes, Consumer<Object> natives,
             Consumer<Object> libraries, Consumer<Object> resolved, Consumer<Object> environment,
-            Consumer<Object> entries, Consumer<Object> enumerations) {
+            Consumer<Object> entries, Consumer<Object> enumerations, Consumer<Object> stacks) {
         if (!instrumentation.isRetransformClassesSupported()) {
             String why = "this JVM cannot retransform classes";
             return new Installed(why, why, why);
@@ -260,6 +316,8 @@ final class ReadHooks {
         List<String[]> resolutionHooks = new ArrayList<>();
         List<String[]> environmentHooks = new ArrayList<>();
         List<String[]> entryHooks = new ArrayList<>();
+        List<String[]> stackHooks = new ArrayList<>();
+        String stacksWhy = null;
         Injector injector;
         String providerWhy;
         try {
@@ -279,6 +337,9 @@ final class ReadHooks {
             holder.getField("ENV").set(null, environment);
             holder.getField("ENTRY").set(null, entries);
             holder.getField("ENUM").set(null, enumerations);
+            // An empty trace loads what the sink needs and records nothing.
+            stacks.accept(new StackTraceElement[0]);
+            holder.getField("STACK").set(null, stacks);
             addAll(readHooks, READS, "SINK", false);
             providerWhy = addProviderHooks(readHooks);
             addAll(lookupHooks, LOOKUPS, "LOOKUP", false);
@@ -289,6 +350,14 @@ final class ReadHooks {
             addAll(environmentHooks, ENVIRONMENT, "ENV", false);
             addAll(entryHooks, ENTRIES, "ENTRY", true);
             addAll(entryHooks, ENUMERATIONS, "ENUM", true);
+            for (String[] hook : STACKS) {
+                String key = hook[0] + '.' + hook[1] + hook[2];
+                if (declares(load(hook[0]), hook[1], hook[2])) {
+                    stackHooks.add(withField(hook, "STACK"));
+                } else if (REQUIRED_STACKS.contains(key) && stacksWhy == null) {
+                    stacksWhy = "this JDK has no " + key.replace('/', '.') + " to hook";
+                }
+            }
             for (String[] hook : NATIVES) {
                 // The API is absent before it existed; where its class exists every hook must hold.
                 if (load(hook[0]) != null) {
@@ -297,7 +366,7 @@ final class ReadHooks {
             }
             List<String[]> all = new ArrayList<>();
             for (List<String[]> hooks : Arrays.asList(readHooks, lookupHooks, defineHooks, processHooks, nativeHooks,
-                    libraryHooks, resolutionHooks, environmentHooks, entryHooks)) {
+                    libraryHooks, resolutionHooks, environmentHooks, entryHooks, stackHooks)) {
                 all.addAll(hooks);
             }
             injector = new Injector(all);
@@ -330,7 +399,8 @@ final class ReadHooks {
         boolean resolving = !resolutionHooks.isEmpty() && installed("resolution", resolutionHooks, injector, failed) == null;
         String entriesWhy = entryHooks.isEmpty() ? "this JDK's ZipFile has no getEntry to hook"
                 : installed("entry", entryHooks, injector, failed);
-        return new Installed(readsWhy, lookupsWhy, environmentWhy, resolving, entriesWhy);
+        String stackWhy = stacksWhy != null ? stacksWhy : installed("stack", stackHooks, injector, failed);
+        return new Installed(readsWhy, lookupsWhy, environmentWhy, resolving, entriesWhy, stackWhy);
     }
 
     /** Each hook with the holder field its sink sits in; when {@code ifPresent}, only where this JDK has it. */
@@ -368,9 +438,17 @@ final class ReadHooks {
         return channel ? null : "the default file-system provider " + provider.getName() + " has no newByteChannel";
     }
 
-    /** Whether {@code owner} itself declares a method with this name and descriptor, with a body. */
+    /** Whether {@code owner} itself declares a method or constructor with this name and descriptor, with a body. */
     private static boolean declares(Class<?> owner, String name, String descriptor) {
         if (owner == null) {
+            return false;
+        }
+        if ("<init>".equals(name)) {
+            for (java.lang.reflect.Constructor<?> constructor : owner.getDeclaredConstructors()) {
+                if (Type.getConstructorDescriptor(constructor).equals(descriptor)) {
+                    return true;
+                }
+            }
             return false;
         }
         for (Method method : owner.getDeclaredMethods()) {
@@ -524,12 +602,13 @@ final class ReadHooks {
         writer.visit(Opcodes.V11, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_SUPER,
                 HOLDER, null, "java/lang/Object", null);
         for (String field : new String[] {"SINK", "LOOKUP", "DEFINE", "PROCESS", "NATIVE", "LIBRARY", "RESOLVED", "ENV",
-                "GUARD", "ENTRY", "ENUM"}) {
+                "GUARD", "ENTRY", "ENUM", "STACK"}) {
             writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, field,
                     "L" + CONSUMER + ";", null, null).visitEnd();
         }
         writeLoaded(writer);
         writeEntry(writer);
+        writeStack(writer);
         writer.visitEnd();
         return writer.toByteArray();
     }
@@ -608,6 +687,29 @@ final class ReadHooks {
         body.visitEnd();
     }
 
+    /**
+     * {@code static void stack(Object value)}: {@code STACK} gets {@code value}. The stack return
+     * hooks call it, so the JDK method itself gains no branch and no frame.
+     */
+    private static void writeStack(ClassWriter writer) {
+        MethodVisitor body = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, STACK,
+                "(Ljava/lang/Object;)V", null, null);
+        body.visitCode();
+        Label done = new Label();
+        body.visitFieldInsn(Opcodes.GETSTATIC, HOLDER, "STACK", "L" + CONSUMER + ";");
+        body.visitVarInsn(Opcodes.ASTORE, 1);
+        body.visitVarInsn(Opcodes.ALOAD, 1);
+        body.visitJumpInsn(Opcodes.IFNULL, done);
+        body.visitVarInsn(Opcodes.ALOAD, 1);
+        body.visitVarInsn(Opcodes.ALOAD, 0);
+        body.visitMethodInsn(Opcodes.INVOKEINTERFACE, CONSUMER, "accept", "(Ljava/lang/Object;)V", true);
+        body.visitLabel(done);
+        body.visitFrame(Opcodes.F_APPEND, 1, new Object[] {CONSUMER}, 0, null);
+        body.visitInsn(Opcodes.RETURN);
+        body.visitMaxs(2, 2);
+        body.visitEnd();
+    }
+
     /** Prepends the sink call to each hooked method, and records which it found. */
     private static final class Injector implements ClassFileTransformer {
         final Set<String> found = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -644,6 +746,9 @@ final class ReadHooks {
                             here.add(className + '.' + name + descriptor);
                             if (hook[0].equals("e")) {
                                 return new EntryCall(visitor);
+                            }
+                            if (hook[0].equals("s")) {
+                                return new StackCall(visitor);
                             }
                             if (hook[0].startsWith("r")) {
                                 String[] slots = hook[0].substring(1).split(",");
@@ -742,6 +847,30 @@ final class ReadHooks {
         @Override
         public void visitMaxs(int maxStack, int maxLocals) {
             super.visitMaxs(maxStack + 3, maxLocals);
+        }
+    }
+
+    /**
+     * Before each normal return, {@code stack(result)} with the trace, element or map of traces about
+     * to be returned. A throw hands out no line number and reaches no return.
+     */
+    private static final class StackCall extends MethodVisitor {
+        StackCall(MethodVisitor visitor) {
+            super(Opcodes.ASM9, visitor);
+        }
+
+        @Override
+        public void visitInsn(int opcode) {
+            if (opcode == Opcodes.ARETURN) {
+                super.visitInsn(Opcodes.DUP);
+                super.visitMethodInsn(Opcodes.INVOKESTATIC, HOLDER, STACK, "(Ljava/lang/Object;)V", false);
+            }
+            super.visitInsn(opcode);
+        }
+
+        @Override
+        public void visitMaxs(int maxStack, int maxLocals) {
+            super.visitMaxs(maxStack + 1, maxLocals);
         }
     }
 

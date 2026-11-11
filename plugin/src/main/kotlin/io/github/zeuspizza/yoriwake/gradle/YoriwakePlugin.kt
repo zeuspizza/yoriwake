@@ -500,6 +500,15 @@ public abstract class YoriwakeExtension {
      */
     public abstract val narrowDependencies: org.gradle.api.provider.Property<Boolean>
 
+    /**
+     * Lets a selecting run narrow an edit that changes only comments, blank lines or line breaks:
+     * `narrowLineOnlyChanges = true`, or `-Pyoriwake.narrowLineOnlyChanges` for one invocation. A
+     * changed source whose compiled classes match the map's line digests, which leave out line
+     * numbers and nothing else, selects only the tests whose JVM could have seen a line number or
+     * read the class or source file from then on. Off by default.
+     */
+    public abstract val narrowLineOnlyChanges: org.gradle.api.provider.Property<Boolean>
+
     init {
         @Suppress("LeakingThis")
         enabled.convention(true)
@@ -510,5 +519,7 @@ public abstract class YoriwakeExtension {
         narrowPlainRunners.convention(false)
         @Suppress("LeakingThis")
         narrowDependencies.convention(false)
+        @Suppress("LeakingThis")
+        narrowLineOnlyChanges.convention(false)
     }
 }

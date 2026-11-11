@@ -129,6 +129,17 @@ internal class Settings(
                     ?.let { parseFlag("${project.artifactId}'s <narrowDependencies>", it.trim()) }
                 ?: false
 
+        /**
+         * Whether [project]'s selecting runs narrow an edit that changes only line information:
+         * `-Dyoriwake.narrowLineOnlyChanges` over the module's `<narrowLineOnlyChanges>`.
+         */
+        fun narrowLineOnlyChangesOf(project: MavenProject, session: MavenSession): Boolean =
+            session.userProperties.getProperty(SettingNames.NARROW_LINE_ONLY_CHANGES)
+                ?.let { parseFlag("-D${SettingNames.NARROW_LINE_ONLY_CHANGES}", it) }
+                ?: moduleConfiguration(project, session)?.getChild("narrowLineOnlyChanges")?.value
+                    ?.let { parseFlag("${project.artifactId}'s <narrowLineOnlyChanges>", it.trim()) }
+                ?: false
+
         /** The module's own plugin entry, else the reactor root's, never a sibling's that `-pl` happened to put first. */
         private fun moduleConfiguration(project: MavenProject, session: MavenSession): Xpp3Dom? {
             val root = session.request.multiModuleProjectDirectory?.absoluteFile

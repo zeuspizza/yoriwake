@@ -8,24 +8,32 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 /**
- * What an edit that changes only comments, blank lines or line breaks selects today.
+ * What an edit that changes only comments, blank lines or line breaks selects, without and with
+ * `narrowLineOnlyChanges`.
  *
- * Characterization: each test pins current behaviour, so a later change to how such edits select
- * shows up here as a deliberate flip rather than as drift. A comment edit is a changed source file,
- * so it selects like any other change to the classes compiled from it; in Kotlin the same edit can
- * force a full run through line information the compiler stores outside the line-number table.
+ * Without the flag a comment edit is a changed source file, so it selects like any other change to
+ * the classes compiled from it; in Kotlin the same edit can force a full run through line
+ * information the compiler stores outside the line-number table. With it, such a file selects only
+ * the tests whose JVM could have seen a line number or read the file from then on.
  */
 class LineOnlyChangeFunctionalTest : FunctionalTestSupport() {
 
     private fun mapDir(dir: File) = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
 
-    /** Captures [sources], applies [edit] to [edited], explains, then runs a selecting build. */
+    private val flag = "-Pyoriwake.narrowLineOnlyChanges"
+
+    /**
+     * Captures [sources], applies [edit] to [edited], explains, then runs a selecting build, both
+     * with [flags]. [beforeSelecting] is handed the map directory before either.
+     */
     private fun selectAfter(
         dir: File,
         buildScript: String,
         sources: List<Pair<String, String>>,
         expectedCapture: Set<String>,
         edited: String,
+        flags: List<String> = emptyList(),
+        beforeSelecting: (File) -> Unit = {},
         edit: (String) -> String,
     ): Pair<String, String> {
         build(dir, "build.gradle.kts" to buildScript, *sources.toTypedArray())
@@ -37,29 +45,158 @@ class LineOnlyChangeFunctionalTest : FunctionalTestSupport() {
         runner(dir, "test").build()
         assertEquals(expectedCapture, ranTests(dir))
 
+        beforeSelecting(mapDir(dir))
         val source = File(dir, edited)
         val before = source.readText()
         source.writeText(edit(before))
         assertFalse(before == source.readText(), "the edit changed nothing in $edited")
         // Compiled first: the explanation reads whatever bytes the build directory holds.
-        runner(dir, "classes", "yoriwakeExplainTest", "-Pyoriwake.base=HEAD").build()
+        runner(dir, "classes", "yoriwakeExplainTest", "-Pyoriwake.base=HEAD", *flags.toTypedArray()).build()
         val explained = File(mapDir(dir), "explain.json").readText()
         File(dir, "build/test-results").deleteRecursively()
-        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", *flags.toTypedArray()).build().output
         return explained to output
     }
+
+    private val commentAboveThrice: (String) -> String =
+        { it.replace("public class Beta {", "public class Beta {\n    // Triples.\n") }
+
+    private val javaSample = listOf(oneClass, oneTest, secondClass, secondTest, classOrderByName)
+
+    private val javaTests = setOf("dev.sample.AlphaTest", "dev.sample.BetaTest")
 
     @Test
     fun `a comment above a Java method selects the tests that cover its class`(@TempDir dir: File) {
         // Ordered by name, BetaTest runs last, so nothing but its own coverage selects it.
         val (_, output) = selectAfter(
-            dir, minimalBuild, listOf(oneClass, oneTest, secondClass, secondTest, classOrderByName),
-            expectedCapture = setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"),
-            edited = secondClass.first,
-        ) { it.replace("public class Beta {", "public class Beta {\n    // Triples.\n") }
+            dir, minimalBuild, javaSample, javaTests, edited = secondClass.first, edit = commentAboveThrice,
+        )
 
         assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
         assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals(null, decisionNotes(dir)["lines-only"], output)
+    }
+
+    @Test
+    fun `with the flag, a comment above a Java method runs no test that only covers its class`(@TempDir dir: File) {
+        val (explained, output) = selectAfter(
+            dir, minimalBuild, javaSample, javaTests, edited = secondClass.first, flags = listOf(flag),
+            edit = commentAboveThrice,
+        )
+
+        assertContains(explained, "\"linesOnly\": [\"dev.sample.Beta\"]")
+        assertContains(explained, "\"linesOnlyPaths\": [\"src/main/java/dev/sample/Beta.java\"]")
+        assertEquals(emptySet(), ranTests(dir), output)
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals("1", decisionNotes(dir)["lines-only"], output)
+        assertContains(output, "changed only in line information")
+    }
+
+    @Test
+    fun `with the flag, a changed operator still selects as it always did`(@TempDir dir: File) {
+        val (explained, output) = selectAfter(
+            dir, minimalBuild, javaSample, javaTests, edited = secondClass.first, flags = listOf(flag),
+        ) { it.replace("n * 3", "n + n + n") }
+
+        assertContains(explained, "\"reason\": \"class-unmatched\"")
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+        assertEquals("0", decisionNotes(dir)["lines-only"], output)
+    }
+
+    @Test
+    fun `with the flag, a map without debug touches keeps the file changed and says why`(@TempDir dir: File) {
+        val (explained, output) = selectAfter(
+            dir, minimalBuild, javaSample, javaTests, edited = secondClass.first, flags = listOf(flag),
+            beforeSelecting = { File(it, "debug-touch.tsv").delete() }, edit = commentAboveThrice,
+        )
+
+        assertContains(explained, "\"reason\": \"debug-touch-absent\"")
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+    }
+
+    @Test
+    fun `with the flag, a map whose line digests another capture stamped keeps the file changed`(@TempDir dir: File) {
+        val (explained, output) = selectAfter(
+            dir, minimalBuild, javaSample, javaTests, edited = secondClass.first, flags = listOf(flag),
+            beforeSelecting = { map ->
+                val table = File(map, "line-digests")
+                table.writeText(table.readText().replace(Regex("(?m)^#stamp\t.*$"), "#stamp\t" + "0".repeat(40)))
+            },
+            edit = commentAboveThrice,
+        )
+
+        assertContains(explained, "\"reason\": \"line-digests-absent\"")
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+    }
+
+    /** Beta's own frame, in a test that reads where it threw. */
+    private val betaThrows = "src/main/java/dev/sample/Beta.java" to """
+        package dev.sample;
+        public class Beta {
+            public int thrice(int n) { return n * 3; }
+            public void fail() { throw new IllegalStateException("here"); }
+        }
+    """.trimIndent()
+
+    private fun javaTest(name: String, body: String) = "src/test/java/dev/sample/$name.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.*;
+        class $name {
+            @Test void runs() throws Exception { $body }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `with the flag, a test that reads a line number runs, with every later test of its JVM`(@TempDir dir: File) {
+        val (_, output) = selectAfter(
+            dir, minimalBuild,
+            listOf(
+                betaThrows, classOrderByName,
+                javaTest("ACoversTest", "assertEquals(3, new Beta().thrice(1));"),
+                javaTest(
+                    "BLineTest",
+                    "try { new Beta().fail(); fail(); } catch (IllegalStateException e) { " +
+                        "assertTrue(e.getStackTrace()[0].getLineNumber() > 0); }",
+                ),
+                javaTest("CCoversTest", "assertEquals(6, new Beta().thrice(2));"),
+            ),
+            setOf("dev.sample.ACoversTest", "dev.sample.BLineTest", "dev.sample.CCoversTest"),
+            edited = betaThrows.first, flags = listOf(flag),
+        ) { it.replace("public class Beta {", "public class Beta {\n    // Moves every line.\n") }
+
+        assertEquals(setOf("dev.sample.BLineTest", "dev.sample.CCoversTest"), ranTests(dir), output)
+        assertEquals("SHARES_JVM_WITH_CHANGE", decisionReasons(dir).entries.single { "BLineTest" in it.key }.value, output)
+    }
+
+    @Test
+    fun `with the flag, a test that reads the source file runs`(@TempDir dir: File) {
+        val (_, output) = selectAfter(
+            dir, minimalBuild,
+            listOf(
+                secondClass, classOrderByName,
+                javaTest("ACoversTest", "assertEquals(3, new Beta().thrice(1));"),
+                javaTest(
+                    "BSnippetTest",
+                    "assertTrue(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(" +
+                        "\"src/main/java/dev/sample/Beta.java\"))).contains(\"thrice\"));",
+                ),
+            ),
+            setOf("dev.sample.ACoversTest", "dev.sample.BSnippetTest"),
+            edited = secondClass.first, flags = listOf(flag), edit = commentAboveThrice,
+        )
+
+        assertEquals(setOf("dev.sample.BSnippetTest"), ranTests(dir), output)
+    }
+
+    @Test
+    fun `the flag takes only true or false`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest)
+        committed(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.narrowLineOnlyChanges=yes").buildAndFail().output
+
+        assertContains(output, "yoriwake.narrowLineOnlyChanges")
     }
 
     private val steps = "src/main/kotlin/dev/demokt/Steps.kt" to """
@@ -176,5 +313,33 @@ class LineOnlyChangeFunctionalTest : FunctionalTestSupport() {
         assertContains(output, "inlined the changed sources")
         assertEquals(setOf("dev.demokt.CallerTest", "dev.demokt.RangeTest"), ranTests(dir), output)
         assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+    }
+
+    @Test
+    fun `with the flag, a comment above a suspend function forces nothing`(@TempDir dir: File) {
+        val (explained, output) = selectAfter(
+            dir, kotlinBuild, listOf(steps, stepsTest, alpha, alphaTest), coroutineTests,
+            edited = steps.first, flags = listOf(flag),
+        ) { it.replace("suspend fun twoSteps", "// Two steps in a row.\nsuspend fun twoSteps") }
+
+        assertContains(explained, "\"refusalKind\": null")
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+        assertEquals(emptySet(), ranTests(dir), output)
+    }
+
+    @Test
+    fun `with the flag, the inliners of a comment edit run only by the line window`(@TempDir dir: File) {
+        val (explained, output) = selectAfter(
+            dir, kotlinBuild, listOf(inlined, caller, callerTest, rangeTest, alpha, alphaTest, classOrderByName),
+            expectedCapture = setOf("dev.demokt.AlphaTest", "dev.demokt.CallerTest", "dev.demokt.RangeTest"),
+            edited = inlined.first, flags = listOf(flag),
+        ) { it.replace("inline fun aboveZero", "// Strictly positive.\ninline fun aboveZero") }
+
+        assertContains(explained, "\"inliners\": []")
+        assertContains(explained, "dev.demokt.Caller")
+        assertContains(explained, "\"refusalKind\": null")
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals(emptySet(), ranTests(dir), output)
     }
 }

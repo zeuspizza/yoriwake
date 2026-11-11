@@ -173,7 +173,7 @@ val jdkIdentityTest by tasks.registering(Test::class) {
 }
 
 val jdkNestTest by tasks.registering(Test::class) {
-    onAgentJdk(listOf("JdkNestTest", "JdkBranchTest"))
+    onAgentJdk(listOf("JdkNestTest", "JdkBranchTest", "JdkStackScanTest"))
     withBootFixture()
     jvmArgs("--add-opens", "java.base/java.lang=ALL-UNNAMED")
 }

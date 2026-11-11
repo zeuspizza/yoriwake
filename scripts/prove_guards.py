@@ -199,6 +199,7 @@ FORCING_PATHS = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change
 PROJECT_FACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ProjectFacts.kt"
 CLASSPATH_FACTS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ClasspathFacts.kt"
 COVERAGE_DECODER = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/CoverageDecoder.kt"
+LINE_ONLY = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/LineOnly.kt"
 SETTINGS = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/Settings.kt"
 RUN_PLAN = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/RunPlan.kt"
 CAPTURE_SESSION = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureSession.java"
@@ -655,6 +656,22 @@ def decoder_suite():
     return named
 
 
+def line_only_suite():
+    """The line digest, what a capture records for line-only changes, and which paths the rule
+    takes out of the change set."""
+    done = gradle([":plugin:test", "--tests", "*LineDigestTest*", "--tests", "*LineOnlyRecordTest*",
+                   "--tests", "*LineOnlyClassifyTest*", "--rerun"])
+    if done.returncode == 0:
+        return []
+    lines = (done.stdout + done.stderr).splitlines()
+    named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
+    if not named:
+        compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
+            if compile_errors else ["the line-only suite failed without naming a test"]
+    return named
+
+
 def reference_suite():
     """The checks that the reference and the contract name what the code has: flags, the extension,
     published tokens, quoted names, files, tasks and printed lines."""
@@ -776,6 +793,8 @@ SUITES = [
     # Pure Python over one fixture repository, with javac for the gate's stand-in.
     ("revert", revert_suite, 10.5),
     ("decoder", decoder_suite, 5),
+    # An estimate until a guard run measures it: three classes, javac in-process for one.
+    ("line only", line_only_suite, 8),
     # 5.7s for one run with a Settings.kt mutation applied, its Kotlin recompile included; a doc
     # mutation recompiles nothing.
     ("reference", reference_suite, 6),
@@ -865,7 +884,7 @@ def warm_up_cost(mode):
 FAST_SUITES = {"sweep", "sharding", "scan", "ci", "controls", "maven harness", "preflight", "corpus",
                "mutations", "order",
                "revert",
-               "decoder", "reference",
+               "decoder", "line only", "reference",
                "jdk identity", "unit", "qualify", "config cost", "configuration guards"}
 
 # The two staging fragments the guards below reintroduce defects into. Named constants because
@@ -1987,8 +2006,8 @@ MUTATIONS = [
     # The nested-class rule's anchor set, from the agent's side: bytes merged into the change set
     # certify an uncovered same-named nested prefix.
     ("changed bytes join the change set the selector anchors on", SELECTOR,
-     "        Collection<String> changedClassPrefixes = change.changedClasses();",
-     "        Collection<String> changedClassPrefixes = new ArrayList<>(change.changedClasses());\n"
+     "        Collection<String> changedClassPrefixes = changedWithUnjudgedLines(map, change);",
+     "        Collection<String> changedClassPrefixes = new ArrayList<>(changedWithUnjudgedLines(map, change));\n"
      "        changedClassPrefixes.addAll(change.changedBytes());",
      agent_suite, "changed bytes never anchor the nested-class rule"),
     # A comparison that could not run is not agreement, with a change set and without one.
@@ -2102,8 +2121,8 @@ MUTATIONS = [
      "        if (lines == null) {",
      decoder_suite, "touches without their end marker touch every class from the first record"),
     ("a class read as a file is no longer dated", COVERAGE_DECODER,
-     "                TOUCH_READ -> namesForPath(parts[2]).forEach(named)",
-     "                TOUCH_READ -> Unit",
+     "                TOUCH_READ -> namesForPath(parts[2]).forEach { name ->\n                    named(name)\n",
+     "                TOUCH_READ -> namesForPath(parts[2]).forEach { name ->\n",
      decoder_suite, "a load or a class-file read before a record dates the class at that record"),
     ("a class's first execution no longer dates it", COVERAGE_DECODER,
      "            inScopeClasses.forEach { touch(it, sequence) }",
@@ -4177,8 +4196,8 @@ MUTATIONS = [
      "        emptySet(),",
      functional_suite, "a declared path outside a build below the repository root stays in the change set"),
     ("a change set pathIgnore emptied is not accounted for", SELECTING_STEP,
-     "            accountedFor(paths, scoped).toString(),",
-     "            accountedFor(scoped.ignore.kept, scoped).toString(),",
+     "            accountedFor(paths, scoped, lines?.prefixes.orEmpty()).toString(),",
+     "            accountedFor(scoped.ignore.kept, scoped, lines?.prefixes.orEmpty()).toString(),",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
     ("a declared file's content is not a task input", SELECTION_WIRING,
      "            (ignore?.let { \":\" + ignoredContentDigest(project, it, paths) } ?: \"\"),",
@@ -5197,8 +5216,67 @@ MUTATIONS = [
      "            get() = properties.getProperty(AgentContract.MODE_PROPERTY) == Strictness.OPTIMISTIC.token()",
      "            get() = false",
      maven_suite, "a map of unknown age runs every test in optimistic mode and captures nothing"),
+    # A changed path leaves the change set as line-only only when everything it rests on holds, and
+    # then runs every test that could have seen a line number or read the file.
+    ("a line-only class is judged without its line digest", LINE_ONLY,
+     "            if (now == null || recorded[name] != now) return Kept(LineOnlyKept.CLASS_UNMATCHED, name)",
+     "            if (now == null) return Kept(LineOnlyKept.CLASS_UNMATCHED, name)",
+     line_only_suite, "a changed operator stays changed"),
+    ("a line-only path no longer needs the whole-output walk", LINE_ONLY,
+     "    if (digest == null || digest.silence != null) return keepAll(LineOnlyKept.WALK_INCOMPLETE, digest?.silence)",
+     "    if (digest == null) return keepAll(LineOnlyKept.WALK_INCOMPLETE, null)",
+     line_only_suite, "a walk that did not finish keeps every path"),
+    ("a deleted source can be line-only", LINE_ONLY,
+     "        if (!File(rule.rootDir, path).isFile) {",
+     "        if (false) {",
+     line_only_suite, "a deleted file stays changed though its class lingers"),
+    ("a moved build output file no longer keeps paths changed", LINE_ONLY,
+     "    rule.movedOutput?.let { return keepAll(LineOnlyKept.OUTPUT_FILE_CHANGED, it) }\n",
+     "",
+     line_only_suite, "a build output file that moved keeps every path"),
+    ("line digests another capture stamped are believed", COVERAGE_DECODER,
+     "        if (table[DEBUG_TOUCH_STAMP] != commit) return null\n",
+     "",
+     line_only_suite, "line digests are read back only under the map's capture commit"),
+    ("stack touches stop reaching the debug touches", COVERAGE_DECODER,
+     "                TOUCH_STACK -> if (inScope(parts[2])) debugged(parts[2], sequence)",
+     "                TOUCH_STACK -> Unit",
+     line_only_suite, "a stack touch becomes a debug touch"),
+    ("class and source reads stop reaching the debug touches", COVERAGE_DECODER,
+     "                    named(name)\n                    if (inScope(name)) debugged(name, sequence)\n"
+     "                }\n                TOUCH_STACKS_RECORDED",
+     "                    named(name)\n                }\n                TOUCH_STACKS_RECORDED",
+     line_only_suite, "a read of a class or source file becomes a debug touch"),
+    ("a JVM whose stack traces were not recorded is windowed as if they were", SELECTOR,
+     "                if (!recorded || first != null && position.sequence() >= first) {",
+     "                if (first != null && position.sequence() >= first) {",
+     agent_suite, "a JVM whose stack traces were not recorded runs what a changed class would"),
+    ("a line window opens before the class arrived", SELECTOR,
+     "                if (opens == null || position.sequence() < opens) {",
+     "                if (false) {",
+     agent_suite, "a debug touch opens no window before the class arrived in that JVM"),
+    ("a change set the line-only rule emptied is not accounted for", SELECTING_STEP,
+     "            accountedFor(paths, scoped, lines?.prefixes.orEmpty()).toString(),",
+     "            accountedFor(paths, scoped).toString(),",
+     functional_suite, "with the flag, a comment above a Java method runs no test that only covers its class"),
+    ("the line digest believes an attribute it cannot read", DIGEST_VISITOR,
+     "        if (lines) throw UnknownAttribute(attribute?.type)",
+     "        if (false) throw UnknownAttribute(attribute?.type)",
+     line_only_suite, "a class carrying an attribute ASM does not know is refused"),
+    ("line-only narrowing runs without the flag", SELECTING_STEP,
+     "            lineOnly = if (!inputs.narrowLineOnlyChanges) null else LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),",
+     "            lineOnly = LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),",
+     functional_suite, "a comment above a Java method selects the tests that cover its class"),
+    ("a Maven execution stops reading narrowLineOnlyChanges", MAVEN_RECORDING,
+     "            narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),",
+     "            narrowLineOnlyChanges = false,",
+     maven_suite, "with the flag, a comment edit runs no test that only covers the class"),
+    # Not a safety guard: the guard that the feature exists at all.
+    ("the line digest feeds line numbers", DIGEST_VISITOR,
+     "        override fun visitLineNumber(line: Int, start: Label?) = Unit",
+     "        override fun visitLineNumber(line: Int, start: Label?) = feed(\"line\", line)",
+     line_only_suite, "a line number alone does not"),
 ]
-
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
 SUITE_TESTS = {
     "sweep": ("bench/test_sweep_corpus.py",),
@@ -5215,6 +5293,7 @@ SUITE_TESTS = {
     "order": ("bench/test_family_order.py", "bench/test_replay_order.py"),
     "revert": ("bench/test_revert.py",),
     "decoder": ("plugin/src/test/",),
+    "line only": ("plugin/src/test/",),
     "reference": ("plugin/src/test/", REFERENCE_DOC, CONTRACT_DOC),
     # The agent `test` task puts the boot fixture on the boot class path, so it proves agent guards.
     "agent": ("agent/src/test/", "agent/src/bootFixture/"),
@@ -5233,7 +5312,7 @@ SUITE_TESTS = {
     "maven break": ("maven/src/functionalTest/", "plugin/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/gradle/breaking/verdict/"),
 }
 # A change to how the Gradle suites are BUILT can break any of them, so it selects all of them.
-GRADLE_SUITES = {"decoder", "agent", "jdk identity", "unit", "configuration guards", "functional",
+GRADLE_SUITES = {"decoder", "line only", "agent", "jdk identity", "unit", "configuration guards", "functional",
                  "replay", "break", "sbom", "portal", "reference", "maven", "maven break"}
 # Run with NOTHING beside them. The functional suite has failed unmutated in a worker while only
 # Python suites ran next to it, and passed alone in the same tree: its TestKit builds compare
@@ -5244,7 +5323,7 @@ EXCLUSIVE_SUITES = {"functional", "configuration guards", "break"}
 # Gradle suites that start no TestKit build and compare no file timestamps, so they run in parallel
 # across the workers, each in its own worktree. Named rather than the locked ones listed, so a
 # suite added later runs under the lock until shown safe.
-UNLOCKED_SUITES = {"agent", "unit", "decoder", "reference"}
+UNLOCKED_SUITES = {"agent", "unit", "decoder", "line only", "reference"}
 
 
 # Functional guards run two at a time in the alone phase, each class in one tree only, so its
@@ -5441,6 +5520,7 @@ def prepare_workers(count):
 # these first, one tree at a time, and the parallel phase only recompiles what a mutation touched.
 WARM_UP = {
     "unit": ":plugin:testClasses", "decoder": ":plugin:testClasses", "reference": ":plugin:testClasses",
+    "line only": ":plugin:testClasses",
     "agent": ":agent:testClasses", "jdk identity": ":agent:testClasses",
     "functional": ":plugin:functionalTestClasses",
     "configuration guards": ":plugin:functionalTestClasses",

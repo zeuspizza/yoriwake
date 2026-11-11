@@ -15,6 +15,7 @@ internal object SettingNames {
     const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
     const val RECORD_SEQUENTIALLY = "yoriwake.recordSequentially"
     const val NARROW_DEPENDENCIES = "yoriwake.narrowDependencies"
+    const val NARROW_LINE_ONLY_CHANGES = "yoriwake.narrowLineOnlyChanges"
     const val MEASURE_TOLL = "yoriwake.audit.measureToll"
     const val INSTRUMENTED_SECONDS = "yoriwake.audit.instrumentedSeconds"
     const val UNINSTRUMENTED_SECONDS = "yoriwake.audit.uninstrumentedSeconds"
