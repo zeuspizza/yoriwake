@@ -359,6 +359,21 @@ internal class DecodeRun(
                         }
                     }
                 }.getOrNull(),
+                // Every class with its line information left out, so a later run can tell an edit that
+                // moved only lines. Recorded whether or not the flag is on, so turning it on works at once.
+                lineDigests = runCatching {
+                    when (val scan = artifacts?.classDigests(Recordability::lineDigest)) {
+                        null -> null
+                        is DigestScan.Found -> scan.digests
+                        is DigestScan.Refused -> {
+                            logger.info(
+                                "[yoriwake] $taskPath: no line digests recorded (${scan.kind}: ${scan.reason}); " +
+                                    "narrowLineOnlyChanges keeps every changed file changed until a capture records them"
+                            )
+                            null
+                        }
+                    }
+                }.getOrNull(),
                 // What the test JVM saw on its classpath, walked before it started; null records none,
                 // and the next selecting run forces until a capture does.
                 classpathFiles = classpathFiles,

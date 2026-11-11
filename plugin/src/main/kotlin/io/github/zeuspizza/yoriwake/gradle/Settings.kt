@@ -67,6 +67,9 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
     val narrowPlainRunners: Boolean? = lookup(NARROW_PLAIN_RUNNERS)?.let { parseFlag(NARROW_PLAIN_RUNNERS, it) }
     /** Null when not passed, so the build's `narrowDependencies` answers. */
     val narrowDependencies: Boolean? = lookup(NARROW_DEPENDENCIES)?.let { parseFlag(NARROW_DEPENDENCIES, it) }
+    /** Null when not passed, so the build's `narrowLineOnlyChanges` answers. */
+    val narrowLineOnlyChanges: Boolean? =
+        lookup(NARROW_LINE_ONLY_CHANGES)?.let { parseFlag(NARROW_LINE_ONLY_CHANGES, it) }
     val counters: String? = lookup(COUNTERS)
     /** Raw, because "present but unparseable" and "never supplied" get different answers. */
     val forcedShare: String? = lookup(FORCED_SHARE)
@@ -84,6 +87,7 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
         const val ALWAYS_RUN = "yoriwake.alwaysRun"
         const val NARROW_PLAIN_RUNNERS = "yoriwake.narrowPlainRunners"
         const val NARROW_DEPENDENCIES = SettingNames.NARROW_DEPENDENCIES
+        const val NARROW_LINE_ONLY_CHANGES = SettingNames.NARROW_LINE_ONLY_CHANGES
         const val TRUSTED_MAPS = SettingNames.TRUSTED_MAPS
         const val MEASURE_TOLL = SettingNames.MEASURE_TOLL
         const val INSTRUMENTED_SECONDS = SettingNames.INSTRUMENTED_SECONDS

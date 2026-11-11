@@ -88,6 +88,12 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private final Set<String> answered = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Directories a miss was recorded in; read without the lock, written under it. */
     private final Set<String> missedDirectories = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Classes a stack trace element named so far, so a trace logged again costs no lock. */
+    private final Set<String> stackSeen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Set when a stack trace's failure could not even be recorded; the next drain records it. */
+    private volatile boolean stacksLost;
+    /** The trace each thread last recorded, so the same trace read again is not walked again. */
+    private final ThreadLocal<Object> lastTrace = new ThreadLocal<>();
 
     /** {@link java.nio.file.Files#isSameFile}, replaceable where no test can mount a directory. */
     interface SameFile {
@@ -145,9 +151,16 @@ public final class TouchRecorder implements CaptureSession.Touches {
             Map<String, String> modules = modulesOf(HostBuild.current().property(AgentContract.JAR_MODULES_PROPERTY));
             ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
                     this::childProcess, this::nativeCode, this::library, this::resolved, this::environmentRead,
-                    this::entry, this::enumerated);
+                    this::entry, this::enumerated, this::stack);
             if (modules != null && hooks.entries == null) {
                 recordJars(modules);
+            }
+            // A native agent reads frames through JVMTI, which no hook sees.
+            String stacksUnseen = hooks.stacks != null ? hooks.stacks : nativeAgent();
+            if (stacksUnseen == null) {
+                touch(AgentContract.TOUCH_STACKS_RECORDED, "");
+            } else {
+                touch(AgentContract.TOUCH_STACK_ALL, stacksUnseen);
             }
             resolving = hooks.resolving;
             guards = GuardHooks.install(instrumentation, this::guard, this::guardLost);
@@ -194,6 +207,9 @@ public final class TouchRecorder implements CaptureSession.Touches {
             }
             pendingMisses.clear();
             answered.clear();
+            if (stacksLost) {
+                pending.add(new String[] {AgentContract.TOUCH_STACK_ALL, "a stack trace could not be recorded"});
+            }
             List<String[]> drained = pending;
             pending = new ArrayList<>();
             return drained;
@@ -487,6 +503,68 @@ public final class TouchRecorder implements CaptureSession.Touches {
             lookupsIncomplete = "a lookup could not be recorded: " + t;
         } finally {
             inside.remove();
+        }
+    }
+
+    /**
+     * The stack hooks' sink: a stack trace element, an array of them, a map of threads to them, or
+     * the name of the class an element is being built for. Anything else hands out a line number
+     * with no element (a recording's frame), and from then on every class's lines count as seen.
+     */
+    void stack(Object value) {
+        if (value == null || inside.get() != null) {
+            return;
+        }
+        inside.set(Boolean.TRUE);
+        try {
+            if (value instanceof String) {
+                stackClass((String) value);
+            } else if (value instanceof StackTraceElement) {
+                stackClass(((StackTraceElement) value).getClassName());
+            } else if (value instanceof StackTraceElement[]) {
+                stackClasses((StackTraceElement[]) value);
+            } else if (value instanceof Map) {
+                for (Object trace : ((Map<?, ?>) value).values()) {
+                    if (trace instanceof StackTraceElement[]) {
+                        stackClasses((StackTraceElement[]) trace);
+                    }
+                }
+            } else {
+                touch(AgentContract.TOUCH_STACK_ALL, "a line number was read from a " + value.getClass().getName());
+            }
+        } catch (Throwable t) {
+            try {
+                touch(AgentContract.TOUCH_STACK_ALL, "a stack trace could not be recorded: " + t);
+            } catch (Throwable lost) {
+                // Nothing may reach the JDK method: the next drain records it instead.
+                stacksLost = true;
+            }
+        } finally {
+            inside.remove();
+        }
+    }
+
+    private void stackClasses(StackTraceElement[] trace) {
+        // A throwable hands out the same trace each time it is printed or read again.
+        if (lastTrace.get() == trace) {
+            return;
+        }
+        lastTrace.set(trace);
+        for (StackTraceElement element : trace) {
+            if (element != null) {
+                stackClass(element.getClassName());
+            }
+        }
+    }
+
+    /** One class named by a frame. A coroutine's element may carry its module, as {@code module/class}. */
+    private void stackClass(String name) {
+        if (name == null) {
+            return;
+        }
+        String binary = name.indexOf('/') < 0 ? name : name.substring(name.lastIndexOf('/') + 1);
+        if (!stackSeen.contains(binary) && stackSeen.add(binary)) {
+            touch(AgentContract.TOUCH_STACK, binary);
         }
     }
 

@@ -47,6 +47,7 @@ public final class FilterRule {
             AgentContract.MOVED_FILES_PROPERTY,
             AgentContract.CHANGED_JARS_PROPERTY,
             AgentContract.MISS_DIRECTORIES_PROPERTY,
+            AgentContract.LINES_ONLY_PROPERTY,
             AgentContract.IGNORED_PATHS_PROPERTY,
             AgentContract.REFUSED_PROPERTY,
             AgentContract.REFUSED_KIND_PROPERTY,
@@ -72,6 +73,7 @@ public final class FilterRule {
                     AgentContract.MOVED_FILES_PROPERTY,
                     AgentContract.CHANGED_JARS_PROPERTY,
                     AgentContract.MISS_DIRECTORIES_PROPERTY,
+                    AgentContract.LINES_ONLY_PROPERTY,
                     AgentContract.IGNORED_PATHS_PROPERTY,
                     AgentContract.BASE_FLAG_PROPERTY)));
 
@@ -155,6 +157,7 @@ public final class FilterRule {
                 .withMovedFiles(movedFiles(property))
                 .withChangedJars(escapedList(property, AgentContract.CHANGED_JARS_PROPERTY),
                         escapedList(property, AgentContract.MISS_DIRECTORIES_PROPERTY))
+                .withLinesOnly(splitProperty(property, AgentContract.LINES_ONLY_PROPERTY))
                 .withIgnoredPaths(ignoredPaths(orEmpty(property, AgentContract.IGNORED_PATHS_PROPERTY)))
                 .withBaseFlag(property.apply(AgentContract.BASE_FLAG_PROPERTY))
                 // Answers before the map or change set is consulted, so a refused run cannot be

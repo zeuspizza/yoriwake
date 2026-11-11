@@ -26,6 +26,11 @@ internal object ChangeDetection {
          * every use of such a file is a copy in its caller, unless its own class ran.
          */
         val inlineOnly: Set<String> = emptySet(),
+        /**
+         * Each changed source path to the prefixes it contributed to [classPrefixes]: a prefix
+         * leaves the change set as line-only only when every path behind it is.
+         */
+        val prefixesByPath: Map<String, Set<String>> = emptyMap(),
     )
 
     // Only Kotlin `inline` bodies are copied into callers and erase the edge. Anything not Java
@@ -39,6 +44,7 @@ internal object ChangeDetection {
         val unmappable = mutableListOf<String>()
         var inlinable = false
         val inlineOnly = mutableSetOf<String>()
+        val byPath = linkedMapOf<String, Set<String>>()
         paths.map { it.replace('\\', '/') }.filter(String::isNotBlank).forEach { path ->
             val match = SOURCE_ROOT.matchEntire(path)
             if (match == null) {
@@ -50,15 +56,16 @@ internal object ChangeDetection {
             } else {
                 val fqn = match.groups["fqn"]!!.value
                 val prefix = if (path.endsWith(".kt")) InlinedSources.kotlinSourcePrefix(fqn) else fqn.replace('/', '.')
-                prefixes += prefix
-                prefixes += declaredTypes(projectDir, path)
+                val own = setOf(prefix) + declaredTypes(projectDir, path)
+                prefixes += own
+                byPath[path] = own
                 inlinable = inlinable || INLINABLE_SOURCE.matches(path)
                 if (path.endsWith(".kt") && declaresOnlyInlineFunctions(projectDir, path)) {
                     inlineOnly += prefix
                 }
             }
         }
-        return Change(prefixes, unmappable, inlinable, inlineOnly)
+        return Change(prefixes, unmappable, inlinable, inlineOnly, byPath)
     }
 
     /**

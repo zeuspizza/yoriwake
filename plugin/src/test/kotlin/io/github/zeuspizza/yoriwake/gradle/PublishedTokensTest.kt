@@ -69,6 +69,7 @@ class PublishedTokensTest {
         add("audit-blocker", Audit.BlockerKind.entries.map { it.token })
         add("audit-state", Audit.State.entries.map { it.token })
         add("digest-silence", DigestSilence.entries.map { it.token })
+        add("line-only-kept", io.github.zeuspizza.yoriwake.gradle.change.LineOnlyKept.entries.map { it.token })
         add("forcing-path-origin", ForcingPaths.Origin.entries.map { it.token })
         add("path-ignore-protection", PathIgnore.Protection.entries.map { it.token })
         add("path-ignore-evidence", PathIgnore.Evidence.entries.map { it.token })

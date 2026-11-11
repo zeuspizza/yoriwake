@@ -135,6 +135,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         val recordSequentially = settings.recordSequentially ?: extension.recordSequentially.getOrElse(false)
         val narrowDependencies = settings.narrowDependencies ?: extension.narrowDependencies.getOrElse(false)
+        val narrowLineOnlyChanges = settings.narrowLineOnlyChanges ?: extension.narrowLineOnlyChanges.getOrElse(false)
         val pathIgnore = PathIgnore.validated(extension.pathIgnore.getOrElse(emptyList()), project.path)
         val largeChange = extension.largeChangeThreshold.getOrElse(LargeChange.DEFAULT_THRESHOLD).also {
             if (it < 1) {
@@ -178,7 +179,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // The denominator every per-task figure needs: `Test` tasks, not projects.
             buildMemo?.count(TEST_TASKS_COUNTER)
             val test = project.tasks.named(name, Test::class.java)
-            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, narrowPlainRunners, recordSequentially, narrowDependencies) } }
+            test.configure { timedConfigure(project) { configure(project, it, scope, alwaysRun, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, buildMemo, projectDir, declarations, largeChange, narrowPlainRunners, recordSequentially, narrowDependencies, narrowLineOnlyChanges) } }
             val wired = if (decidedByTask) configured.getValue(test.get().name).decode != null else jacoco
 
             // Registered by name, configured only when asked for: configuring one realises its
@@ -195,7 +196,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, largeChange, narrowPlainRunners, narrowDependencies) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, environment, largeChange, narrowPlainRunners, narrowDependencies, narrowLineOnlyChanges) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
@@ -241,6 +242,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         narrowPlainRunners: Boolean,
         recordSequentially: Boolean,
         narrowDependencies: Boolean,
+        narrowLineOnlyChanges: Boolean,
     ) {
         val mapDir = MapLocation.forTask(project.cacheDir(), test.path)
         val scopeOutcome = applyJacocoIncludes(project, test, scope)
@@ -385,7 +387,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             val leftAlone = declinedLeftAloneMarker(recordsDir)
             test.doFirst { leftAlone.delete() }
             configureSelection(project, test, mapDir, buildMemo, runPlan, fromBuildScript, notReadByTests, pathIgnore, environment,
-                projectDir, declarations.filter { it.task == test.name }, largeChange, narrowDependencies)
+                projectDir, declarations.filter { it.task == test.name }, largeChange, narrowDependencies, narrowLineOnlyChanges)
         } else {
             declineSelection(test, mapDir, runPlan)
         }

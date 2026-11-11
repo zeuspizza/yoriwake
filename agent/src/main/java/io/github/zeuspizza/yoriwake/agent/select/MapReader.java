@@ -220,6 +220,7 @@ public final class MapReader {
         private ResourceReads resourceReads;
         private JarTouches jarTouches;
         private JarTouches missTouches;
+        private JarTouches debugTouches;
         private final String unusableReason;
         private final Reason reason;
 
@@ -320,6 +321,14 @@ public final class MapReader {
         /** The absent names each JVM looked up in a library module jar, by directory; null when the map records none. */
         public JarTouches missTouches() {
             return missTouches;
+        }
+
+        /**
+         * When each JVM first could have seen each class's line numbers or text; null when the map
+         * records none. Whether the file speaks for this map is the daemon's to judge (its stamp).
+         */
+        public JarTouches debugTouches() {
+            return debugTouches;
         }
 
         /** Whether the map records the scope its records were captured under. */
@@ -438,6 +447,7 @@ public final class MapReader {
         result.resourceReads = readResourceReads(new File(mapDir, AgentContract.RESOURCE_TOUCH_FILE));
         result.jarTouches = readJarTouches(new File(mapDir, AgentContract.JAR_TOUCH_FILE));
         result.missTouches = readJarTouches(new File(mapDir, AgentContract.MISS_TOUCH_FILE));
+        result.debugTouches = readJarTouches(new File(mapDir, AgentContract.DEBUG_TOUCH_FILE));
         result.instrumentationScope = scope;
         result.loadedClasses = loaded;
         result.loadedScope = loadedScope;
@@ -499,6 +509,9 @@ public final class MapReader {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.isEmpty()) {
+                    continue;
+                }
+                if (line.startsWith(AgentContract.DEBUG_TOUCH_STAMP + "\t")) {
                     continue;
                 }
                 String[] parts = Tsv.split(line);

@@ -143,6 +143,7 @@ internal fun TestTaskWiring.configureSelection(
     declarations: List<Declarations.Declaration>,
     largeChange: Int,
     narrowDependencies: Boolean,
+    narrowLineOnlyChanges: Boolean,
 ) {
     if (!runPlan.selecting && !runPlan.observing) {
         return
@@ -242,6 +243,7 @@ internal fun TestTaskWiring.configureSelection(
             SelectingStep.Inputs(
                 mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
                 notReadByTests, ignore, declared, observing, dependencies = dependencies,
+                narrowLineOnlyChanges = narrowLineOnlyChanges,
             ),
             GradleSelectingHost(test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes),
         )

@@ -130,6 +130,15 @@ public final class AgentContract {
     public static final String MISS_DIRECTORIES_PROPERTY = "yoriwake.change.missDirs";
 
     /**
+     * Changed classes whose compiled form differs from the capture's in line information only,
+     * comma-separated: class prefixes, matched as {@link #CHANGED_CLASSES_PROPERTY}'s are. Each
+     * selects the tests from their JVM's first debug touch of it on ({@link #DEBUG_TOUCH_FILE}),
+     * and forces nothing. Set only when {@code narrowLineOnlyChanges} is on, empty when nothing
+     * was line-only.
+     */
+    public static final String LINES_ONLY_PROPERTY = "yoriwake.change.linesOnly";
+
+    /**
      * A file of the library module jars on the test JVM's classpath, one {@code path \t identity} row
      * each, whose touches and absent-name lookups the agent records.
      */
@@ -414,6 +423,26 @@ public final class AgentContract {
     /** The {@link #JAR_TOUCH_FILE} and {@link #MISS_TOUCH_FILE} value of a JVM whose touches were recorded. */
     public static final String JARS_RECORDED = "#recorded";
 
+    /**
+     * {@code jvm \t sequence \t class}: the first record sequence at or before which each JVM could
+     * have seen a class's line numbers or text: built a stack trace element naming it, or read its
+     * class or source file. Touches before the test plan started are at sequence 0. {@link
+     * #FIRST_TOUCH_ANY} as the class stands for every class. Every JVM whose stack traces were
+     * recorded has a {@link #DEBUG_RECORDED} row at sequence 0; one without is judged as if this file
+     * said nothing about it. The first line is {@link #DEBUG_TOUCH_STAMP}.
+     */
+    public static final String DEBUG_TOUCH_FILE = "debug-touch.tsv";
+
+    /** The {@link #DEBUG_TOUCH_FILE} value of a JVM whose stack traces were recorded. */
+    public static final String DEBUG_RECORDED = "#recorded";
+
+    /**
+     * Starts {@link #DEBUG_TOUCH_FILE}'s first line, {@code #stamp \t commit \t jvms}: the capture
+     * commit the map was dated at, and a digest of the JVM ids of {@link #POSITIONS_FILE} when it was
+     * written. A file whose stamp no longer matches the map reads as absent.
+     */
+    public static final String DEBUG_TOUCH_STAMP = "#stamp";
+
     /** A first-touch class meaning "every class": the JVM's loads and reads were not all observed. */
     public static final String FIRST_TOUCH_ANY = "*";
 
@@ -534,6 +563,23 @@ public final class AgentContract {
 
     /** A touch kind: this JVM records {@link #TOUCH_JAR_REACHED} and {@link #TOUCH_MISSED}. */
     public static final String TOUCH_JARS_RECORDED = "jars-recorded";
+
+    /**
+     * A touch kind: a stack trace element naming a class was built or handed to Java code (a
+     * throwable's trace, a thread's, a stack walker's frame, a thread dump, an element built by
+     * hand); the value is the class's binary name.
+     */
+    public static final String TOUCH_STACK = "stack";
+
+    /** A touch kind: this JVM records {@link #TOUCH_STACK}, every hook in place. */
+    public static final String TOUCH_STACKS_RECORDED = "stacks-recorded";
+
+    /**
+     * A touch kind: from here on a line number may reach code unrecorded (a stack hook this JDK
+     * could not take, a native agent, a frame read without an element); why. Only {@link
+     * #DEBUG_TOUCH_FILE} reads it: what the JVM loaded is still known.
+     */
+    public static final String TOUCH_STACK_ALL = "stack-all";
 
     /**
      * A touch kind: from here on not everything was observed (a hook missing, a child process
@@ -718,6 +764,12 @@ public final class AgentContract {
     public static final String PATHS_IGNORED_NOTE = "paths-ignored";
 
     /**
+     * How many changed classes changed in line information only, from {@link #LINES_ONLY_PROPERTY}:
+     * noted, zero included, whenever {@code narrowLineOnlyChanges} was on.
+     */
+    public static final String LINES_ONLY_NOTE = "lines-only";
+
+    /**
      * What a selecting run of the same inputs would have noted as its outcome, on an observing run:
      * {@code outcome [\t full-run-kind [\t refusal-kind]]}. The {@link #OUTCOME_NOTE} says what ran.
      */
@@ -890,6 +942,12 @@ public final class AgentContract {
 
     /** The map holds no position for the test, so the first-touch rule cannot date it. */
     public static final String RULE_SHARES_JVM_UNPOSITIONED = "shares-jvm-unpositioned";
+
+    /**
+     * The test ran at or after its JVM first could have seen the line numbers or the text of a
+     * class that changed in line information only, or of every class.
+     */
+    public static final String RULE_SHARES_JVM_LINES_OBSERVED = "shares-jvm-lines-observed";
 
     /** The map does not record the test as having passed. */
     public static final String RULE_NOT_KNOWN_TO_PASS = "not-known-to-pass";

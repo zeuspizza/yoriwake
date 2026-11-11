@@ -102,6 +102,18 @@ internal fun writeExplanation(
         append("""  "captureReason": ${Json.string(capture?.reason)},""")
             .append('\n')
         append("""  "inliners": """).append(Json.strings(widening.inliners.sorted())).append(",\n")
+        // Only with `narrowLineOnlyChanges` on, so a run without it explains what it did.
+        widening.lines?.let { lines ->
+            append("""  "linesOnly": """).append(Json.strings(lines.classes.toList())).append(",\n")
+            append("""  "linesOnlyPaths": """).append(Json.strings(lines.paths.sorted())).append(",\n")
+            append("""  "keptChanged": [""")
+            append(
+                lines.kept.entries.sortedBy { it.key }.joinToString(", ") { (path, why) ->
+                    """{ "path": ${Json.string(path)}, "reason": ${Json.string(why.kind.token)}, "detail": ${Json.string(why.detail)} }"""
+                }
+            )
+            append("],\n")
+        }
         // The bytes comparison. `digestOn` false means the rest describe a comparison that did not
         // run; `digestAdded` beside the sample shows when the sample was cut short.
         append("""  "digestOn": ${widening.digest != null},""").append('\n')

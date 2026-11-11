@@ -315,7 +315,8 @@ public final class Selector {
     public static Decision decide(MapReader.Result map, ChangeSet change, Collection<String> discoveredTestIds,
             Strictness strictness) {
         Set<Rule> loosened = strictness.loosened();
-        Collection<String> changedClassPrefixes = change.changedClasses();
+        Collection<String> linesOnly = linesOnlyOf(map, change);
+        Collection<String> changedClassPrefixes = changedWithUnjudgedLines(map, change);
         Collection<String> unmappablePaths = change.unmappablePaths();
         Collection<String> absenceProvable = change.absenceProvable();
         Collection<String> ownTestClasses = change.ownTestClasses();
@@ -487,6 +488,13 @@ public final class Selector {
                 }
             }
         }
+        if (!linesOnly.isEmpty()) {
+            for (String id : linesObserved(map, tests, linesOnly, change, knownTestIds, loosened)) {
+                if (selected.add(id)) {
+                    sharedJvmOnly.add(id);
+                }
+            }
+        }
 
         return Decision.selecting(selected, knownTestIds, notKnownToPass(tests), sharedJvmOnly);
     }
@@ -516,7 +524,8 @@ public final class Selector {
         if (change.testJvmUnsupported() != null) {
             forcing.add(Decision.FullRunKind.TEST_JVM_UNSUPPORTED);
         }
-        Collection<String> changed = change.changedClasses();
+        Collection<String> changed = changedWithUnjudgedLines(map, change);
+        Collection<String> linesOnly = linesOnlyOf(map, change);
         List<MapReader.Entry> entries = map.entries();
 
         List<MapReader.Entry> tests = new ArrayList<>();
@@ -597,6 +606,11 @@ public final class Selector {
             Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), changed, knownTestIds);
             sharesJvm(map, tests, changed, bytes, change.movedFiles(), change.ignoredPaths(), exempt, byTest,
                     change.changedJars(), change.missDirectories());
+        }
+        if (!linesOnly.isEmpty()) {
+            for (String id : linesObserved(map, tests, linesOnly, change, knownTestIds, EnumSet.noneOf(Rule.class))) {
+                add(byTest, id, map.positionsOf(id).isEmpty() ? Rule.SHARES_JVM_UNPOSITIONED : Rule.SHARES_JVM_LINES_OBSERVED);
+            }
         }
         return new Rules(basis, forcing, byTest, knownTestIds);
     }
@@ -698,6 +712,30 @@ public final class Selector {
     private static Set<String> ranAfterFirstTouch(MapReader.Result map, List<MapReader.Entry> tests,
             Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt,
             Set<Rule> loosened) {
+        Map<String, Integer> firstTouchByJvm = firstTouchWindows(map, tests, changedClassPrefixes, changedBytes, exempt,
+                loosened);
+        Set<String> after = new HashSet<>();
+        for (MapReader.Entry test : tests) {
+            List<MapReader.Position> positions = map.positionsOf(test.testId());
+            if (positions.isEmpty()) {
+                after.add(test.testId());
+                continue;
+            }
+            for (MapReader.Position position : positions) {
+                Integer first = firstTouchByJvm.get(position.jvm());
+                if (first != null && position.sequence() >= first) {
+                    after.add(test.testId());
+                    break;
+                }
+            }
+        }
+        return after;
+    }
+
+    /** Where {@link #ranAfterFirstTouch}'s window opens in each JVM; a JVM it does not name has none. */
+    private static Map<String, Integer> firstTouchWindows(MapReader.Result map, List<MapReader.Entry> tests,
+            Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt,
+            Set<Rule> loosened) {
         Map<String, Integer> firstTouchByJvm = new HashMap<>();
         List<String> dated = new ArrayList<>();
         for (String prefix : changedClassPrefixes) {
@@ -738,22 +776,83 @@ public final class Selector {
                 }
             }
         }
-        Set<String> after = new HashSet<>();
+        return firstTouchByJvm;
+    }
+
+    /**
+     * The classes {@link ChangeSet#linesOnly} names, when the map records when each JVM first could
+     * have seen their lines; empty otherwise, when {@link #changedWithUnjudgedLines} takes them.
+     */
+    private static Collection<String> linesOnlyOf(MapReader.Result map, ChangeSet change) {
+        return map.debugTouches() == null ? Collections.<String>emptyList() : change.linesOnly();
+    }
+
+    /**
+     * The changed classes, with the line-only ones among them when the map records no debug touches:
+     * the daemon judged against a map that had them, and nothing here can tell when a line was seen.
+     */
+    private static Collection<String> changedWithUnjudgedLines(MapReader.Result map, ChangeSet change) {
+        if (map.debugTouches() != null || change.linesOnly().isEmpty()) {
+            return change.changedClasses();
+        }
+        List<String> merged = new ArrayList<>(change.changedClasses());
+        for (String prefix : change.linesOnly()) {
+            if (!merged.contains(prefix)) {
+                merged.add(prefix);
+            }
+        }
+        return merged;
+    }
+
+    /**
+     * The tests a class that changed in line information only runs: those at or after their JVM's
+     * first debug touch of it ({@link AgentContract#DEBUG_TOUCH_FILE}), or of every class. Never one
+     * the changed class itself would not run: the window opens no earlier than the one a changed
+     * class opens, since nothing shows a class's lines before it arrived. In a JVM whose stack traces
+     * were not recorded, a test runs as for a changed class: by that window, its coverage or its own
+     * class. A test the map holds no position for runs. The arrival window is loosened as a changed
+     * class's is, so it never opens where that one would not.
+     */
+    private static Set<String> linesObserved(MapReader.Result map, List<MapReader.Entry> tests,
+            Collection<String> lines, ChangeSet change, Set<String> knownTestIds, Set<Rule> loosened) {
+        MapReader.JarTouches debug = map.debugTouches();
+        Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), lines, knownTestIds);
+        Map<String, Integer> arrived = firstTouchWindows(map, tests, lines, Collections.<String>emptySet(), exempt,
+                loosened);
+        Map<String, Integer> seen = new HashMap<>();
+        for (MapReader.FirstTouch touch : debug.touches()) {
+            String name = touch.className();
+            if (AgentContract.FIRST_TOUCH_ANY.equals(name) || touchesChange(name, lines, lines)) {
+                seen.merge(touch.jvm(), touch.sequence(), Math::min);
+            }
+        }
+        Set<String> selected = new HashSet<>();
         for (MapReader.Entry test : tests) {
             List<MapReader.Position> positions = map.positionsOf(test.testId());
             if (positions.isEmpty()) {
-                after.add(test.testId());
+                selected.add(test.testId());
                 continue;
             }
+            boolean unrecorded = false;
             for (MapReader.Position position : positions) {
-                Integer first = firstTouchByJvm.get(position.jvm());
-                if (first != null && position.sequence() >= first) {
-                    after.add(test.testId());
+                boolean recorded = debug.recorded(position.jvm());
+                unrecorded |= !recorded;
+                Integer opens = arrived.get(position.jvm());
+                if (opens == null || position.sequence() < opens) {
+                    continue;
+                }
+                Integer first = seen.get(position.jvm());
+                if (!recorded || first != null && position.sequence() >= first) {
+                    selected.add(test.testId());
                     break;
                 }
             }
+            if (unrecorded && (intersects(test, lines)
+                    || ofChangedOwnClass(test.testId(), change.ownTestClasses(), lines))) {
+                selected.add(test.testId());
+            }
         }
-        return after;
+        return selected;
     }
 
     /**

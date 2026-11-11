@@ -4,6 +4,9 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.CLASS_SCOPED_RECORD_PREFIX
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLETE_SUFFIX
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COVERAGE_FILE
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DEBUG_RECORDED
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DEBUG_TOUCH_FILE
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.DEBUG_TOUCH_STAMP
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EFFECTIVE_SCOPE_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.EXEC_FILE_FORMAT
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FIRST_TOUCH_ANY
@@ -54,6 +57,9 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_JAR_REACH
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_MISSED
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_RESOURCE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_RESOURCES_RECORDED
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_STACK
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_STACKS_RECORDED
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_STACK_ALL
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNATTRIBUTED_RECORD_ID
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLEL_UNCONFIRMED_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WORKER_DIR_PREFIX
@@ -104,10 +110,18 @@ internal object CoverageDecoder {
      * `inline` bodies copied into a consumer whose source did not change. Only ever widens.
      *
      * No MAP_SCHEMA_VERSION bump: a missing table reads as unknown and an unbuildable one is
-     * deleted, so neither passes for agreement. Once a digest match may retire a forcing, the bump
-     * is owed.
+     * deleted, so neither passes for agreement. The match that retires a forcing is the line
+     * digest's, whose table carries a stamp instead; see [LINE_DIGESTS_FILE].
      */
     const val CLASS_DIGESTS_FILE = "class-digests"
+
+    /**
+     * `className<TAB>line digest` for every class in this build's output (`Recordability.lineDigest`),
+     * after a first line `#stamp<TAB>commit` naming the capture commit it was recorded at. A table
+     * whose stamp is not the map's capture commit reads as absent, so one an older capture left
+     * cannot agree with classes the change set no longer runs from; no MAP_SCHEMA_VERSION bump.
+     */
+    const val LINE_DIGESTS_FILE = "line-digests"
 
     /**
      * `className<TAB>annotation digest` for every class in this build's output, so a change to an
@@ -220,6 +234,8 @@ internal object CoverageDecoder {
         annotationDigests: Map<String, String>? = null,
         /** See [RESOURCE_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
         classpathFiles: Map<String, String>? = null,
+        /** See [LINE_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
+        lineDigests: Map<String, String>? = null,
         /** See [WorkingTree]. Asked once records merge; a null answer removes the snapshot and its record. */
         worktreeSnapshot: (() -> WorkingTree.Reobserved?)? = null,
         /** Whether this capture forked a JVM per test class; see [JVM_MODE_FILE]. */
@@ -281,7 +297,7 @@ internal object CoverageDecoder {
         val merged = (retained + captured).distinct()
         val merged6 = mergeOrder(mapDir, recaptured, decoded, datesTheMap)
         val (positions, firstTouches, namedTouches, modes, resourceTouches) = merged6
-        val (jarTouches, missTouches) = merged6.drop(5)
+        val (jarTouches, missTouches, debugTouches) = merged6.drop(5)
 
         mapDir.mkdirs()
         // Version marker off first, back on last: each write is atomic but the set is not, and
@@ -308,6 +324,13 @@ internal object CoverageDecoder {
         )
         val unionDiscarded = writeLoaded(mapDir, selecting, wholeTask, jvmCount(workers), loadedScope)
         writeCaptureCommit(mapDir, captureCommit, datesTheMap)
+        // After the capture commit, which both stamps name.
+        writeDebugTouches(mapDir, positions, debugTouches)
+        writeDigestTable(
+            File(mapDir, LINE_DIGESTS_FILE),
+            captureCommit?.takeIf(String::isNotBlank)?.let { commit -> lineDigests?.plus(DEBUG_TOUCH_STAMP to commit.trim()) },
+            datesTheMap,
+        )
         writeConstants(mapDir, constants, datesTheMap)
         writeDigestTable(File(mapDir, CLASS_DIGESTS_FILE), classDigests, datesTheMap)
         writeDigestTable(File(mapDir, ANNOTATION_DIGESTS_FILE), annotationDigests, datesTheMap)
@@ -491,6 +514,49 @@ internal object CoverageDecoder {
      */
     fun readClassDigests(mapDir: File): Map<String, String>? =
         readDigestTable(File(mapDir, CLASS_DIGESTS_FILE))
+
+    /**
+     * Reads [LINE_DIGESTS_FILE] as strictly as [readClassDigests], or null when it is absent, torn, or
+     * stamped with any commit but the map's capture commit.
+     */
+    fun readLineDigests(mapDir: File): Map<String, String>? {
+        val table = readDigestTable(File(mapDir, LINE_DIGESTS_FILE)) ?: return null
+        val commit = readCaptureStamp(mapDir) ?: return null
+        if (table[DEBUG_TOUCH_STAMP] != commit) return null
+        return table - DEBUG_TOUCH_STAMP
+    }
+
+    /**
+     * Whether [DEBUG_TOUCH_FILE] speaks for this map: present, and stamped with the map's capture
+     * commit and the JVMs its positions hold now. A decode that did not write it (an older plugin's)
+     * leaves a stamp that no longer matches.
+     */
+    fun debugTouchesCurrent(mapDir: File): Boolean = runCatching {
+        val file = File(mapDir, DEBUG_TOUCH_FILE)
+        if (!file.isFile) return false
+        val stamp = file.bufferedReader().use { it.readLine() } ?: return false
+        val commit = readCaptureStamp(mapDir) ?: return false
+        val positions = File(mapDir, POSITIONS_FILE).takeIf(File::isFile)?.readLines()?.filter(String::isNotBlank) ?: return false
+        stamp == debugStamp(commit, positions)
+    }.getOrDefault(false)
+
+    /** [DEBUG_TOUCH_FILE]'s first line for a map at [commit] whose positions are [positions]. */
+    private fun debugStamp(commit: String, positions: List<String>): String {
+        val jvms = positions.map { Tsv.split(it).first() }.distinct().sorted().joinToString("\n")
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(jvms.toByteArray(Charsets.UTF_8))
+        return Tsv.join(DEBUG_TOUCH_STAMP, commit.trim(), digest.joinToString("") { "%02x".format(it) })
+    }
+
+    /** Rewrites [DEBUG_TOUCH_FILE] with [rows] under a fresh stamp; without a capture commit, removes it. */
+    private fun writeDebugTouches(mapDir: File, positions: List<String>, rows: List<String>) {
+        val file = File(mapDir, DEBUG_TOUCH_FILE)
+        val commit = readCaptureStamp(mapDir)
+        if (commit == null) {
+            file.delete()
+            return
+        }
+        writeAtomically(file, (listOf(debugStamp(commit, positions)) + rows).joinToString("") { "$it\n" })
+    }
 
     /** Whether the map records which JVMs read which classpath files; see [RESOURCE_TOUCH_FILE]. */
     fun recordsResourceReads(mapDir: File): Boolean = File(mapDir, RESOURCE_TOUCH_FILE).isFile
@@ -731,6 +797,8 @@ internal object CoverageDecoder {
         val jarTouches: List<String> = emptyList(),
         /** `jvm \t sequence \t directory` rows; see [MISS_TOUCH_FILE]. */
         val missTouches: List<String> = emptyList(),
+        /** `jvm \t sequence \t class` rows; see [DEBUG_TOUCH_FILE]. */
+        val debugTouches: List<String> = emptyList(),
     )
 
     /**
@@ -825,7 +893,9 @@ internal object CoverageDecoder {
             touchNamed(name, sequence)
             if (name == FIRST_TOUCH_ANY) jars.all(sequence)
         }
-        val discovery = readTouches(worker, inScope, touch, touchNamedAndJars, resourceSink(rootDir, resource), jars)
+        val debug = HashMap<String, Int>()
+        val debugTouch = { name: String, sequence: Int -> debug.merge(name, sequence, ::minOf); Unit }
+        val discovery = readTouches(worker, inScope, touch, touchNamedAndJars, resourceSink(rootDir, resource), jars, debugTouch)
         // Project code that ran during discovery (a class orderer, a filter, a listener) was handed
         // every test class without a lookup by name, and may have kept what it read for later tests.
         if (discovery != null && firstRanProjectCode < discovery.planStartedAt) {
@@ -839,6 +909,7 @@ internal object CoverageDecoder {
             touchNamed(FIRST_TOUCH_ANY, 0)
             resource(RESOURCE_READ, FIRST_TOUCH_ANY, 0)
             jars.all(0)
+            debugTouch(FIRST_TOUCH_ANY, 0)
         }
         val rows = { touches: Map<String, Int> ->
             touches.entries.sortedBy { it.key }.map { (name, sequence) -> Tsv.join(jvm, sequence.toString(), name) }
@@ -850,7 +921,7 @@ internal object CoverageDecoder {
         }
         return WorkerRecords(
             lines, positions, rows(first), rows(named), Tsv.join(jvm, mode), unreadUnowned, resourceRows,
-            rows(reached), rows(missed),
+            rows(reached), rows(missed), rows(debug),
         )
     }
 
@@ -871,6 +942,8 @@ internal object CoverageDecoder {
         touchNamed: (String, Int) -> Unit,
         resources: ResourceSink,
         jars: JarSink,
+        /** Where [DEBUG_TOUCH_FILE]'s rows go: a class name, [FIRST_TOUCH_ANY] or [DEBUG_RECORDED]. */
+        debug: (String, Int) -> Unit,
     ): Discovery? {
         // Discovery loads and inspects every test class; what it did stays out of the named touches.
         var planStarted = false
@@ -880,12 +953,18 @@ internal object CoverageDecoder {
             firstTouch(name, sequence)
             if (!planStarted) discovered += name
         }
-        // Whatever widens to every class widens to every file too.
+        // Whatever widens to every class widens to every file, and every class's lines, too.
         val both = { name: String, sequence: Int ->
             touch(name, sequence)
             touchNamed(name, sequence)
-            if (name == FIRST_TOUCH_ANY) resources.all(sequence)
+            if (name == FIRST_TOUCH_ANY) {
+                resources.all(sequence)
+                debug(FIRST_TOUCH_ANY, if (planStarted) sequence else 0)
+            }
         }
+        // Before the plan started, at 0: a line number seen during discovery may have been kept for
+        // any test of the JVM, and nothing else dates it.
+        val debugged = { name: String, sequence: Int -> debug(name, if (planStarted) sequence else 0) }
         val file = File(worker, TOUCHES_FILE)
         val lines = runCatching { if (file.isFile) file.readLines() else null }.getOrNull()
         if (lines == null || lines.lastOrNull { it.isNotBlank() } != TOUCHES_COMPLETE) {
@@ -907,7 +986,13 @@ internal object CoverageDecoder {
                 TOUCH_DEFINED -> named(parts[2])
                 TOUCH_LOOKUP -> if (parts[2] == FIRST_TOUCH_ANY) touchNamed(FIRST_TOUCH_ANY, if (planStarted) sequence else 0)
                     else named(binaryName(parts[2]))
-                TOUCH_READ -> namesForPath(parts[2]).forEach(named)
+                TOUCH_READ -> namesForPath(parts[2]).forEach { name ->
+                    named(name)
+                    if (inScope(name)) debugged(name, sequence)
+                }
+                TOUCH_STACKS_RECORDED -> debug(DEBUG_RECORDED, 0)
+                TOUCH_STACK -> if (inScope(parts[2])) debugged(parts[2], sequence)
+                TOUCH_STACK_ALL -> debugged(FIRST_TOUCH_ANY, sequence)
                 TOUCH_RESOURCES_RECORDED -> resources.recorded()
                 TOUCH_RESOURCE -> resources.read(RESOURCE_READ, parts[2], sequence)
                 TOUCH_LOADER_MANIFEST -> resources.read(RESOURCE_LOADER, parts[2], sequence)
@@ -923,7 +1008,10 @@ internal object CoverageDecoder {
                     if (entries == null) {
                         both(FIRST_TOUCH_ANY, sequence)
                     } else {
-                        entries.flatMap(::namesForPath).forEach(named)
+                        entries.flatMap(::namesForPath).forEach { name ->
+                            named(name)
+                            if (inScope(name)) debugged(name, sequence)
+                        }
                     }
                 }
                 TOUCH_ALL -> both(FIRST_TOUCH_ANY, sequence)
@@ -1101,6 +1189,7 @@ internal object CoverageDecoder {
             (retained(RESOURCE_TOUCH_FILE) + decoded.flatMap(WorkerRecords::resourceTouches)).distinct().sorted(),
             (retained(JAR_TOUCH_FILE) + decoded.flatMap(WorkerRecords::jarTouches)).distinct().sorted(),
             (retained(MISS_TOUCH_FILE) + decoded.flatMap(WorkerRecords::missTouches)).distinct().sorted(),
+            (retained(DEBUG_TOUCH_FILE) + decoded.flatMap(WorkerRecords::debugTouches)).distinct().sorted(),
         )
     }
 

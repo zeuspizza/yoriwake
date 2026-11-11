@@ -41,6 +41,8 @@ internal object MapProvenance {
         AgentContract.MAP_SCHEMA_VERSION_FILE,
         AgentContract.JAR_TOUCH_FILE,
         AgentContract.MISS_TOUCH_FILE,
+        AgentContract.DEBUG_TOUCH_FILE,
+        CoverageDecoder.LINE_DIGESTS_FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.DIRS_FILE,
     ).sorted()

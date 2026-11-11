@@ -88,6 +88,7 @@ class ExplainMojo : AbstractMojo() {
                 explaining = true,
                 listedName = mapDir.name,
                 worked = { done, base -> worked = done to base },
+                narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),
             )
             val refused = properties.getProperty(AgentContract.REFUSED_PROPERTY)
             val done = worked

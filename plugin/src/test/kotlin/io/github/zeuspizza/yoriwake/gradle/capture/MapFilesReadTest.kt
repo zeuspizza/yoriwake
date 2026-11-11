@@ -50,6 +50,7 @@ class MapFilesReadTest {
         "ENVIRONMENT_FILE" to "environment.tsv", "ENVIRONMENT_FINGERPRINTS_FILE" to "environment-fingerprints.tsv",
         "SALT_FILE" to "fingerprint-salt",
         "JAR_TOUCH_FILE" to "jar-touch.tsv", "MISS_TOUCH_FILE" to "miss-touch.tsv",
+        "DEBUG_TOUCH_FILE" to "debug-touch.tsv", "LINE_DIGESTS_FILE" to "line-digests",
         "ClasspathRecord.FILE" to "classpath.tsv", "DIRS_FILE" to "classpath-dirs.tsv",
     )
 

@@ -72,6 +72,15 @@ full-run-kind	no-coverage-for-changed-bytes
 full-run-kind	startup-coverage
 full-run-kind	test-jvm-unsupported
 full-run-kind	unmappable-paths
+line-only-kept	class-unmatched
+line-only-kept	class-vanished
+line-only-kept	debug-touch-absent
+line-only-kept	line-digests-absent
+line-only-kept	out-of-scope
+line-only-kept	output-file-changed
+line-only-kept	path-deleted
+line-only-kept	unobserved-jvms
+line-only-kept	walk-incomplete
 map-outcome	FLAKY
 map-outcome	NONE
 map-outcome	SKIPPED
@@ -169,6 +178,7 @@ row-rule	shares-jvm-changed-bytes
 row-rule	shares-jvm-changed-class
 row-rule	shares-jvm-changed-jar
 row-rule	shares-jvm-ignored-path
+row-rule	shares-jvm-lines-observed
 row-rule	shares-jvm-moved-classpath-file
 row-rule	shares-jvm-unobserved
 row-rule	shares-jvm-unpositioned
