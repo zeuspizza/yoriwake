@@ -754,7 +754,7 @@ def case_a_forcing_row_that_narrowed_with_the_flags_off_fails_the_recall_gate():
     return failures
 
 
-def case_the_forcing_set_runs_on_the_reduced_arm_and_the_groovy_project_only():
+def case_the_forcing_set_runs_on_the_reduced_arm_only():
     """Each forcing row costs a suite run for an answer the change's path fixes."""
     import contextlib  # noqa: PLC0415
     import io  # noqa: PLC0415
@@ -765,7 +765,7 @@ def case_the_forcing_set_runs_on_the_reduced_arm_and_the_groovy_project_only():
         plan = {entry["project"]: entry["args"] for entry in json.loads(out.getvalue())}
     except ValueError:
         return fail(f"--print-commands printed more than JSON: {out.getvalue()[:200]!r}")
-    want = sorted(sweep_corpus.REDUCED_ARM + ("grails-core",))
+    want = sorted(sweep_corpus.REDUCED_ARM)
     failures = 0
     if code != 0 or sorted(plan) != want:
         failures += fail(f"forcing/v1 planned {sorted(plan)}, not {want}, exit {code}")
@@ -775,7 +775,7 @@ def case_the_forcing_set_runs_on_the_reduced_arm_and_the_groovy_project_only():
 
 
 def case_the_forcing_set_refuses_the_reduced_arm():
-    """The reduced arm's gates are recall gates, and it would drop the Groovy project."""
+    """The reduced arm's gates are recall gates."""
     try:
         sweep_corpus.main(["--set", "forcing/v1", "--arm", "reduced", "--print-commands"])
     except SystemExit as refusal:

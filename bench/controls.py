@@ -12,15 +12,15 @@ sweeps each control project against it with `run.py --control`. Per set:
     pool/v1      the same plant, and every family of the set must report a miss on demo or
     revert/v1    demo-kotlin (pool/v1), or on spring-framework (revert/v1, which needs history). A
                  family with no miss counts as clean in a figure without ever having shown that
-                 the harness can see it fail. The fixtures carry body and pool/v1's own four;
-                 `--corpus` asks aliased, constant, renamed and schema on moshi and okhttp. A
-                 family no row could miss for passes only as declared `UNCONTROLLED`.
+                 the harness can see it fail. The fixtures carry body and pool/v1's own families
+                 but groovy-body; `--corpus` asks aliased, constant, renamed, schema and
+                 groovy-body on moshi, okhttp and grails-core. A family no row could miss for
+                 passes only as declared `UNCONTROLLED`.
     forcing/v1   `planted_no_force()`: the scoped change set treats every forcing family's paths
                  as unread, so the change is accounted for and the run selects on the changed bytes
                  alone; and `NO_FORCE_RULES`, the two rules that force those rows behind it, off.
                  Every family's row must narrow, and miss where a test reads the file. The
-                 fixtures carry three families; `--corpus` runs `dependency-revert` on ktlint and
-                 `groovy-body` on grails-core.
+                 fixtures carry three families; `--corpus` runs `dependency-revert` on ktlint.
     neutral/v1   no plant: the null change must run the whole suite as `empty-change-set`, so a
                  selector that skips everything on an empty diff cannot pass, and a
                  behaviour-neutral edit must report no miss, on every demo fixture.
@@ -33,8 +33,8 @@ checkout builds is published to mavenLocal again afterwards. Results go to
     python bench/controls.py --ground-truth auto     # complement mode, before it is enabled
     python bench/controls.py --set pool/v1           # likewise forcing/v1, neutral/v1
     python bench/controls.py --set revert/v1         # spring-framework, a quiet machine
-    python bench/controls.py --set forcing/v1 --corpus   # ktlint and grails-core
-    python bench/controls.py --set pool/v1 --corpus      # moshi and okhttp
+    python bench/controls.py --set forcing/v1 --corpus   # ktlint
+    python bench/controls.py --set pool/v1 --corpus      # moshi, okhttp and grails-core
     python bench/controls.py --set pool/v1 --verdict     # judge the files on disk, run nothing
 """
 
@@ -98,7 +98,6 @@ NO_FORCE_PATHS = {
     # Every path a dependency revert may edit: a version catalog, any Gradle script, the
     # properties file.
     "dependency-revert": r"\.versions\.toml$|\.gradle(\.kts)?$|(^|/)gradle\.properties$",
-    "groovy-body": r"\.groovy$",
 }
 SCOPED_CHANGE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 NO_FORCE_ANCHOR = "    val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }"
@@ -126,7 +125,7 @@ NO_FORCE_RULES = (
      "    is EnvironmentFingerprint.Verdict.Changed -> null"),
 )
 
-# The default set's kinds, which `pool/v1` keeps beside its own four families.
+# The default set's kinds, which `pool/v1` keeps beside its own families.
 DEFAULT_KINDS = ("body", "aliased", "constant", "renamed", "schema")
 POOL_FAMILIES = DEFAULT_KINDS + pool_mutations.FAMILIES
 REVERT_FAMILIES = ("revert",)
@@ -134,8 +133,10 @@ REVERT_FAMILIES = ("revert",)
 # fixtures' constant, renamed and schema rows all force, so those four are asked on corpus
 # checkouts: moshi, whose archived rows narrowed and induced on `aliased`, and okhttp on `constant`,
 # both seconds a row. No archived row of any project narrowed and induced on `renamed` or `schema`.
-POOL_FIXTURE_FAMILIES = ("body",) + pool_mutations.FAMILIES
-POOL_CORPUS_FAMILIES = ("aliased", "constant", "renamed", "schema")
+# No fixture has a Groovy source either, so `groovy-body` is asked on grails-core.
+POOL_CORPUS_FAMILIES = ("aliased", "constant", "renamed", "schema", "groovy-body")
+POOL_FIXTURE_FAMILIES = ("body",) + tuple(f for f in pool_mutations.FAMILIES
+                                          if f not in POOL_CORPUS_FAMILIES)
 # THE FAMILIES NO CONTROL CAN SHOW A MISS FOR, each with its evidence. A family's control passes as
 # UNCONTROLLED, printed, only when it is named here and no row narrowed and induced a failure; any
 # other family without such a row fails, so a new family cannot slip through unasked.
@@ -149,11 +150,10 @@ UNCONTROLLED = {
 # On each forcing control fixture, the families a test reads the edited file of, whose narrowed
 # row must therefore report a miss. The others only have to narrow.
 READ_BY_A_TEST = {"demo": ("resource-value", "services")}
-# THE FORCING FAMILIES EACH LEG CONTROLS. A dependency revert needs history and a Groovy body needs
-# a Groovy root, which no fixture has, so those two run on corpus checkouts: a leg of their own, so
-# the fixture leg stays minutes.
+# THE FORCING FAMILIES EACH LEG CONTROLS. A dependency revert needs history, which no fixture has,
+# so it runs on a corpus checkout: a leg of its own, so the fixture leg stays minutes.
 FORCING_FIXTURE_FAMILIES = ("resource-value", "services", "build-script")
-FORCING_CORPUS_FAMILIES = ("dependency-revert", "groovy-body")
+FORCING_CORPUS_FAMILIES = ("dependency-revert",)
 
 # Per set: the projects it runs on, the plants its plugin is built with, and its `run.py` arguments
 # beside `--control --recall-only`. They come after `--limit <sweep_limit>`, so a `--limit` of
@@ -179,11 +179,12 @@ SET_CONTROLS = {
 CORPUS_CONTROLS = {
     # A family's own cap of 8 rows, not moshi's `sweep_limit` of 32: a kind that forces every row
     # would otherwise draw 32.
-    run.POOL_SHAPES: {"projects": ("moshi", "okhttp"), "families": POOL_CORPUS_FAMILIES,
+    run.POOL_SHAPES: {"projects": ("moshi", "okhttp", "grails-core"),
+                      "families": POOL_CORPUS_FAMILIES,
                       "plants": (PLANTED_MISS,),
                       "args": ("--narrowed-target", "1", "--limit", "8",
                                "--families", *POOL_CORPUS_FAMILIES)},
-    run.FORCING_SET: {"projects": ("ktlint", "grails-core"), "families": FORCING_CORPUS_FAMILIES,
+    run.FORCING_SET: {"projects": ("ktlint",), "families": FORCING_CORPUS_FAMILIES,
                       "plants": SET_CONTROLS[run.FORCING_SET]["plants"], "args": ()},
 }
 

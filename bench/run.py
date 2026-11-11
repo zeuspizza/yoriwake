@@ -2402,10 +2402,10 @@ REVERT_GRAMMAR_FILES = ("bench/revert.py", "bench/census.py")
 SET_GRAMMAR_FILES = {POOL_SHAPES: ("bench/pool_mutations.py", "bench/family_order.py",
                                    # Absent until a replay adopts the learned order for a family.
                                    "bench/order/learned-v1.json"),
-                     # With the files its families reuse: `throw-entry`'s grammar, the revert
-                     # set's patches, and the measured module the census names.
-                     FORCING_SET: ("bench/forcing_mutations.py", "bench/pool_mutations.py",
-                                   "bench/revert.py", "bench/census.py")}
+                     # With the files its families reuse: the revert set's patches, and the
+                     # measured module the census names.
+                     FORCING_SET: ("bench/forcing_mutations.py", "bench/revert.py",
+                                   "bench/census.py")}
 
 
 def shape_folder(shapes):

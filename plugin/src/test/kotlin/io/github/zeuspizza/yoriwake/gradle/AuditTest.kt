@@ -896,8 +896,9 @@ class AuditTest {
         )
 
         assertEquals("scope-not-applied", blockers.first().token)
-        // Groovy and Scala; Kotlin Multiplatform has a kind of its own.
-        assertContains(assertNotNull(blockers.first().remedy), "Groovy")
+        // The languages it does read, so a Groovy or Scala module is not told it is unsupported;
+        // Kotlin Multiplatform has a kind of its own.
+        assertContains(assertNotNull(blockers.first().remedy), "it reads Java, Kotlin, Groovy and Scala")
     }
 
     @Test

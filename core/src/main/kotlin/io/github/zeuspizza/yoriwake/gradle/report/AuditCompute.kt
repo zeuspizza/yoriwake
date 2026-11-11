@@ -328,8 +328,8 @@ internal fun Audit.blockers(
                     }
                     ScopeOutcome.NotApplied.Kind.NO_PACKAGES_DERIVED ->
                         "no remedy: this build's sources are in a language the scope " +
-                            "derivation does not read -- Groovy and Scala modules among " +
-                            "them. A documented limit, and the plugin declines rather than " +
+                            "derivation does not read -- it reads Java, Kotlin, Groovy and " +
+                            "Scala. A documented limit, and the plugin declines rather than " +
                             "capturing an unknown extent."
                     ScopeOutcome.NotApplied.Kind.NO_HOST_PLUGIN ->
                         "apply the `java` plugin, or one of the Android plugins, to the " +

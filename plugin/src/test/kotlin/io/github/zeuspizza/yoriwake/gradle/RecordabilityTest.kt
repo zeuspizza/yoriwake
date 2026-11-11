@@ -694,6 +694,25 @@ class RecordabilityTest {
     }
 
     @Test
+    fun `a Spock feature method is a test method`() {
+        // Spock's compiler marks each feature with FeatureMetadata; a helper method carries none.
+        fun specWith(methodAnnotation: String?): ByteArray {
+            val writer = org.objectweb.asm.ClassWriter(0)
+            writer.visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, "BetaSpec", null,
+                "spock/lang/Specification", null)
+            writer.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "\$spock_feature_0_0", "()V", null, null).apply {
+                methodAnnotation?.let { visitAnnotation(it, true).visitEnd() }
+                visitEnd()
+            }
+            writer.visitEnd()
+            return writer.toByteArray()
+        }
+
+        assertTrue(Recordability.declaresTestMethod(specWith("Lorg/spockframework/runtime/model/FeatureMetadata;")))
+        assertFalse(Recordability.declaresTestMethod(specWith(null)))
+    }
+
+    @Test
     fun `class-level annotations are read whatever their retention`() {
         assertEquals(
             listOf("Ljava/lang/Deprecated;"),

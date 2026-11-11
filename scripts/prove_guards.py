@@ -2033,6 +2033,33 @@ MUTATIONS = [
      "            if (prefix in ownTestClasses && Recordability.declaresTestMethod(bytes)) continue",
      "            if (prefix in ownTestClasses) continue",
      unit_suite, "an annotation change on a test helper that declares no test still forces"),
+    # Spock writes each feature's line into an annotation on its method, so a line added above a
+    # feature moves the specification's annotations. Not reading its feature annotation as a test
+    # method sends every such edit to the annotation refusal and the whole suite.
+    ("a Spock feature is no test method again", RECORDABILITY,
+     '        "Lorg/spockframework/runtime/model/FeatureMetadata;",\n', '',
+     unit_suite, "a Spock feature method is a test method"),
+    # ---------------------------------------------------------------------------- Groovy sources
+    #
+    # A Groovy source directory compiles `.groovy` and, jointly, `.java`. A Groovy file anywhere
+    # else is compiled by nothing or read at run time, so naming a class for it would skip the
+    # tests that read it.
+    ("a Groovy file outside a Groovy source directory maps to a class", CHANGE_DETECTION,
+     '            """(?:(?:kotlin|java)/(?=.+\\.(?:kt|java)$)|groovy/(?=.+\\.(?:groovy|java)$))""" +',
+     '            """(?:kotlin|java|groovy)/""" +',
+     unit_suite, "a Groovy file outside a Groovy source directory is unmappable"),
+    # Groovy's own string forms are not lexed, and a triple double quote inside one opens a range
+    # that swallows the declarations after it: a dropped declaration is a skipped test.
+    ("a Groovy string hides the declarations after it again", CHANGE_DETECTION,
+     '        if (path.endsWith(".groovy")) emptyList() else rawStringRanges(text)',
+     '        rawStringRanges(text)',
+     unit_suite, "a Groovy string of any form never hides a declaration after it"),
+    # Groovy has no `inline`. Counted as inlinable, a Groovy change in a module whose Kotlin carries
+    # no SMAP is refused as `smap-absent`.
+    ("a Groovy change counts as inlinable again", CHANGE_DETECTION,
+     '    private val INLINABLE_SOURCE = Regex(""".*\\.(?!(?:java|groovy)$)[A-Za-z0-9_]+$""")',
+     '    private val INLINABLE_SOURCE = Regex(""".*\\.(?!java$)[A-Za-z0-9_]+$""")',
+     unit_suite, "a java-only change set is not inlinable, and anything else is"),
     # A framework can wire a class from its annotation alone (a Dagger module whose `@Binds` are
     # abstract, a scanned bean), so no test need load it for one to depend on it. Reading the
     # annotations and ignoring them makes an annotated class nothing loads provable by absence again.
@@ -3992,8 +4019,8 @@ MUTATIONS = [
      '"families": POOL_FIXTURE_FAMILIES,',
      controls_suite, "the pool legs ask"),
     ("a pool kind is asked by no leg", CONTROLS_SRC,
-     'POOL_CORPUS_FAMILIES = ("aliased", "constant", "renamed", "schema")',
-     'POOL_CORPUS_FAMILIES = ("aliased", "constant", "renamed")',
+     'POOL_CORPUS_FAMILIES = ("aliased", "constant", "renamed", "schema", "groovy-body")',
+     'POOL_CORPUS_FAMILIES = ("aliased", "constant", "renamed", "groovy-body")',
      controls_suite, "the pool legs ask"),
     ("the forcing corpus leg asks the fixture families", CONTROLS_SRC,
      '"families": FORCING_CORPUS_FAMILIES,',
@@ -4567,13 +4594,15 @@ MUTATIONS = [
     ("the build-script property is named where the fingerprint never looks", FORCING_MUTATIONS,
      'PROPERTY = ("mutation.marker", "true")', 'PROPERTY = ("yoriwake.mutated", "true")',
      mutations_suite, "which its fingerprint leaves out"),
-    ("groovy-body globs no Groovy source", FORCING_MUTATIONS,
-     '    for relative in _files(checkout, roots, ["*.groovy"]):',
-     '    for relative in _files(checkout, roots, ["*.java"]):', mutations_suite,
+    ("groovy-body globs no Groovy source", POOL_MUTATIONS,
+     '        paths = glob.glob(os.path.join(base, "**", "*.groovy"), recursive=True)',
+     '        paths = glob.glob(os.path.join(base, "**", "*.java"), recursive=True)', mutations_suite,
      "a .groovy source under the roots is globbed"),
-    ("the groovy-body edit goes braceless", FORCING_MUTATIONS,
-     '    _write(path, pool_mutations._entry(text, match, ("if (true) {", "    " + throw, "}")))',
-     '    _write(path, pool_mutations._entry(text, match, ("if (true) " + throw,)))',
+    ("the groovy-body edit goes braceless", POOL_MUTATIONS,
+     '    _write(path, _entry(text, match, ("if (true) {", "    " + throw, "}")))\n'
+     '    return match.group("name")',
+     '    _write(path, _entry(text, match, ("if (true) " + throw,)))\n'
+     '    return match.group("name")',
      mutations_suite, "the second method throws at its entry"),
     ("a forcing family draws a second row a project", FORCING_MUTATIONS,
      "    return rows >= limit", "    return rows > limit", mutations_suite,
@@ -4616,8 +4645,8 @@ MUTATIONS = [
     ("the forcing set sweeps the whole corpus", "bench/sweep_corpus.py",
      "    if args.set == run.FORCING_SET:", "    if False:", sweep_suite, "forcing/v1 planned"),
     ("the forcing set is stamped with the default grammar digest", PY_SRC,
-     '                     FORCING_SET: ("bench/forcing_mutations.py", "bench/pool_mutations.py",',
-     '                     "unused": ("bench/forcing_mutations.py", "bench/pool_mutations.py",',
+     '                     FORCING_SET: ("bench/forcing_mutations.py", "bench/revert.py",',
+     '                     "unused": ("bench/forcing_mutations.py", "bench/revert.py",',
      python_suite, "the forcing set is stamped with another set's grammar digest"),
     ("a forcing row the selector narrowed onto every test reads as forced",
      "bench/assert_recall.py",

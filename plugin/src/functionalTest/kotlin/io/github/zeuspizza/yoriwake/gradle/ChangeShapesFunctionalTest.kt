@@ -168,21 +168,277 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
         assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
     }
 
+    // Groovy 4.0.22 cannot read Java 25 class files, so the fixture keeps to 21 on any daemon JDK.
+    private val groovyBuild = minimalBuild
+        .replace("java\n", "groovy\n")
+        .replace("dependencies {", "dependencies {\n    implementation(\"org.apache.groovy:groovy:4.0.22\")")
+        .plus("\njava { toolchain { languageVersion = JavaLanguageVersion.of(21) } }")
+
+    private fun groovyBeta(body: String) = "src/main/groovy/dev/sample/Beta.groovy" to body.trimIndent()
+
     @Test
-    fun `a Groovy method body edited runs everything, as paths coverage cannot map`(@TempDir dir: File) {
-        val groovyBuild = minimalBuild
-            .replace("java\n", "groovy\n")
-            .replace("dependencies {", "dependencies {\n    implementation(\"org.apache.groovy:groovy:4.0.22\")")
-        val beta = "src/main/groovy/dev/sample/Beta.groovy" to """
+    fun `a Groovy method body edited runs the test that called it`(@TempDir dir: File) {
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            class Beta { int thrice(int n) { n * 3 } }
+            """
+        )
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, beta, secondTest, edit = {
+            edit(dir, beta.first, "n * 3", "n * 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a Groovy closure body edited runs the test that ran the closure`(@TempDir dir: File) {
+        // The closure compiles to a class of its own, named after the class that declares it.
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            class Beta { int thrice(int n) { [n].collect { it * 3 }.sum() } }
+            """
+        )
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, beta, secondTest, edit = {
+            edit(dir, beta.first, "it * 3", "it * 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a Groovy method body given a new closure runs everything`(@TempDir dir: File) {
+        // groovyc marks the methods it generates with an annotation, so the closure's new class
+        // carries annotations the map never recorded.
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            class Beta { int thrice(int n) { n * 3 } }
+            """
+        )
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, beta, secondTest, edit = {
+            edit(dir, beta.first, "n * 3", "[n].collect { it * 4 }.sum()")
+        }, run = GradleRunner::buildAndFail)
+
+        assertFullRun(dir, "daemon-refused", both, output)
+        assertEquals("annotations-unrecorded", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `a Groovy trait method edited runs the test that reached it through its class`(@TempDir dir: File) {
+        // The trait's body runs in its helper class; the implementing class only forwards to it.
+        val tripler = "src/main/groovy/dev/sample/Tripler.groovy" to """
+            package dev.sample
+            trait Tripler { int thrice(int n) { n * 3 } }
+        """.trimIndent()
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            class Beta implements Tripler { }
+            """
+        )
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, tripler, beta, secondTest, edit = {
+            edit(dir, tripler.first, "n * 3", "n * 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a Groovy script's method edited runs the test that called it`(@TempDir dir: File) {
+        // A script declares no class: the one it compiles to is named after the file.
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            int thrice(int n) { n * 3 }
+            """
+        )
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, beta, secondTest, edit = {
+            edit(dir, beta.first, "n * 3", "n * 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a Groovy class declared beside another in one file runs the test that called it`(@TempDir dir: File) {
+        val shapes = "src/main/groovy/dev/sample/Beta.groovy" to """
+            package dev.sample
+            class Gamma { int one() { 1 } }
+            class Beta { int thrice(int n) { new Gamma().one() * n * 3 } }
+        """.trimIndent()
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, shapes, secondTest, edit = {
+            edit(dir, shapes.first, "n * 3", "n * 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a Groovy file named after none of its classes runs everything`(@TempDir dir: File) {
+        // Its path names a class nothing compiles to unless the file also holds a script, which
+        // the declarations alone cannot rule out, and no test ever recorded that name.
+        val shapes = "src/main/groovy/dev/sample/Shapes.groovy" to """
             package dev.sample
             class Beta { int thrice(int n) { n * 3 } }
         """.trimIndent()
 
-        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, beta, secondTest, edit = {
-            edit(dir, beta.first, "n * 3", "n + n + n")
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, shapes, secondTest, edit = {
+            edit(dir, shapes.first, "n * 3", "n * 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertFullRun(dir, "no-coverage-for-changed", both, output)
+    }
+
+    @Test
+    fun `a Groovy method reached only through methodMissing runs the test that called it`(@TempDir dir: File) {
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            class Beta { def methodMissing(String name, args) { args[0] * 3 } }
+            """
+        )
+        val betaTest = "src/test/java/dev/sample/BetaTest.java" to """
+            package dev.sample;
+            import org.codehaus.groovy.runtime.InvokerHelper;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class BetaTest {
+                @Test void passes() { assertEquals(3, InvokerHelper.invokeMethod(new Beta(), "thrice", 1)); }
+            }
+        """.trimIndent()
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, beta, betaTest, edit = {
+            edit(dir, beta.first, "args[0] * 3", "args[0] * 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a Groovy constant a Java test copied runs everything`(@TempDir dir: File) {
+        // groovyc writes a ConstantValue for a static final primitive or String, so javac copies the
+        // value into the test and the test never loads Beta.
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            class Beta { public static final int FACTOR = 3 }
+            """
+        )
+        val betaTest = "src/test/java/dev/sample/BetaTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class BetaTest { @Test void passes() { assertEquals(3, Beta.FACTOR); } }
+        """.trimIndent()
+
+        val output = selectAfter(dir, groovyBuild, oneClass, oneTest, beta, betaTest, edit = {
+            edit(dir, beta.first, "FACTOR = 3", "FACTOR = 4")
+        }, run = GradleRunner::buildAndFail)
+
+        assertFullRun(dir, "daemon-refused", both, output)
+        assertEquals("constant-changed", decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
+    fun `a global AST transform edited runs everything`(@TempDir dir: File) {
+        // The transform runs in the compiler, never in a test, so no test recorded its class.
+        val transform = listOf(
+            "settings.gradle.kts" to "rootProject.name = \"sample\"\ninclude(\"transform\")",
+            "transform/build.gradle.kts" to """
+                plugins { groovy }
+                repositories { mavenCentral() }
+                dependencies { implementation("org.apache.groovy:groovy:4.0.22") }
+                java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+            """.trimIndent(),
+            "transform/src/main/groovy/dev/transform/TagTransform.groovy" to """
+                package dev.transform
+                import java.lang.reflect.Modifier
+                import org.codehaus.groovy.ast.ASTNode
+                import org.codehaus.groovy.ast.ClassHelper
+                import org.codehaus.groovy.ast.ClassNode
+                import org.codehaus.groovy.ast.Parameter
+                import org.codehaus.groovy.ast.expr.ConstantExpression
+                import org.codehaus.groovy.ast.stmt.ReturnStatement
+                import org.codehaus.groovy.control.CompilePhase
+                import org.codehaus.groovy.control.SourceUnit
+                import org.codehaus.groovy.transform.ASTTransformation
+                import org.codehaus.groovy.transform.GroovyASTTransformation
+
+                @GroovyASTTransformation(phase = CompilePhase.SEMANTIC_ANALYSIS)
+                class TagTransform implements ASTTransformation {
+                    void visit(ASTNode[] nodes, SourceUnit source) {
+                        source.AST.classes.findAll { it.packageName == 'dev.sample' }.each { ClassNode c ->
+                            c.addMethod('tag', Modifier.PUBLIC, ClassHelper.STRING_TYPE, Parameter.EMPTY_ARRAY,
+                                ClassNode.EMPTY_ARRAY, new ReturnStatement(new ConstantExpression('v1')))
+                        }
+                    }
+                }
+            """.trimIndent(),
+            "transform/src/main/resources/META-INF/services/org.codehaus.groovy.transform.ASTTransformation" to
+                "dev.transform.TagTransform\n",
+        )
+        val beta = groovyBeta(
+            """
+            package dev.sample
+            class Beta { }
+            """
+        )
+        val betaTest = "src/test/java/dev/sample/BetaTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class BetaTest { @Test void passes() { assertEquals("v1", new Beta().tag()); } }
+        """.trimIndent()
+        val build = groovyBuild.replace("dependencies {", "dependencies {\n    compileOnly(project(\":transform\"))")
+
+        val output = selectAfter(dir, build, *transform.toTypedArray(), oneClass, oneTest, beta, betaTest, edit = {
+            edit(dir, transform[2].first, "'v1'", "'v2'")
+        }, run = GradleRunner::buildAndFail)
+
+        assertFullRun(dir, "no-coverage-for-changed", both, output)
+    }
+
+    @Test
+    fun `a line added above a Spock feature runs everything, as the specification's code ran at startup`(
+        @TempDir dir: File,
+    ) {
+        // Spock records each feature's line in an annotation on its method, which a test class this
+        // task runs is exempt from. Spock also runs the specification's own code before any of its
+        // features, where no test owns the coverage.
+        val spockBuild = groovyBuild.replace(
+            "dependencies {",
+            "dependencies {\n    testImplementation(\"org.spockframework:spock-core:2.3-groovy-4.0\")",
+        )
+        val spec = { name: String, subject: String, expected: Int ->
+            "src/test/groovy/dev/sample/${name}Spec.groovy" to """
+                package dev.sample
+
+                import spock.lang.Specification
+
+                class ${name}Spec extends Specification {
+                    def "computes"() {
+                        expect:
+                        $subject == $expected
+                    }
+                }
+            """.trimIndent()
+        }
+        val alphaSpec = spec("Alpha", "new Alpha().twice(1)", 2)
+        val betaSpec = spec("Beta", "new Beta().thrice(1)", 3)
+
+        val output = selectAfter(dir, spockBuild, oneClass, secondClass, alphaSpec, betaSpec, edit = {
+            edit(dir, betaSpec.first, "    def \"computes\"()", "    // moved down a line\n    def \"computes\"()")
         })
 
-        assertFullRun(dir, "unmappable-paths", both, output)
+        assertFullRun(dir, "startup-coverage", setOf("dev.sample.AlphaSpec", "dev.sample.BetaSpec"), output)
     }
 
     @Test

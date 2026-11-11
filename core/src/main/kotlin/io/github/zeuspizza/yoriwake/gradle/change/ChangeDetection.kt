@@ -12,11 +12,14 @@ import java.util.concurrent.TimeUnit
 internal object ChangeDetection {
 
     // Any number of leading directories, including none: a single-project build has no module
-    // segment before `src/`.
-    private val SOURCE_ROOT =
-        Regex("""^(?:[^/]+/)*?src/[^/]+/(?:kotlin|java)/(?<fqn>.+)\.(?:kt|java)$""")
+    // segment before `src/`. A Groovy source directory compiles `.groovy` and, jointly, `.java`.
+    private val SOURCE_ROOT = Regex(
+        """^(?:[^/]+/)*?src/[^/]+/""" +
+            """(?:(?:kotlin|java)/(?=.+\.(?:kt|java)$)|groovy/(?=.+\.(?:groovy|java)$))""" +
+            """(?<fqn>.+)\.(?:kt|java|groovy)$"""
+    )
 
-    /** [inlinableSourceChanged] is false only when every mappable changed path is Java. */
+    /** [inlinableSourceChanged] is false only when every mappable changed path is Java or Groovy. */
     data class Change(
         val classPrefixes: Set<String>,
         val unmappablePaths: List<String>,
@@ -33,9 +36,9 @@ internal object ChangeDetection {
         val prefixesByPath: Map<String, Set<String>> = emptyMap(),
     )
 
-    // Only Kotlin `inline` bodies are copied into callers and erase the edge. Anything not Java
-    // counts as inlinable, the conservative direction.
-    private val INLINABLE_SOURCE = Regex(""".*\.(?!java$)[A-Za-z0-9_]+$""")
+    // Only Kotlin `inline` bodies are copied into callers and erase the edge; Groovy has no
+    // `inline`. Anything else counts as inlinable, the conservative direction.
+    private val INLINABLE_SOURCE = Regex(""".*\.(?!(?:java|groovy)$)[A-Za-z0-9_]+$""")
 
     // An unrecognised path is unmappable, never dropped. Prefixes come from the path and the
     // file's declarations, since a Kotlin file need not be named after its classes.
@@ -155,12 +158,14 @@ internal object ChangeDetection {
         val file = projectDir?.resolve(path)?.takeIf(File::isFile) ?: return false
         val text = runCatching { file.readText() }.getOrNull() ?: return false
 
-        val rawStrings = rawStringRanges(text)
+        val rawStrings = rawStringRanges(path, text)
         fun matchesOutsideSamples(regex: Regex) =
             regex.findAll(text).any { match -> rawStrings.none { match.range.first in it } }
 
-        // A class, object, enum or record always has a constructor, so it is loaded when used.
-        // Only a bare interface or annotation can be inlined away entirely.
+        // A class, object, enum or record always has a constructor, so it is loaded when used. A
+        // Groovy trait's members run in, and are read through, its helper classes; groovyc writes
+        // no compile-time constant for its fields. Only a bare interface or annotation can be
+        // inlined away entirely.
         if (matchesOutsideSamples(CONSTRUCTED_TYPE)) {
             return false
         }
@@ -170,14 +175,14 @@ internal object ChangeDetection {
     private val CONSTRUCTED_TYPE = Regex(
         """(?m)^[^\S
 ]*(?:(?:public|private|internal|protected|abstract|final|open|sealed|data|value|inner|static|annotation|enum)\s+)*""" +
-            """(?:class|object|record|enum)\s+\w+"""
+            """(?:class|object|record|enum|trait)\s+\w+"""
     )
 
     private fun declaredTypes(projectDir: File?, path: String): Set<String> {
         val file = projectDir?.resolve(path)?.takeIf(File::isFile) ?: return emptySet()
         val text = runCatching { file.readText() }.getOrNull() ?: return emptySet()
 
-        val rawStrings = rawStringRanges(text)
+        val rawStrings = rawStringRanges(path, text)
         val packageName = PACKAGE.findAll(text)
             .firstOrNull { match -> rawStrings.none { match.range.first in it } }
             ?.groups?.get("name")?.value?.trim()
@@ -188,6 +193,11 @@ internal object ChangeDetection {
             .map { prefix + it }
             .toSet()
     }
+
+    // Groovy's `'''`, slashy and dollar-slashy strings are not lexed, and a `"""` inside one would
+    // open a range that swallows the declarations after it. A Groovy file suppresses nothing.
+    private fun rawStringRanges(path: String, text: String): List<IntRange> =
+        if (path.endsWith(".groovy")) emptyList() else rawStringRanges(text)
 
     // Spans of raw string literals, whose code samples would otherwise yield phantom prefixes.
     // Walked rather than paired, because a `"""` inside a comment would shift the pairing and
@@ -251,7 +261,7 @@ internal object ChangeDetection {
     private val TYPE_DECLARATION = Regex(
         """(?m)^[^\S\n]*(?:@\w[\w.]*(?:\([^)\n]*\))?\s+)*""" +
             """(?:(?:public|private|internal|protected|abstract|final|open|sealed|data|value|inner|static|annotation|enum|fun)\s+)*""" +
-            """(?:class|interface|object|record|@interface|enum|typealias)\s+(?<name>\w+)"""
+            """(?:class|interface|object|record|@interface|enum|typealias|trait)\s+(?<name>\w+)"""
     )
 
     // javac inlines `static final` primitives and Strings into dependents, so a file of only
