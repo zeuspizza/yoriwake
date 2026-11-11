@@ -58,7 +58,7 @@ class MapProvenanceTest {
     // Computed outside this code, by the digest's definition over each release's file list.
     private val releasedDigest = "638c298d36cfd92afc529aca0b0b635542d09b5912f8aa190b3a0cdf340b02ef"
     private val digestUpTo050 = "965cdb082c9b16416f782c73b99086925df47091ee6bbc0eac7353c6d06dde73"
-    private val currentDigest = "475b7720959a0ac2b6355ef97a297dd1f3792acd2845caad506daa1fd6b82421"
+    private val currentDigest = "d2b179ea4235ed4027ea6c7486f8dde4afc8803206d5d7eb2cebd6cb8db4973b"
 
     @Test
     fun `each digest scheme gives the digest its release wrote`(@TempDir dir: File) {
