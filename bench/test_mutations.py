@@ -907,7 +907,9 @@ def case_the_default_set_is_unchanged_by_the_pool(root):
                   str(pool)) +
             check(f"{fixture}'s pool draws schema at most once",
                   sum(1 for t in pool if t[1] == "schema") <= 1, str(pool)) +
-            check(f"{fixture} carries every pool family", set(pm.FAMILIES) <= kinds, str(kinds))
+            # No fixture has a Groovy source, so `groovy-body` draws nothing there.
+            check(f"{fixture} carries every pool family but groovy-body",
+                  set(pm.FAMILIES) - {"groovy-body"} <= kinds, str(kinds))
         )
     return failures
 
@@ -1088,16 +1090,16 @@ def case_build_script_adds_one_system_property_to_the_test_tasks(root):
 
 
 def case_groovy_body_throws_at_entry(root):
-    fm = _forcing()
+    pm = _pool()
     path = write(root, "src/main/groovy/p/Greeter.groovy",
                  "package p\n\nclass Greeter {\n    String name\n\n"
                  "    Greeter(String name) {\n        this.name = name\n    }\n\n"
                  "    def greet(String other) {\n        \"hi $other\"\n    }\n\n"
                  "    static int twice(int n) {\n        n * 2\n    }\n}\n")
-    count = fm.groovy_methods_in(path)
-    name = fm.groovy_body(path, 1)
+    count = pm.groovy_methods_in(path)
+    name = pm.groovy_body(path, 1)
     text = _read(path)
-    targets = fm.mutation_targets(root, {"sources": ["src/main/groovy"]})
+    targets = pm.mutation_targets(root, {"sources": ["src/main/groovy"]})
     return (
         check("the constructor is no target; the two methods are", count == 2, str(count)) +
         check("the second method throws at its entry", name == "twice" and
@@ -1178,7 +1180,7 @@ def case_a_forcing_family_draws_its_rows_and_no_more(root):
 
 def case_demo_carries_every_forcing_family_it_can(root):
     """`demo` carries a resource and a service file each read by a test, and a build script; it
-    has one commit and no Groovy, so `dependency-revert` and `groovy-body` draw nothing there."""
+    has one commit, so `dependency-revert` draws nothing there."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import run  # noqa: PLC0415
     fm = _forcing()

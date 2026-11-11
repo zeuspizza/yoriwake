@@ -111,44 +111,44 @@ failures are the ground truth.
 - **Fixtures.** A sample swept from this repository (`demo`, `demo-kotlin`) is stamped with a digest
   of its tracked files, `fixture_digest`; a sweep on a changed tree starts fresh, and the readers
   refuse to compare or merge rows of two trees.
-- **`pool/v1`.** The default shapes, with `schema` capped at one edit per project, plus four
-  families real commits make and the default set never plants: `void-return` (an early return at
-  the entry of a void Java method or a block-bodied Unit Kotlin function), `throw-entry` (an
+- **`pool/v1`.** The default shapes, with `schema` capped at one edit per project, plus five
+  families real commits make and the default set never plants: `void-return` (an early return at the
+  entry of a void Java method or a block-bodied Unit Kotlin function), `throw-entry` (an
   `IllegalStateException` thrown at the entry of any method or function with a body, whatever it
   returns), `override-add` (a `toString`, `hashCode` or `equals` that returns a fixed value, added
-  to a class that lacks it) and `member-delete` (one overriding method deleted). Constructors,
-  initialisers and declarations without a body are never edited. The compile gate's ceiling applies
-  per family, and an edit it rejects is replaced by the same family's next one. A family above it
-  is refused: its rows count toward no figure, though a missed test among them still fails the
-  sweep, and once no row the limit still allows could bring it under, it is not drawn again. Its
-  generators are digested with this set only, so the default set's `grammar_digest` does not move.
-  The demo fixtures carry each shape with a test that fails when it breaks: Java on `demo`, Kotlin
-  on `demo-kotlin`. Its order is `family-round-robin/v1`: every family (each shape) takes a turn,
-  in a seeded order, so each gets its first edit before any gets a second, and inside a family the
-  edits keep the reach-stratified order. Each family stops on its own, at 4 edits that narrowed and
-  induced a failure or at the project's cap (`sweep_limit`) in edits of that family; both are
-  stamped on every row. A learned order inside a family's strata, scored from features alone
-  (stratum, covering-test count, file size) and fitted on earlier sweeps' rows, is used for a
-  family only when `bench/replay_order.py` shows it drawing more rows where a miss was possible in
-  a leave-one-project-out replay, with no project losing its last such row. Over the 0.1.0 sweep's
+  to a class that lacks it), `member-delete` (one overriding method deleted) and `groovy-body`
+  (`throw-entry` for a Groovy method). Constructors, initialisers and declarations without a body
+  are never edited. The compile gate's ceiling applies per family, and an edit it rejects is
+  replaced by the same family's next one. A family above it is refused: its rows count toward no
+  figure, though a missed test among them still fails the sweep, and once no row the limit still
+  allows could bring it under, it is not drawn again. Its generators are digested with this set
+  only, so the default set's `grammar_digest` does not move. The demo fixtures carry each shape but
+  `groovy-body` with a test that fails when it breaks: Java on `demo`, Kotlin on `demo-kotlin`. Its
+  order is `family-round-robin/v1`: every family (each shape) takes a turn, in a seeded order, so
+  each gets its first edit before any gets a second, and inside a family the edits keep the
+  reach-stratified order. Each family stops on its own, at 4 edits that narrowed and induced a
+  failure or at the project's cap (`sweep_limit`) in edits of that family; both are stamped on every
+  row. A learned order inside a family's strata, scored from features alone (stratum, covering-test
+  count, file size) and fitted on earlier sweeps' rows, is used for a family only when
+  `bench/replay_order.py` shows it drawing more rows where a miss was possible in a
+  leave-one-project-out replay, with no project losing its last such row. Over the 0.1.0 sweep's
   files no family passed (`body`, `constant`, `schema`, `renamed`, `aliased`: equal counts in the
   first four edits of every family), so the round-robin draws alone.
-- **`forcing/v1`.** Changes yoriwake runs every test for today, because their paths alone decide
-  it: `resource-value` (one value edited in a `.properties`, `.yml`, `.json` or `.xml` file under
-  the measured module's `src/main/resources`), `services` (one provider line removed from a
-  `META-INF/services` file that names two or more), `build-script` (one system property added to
-  the measured module's test tasks), `dependency-revert` (the revert of a recent commit that changed
+- **`forcing/v1`.** Changes yoriwake runs every test for today, because their paths alone decide it:
+  `resource-value` (one value edited in a `.properties`, `.yml`, `.json` or `.xml` file under the
+  measured module's `src/main/resources`), `services` (one provider line removed from a
+  `META-INF/services` file that names two or more), `build-script` (one system property added to the
+  measured module's test tasks), `dependency-revert` (the revert of a recent commit that changed
   only a version catalog or version lines, through the revert set's patches; an artifact that no
-  longer resolves is a counted rejection) and `groovy-body` (an exception thrown at the entry of a
-  Groovy method). Each row checks that the forcing holds, so a family stops after one row a project
-  whatever it showed, and the set runs on the reduced arm's projects and grails-core only. It has
-  no recall denominator: its figure is, per family, the rows and the forced rows that ran
+  longer resolves is a counted rejection). Each row checks that the forcing holds, so a family stops
+  after one row a project whatever it showed, and the set runs on the reduced arm's projects only.
+  It has no recall denominator: its figure is, per family, the rows and the forced rows that ran
   everything, with the kind they forced on. With no narrowing flag in a project's `flags`, a row
   that ran less than everything fails the project; with `-Pyoriwake.narrowResources` or
   `-Pyoriwake.narrowDependencies` there, the file is a `flag-on` population of its own. Rejections
   are counted, under no ceiling, and an edit the gate rejects is replaced by the same family's next
-  one; the gate reads groovyc's `startup failed:` and Gradle's Groovy `Compilation failed` banner
-  as rejections. `demo` carries a main resource and a service file, each read by a test.
+  one; the gate reads groovyc's `startup failed:` and Gradle's Groovy `Compilation failed` banner as
+  rejections. `demo` carries a main resource and a service file, each read by a test.
 
 The harness that measured this is in [`bench/`](../bench/README.md): how to run one project, what
 counts as a result, and how to add a project. Its results files are described field by field in
@@ -451,7 +451,7 @@ that forces must name its kind.
 | Early throw in a Kotlin function returning `Int` | `a Kotlin function returning Int that throws at its entry runs its caller's test` | narrowed to the caller's test |
 | Overriding `toString` deleted | `an overriding toString deleted runs the test that formatted the class` | narrowed to the formatting test |
 | `toString` override added | `a toString override added to a class without one runs the test that formatted it` | narrowed to the formatting test |
-| Groovy method body | `a Groovy method body edited runs everything, as paths coverage cannot map` | full run, `unmappable-paths` |
+| Groovy method body | `a Groovy method body edited runs the test that called it` | narrowed to the caller's test |
 | Trailing comment on a main-class line | `a trailing comment on a line of a main class narrows to the tests that ran the class` | narrowed to the class's test |
 | Value in a main resource | `a value edited in a main resource runs everything` | full run, `unmappable-paths` |
 | Line removed from a service file | `a line removed from a service file runs everything` | full run, `unmappable-paths` |

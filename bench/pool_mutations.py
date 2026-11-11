@@ -1,5 +1,5 @@
 """
-The `pool/v1` shape set: the default shapes, plus four families real commits make and the default
+The `pool/v1` shape set: the default shapes, plus five families real commits make and the default
 grammar never plants.
 
     void-return     an early return at the entry of a void Java method or a block-bodied Unit
@@ -14,6 +14,8 @@ grammar never plants.
                     an added member changes.
     member-delete   one overriding method deleted, so dispatch falls back to the parent's. An
                     override of an abstract member does not compile, and the gate discards it.
+    groovy-body     `throw-entry` for a Groovy method under the project's source roots, typed or
+                    `def`. The default grammar reads only Java and Kotlin.
 
 Constructors, initialisers and declarations without a body yield no target. `schema` is capped at
 one target per project: it changes behaviour only where a test introspects, and almost none does.
@@ -40,9 +42,9 @@ import target_ordering
 
 POOL_SHAPES = "pool/v1"
 
-FAMILIES = ("void-return", "throw-entry", "override-add", "member-delete")
+FAMILIES = ("void-return", "throw-entry", "override-add", "member-delete", "groovy-body")
 
-# Every family changes what a test that runs the method observes, so all four are answering shapes.
+# Every family changes what a test that runs the method observes, so all five are answering shapes.
 ANSWERING_SHAPES = target_ordering.ANSWERING_SHAPES + FAMILIES
 
 SENTINEL = '"yoriwake-mutated"'
@@ -437,6 +439,34 @@ def member_delete(path, index=0):
     return name
 
 
+# ---------------------------------------------------------------------------------- groovy-body
+
+def _groovy_methods(text):
+    """Groovy methods with a body whose `{` ends the declaration's line, as the Java grammar reads
+    them: typed or `def`, indented as members are."""
+    code = _code(text)
+    return [m for m in JAVA_METHOD.finditer(text)
+            if code[m.start("name")] != " " and m.group("type") != "record"
+            and m.group("type") not in _JAVA_NOT_A_TYPE
+            and m.group("name") not in _JAVA_NOT_A_TYPE]
+
+
+def groovy_methods_in(path):
+    return len(_groovy_methods(_read(path)))
+
+
+def groovy_body(path, index=0):
+    """Throws at the entry of the index-th Groovy method, in `throw-entry`'s braced form."""
+    text = _read(path)
+    matches = _groovy_methods(text)
+    if index >= len(matches):
+        return None
+    match = matches[index]
+    throw = f"throw new IllegalStateException({SENTINEL})"
+    _write(path, _entry(text, match, ("if (true) {", "    " + throw, "}")))
+    return match.group("name")
+
+
 # --------------------------------------------------------------------------------------- the set
 
 def _first_by_hash(targets):
@@ -449,7 +479,7 @@ def _first_by_hash(targets):
 
 def mutation_targets(checkout, project):
     """Every `(path, kind, index)` `pool/v1` draws from: the default shapes, `schema` capped at one
-    per project, and the four families."""
+    per project, and the five families."""
     default = target_ordering.mutation_targets(checkout, project, target_ordering.DEFAULT_SHAPES)
     targets = [t for t in default if t[1] != "schema"]
     targets += _first_by_hash([t for t in default if t[1] == "schema"])
@@ -460,6 +490,9 @@ def mutation_targets(checkout, project):
         if can_override_add(path):
             targets.append((relative, "override-add", 0))
         targets += [(relative, "member-delete", i) for i in range(overrides_in(path))]
+    for relative in sorted(_groovy_files(checkout, project)):
+        targets += [(relative, "groovy-body", i)
+                    for i in range(groovy_methods_in(os.path.join(checkout, relative)))]
     return targets
 
 
@@ -477,8 +510,18 @@ def _source_files(checkout, project):
     return found
 
 
+def _groovy_files(checkout, project):
+    """The `.groovy` files under the project's source roots."""
+    found = set()
+    for source_root in project.get("sources") or []:
+        base = os.path.join(checkout, source_root)
+        paths = glob.glob(os.path.join(base, "**", "*.groovy"), recursive=True)
+        found.update(os.path.relpath(p, checkout).replace("\\", "/") for p in paths)
+    return found
+
+
 def by_coverage(targets, covered):
-    """`target_ordering.by_coverage`, with the four families counted as answering shapes."""
+    """`target_ordering.by_coverage`, with the five families counted as answering shapes."""
     _, provenance = target_ordering.by_coverage(targets, covered)
 
     def by_shape(bucket):
@@ -493,11 +536,12 @@ def by_coverage(targets, covered):
 
 
 GENERATORS = {"void-return": void_return, "throw-entry": throw_entry,
-              "override-add": override_add, "member-delete": member_delete}
+              "override-add": override_add, "member-delete": member_delete,
+              "groovy-body": groovy_body}
 
 
 def apply(checkout, relative, kind, index):
-    """`mutations.apply`, for the four families too."""
+    """`mutations.apply`, for the five families too."""
     generator = GENERATORS.get(kind)
     if generator is None:
         return mutations.apply(checkout, relative, kind, index)

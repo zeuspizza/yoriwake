@@ -45,14 +45,12 @@ class ChangeDetectionTest {
             ).inlinableSourceChanged,
             "one Kotlin source among Java ones is enough to need the signal",
         )
-        // An unrecognised language is unmappable and forces a full run on its own, so false is safe.
+        // Groovy has no `inline`, so a Groovy change in a module whose Kotlin carries no SMAP
+        // must not be refused for it.
         val groovy = ChangeDetection.split(listOf("src/main/groovy/com/acme/Thing.groovy"))
-        assertFalse(groovy.inlinableSourceChanged)
-        assertEquals(
-            listOf("src/main/groovy/com/acme/Thing.groovy"),
-            groovy.unmappablePaths,
-            "a Groovy path must still force, which is what makes the flag above harmless",
-        )
+        assertFalse(groovy.inlinableSourceChanged, "a Groovy source has no inline body")
+        assertEquals(setOf("com.acme.Thing"), groovy.classPrefixes)
+        assertTrue(groovy.unmappablePaths.isEmpty(), "got ${groovy.unmappablePaths}")
         assertFalse(
             ChangeDetection.split(emptyList()).inlinableSourceChanged,
             "an empty change set has no changed source to inline",
@@ -102,6 +100,30 @@ class ChangeDetectionTest {
         val change = ChangeDetection.split(listOf("""app\src\main\kotlin\com\acme\A.kt"""))
 
         assertEquals(setOf("com.acme.A"), change.classPrefixes)
+    }
+
+    @Test
+    fun `a Groovy source directory maps its Groovy and its jointly compiled Java`() {
+        val change = ChangeDetection.split(
+            listOf("src/main/groovy/com/acme/Thing.groovy", "app/src/test/groovy/com/acme/Both.java"),
+        )
+
+        assertEquals(setOf("com.acme.Thing", "com.acme.Both"), change.classPrefixes)
+        assertTrue(change.unmappablePaths.isEmpty(), "got ${change.unmappablePaths}")
+    }
+
+    @Test
+    fun `a Groovy file outside a Groovy source directory is unmappable`() {
+        // Neither compiles it: under resources it is read at run time, under java it is not compiled.
+        val paths = listOf(
+            "src/main/resources/scripts/x.groovy",
+            "src/main/java/com/acme/Thing.groovy",
+            "src/main/kotlin/com/acme/Thing.groovy",
+            "src/main/groovy/com/acme/Thing.kt",
+            "build.gradle",
+        )
+
+        assertEquals(paths, ChangeDetection.split(paths).unmappablePaths)
     }
 
     @Test
@@ -275,6 +297,65 @@ class ChangeDetectionTest {
                 ChangeDetection.split(listOf("src/main/java/com/acme/Kind.java"), root)
                     .classPrefixes.contains("com.acme.Kind")
             )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `every class and trait a Groovy file declares is contributed`() {
+        val root = sourceTree(
+            "src/main/groovy/com/acme/Shapes.groovy" to
+                "package com.acme\n\nclass A { int one() { 1 } }\nclass B { int two() { 2 } }\n" +
+                "trait T { int three() { 3 } }\n"
+        )
+        try {
+            val prefixes = ChangeDetection.split(listOf("src/main/groovy/com/acme/Shapes.groovy"), root)
+                .classPrefixes
+
+            assertEquals(setOf("com.acme.Shapes", "com.acme.A", "com.acme.B", "com.acme.T"), prefixes)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a Groovy trait is a normal prefix, whatever shares its line`() {
+        // Its members run in its helper classes, and groovyc writes no compile-time constant for
+        // its fields, so nothing of it is copied into a caller.
+        val root = sourceTree(
+            "src/main/groovy/com/acme/Tripler.groovy" to
+                "package com.acme\ntrait Tripler { static final int K = 3; int thrice(int n) { n * K } }\n"
+        )
+        try {
+            val change = ChangeDetection.split(listOf("src/main/groovy/com/acme/Tripler.groovy"), root)
+
+            assertEquals(setOf("com.acme.Tripler"), change.classPrefixes)
+            assertTrue(change.unmappablePaths.isEmpty(), "got ${change.unmappablePaths}")
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a Groovy string of any form never hides a declaration after it`() {
+        // The raw-string walk knows only Kotlin's and Java's delimiters. A triple double quote inside
+        // a Groovy triple-single-quoted, slashy or dollar-slashy string would pair with the next one
+        // and swallow the classes between them.
+        val q = "\"".repeat(3)
+        val root = sourceTree(
+            "src/main/groovy/com/acme/Strings.groovy" to
+                "package com.acme\n\nclass A {\n    def single = '''\n$q\n'''\n}\nclass B { }\n" +
+                "class C {\n    def slashy = /$q/\n    def dollar = $/\n$q\n/$\n}\nclass D { }\n" +
+                "def last = '''$q'''\n"
+        )
+        try {
+            val prefixes = ChangeDetection.split(listOf("src/main/groovy/com/acme/Strings.groovy"), root)
+                .classPrefixes
+
+            for (name in listOf("A", "B", "C", "D")) {
+                assertTrue("com.acme.$name" in prefixes, "$name is lost; got $prefixes")
+            }
         } finally {
             root.deleteRecursively()
         }

@@ -169,7 +169,7 @@ internal object Recordability {
     }.getOrNull()
 
     /**
-     * Whether this class declares a method a JUnit or TestNG engine runs as a test. Only the
+     * Whether this class declares a method a JUnit, TestNG or Spock engine runs as a test. Only the
      * engines' own annotations count: a meta-annotation, another engine or unreadable bytes answer
      * false.
      */
@@ -203,6 +203,8 @@ internal object Recordability {
         "Lorg/junit/jupiter/params/ParameterizedTest;",
         "Lorg/junit/Test;",
         "Lorg/testng/annotations/Test;",
+        // Spock's compiler writes it on every feature method of a specification.
+        "Lorg/spockframework/runtime/model/FeatureMetadata;",
     )
 
     /** [annotationDigest] of a class that declares no annotation anywhere. */

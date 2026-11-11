@@ -988,6 +988,29 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   so any changed Kotlin source forces a full run. A change set of Java sources alone still narrows.
   The audit reports `smap-absent`.
 
+## Groovy
+
+- A changed `.groovy` file, or a `.java` file compiled with it, under `src/<set>/groovy/` names the
+  classes its path and its declarations name, as a Java source does: a method body edit runs the
+  tests that executed it. Closures, trait helpers and inner classes compile to classes named after
+  the class that declares them, so the same path covers them. A script names the class it compiles
+  to after its file.
+- Spock 2 specifications capture, and a change to the code they test narrows. An edited
+  specification runs everything (`startup-coverage`): Spock runs part of a specification's own code
+  before its features, where no test owns the coverage.
+- Groovy shapes that run everything:
+  - an edit that adds a closure or a class: groovyc marks the methods it generates with an
+    annotation, so the new class carries annotations the map never recorded
+    (`annotations-unrecorded`);
+  - a `static final` primitive or `String` changed: groovyc writes it as a compile-time constant,
+    which javac copies into Java callers (`constant-changed`);
+  - a file named after none of the classes it declares: its path names a class no test recorded
+    (`no-coverage-for-changed`);
+  - a global AST transform edited in another module: it runs in the compiler, never in a test
+    (`no-coverage-for-changed`);
+  - a Groovy file outside `src/<set>/groovy/`, a script read from resources at run time or a
+    `build.gradle` among them: no class is named for its path (`unmappable-paths`).
+
 ## CI
 
 A CI job starts with no map, so every run captures and none selects unless one is restored.
@@ -1732,6 +1755,11 @@ to:** a release gate, or a suite that depends on state a changed class leaves in
 built once and cached (Spring's test context, a `@WebMvcTest` slice), a static initialiser another
 test reads, reflection over a class, or a test that reads class files. That state is what the two
 windows exist for, and with them dropped such a test fails only on the full run.
+
+In Groovy, a method an extension module or a category adds that shadows another (a GDK method or
+one of your own) changes what a test's call does without the test executing the class that adds
+it: Groovy's metaclass registry only loads that class. Such a test reaches the change through the
+shared-JVM window alone, so optimistic mode leaves it out.
 
 What it misses, measured: replayed offline from the per-test rules the 0.1.0 benchmark recorded
 (plugin `30be0e8`, 161 narrowed changes in 22 projects, all generated edits; no real commit was

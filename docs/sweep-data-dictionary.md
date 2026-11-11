@@ -83,12 +83,11 @@ or "does not apply", never zero. Figures derived from these fields carry the cav
   `control` row. `--set` runs a named set's control into `results/control/<set>/`: `pool/v1`
   (demo, demo-kotlin) and `revert/v1` (spring-framework's spring-beans) under the same plant,
   where every family must report a miss on some project (pool/v1's fixtures ask body and its own
-  four families; `--corpus` asks aliased, constant, renamed and schema on moshi and okhttp,
-  drawing only those with `run.py --families`). A family with no row that narrowed and induced a
+  families but `groovy-body`; `--corpus` asks aliased, constant, renamed, schema and `groovy-body`
+  on moshi, okhttp and grails-core, drawing only those with `run.py --families`). A family with no row that narrowed and induced a
   failure cannot show a miss: it passes as UNCONTROLLED, printed with its reason, only when
   `controls.UNCONTROLLED` declares it (`renamed`, `schema`), and fails otherwise;
-  `forcing/v1` (demo, demo-kotlin; `--corpus`: ktlint for `dependency-revert`, grails-core for
-  `groovy-body`) under `planted_no_force()`, which reads every forcing family's paths as unread,
+  `forcing/v1` (demo, demo-kotlin; `--corpus`: ktlint for `dependency-revert`) under `planted_no_force()`, which reads every forcing family's paths as unread,
   and with `NO_FORCE_RULES` (the classpath-files and environment refusals that force those rows
   behind the path rule) off, where every family's row must narrow as the harness detects it, a
   family a test reads the file of (`READ_BY_A_TEST`) must report a miss, and the families only

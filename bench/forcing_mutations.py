@@ -12,8 +12,6 @@ alone decide it. Each row checks that the forcing still holds.
                        lines of a build script, through the revert set's patches. An artifact that
                        does not resolve after it is a counted rejection: this family edits
                        dependency declarations, unlike the revert set
-    groovy-body        an `IllegalStateException` thrown at the entry of a Groovy method under the
-                       project's source roots
 
 A family stops drawing after `ROWS_PER_FAMILY` rows a project, whatever they showed: the answer is
 fixed by the path, so a second row of the same family buys a suite run and no information. The set
@@ -23,8 +21,7 @@ With a narrowing flag in the project's `flags`, its rows are a population of the
 
 WHY A FILE OF ITS OWN. `grammar_digest` hashes the default grammar's files; adding these generators
 to them would move the default set's digest and restart every default results file. This file is
-digested with `forcing/v1` only, beside the three it reuses (`pool_mutations.py`, `revert.py` and
-`census.py`).
+digested with `forcing/v1` only, beside the two it reuses (`revert.py` and `census.py`).
 """
 
 import glob
@@ -33,20 +30,15 @@ import os
 import re
 
 import census
-import pool_mutations
 import revert
 
 FORCING_SET = "forcing/v1"
 
-FAMILIES = ("resource-value", "services", "build-script", "dependency-revert", "groovy-body")
+FAMILIES = ("resource-value", "services", "build-script", "dependency-revert")
 
 # ROWS A FAMILY DRAWS A PROJECT. One, since the path decides the outcome; two once each force kind
 # also has its own cap on suite runs.
 ROWS_PER_FAMILY = 1
-
-# The projects a sweep of this set runs on beside the reduced arm: the one whose measured root is
-# Groovy, for `groovy-body`.
-GROOVY_PROJECTS = ("grails-core",)
 
 # Plugin properties that let a forcing path narrow. With one of them on, a narrowed row is what the
 # flag is for, not a finding.
@@ -205,34 +197,6 @@ def build_script(path, index=0):
     return "systemProperty"
 
 
-# ---------------------------------------------------------------------------------- groovy-body
-
-def _groovy_methods(text):
-    """Groovy methods with a body whose `{` ends the declaration's line, as the Java grammar reads
-    them: typed or `def`, indented as members are."""
-    code = pool_mutations._code(text)
-    return [m for m in pool_mutations.JAVA_METHOD.finditer(text)
-            if code[m.start("name")] != " " and m.group("type") != "record"
-            and m.group("type") not in pool_mutations._JAVA_NOT_A_TYPE
-            and m.group("name") not in pool_mutations._JAVA_NOT_A_TYPE]
-
-
-def groovy_methods_in(path):
-    return len(_groovy_methods(_read(path)))
-
-
-def groovy_body(path, index=0):
-    """Throws at the entry of the index-th Groovy method, in `throw-entry`'s braced form."""
-    text = _read(path)
-    matches = _groovy_methods(text)
-    if index >= len(matches):
-        return None
-    match = matches[index]
-    throw = f'throw new IllegalStateException("{SENTINEL}")'
-    _write(path, pool_mutations._entry(text, match, ("if (true) {", "    " + throw, "}")))
-    return match.group("name")
-
-
 # ---------------------------------------------------------------------------- dependency-revert
 
 # A changed line of a build script that only moves a version: a `version` property or assignment,
@@ -352,10 +316,6 @@ def mutation_targets(checkout, project):
     script = build_script_of(checkout, project)
     if script:
         targets.append((script, "build-script", 0))
-    roots = [root.strip("/") for root in project.get("sources") or [] if root.strip("/")]
-    for relative in _files(checkout, roots, ["*.groovy"]):
-        targets += [(relative, "groovy-body", i)
-                    for i in range(groovy_methods_in(os.path.join(checkout, relative)))]
     return targets
 
 
@@ -377,7 +337,7 @@ def draw_order(targets, seed):
 
 
 GENERATORS = {"resource-value": resource_value, "services": services,
-              "build-script": build_script, "groovy-body": groovy_body}
+              "build-script": build_script}
 
 
 def apply(checkout, relative, kind, index):

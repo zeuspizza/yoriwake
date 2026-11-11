@@ -189,8 +189,7 @@ def _forcing(**overrides):
     rows = {"resource-value": _row("resource-value", missed=["p.SettingsTest::t"]),
             "services": _row("services", missed=["p.ServicesTest::t"]),
             "build-script": _row("build-script"),
-            "dependency-revert": _row("dependency-revert"),
-            "groovy-body": _row("groovy-body", missed=["p.G::t"])}
+            "dependency-revert": _row("dependency-revert")}
     rows.update(overrides)
     return {"demo": _file(*(r for r in rows.values() if r is not None))}
 
@@ -236,6 +235,8 @@ def case_each_pool_family_has_one_leg():
     corpus = controls.CORPUS_CONTROLS[controls.run.POOL_SHAPES]["families"]
     if sorted(fixture + corpus) != sorted(controls.POOL_FAMILIES):
         failures += fail(f"the pool legs ask {sorted(fixture + corpus)}, not every family once")
+    if "groovy-body" not in corpus:
+        failures += fail("groovy-body is asked on the fixtures, none of which has a Groovy source")
     on_fixtures = {"demo": _file(*(_row(f, missed=["p.T::t"]) for f in fixture))}
     if controls.set_failures(controls.run.POOL_SHAPES, on_fixtures):
         failures += fail("the fixture leg asked for a family only the corpus leg holds")
@@ -255,8 +256,10 @@ def case_each_pool_family_has_one_leg():
     if said:
         failures += fail(f"the corpus leg asked for a family the fixture leg asks: {said}")
     leg = controls.CORPUS_CONTROLS[controls.run.POOL_SHAPES]
-    if set(leg["projects"]) != {"moshi", "okhttp"} or leg["plants"] != (controls.PLANTED_MISS,):
-        failures += fail("the pool corpus leg is not moshi and okhttp under the planted miss")
+    if set(leg["projects"]) != {"moshi", "okhttp", "grails-core"} or \
+            leg["plants"] != (controls.PLANTED_MISS,):
+        failures += fail("the pool corpus leg is not moshi, okhttp and grails-core under the "
+                         "planted miss")
     refused = {**on_fixtures, "demo-kotlin": _file(_row(
         "override-add", outcome="full-run", full_run_kind="daemon-refused"))}
     notes = controls.set_notes(controls.run.POOL_SHAPES, refused)
@@ -276,7 +279,8 @@ def case_a_family_with_no_miss_possible_row_is_uncontrolled_only_by_name():
                              _row("constant", missed=["p.T::t"]),
                              _row("renamed", outcome="full-run", full_run_kind="startup-coverage",
                                   induced=["p.T::t"]),
-                             _row("schema"))}
+                             _row("schema")),
+              "grails-core": _file(_row("groovy-body", missed=["p.T::t"]))}
     said = controls.set_failures(controls.run.POOL_SHAPES, forced, corpus=True)
     if said:
         failures += fail(f"declared uncontrolled families with no row able to miss failed: {said}")
@@ -310,20 +314,23 @@ def case_each_forcing_family_has_one_leg():
     if sorted(fixture + corpus) != sorted(controls.forcing_mutations.FAMILIES):
         failures += fail(f"the forcing legs control {sorted(fixture + corpus)}, not every family "
                          f"once")
-    on_fixtures = _forcing(**{"dependency-revert": None, "groovy-body": None})
+    on_fixtures = _forcing(**{"dependency-revert": None})
     if controls.set_failures(controls.run.FORCING_SET, on_fixtures):
         failures += fail("the fixture leg asked for a family only the corpus leg holds")
     if not controls.set_failures(controls.run.FORCING_SET, on_fixtures, corpus=True):
-        failures += fail("the corpus leg passed without a dependency revert or a Groovy row")
+        failures += fail("the corpus leg passed without a dependency revert")
     on_corpus = {"ktlint": _file(_row("dependency-revert"),
-                                 _row("resource-value", outcome="full-run")),
-                 "grails-core": _file(_row("groovy-body", missed=["p.G::t"]))}
+                                 _row("resource-value", outcome="full-run"))}
     said = controls.set_failures(controls.run.FORCING_SET, on_corpus, corpus=True)
     if said:
         failures += fail(f"the corpus leg asked for a family the fixture leg controls: {said}")
-    if set(controls.CORPUS_CONTROLS[controls.run.FORCING_SET]["projects"]) != {"ktlint",
-                                                                               "grails-core"}:
-        failures += fail("the corpus leg does not run on ktlint and grails-core")
+    if set(controls.CORPUS_CONTROLS[controls.run.FORCING_SET]["projects"]) != {"ktlint"}:
+        failures += fail("the corpus leg does not run on ktlint")
+    # A Groovy method body narrows, so it is a pool/v1 family asked for a miss, not a forcing one.
+    if "groovy-body" in controls.FORCING_CORPUS_FAMILIES or "groovy-body" in controls.NO_FORCE_PATHS:
+        failures += fail("groovy-body is still controlled as a forcing family")
+    if re.search(controls.planted_no_force()[2].split('"""')[1], "src/main/groovy/dev/G.groovy"):
+        failures += fail("the no-force plant reads a Groovy source as unread")
     if controls.CORPUS_CONTROLS[controls.run.FORCING_SET]["plants"] != \
             controls.SET_CONTROLS[controls.run.FORCING_SET]["plants"]:
         failures += fail("the corpus leg is built with other plants than the fixture leg")
@@ -393,7 +400,6 @@ def case_the_no_force_plant_covers_each_forcing_family():
     samples["dependency-revert"] = ["gradle/libs.versions.toml", "build.gradle.kts",
                                     "settings.gradle", "build-logic/src/main/kotlin/a.gradle.kts",
                                     "gradle.properties"]
-    samples["groovy-body"] = ["src/main/groovy/dev/G.groovy"]
     for family in controls.forcing_mutations.FAMILIES:
         if family not in samples:
             failures += fail(f"no sample path of {family} to check its plant against")
