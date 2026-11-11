@@ -90,6 +90,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
     private final Set<String> missedDirectories = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Classes a stack trace element named so far, so a trace logged again costs no lock. */
     private final Set<String> stackSeen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Set when a stack trace's failure could not even be recorded; the next drain records it. */
+    private volatile boolean stacksLost;
     /** The trace each thread last recorded, so the same trace read again is not walked again. */
     private final ThreadLocal<Object> lastTrace = new ThreadLocal<>();
 
@@ -205,6 +207,9 @@ public final class TouchRecorder implements CaptureSession.Touches {
             }
             pendingMisses.clear();
             answered.clear();
+            if (stacksLost) {
+                pending.add(new String[] {AgentContract.TOUCH_STACK_ALL, "a stack trace could not be recorded"});
+            }
             List<String[]> drained = pending;
             pending = new ArrayList<>();
             return drained;
@@ -528,7 +533,12 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 touch(AgentContract.TOUCH_STACK_ALL, "a line number was read from a " + value.getClass().getName());
             }
         } catch (Throwable t) {
-            touch(AgentContract.TOUCH_STACK_ALL, "a stack trace could not be recorded: " + t);
+            try {
+                touch(AgentContract.TOUCH_STACK_ALL, "a stack trace could not be recorded: " + t);
+            } catch (Throwable lost) {
+                // Nothing may reach the JDK method: the next drain records it instead.
+                stacksLost = true;
+            }
         } finally {
             inside.remove();
         }

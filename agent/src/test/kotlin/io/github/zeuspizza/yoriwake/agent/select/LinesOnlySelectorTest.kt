@@ -144,6 +144,18 @@ class LinesOnlySelectorTest {
     }
 
     @Test
+    fun `optimistic mode opens no line window a changed class's would not`() {
+        // Optimistic drops the changed class's own window, so only the covering test runs with the flag off.
+        val map = map(
+            listOf("A" to "com.acme.Beta", "B" to "com.acme.Other", "C" to "com.acme.Other"),
+            firstTouches = listOf(1 to "com.acme.Beta"),
+            debug = listOf(2 to "com.acme.Beta"),
+        )
+        ran(Selector.decide(map, ChangeSet.of(listOf("com.acme.Beta"), emptyList()), emptyList(), Strictness.OPTIMISTIC), "A")
+        ran(Selector.decide(map, lines("com.acme.Beta"), emptyList(), Strictness.OPTIMISTIC))
+    }
+
+    @Test
     fun `a map without debug touches judges the class as changed`() {
         val map = map(listOf("A" to "com.acme.Beta", "B" to "com.acme.Other"), debug = null)
         ran(Selector.decide(map, lines("com.acme.Beta"), emptyList()), "A")
@@ -169,8 +181,8 @@ class LinesOnlySelectorTest {
     }
 
     /**
-     * Never wider: for random maps and touches, a class judged line-only selects a subset of what the
-     * same class selects when changed, and never runs everything where that narrows.
+     * Never wider: for random maps, touches and strictness, a class judged line-only selects a subset
+     * of what the same class selects when changed, and never runs everything where that narrows.
      */
     @Test
     fun `line-only selection is never wider than the changed class's`() {
@@ -187,13 +199,14 @@ class LinesOnlySelectorTest {
                 recorded = random.nextBoolean(),
                 startup = if (random.nextInt(4) == 0) "com.acme.Beta" else null,
             )
-            val off = Selector.decide(map, ChangeSet.of(listOf("com.acme.Beta"), emptyList()), emptyList())
-            val on = Selector.decide(map, lines("com.acme.Beta"), emptyList())
+            val strictness = Strictness.values()[random.nextInt(Strictness.values().size)]
+            val off = Selector.decide(map, ChangeSet.of(listOf("com.acme.Beta"), emptyList()), emptyList(), strictness)
+            val on = Selector.decide(map, lines("com.acme.Beta"), emptyList(), strictness)
             val all = names.map(::id)
-            assertFalse(on.isFullRun && !off.isFullRun, "round $round: flag-on ran everything where flag-off narrowed")
+            assertFalse(on.isFullRun && !off.isFullRun, "round $round ($strictness): flag-on ran everything where flag-off narrowed")
             if (!off.isFullRun) {
                 val wider = all.filter { on.includes(it) && !off.includes(it) }
-                assertTrue(wider.isEmpty(), "round $round: flag-on also ran $wider")
+                assertTrue(wider.isEmpty(), "round $round ($strictness): flag-on also ran $wider")
             }
         }
     }

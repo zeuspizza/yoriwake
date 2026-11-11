@@ -489,7 +489,7 @@ public final class Selector {
             }
         }
         if (!linesOnly.isEmpty()) {
-            for (String id : linesObserved(map, tests, linesOnly, change, knownTestIds)) {
+            for (String id : linesObserved(map, tests, linesOnly, change, knownTestIds, loosened)) {
                 if (selected.add(id)) {
                     sharedJvmOnly.add(id);
                 }
@@ -608,7 +608,7 @@ public final class Selector {
                     change.changedJars(), change.missDirectories());
         }
         if (!linesOnly.isEmpty()) {
-            for (String id : linesObserved(map, tests, linesOnly, change, knownTestIds)) {
+            for (String id : linesObserved(map, tests, linesOnly, change, knownTestIds, EnumSet.noneOf(Rule.class))) {
                 add(byTest, id, map.positionsOf(id).isEmpty() ? Rule.SHARES_JVM_UNPOSITIONED : Rule.SHARES_JVM_LINES_OBSERVED);
             }
         }
@@ -810,14 +810,15 @@ public final class Selector {
      * the changed class itself would not run: the window opens no earlier than the one a changed
      * class opens, since nothing shows a class's lines before it arrived. In a JVM whose stack traces
      * were not recorded, a test runs as for a changed class: by that window, its coverage or its own
-     * class. A test the map holds no position for runs. Never loosened.
+     * class. A test the map holds no position for runs. The arrival window is loosened as a changed
+     * class's is, so it never opens where that one would not.
      */
     private static Set<String> linesObserved(MapReader.Result map, List<MapReader.Entry> tests,
-            Collection<String> lines, ChangeSet change, Set<String> knownTestIds) {
+            Collection<String> lines, ChangeSet change, Set<String> knownTestIds, Set<Rule> loosened) {
         MapReader.JarTouches debug = map.debugTouches();
         Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), lines, knownTestIds);
         Map<String, Integer> arrived = firstTouchWindows(map, tests, lines, Collections.<String>emptySet(), exempt,
-                EnumSet.noneOf(Rule.class));
+                loosened);
         Map<String, Integer> seen = new HashMap<>();
         for (MapReader.FirstTouch touch : debug.touches()) {
             String name = touch.className();

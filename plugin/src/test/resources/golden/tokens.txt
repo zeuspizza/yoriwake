@@ -76,6 +76,7 @@ line-only-kept	class-unmatched
 line-only-kept	class-vanished
 line-only-kept	debug-touch-absent
 line-only-kept	line-digests-absent
+line-only-kept	out-of-scope
 line-only-kept	output-file-changed
 line-only-kept	path-deleted
 line-only-kept	unobserved-jvms

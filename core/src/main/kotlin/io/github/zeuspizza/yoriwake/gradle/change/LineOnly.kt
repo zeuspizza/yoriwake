@@ -38,6 +38,9 @@ internal enum class LineOnlyKept(val token: String) {
 
     /** The task runs code in JVMs the agent cannot observe, which may read any line. */
     UNOBSERVED_JVMS("unobserved-jvms"),
+
+    /** A class it compiles to is outside the scope the map was captured under, which records no touch of it. */
+    OUT_OF_SCOPE("out-of-scope"),
 }
 
 /** What the line-only rule reads, built by each selecting call site; absent with the flag off. */
@@ -51,6 +54,8 @@ internal class LineOnlyRule(
     val prefixesByPath: Map<String, Set<String>>,
     /** The build-produced classpath files that moved since the capture, named; null when none did. */
     val movedOutput: String?,
+    /** Whether the map's capture recorded touches of a class: none outside its instrumentation scope. */
+    val inScope: (String) -> Boolean = { true },
 ) {
     companion object {
         fun of(mapDir: File, rootDir: File, change: ChangeDetection.Change, classpathFiles: ClasspathFilesVerdict) =
@@ -66,7 +71,16 @@ internal class LineOnlyRule(
                     is ClasspathFilesVerdict.DependenciesMoved -> classpathFiles.moved.named()
                     is ClasspathFilesVerdict.Unrecorded -> classpathFiles.why
                 },
+                recordedScope(mapDir),
             )
+
+        /** As the decode filters touches: no scope file means every class. */
+        private fun recordedScope(mapDir: File): (String) -> Boolean {
+            val scope = File(mapDir, io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SCOPE_FILE)
+            val prefixes = runCatching { if (scope.isFile) scope.readLines().map(String::trim).filter(String::isNotEmpty) else emptyList() }
+                .getOrNull() ?: return { false }
+            return { name -> prefixes.isEmpty() || prefixes.any(name::startsWith) }
+        }
     }
 }
 
@@ -128,7 +142,7 @@ internal fun classifyLineOnly(
             kept[path] = Kept(LineOnlyKept.PATH_DELETED, null)
             continue
         }
-        judge(own.filter(asked::contains), artifacts, current, recorded)?.let { kept[path] = it }
+        judge(own.filter(asked::contains), artifacts, current, recorded, rule.inScope)?.let { kept[path] = it }
     }
     val lineOnlyPaths = paths.keys.filter { it !in kept }
     val leaving = lineOnlyPaths.flatMapTo(HashSet()) { paths.getValue(it).filter(asked::contains) } -
@@ -142,14 +156,19 @@ internal fun classifyLineOnly(
     if (leaving.isNotEmpty() && unaccounted.isNotEmpty()) {
         val detail = unaccounted.sorted().first()
         lineOnlyPaths.forEach { kept[it] = Kept(LineOnlyKept.CLASS_UNMATCHED, detail) }
-        return LineOnly(emptyList(), emptySet(), lineOnlyBytes(digest, current, recorded), kept)
+        return LineOnly(emptyList(), emptySet(), lineOnlyBytes(digest, current, recorded, rule.inScope), kept)
     }
-    return LineOnly(lineOnlyPaths, leaving, lineOnlyBytes(digest, current, recorded), kept)
+    return LineOnly(lineOnlyPaths, leaving, lineOnlyBytes(digest, current, recorded, rule.inScope), kept)
 }
 
 /** Of the classes whose bytes moved with no source change, those that moved in line information only. */
-private fun lineOnlyBytes(digest: DigestWidening, current: Map<String, String>, recorded: Map<String, String>): Set<String> =
-    digest.added.filterTo(sortedSetOf()) { name -> current[name] != null && current[name] == recorded[name] }
+private fun lineOnlyBytes(
+    digest: DigestWidening,
+    current: Map<String, String>,
+    recorded: Map<String, String>,
+    inScope: (String) -> Boolean,
+): Set<String> =
+    digest.added.filterTo(sortedSetOf()) { name -> inScope(name) && current[name] != null && current[name] == recorded[name] }
 
 /** Why these prefixes of one path are not line-only, or null when they are. */
 private fun judge(
@@ -157,6 +176,7 @@ private fun judge(
     artifacts: TaskArtifacts,
     current: Map<String, String>,
     recorded: Map<String, String>,
+    inScope: (String) -> Boolean,
 ): Kept? {
     for (prefix in prefixes.sorted()) {
         val classes = artifacts.classesFor(prefix)
@@ -166,6 +186,8 @@ private fun judge(
         // the map may hold them under, so every class the source compiles to is judged.
         val names = bytes.keys.toSortedSet() + current.keys.filter { compiledFrom(it, prefix) }
         for (name in names) {
+            // No touch of it was recorded, so no window could date who saw its lines.
+            if (!inScope(name)) return Kept(LineOnlyKept.OUT_OF_SCOPE, name)
             val now = current[name] ?: bytes[name]?.let { Recordability.lineDigest(it).value }
             if (now == null || recorded[name] != now) return Kept(LineOnlyKept.CLASS_UNMATCHED, name)
         }

@@ -1477,7 +1477,9 @@ class arrived in that JVM. Each test so selected names the rule `shares-jvm-line
 `decisions.tsv`, and `decisions.tsv` notes how many classes were line-only as `lines-only`. In a JVM
 whose stack traces were not recorded, the class runs what a changed class would there. A class
 whose bytes moved with no source change, in line information only (a class that inlined a
-line-only Kotlin function), is treated the same way. Optimistic mode does not loosen this window.
+line-only Kotlin function), is treated the same way. Optimistic mode loosens this window as it
+does a changed class's: it opens only where the unobserved window does, so it never runs a test the
+same edit, judged changed, would leave out.
 
 A changed source stays changed when any of this cannot be established, and `explain.json` names
 the reason for each path in `keptChanged`, beside `linesOnly` and `linesOnlyPaths`:
@@ -1493,6 +1495,8 @@ the reason for each path in `keptChanged`, beside `linesOnly` and `linesOnlyPath
   as an annotation processor can from a comment. A build that writes a timestamp there
   (`build-info.properties`) never narrows.
 - `unobserved-jvms`: the task runs code in JVMs the agent cannot see.
+- `out-of-scope`: a class it compiles to is outside the packages the map was recorded for, so no
+  touch of it was recorded.
 
 The stack hooks are checked against each JDK: every method and field of `java.base`,
 `java.management`, `jdk.management` and `jdk.jfr` whose descriptor names `StackTraceElement` is

@@ -55,8 +55,8 @@ class LineOnlyClassifyTest {
         return writer.toByteArray()
     }
 
-    /** The module's output, written now, and its facts. */
-    private fun module(vararg classes: Pair<String, ByteArray>): ClasspathFacts {
+    /** The module's output, written now, and its facts, with [extra] also on the classpath. */
+    private fun module(vararg classes: Pair<String, ByteArray>, extra: List<File> = emptyList()): ClasspathFacts {
         val project = ProjectBuilder.builder().withProjectDir(dir).build()
         val output = File(dir, "core/build/classes").also { it.deleteRecursively(); it.mkdirs() }
         classes.forEach { (name, bytes) ->
@@ -71,7 +71,7 @@ class LineOnlyClassifyTest {
             compileTime = project.files(),
             ownPath = ":core",
             testOutputs = project.files(),
-            classpath = project.files(output),
+            classpath = project.files(output, *extra.toTypedArray()),
         )
     }
 
@@ -87,13 +87,15 @@ class LineOnlyClassifyTest {
         movedOutput: String? = null,
         recordedBytes: Map<String, String>? = bytes(captured),
         recordedLines: Map<String, String>? = lines(captured),
+        extra: List<File> = emptyList(),
+        inScope: (String) -> Boolean = { true },
     ): InlineWidening {
-        val facts = module(*now.toList().toTypedArray())
+        val facts = module(*now.toList().toTypedArray(), extra = extra)
         return widenForInlining(
             byPath.values.flatten().distinct(), facts, inlinableSourceChanged = false,
             digestRule = DigestRule(recordedBytes, bytesAreFresh = true),
             recordedAnnotations = captured.mapValues { Recordability.annotationDigest(it.value).value!! },
-            lineOnly = LineOnlyRule(dir, recordedLines, debugTouches, byPath, movedOutput),
+            lineOnly = LineOnlyRule(dir, recordedLines, debugTouches, byPath, movedOutput, inScope),
         )
     }
 
@@ -193,6 +195,18 @@ class LineOnlyClassifyTest {
     @Test
     fun `a map without debug touches keeps the file changed`() {
         assertEquals(LineOnlyKept.DEBUG_TOUCH_ABSENT, widen(capturedBeta, movedBeta, debugTouches = false).kept())
+    }
+
+    @Test
+    fun `a task that runs code in JVMs the agent cannot see keeps every path`() {
+        val testKit = File(dir, "gradle-testkit/classes").apply { mkdirs() }
+        assertEquals(LineOnlyKept.UNOBSERVED_JVMS, widen(capturedBeta, movedBeta, extra = listOf(testKit)).kept())
+    }
+
+    @Test
+    fun `a class outside the scope the map was captured under keeps its file changed`() {
+        // The capture recorded no touch of it, so nothing dates who saw its lines.
+        assertEquals(LineOnlyKept.OUT_OF_SCOPE, widen(capturedBeta, movedBeta, inScope = { !it.startsWith("com.acme") }).kept())
     }
 
     @Test

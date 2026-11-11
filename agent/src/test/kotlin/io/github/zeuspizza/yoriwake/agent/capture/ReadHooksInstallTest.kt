@@ -39,6 +39,7 @@ class ReadHooksInstallTest {
         val why = "this JVM cannot retransform classes"
         assertEquals(listOf(why, why, why), listOf(installed.reads, installed.lookups, installed.environment))
         assertEquals(why, installed.entries, "without the entry hooks no library jar touch can be vouched for")
+        assertEquals(why, installed.stacks, "without the stack hooks no class's lines can be vouched unseen")
         assertFalse(installed.resolving)
         assertFalse("addTransformer" in calls)
     }
@@ -53,6 +54,7 @@ class ReadHooksInstallTest {
         }
         assertEquals(installed.reads, installed.lookups)
         assertEquals(installed.reads, installed.environment)
+        assertEquals(installed.reads, installed.stacks)
         assertFalse(installed.resolving)
         assertTrue("redefineModule" in calls)
         assertFalse("addTransformer" in calls)
