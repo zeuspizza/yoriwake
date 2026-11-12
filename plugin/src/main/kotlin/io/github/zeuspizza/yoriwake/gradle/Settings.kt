@@ -51,6 +51,10 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
     val mode: Strictness get() = parseMode(modeValue, modePassed)
     val disabled: Boolean = parseFlag(DISABLED, lookup(DISABLED))
     val isolatedCapture: Boolean = parseFlag(ISOLATED_CAPTURE, lookup(ISOLATED_CAPTURE))
+    /** Null when not passed, so the build's own `maxParallelForks` stands. */
+    val isolatedCaptureForks: IsolatedCaptureForks? = lookup(ISOLATED_CAPTURE_FORKS)?.let {
+        IsolatedCaptureForks.parse(it) ?: throw InvalidUserDataException(IsolatedCaptureForks.malformed("-P", it))
+    }
     /** Null when not passed, so the build's `recordSequentially` answers. */
     val recordSequentially: Boolean? = lookup(RECORD_SEQUENTIALLY)?.let { parseFlag(RECORD_SEQUENTIALLY, it) }
     /** A file of trusted map digests; while set, a map narrows only when it names the map's. */
@@ -83,6 +87,7 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
         const val MODE = SettingNames.MODE
         const val DISABLED = "yoriwake.disabled"
         const val ISOLATED_CAPTURE = SettingNames.ISOLATED_CAPTURE
+        const val ISOLATED_CAPTURE_FORKS = SettingNames.ISOLATED_CAPTURE_FORKS
         const val RECORD_SEQUENTIALLY = SettingNames.RECORD_SEQUENTIALLY
         const val ALWAYS_RUN = "yoriwake.alwaysRun"
         const val NARROW_PLAIN_RUNNERS = "yoriwake.narrowPlainRunners"

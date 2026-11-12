@@ -737,8 +737,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
     /**
      * With `-Pyoriwake.isolatedCapture`, gives each test class a JVM of its own on a run that records
      * the map, so its coverage and first touches are its own work. The host's `maxParallelForks`
-     * stands. A selecting run never gets it, even one that ends up capturing, and neither does a
-     * run whose capture is off, so both run the host's tests as the host configured them.
+     * stands unless `-Pyoriwake.isolatedCaptureForks` raises it. A selecting run never gets either,
+     * even one that ends up capturing, and neither does a run whose capture is off, so both run the
+     * host's tests as the host configured them.
      *
      * At execution time because the in-JVM parallelism refusal, which switches capture off, is only
      * decided then; registered before [refuseInJvmParallelism] so it runs after it.
@@ -759,12 +760,15 @@ internal class TestTaskWiring(internal val settings: Settings) {
         if (!settings.isolatedCapture || runPlan.selecting) {
             return
         }
+        val forks = settings.isolatedCaptureForks
         test.doFirst {
             // Emptied by a refusal: nothing is recorded, so the host's forks stand.
             if (test.systemProperties[RECORDS_DIR_PROPERTY]?.toString().isNullOrEmpty()) {
                 return@doFirst
             }
             test.forkEvery = 1
+            // `cores` is resolved here, so a configuration-cache entry never carries one machine's count.
+            forks?.let { test.maxParallelForks = maxOf(test.maxParallelForks, it.resolve()) }
             test.logger.lifecycle(
                 "[yoriwake] ${test.path}: recording with a fresh test JVM per test class " +
                     "(-P${Settings.ISOLATED_CAPTURE}), up to ${test.maxParallelForks} at a time"

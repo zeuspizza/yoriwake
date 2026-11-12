@@ -147,6 +147,62 @@ class ForkingFunctionalTest {
     }
 
     @Test
+    fun `isolated capture takes the forks setting`(@TempDir dir: File) {
+        val project = committed(dir, "<forkCount>1</forkCount>")
+
+        val output = recorded(project, "-Dyoriwake.isolatedCapture", "-Dyoriwake.isolatedCaptureForks=3", "-X")
+
+        assertContains(output, "(f) forkCount = 3")
+        assertContains(output, "up to 3 at a time")
+    }
+
+    @Test
+    fun `a selecting run keeps the build's forkCount under the forks setting`(@TempDir dir: File) {
+        val project = committed(dir, "<forkCount>1</forkCount>")
+        recorded(project, "-Dyoriwake.isolatedCapture")
+        File(project, "lib/src/main/java/dev/demo/lib/Counter.java").edit { it.replace("n * 2", "n + n") }
+        File(project, ".gitignore").writeText("target/\n")
+        git(project, "add", ".gitignore")
+        git(project, "commit", "-q", "-am", "an edit coverage can learn from")
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+            "-Dyoriwake.isolatedCapture", "-Dyoriwake.isolatedCaptureForks=3", "-X",
+        ).succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) selecting against ")
+        assertContains(output, "(f) forkCount = 1")
+        assertFalse("up to 3 at a time" in output, output)
+    }
+
+    @Test
+    fun `a run that keeps its in-JVM parallelism keeps the build's forkCount under the forks setting`(@TempDir dir: File) {
+        val project = committed(
+            dir,
+            "<forkCount>1</forkCount><properties><configurationParameters>junit.jupiter.execution.parallel.enabled=true" +
+                "</configurationParameters></properties>",
+        )
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib", "-Dyoriwake.observe", "-Dyoriwake.recordSequentially",
+            "-Dyoriwake.isolatedCapture", "-Dyoriwake.isolatedCaptureForks=3", "-X",
+        ).succeeded().output
+
+        assertContains(output, "(f) forkCount = 1")
+        assertFalse("up to 3 at a time" in output, output)
+    }
+
+    @Test
+    fun `a forks value that is not a count fails the build and names the setting`(@TempDir dir: File) {
+        val project = committed(dir)
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.isolatedCapture", "-Dyoriwake.isolatedCaptureForks=two")
+
+        assertTrue(result.exitCode != 0, result.output)
+        assertContains(result.output, "-Dyoriwake.isolatedCaptureForks=two")
+    }
+
+    @Test
     fun `a selecting run that falls back over an isolated map leaves it alone and names Maven's flags`(@TempDir dir: File) {
         val project = committed(dir)
         recorded(project, "-Dyoriwake.isolatedCapture")

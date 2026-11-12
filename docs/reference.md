@@ -1224,8 +1224,17 @@ selecting builds run your tests exactly as they did.
 - **It is meant for a nightly or main-branch job** that records the map other builds restore, not
   for every build. Recording takes several times longer: every test class pays for a JVM start,
   instrumentation against a cold JIT, and any setup a shared JVM would have reused.
-- **Raise `maxParallelForks` for that job** if your build lets you. The flag keeps whatever the
-  task sets and starts that many JVMs at a time. Measured on GitHub's 4-core `ubuntu-24.04`
+- **Raise the forks for that job** with `-Pyoriwake.isolatedCaptureForks=cores` (or a count;
+  `-Dyoriwake.isolatedCaptureForks` on Maven), where your tests tolerate parallel JVMs. Without it
+  the flag keeps whatever the task sets (`maxParallelForks`, Surefire's `forkCount`) and starts
+  that many JVMs at a time; with it, a run that records in isolation starts the larger of the two,
+  never fewer than the build's. That is a recording or observing run, and a selecting or
+  complement run that runs everything as a recording run from its start; a run that stays
+  selecting, or captures nothing, keeps the build's. It reaches every test task, or Surefire and
+  Failsafe execution, that the invocation records in isolation, so record tests that cannot run
+  concurrently in an invocation without it. Gradle also caps test JVMs at `--max-workers`, which
+  defaults to the machine's processors; Maven has no such cap, so under `-T` each module building
+  at the same time starts its own. Measured on GitHub's 4-core `ubuntu-24.04`
   runners at `6d15f47` (the plugin of 0.4.0), three recordings per arm of each project's test task:
 
   | Project | Shared JVM | Isolated, 1 fork | Isolated, 4 forks |
@@ -1236,8 +1245,7 @@ selecting builds run your tests exactly as they did.
 
   Four forks took 20 to 31% off the isolated recording, which stayed 3.5 to 34 times the shared
   one. The cost follows the number of test classes, each paying a JVM start, not the suite's own
-  length: the fastest shared suite here grew the most. Set `maxParallelForks` to the machine's
-  cores in the recording job only, where your tests tolerate parallel JVMs.
+  length: the fastest shared suite here grew the most.
 - **Only a recording run updates it.** A selecting run that falls back to a full run still runs
   every test, with your fork settings, but leaves a map holding any JVM recorded in isolation
   exactly as it is, and says so. Recording that run would replace the isolated records with
@@ -1828,7 +1836,8 @@ the Gradle plugin.
 - **Flags** are user properties with the Gradle names: `-Dyoriwake.select`, `-Dyoriwake.observe`,
   `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.mode` (command
   line only; see [Optimistic mode](#optimistic-mode)), `-Dyoriwake.trustedMaps`,
-  `-Dyoriwake.isolatedCapture`, `-Dyoriwake.recordSequentially`, the audit's
+  `-Dyoriwake.isolatedCapture`, `-Dyoriwake.isolatedCaptureForks=<N>` (or `cores`, with
+  `isolatedCapture` only), `-Dyoriwake.recordSequentially`, the audit's
   `-Dyoriwake.audit.measureToll` with its two timings, and `-Dyoriwake.alwaysRun=<glob>[,<glob>…]`
   for one run. The off switch is `-Dyoriwake.enabled=false`; Gradle's `yoriwake.disabled` is not
   read here.
@@ -1922,6 +1931,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.narrowDependencies` | Let a selecting run narrow a commit that only bumps library versions. Overrides the build's `narrowDependencies`; `=false` turns it off. See [Dependency bumps](#dependency-bumps). |
 | `yoriwake.narrowLineOnlyChanges` | Let a selecting run narrow an edit that changes only comments, blank lines or line breaks. Overrides the build's `narrowLineOnlyChanges`; `=false` turns it off. See [Line-only changes](#line-only-changes). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
+| `yoriwake.isolatedCaptureForks=<N>` | With `yoriwake.isolatedCapture`: run up to `<N>` test JVMs at a time, or the machine's processors for `cores`, while recording in isolation; never fewer than the build's own. Off by default, and does nothing without `isolatedCapture`. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. `-D` on Maven. |
 | `yoriwake.audit.instrumentedSeconds=<s>` | With `measureToll`: a full instrumented run's duration. `-D` on Maven. |

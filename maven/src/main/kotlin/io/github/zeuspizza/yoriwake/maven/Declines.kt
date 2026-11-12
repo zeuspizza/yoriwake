@@ -52,7 +52,7 @@ internal object Declines {
      * The JVMs `forkCount` asks for: a number, or a multiple of the processors with a `C`, which
      * Surefire rounds up to one unless the multiple is zero.
      */
-    private fun forks(value: String): Int? = if (value.endsWith("C", ignoreCase = true)) {
+    fun forks(value: String): Int? = if (value.endsWith("C", ignoreCase = true)) {
         value.dropLast(1).toDoubleOrNull()?.let { multiple ->
             val threads = multiple * Runtime.getRuntime().availableProcessors()
             if (threads > 0) maxOf(1, threads.toInt()) else 0

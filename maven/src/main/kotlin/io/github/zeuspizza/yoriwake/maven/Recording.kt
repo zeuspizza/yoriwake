@@ -86,6 +86,7 @@ internal class Recording(
     /** Each module's environment lists and whether it records one test at a time, read now for the same reason. */
     private val environments = session.projects.associate { it.id to Settings.environmentOf(it, session) }
     private val sequential = session.projects.associate { it.id to Settings.recordSequentiallyOf(it, session) }
+    private val captureForks = session.projects.associate { it.id to Settings.isolatedCaptureForksOf(it, session) }
 
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
@@ -278,6 +279,11 @@ internal class Recording(
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
+        // Only once the kind is known: a run that stays selecting or complementing keeps the build's forks,
+        // and so does one that keeps its in-JVM parallelism, which captures nothing.
+        if (isolated && keepsParallelism == null && (kind == RunPlan.Kind.RECORD || kind == RunPlan.Kind.OBSERVE)) {
+            captureForks[project.id]?.let { raiseForks(name, project, configuration, it.resolve()) }
+        }
         if (recordsSequentially) recordOneAtATime(name, mapDir, configuration, properties, inJvm)
         keepsParallelism?.let { keepParallelism(name, mapDir, parallelMarker, properties, it) }
         execution.configuration = configuration
@@ -381,6 +387,17 @@ internal class Recording(
             "junit:junit" in artifacts -> Audit.TaskFacts.JUNIT4
             else -> "JUnit 3 or plain test classes"
         }
+    }
+
+    /** `forkCount` up to [forks], never below what the POM or `-DforkCount` already asks for. */
+    private fun raiseForks(name: String, project: MavenProject, configuration: Xpp3Dom, forks: Int) {
+        val own = parameter(project, configuration, "forkCount", "forkCount")?.let(Declines::forks) ?: 1
+        val raised = maxOf(own, forks)
+        child(configuration, "forkCount").value = raised.toString()
+        log.info(
+            "[yoriwake] $name: recording with a fresh test JVM per test class (-D${SettingNames.ISOLATED_CAPTURE}), " +
+                "up to $raised at a time"
+        )
     }
 
     /** A Surefire or Failsafe parameter as this execution resolves it: its POM value, else its user property. */

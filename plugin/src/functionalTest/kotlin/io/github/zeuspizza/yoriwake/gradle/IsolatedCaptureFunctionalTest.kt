@@ -64,7 +64,7 @@ class IsolatedCaptureFunctionalTest : FunctionalTestSupport() {
         runner(dir, "test", "-Pyoriwake.isolatedCapture").build()
         changeBeta(dir)
 
-        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.isolatedCapture").build().output
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.isolatedCapture", "-Pyoriwake.isolatedCaptureForks=3").build().output
 
         assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
         assertEquals("every=0 parallel=2", forks(output))
@@ -75,7 +75,7 @@ class IsolatedCaptureFunctionalTest : FunctionalTestSupport() {
         sample(dir)
 
         // No map yet: the run refuses, runs everything, and captures.
-        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.isolatedCapture").build().output
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.isolatedCapture", "-Pyoriwake.isolatedCaptureForks=3").build().output
 
         assertContains(output, "running everything, so this run also captures")
         assertEquals("every=0 parallel=2", forks(output))
@@ -116,9 +116,9 @@ class IsolatedCaptureFunctionalTest : FunctionalTestSupport() {
         File(dir, "build.gradle.kts").appendText("\n// forces a full run\n")
     }
 
-    private fun selecting(dir: File): String {
+    private fun selecting(dir: File, vararg extra: String): String {
         File(dir, "build/test-results").deleteRecursively()
-        return runner(dir, "test", "-Pyoriwake.select").build().output
+        return runner(dir, "test", "-Pyoriwake.select", *extra).build().output
     }
 
     @Test
@@ -128,7 +128,7 @@ class IsolatedCaptureFunctionalTest : FunctionalTestSupport() {
         val recorded = mapFiles(dir)
         forceAFallback(dir)
 
-        val output = selecting(dir)
+        val output = selecting(dir, "-Pyoriwake.isolatedCaptureForks=3")
 
         assertEquals("full-run", decisionNotes(dir)["outcome"], output)
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
@@ -233,6 +233,84 @@ class IsolatedCaptureFunctionalTest : FunctionalTestSupport() {
 
         assertContains(output, "in-JVM parallel test execution is enabled")
         assertEquals("every=0 parallel=2", forks(output))
+    }
+
+    @Test
+    fun `an isolated recording run takes the forks setting`(@TempDir dir: File) {
+        sample(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.isolatedCapture", "-Pyoriwake.isolatedCaptureForks=3").build().output
+
+        assertEquals("every=1 parallel=3", forks(output))
+        assertContains(output, "up to 3 at a time")
+    }
+
+    @Test
+    fun `the forks setting never lowers the build's own`(@TempDir dir: File) {
+        sample(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.isolatedCapture", "-Pyoriwake.isolatedCaptureForks=1").build().output
+
+        assertEquals("every=1 parallel=2", forks(output))
+    }
+
+    @Test
+    fun `a complement with no record to read records with the forks setting`(@TempDir dir: File) {
+        sample(dir)
+
+        val output = runner(
+            dir, "test", "-Pyoriwake.complement", "-Pyoriwake.isolatedCapture", "-Pyoriwake.isolatedCaptureForks=3",
+        ).build().output
+
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
+        assertEquals("every=1 parallel=3", forks(output))
+    }
+
+    /**
+     * A map file's lines with each test JVM's id replaced by the test class it ran, sorted: the ids
+     * are a random run id plus a worker number, which more forks hand out in a different order. A
+     * coverage row's duration, its second column, is blanked: no two runs time a test alike.
+     */
+    private fun byClass(dir: File): Map<String, List<String>> {
+        val classOf = File(mapDir(dir), AgentContract.POSITIONS_FILE).readLines().filter(String::isNotBlank)
+            .map { it.split('\t') }.groupBy({ it[0] }, { it.last().substringBefore('#').substringBefore('(') })
+            .mapValues { (jvm, classes) -> classes.toSet().single().also { check(jvm.isNotEmpty()) } }
+        return listOf(
+            AgentContract.COVERAGE_FILE, AgentContract.FIRST_TOUCH_FILE, AgentContract.NAMED_TOUCH_FILE,
+            AgentContract.POSITIONS_FILE, AgentContract.JVM_MODE_FILE,
+        ).associateWith { name ->
+            File(mapDir(dir), name).readLines().filter(String::isNotBlank)
+                .map { line ->
+                    val cells = line.split('\t').map { classOf[it] ?: it }.toMutableList()
+                    if (name == AgentContract.COVERAGE_FILE) cells[1] = ""
+                    cells.joinToString("\t")
+                }.sorted()
+        }
+    }
+
+    @Test
+    fun `more forks record the same isolated map`(@TempDir dir: File) {
+        // One JVM at a time first, so the second recording runs both classes at once.
+        sample(dir, hostBuild().replace("maxParallelForks = 2", "maxParallelForks = 1"))
+        runner(dir, "test", "-Pyoriwake.isolatedCapture").build()
+        val sequential = byClass(dir)
+
+        val output = runner(dir, "test", "-Pyoriwake.isolatedCapture", "-Pyoriwake.isolatedCaptureForks=3", "--rerun-tasks")
+            .build().output
+
+        assertEquals("every=1 parallel=3", forks(output))
+        assertEquals(sequential, byClass(dir), "more forks recorded a different isolated map")
+    }
+
+    @Test
+    fun `a forks value that is not a count fails the build and names the setting`(@TempDir dir: File) {
+        sample(dir)
+
+        listOf("two", "0").forEach { value ->
+            val output = runner(dir, "test", "-Pyoriwake.isolatedCapture", "-Pyoriwake.isolatedCaptureForks=$value")
+                .buildAndFail().output
+            assertContains(output, "-Pyoriwake.isolatedCaptureForks=$value")
+        }
     }
 
     @Test

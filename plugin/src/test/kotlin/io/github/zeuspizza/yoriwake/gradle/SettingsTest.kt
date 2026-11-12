@@ -92,6 +92,19 @@ class SettingsTest {
     }
 
     @Test
+    fun `isolatedCaptureForks is a count or the machine's cores`() {
+        assertNull(settings().isolatedCaptureForks)
+        assertEquals(3, settings(Settings.ISOLATED_CAPTURE_FORKS to "3").isolatedCaptureForks?.resolve())
+        val cores = Runtime.getRuntime().availableProcessors()
+        assertEquals(cores, settings(Settings.ISOLATED_CAPTURE_FORKS to "cores").isolatedCaptureForks?.resolve())
+        assertEquals(cores, settings(Settings.ISOLATED_CAPTURE_FORKS to "CORES").isolatedCaptureForks?.resolve())
+        listOf("0", "-1", "two", "").forEach { value ->
+            val failure = assertFailsWith<InvalidUserDataException>(value) { settings(Settings.ISOLATED_CAPTURE_FORKS to value) }
+            assertContains(failure.message.orEmpty(), "-Pyoriwake.isolatedCaptureForks=$value")
+        }
+    }
+
+    @Test
     fun `alwaysRun is split on commas and blanks are dropped`() {
         assertEquals(listOf("a.B", "c.*"), settings(Settings.ALWAYS_RUN to " a.B, ,c.* ").alwaysRun)
     }
