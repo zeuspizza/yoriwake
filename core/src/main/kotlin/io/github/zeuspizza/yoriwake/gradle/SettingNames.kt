@@ -13,6 +13,7 @@ internal object SettingNames {
     const val MODE = "yoriwake.mode"
     const val TRUSTED_MAPS = "yoriwake.trustedMaps"
     const val ISOLATED_CAPTURE = "yoriwake.isolatedCapture"
+    const val ISOLATED_CAPTURE_FORKS = "yoriwake.isolatedCaptureForks"
     const val RECORD_SEQUENTIALLY = "yoriwake.recordSequentially"
     const val NARROW_DEPENDENCIES = "yoriwake.narrowDependencies"
     const val NARROW_LINE_ONLY_CHANGES = "yoriwake.narrowLineOnlyChanges"

@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.maven
 
 import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
+import io.github.zeuspizza.yoriwake.gradle.IsolatedCaptureForks
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
@@ -139,6 +140,17 @@ internal class Settings(
                 ?: moduleConfiguration(project, session)?.getChild("narrowLineOnlyChanges")?.value
                     ?.let { parseFlag("${project.artifactId}'s <narrowLineOnlyChanges>", it.trim()) }
                 ?: false
+
+        /**
+         * How many test JVMs [project]'s executions recording in isolation may start at a time:
+         * `-Dyoriwake.isolatedCaptureForks`, from where `-Dyoriwake.isolatedCapture` is read. Null when
+         * unset; a value that is neither a count nor `cores` fails the build.
+         */
+        fun isolatedCaptureForksOf(project: MavenProject, session: MavenSession): IsolatedCaptureForks? =
+            Declines.property(project, session, SettingNames.ISOLATED_CAPTURE_FORKS)?.let {
+                IsolatedCaptureForks.parse(it.trim())
+                    ?: throw MavenExecutionException(IsolatedCaptureForks.malformed("-D", it), null as Throwable?)
+            }
 
         /** The module's own plugin entry, else the reactor root's, never a sibling's that `-pl` happened to put first. */
         private fun moduleConfiguration(project: MavenProject, session: MavenSession): Xpp3Dom? {

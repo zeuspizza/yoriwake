@@ -21,6 +21,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - `narrowLineOnlyChanges` lets a comment-only edit run only the tests that could see a line number. Map: two files added.
 - A trusted-map list written before this version names no map now; the default branch's next run writes one. Map: left alone.
 - `-Pyoriwake.mode=optimistic` (`-D` on Maven) selects without the shared-JVM change windows, loudly. Map: left alone.
+- `yoriwake.isolatedCaptureForks` raises an isolated recording run's parallel test JVMs. Map: left alone.
 
 ### Changed
 
