@@ -22,6 +22,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A trusted-map list written before this version names no map now; the default branch's next run writes one. Map: left alone.
 - `-Pyoriwake.mode=optimistic` (`-D` on Maven) selects without the shared-JVM change windows, loudly. Map: left alone.
 - `yoriwake.isolatedCaptureForks` raises an isolated recording run's parallel test JVMs. Map: left alone.
+- Maven records the loaded-class union under `-Dyoriwake.internal.loaded`, as Gradle does. Map: left alone.
 
 ### Changed
 

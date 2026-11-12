@@ -371,6 +371,7 @@ internal object CoverageDecoder {
         return Outcome(
             captured.size,
             merged.size,
+            unionDiscarded = unionDiscarded,
             unattributable = unattributable,
             mapUnattributable = mapTestRecords.count { line ->
                 val parts = line.split('	')

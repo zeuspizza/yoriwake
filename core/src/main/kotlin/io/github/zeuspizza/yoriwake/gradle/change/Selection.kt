@@ -51,9 +51,10 @@ internal fun establish(
 
     // A task that runs builds in child JVMs is one the union cannot speak for; the reason belongs
     // to the task, not to any one class.
-    val verdicts = if (artifacts.runsCodeInUnobservedJvms()) {
+    val runner = artifacts.unobservedJvmRunner()
+    val verdicts = if (runner != null) {
         report(
-            "this task runs code in child JVMs the agent cannot observe (gradle-testkit is on " +
+            "this task runs code in child JVMs the agent cannot observe ($runner is on " +
                 "its classpath), so a class absent from the loaded-class union proves nothing " +
                 "and every changed class the map does not mention still forces a full run"
         )

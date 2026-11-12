@@ -431,6 +431,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
 
         override fun captureNothing() {
             properties.setProperty(AgentContract.RECORDS_DIR_PROPERTY, "")
+            properties.setProperty(AgentContract.LOADED_DIR_PROPERTY, "")
         }
 
         override fun flag(name: String) = "-D$name"
