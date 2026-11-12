@@ -5702,6 +5702,41 @@ def _timing(name, test_class):
             "baseline_seconds": None}
 
 
+def parallel_tasks(chosen, workers):
+    """The parallel phase's two task lists from `chosen`, its guards costliest first: the Maven
+    lane, every Maven guard grouped by class for one worker of its own, and the other guards in the
+    order the remaining workers take them. With one worker there is no lane: the Maven guards, in
+    the same order, come first in its one list.
+
+    The Maven guards share one lane because its worker keeps one baseline per class, and each of
+    their builds holds the Gradle lock anyway: handed to whichever worker was free, a class paid its
+    baseline, about as long as a guard, in every worker that drew one of its guards. The other
+    guards go one Gradle guard, then enough others to fill the remaining workers, repeated: Gradle
+    suites run one at a time, so queueing them together would leave every other worker waiting on
+    the lock. Costliest first within each kind, so the long ones are not left to run alone at the
+    end."""
+    by_class = {}
+    for i in chosen:
+        if MUTATIONS[i][4] is maven_suite:
+            by_class.setdefault(_class_of(maven_suite, MUTATIONS[i][5]), []).append(i)
+    lane = [i for indices in by_class.values() for i in indices]
+    in_lane = set(lane)
+    rest = [i for i in chosen if i not in in_lane]
+    gradle = [i for i in rest if _locked(SUITE_NAMES[MUTATIONS[i][4]])]
+    others = [i for i in rest if not _locked(SUITE_NAMES[MUTATIONS[i][4]])]
+    # The lane holds one worker, so the others share one fewer.
+    fill = max(1, workers - (2 if lane else 1))
+    indices = []
+    while gradle or others:
+        if gradle:
+            indices.append(gradle.pop(0))
+        indices.extend(others[:fill])
+        del others[:fill]
+    if workers <= 1:
+        return [], lane + indices
+    return lane, indices
+
+
 def _run_parallel(args, selected, skipped, reasons):
     """The guard loop across worker trees. Same verdicts, same closing sentence, real tree untouched."""
     import concurrent.futures
@@ -5724,32 +5759,28 @@ def _run_parallel(args, selected, skipped, reasons):
     for path in paths:
         slots.put(path)
     gradle_lock = manager.Lock()
-    # One Gradle guard, then enough others to fill the remaining workers, repeated: Gradle suites
-    # run one at a time, so queueing them together would leave every other worker waiting on the
-    # lock. Costliest first within each kind, so the long ones are not left to run alone at the end.
     cost = {fn: c for _n, fn, c in SUITES}
     wanted = {m[0] for m in selected}
     chosen = sorted((i for i in range(len(MUTATIONS)) if MUTATIONS[i][0] in wanted),
                     key=lambda i: -cost[MUTATIONS[i][4]])
     exclusive = [i for i in chosen if SUITE_NAMES[MUTATIONS[i][4]] in EXCLUSIVE_SUITES]
-    chosen = [i for i in chosen if i not in exclusive]
-    gradle = [i for i in chosen if _locked(SUITE_NAMES[MUTATIONS[i][4]])]
-    others = [i for i in chosen if not _locked(SUITE_NAMES[MUTATIONS[i][4]])]
-    indices = []
-    while gradle or others:
-        if gradle:
-            indices.append(gradle.pop(0))
-        indices.extend(others[:max(1, slots_needed - 1)])
-        del others[:max(1, slots_needed - 1)]
+    lane, indices = parallel_tasks([i for i in chosen if i not in exclusive], slots_needed)
     failures = 0
     results = []
     _phase("parallel")
-    if indices:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=slots_needed, mp_context=context,
-                                                    initializer=_init_worker,
-                                                    initargs=(slots, gradle_lock)) as pool:
-            for future in concurrent.futures.as_completed([pool.submit(_prove_in_worker, i)
-                                                           for i in indices]):
+    if indices or lane:
+        with contextlib.ExitStack() as stack:
+            futures = []
+            if lane:
+                maven = stack.enter_context(concurrent.futures.ProcessPoolExecutor(
+                    max_workers=1, mp_context=context, initializer=_init_worker, initargs=(slots, gradle_lock)))
+                futures += [maven.submit(_prove_in_worker, i) for i in lane]
+            if indices:
+                pool = stack.enter_context(concurrent.futures.ProcessPoolExecutor(
+                    max_workers=slots_needed - (1 if lane else 0), mp_context=context,
+                    initializer=_init_worker, initargs=(slots, gradle_lock)))
+                futures += [pool.submit(_prove_in_worker, i) for i in indices]
+            for future in concurrent.futures.as_completed(futures):
                 results.append(future.result())
                 failures += _report(*results[-1])
     slots = min(ALONE_SLOTS, len(paths))
@@ -5893,12 +5924,11 @@ JOBS = 4
 
 
 def _class_weight(suite, name, guards):
-    """The seconds a run of `guards` guards of one class costs: its baseline in each tree that runs
-    them, then each guard. A functional class runs in one tree; a Maven class's guards go to
-    whichever parallel worker is free, so each of up to `JOBS` workers pays its baseline."""
+    """The seconds a run of `guards` guards of one class costs: its baseline once, then each guard.
+    A functional class runs in one tree of the alone phase; a shard's Maven guards all run in the
+    parallel phase's one Maven lane, so a Maven class too is baselined in one tree."""
     baseline, guard = class_cost(suite, name)
-    trees = min(guards, JOBS) if suite == "maven" else 1
-    return trees * baseline + guards * guard
+    return baseline + guards * guard
 
 
 def partition(mutations, count):
@@ -5907,11 +5937,10 @@ def partition(mutations, count):
     selection, `guard_costs.json` and the checkout only, so every machine splits a commit's
     selection alike.
 
-    A functional or Maven class's guards share their baselines, one per worker tree that runs them,
-    so they stay together unless the class outweighs a shard's share of its suite; then it splits
-    into near-equal chunks. A functional class runs in one tree; a Maven class's guards go to
-    whichever of the parallel phase's workers is free, so a chunk pays its baseline once per worker
-    that runs it. Both are placed on one scale, the seconds a chunk adds to its shard's wall
+    A functional or Maven class's guards share one baseline, so they stay together unless the
+    class outweighs a shard's share of its suite; then it splits into near-equal chunks, each
+    weighed with its own baseline. A functional class runs in one tree, and a shard's Maven guards
+    in its one Maven lane, so each class pays one baseline per shard. Both are placed on one scale, the seconds a chunk adds to its shard's wall
     clock: a functional chunk runs beside another on one of `ALONE_SLOTS` trees, a Maven chunk under
     the Gradle lock, one build at a time. The other guards are placed after them by their suite's
     registry seconds, a scale balanced apart and never added.
