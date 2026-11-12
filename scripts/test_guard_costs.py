@@ -241,6 +241,23 @@ def case_a_shard_that_left_nothing_keeps_the_others_projections():
     return failures
 
 
+def case_a_shard_that_lost_its_first_file_adds_no_warm_up():
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        _shard(root, 1, 2, [("u", None, 60, 70)], seconds=60, name="fast.json", mode="fast",
+               suite="unit", phases={"warm_up": 100, "parallel": 60})
+        _shard(root, 1, 2, [("u", None, 20, None)], seconds=20, name="changed.json", suite="unit",
+               phases={"warm_up": 7, "parallel": 20})
+        # Shard 2 kept only its second step: its warm-up of 7 is not a cold start.
+        _shard(root, 2, 2, [("u", None, 40, None)], seconds=40, name="changed.json", suite="unit",
+               phases={"warm_up": 7, "parallel": 40})
+        results = gc.shard_results(root, ["fast.json", "changed.json"])
+        derived = gc.derive({**TABLE, "warm_up": {}}, results, {"run": 2}, "fast.json")
+    if derived["warm_up"] != {"fast": 100}:
+        failures += fail(f"the warm-up with one shard's first file lost: {derived['warm_up']}")
+    return failures
+
+
 def case_the_checked_in_table_is_written_as_derive_writes_it():
     """A hand edit that reformats the table would turn the next refresh into a rewrite."""
     with open(pg.COSTS_FILE, encoding="utf-8") as handle:
@@ -257,6 +274,7 @@ CASES = (case_derive_takes_each_timed_classs_medians_and_keeps_the_rest,
          case_report_projects_each_shard_from_the_guards_it_held_against_the_jobs_limit,
          case_report_takes_a_pull_requests_two_steps_as_one_job,
          case_a_shard_that_left_nothing_keeps_the_others_projections,
+         case_a_shard_that_lost_its_first_file_adds_no_warm_up,
          case_the_checked_in_table_is_written_as_derive_writes_it)
 
 
