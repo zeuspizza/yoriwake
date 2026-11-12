@@ -346,12 +346,15 @@ internal class TaskArtifacts(
     }
 
     /**
-     * Whether this task runs code in child JVMs the agent cannot see, which the absence rule would
-     * call untested. Only `gradle-testkit` is detected; the general case is a README known limit.
+     * The library on this task's classpath that runs code in child JVMs the agent cannot see, which
+     * the absence rule would call untested, or null. Only Gradle TestKit and the libraries that fork
+     * a Maven build are detected; the general case is a README known limit.
      */
-    fun runsCodeInUnobservedJvms(): Boolean =
-        jars.any { it.name.startsWith("gradle-testkit") } ||
-            directories.any { it.absolutePath.contains("gradle-testkit") }
+    fun unobservedJvmRunner(): String? = UNOBSERVED_JVM_RUNNERS.firstOrNull { name -> jars.any { it.name.startsWith(name) } }
+        ?: "gradle-testkit".takeIf { name -> directories.any { it.absolutePath.contains(name) } }
+
+    /** Whether [unobservedJvmRunner] finds one. */
+    fun runsCodeInUnobservedJvms(): Boolean = unobservedJvmRunner() != null
 
     /**
      * Whether every class this prefix compiles to lives in this task's own test output. Such a
@@ -966,6 +969,11 @@ internal class TaskArtifacts(
             .replace('/', '.')
 
     private companion object {
+        /** Gradle TestKit's jars, and those of the libraries a test uses to run a Maven build in its own JVM. */
+        val UNOBSERVED_JVM_RUNNERS = listOf(
+            "gradle-testkit", "maven-verifier", "maven-invoker", "takari-plugin-integration-testing", "itf-jupiter-extension",
+        )
+
         /** Read as bytes, so a resource in any encoding is searched for an ASCII class name. */
         const val MAX_RESOURCE_BYTES = 4L * 1024 * 1024
 

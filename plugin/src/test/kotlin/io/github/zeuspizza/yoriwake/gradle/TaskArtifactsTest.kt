@@ -40,6 +40,19 @@ class TaskArtifactsTest {
     }
 
     @Test
+    fun `a library that forks a Maven build runs code in JVMs the agent cannot see`(@TempDir dir: File) {
+        listOf("maven-verifier-1.8.0.jar", "maven-invoker-3.3.0.jar", "takari-plugin-integration-testing-3.0.0.jar", "itf-jupiter-extension-0.13.1.jar").forEach { name ->
+            val classpath = listOf(jar(File(dir, name), "a.txt" to byteArrayOf(1)))
+            assertEquals(name.substringBeforeLast('-'), TaskArtifacts(classpath, emptyList()).unobservedJvmRunner(), name)
+        }
+        val model = listOf(jar(File(dir, "maven-model-3.9.9.jar"), "a.txt" to byteArrayOf(1)))
+        assertNull(TaskArtifacts(model, emptyList()).unobservedJvmRunner())
+        // A module of that name, built here, is not the library.
+        val module = File(dir, "maven-invoker-tests/target/classes").apply { mkdirs() }
+        assertNull(TaskArtifacts(listOf(module), emptyList()).unobservedJvmRunner())
+    }
+
+    @Test
     fun `finds the class a prefix names, and the types compiled beside it`(@TempDir dir: File) {
         classFile(dir, "com.acme.Thing")
         classFile(dir, "com.acme.Thing\$Inner")

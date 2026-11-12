@@ -160,4 +160,80 @@ class CaptureFunctionalTest {
         assertFalse("map updated" in output, output)
         assertTrue(libMap(project) == null || captureCommit(project) == null)
     }
+
+    private val loaded = "-Dyoriwake.internal.loaded"
+
+    /** lib's loaded-class union, or null when its map holds none. */
+    private fun union(project: File): String? = libMap(project)?.let { File(it, "loaded.txt") }?.takeIf(File::isFile)?.readText()
+
+    /** lib's Surefire given [xml] as its configuration; committed. */
+    private fun surefire(project: File, xml: String) {
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId>\n  <build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId>" +
+                    "<configuration>$xml</configuration></plugin></plugins></build>",
+            )
+        }
+        git(project, "commit", "-q", "-am", "configure Surefire")
+    }
+
+    @Test
+    fun `a capture filtered by groups discards the union`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+        assertNotNull(union(project))
+        surefire(project, "<groups>fast</groups>")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded().output
+
+        assertNull(union(project))
+        assertContains(output, "so the loaded-class union it could not vouch for was discarded")
+    }
+
+    @Test
+    fun `tags Surefire hands the JUnit Platform discard the union`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+        assertNotNull(union(project))
+        surefire(project, "<properties><includeTags>fast</includeTags></properties>")
+
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+
+        assertNull(union(project))
+    }
+
+    @Test
+    fun `a capture of named tests leaves the union as it was`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+        val before = assertNotNull(union(project))
+
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded, "-Dtest=GreeterTest").succeeded()
+
+        assertEquals(before, union(project))
+    }
+
+    @Test
+    fun `POM includes still record a union`(@TempDir dir: File) {
+        val project = committed(dir)
+        // They define which classes are tests, as a Gradle task's include does, and filter nothing.
+        surefire(project, "<includes><include>**/GreeterTest.java</include></includes>")
+
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+
+        assertContains(assertNotNull(union(project)), "dev.demo.lib.Greeter")
+    }
+
+    @Test
+    fun `an engine excluded in the POM discards the union`(@TempDir dir: File) {
+        val project = committed(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+        assertNotNull(union(project))
+        surefire(project, "<excludeJUnit5Engines><excludeJUnit5Engine>junit-vintage</excludeJUnit5Engine></excludeJUnit5Engines>")
+
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+
+        assertNull(union(project))
+    }
 }

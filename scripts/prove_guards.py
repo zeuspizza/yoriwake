@@ -4923,6 +4923,32 @@ MUTATIONS = [
      "        if (outcome is ScopeOutcome.NotApplied || !isTestGoal(execution)) return\n",
      "        if (outcome is ScopeOutcome.NotApplied) return\n",
      maven_suite, "integration tests are captured into their own map"),
+    # A loaded-class union speaks for every test of the execution: a capture narrowed by groups or
+    # engines must discard it, as Gradle's filtered task does, or a class only the left-out tests
+    # load would read as untested and be skipped.
+    ("a Maven capture filtered by groups keeps a union", MAVEN_RECORDING,
+     "        return !byGroups && !byEngines && !bySuites\n",
+     "        return !byEngines && !bySuites\n",
+     maven_suite, "a capture filtered by groups discards the union"),
+    ("a Maven capture filtered by engines keeps a union", MAVEN_RECORDING,
+     "        return !byGroups && !byEngines && !bySuites\n",
+     "        return !byGroups && !bySuites\n",
+     maven_suite, "an engine excluded in the POM discards the union"),
+    ("a Maven capture filtered by tags in its properties keeps a union", MAVEN_RECORDING,
+     '            listOf("includeTags", "excludeTags").any { given(properties[it]) }\n',
+     '            false\n',
+     maven_suite, "tags Surefire hands the JUnit Platform discard the union"),
+    # Failsafe's tests commonly drive an application another JVM runs: a union from its fork alone
+    # would turn a class only that JVM loads into a skip.
+    ("a Failsafe capture records a union", MAVEN_RECORDING,
+     "        if (!recordsLoaded(project) || undated != null || execution.artifactId == FAILSAFE) return false\n",
+     "        if (!recordsLoaded(project) || undated != null) return false\n",
+     maven_suite, "a Failsafe execution records no union"),
+    # A test that runs a Maven build through maven-verifier runs code in JVMs the agent never sees.
+    ("a task that forks a Maven build narrows on absence", TASK_ARTIFACTS,
+     '"gradle-testkit", "maven-verifier", ',
+     '"gradle-testkit", ',
+     unit_suite, "a library that forks a Maven build runs code in JVMs the agent cannot see"),
     # CORE DECIDES, MAVEN BUILDS WHAT IT COMPARES. Each guard below drops what Maven hands a shared
     # rule: the test JVM's arguments and environment, its call into the environment comparison, the
     # map's capture stamp, and Surefire's stop-after-failure and failIfNoTests. The SNAPSHOT

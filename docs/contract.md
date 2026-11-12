@@ -26,7 +26,7 @@ refuses the run as `change-set-unreadable`.
 | `MAP_DIR_PROPERTY` | `yoriwake.map.dir` | plugin → agent | The map directory to read |
 | `RECORDS_DIR_PROPERTY` | `yoriwake.internal.capture.outputDir` | plugin → agent | Where to write raw records. Capture is off when unset or empty |
 | `CAPTURE_ROOT_PROPERTY` | `yoriwake.internal.capture.root` | plugin → agent | The root project's directory. A capturing JVM records the non-class files it reads beneath it |
-| `LOADED_DIR_PROPERTY` | `yoriwake.loaded.out` | plugin → agent | Where to write loaded-class lists. Set only with `-Pyoriwake.internal.loaded` |
+| `LOADED_DIR_PROPERTY` | `yoriwake.loaded.out` | plugin → agent | Where to write loaded-class lists. Set only with `-Pyoriwake.internal.loaded` on Gradle, `-Dyoriwake.internal.loaded` on Maven (in the run file) |
 | `JUNIT4_HOOK_PROPERTY` | `yoriwake.junit4.hook` | plugin → agent | `true` on a plain JUnit 4 (`useJUnit()`) task: capture through JUnit 4's `RunNotifier` |
 | `SELECT_PROPERTY` | `yoriwake.select` | plugin → agent | `true` to narrow; anything else runs everything |
 | `MODE_PROPERTY` | `yoriwake.mode` | plugin → agent | `optimistic` on a selecting run in optimistic mode, which drops the `shares-jvm-changed-class` and `shares-jvm-changed-bytes` windows; set only then. Absent or anything else is the safe rule |

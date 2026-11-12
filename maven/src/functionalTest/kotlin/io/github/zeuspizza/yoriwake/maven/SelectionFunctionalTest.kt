@@ -1162,4 +1162,94 @@ class SelectionFunctionalTest {
         assertContains(result.output, "-Dyoriwake.enabled=false")
         assertFalse("Tests run:" in result.output, result.output)
     }
+
+    /** The demo with `Orphan` in `lib`, a class no test executes, loads or names; committed. */
+    private fun withOrphan(dir: File, vararg files: Pair<String, String>): File = committed(dir).also { project ->
+        (files.toList() + ("lib/src/main/java/dev/demo/lib/Orphan.java" to orphan(1))).forEach { (path, text) ->
+            File(project, path).apply { parentFile.mkdirs() }.writeText(text)
+        }
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "orphan")
+    }
+
+    private fun orphan(answer: Int) = "package dev.demo.lib;\npublic class Orphan { public int once() { return $answer; } }\n"
+
+    private fun editOrphan(project: File) {
+        File(project, "lib/src/main/java/dev/demo/lib/Orphan.java").writeText(orphan(2))
+        git(project, "commit", "-q", "-am", "an edit to Orphan")
+    }
+
+    private fun libMap(project: File): File =
+        File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-lib-maven-surefire-plugin-") }
+
+    private fun union(project: File): String? = File(libMap(project), "loaded.txt").takeIf(File::isFile)?.readText()
+
+    private fun selectLib(project: File, vararg extra: String) =
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", *extra).succeeded().output
+
+    @Test
+    fun `a class nothing executes, loads or names stops forcing a full run`(@TempDir dir: File) {
+        val project = withOrphan(dir)
+        // The rule refuses without a loaded-class union: coverage proves only that nothing executed
+        // the class, and a test can load one and read its fields without executing a line of it.
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.internal.loaded").succeeded()
+        editOrphan(project)
+
+        val output = selectLib(project)
+
+        assertFalse("Running dev.demo.lib." in output, output)
+    }
+
+    @Test
+    fun `a capture without the internal flag records no union`(@TempDir dir: File) {
+        val project = withOrphan(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded()
+
+        assertFalse(File(libMap(project), "loaded.txt").exists())
+        assertFalse(File(libMap(project), "loaded").exists())
+        editOrphan(project)
+        val output = selectLib(project)
+
+        assertContains(output, "Running dev.demo.lib.GreeterTest")
+        assertContains(output, "Running dev.demo.lib.CounterTest")
+    }
+
+    @Test
+    fun `a selecting run keeps the union of the capture before it`(@TempDir dir: File) {
+        val project = withOrphan(dir)
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.internal.loaded").succeeded()
+        val before = union(project)
+        assertTrue(before != null && "dev.demo.lib.Counter" in before, "no union after a whole capture: $before")
+        editCounter(project)
+
+        selectLib(project, "-Dyoriwake.internal.loaded")
+
+        assertEquals(before, union(project))
+    }
+
+    @Test
+    fun `a class a test loads but never executes still forces`(@TempDir dir: File) {
+        // Named by its package and simple name at run time, so no test class's constants name it.
+        val project = withOrphan(
+            dir,
+            "lib/src/test/java/dev/demo/lib/LoaderTest.java" to """
+                package dev.demo.lib;
+                class LoaderTest {
+                    @org.junit.jupiter.api.Test void loads() throws Exception {
+                        String simple = "Orphan";
+                        Class.forName(getClass().getPackageName() + "." + simple);
+                    }
+                }
+            """.trimIndent() + "\n",
+        )
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.internal.loaded").succeeded()
+        // Forced by the union, not by its absence.
+        assertContains(union(project).orEmpty(), "dev.demo.lib.Orphan\n")
+        editOrphan(project)
+
+        val output = selectLib(project)
+
+        assertContains(output, "Running dev.demo.lib.CounterTest")
+        assertContains(output, "Running dev.demo.lib.GreeterTest")
+    }
 }

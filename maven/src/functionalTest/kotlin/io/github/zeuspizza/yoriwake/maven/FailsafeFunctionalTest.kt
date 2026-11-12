@@ -6,6 +6,7 @@ import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** Failsafe's `integration-test` captures and selects as Surefire's `test` does, into its own map. */
 class FailsafeFunctionalTest {
@@ -131,5 +132,19 @@ class FailsafeFunctionalTest {
 
         assertContains(output, "Tests run: 2, Failures: 1")
         assertContains(output, "[yoriwake] $name map updated: ")
+    }
+
+    @Test
+    fun `a Failsafe execution records no union`(@TempDir dir: File) {
+        val project = withIntegrationTests(dir)
+
+        FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.internal.loaded").succeeded()
+
+        // Its tests may drive an application another JVM runs, which no union can speak for.
+        val maps = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().filter { it.name.startsWith("dev.demo-app-") }
+        val integration = maps.single { "failsafe" in it.name }
+        val unit = maps.single { "surefire" in it.name }
+        assertFalse(File(integration, "loaded.txt").exists(), "a union in $integration")
+        assertTrue(File(unit, "loaded.txt").isFile, "no union in $unit")
     }
 }

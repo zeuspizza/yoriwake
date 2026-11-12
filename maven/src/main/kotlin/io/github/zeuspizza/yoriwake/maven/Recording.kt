@@ -76,6 +76,8 @@ internal class Recording(
         val kind: RunPlan.Kind,
         /** The JaCoCo agent's scope as the fork is handed it, serialized; null when unreadable. */
         val effectiveScope: String?,
+        /** Whether this run's loaded-class lists may stand for the whole execution; see [wholeTaskOf]. */
+        val wholeTask: Boolean,
     )
 
     private val selection = Selection(session, root, log).also { it.validate() }
@@ -206,6 +208,9 @@ internal class Recording(
         val recordsDir = CoverageDecoder.recordsDir(mapDir)
         discardPrevious(mapDir, recordsDir, name)
         undatedRunMarker(recordsDir).delete()
+        // Every run, flagged or not, so an earlier run's lists never pass for this one's.
+        val loadedDir = CoverageDecoder.loadedDir(mapDir)
+        loadedDir.deleteRecursively()
         startReading(mapDir)
 
         val runFile = File(mapDir, AgentContract.RUN_FILE)
@@ -213,6 +218,7 @@ internal class Recording(
             setProperty(AgentContract.MAP_DIR_PROPERTY, mapDir.path)
             setProperty(AgentContract.RECORDS_DIR_PROPERTY, recordsDir.path)
             setProperty(AgentContract.CAPTURE_ROOT_PROPERTY, root.path)
+            if (recordsLoaded(project)) setProperty(AgentContract.LOADED_DIR_PROPERTY, loadedDir.path)
         }
 
         val agent = agentJar()
@@ -292,7 +298,7 @@ internal class Recording(
             append(AgentContract.RUN_FILE_END).append('\n')
         })
         val scope = EffectiveScope.fromAgentArguments(hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()))
-        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize())
+        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize(), wholeTaskOf(project, execution, configuration, undated))
     }
 
     /** Every model file read this session that lies in the checkout: each module's POM, and its parents'. */
@@ -348,7 +354,7 @@ internal class Recording(
             observing = run.kind == RunPlan.Kind.OBSERVE,
             asksSelection = selection.asksSelection,
             complementing = run.kind == RunPlan.Kind.COMPLEMENT,
-            wholeTask = false,
+            wholeTask = run.wholeTask,
             loadedScope = reactorPackages,
             datesTheMap = run.undatedReason == null,
             undatedReason = run.undatedReason.orEmpty(),
@@ -495,6 +501,32 @@ internal class Recording(
         val stopAfter = parameter("skipAfterFailureCount", if (failsafe) "failsafe.skipAfterFailureCount" else "surefire.skipAfterFailureCount")
         if ((stopAfter?.toIntOrNull() ?: 0) > 0) return "the run stops after $stopAfter failure(s)"
         return null
+    }
+
+    /** Whether `-Dyoriwake.internal.loaded` asks this run's test JVMs to list the classes they load. */
+    private fun recordsLoaded(project: MavenProject): Boolean =
+        Declines.property(project, session, INTERNAL_LOADED)?.let { it.isEmpty() || it.equals("true", ignoreCase = true) } == true
+
+    /**
+     * Whether this run's loaded-class union may speak for the whole execution, as Gradle's
+     * unfiltered task: flagged, dating the map, and not narrowed by groups, tags, JUnit 5 engines or
+     * TestNG suite files. POM `includes` and `excludes` say which classes are tests, as a Gradle
+     * task's own do, and filter nothing. Failsafe never: its tests commonly drive an application
+     * another JVM runs, whose loaded classes no union sees.
+     */
+    private fun wholeTaskOf(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom, undated: String?): Boolean {
+        if (!recordsLoaded(project) || undated != null || execution.artifactId == FAILSAFE) return false
+        // A value given through an expression counts unless it resolves to nothing.
+        fun given(value: String?) = resolved(project, value?.trim()) != null
+        fun listed(name: String) = configuration.getChild(name).let { list -> given(list?.value) || list?.children.orEmpty().any { given(it.value) } }
+        // The JUnit Platform provider still reads tag filters from `<properties>`, in either form.
+        val properties = configuration.getChild("properties")?.children.orEmpty()
+            .associate { if (it.name == "property") it.getChild("name")?.value?.trim() to it.getChild("value")?.value else it.name to it.value }
+        val byGroups = listOf("groups", "excludedGroups").any { given(configuration.getChild(it)?.value) || given(Declines.property(project, session, it)) } ||
+            listOf("includeTags", "excludeTags").any { given(properties[it]) }
+        val byEngines = listOf("includeJUnit5Engines", "excludeJUnit5Engines").any { listed(it) || given(Declines.property(project, session, "surefire.$it")) }
+        val bySuites = listed("suiteXmlFiles") || given(Declines.property(project, session, "surefire.suiteXmlFiles"))
+        return !byGroups && !byEngines && !bySuites
     }
 
     /** The previous run's records, decisions and observation go before this one writes any. */
