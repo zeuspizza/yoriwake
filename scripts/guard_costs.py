@@ -18,6 +18,10 @@ and the worst shard's margin to the job's `timeout-minutes`.
 `<shards-dir>` holds one directory per shard, named `...-<index>-of-<count>`, each with that shard's
 results in a file called `full.json`. `--file`, repeated in the order the job ran its steps, names
 others: `--file fast.json --file changed.json` for a pull request's shards.
+
+The `fast/` rows of `suites` are derived the same way, from a pull request's artifacts: run it with
+`--file fast.json --file changed.json` over a run whose guards job ran fast mode. Do not edit them
+by hand.
 """
 
 import argparse

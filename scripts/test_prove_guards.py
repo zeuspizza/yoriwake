@@ -8,6 +8,7 @@ this run selected fired", which is true and says nothing about the one it left o
 Run: `python scripts/test_prove_guards.py`
 """
 
+import argparse
 import contextlib
 import io
 import json
@@ -890,6 +891,28 @@ def case_every_shards_job_is_its_steps_plus_setup_and_the_limit_is_the_workflows
     return failures
 
 
+def case_a_steps_place_in_its_ci_job_follows_its_flags():
+    failures = 0
+    def step(**flags):
+        return pg._step_on_ci(argparse.Namespace(**{"mode": "full", "changed": None, "guard": None, **flags}))
+    expected = {"every guard": ({}, {"mode": "full", "first": True, "job": "full-shard"}),
+                "fast mode": ({"mode": "fast"}, {"mode": "fast", "first": True, "job": None}),
+                "--changed": ({"changed": "origin/main"}, {"mode": "full", "first": False, "job": None}),
+                "--guard": ({"guard": ["x"]}, {"mode": "full", "first": True, "job": None})}
+    for name, (flags, want) in expected.items():
+        if step(**flags) != want:
+            failures += fail(f"{name}: {step(**flags)}")
+    return failures
+
+
+def case_a_job_without_a_limit_is_projected_without_a_margin():
+    failures = 0
+    lines = pg.shard_projections(pg.MUTATIONS, 8, job="no-such-job")
+    if len(lines) != 8 or any("; job ~" not in line or " under " in line for line in lines):
+        failures += fail(f"a job with no limit: {lines[:1]}")
+    return failures
+
+
 def case_a_worker_pays_a_class_baseline_once_and_times_each_run():
     """`derive` reads a guard's seconds and its baseline's apart: one baseline per class per tree."""
     failures = 0
@@ -1257,6 +1280,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other,
          case_a_step_is_projected_as_the_phases_it_runs,
          case_every_shards_job_is_its_steps_plus_setup_and_the_limit_is_the_workflows,
+         case_a_steps_place_in_its_ci_job_follows_its_flags,
+         case_a_job_without_a_limit_is_projected_without_a_margin,
          case_a_worker_pays_a_class_baseline_once_and_times_each_run,
          case_a_wait_for_the_lock_is_not_counted_as_a_guards_seconds,
          case_a_shard_that_is_not_one_of_n_refuses,
