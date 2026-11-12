@@ -1318,6 +1318,79 @@ def case_every_way_a_selected_guard_can_go_unproved_fails():
     return problems
 
 
+GUARD_SHARD_UPLOADS = {"fast-shard": "guards-pr-", "full-shard": "guards-every-"}
+
+
+def retried_upload_problems(text):
+    """Each guard shard job whose results upload a GitHub error could lose: its first upload must
+    not fail the job, a second, identical one must run only when the first failed and fail the job
+    then."""
+    problems = []
+    for job, prefix in GUARD_SHARD_UPLOADS.items():
+        block = _job_block(text, job)
+        if block is None:
+            problems.append(f"{job}: the job is gone")
+            continue
+        # Comment lines aside, so that a comment naming a setting cannot stand in for it.
+        steps = ["\n".join(line for line in step.splitlines() if not line.lstrip().startswith("#"))
+                 for step in block.split("\n      - ")]
+        uploads = [step for step in steps if "upload-artifact@" in step and f"name: {prefix}" in step]
+        if len(uploads) != 2:
+            problems.append(f"{job}: {len(uploads)} uploads of its results, not a first and a retry")
+            continue
+        first, retry = uploads
+        step_id = re.search(r"^(?:- )?id: (\S+)$", first.strip(), re.M)
+        if step_id is None or "continue-on-error: true" not in first or "if: always()" not in first:
+            problems.append(f"{job}: the first upload has no id, fails the job, or skips a failed run")
+        elif f"if: always() && steps.{step_id.group(1)}.outcome == 'failure'" not in retry:
+            problems.append(f"{job}: the retry does not run when, and only when, the first upload failed")
+        elif "continue-on-error" in retry:
+            problems.append(f"{job}: a failed retry does not fail the job")
+        else:
+            # The `with:` settings and the action, `overwrite` aside: the retry may replace what a
+            # failed first upload left half made.
+            def settings(step):
+                return sorted(line.strip() for line in step.splitlines()
+                              if line.startswith("          ") and "overwrite:" not in line
+                              or "uses:" in line)
+            if settings(first) != settings(retry):
+                problems.append(f"{job}: the retry does not upload what the first one does")
+    return problems
+
+
+def case_every_guard_shard_retries_its_results_upload():
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = sum(fail(f"guards.yml {problem}") for problem in retried_upload_problems(text))
+    mutants = {
+        "no retry": lambda t: re.sub(r"\n      # The same upload, when the first failed.*?overwrite: true\n",
+                                     "\n", t, flags=re.S),
+        "a failing first upload": lambda t: t.replace("        continue-on-error: true\n        with:\n"
+                                                       "          name: guards-", "        with:\n"
+                                                       "          name: guards-"),
+        "a retry on every run": lambda t: t.replace("if: always() && steps.upload.outcome == 'failure'",
+                                                    "if: always()"),
+        "a retry that cannot fail the job": lambda t: t.replace(
+            "        if: always() && steps.upload.outcome == 'failure'\n",
+            "        if: always() && steps.upload.outcome == 'failure'\n        continue-on-error: true\n"),
+        "a retry of other files": lambda t: t.replace("          overwrite: true\n",
+                                                      "          overwrite: true\n          compression-level: 0\n"),
+        "a retry with another action": lambda t: t.replace(
+            "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n"
+            "        if: always() && steps.upload",
+            "      - uses: actions/upload-artifact@0123456789012345678901234567890123456789 # v4.0.0\n"
+            "        if: always() && steps.upload"),
+    }
+    for why, edit in mutants.items():
+        edited = edit(text)
+        if edited == text:
+            problems += fail(f"the fixture edit for {why!r} no longer applies to guards.yml")
+        elif len(retried_upload_problems(edited)) != len(GUARD_SHARD_UPLOADS):
+            problems += fail(f"guards.yml with {why} was not reported for each shard job: "
+                             f"{retried_upload_problems(edited)}")
+    return problems
+
+
 def case_every_guard_job_runs_all_its_shards_under_its_required_name():
     """Each guard job's shards are 1..N, its check expects N, runs when a shard fails and fails
     then, and reads its own shards' results; the required names sit on the check jobs alone."""
@@ -3745,6 +3818,7 @@ CASES = (
     case_guard_shards_that_partition_the_selection_and_fire_pass,
     case_every_way_a_selected_guard_can_go_unproved_fails,
     case_every_guard_job_runs_all_its_shards_under_its_required_name,
+    case_every_guard_shard_retries_its_results_upload,
     case_each_guard_check_reports_its_shards_and_the_every_guard_one_keeps_their_costs,
     case_guard_results_with_timings_read_as_those_without,
     case_finds_a_map_under_a_task_directory_it_could_not_predict,

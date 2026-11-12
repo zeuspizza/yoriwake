@@ -546,19 +546,44 @@ class EngineSupportTest {
 
             import io.kotest.core.spec.style.ShouldSpec
             import io.kotest.engine.test.TestResult
-            import kotlinx.coroutines.delay
+            import kotlinx.coroutines.CompletableDeferred
+            import kotlinx.coroutines.async
+            import kotlinx.coroutines.awaitCancellation
+            import kotlinx.coroutines.coroutineScope
+            import kotlinx.coroutines.selects.select
             import kotlin.time.Duration.Companion.milliseconds
 
             // As kotest's own timeout tests do: a timeout turned into a success, so the container
-            // finishes successfully while the engine never finishes the test inside it.
+            // finishes successfully while the engine never finishes the test inside it. The
+            // container times out only once the test inside it has started: a timer of a fixed
+            // length could fire before a slow runner starts the test at all.
             class TimeoutSpec : ShouldSpec() {
+                private val started = CompletableDeferred<Unit>()
+
                 init {
                     extension { (testCase, execute) ->
-                        execute(testCase)
+                        if (testCase.parent == null) {
+                            coroutineScope {
+                                val container = async { execute(testCase) }
+                                // A container that ends without starting the test leaves no row
+                                // to find, which fails the test rather than hanging the build.
+                                select {
+                                    started.onAwait {}
+                                    container.onJoin {}
+                                }
+                                container.cancel()
+                                container.join()
+                            }
+                        } else {
+                            execute(testCase)
+                        }
                         TestResult.Success(0.milliseconds)
                     }
-                    context("times out").config(timeout = 10.milliseconds) {
-                        should("never finish") { delay(1_000) }
+                    context("times out") {
+                        should("never finish") {
+                            started.complete(Unit)
+                            awaitCancellation()
+                        }
                     }
                 }
             }
