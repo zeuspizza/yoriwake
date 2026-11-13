@@ -495,6 +495,34 @@ val functionalShard = providers.gradleProperty("yoriwake.functional.shard").orNu
     }
     index to count
 }
+// A shard job also names its operating system, and the shard table then places each class it lists
+// by measured test time, so the shards take about equal time; a class it lacks still hashes.
+// `.github/functional_shards.py table` writes it from a run's results.
+val shardTableFile = rootProject.layout.projectDirectory.file(".github/functional-shards.json")
+val functionalShardTable = providers.gradleProperty("yoriwake.functional.shardTable").orNull?.let { os ->
+    val table = try {
+        groovy.json.JsonSlurper().parseText(providers.fileContents(shardTableFile).asText.get())
+    } catch (e: Exception) {
+        throw GradleException("the shard table ${shardTableFile.asFile} cannot be read: ${e.message}", e)
+    }
+    os to (table as? Map<*, *> ?: throw GradleException("the shard table ${shardTableFile.asFile} is no JSON object"))
+}
+
+// The shard of each class the table lists for one suite at one count, by top-level name.
+fun shardTablePlaced(suite: String, count: Int): Map<String, Int> {
+    val (os, suites) = functionalShardTable ?: return emptyMap()
+    val key = "plugin/$os/$suite"
+    return when (val shards = (suites[key] as? Map<*, *>)?.get(count.toString())) {
+        null -> emptyMap()
+        is Map<*, *> -> shards.entries.associate { (name, index) ->
+            require(name is String && index is Int && index in 1..count) {
+                "the shard table ${shardTableFile.asFile} puts $name of $key in shard $index of $count"
+            }
+            name to index
+        }
+        else -> throw GradleException("the shard table ${shardTableFile.asFile} has no classes for $key at $count")
+    }
+}
 // Coverage of the plugin's code in the TestKit daemons, where its wiring and tasks run. On by
 // default, so `./gradlew build` measures it; a matrix cell runs one version and proves the plugin as
 // users run it, so it never carries coverage. `-Pyoriwake.functional.coverage=false` turns it off.
@@ -672,6 +700,7 @@ testing {
                             filter.excludeTestsMatching("$breakAttemptsPackage.*")
                         }
                         functionalShard?.takeIf { !name.startsWith("breakAttempts") }?.let { (index, count) ->
+                            val placed = shardTablePlaced(name, count)
                             // By the class file's top-level name, so a nested class runs with the class
                             // around it. CRC32, not hashCode: the same shard on every JVM and every run.
                             // Plain values only in the lambda, for the configuration cache.
@@ -679,8 +708,9 @@ testing {
                                 val path = file.relativePath.pathString
                                 if (file.isDirectory || !path.endsWith(".class")) return@exclude false
                                 val topLevel = path.removeSuffix(".class").substringBefore('$').replace('/', '.')
-                                val crc = CRC32().apply { update(topLevel.toByteArray()) }.value
-                                (crc % count).toInt() + 1 != index
+                                val shard = placed[topLevel]
+                                    ?: ((CRC32().apply { update(topLevel.toByteArray()) }.value % count).toInt() + 1)
+                                shard != index
                             }
                         }
                     }
