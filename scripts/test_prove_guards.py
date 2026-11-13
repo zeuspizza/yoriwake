@@ -1256,6 +1256,138 @@ def case_a_refused_run_writes_every_guard_it_held_as_not_proved():
     return failures
 
 
+def _results_file(directory, test_class, test, message, age=0):
+    """The results file a Gradle test task leaves for a class with one failing test, written `age`
+    seconds ago."""
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"TEST-io.github.zeuspizza.yoriwake.{test_class}.xml")
+    escaped = message.replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;").replace("\n", "&#10;")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f'<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="{test_class}" tests="2" failures="1">\n'
+                f'  <testcase name="one that passes()" classname="io.github.zeuspizza.yoriwake.{test_class}"/>\n'
+                f'  <testcase name="{test}()" classname="io.github.zeuspizza.yoriwake.{test_class}">\n'
+                f'    <failure message="{escaped}" type="java.lang.AssertionError">at {test_class}.kt:12</failure>\n'
+                f'  </testcase>\n</testsuite>\n')
+    if age:
+        os.utime(path, (time.time() - age, time.time() - age))
+    return path
+
+
+def case_a_baseline_that_fails_prints_why_and_keeps_its_results():
+    """A class that failed before any mutation, in one worker of one run, left only its test's
+    name. The log now carries the failing test's message and the end of Gradle's output, the
+    build's results are kept where a failed shard uploads them, and `--results` keeps one line."""
+    failures = 0
+    test = "a multithreaded reactor build dates every module"
+    message = "\n".join(["java.lang.AssertionError: Expected the char sequence to contain the substring."]
+                        + [f"the build printed {i}" for i in range(100)] + ["Substring <module b is dated>"])
+    printed = "\n".join([f"> Task :step{i}" for i in range(200)]
+                        + [f"ForkingFunctionalTest > {test}() FAILED", "", "BUILD FAILED in 2m 3s"])
+    saved = (pg.prepare_workers, pg.warm_up_tasks, pg._class_of, pg.subprocess.run, pg.UNMUTATED_RESULTS,
+             set(pg.EXCLUSIVE_SUITES))
+    real = pg.subprocess.run
+
+    def build(argv, **kwargs):
+        if os.path.basename(argv[0]) not in ("gradlew", "gradlew.bat"):
+            return real(argv, **kwargs)
+        if ":passes" in argv:
+            return subprocess.CompletedProcess(argv, 0, "BUILD SUCCESSFUL in 1s", "")
+        # A build takes longer than a file system's clock is coarse.
+        time.sleep(0.05)
+        results = os.path.join(kwargs["cwd"], "maven", "build", "test-results", "functionalTest")
+        _results_file(results, "ForkingFunctionalTest", test, message)
+        # The results of a class the build was cut off writing.
+        with open(os.path.join(results, "TEST-io.github.zeuspizza.yoriwake.CutShortTest.xml"), "w") as f:
+            f.write('<testsuite name="CutShortTest"><testcase name="cut')
+        return subprocess.CompletedProcess(argv, 1, printed, "")
+
+    def standing():
+        return ["FAIL: synthetic > it fails as it stands"]
+
+    def checked_after_a_build():
+        pg.gradle([":passes"])
+        return ["FAIL: synthetic > its check after the build fails"]
+
+    with _synthetic([("held", True), ("other", True), ("after", True)]) as tmp:
+        # What an earlier build of another task left in the tree: not this baseline's failure.
+        stale = _results_file(os.path.join(tmp, "plugin", "build", "test-results", "test"), "OlderTest",
+                              "an earlier build's test", "the earlier build's failure", age=3600)
+        # Forced: a machine that ignores build/ everywhere would stage nothing.
+        subprocess.run(["git", "-C", tmp, "add", "-A", "-f"], check=True)
+        subprocess.run(["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t",
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "results"], check=True)
+        for suite_name, suite in (("synthetic standing", standing), ("synthetic checked", checked_after_a_build)):
+            pg.SUITES.append((suite_name, suite, 0))
+            pg.SUITE_NAMES[suite] = suite_name
+        pg.MUTATIONS[:] = [("held", "held.txt", "anchor", "mutated", pg.functional_suite, "dates every module"),
+                           ("other", "other.txt", "anchor", "mutated", standing, "synthetic"),
+                           ("after", "after.txt", "anchor", "mutated", checked_after_a_build, "synthetic")]
+        result, kept = os.path.join(tmp, "result.json"), os.path.join(tmp, "kept")
+        pg.prepare_workers = lambda count: [tmp]
+        pg.warm_up_tasks = lambda selected: []
+        pg._class_of = lambda suite, expect: "ForkingFunctionalTest" if suite is pg.functional_suite else None
+        pg.subprocess.run = build
+        pg.UNMUTATED_RESULTS = kept
+        # In the phase that runs in this process, so no worker process imports a suite defined here.
+        pg.EXCLUSIVE_SUITES.update(("synthetic standing", "synthetic checked"))
+        try:
+            code, out = _run(["--guard", "held", "--guard", "other", "--guard", "after", "--results", result])
+            got = {g["label"]: (g["outcome"], g["detail"]) for g in _results(result)["guards"]}
+            files = sorted(os.path.join(os.path.relpath(root, kept), name)
+                           for root, _dirs, names in os.walk(kept) for name in names)
+            whole = [open(os.path.join(kept, name), encoding="utf-8").read() for name in files]
+            code_one, out_one = _run(["--guard", "held", "--jobs", "1"])
+            # Nowhere to keep the results, under a file: the refusal and the message still stand.
+            pg.UNMUTATED_RESULTS = os.path.join(result, "kept")
+            code_nowhere, out_nowhere = _run(["--guard", "held", "--guard", "other"])
+        finally:
+            (pg.prepare_workers, pg.warm_up_tasks, pg._class_of, pg.subprocess.run,
+             pg.UNMUTATED_RESULTS) = saved[:5]
+            pg.EXCLUSIVE_SUITES.clear()
+            pg.EXCLUSIVE_SUITES.update(saved[5])
+        for how, exit_code, log, refusal in (("in a worker tree", code, out, "fails unmutated"),
+                                             ("with --jobs 1", code_one, out_one, "MUST BE 0")):
+            if exit_code != 1 or refusal not in log:
+                failures += fail(f"{how}, a class failing as it stands was not refused: {exit_code} {log!r}")
+            # Both ends of a long message: what was expected is its last line.
+            for expected in (f"ForkingFunctionalTest > {test}", "Expected the char sequence to contain",
+                             "the build printed 0", "Substring <module b is dated>", "BUILD FAILED in 2m 3s",
+                             "> Task :step199", f"kept in {kept}", "CutShortTest.xml cannot be read"):
+                if expected not in log:
+                    failures += fail(f"{how}, the log of a failed baseline has no {expected!r}")
+            for left_out in ("the build printed 50", "> Task :step0\n", "the earlier build's failure"):
+                if left_out in log:
+                    failures += fail(f"{how}, the log of a failed baseline holds {left_out!r}")
+        if code_nowhere != 1 or any(expected not in out_nowhere for expected in (
+                "fails unmutated", "Substring <module b is dated>", "could not be kept in",
+                "the synthetic standing suite fails")):
+            failures += fail(f"results that cannot be kept cost more than a line: {code_nowhere} {out_nowhere!r}")
+        # The suite that started no build says nothing of the build before it, and the one whose
+        # build passed nothing of that build: what failed was its check.
+        if out.count("BUILD FAILED in 2m 3s") != 1 or "BUILD SUCCESSFUL in 1s" in out \
+                or [got.get(label, ("", ""))[0] for label in ("other", "after")] != ["not proved"] * 2:
+            failures += fail(f"a suite was given the output of a build that did not fail it, or proved: "
+                             f"{got} {out!r}")
+        outcome, detail = got.get("held", ("", ""))
+        if outcome != "not proved" or "fails unmutated" not in detail or "\n" in detail:
+            failures += fail(f"--results keeps {outcome!r} with {detail!r}, not the refusal's one line")
+        if [name.rsplit(".", 2)[-2] for name in files] != ["CutShortTest", "ForkingFunctionalTest"] \
+                or "the build printed 50" not in whole[-1]:
+            failures += fail(f"the failed build's results are not kept whole, alone: {files}")
+        if f"kept in {os.path.join(kept, os.path.dirname(files[0]))}" not in out if files else True:
+            failures += fail(f"the log does not say where the results are kept: {out!r}")
+        if not os.path.exists(stale):
+            failures += fail("the tree's own results were moved, not copied")
+    # Each shard job uploads the directory the script keeps them in: a path that drifted would
+    # upload nothing and say nothing.
+    repository = os.path.dirname(os.path.dirname(os.path.abspath(pg.__file__)))
+    uploaded = f"path: {os.path.relpath(pg.UNMUTATED_RESULTS, repository).replace(os.sep, '/')}/\n"
+    with open(pg.GUARDS_WORKFLOW, encoding="utf-8") as handle:
+        if handle.read().count(uploaded) != 2:
+            failures += fail(f"the two shard jobs do not each upload {uploaded!r}")
+    return failures
+
+
 def case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing():
     failures = 0
     changed = {"bench/run.py"}
@@ -1430,6 +1562,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_an_empty_shard_succeeds_and_says_whose_guards_it_left,
          case_a_shard_writes_each_guards_outcome_and_a_silent_one_fails_it,
          case_a_refused_run_writes_every_guard_it_held_as_not_proved,
+         case_a_baseline_that_fails_prints_why_and_keeps_its_results,
          case_the_parallel_run_ci_uses_writes_outcomes_and_refusals,
          case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing,
          case_gradle_starts_through_the_wrapper_windows_can_run,
