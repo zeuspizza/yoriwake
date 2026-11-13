@@ -1,7 +1,7 @@
 {
  "measured_by": [
-  {"run": 42375576798, "commit": "1e9ffab8", "modes": ["full"]},
-  {"run": 41672434468, "commit": "19708b71", "modes": ["fast"]}
+  {"run": 43306357287, "commit": "ecd4f772", "modes": ["fast"]},
+  {"run": 42375576798, "commit": "1e9ffab8", "modes": ["full"]}
  ],
  "estimated": [
   "functional/DependencyBumpFunctionalTest",
@@ -13,25 +13,25 @@
   "maven/OptimisticModeFunctionalTest"
  ],
  "suites": {
-  "fast/ci": {"baseline": 13, "guard": 9},
+  "fast/ci": {"baseline": 17, "guard": 10},
   "fast/config cost": {"baseline": 1, "guard": 1},
-  "fast/configuration guards": {"baseline": 49, "guard": 27},
+  "fast/configuration guards": {"baseline": 48, "guard": 26},
   "fast/controls": {"baseline": 1, "guard": 1},
-  "fast/corpus": {"baseline": 5, "guard": 3},
-  "fast/decoder": {"baseline": 18, "guard": 22},
-  "fast/jdk identity": {"baseline": 52, "guard": 16},
-  "fast/line only": {"baseline": 20, "guard": 20},
+  "fast/corpus": {"baseline": 3, "guard": 3},
+  "fast/decoder": {"baseline": 18, "guard": 20},
+  "fast/jdk identity": {"baseline": 31, "guard": 14},
+  "fast/line only": {"baseline": 38, "guard": 45},
   "fast/maven harness": {"baseline": 1, "guard": 1},
-  "fast/mutations": {"baseline": 1, "guard": 1},
-  "fast/order": {"baseline": 3, "guard": 3},
+  "fast/mutations": {"baseline": 1, "guard": 0},
+  "fast/order": {"baseline": 2, "guard": 3},
   "fast/preflight": {"baseline": 0, "guard": 0},
   "fast/qualify": {"baseline": 1, "guard": 0},
-  "fast/reference": {"baseline": 29, "guard": 29},
-  "fast/revert": {"baseline": 16, "guard": 16},
+  "fast/reference": {"baseline": 34, "guard": 24},
+  "fast/revert": {"baseline": 12, "guard": 12},
   "fast/scan": {"baseline": 1, "guard": 1},
   "fast/sharding": {"baseline": 1, "guard": 1},
   "fast/sweep": {"baseline": 0, "guard": 0},
-  "fast/unit": {"baseline": 102, "guard": 70},
+  "fast/unit": {"baseline": 98, "guard": 68},
   "full/agent": {"baseline": 24, "guard": 23},
   "full/break": {"baseline": 53, "guard": 34},
   "full/ci": {"baseline": 11, "guard": 11},
@@ -61,7 +61,7 @@
   "full/unit": {"baseline": 35, "guard": 34}
  },
  "warm_up": {
-  "fast": 184,
+  "fast": 172,
   "full": 174
  },
  "classes": {

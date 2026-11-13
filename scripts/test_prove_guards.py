@@ -670,19 +670,94 @@ def case_a_class_stays_whole_unless_it_outweighs_a_shard_share():
     return failures
 
 
-def case_a_maven_class_pays_its_baseline_in_each_worker_that_runs_it():
-    """The parallel phase hands a Maven class's guards to whichever worker is free, and each worker
-    baselines the class before its first guard: on CI, four guards of one class paid four baselines."""
+def case_a_maven_class_pays_one_baseline_per_shard():
+    """A shard's Maven guards run in one lane, one tree, so a class is baselined once however many
+    of its guards the shard holds, as a functional class is."""
     failures = 0
     for guards in (1, 3, pg.JOBS, pg.JOBS + 3):
-        baseline, guard = pg.class_cost("maven", "SelectionFunctionalTest")
-        expected = min(guards, pg.JOBS) * baseline + guards * guard
-        if pg._class_weight("maven", "SelectionFunctionalTest", guards) != expected:
-            failures += fail(f"{guards} Maven guards of one class weigh "
-                             f"{pg._class_weight('maven', 'SelectionFunctionalTest', guards)}s, not {expected}s")
-        baseline, guard = pg.class_cost("functional", "SelectionFunctionalTest")
-        if pg._class_weight("functional", "SelectionFunctionalTest", guards) != baseline + guards * guard:
-            failures += fail(f"{guards} functional guards of one class, in one tree, pay more than one baseline")
+        for suite in ("maven", "functional"):
+            baseline, guard = pg.class_cost(suite, "SelectionFunctionalTest")
+            weight = pg._class_weight(suite, "SelectionFunctionalTest", guards)
+            if weight != baseline + guards * guard:
+                failures += fail(f"{guards} {suite} guards of one class weigh {weight}s, "
+                                 f"not one baseline and each guard, {baseline + guards * guard}s")
+    return failures
+
+
+def _indices(suite, count, test_class=None):
+    """The `MUTATIONS` indices of the first `count` guards of `suite`, of one class when named."""
+    found = [i for i, m in enumerate(pg.MUTATIONS) if m[4] is suite
+             and (test_class is None or pg._class_of(m[4], m[5]) == test_class)]
+    assert len(found) >= count, (suite.__name__, test_class, len(found))
+    return found[:count]
+
+
+def _by_cost(indices):
+    """`indices` as the parallel phase orders them: costliest suite first."""
+    cost = {fn: c for _n, fn, c in pg.SUITES}
+    return sorted(indices, key=lambda i: -cost[pg.MUTATIONS[i][4]])
+
+
+def case_the_maven_guards_run_in_one_lane_grouped_by_class():
+    """Each worker baselines a class once, so a class's guards spread over workers paid a baseline
+    in each; one lane for all of a shard's Maven guards pays one per class."""
+    failures = 0
+    classes = sorted({pg._class_of(m[4], m[5]) for m in pg.MUTATIONS if m[4] is pg.maven_suite})
+    first, second = classes[0], classes[1]
+    a = _indices(pg.maven_suite, 3, first)
+    b = _indices(pg.maven_suite, 1, second)
+    unit, replay = _indices(pg.unit_suite, 2), _indices(pg.replay_suite, 1)
+    # Mixed so the classes' guards are not adjacent before the lane groups them.
+    chosen = _by_cost([a[0], b[0], a[1], unit[0], replay[0], a[2], unit[1]])
+    lane, rest = pg.parallel_tasks(chosen, 4)
+    if sorted(lane) != sorted(a + b) or lane not in (a + b, b + a):
+        failures += fail(f"the lane is {lane}, not {first}'s {a} and {second}'s {b}, each class together")
+    # Three workers beside the lane: one Gradle guard, then two others.
+    if rest != [replay[0]] + unit:
+        failures += fail(f"the other guards are {rest}, not one Gradle guard then the others: {replay + unit}")
+    # Two workers beside the lane: each Gradle guard, then one other.
+    replays = _indices(pg.replay_suite, 2)
+    _lane, rest = pg.parallel_tasks(_by_cost(a[:1] + replays + unit), 3)
+    if rest != [replays[0], unit[0], replays[1], unit[1]]:
+        failures += fail(f"two workers beside the lane were handed {rest}, not each Gradle guard then one other")
+    others = _by_cost(unit + replay)
+    if pg.parallel_tasks(others, 4) != ([], [replay[0]] + unit):
+        failures += fail(f"without a Maven guard: {pg.parallel_tasks(others, 4)}")
+    lane, rest = pg.parallel_tasks(_by_cost(a + b), 4)
+    if rest or sorted(lane) != sorted(a + b):
+        failures += fail(f"only Maven guards: lane {lane}, others {rest}")
+    lane, rest = pg.parallel_tasks(chosen, 1)
+    if lane or rest[:4] not in (a + b, b + a) or sorted(rest[4:]) != sorted(unit + replay):
+        failures += fail(f"one worker: lane {lane}, list {rest}")
+    return failures
+
+
+def case_one_worker_running_the_lane_pays_each_class_one_baseline():
+    """The lane's guards reach its worker one task at a time; its memo spans them all."""
+    failures = 0
+    saved = (pg._class_of, dict(pg._WORKER))
+    with _synthetic([("a1", True), ("b1", True), ("a2", True), ("a3", True)]):
+        def quick(test_class=None):
+            return []
+        pg.SUITES.append(("synthetic lane", quick, 0))
+        pg.SUITE_NAMES[quick] = "synthetic lane"
+        pg.MUTATIONS[:] = [(m[0], m[1], m[2], m[3], quick, m[5]) for m in pg.MUTATIONS]
+        classes = {"a1": "ATest", "a2": "ATest", "a3": "ATest", "b1": "BTest"}
+        pg._WORKER.update(baselined={}, gradle_lock=contextlib.nullcontext())
+        try:
+            timings = {}
+            for i, m in enumerate(pg.MUTATIONS):
+                pg._class_of = lambda suite, expect, name=classes[m[0]]: name
+                timings[m[0]] = pg._prove_in_worker(i)[3]
+        finally:
+            pg._class_of = saved[0]
+            pg._WORKER.clear()
+            pg._WORKER.update(saved[1])
+    paid = sorted(label for label, t in timings.items() if t["baseline_seconds"] is not None)
+    if paid != ["a1", "b1"]:
+        failures += fail(f"baselines paid by {paid}, not by each class's first guard: {timings}")
+    if any(t["seconds"] is None for t in timings.values()):
+        failures += fail(f"a guard's run has no seconds: {timings}")
     return failures
 
 
@@ -1198,7 +1273,9 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one,
          case_two_chunks_of_a_class_on_one_shard_are_one_cut,
          case_a_class_stays_whole_unless_it_outweighs_a_shard_share,
-         case_a_maven_class_pays_its_baseline_in_each_worker_that_runs_it,
+         case_a_maven_class_pays_one_baseline_per_shard,
+         case_the_maven_guards_run_in_one_lane_grouped_by_class,
+         case_one_worker_running_the_lane_pays_each_class_one_baseline,
          case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median,
          case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other,
          case_a_step_is_projected_as_the_phases_it_runs,
