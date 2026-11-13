@@ -29,6 +29,11 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Kotlin Multiplatform: a change to a `Platform.jvm.kt`-style file, or to a file of only `inline` functions, narrows. Map: left alone.
 - A Groovy source change narrows to the tests that ran it, instead of running everything. Map: left alone.
 
+### Fixed
+
+- A class with a primitive-array annotation value (`@ValueSource(booleans = ...)`) no longer counts as changed on every run.
+  Map: left alone; the fix shows from its next recording.
+
 ## [0.5.0] - 2026-11-07
 
 **Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.
