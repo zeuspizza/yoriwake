@@ -245,7 +245,7 @@ jobs:
     # prints both for a run's artifacts. Release dry-run attempts have been cut at a lower limit on
     # slow runners whose Maven downloads timed out, and each new class the guards grow has pushed
     # the slowest shard toward it: raise it from that report, not from a duration written here.
-    timeout-minutes: 165
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
