@@ -1279,6 +1279,141 @@ def case_guard_shards_that_partition_the_selection_and_fire_pass():
     return problems
 
 
+def case_a_dispatch_runs_only_its_named_shards_while_nothing_deciding_the_others_changed():
+    """A red shard of a release check costs that shard again, not every one, unless what changed
+    since could change another shard's verdict."""
+    problems = 0
+    every = list(range(1, 9))
+    for changed, holders, expected in (
+        (["docs/plans/x.md", "README.md", ""], set(), [3, 6]),
+        ([], set(), [3, 6]),
+        (["docs/contract.md"], set(), every),
+        (["SECURITY.md"], set(), every),
+        (["scripts/prove_guards.py"], set(), every),
+        (["scripts/guard_costs.json"], set(), every),
+        (["plugin/src/main/kotlin/A.kt", "README.md"], set(), every),
+        (["plugin/src/functionalTest/kotlin/AFunctionalTest.kt"], set(), every),
+        ([".github/ci.py"], set(), every),
+        # The `ci` suite's guards check the workflows: their shards run again, the others stand.
+        ([".github/workflows/verify.yml"], {1, 4}, [1, 3, 4, 6]),
+        ([".github/workflows/verify.yml"], {3}, [3, 6]),
+        # Its badge check reads the README.
+        (["README.md"], {1, 4}, [1, 3, 4, 6]),
+    ):
+        got = ci.shards_to_run([3, 6], 8, {i: changed for i in every if i not in (3, 6)}, holders)
+        if got[0] != expected or (got[1] is None) != (expected != every):
+            problems += fail(f"{changed} with ci guards in {holders}: {got}, not {expected}")
+    for named in ([], [9], [0, 3]):
+        if ci.shards_to_run(named, 8, {}, set())[0] != every:
+            problems += fail(f"shards {named} did not run every shard")
+    if ci.parse_shards("3, 6") != [3, 6] or ci.parse_shards("3;6") or ci.parse_shards(""):
+        problems += fail("the shards input is not read as a comma-separated list of numbers")
+    return problems
+
+
+# The commits an earlier dispatch and the run before it proved their shards at.
+EARLIER_HEAD, OLDER_HEAD = "a" * 40, "9" * 40
+
+
+def _earlier_shards(root, count=8, outcome="fired", sources=None, joined=False, header=None):
+    """An earlier dispatch's downloaded shard artifacts, each with one guard of `outcome`;
+    `sources` gives a shard its own run and commit, under `guards-joined` when `joined`."""
+    for index in range(1, count + 1):
+        name = f"guards-every-{index}-of-{count}"
+        path = os.path.join(root, "earlier", "guards-joined", name) if joined else os.path.join(root, "earlier", name)
+        os.makedirs(path)
+        with open(os.path.join(path, "full.json"), "w", encoding="utf-8") as handle:
+            json.dump({"mode": "full", "changed": None, "guard": [], "shard": f"{index}/{count}",
+                       "refused": None, **(header or {}),
+                       "guards": [{"label": f"g{index}", "outcome": outcome}]}, handle)
+        if sources and index in sources:
+            with open(os.path.join(path, "source.json"), "w", encoding="utf-8") as handle:
+                json.dump(sources[index], handle)
+
+
+def _reuse(root, event="workflow_dispatch", changed=None):
+    """`reuse_shards` over `root`'s earlier shards, run 100 at `EARLIER_HEAD`, naming shards 3 and 6;
+    `changed` maps a commit to the paths changed since."""
+    diffs = changed or {}
+    return ci.reuse_shards(os.path.join(root, "earlier"), os.path.join(root, "reused"), "100", EARLIER_HEAD,
+                           event, ci.GUARDS_WORKFLOW, [3, 6], 8,
+                           diff=lambda since: diffs.get(since, []), ci_holders=lambda count: set())
+
+
+def case_an_earlier_run_stands_in_only_for_shards_it_proved_at_a_commit_still_alike():
+    problems = 0
+    every = list(range(1, 9))
+    with tempfile.TemporaryDirectory() as root:
+        _earlier_shards(root)
+        os.makedirs(os.path.join(root, "reused"))
+        shards, why = _reuse(root)
+        kept = sorted(os.listdir(os.path.join(root, "reused")))
+        if shards != [3, 6] or why or kept != [f"guards-every-{i}-of-8" for i in every if i not in (3, 6)]:
+            problems += fail(f"a clean earlier run: shards {shards} ({why}), kept {kept}")
+        with open(os.path.join(root, "reused", "guards-every-1-of-8", "source.json"), encoding="utf-8") as handle:
+            if json.load(handle) != {"run": 100, "head": EARLIER_HEAD}:
+                problems += fail("a kept shard does not name the run and commit it was proved at")
+    for why, setup, event in (
+        ("another shard count", lambda root: _earlier_shards(root, count=6), "workflow_dispatch"),
+        ("a guard that did not fire", lambda root: _earlier_shards(root, outcome="nothing caught"), "workflow_dispatch"),
+        ("a pull request's run", _earlier_shards, "pull_request"),
+        ("no artifacts", lambda root: os.makedirs(os.path.join(root, "earlier")), "workflow_dispatch"),
+        ("a shard of a changed-guards run", lambda root: _earlier_shards(root, header={"changed": "base"}),
+         "workflow_dispatch"),
+        ("a refused shard", lambda root: _earlier_shards(root, header={"refused": "dirty tree"}), "workflow_dispatch"),
+        ("a shard that names another run",
+         lambda root: _earlier_shards(root, sources={1: {"run": 7, "head": "7" * 40}}), "workflow_dispatch"),
+        ("a shard whose commit is no commit",
+         lambda root: _earlier_shards(root, sources={1: {"run": 90, "head": "--output=x"}}, joined=True),
+         "workflow_dispatch"),
+    ):
+        with tempfile.TemporaryDirectory() as root:
+            setup(root)
+            os.makedirs(os.path.join(root, "reused"))
+            shards, reason = _reuse(root, event)
+            if shards != every or not reason or os.listdir(os.path.join(root, "reused")):
+                problems += fail(f"{why}: shards {shards} ({reason}) kept {os.listdir(os.path.join(root, 'reused'))}")
+    # A run that itself kept shards from an earlier one: each shard is compared from its own commit.
+    with tempfile.TemporaryDirectory() as root:
+        older = {1: {"run": 90, "head": OLDER_HEAD}}
+        _earlier_shards(root, sources={**older, **{i: {"run": 100, "head": EARLIER_HEAD} for i in range(2, 9)}}, joined=True)
+        os.makedirs(os.path.join(root, "reused"))
+        shards, reason = _reuse(root, changed={OLDER_HEAD: ["scripts/prove_guards.py"]})
+        if shards != every or "shard 1" not in (reason or ""):
+            problems += fail(f"a change since the older run's shard was not seen: {shards} ({reason})")
+    with tempfile.TemporaryDirectory() as root:
+        _earlier_shards(root, sources={1: {"run": 90, "head": OLDER_HEAD}}, joined=True)
+        os.makedirs(os.path.join(root, "reused"))
+        shards, reason = _reuse(root, changed={OLDER_HEAD: ["README.md"]})
+        with open(os.path.join(root, "reused", "guards-every-1-of-8", "source.json"), encoding="utf-8") as handle:
+            kept = json.load(handle)
+        if shards != [3, 6] or kept != {"run": 90, "head": OLDER_HEAD}:
+            problems += fail(f"a shard kept twice lost its own run: {shards} ({reason}), {kept}")
+    return problems
+
+
+def case_only_the_job_that_reads_another_run_reads_actions_and_every_shard_names_its_run():
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    holders = [job for job in ("changes", "fast-shard", "fast", "full-shard", "full", "run-summary")
+               if "\n      actions: read\n" in (_job_block(text, job) or "")]
+    if holders != ["changes"] or text.count("\n      actions: read\n") != 1 or "\n  actions: read\n" in text:
+        problems += fail(f"`actions: read` is on {holders}, not on the job that reads another run alone")
+    full_shard, full = _job_block(text, "full-shard") or "", _job_block(text, "full") or ""
+    if "results/source.json" not in full_shard:
+        problems += fail("an every-guard shard does not record the run and commit its guards ran at")
+    if full_shard.count("retention-days: 7") != 2 or "retention-days: 1" in full_shard:
+        problems += fail("an every-guard shard's results are not kept a week for a later dispatch")
+    if "if: always() && needs.changes.outputs.reused == 'true'\n        with:\n          name: guards-reused" not in full:
+        problems += fail("the every-guard check does not join the kept shards only when there are some")
+    if "name: guards-joined" not in full:
+        problems += fail("the every-guard check does not keep the joined shards")
+    if not re.search(r"\n          SHARDS: \$\{\{ inputs\.shards \}\}\n          REUSE: \$\{\{ inputs\.reuse \}\}", text):
+        problems += fail("the dispatch inputs do not reach the script through the environment")
+    return problems
+
+
 def case_every_way_a_selected_guard_can_go_unproved_fails():
     """Each check must be able to fail: green shards that left a guard unproved are the defect."""
     problems = 0
@@ -1405,6 +1540,10 @@ def case_every_guard_job_runs_all_its_shards_under_its_required_name():
             problems += fail(f"guards.yml has no {shard_job} job and {check_name} check")
             continue
         listed = re.search(r"shard: \[([\d, ]+)\]", job)
+        # A dispatch may run some every-guard shards alone; by default the list is every one.
+        if not listed and "shard: ${{ fromJSON(needs.changes.outputs.shards) }}" in job:
+            changes = next((j for j in jobs if j.startswith("changes:\n")), "")
+            listed = re.search(r"shards: \$\{\{ steps\.reuse\.outputs\.shards \|\| '\[([\d, ]+)\]' \}\}", changes)
         counts = set(re.findall(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", job))
         if not listed or len(counts) != 1:
             problems += fail(f"{shard_job}: no shard list, or not one shard count: {sorted(counts)}")
@@ -3632,6 +3771,31 @@ def case_a_failed_run_names_the_job_the_test_and_the_shard_that_left_nothing():
     return problems
 
 
+def case_a_run_that_kept_shards_names_the_run_each_came_from():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        for index, run in ((1, 90), (2, 100)):
+            path = os.path.join(root, "results", "guards-joined", f"guards-every-{index}-of-2")
+            os.makedirs(path)
+            with open(os.path.join(path, "full.json"), "w", encoding="utf-8") as handle:
+                json.dump({"guards": [{"label": f"g{index}", "suite": "unit", "outcome": "fired"}]}, handle)
+            with open(os.path.join(path, "source.json"), "w", encoding="utf-8") as handle:
+                json.dump({"run": run, "head": "b"}, handle)
+        # The run's own shard 2, and the kept shard 1 again, beside the joined ones.
+        shutil.copytree(os.path.join(root, "results", "guards-joined", "guards-every-2-of-2"),
+                        os.path.join(root, "results", "guards-every-2-of-2"))
+        shutil.copytree(os.path.join(root, "results", "guards-joined", "guards-every-1-of-2"),
+                        os.path.join(root, "results", "guards-reused", "guards-every-1-of-2"))
+        text = _summary(root, GREEN)
+    for expected in ("| guards-every: full | unit | 2/2 | 2 | 0 |", "| guards-every-1-of-2 | 90 |",
+                     "| guards-every-2-of-2 | 100 |"):
+        if expected not in text:
+            problems += fail(f"a run that kept shards lacks {expected!r}:\n{text}")
+    if "left no results" in text:
+        problems += fail(f"a kept shard was read as missing:\n{text}")
+    return problems
+
+
 def case_a_guard_that_did_not_fire_is_counted_and_listed():
     problems = 0
     with tempfile.TemporaryDirectory() as root:
@@ -3818,6 +3982,9 @@ CASES = (
     case_guard_shards_that_partition_the_selection_and_fire_pass,
     case_every_way_a_selected_guard_can_go_unproved_fails,
     case_every_guard_job_runs_all_its_shards_under_its_required_name,
+    case_a_dispatch_runs_only_its_named_shards_while_nothing_deciding_the_others_changed,
+    case_an_earlier_run_stands_in_only_for_shards_it_proved_at_a_commit_still_alike,
+    case_only_the_job_that_reads_another_run_reads_actions_and_every_shard_names_its_run,
     case_every_guard_shard_retries_its_results_upload,
     case_each_guard_check_reports_its_shards_and_the_every_guard_one_keeps_their_costs,
     case_guard_results_with_timings_read_as_those_without,
@@ -3894,6 +4061,7 @@ CASES = (
     case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported,
     case_a_green_run_summarises_every_job_and_each_suites_shards,
     case_a_failed_run_names_the_job_the_test_and_the_shard_that_left_nothing,
+    case_a_run_that_kept_shards_names_the_run_each_came_from,
     case_a_guard_that_did_not_fire_is_counted_and_listed,
     case_failure_detail_stops_at_twenty_lines_and_counts_the_rest,
     case_an_unreadable_file_is_a_line_not_an_exit_code,
