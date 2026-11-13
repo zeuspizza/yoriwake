@@ -15,8 +15,10 @@ a function that asserted would be collected by pytest and pass however many chec
     python .github/test_ci.py
 """
 
+import contextlib
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
@@ -1201,9 +1203,25 @@ def case_every_sharded_suite_runs_all_its_shards():
         n = int(count.group(1))
         if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
             problems += fail(f"{name}: shards {listed.group(1)} are not 1..{n}")
-        check = next((j for j in jobs if re.search(rf"\n    needs: (\[changes, )?{re.escape(name)}\]?\n", j)), "") + "\n"
-        if f"--count {n}\n" not in check:
-            problems += fail(f"{name}: its check does not expect {n} shards")
+        # A check job gates on its shards; the Maven suite's also on the build job, whose name it took.
+        check = next((j for j in jobs if re.search(rf"\n    needs: (\[changes, )?{re.escape(name)}(, build)?\]?\n", j)), "") + "\n"
+        if check == "\n":
+            problems += fail(f"{name}: no check job gates on it (needs: [changes, {name}])")
+            continue
+        task = re.search(r"\./gradlew :(plugin|maven):(\w+)", job)
+        module = task.group(1) if task else "plugin"
+        flag = " --module maven" if module == "maven" else ""
+        if f"--count {n}{flag}\n" not in check:
+            problems += fail(f"{name}: its check does not expect {n} shards of the {module} suite")
+        # The Maven suite's check took the unit job's required name, so it must still gate on that job.
+        if module == "maven" and ("\n    name: unit and agent suites\n" not in check
+                                  or "\n    needs: [changes, " + name + ", build]\n" not in check
+                                  or not re.search(r"if: needs\.build\.result != 'success'\n\s+run: \|\n[^\n]*\n\s+exit 1\n", check)):
+            problems += fail(f"{name}: its check is not the required `unit and agent suites` gating on the build job too")
+        # Without the operating system the shard table is not read and every class hashes.
+        os_name = "windows" if "runs-on: windows" in job else "linux"
+        if f"-Pyoriwake.functional.shardTable={os_name} " not in job:
+            problems += fail(f"{name}: it does not name its shard table ({os_name})")
         # Without these a failed shard skips its check, and GitHub counts a skipped required check
         # as passing.
         if not re.search(r"\n    if: always\(\)( &&[^\n]*)?\n", check):
@@ -1211,13 +1229,12 @@ def case_every_sharded_suite_runs_all_its_shards():
         if f"if: needs.{name}.result != 'success'" not in check or "exit 1" not in check:
             problems += fail(f"{name}: its check job does not fail when a shard did not succeed")
         # One suite's check must read that suite's results, not another's.
-        task = re.search(r"\./gradlew :plugin:(\w+)", job)
         upload = re.search(r"name: (functional-\w+-(\w+)-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
-        if not task or not upload or upload.group(2) != task.group(1) or upload.group(3) != str(n):
+        if not task or not upload or upload.group(2) != task.group(2) or upload.group(3) != str(n):
             problems += fail(f"{name}: its artifact name does not name its task and shard count")
             continue
-        if f"path: plugin/build/test-results/{task.group(1)}/*.xml" not in job:
-            problems += fail(f"{name}: it does not upload {task.group(1)}'s results")
+        if f"path: {module}/build/test-results/{task.group(2)}/*.xml" not in job:
+            problems += fail(f"{name}: it does not upload {task.group(2)}'s results")
         if f"pattern: {upload.group(1)}*\n" not in check:
             problems += fail(f"{name}: its check does not download its own artifacts ({upload.group(1)}*)")
     return problems
@@ -1229,6 +1246,72 @@ def case_no_downloaded_shard_is_every_shard_missing():
         found = functional_shards.check(os.path.join(root, "absent"), 2, sources)
     expected = {"shard 1 of 2 left no results", "shard 2 of 2 left no results"}
     return 0 if expected <= set(found) else fail(f"a missing shards directory gave {found}")
+
+
+def case_the_table_puts_each_class_in_one_shard_longest_first():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        _shard(root, 1, 2, ["a.AlphaTest"])
+        _shard(root, 2, 2, ["a.BetaTest", "a.GammaTest", "a.GammaTest$Nested"])
+        with open(os.path.join(root, "shards", "functional-linux-functionalTest-1-of-2", "TEST-1.xml"),
+                  "w", encoding="utf-8") as handle:
+            handle.write('<testsuite><testcase classname="a.AlphaTest" name="t()" time="9"/></testsuite>')
+        path = os.path.join(root, "table.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            functional_shards.write_table(os.path.join(root, "shards"), "plugin/linux/functionalTest", 2, path)
+        with open(path, encoding="utf-8") as handle:
+            table = json.load(handle)
+    shards = table.get("plugin/linux/functionalTest", {}).get("2", {})
+    # The heaviest class alone; the two light ones, a nested class counted with its own, together.
+    if shards != {"a.AlphaTest": 1, "a.BetaTest": 2, "a.GammaTest": 2}:
+        problems += fail(f"the table was {table}")
+    if functional_shards.assign({"b": 1.0, "a": 1.0}, 2) != {"a": 1, "b": 2}:
+        problems += fail("equal times did not give the same table every time")
+    return problems
+
+
+def case_a_table_the_filters_cannot_use_is_reported():
+    problems = 0
+    scenarios = {
+        "a shard beyond the count": {"plugin/linux/functionalTest": {"2": {"a.A": 3}}},
+        "shard zero": {"plugin/linux/functionalTest": {"2": {"a.A": 0}}},
+        "a count with no classes": {"plugin/linux/functionalTest": {"2": {}}},
+        "no count": {"plugin/linux/functionalTest": {"two": {"a.A": 1}}},
+        "a suite of no module": {"bench/linux/functionalTest": {"2": {"a.A": 1}}},
+    }
+    for label, table in scenarios.items():
+        if not functional_shards.table_problems(table):
+            problems += fail(f"{label} passed")
+    return problems
+
+
+def case_the_committed_table_is_usable_and_names_only_suites_the_workflow_shards():
+    """A table entry no shard job reads is a count or suite renamed under it: its classes would hash."""
+    with open(functional_shards.TABLE, encoding="utf-8") as handle:
+        table = json.load(handle)
+    problems = sum(fail(f"shard table: {problem}") for problem in functional_shards.table_problems(table))
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    sharded = set()
+    for job in re.split(r"\n  (?=[\w-]+:\n)", text):
+        found = re.search(r"\./gradlew :(plugin|maven):(\w+).*-Pyoriwake\.functional\.shard=\$\{\{ matrix\.shard \}\}/(\d+)"
+                          r" -Pyoriwake\.functional\.shardTable=(\w+)", job)
+        if found:
+            sharded.add((f"{found.group(1)}/{found.group(4)}/{found.group(2)}", found.group(3)))
+    for suite, counts in table.items():
+        for count in counts:
+            if (suite, count) not in sharded:
+                problems += fail(f"shard table: {suite} at {count} shards is run by no job of verify.yml")
+    for suite, count in sorted(sharded - {(s, c) for s, counts in table.items() for c in counts}):
+        problems += fail(f"verify.yml shards {suite} {count} ways with no table entry: every class hashes")
+    return problems
+
+
+def case_the_maven_source_scan_leaves_out_its_break_attempts():
+    found = functional_shards.candidates(*functional_shards.MODULES["maven"])
+    if not found or any(".breaking." in name for name in found) or not all(".maven." in name for name in found):
+        return fail(f"the Maven candidates were {sorted(found)}")
+    return 0
 
 
 GUARD_SELECTION = {"mode": "full", "changed": "base", "guard": []}
@@ -3979,6 +4062,10 @@ CASES = (
     case_every_way_a_test_class_can_go_untested_fails,
     case_every_sharded_suite_runs_all_its_shards,
     case_no_downloaded_shard_is_every_shard_missing,
+    case_the_table_puts_each_class_in_one_shard_longest_first,
+    case_a_table_the_filters_cannot_use_is_reported,
+    case_the_committed_table_is_usable_and_names_only_suites_the_workflow_shards,
+    case_the_maven_source_scan_leaves_out_its_break_attempts,
     case_guard_shards_that_partition_the_selection_and_fire_pass,
     case_every_way_a_selected_guard_can_go_unproved_fails,
     case_every_guard_job_runs_all_its_shards_under_its_required_name,

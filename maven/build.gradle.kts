@@ -1,3 +1,4 @@
+import java.util.zip.CRC32
 import java.util.zip.ZipFile
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
@@ -275,10 +276,57 @@ fun Test.overRealMaven() {
 // regression fixture. Run on their own, as on the Gradle plugin, so `check` never pays for them.
 val breakAttemptsPackage = "io.github.zeuspizza.yoriwake.maven.breaking"
 
+// A pull request's CI runs the suite as several jobs, as the Gradle plugin's (plugin/build.gradle.kts):
+// `-Pyoriwake.functional.shard=<index>/<count>` runs the classes the shard table puts in `index`
+// for the operating system `-Pyoriwake.functional.shardTable` names, and a class it lacks where its
+// top-level name hashes. The workflow checks every class ran in exactly one shard.
+val functionalShard = providers.gradleProperty("yoriwake.functional.shard").orNull?.let { value ->
+    val parts = value.split("/")
+    val index = parts.getOrNull(0)?.toIntOrNull()
+    val count = parts.getOrNull(1)?.toIntOrNull()
+    require(parts.size == 2 && index != null && count != null && count > 0 && index in 1..count) {
+        "yoriwake.functional.shard=$value must be <index>/<count>, with 1 <= index <= count"
+    }
+    index to count
+}
+val functionalShardPlaced = functionalShard?.let { (_, count) ->
+    providers.gradleProperty("yoriwake.functional.shardTable").orNull?.let { os ->
+        val file = rootProject.layout.projectDirectory.file(".github/functional-shards.json")
+        val table = try {
+            groovy.json.JsonSlurper().parseText(providers.fileContents(file).asText.get())
+        } catch (e: Exception) {
+            throw GradleException("the shard table ${file.asFile} cannot be read: ${e.message}", e)
+        }
+        val suites = table as? Map<*, *> ?: throw GradleException("the shard table ${file.asFile} is no JSON object")
+        when (val shards = (suites["maven/$os/functionalTest"] as? Map<*, *>)?.get(count.toString())) {
+            null -> emptyMap()
+            is Map<*, *> -> shards.entries.associate { (name, index) ->
+                require(name is String && index is Int && index in 1..count) {
+                    "the shard table ${file.asFile} puts $name of maven/$os/functionalTest in shard $index of $count"
+                }
+                name to index
+            }
+            else -> throw GradleException("the shard table ${file.asFile} has no classes for maven/$os/functionalTest at $count")
+        }
+    }
+} ?: emptyMap()
+
 tasks.register<Test>("functionalTest") {
     description = "Runs real Maven builds over fixtures with the published plugin."
     overRealMaven()
     filter.excludeTestsMatching("$breakAttemptsPackage.*")
+    functionalShard?.let { (index, count) ->
+        val placed = functionalShardPlaced
+        // By the class file's top-level name, so a nested class runs with the class around it.
+        // Plain values only in the lambda, for the configuration cache.
+        exclude { file ->
+            val path = file.relativePath.pathString
+            if (file.isDirectory || !path.endsWith(".class")) return@exclude false
+            val topLevel = path.removeSuffix(".class").substringBefore('$').replace('/', '.')
+            val shard = placed[topLevel] ?: ((CRC32().apply { update(topLevel.toByteArray()) }.value % count).toInt() + 1)
+            shard != index
+        }
+    }
 }
 
 tasks.register<Test>("breakAttempts") {
