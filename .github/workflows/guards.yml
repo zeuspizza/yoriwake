@@ -133,7 +133,7 @@ jobs:
     # shard's projection and the largest shortfall of a projection on a measured pull-request run:
     # `python3 scripts/guard_costs.py report <shards-dir> --job fast-shard` prints both for a run's
     # artifacts, and `prove_guards.py --shard I/N --changed --list-selection FILE` projects one.
-    timeout-minutes: 200
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -245,7 +245,7 @@ jobs:
     # prints both for a run's artifacts. Release dry-run attempts have been cut at a lower limit on
     # slow runners whose Maven downloads timed out, and each new class the guards grow has pushed
     # the slowest shard toward it: raise it from that report, not from a duration written here.
-    timeout-minutes: 260
+    timeout-minutes: 165
     strategy:
       fail-fast: false
       matrix:
