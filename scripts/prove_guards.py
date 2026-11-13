@@ -588,8 +588,20 @@ def functional_class(expect, checkout, sources=FUNCTIONAL_SOURCES):
     return _FUNCTIONAL_CLASSES[key]
 
 
-def _suite_run(suite, test_class):
-    return suite(test_class) if test_class else suite()
+def test_filter(test_class, expect):
+    """The `--tests` filter of a class suite's run: the tests of `test_class` whose names hold
+    `expect` (a class resolves only from an `expect`), and every functional class without one.
+
+    A guard's verdict reads only whether the test its `expect` names failed, so the class's other
+    tests cost minutes and decide nothing, and each test a class gained made every one of its
+    guards slower. A filter that matches no test fails the run with Gradle's "No tests found", so
+    the guard is refused, never proved.
+    """
+    return f"*.{test_class}.*{expect}*" if test_class else FUNCTIONAL_FILTER
+
+
+def _suite_run(suite, test_class, expect=None):
+    return suite(test_class, expect) if test_class else suite()
 
 
 def _class_of(suite, expect):
@@ -601,16 +613,16 @@ def _class_of(suite, expect):
     return None
 
 
-def functional_suite(test_class=None):
+def functional_suite(test_class=None, expect=None):
     """The TestKit builds that drive a real Gradle build end to end, one class per feature.
 
-    With `test_class`, that class alone: a guard fires only when the test it names fails, so the
-    other classes cost minutes and decide nothing. `--rerun` forces the tests and lets Gradle's own
-    up-to-date checks rebuild what a mutation or its restore touched; `--rerun-tasks` recompiled and
-    re-published the plugin on every run.
+    With `test_class`, that class alone, and with `expect` only its tests that name it
+    (`test_filter`): a guard fires only when the test it names fails, so the other tests cost
+    minutes and decide nothing. `--rerun` forces the tests and lets Gradle's own up-to-date checks
+    rebuild what a mutation or its restore touched; `--rerun-tasks` recompiled and re-published the
+    plugin on every run.
     """
-    done = gradle(FUNCTIONAL_FLOOR_ONLY + ["--tests", f"*.{test_class}" if test_class else FUNCTIONAL_FILTER,
-                                           "--rerun"])
+    done = gradle(FUNCTIONAL_FLOOR_ONLY + ["--tests", test_filter(test_class, expect), "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -622,15 +634,14 @@ def functional_suite(test_class=None):
     return named
 
 
-def maven_suite(test_class=None):
+def maven_suite(test_class=None, expect=None):
     """Real Maven builds over the Maven plugin's fixtures: the declines, the capture and its forks.
 
-    With `test_class`, that class alone, as `functional_suite`: each Maven build is minutes on a
-    runner, and every class at every guard ran a shard past its time limit. Without one, every
+    With `test_class` and `expect`, the tests they name alone, as `functional_suite`: each Maven
+    build is minutes on a runner, and every class at every guard ran a shard past its time limit. Without one, every
     functional class by the filter: a hand-kept list of classes missed the ones added after it.
     """
-    done = gradle([":maven:functionalTest", "--tests", f"*.{test_class}" if test_class else FUNCTIONAL_FILTER,
-                   "--rerun"])
+    done = gradle([":maven:functionalTest", "--tests", test_filter(test_class, expect), "--rerun"])
     if done.returncode == 0:
         return []
     lines = (done.stdout + done.stderr).splitlines()
@@ -5397,8 +5408,8 @@ EXCLUSIVE_SUITES = {"functional", "configuration guards", "break"}
 UNLOCKED_SUITES = {"agent", "unit", "decoder", "line only", "reference"}
 
 
-# Functional guards run two at a time in the alone phase, each class in one tree only, so its
-# baseline runs beside one other build and never twice. Earned by measurement: one guard of each
+# Functional guards run two at a time in the alone phase, each class in one tree only, so each of
+# its builds runs beside one other build. Earned by measurement: one guard of each
 # functional class, its class baseline and mutated run beside another class's, three rounds: every
 # baseline passed, and every guard fired its named test. Configuration guards still run one at a
 # time after them.
@@ -5646,7 +5657,7 @@ def _init_worker(slots, gradle_lock):
     _WORKER["gradle_lock"] = gradle_lock
 
 
-def _run_suite(suite, test_class=None):
+def _run_suite(suite, test_class=None, expect=None):
     """A suite in this worker's tree -- one GRADLE suite at a time across every worker.
 
     Measured: four functional suites at once failed unmutated in every worker. TestKit
@@ -5657,28 +5668,31 @@ def _run_suite(suite, test_class=None):
     """
     if _locked(SUITE_NAMES[suite]):
         with _WORKER["gradle_lock"]:
-            return _timed_run(suite, test_class)
-    return _timed_run(suite, test_class)
+            return _timed_run(suite, test_class, expect)
+    return _timed_run(suite, test_class, expect)
 
 
-def _timed_run(suite, test_class):
+def _timed_run(suite, test_class, expect=None):
     """A suite's failures and the seconds it ran. Timed inside the lock, so a wait for another
     worker's build is not counted as this one's cost."""
     start = time.monotonic()
-    fired = _suite_run(suite, test_class)
+    fired = _suite_run(suite, test_class, expect)
     return fired, round(time.monotonic() - start, 1)
 
 
 def _prove_in_worker(index):
-    """One guard, in this worker's own tree: its suite unmutated once, then mutated. Returns its
-    index, what fired, a refusal, and the seconds of its run and of the baseline it paid, if any."""
+    """One guard, in this worker's own tree: the run it makes unmutated once, then mutated. Returns
+    its index, what fired, a refusal, and the seconds of its run and of the baseline it paid, if any.
+
+    A guard that runs only its named tests is baselined on exactly those: another guard's baseline
+    of the same class proved other tests, and a test already failing would read as fired."""
     label, path, old, new, suite, expect = MUTATIONS[index]
     name = SUITE_NAMES[suite]
     test_class = _class_of(suite, expect)
-    key = (name, test_class)
+    key = (name, test_class, expect if test_class else None)
     timing = _timing(name, test_class)
     if key not in _WORKER["baselined"]:
-        _WORKER["baselined"][key], timing["baseline_seconds"] = _run_suite(suite, test_class)
+        _WORKER["baselined"][key], timing["baseline_seconds"] = _run_suite(suite, test_class, expect)
     standing = _WORKER["baselined"][key]
     if standing:
         scope = f" ({test_class})" if test_class else ""
@@ -5688,7 +5702,7 @@ def _prove_in_worker(index):
     original = read_bytes(target)
     write_source(target, read_source(target).replace(old, new, 1))
     try:
-        fired, timing["seconds"] = _run_suite(suite, test_class)
+        fired, timing["seconds"] = _run_suite(suite, test_class, expect)
         return index, fired, None, timing
     finally:
         write_bytes(target, original)
@@ -5708,9 +5722,8 @@ def parallel_tasks(chosen, workers):
     order the remaining workers take them. With one worker there is no lane: the Maven guards, in
     the same order, come first in its one list.
 
-    The Maven guards share one lane because its worker keeps one baseline per class, and each of
-    their builds holds the Gradle lock anyway: handed to whichever worker was free, a class paid its
-    baseline, about as long as a guard, in every worker that drew one of its guards. The other
+    The Maven guards share one lane because each of their builds holds the Gradle lock anyway, so
+    one worker runs them as fast as four, and the others stay free for the unlocked suites. The other
     guards go one Gradle guard, then enough others to fill the remaining workers, repeated: Gradle
     suites run one at a time, so queueing them together would leave every other worker waiting on
     the lock. Costliest first within each kind, so the long ones are not left to run alone at the
@@ -5889,7 +5902,7 @@ def _report(index, fired, refusal, timing=None):
 
 def _place(units, count, shards):
     """Each (weight, name, guards) unit, heaviest first, to a shard that holds no other chunk of its
-    class (two would pay the class's baseline twice in one tree and break its run of guards), then
+    class (two would break its run of guards), then
     the least weight so far, then the fewest units, then the lowest index; returns each shard's
     weight, and each unit with the shard it went to."""
     load, held, placed = [0.0] * count, [0] * count, []
@@ -5924,11 +5937,13 @@ JOBS = 4
 
 
 def _class_weight(suite, name, guards):
-    """The seconds a run of `guards` guards of one class costs: its baseline once, then each guard.
-    A functional class runs in one tree of the alone phase; a shard's Maven guards all run in the
-    parallel phase's one Maven lane, so a Maven class too is baselined in one tree."""
+    """The seconds a run of `guards` guards of one class costs. Each guard of a class runs and is
+    baselined on its own named tests, so each pays a baseline and its run; a guard whose class does
+    not resolve runs the whole suite, baselined once per tree."""
     baseline, guard = class_cost(suite, name)
-    return baseline + guards * guard
+    if name is None:
+        return baseline + guards * guard
+    return guards * (baseline + guard)
 
 
 def partition(mutations, count):
@@ -5937,10 +5952,9 @@ def partition(mutations, count):
     selection, `guard_costs.json` and the checkout only, so every machine splits a commit's
     selection alike.
 
-    A functional or Maven class's guards share one baseline, so they stay together unless the
-    class outweighs a shard's share of its suite; then it splits into near-equal chunks, each
-    weighed with its own baseline. A functional class runs in one tree, and a shard's Maven guards
-    in its one Maven lane, so each class pays one baseline per shard. Both are placed on one scale, the seconds a chunk adds to its shard's wall
+    A functional or Maven class's guards stay together unless the class outweighs a shard's share of
+    its suite; then it splits into near-equal chunks. Each guard pays its own baseline, so a cut
+    costs nothing. Both are placed on one scale, the seconds a chunk adds to its shard's wall
     clock: a functional chunk runs beside another on one of `ALONE_SLOTS` trees, a Maven chunk under
     the Gradle lock, one build at a time. The other guards are placed after them by their suite's
     registry seconds, a scale balanced apart and never added.
@@ -5997,6 +6011,12 @@ def in_shard(mutations, shard):
 # What a shard's job spends outside its guard steps: checkout, the JDK, Gradle's setup and the
 # artifact upload: under a minute as measured.
 JOB_SETUP = 60
+# The wall clock a shard's job is held under, so a red shard's re-run costs about an hour, not a
+# release check's afternoon; and how far past its projection a shard has run on an every-guard run
+# (`guard_costs.py report`'s "furthest over its projection"). test_prove_guards.py fails a change
+# whose worst projected shard, with that on top, passes the target or its job's limit.
+TARGET = 120 * 60
+OVER_PROJECTION = 0.26
 GUARDS_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                ".github", "workflows", "guards.yml")
 
@@ -6349,7 +6369,7 @@ def _main(args, held):
     # that was already failing would report every mutation as caught while catching nothing.
     _phase("serial")
     print("baseline, unmutated:")
-    # A functional guard that runs one class is baselined on that class, just before its first
+    # A functional or Maven guard that runs its named tests is baselined on those, just before its
     # mutation; the whole suite here only if some guard falls back to it.
     narrowed = {}
     for m in selected:
@@ -6373,15 +6393,15 @@ def _main(args, held):
         label, relative, old, new, suite, expect = mutation
         test_class = _class_of(suite, expect)
         timing = _timing(SUITE_NAMES[suite], test_class)
-        if test_class and test_class not in baselined:
-            standing, timing["baseline_seconds"] = _timed_run(suite, test_class)
+        if test_class and (SUITE_NAMES[suite], test_class, expect) not in baselined:
+            standing, timing["baseline_seconds"] = _timed_run(suite, test_class, expect)
             print(f"  baseline {test_class:44} -> {len(standing)} failing"
                   + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
             if standing:
-                print("\nThe class fails before any mutation, so its guards cannot be believed.")
+                print("\nThe guard's tests fail before any mutation, so it cannot be believed.")
                 _RUN["refused"] = f"{test_class} fails unmutated: {standing[0]}"
                 return 1
-            baselined.add(test_class)
+            baselined.add((SUITE_NAMES[suite], test_class, expect))
         path = source(relative)
         original = read_bytes(path)
         text = read_source(path)
@@ -6402,7 +6422,7 @@ def _main(args, held):
         undo = _restore_on_signal(path, original)
         write_source(path, text.replace(old, new, 1))
         try:
-            fired, timing["seconds"] = _timed_run(suite, test_class)
+            fired, timing["seconds"] = _timed_run(suite, test_class, expect)
         finally:
             write_bytes(path, original)
             undo()

@@ -12,10 +12,23 @@ name: guards
 # each shard's projected and measured job and the margin to its limit (scripts/guard_costs.py
 # report); the every-guard check uploads the cost table its run measured, and the release check
 # commits it.
+#
+# A dispatch can run chosen every-guard shards again on a newer commit, after a red shard of a
+# release check: `shards` names them and `reuse` the earlier dispatch, whose other shards stand
+# when only documents no check reads or workflows changed since (.github/ci.py reuse-shards).
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      shards:
+        description: 'Every-guard shards to run, as 3,6; the others come from the run in reuse'
+        required: false
+        default: ''
+      reuse:
+        description: 'The id of an earlier dispatch of this workflow whose other shards stand'
+        required: false
+        default: ''
 
 # A newer push to a pull request cancels its older run.
 concurrency:
@@ -39,10 +52,16 @@ jobs:
   changes:
     name: what changed
     runs-on: ubuntu-24.04
+    # Reading another run's artifacts takes `actions: read`; nothing here writes.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.decide.outputs.code }}
       product: ${{ steps.decide.outputs.product }}
       base: ${{ steps.decide.outputs.base }}
+      shards: ${{ steps.reuse.outputs.shards || '[1, 2, 3, 4, 5, 6, 7, 8]' }}
+      reused: ${{ steps.reuse.outputs.reused }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,6 +83,45 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "product=true" >> "$GITHUB_OUTPUT"
           fi
+      # Which every-guard shards a dispatch runs: those it names, when the earlier run's others
+      # stand; else every one, and the summary says why. Inputs reach the script through the
+      # environment, never spliced into it.
+      # A failure or a hung call here leaves the output unset, and every shard runs.
+      - id: reuse
+        if: github.event_name == 'workflow_dispatch' && (inputs.shards != '' || inputs.reuse != '')
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          SHARDS: ${{ inputs.shards }}
+          REUSE: ${{ inputs.reuse }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          mkdir -p earlier reused
+          path="" event="" head=""
+          case "$REUSE" in
+            ''|*[!0-9]*) ;;
+            *)
+              if found=$(gh api "repos/$REPO/actions/runs/$REUSE" --jq '[.path, .event, .head_sha] | @tsv'); then
+                IFS=$'\t' read -r path event head <<< "$found"
+              fi
+              gh run download "$REUSE" --repo "$REPO" --pattern 'guards-every-*' --pattern guards-joined --dir earlier || true
+              ;;
+          esac
+          python3 .github/ci.py reuse-shards earlier reused --run "$REUSE" --head "$head" --event "$event" \
+            --workflow "$path" --shards "$SHARDS" --count 8 > shards.json 2> why.txt
+          echo "shards=$(cat shards.json)" >> "$GITHUB_OUTPUT"
+          if [ -n "$(ls reused)" ]; then echo "reused=true" >> "$GITHUB_OUTPUT"; fi
+          cat why.txt >> "$GITHUB_STEP_SUMMARY"
+      # The every-guard check joins them with this run's shards. Kept a week, as the shards' own.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.reuse.outputs.reused == 'true'
+        with:
+          name: guards-reused
+          path: reused/
+          if-no-files-found: error
+          retention-days: 7
 
   fast-shard:
     name: guards, fast and the change's own (shard ${{ matrix.shard }}/8)
@@ -191,7 +249,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        # Every shard, unless a dispatch keeps an earlier run's results for some.
+        shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -208,11 +267,16 @@ jobs:
           path: ~/.gradle/yoriwake-maven-distributions
           key: maven-distributions-${{ hashFiles('maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt') }}
           restore-keys: maven-distributions-
-      - run: |
+      # With the run and commit its guards ran at, for a later dispatch that takes this shard.
+      - env:
+          RUN: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
           mkdir -p results
+          printf '{"run": %s, "head": "%s"}\n' "$RUN" "$SHA" > results/source.json
           python3 scripts/prove_guards.py --mode full --shard ${{ matrix.shard }}/8 --results results/full.json
-      # The check job reads every shard's results. Kept a day: a re-run after a day needs
-      # "Re-run all jobs".
+      # The check job reads every shard's results. Kept a week: a dispatch that runs chosen shards
+      # again takes the others from here.
       # A GitHub error on this upload would lose the shard's hours of work and keep the check
       # from running: it is tried twice, and the job fails only when the second try fails too.
       - id: upload
@@ -223,7 +287,7 @@ jobs:
           name: guards-every-${{ matrix.shard }}-of-8
           path: results/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
       # The same upload, when the first failed: the check job reads it. The first may have left
       # the artifact half made, so this one overwrites it.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -232,7 +296,7 @@ jobs:
           name: guards-every-${{ matrix.shard }}-of-8
           path: results/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           overwrite: true
       # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
       # cache, and a live daemon's files can lock a Windows save.
@@ -260,6 +324,12 @@ jobs:
         with:
           pattern: guards-every-*
           path: shards
+      # The shards this run kept from an earlier one, beside its own.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: always() && needs.changes.outputs.reused == 'true'
+        with:
+          name: guards-reused
+          path: shards
       - name: every guard fired in exactly one shard
         run: |
           python3 scripts/prove_guards.py --mode full --list-selection full.json
@@ -282,6 +352,17 @@ jobs:
         with:
           name: guard-costs
           path: guard-costs/
+          if-no-files-found: error
+          retention-days: 7
+      # Every shard's results, this run's and those it kept, each with its run and commit: a later
+      # dispatch takes shards from here, and the run summary names where each came from. Kept a
+      # week, as the shards' own.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.shards.outcome == 'success'
+        continue-on-error: true
+        with:
+          name: guards-joined
+          path: shards/
           if-no-files-found: error
           retention-days: 7
 

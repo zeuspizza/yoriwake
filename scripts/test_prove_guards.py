@@ -418,18 +418,30 @@ def case_a_functional_guard_runs_the_one_class_that_holds_its_test():
     return failures
 
 
-def case_every_functional_guard_resolves_to_one_class():
-    """A renamed test would otherwise slow its guard back to the whole suite, unseen."""
-    unresolved = [m[0] for m in pg.MUTATIONS if m[4] is pg.functional_suite
-                  and pg.functional_class(m[5], pg.yoriwake_checkout.root()) is None]
-    return fail(f"no single class for: {', '.join(unresolved)}") if unresolved else 0
+def _runs_whole(mutations, checkout):
+    """The functional and Maven guards of `mutations` that would run their whole class or suite: no
+    one class under `checkout` holds a test whose name contains their `expect`."""
+    sources = {pg.functional_suite: pg.FUNCTIONAL_SOURCES, pg.maven_suite: pg.MAVEN_SOURCES}
+    return [m[0] for m in mutations if m[4] in sources
+            and pg.functional_class(m[5], checkout, sources[m[4]]) is None]
 
 
-def case_every_maven_guard_resolves_to_one_class():
-    """A renamed Maven test would otherwise fall back to the whole Maven suite, unseen."""
-    unresolved = [m[0] for m in pg.MUTATIONS if m[4] is pg.maven_suite
-                  and pg._class_of(m[4], m[5]) is None]
-    return fail(f"no single Maven class for: {', '.join(unresolved)}") if unresolved else 0
+def case_every_functional_and_maven_guard_runs_only_its_named_tests():
+    """A guard that runs its whole class costs every test the class gains, and the shards'
+    projections drift with it; a renamed test would also slow its guard back to the whole suite,
+    unseen."""
+    failures = 0
+    whole = _runs_whole(pg.MUTATIONS, pg.yoriwake_checkout.root())
+    if whole:
+        failures += fail(f"no one class holds the test named by: {', '.join(whole)}")
+    with tempfile.TemporaryDirectory() as tmp:
+        _functional_tree(tmp, {"AlphaFunctionalTest.kt": "class AlphaFunctionalTest {\n"
+                                                         "  @Test fun `a change selects its tests`() {}\n}\n"})
+        mutations = [guard(suite=pg.functional_suite, label="named", expect="a change selects"),
+                     guard(suite=pg.functional_suite, label="renamed", expect="a change picks")]
+        if _runs_whole(mutations, tmp) != ["renamed"]:
+            failures += fail(f"a guard whose test is gone was not named: {_runs_whole(mutations, tmp)}")
+    return failures
 
 
 def _maven_classes_the_whole_suite_misses(root):
@@ -631,7 +643,8 @@ def case_two_chunks_of_a_class_on_one_shard_are_one_cut():
 
 
 def case_a_class_stays_whole_unless_it_outweighs_a_shard_share():
-    """Each worker pays a class's baseline once, so scattering a class's guards costs time."""
+    """A class's guards stay on one shard unless the class outweighs a shard's share; then they are
+    cut into runs of the table's order, not dealt out."""
     failures = 0
     split, _loads = pg.partition(pg.MUTATIONS, 8)
     classes = _heavy_classes(pg.MUTATIONS)
@@ -670,17 +683,20 @@ def case_a_class_stays_whole_unless_it_outweighs_a_shard_share():
     return failures
 
 
-def case_a_maven_class_pays_one_baseline_per_shard():
-    """A shard's Maven guards run in one lane, one tree, so a class is baselined once however many
-    of its guards the shard holds, as a functional class is."""
+def case_each_class_guard_pays_its_own_baseline():
+    """A guard of a class is baselined on its own named tests, so no baseline is shared and any cut
+    of a class is free; a guard whose class does not resolve runs the whole suite, baselined once."""
     failures = 0
     for guards in (1, 3, pg.JOBS, pg.JOBS + 3):
         for suite in ("maven", "functional"):
             baseline, guard = pg.class_cost(suite, "SelectionFunctionalTest")
             weight = pg._class_weight(suite, "SelectionFunctionalTest", guards)
-            if weight != baseline + guards * guard:
+            if weight != guards * (baseline + guard):
                 failures += fail(f"{guards} {suite} guards of one class weigh {weight}s, "
-                                 f"not one baseline and each guard, {baseline + guards * guard}s")
+                                 f"not each guard and its baseline, {guards * (baseline + guard)}s")
+            baseline, guard = pg.class_cost(suite, None)
+            if pg._class_weight(suite, None, guards) != baseline + guards * guard:
+                failures += fail(f"{guards} {suite} guards of no class do not weigh one whole-suite baseline")
     return failures
 
 
@@ -732,16 +748,20 @@ def case_the_maven_guards_run_in_one_lane_grouped_by_class():
     return failures
 
 
-def case_one_worker_running_the_lane_pays_each_class_one_baseline():
-    """The lane's guards reach its worker one task at a time; its memo spans them all."""
+def case_a_worker_baselines_each_guards_own_tests_once():
+    """Each guard of a class runs its own named tests, so it is baselined on them: another guard's
+    baseline of the class proved other tests. The same tests are baselined once per worker."""
     failures = 0
     saved = (pg._class_of, dict(pg._WORKER))
+    calls = []
     with _synthetic([("a1", True), ("b1", True), ("a2", True), ("a3", True)]):
-        def quick(test_class=None):
+        def quick(test_class=None, expect=None):
+            calls.append((test_class, expect))
             return []
         pg.SUITES.append(("synthetic lane", quick, 0))
         pg.SUITE_NAMES[quick] = "synthetic lane"
-        pg.MUTATIONS[:] = [(m[0], m[1], m[2], m[3], quick, m[5]) for m in pg.MUTATIONS]
+        expects = {"a1": "one", "a2": "two", "a3": "one", "b1": "one"}
+        pg.MUTATIONS[:] = [(m[0], m[1], m[2], m[3], quick, expects[m[0]]) for m in pg.MUTATIONS]
         classes = {"a1": "ATest", "a2": "ATest", "a3": "ATest", "b1": "BTest"}
         pg._WORKER.update(baselined={}, gradle_lock=contextlib.nullcontext())
         try:
@@ -754,11 +774,93 @@ def case_one_worker_running_the_lane_pays_each_class_one_baseline():
             pg._WORKER.clear()
             pg._WORKER.update(saved[1])
     paid = sorted(label for label, t in timings.items() if t["baseline_seconds"] is not None)
-    if paid != ["a1", "b1"]:
-        failures += fail(f"baselines paid by {paid}, not by each class's first guard: {timings}")
+    if paid != ["a1", "a2", "b1"]:
+        failures += fail(f"baselines paid by {paid}, not by each guard whose tests had none: {timings}")
     if any(t["seconds"] is None for t in timings.values()):
         failures += fail(f"a guard's run has no seconds: {timings}")
+    # Baseline and mutated run alike are filtered to the guard's own tests.
+    want = [("ATest", "one")] * 2 + [("BTest", "one")] * 2 + [("ATest", "two")] * 2 + [("ATest", "one")]
+    if calls != want:
+        failures += fail(f"the suite was run as {calls}, not {want}")
     return failures
+
+
+def case_one_tree_baselines_each_guards_own_tests_once():
+    """`--jobs 1` keeps its own baselines, by the same rule as a worker's."""
+    failures = 0
+    saved = pg._class_of
+    calls = []
+    with _synthetic([("a1", True), ("a2", True), ("a3", True)]) as tmp:
+        def recording(test_class=None, expect=None):
+            calls.append((test_class, expect))
+            for name in ("a1", "a2", "a3"):
+                with open(os.path.join(tmp, f"{name}.txt")) as f:
+                    if "mutated" in f.read():
+                        return [f"FAIL: ATest > {expect} FAILED"]
+            return []
+        pg.SUITES.append(("synthetic recording", recording, 0))
+        pg.SUITE_NAMES[recording] = "synthetic recording"
+        expects = {"a1": "one", "a2": "two", "a3": "one"}
+        pg.MUTATIONS[:] = [(m[0], m[1], m[2], m[3], recording, expects[m[0]]) for m in pg.MUTATIONS]
+        pg._class_of = lambda suite, expect: "ATest"
+        try:
+            code, out = _run(["--guard", "a1", "--guard", "a2", "--guard", "a3", "--jobs", "1"])
+        finally:
+            pg._class_of = saved
+    # The whole suite's baseline first (it is no class suite), then each guard's tests.
+    want = [(None, None), ("ATest", "one"), ("ATest", "one"), ("ATest", "two"), ("ATest", "two"),
+            ("ATest", "one")]
+    if code != 0 or calls != want:
+        failures += fail(f"one tree ran {calls}, not {want}: {code} {out!r}")
+    return failures
+
+
+def case_a_class_guard_runs_only_the_tests_its_expect_names():
+    """The class's other tests decide nothing about the guard; without a class the suite runs."""
+    failures = 0
+    saved = pg.gradle
+    seen = []
+    pg.gradle = lambda args: seen.append(args) or subprocess.CompletedProcess(args, 0, "", "")
+    try:
+        pg.maven_suite("SelectionFunctionalTest", "a sibling's classes keep its edits")
+        pg.functional_suite("MapDatingFunctionalTest", "--tests over a filter, as it was")
+        pg.functional_suite()
+    finally:
+        pg.gradle = saved
+    filters = [args[args.index("--tests") + 1] for args in seen]
+    want = ["*.SelectionFunctionalTest.*a sibling's classes keep its edits*",
+            "*.MapDatingFunctionalTest.*--tests over a filter, as it was*",
+            pg.FUNCTIONAL_FILTER]
+    if filters != want:
+        failures += fail(f"the filters were {filters}, not {want}")
+    if seen[0][0] != ":maven:functionalTest" or seen[1][:3] != pg.FUNCTIONAL_FLOOR_ONLY:
+        failures += fail(f"the filtered runs were not their suites' tasks: {seen[:2]}")
+    return failures
+
+
+def case_a_filter_that_runs_no_test_refuses_the_guard():
+    """Gradle fails a run whose filter matched nothing, naming no test: the guard's baseline fails,
+    and the guard is refused as failing unmutated, never proved."""
+    saved = (pg.gradle, pg._class_of, dict(pg._WORKER))
+    output = ("> No tests found for given includes: [*.SelectionFunctionalTest.*renamed*]"
+              "(--tests filter)\n\nBUILD FAILED in 9s\n")
+    with _synthetic([("renamed", True)]):
+        pg.MUTATIONS[:] = [(m[0], m[1], m[2], m[3], pg.maven_suite, "renamed") for m in pg.MUTATIONS]
+        pg.gradle = lambda args: subprocess.CompletedProcess(args, 1, output, "")
+        pg._class_of = lambda suite, expect: "SelectionFunctionalTest"
+        pg._WORKER.update(baselined={}, gradle_lock=contextlib.nullcontext())
+        try:
+            index, fired, refusal, _timing = pg._prove_in_worker(0)
+            failed = pg._report(index, fired, refusal)
+        finally:
+            pg.gradle, pg._class_of = saved[0], saved[1]
+            pg._WORKER.clear()
+            pg._WORKER.update(saved[2])
+            pg._RUN["outcomes"].pop("renamed", None)
+            pg._RUN["timings"].pop("renamed", None)
+    if fired is not None or not refusal or "fails unmutated" not in refusal or failed != 1:
+        return fail(f"a filter that ran no test gave fired={fired}, refusal={refusal}, failed={failed}")
+    return 0
 
 
 def case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median():
@@ -808,6 +910,43 @@ def case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other():
     beside, _loads = pg.partition(no_maven, 8)
     if [[m for m in shard if m[4] is pg.functional_suite] for shard in beside] != alone:
         failures += fail("the other guards moved a functional guard to another shard")
+    return failures
+
+
+def _over_target(mutations, count=8):
+    """Each job whose worst projected shard, with `OVER_PROJECTION` on top, passes `TARGET` or the
+    job's limit: an every-guard shard, and a pull request's fast step followed by every guard."""
+    problems = []
+    fast = [m for m in mutations if pg.SUITE_NAMES[m[4]] in pg.FAST_SUITES]
+    every, _loads = pg.partition(mutations, count)
+    quick, _loads = pg.partition(fast, count)
+    jobs = {"full-shard": [[pg.step_projection(shard, "full")] for shard in every],
+            "fast-shard": [[pg.step_projection(a, "fast"), pg.step_projection(b, "full", first=False)]
+                           for a, b in zip(quick, every)]}
+    for job, shards in jobs.items():
+        worst = max(range(count), key=lambda i: pg.job_projection(shards[i]))
+        seconds = pg.job_projection(shards[worst]) * (1 + pg.OVER_PROJECTION)
+        limit = pg.job_limit(job)
+        for name, ceiling in (("the target", pg.TARGET), (f"{job}'s limit", (limit or math.inf) * 60)):
+            if seconds > ceiling:
+                problems.append(f"{job}'s shard {worst + 1}/{count} projects {seconds / 60:.0f} min with "
+                                f"{pg.OVER_PROJECTION:.0%} over, past {name} of {ceiling / 60:.0f} min")
+    return problems
+
+
+def case_the_worst_shard_stays_under_the_target_with_room_to_run_over():
+    """A change that adds enough guards, or slow enough ones, to push a shard past the target is
+    told on its own pull request, not by a release check cut at the limit."""
+    failures = 0
+    problems = _over_target(pg.MUTATIONS)
+    if problems:
+        failures += fail("; ".join(problems))
+    table = dict(pg._cost_table())
+    slow = {key: {"baseline": 3600, "guard": 3600} for key in table["classes"]}
+    with _cost_table({**table, "classes": slow}):
+        problems = _over_target(pg.MUTATIONS)
+    if not any("full-shard's shard" in p and "past the target" in p for p in problems):
+        failures += fail(f"guards an hour each were not refused: {problems}")
     return failures
 
 
@@ -914,11 +1053,11 @@ def case_a_job_without_a_limit_is_projected_without_a_margin():
 
 
 def case_a_worker_pays_a_class_baseline_once_and_times_each_run():
-    """`derive` reads a guard's seconds and its baseline's apart: one baseline per class per tree."""
+    """`derive` reads a guard's seconds and its baseline's apart: one baseline per tests per tree."""
     failures = 0
     saved = (pg._class_of, dict(pg._WORKER))
     with _synthetic([("first", True), ("second", True)]):
-        def slow(test_class=None):
+        def slow(test_class=None, expect=None):
             time.sleep(0.05)
             return []
         pg.SUITES.append(("synthetic slow", slow, 0))
@@ -1259,8 +1398,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_worker_tree_carries_the_uncommitted_state_and_leaves_its_source_unwritten,
          case_a_tracked_edit_and_a_new_file_are_both_changes,
          case_a_functional_guard_runs_the_one_class_that_holds_its_test,
-         case_every_functional_guard_resolves_to_one_class,
-         case_every_maven_guard_resolves_to_one_class,
+         case_every_functional_and_maven_guard_runs_only_its_named_tests,
          case_the_maven_whole_suite_runs_every_maven_class,
          case_no_testkit_suite_runs_in_the_parallel_phase,
          case_the_maven_break_suite_runs_under_the_lock_as_the_maven_suite_does,
@@ -1273,11 +1411,15 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_every_guard_lands_in_exactly_one_shard_and_always_the_same_one,
          case_two_chunks_of_a_class_on_one_shard_are_one_cut,
          case_a_class_stays_whole_unless_it_outweighs_a_shard_share,
-         case_a_maven_class_pays_one_baseline_per_shard,
+         case_each_class_guard_pays_its_own_baseline,
          case_the_maven_guards_run_in_one_lane_grouped_by_class,
-         case_one_worker_running_the_lane_pays_each_class_one_baseline,
+         case_a_worker_baselines_each_guards_own_tests_once,
+         case_one_tree_baselines_each_guards_own_tests_once,
+         case_a_class_guard_runs_only_the_tests_its_expect_names,
+         case_a_filter_that_runs_no_test_refuses_the_guard,
          case_every_class_guard_has_a_cost_and_an_unknown_one_weighs_its_suites_median,
          case_the_shards_projected_walls_are_within_one_heavy_unit_of_each_other,
+         case_the_worst_shard_stays_under_the_target_with_room_to_run_over,
          case_a_step_is_projected_as_the_phases_it_runs,
          case_every_shards_job_is_its_steps_plus_setup_and_the_limit_is_the_workflows,
          case_a_steps_place_in_its_ci_job_follows_its_flags,

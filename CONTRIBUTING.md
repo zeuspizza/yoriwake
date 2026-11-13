@@ -107,7 +107,8 @@ make the numbers worse.
 
 Each rule that keeps a test from being skipped has a guard: an entry in `scripts/prove_guards.py`
 that puts the defect back into the source (a literal fragment and what replaces it), runs one
-suite, and expects one named test to fail. A guard that no test catches means the rule is
+suite, and expects one named test to fail. A functional or Maven guard runs only the tests of its
+class whose names hold that phrase, unmutated first and then mutated. A guard that no test catches means the rule is
 unprotected, however green the build is.
 
 ```bash
@@ -129,8 +130,7 @@ guards run in four worktrees under `sandbox/prove-guards/` and never write your 
 On a pull request, CI runs fast mode and the guards the change can affect; a change to
 `plugin/src/main`, `core/src/main`, `agent/src/main` or `maven/src/main` runs every guard instead,
 and every guard runs on dispatch in each release check. Each of these runs in 8 shards of its
-selected guards, balanced by the costs CI measured with a functional or Maven class's guards
-together (`--shard I/8`, with the same `--mode` and `--changed` as the job, reproduces one), and a
+selected guards, balanced by the costs CI measured (`--shard I/8`, with the same `--mode` and `--changed` as the job, reproduces one), and a
 check job under the job's name fails unless every guard the run selects fired in exactly one shard.
 The costs are `scripts/guard_costs.json`. Every run's `--results` records each guard's seconds, and
 both checks print each shard's projected and measured job and its margin to the job's limit, and
@@ -138,7 +138,10 @@ the every-guard check uploads the table its run measured as the `guard-costs` ar
 check commits it
 (`scripts/guard_costs.py derive` writes it from the shards' results). A separate check fails a
 pull request that removes a guard, or changes its target, fragment, suite or expected test, or
-takes a suite out of fast mode, until a maintainer approves it.
+takes a suite out of fast mode, until a maintainer approves it. A dispatch with `shards` (as `3,6`)
+and `reuse` (an earlier dispatch's run id) runs only those every-guard shards and keeps the earlier
+run's others, when only documents no check reads or workflows changed since; otherwise every shard
+runs, and the run's summary says why.
 
 **A new rule comes with its guard.** Add the entry to `MUTATIONS`: a label that says what breaks,
 the source, a fragment that appears exactly once in it, its replacement, the suite, and a phrase

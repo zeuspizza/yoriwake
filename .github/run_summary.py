@@ -11,7 +11,9 @@ last job of `verify.yml`, `guards.yml` and `matrix.yml` calls this with three th
   guard shard's results (`prove_guards.py --results`).
 
 An artifact named `...-<index>-of-<count>` is one shard of the suite its name starts with; a suite
-whose shards left no results says so. The summary reports and never judges: it exits 0 whatever the
+whose shards left no results says so. A `guards-joined` artifact holds every guard shard of a run
+that kept some from an earlier run: it is read in place of the shards themselves, and the summary
+names the run each shard's results came from. The summary reports and never judges: it exits 0 whatever the
 run's result, and a file it cannot read is a line in the summary, so a red run gets no second red
 job. It is appended to `$GITHUB_STEP_SUMMARY`, or printed when that is unset:
 
@@ -26,6 +28,8 @@ import sys
 import xml.etree.ElementTree as ElementTree
 
 SHARD = re.compile(r"^(.+)-(\d+)-of-(\d+)$")
+# Every guard shard of the run, its own and those it kept, and the kept ones alone.
+JOINED, REUSED = "guards-joined", "guards-reused"
 EXPRESSION = re.compile(r"\$\{\{.*?\}\}")
 # Enough to name what broke; the rest is a click away in the run.
 DETAIL_LINES = 20
@@ -73,10 +77,22 @@ def read_junit(root, suite, found):
 def read_artifacts(directory):
     """Per suite its shards and counts, per guard results file its outcomes, and the detail lines:
     files not read, shards that left no results, failing cases, guards that did not fire."""
-    suites, guards, unread, failing = {}, {}, [], []
+    suites, guards, unread, failing, sources = {}, {}, [], [], {}
     entries = sorted(os.listdir(directory)) if os.path.isdir(directory) else []
-    for entry in entries:
-        path = os.path.join(directory, entry)
+    paths = {entry: os.path.join(directory, entry) for entry in entries if entry != REUSED}
+    joined = os.path.join(directory, JOINED)
+    if os.path.isdir(joined):
+        # The joined shards stand in for the run's own, which they include.
+        paths = {entry: path for entry, path in paths.items()
+                 if entry != JOINED and not (SHARD.match(entry) and SHARD.match(entry).group(1) == "guards-every")}
+        for entry in sorted(os.listdir(joined)):
+            paths[entry] = os.path.join(joined, entry)
+            try:
+                with open(os.path.join(joined, entry, "source.json"), encoding="utf-8") as handle:
+                    sources[entry] = json.load(handle).get("run")
+            except (OSError, ValueError, AttributeError):
+                sources[entry] = None
+    for entry, path in sorted(paths.items()):
         if not os.path.isdir(path):
             continue
         match = SHARD.match(entry)
@@ -125,7 +141,7 @@ def read_artifacts(directory):
         for index in range(1, found["count"] + 1):
             if index not in found["shards"]:
                 missing.append(f"{name}: shard {index} of {found['count']} left no results")
-    return suites, guards, unread + missing + failing
+    return suites, guards, unread + missing + failing, sources
 
 
 def cell(text):
@@ -146,7 +162,7 @@ def summary(workflow_text, needs, artifacts, run_url=None):
     names = dict(jobs)
     order = [job for job, _ in jobs if job in needs] + sorted(job for job in needs if job not in names)
     results = {job: (needs[job] or {}).get("result", "unknown") for job in order}
-    suites, guards, detail = read_artifacts(artifacts)
+    suites, guards, detail, sources = read_artifacts(artifacts)
 
     lines = [f"## {cell(title)}: {overall(results.values())}", ""]
     if run_url:
@@ -166,6 +182,11 @@ def summary(workflow_text, needs, artifacts, run_url=None):
             shards = f"{len(found['shards'])}/{found['count']}"
             for suite, counts in sorted(found["suites"].items()) or [("none selected", {"fired": 0, "other": 0})]:
                 lines.append(f"| {cell(name)} | {cell(suite)} | {shards} | {counts['fired']} | {counts['other']} |")
+        lines.append("")
+    if len(set(sources.values())) > 1:
+        lines += ["| guard shard | results from run |", "| --- | --- |"]
+        lines += [f"| {cell(entry)} | {cell(run if run is not None else 'unknown')} |"
+                  for entry, run in sorted(sources.items())]
         lines.append("")
     if not suites and not guards:
         lines += ["No test or guard results among the run's artifacts.", ""]
