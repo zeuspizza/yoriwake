@@ -26,8 +26,10 @@ import java.io.File
  * When the run still narrows, or still leaves out what a selecting run ran, and a file moved since
  * it was compared, the whole suite runs. A selecting run's record also carries the configuration its
  * test JVM starts with, and leaves no record when fail-fast is on by now or once its tests start; a
- * complement whose configuration differs from that one runs every test. [agentArgument] is the
- * plugin's own `-javaagent` argument, which the configuration leaves out.
+ * complement whose configuration differs from that one runs every test. A run in which the build
+ * placed an action of its own between this one and the task's own runs every test too: nothing the
+ * plugin reads here is final then ([afterLastLook]). [agentArgument] is the plugin's own
+ * `-javaagent` argument, which the configuration leaves out.
  */
 internal class LastLook(private val mapDir: File, private val agentArgument: String?) : Action<Task> {
 
@@ -37,28 +39,33 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
         val selecting = test.systemProperties[AgentContract.SELECT_PROPERTY]?.toString() == "true"
         val complementing = test.systemProperties[AgentContract.COMPLEMENT_RECORD_PROPERTY] != null
         if (!selecting && !complementing) return
-        if (selecting) finishStart(test)
+        val late = runCatching { afterLastLook(test.actions.map { (it as? Describable)?.displayName }) }.getOrDefault(emptyList())
+        if (selecting) {
+            // A run that runs everything leaves no record.
+            if (late.isEmpty()) finishStart(test) else runCatching { File(mapDir, SelectionRecord.START_FILE).delete() }
+        }
         val handed = handOver(mapDir)
-        val configured = if (complementing) {
+        val configured = if (complementing && late.isEmpty()) {
             val copy = runCatching { File(test.systemProperties[AgentContract.COMPLEMENT_RECORD_PROPERTY].toString()).readText() }
                 .getOrNull()
             configurationMoved(copy) { configurationOf(test, agentArgument) }
         } else {
             null
         }
-        if (configured != null) runCatching { handed.delete() }
+        if (configured != null || late.isNotEmpty()) runCatching { handed.delete() }
         val moved = configured ?: run {
+            if (late.isNotEmpty()) return@run lateActions(late)
             if (!handed.isFile) return
             val compared = runCatching { read(handed.readText()) }.getOrNull()
             runCatching { handed.delete() }
             whatMoved(compared) { again(test.classpath.files, it) }
         } ?: return
-        val (kind, reason) = if (complementing) {
-            // Left out by its record no more: the run is a full run that captures nothing.
-            test.setSystemProperties(test.systemProperties - AgentContract.COMPLEMENT_RECORD_PROPERTY)
-            RefusalKind.COMPLEMENT_RECORD_MISMATCH to "$moved. The selecting run's record cannot vouch for it"
-        } else {
-            RefusalKind.CLASSPATH_FILES_CHANGED to "$moved. No map records what such an action writes; " +
+        // Left out by its record no more: the run is a full run that captures nothing.
+        if (complementing) test.setSystemProperties(test.systemProperties - AgentContract.COMPLEMENT_RECORD_PROPERTY)
+        val (kind, reason) = when {
+            late.isNotEmpty() -> RefusalKind.LATE_TASK_ACTION to "$moved. Add such an action with doFirst instead, which runs before that look"
+            complementing -> RefusalKind.COMPLEMENT_RECORD_MISMATCH to "$moved. The selecting run's record cannot vouch for it"
+            else -> RefusalKind.CLASSPATH_FILES_CHANGED to "$moved. No map records what such an action writes; " +
                 "generate the file in a task the test task depends on instead"
         }
         test.logger.lifecycle("[yoriwake] ${test.path}: $reason. The whole suite runs.")
@@ -121,6 +128,28 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
     companion object {
         /** The name it runs under, which [moveLast] finds it by. */
         const val NAME = "yoriwake last look"
+
+        /** The name the task's own action runs under. */
+        private const val OWN = "Execute executeTests"
+
+        /**
+         * The actions between this one and the task's own, given the display name of each of the
+         * task's actions in order (null for one that has none): the build placed them there after
+         * [moveLast] ran, and whatever they set or write, the looks before them did not see. Every
+         * action after this one when the task's own is not among them, as when the build wrapped
+         * it; empty when this one cannot be found, as under a build that wraps every action.
+         */
+        internal fun afterLastLook(names: List<String?>): List<String> {
+            val look = names.indexOf("Execute $NAME")
+            val own = names.indexOf(OWN)
+            if (look < 0 || own in 0 until look) return emptyList()
+            return names.subList(look + 1, if (own < 0) names.size else own).map { it ?: "an action without a name" }
+        }
+
+        /** Why a run with [late] between this action and the task's own may not leave tests out. */
+        private fun lateActions(late: List<String>) =
+            "${late.size} of the test task's actions (${late.distinct().joinToString()}) run after yoriwake last looked at " +
+                "the task's configuration and its classpath files, and may change either unseen"
 
         /** Where a comparing action leaves what it compared, for this action to look at again. */
         fun handOver(mapDir: File) = File(mapDir, "classpath-files.compared")
@@ -201,7 +230,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
         fun moveLast(test: Test) {
             runCatching {
                 val actions = test.actions
-                val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                val own = actions.indexOfFirst { (it as? Describable)?.displayName == OWN }
                 val look = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute $NAME" }
                 if (own < 0 || look < 0 || look == own - 1) return
                 val moved = actions.removeAt(look)

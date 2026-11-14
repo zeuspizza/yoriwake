@@ -167,6 +167,13 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     COMPLEMENT_RECORD_MISMATCH(io.github.zeuspizza.yoriwake.agent.contract.AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND),
 
     /**
+     * The build placed an action of the test task after the plugin's last one, right before the
+     * tests run, where it can change the task's configuration or its classpath files unseen. A
+     * selecting or complement run runs everything; adding the action with `doFirst` lifts this.
+     */
+    LATE_TASK_ACTION("late-task-action"),
+
+    /**
      * A class of the task's own output is compiled for a newer Java than the plugin's ASM reads or
      * the host's JaCoCo officially instruments, so its digest or its coverage cannot be trusted. A
      * newer yoriwake, or a newer JaCoCo (`jacoco.toolVersion` on Gradle, the jacoco-maven-plugin

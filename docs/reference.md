@@ -1667,6 +1667,15 @@ in only one of them, makes the complement run every test as `complement-record-m
 there alike in both keeps the complement. Set what differs at configuration, or through a
 `jvmArgumentProviders` entry, so the complement names it as soon as it starts.
 
+That reading, and the last look at the classpath files, come from an action the plugin places
+right before the task's own, behind every `doFirst`. A build that inserts an action of its own
+between the two (into the task's `actions` list, before "Execute executeTests") could change either
+unseen, so a selecting run that would leave tests out, and a complement run, run every test instead,
+as `late-task-action`, and the selecting run leaves no record. Add the action with `doFirst`, which
+runs before that look. The same holds for a build that wraps or replaces the task's own action. A
+build that wraps every action of the task hides the plugin's too, and the plugin cannot tell what
+follows its own there: what such a wrapper sets or writes after the plugin's last action is not seen.
+
 A selecting run leaves no record, and removes an older one, when it ran everything, declined, ran
 with fail-fast however it is set (`--fail-fast`, `failFast` in the task's configuration or in its
 own `doFirst`; Gradle drops the results of tests that finish after the first failure), or

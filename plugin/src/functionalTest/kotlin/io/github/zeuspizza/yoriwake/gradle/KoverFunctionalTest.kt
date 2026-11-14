@@ -255,7 +255,7 @@ class KoverFunctionalTest : FunctionalTestSupport() {
         const val JACOCO_XML = "tasks.jacocoTestReport { reports { xml.required.set(true) } }"
         const val ARGS = "build/probe/jvm-args.txt"
 
-        // Inserted just before the tests run, after every action of the plugin's.
+        // Inserted after every action of the plugin's that runs before the tests but its last look.
         val PROBE = """
 
             gradle.taskGraph.whenReady {
@@ -266,8 +266,9 @@ class KoverFunctionalTest : FunctionalTestSupport() {
                     out.writeText((this as Test).allJvmArgs.joinToString("\n"))
                 }
                 val actions = test.actions.toMutableList()
-                val tests = actions.indexOfFirst { (it as? org.gradle.api.Describable)?.displayName?.contains("executeTests") == true }
-                actions.add(tests, probe)
+                fun named(name: String) = actions.indexOfFirst { (it as? org.gradle.api.Describable)?.displayName?.contains(name) == true }
+                // Before the plugin's last look: an action after it makes a run that leaves tests out run them all.
+                actions.add(named("yoriwake last look").takeIf { it >= 0 } ?: named("executeTests"), probe)
                 test.actions = actions
             }
         """.trimIndent()

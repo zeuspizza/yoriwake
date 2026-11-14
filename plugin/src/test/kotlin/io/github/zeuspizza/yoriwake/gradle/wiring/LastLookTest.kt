@@ -146,4 +146,35 @@ class LastLookTest {
         assertNull(LastLook.whatMoved(selecting) { LastLook.again(classpath, it) })
         assertNull(LastLook.whatMoved(complement) { LastLook.again(classpath, it) })
     }
+
+    @Test
+    fun `the actions between the last look and the task's own are the ones the build placed there`() {
+        val look = "Execute ${LastLook.NAME}"
+        val own = "Execute executeTests"
+
+        assertEquals(emptyList(), LastLook.afterLastLook(listOf("Execute doFirst", look, own, "Execute doLast")))
+        assertEquals(
+            listOf("Execute unnamed action", "an action without a name"),
+            LastLook.afterLastLook(listOf(look, "Execute unnamed action", null, own, "Execute doLast")),
+        )
+    }
+
+    @Test
+    fun `every action after the last look counts when the task's own is not among them`() {
+        val look = "Execute ${LastLook.NAME}"
+
+        assertEquals(
+            listOf("Execute unnamed action", "Execute doLast"),
+            LastLook.afterLastLook(listOf("Execute doFirst", look, "Execute unnamed action", "Execute doLast")),
+        )
+    }
+
+    @Test
+    fun `no action counts as after the last look when it cannot be found or runs after the task's own`() {
+        val look = "Execute ${LastLook.NAME}"
+
+        assertEquals(emptyList(), LastLook.afterLastLook(listOf("Execute unnamed action", "Execute executeTests")))
+        assertEquals(emptyList(), LastLook.afterLastLook(listOf("Execute executeTests", look, "Execute unnamed action")))
+        assertEquals(emptyList(), LastLook.afterLastLook(List(3) { "Execute unnamed action" }))
+    }
 }

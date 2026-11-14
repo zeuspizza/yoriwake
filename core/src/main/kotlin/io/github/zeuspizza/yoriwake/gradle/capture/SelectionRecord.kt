@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.SelectionRecordFile
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
+import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
 import io.github.zeuspizza.yoriwake.gradle.wiring.AgentJar
 import java.io.File
@@ -193,6 +194,10 @@ internal object SelectionRecord {
         }
     }
 
+    /** The refusals under which a complement run ran every test. */
+    private val FORCED_COMPLEMENT =
+        setOf(AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND, RefusalKind.LATE_TASK_ACTION.token)
+
     fun complemented(mapDir: File): Complemented {
         var leftOut = 0
         var ran = 0
@@ -206,7 +211,7 @@ internal object SelectionRecord {
                 leftOut += counts.getOrNull(0)?.toIntOrNull() ?: 0
                 ran += counts.getOrNull(1)?.toIntOrNull() ?: 0
             }
-            if (notes[AgentContract.REFUSAL_KIND_NOTE]?.firstOrNull() == AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND) {
+            if (notes[AgentContract.REFUSAL_KIND_NOTE]?.firstOrNull() in FORCED_COMPLEMENT) {
                 mismatch = notes[AgentContract.FULL_RUN_REASON_NOTE]?.firstOrNull() ?: "the selection record did not match"
             }
         }

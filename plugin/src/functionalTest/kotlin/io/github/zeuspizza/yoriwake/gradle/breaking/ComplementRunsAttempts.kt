@@ -246,10 +246,9 @@ class ComplementRunsAttempts : BreakAttempt() {
     }
 
     // Track: code reading. Boundary: the last look reads fail-fast again right before the tests
-    // run, from an action placed next to the task's own once every build script has run; every
-    // doFirst runs before it, one added later too, since doFirst prepends. Here the build inserts
-    // an action of its own into the task's list, between the last look and the task's own action
-    // (a doLast of the plugin's follows the task's own, so the list's end is past it).
+    // run, and a run with an action between it and the task's own runs every test, so leaves no
+    // record. The last look finds both by name; here the build wraps every action, so none has a
+    // name, and turns fail-fast on around the task's own action.
     @Test
     fun `a selecting run whose test task turns on fail-fast in an action after the last look leaves no record`(@TempDir dir: File) {
         val build = minimalBuild + """
@@ -257,12 +256,88 @@ class ComplementRunsAttempts : BreakAttempt() {
             tasks.test {
                 val failFastAsked = providers.gradleProperty("failFirst").isPresent
                 gradle.taskGraph.whenReady {
-                    val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
-                    actions.add(own, Action<Task> { (this as Test).failFast = failFastAsked })
+                    actions = actions.map { action ->
+                        val own = (action as? Describable)?.displayName == "Execute executeTests"
+                        Action<Task> {
+                            if (own) (this as Test).failFast = failFastAsked
+                            action.execute(this)
+                        }
+                    }
                 }
             }
         """.trimIndent()
         failFastAttempt(dir, build)
+    }
+
+    /** A target that reaches Codec and passes only where the system property `flavor` is `a`. */
+    private val propertyTarget = source(
+        "src/test/java/dev/sample/A9TargetTest.java",
+        """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class A9TargetTest {
+            @Test void flavorA() {
+                assertEquals("cba", new Codec().encode("abc"));
+                assertEquals("a", System.getProperty("flavor"));
+            }
+        }
+        """,
+    )
+
+    // Track: code reading. Boundary: the configuration a complement compares with the record is
+    // read at the last look, placed next to the task's own action once every build script has run.
+    // Here the build inserts an action of its own between the two, once the task graph is ready,
+    // and it sets a system property the tests read. The action is there only in the complement run:
+    // a selecting run with one runs every test and leaves no record.
+    @Test
+    fun `a system property an action after the last look sets in the complement run only runs every test`(@TempDir dir: File) {
+        val build = minimalBuild + """
+
+            tasks.test {
+                systemProperty("flavor", "a")
+                if (providers.gradleProperty("late").isPresent) {
+                    gradle.taskGraph.whenReady {
+                        val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                        actions.add(own, Action<Task> { (this as Test).systemProperty("flavor", "b") })
+                    }
+                }
+            }
+        """.trimIndent()
+        val result = complementAttempt(
+            dir, "dev.sample.A9TargetTest", Aim.Forced("late-task-action"),
+            listOf(codec, other, first, propertyTarget, classOrderByName), build,
+            narrow = ::rewriteCodec, complementing = listOf("-Plate"),
+        )
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: the classpath files are digested again at the last look. The
+    // action inserted after it is there only in the complement run, and writes the resource the
+    // target reads, with another flavor than the one the selecting run's tests read.
+    @Test
+    fun `a resource an action after the last look writes in the complement run only runs every test`(@TempDir dir: File) {
+        val build = minimalBuild + "\n" + flavorTask("flavorFile", "generated/flavor") + """
+
+            dependencies { testRuntimeOnly(files(flavorFile)) }
+            tasks.test {
+                val file = layout.buildDirectory.file("generated/flavor/flavor.properties")
+                if (providers.gradleProperty("late").isPresent) {
+                    gradle.taskGraph.whenReady {
+                        val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                        actions.add(own, Action<Task> { file.get().asFile.writeText("flavor=b\n") })
+                    }
+                }
+            }
+        """.trimIndent()
+        val result = complementAttempt(
+            dir, "dev.sample.A9TargetTest", Aim.Forced("late-task-action"),
+            listOf(codec, other, first, flavorTarget("flavor.properties"), classOrderByName), build,
+            narrow = ::rewriteCodec, complementing = listOf("-Plate"),
+        )
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     private fun failFastAttempt(dir: File, build: String) {

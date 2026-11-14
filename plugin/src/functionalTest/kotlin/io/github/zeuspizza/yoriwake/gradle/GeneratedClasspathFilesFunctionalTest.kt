@@ -342,6 +342,31 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a resource an action after the last look writes runs everything`(@TempDir dir: File) {
+        fixture(
+            dir,
+            """
+            tasks.test {
+                val stamp = providers.gradleProperty("stamp").orElse("a")
+                val info = layout.buildDirectory.file("resources/test/info.properties")
+                gradle.taskGraph.whenReady {
+                    val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                    actions.add(own, Action<Task> { info.get().asFile.writeText("info=" + stamp.get() + "\n") })
+                }
+            }
+            """.trimIndent(),
+        )
+        capture(dir, "-Pstamp=a")
+        editLegacy(dir)
+
+        val output = select(dir, "-Pstamp=x")
+
+        assertTrue("dev.sample.AaInfoTest" in ranTests(app(dir)), output)
+        assertEquals("late-task-action", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.lines().any { it.startsWith("[yoriwake] :app:test: ") && "doFirst" in it }, output)
+    }
+
+    @Test
     fun `a resource a doFirst from the root project's subprojects block writes runs the test that reads it`(@TempDir dir: File) {
         fixture(
             dir,

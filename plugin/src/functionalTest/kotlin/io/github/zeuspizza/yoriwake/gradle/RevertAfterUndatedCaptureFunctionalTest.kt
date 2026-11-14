@@ -22,6 +22,15 @@ class RevertAfterUndatedCaptureFunctionalTest : FunctionalTestSupport() {
             useJUnitPlatform { if (project.hasProperty("fastOnly")) includeTags("fast") }
             forkEvery = 1
             if (project.hasProperty("narrow")) filter.includeTestsMatching("*RouterTest")
+            // Right before the task's own action, after every action of the plugin's.
+            val late = listOf("failLate", "narrowLate").firstOrNull { project.hasProperty(it) }
+            if (late != null) gradle.taskGraph.whenReady {
+                val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                actions.add(own, Action<Task> {
+                    if (late == "failLate") (this as Test).failFast = true
+                    else (this as Test).filter.includeTestsMatching("*OtherTest")
+                })
+            }
         }
         """.trimIndent(),
     )
@@ -184,6 +193,44 @@ class RevertAfterUndatedCaptureFunctionalTest : FunctionalTestSupport() {
         runner(dir, "test", "--fail-fast").buildAndFail()
         failing.delete()
         gitAs(dir, "revert", "--no-edit", "HEAD")
+
+        assertRouterTestRan(editLegacyAndSelect(dir))
+    }
+
+    /**
+     * Captured at R, where Router no longer reaches Legacy, then the branch committed back: the
+     * record of RouterTest is from R, and the next capture is the one that would replace it.
+     */
+    private fun branchBackAfterCaptureAtR(dir: File) {
+        capturedAtS(dir)
+        commitR(dir)
+        runner(dir, "test").build()
+        setRouter(dir, withBranch)
+        commit(dir, "branch back")
+    }
+
+    @Test
+    fun `a test a capture an inserted action made fail-fast never reached runs when what it reads now changes`(
+        @TempDir dir: File,
+    ) {
+        branchBackAfterCaptureAtR(dir)
+        // Ordered before RouterTest, which the run stops short of.
+        val failing = File(dir, "src/test/java/dev/sample/AFailTest.java")
+        failing.writeText(test("AFailTest", "class AFailTest { @Test void fails() { fail(); } }").second)
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-PfailLate", "--configuration-cache").buildAndFail()
+        assertTrue("dev.sample.RouterTest" !in ranTests(dir), "the capture reached RouterTest, so fail-fast was not on")
+        failing.delete()
+
+        assertRouterTestRan(editLegacyAndSelect(dir))
+    }
+
+    @Test
+    fun `a test a capture an inserted action filtered out runs when what it reads now changes`(@TempDir dir: File) {
+        branchBackAfterCaptureAtR(dir)
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "test", "-PnarrowLate", "--configuration-cache").build()
+        assertTrue("dev.sample.RouterTest" !in ranTests(dir), "the capture ran RouterTest, so the filter was not on")
 
         assertRouterTestRan(editLegacyAndSelect(dir))
     }
