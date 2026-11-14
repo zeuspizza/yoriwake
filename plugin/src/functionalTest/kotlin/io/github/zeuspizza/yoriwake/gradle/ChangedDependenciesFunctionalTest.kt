@@ -2,6 +2,8 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import org.gradle.testkit.runner.GradleRunner
+import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -189,6 +191,58 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
     }
 
     // The JDK's class loader opens a file whose name `java.net.URI` rejects.
+    /**
+     * `real/vendor.jar`, whose manifest names `lib/a.jar` beside it, is on the classpath through the
+     * link `elsewhere/vendor.jar`: the test JVM opens the jar by its real path, so `real/lib/a.jar`.
+     */
+    private fun linkedVendorCaptured(dir: File, vendor: File) {
+        // On Windows a JVM before 24 does not resolve a link when it canonicalises a class path
+        // entry, so it reads the name beside the link, which the row of the path as given holds.
+        assumeFalse(windows, "the test JVM opens a linked jar by its real path only off Windows")
+        val target = File(vendor, "real/vendor.jar")
+        jar(target, "lib/a.jar")
+        jar(File(vendor, "real/lib/a.jar"), null, "vendor.properties" to "flavor=a\n")
+        val link = File(vendor, "elsewhere/vendor.jar").apply { parentFile.mkdirs() }
+        assumeTrue(
+            runCatching { java.nio.file.Files.createSymbolicLink(link.toPath(), target.toPath()) }.isSuccess,
+            "this file system or user cannot create a symbolic link",
+        )
+        val onClasspath = "dependencies { testRuntimeOnly(files(\"${link.invariantSeparatorsPath}\")) }"
+        captured(dir, fromProjectProperty + "\n" + onClasspath, vendorTest)
+    }
+
+    @Test
+    fun `a file a symlinked dependency's manifest names beside its target runs every test when it is replaced`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        linkedVendorCaptured(dir, vendor)
+        jar(File(vendor, "real/lib/a.jar"), null, "vendor.properties" to "flavor=b\n")
+        changeBeta(dir)
+
+        val output = select(dir)
+
+        assertTrue("dev.sample.AbVendorTest" in ranTests(dir), output)
+        assertEquals("dependencies-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, "vendor.jar Class-Path lib/a.jar (real path) (changed)")
+    }
+
+    @Test
+    fun `a symlinked dependency whose manifest names a file selects as before when nothing changed`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        linkedVendorCaptured(dir, vendor)
+        changeBeta(dir)
+
+        repeat(2) {
+            val output = select(dir)
+
+            assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+            assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        }
+    }
+
     @Test
     fun `a file a dependency's manifest names with brackets runs every test when it is replaced`(
         @TempDir dir: File,

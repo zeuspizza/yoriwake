@@ -69,7 +69,8 @@ internal object ClasspathFiles {
      * every class-path file as a jar, whatever its name. It is walked wherever it lies, but in
      * Gradle's module cache under [gradleUserHome] or the read-only cache, whose paths name their
      * content, and with its class files, which the class-digest rule never reads. Without
-     * [gradleUserHome] nothing else it names is taken for the module cache.
+     * [gradleUserHome] nothing else it names is taken for the module cache. What a classpath entry
+     * that is a link into another directory names is walked from the link's target too.
      *
      * A copy of a tracked text file that git writes with `\r\n` in this checkout is digested with
      * its line endings as `\n` ([TrackedText]), so a checkout with other line-ending settings
@@ -100,6 +101,7 @@ internal object ClasspathFiles {
         // Each entry with whether its class files are walked; what a manifest names joins at the end.
         val pending = ArrayDeque(produced.map { it to classes })
         val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
+        val entries = seen.toSet()
         while (pending.isNotEmpty()) {
             val (entry, withClasses) = pending.removeFirst()
             when {
@@ -143,7 +145,7 @@ internal object ClasspathFiles {
                                     digestOf({ zip.getInputStream(zipped) }, zipped.name, text)
                                 }.getOrDefault(UNREADABLE)
                             }
-                            for ((token, named) in classPathOf(entry, zip.manifest)) {
+                            for ((token, named) in classPathOf(entry, zip.manifest, entry.normalize() in entries)) {
                                 if (named == null) {
                                     // Not resolved here, so it forces rather than guesses.
                                     digests["$jar Class-Path $token"] = UNREADABLE
@@ -163,7 +165,7 @@ internal object ClasspathFiles {
                     }.getOrDefault(UNREADABLE)
                     // A file no zip reader opens has no manifest the JVM can read either.
                     val manifest = runCatching { JarFile(entry, false).use { it.manifest } }.getOrNull()
-                    for ((token, named) in classPathOf(entry, manifest)) {
+                    for ((token, named) in classPathOf(entry, manifest, entry.normalize() in entries)) {
                         if (named == null) {
                             digests["$file Class-Path $token"] = UNREADABLE
                         } else if (!inModuleCache(named, gradleUserHome) && seen.add(named)) {
@@ -196,15 +198,18 @@ internal object ClasspathFiles {
      * entry, such as the jar of a build this one includes or an absolute `files(...)`, is keyed
      * `dependency:<outside>/<name>`, with `#2`, `#3` for a name repeated in classpath order, since
      * its path differs between machines, and read by content: a jar entry by entry (a rebuilt jar
-     * keeps entry timestamps), a directory file by file.
+     * keeps entry timestamps), a directory file by file, its files counted against [maxFiles].
      *
      * What the manifest `Class-Path` of an entry read by content names is on the test JVM's class path
      * too, and on no classpath Gradle or Maven lists, whatever the naming file is called: each file
      * it names, and what a named file names in turn, gets a row keyed `<the naming row's key>
      * Class-Path <token>`, read by content (a directory with each jar in it by its entries),
-     * [ABSENT] when missing, since a file that later appears there shadows every later entry. A file on the classpath or already named, or in
+     * [ABSENT] when missing, since a file that later appears there shadows every later entry. A
+     * classpath entry that is a link into another directory has each token resolved from the
+     * link's target too ([classPathOf]), that row keyed with [REAL_PATH] appended. A file on the classpath or already named, or in
      * Gradle's module cache under the [GRADLE_USER_HOME] home, gets none. The files of the
-     * directories named count against [maxFiles] with those [walk] reads; past it the table refuses.
+     * directories named count against [maxFiles] with those of the `<outside>` directories and those
+     * [walk] reads; past it the table refuses.
      */
     fun table(
         classpath: Collection<File>,
@@ -231,6 +236,8 @@ internal object ClasspathFiles {
         val repeated = mutableMapOf<String, Int>()
         // Each entry read by content with its row's key, for what its manifest's `Class-Path` names.
         val following = ArrayDeque<Pair<String, File>>()
+        // The files read in directories from outside the build: any directory may be put there.
+        var outside = 0
         for (entry in classpath.map(File::getAbsoluteFile).distinct()) {
             // The plugin's own agent, not an input of the tests: present or not, it changes nothing they
             // read, and a task the wiring finds without it already runs everything for that reason.
@@ -261,12 +268,19 @@ internal object ClasspathFiles {
                 // its path differs between machines, so it is named by its file name and read.
                 val count = repeated.merge(entry.name, 1, Int::plus)!!
                 val suffix = if (count > 1) "#$count" else ""
-                "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}$suffix".also { rows[it] = contentDigest(entry) }
+                val digest = if (entry.isDirectory) {
+                    runCatching { directoryDigest(entry) { ++outside > maxFiles } }.getOrDefault(UNREADABLE)
+                        ?: return outsideBudgetSpent(maxFiles)
+                } else {
+                    contentDigest(entry)
+                }
+                "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}$suffix".also { rows[it] = digest }
             }
             order += key
             if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)
         }
-        val named = classPathRows(following, classpath, gradleUserHome, maxFiles) ?: return namedBudgetSpent(maxFiles)
+        val named = classPathRows(following, classpath, gradleUserHome, maxFiles, outside)
+            ?: return namedBudgetSpent(maxFiles)
         rows += named.rows
         rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
         return when (val walk = walk(
@@ -278,7 +292,7 @@ internal object ClasspathFiles {
         }
     }
 
-    /** [classPathRows]' rows, and how many files it read in the directories named for them. */
+    /** [classPathRows]' rows, and how many files it read in the directories named for them, with those spent before. */
     data class Named(val rows: Map<String, String>, val files: Int)
 
     /**
@@ -288,27 +302,30 @@ internal object ClasspathFiles {
      * class loader resolves to a file this cannot name, and a directory holding a file that cannot
      * be read, give [UNREADABLE].
      *
-     * Null when the directories named hold more than [maxFiles] files ([namedBudgetSpent]): a
-     * manifest may name any directory, the file system's root included.
+     * Null when the directories named hold more than [maxFiles] files ([namedBudgetSpent]), [spent]
+     * of which the caller has read already: a manifest may name any directory, the file system's
+     * root included.
      */
     fun classPathRows(
         entries: Collection<Pair<String, File>>,
         classpath: Collection<File>,
         gradleUserHome: File?,
         maxFiles: Int = MAX_FILES,
+        spent: Int = 0,
     ): Named? {
         val rows = linkedMapOf<String, String>()
-        var files = 0
+        var files = spent
         val following = ArrayDeque(entries)
         val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
+        val onClasspath = seen.toSet()
         while (following.isNotEmpty()) {
             val (referrer, jar) = following.removeFirst()
             // The JDK's class loader opens every class-path file as a jar, whatever its name.
             if (!jar.isFile) continue
             // A file no zip reader opens has no manifest the JVM can read either; its own row moves with its bytes.
             val manifest = runCatching { JarFile(jar, false).use { it.manifest } }.getOrNull()
-            for ((token, named) in classPathOf(jar, manifest)) {
-                val key = "$referrer Class-Path $token"
+            for ((token, named, real) in classPathOf(jar, manifest, jar.absoluteFile.normalize() in onClasspath)) {
+                val key = "$referrer Class-Path $token" + if (real) REAL_PATH else ""
                 if (named == null) {
                     // The class loader does not ignore it, so it forces rather than guesses.
                     rows[key] = UNREADABLE
@@ -329,6 +346,9 @@ internal object ClasspathFiles {
     /** Why a table refuses when [classPathRows] gives none. */
     fun namedBudgetSpent(maxFiles: Int = MAX_FILES) =
         Walk.Refused("the files a manifest Class-Path names exceed the $maxFiles-file budget")
+
+    private fun outsideBudgetSpent(maxFiles: Int) =
+        Walk.Refused("the classpath directories from outside the build exceed the $maxFiles-file budget")
 
     /** How [table] reads a dependency entry for its row; [BUILT] marks build output, which has none. */
     enum class Read { BUILT, NAMED, CONTENT, WHOLE }
@@ -379,18 +399,57 @@ internal object ClasspathFiles {
         return keys
     }
 
+    /** A `Class-Path` token with a file it names, [real] when resolved against the naming jar's real path. */
+    private data class Token(val token: String, val file: File?, val real: Boolean)
+
     /**
-     * Each token of [manifest]'s `Class-Path` with the file it names, resolved against [jar] as the
+     * Each token of [manifest]'s `Class-Path` with the file it names against [jar]'s path as given
+     * ([resolved]). When [jar] is a classpath [entry] reached through a link, a token that names
+     * another file against the jar's real path follows with that file: a JVM handed the entry on
+     * its class path opens it by its real path and resolves its tokens from there, while one
+     * handed it through a manifest, as Maven Surefire's default fork does, resolves them from the
+     * path as given. A jar a token names is opened by the path the token gave, so it has one
+     * resolution.
+     */
+    private fun classPathOf(jar: File, manifest: Manifest?, entry: Boolean): List<Token> {
+        val classPath = manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH).orEmpty()
+        if (classPath.isBlank()) return emptyList()
+        val given = resolved(jar.toURI().toURL(), classPath)
+        val realPath = if (entry) runCatching { jar.toPath().toRealPath() }.getOrNull()?.takeIf { it != jar.toPath() } else null
+        if (realPath == null) return given.map { (token, file) -> Token(token, file, false) }
+        val above = spellings(jar)
+        val real = resolved(realPath.toUri().toURL(), classPath).toMap()
+        return given.flatMap { (token, file) ->
+            val second = real[token]?.let { respelled(it, above) }?.takeIf { it != file }
+            listOfNotNull(Token(token, file, false), second?.let { Token(token, it, true) })
+        }
+    }
+
+    /** Each directory above [jar] that can be resolved, the deepest first, with its real path. */
+    private fun spellings(jar: File): List<Pair<File, java.nio.file.Path>> =
+        generateSequence(jar.parentFile) { it.parentFile }
+            .mapNotNull { above -> runCatching { above to above.toPath().toRealPath() }.getOrNull() }.toList()
+
+    /**
+     * [file], found from a jar's real path, spelled through the jar's path as given where a
+     * directory [above] the jar leads to it: under a link in a directory above (macOS's `/var`, a
+     * linked checkout), or beside a link's target in the same directory, both resolutions name
+     * one file, which is then spelled as the classpath, the root and the homes are.
+     */
+    private fun respelled(file: File, above: List<Pair<File, java.nio.file.Path>>): File {
+        val (given, real) = above.firstOrNull { (_, real) -> file.toPath().startsWith(real) } ?: return file
+        return given.toPath().resolve(real.relativize(file.toPath())).toFile()
+    }
+
+    /**
+     * Each token of [classPath] with the file it names, resolved against [base] as the
      * JDK's class loader resolves it: with `java.net.URL`, which takes characters `java.net.URI`
      * rejects, and the path's escapes decoded. Null for a `file:` URL the class loader does not
      * ignore and this cannot turn into a file: one with a malformed escape, which the class loader
      * throws on, or on another host. A token the class loader ignores or drops is left out: a URL
      * that is not a `file:` one, or of no known protocol.
      */
-    private fun classPathOf(jar: File, manifest: Manifest?): List<Pair<String, File?>> {
-        val classPath = manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH).orEmpty()
-        if (classPath.isBlank()) return emptyList()
-        val base = jar.toURI().toURL()
+    private fun resolved(base: URL, classPath: String): List<Pair<String, File?>> {
         return classPath.split(' ', '\t', '\n', '\r', '\u000c').filter(String::isNotEmpty).mapNotNull { token ->
             @Suppress("DEPRECATION")
             val url = runCatching { URL(base, token) }.getOrNull() ?: return@mapNotNull null
@@ -576,6 +635,9 @@ internal object ClasspathFiles {
     /** What a row whose path names its content records, having read nothing. */
     private const val NAMED_BY_PATH = "named"
 
+    /** Appended to the key of a `Class-Path` row resolved against the naming entry's real path; no token holds a space. */
+    private const val REAL_PATH = " (real path)"
+
     /** What a classpath entry that does not exist records. */
     private const val ABSENT = "absent"
 
@@ -592,7 +654,7 @@ internal object ClasspathFiles {
     private fun wholeDigest(entry: File): String = runCatching {
         when {
             entry.isFile -> entry.inputStream().use(::sha256)
-            entry.isDirectory -> directoryDigest(entry)
+            entry.isDirectory -> checkNotNull(directoryDigest(entry) { false })
             else -> ABSENT
         }
     }.getOrDefault(UNREADABLE)
@@ -612,11 +674,18 @@ internal object ClasspathFiles {
         }
     }
 
-    private fun directoryDigest(directory: File, digest: (File) -> String = { it.inputStream().use(::sha256) }): String {
-        val lines = directory.walkTopDown().filter { it.isFile }
-            .map { it.relativeTo(directory).invariantSeparatorsPath to it }
-            .sortedBy { it.first }
-            .map { (relative, file) -> "$relative\u0000${digest(file)}" }.toList()
+    /**
+     * A directory's files by relative path and bytes. Null once [overBudget] says so; it is asked
+     * per file while the tree is listed, before anything is read.
+     */
+    private fun directoryDigest(directory: File, overBudget: () -> Boolean): String? {
+        val found = mutableListOf<Pair<String, File>>()
+        for (file in directory.walkTopDown().filter { it.isFile }) {
+            if (overBudget()) return null
+            found += file.relativeTo(directory).invariantSeparatorsPath to file
+        }
+        val lines = found.sortedBy { it.first }
+            .map { (relative, file) -> "$relative\u0000${file.inputStream().use(::sha256)}" }
         return sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
     }
 
