@@ -4967,6 +4967,11 @@ MUTATIONS = [
      "        session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +\n",
      "        emptyMap<String, String>() +\n",
      maven_suite, "a complement run with another user property runs everything and names the configuration"),
+    # The map keeps the POM's value of a name systemPropertyVariables also sets; the fork gets the command line's.
+    ("a Maven complement stamp lets systemPropertyVariables hide a user property", MAVEN_RECORDING,
+     '                .filter { configuration.getChild("systemPropertyVariables")?.getChild(it) != null }\n',
+     "                .filter { false }\n",
+     maven_suite, "a complement run with another user property a systemPropertyVariables entry names runs everything"),
     # Surefire and Failsafe executions of one module keep their own maps, keyed by the plugin too.
     ("a Maven map key leaves out the plugin", MAVEN_RECORDING,
      '            "${project.groupId}:${project.artifactId}:${execution.artifactId}:${execution.executionId}"',
