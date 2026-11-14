@@ -38,6 +38,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Maven: a complement run under another `-D` value of a property `systemPropertyVariables` also sets runs every test. Map: left alone.
 - A class with a primitive-array annotation value (`@ValueSource(booleans = ...)`) no longer counts as changed on every run.
   Map: left alone; the fix shows from its next recording.
+- Maven: a JaCoCo agent in `JDK_JAVA_OPTIONS` captures, as in `JAVA_TOOL_OPTIONS`; either may name it by a property. Map: left alone.
 
 ## [0.5.0] - 2026-11-07
 

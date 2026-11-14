@@ -150,6 +150,10 @@ private val ROOT_ELEMENTS = setOf(
 internal fun toolOptionsOf(configuration: Xpp3Dom?): String? =
     configuration?.getChild("environmentVariables")?.getChild("JAVA_TOOL_OPTIONS")?.value ?: System.getenv("JAVA_TOOL_OPTIONS")
 
+/** The `JDK_JAVA_OPTIONS` the fork's `java` launcher reads: its configured environment's, else Maven's own. */
+internal fun launcherOptionsOf(configuration: Xpp3Dom?): String? =
+    configuration?.getChild("environmentVariables")?.getChild("JDK_JAVA_OPTIONS")?.value ?: System.getenv("JDK_JAVA_OPTIONS")
+
 /**
  * Adds every reactor module that a `groupId` and `artifactId` pair under one element names, at any
  * depth, or that a `groupId:artifactId` string in a value names. False when a pair would not resolve.
