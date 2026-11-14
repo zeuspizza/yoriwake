@@ -29,6 +29,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Kotlin Multiplatform: a change to a `Platform.jvm.kt`-style file, or to a file of only `inline` functions, narrows. Map: left alone.
 - A Groovy source change narrows to the tests that ran it, instead of running everything. Map: left alone.
 
+### Fixed
+
+- A complement run compares a jar only a dependency's manifest `Class-Path` names too. Map: left alone.
+
 ## [0.5.0] - 2026-11-07
 
 **Your map:** repaired on the next build, which runs every test once; on Maven, the first run of each execution runs everything.
