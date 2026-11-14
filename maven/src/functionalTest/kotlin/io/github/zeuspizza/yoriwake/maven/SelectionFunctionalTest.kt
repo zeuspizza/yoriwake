@@ -899,6 +899,49 @@ class SelectionFunctionalTest {
         assertContains(output, "Tests run: 2, Failures: 0")
     }
 
+    /**
+     * As [selectedOnce], with lib's Surefire setting the system property `mode` and every run so far
+     * passing `-Dmode=fast`: the test JVM gets the command line's value, not the POM's.
+     */
+    private fun selectedOnceUnderModeFast(dir: File): File = committed(dir).also { project ->
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId><build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId>" +
+                    "<configuration><systemPropertyVariables><mode>pom</mode></systemPropertyVariables></configuration>" +
+                    "</plugin></plugins></build>",
+            )
+        }
+        git(project, "commit", "-q", "-am", "a system property")
+        FunctionalMaven.run(maven, project, "verify", "-Dmode=fast").succeeded()
+        editGreeter(project)
+        val selected = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", "-Dmode=fast")
+            .succeeded().output
+        assertContains(selected, "in dev.demo.lib.GreeterTest")
+    }
+
+    @Test
+    fun `a complement run with another user property a systemPropertyVariables entry names runs everything`(@TempDir dir: File) {
+        val project = selectedOnceUnderModeFast(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", "-Dmode=slow")
+            .succeeded().output
+
+        assertContains(output, "differs from this run in")
+        assertContains(output, "configuration")
+        assertContains(output, "Tests run: 2, Failures: 0")
+    }
+
+    @Test
+    fun `a complement run with the same user property a systemPropertyVariables entry names narrows`(@TempDir dir: File) {
+        val project = selectedOnceUnderModeFast(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.complement", "-Dmode=fast")
+            .succeeded().output
+
+        assertContains(output, "leaving out the 1 tests the selecting run at ")
+    }
+
     @Test
     fun `with a trusted-map list a complement reading this build's own record runs everything`(@TempDir dir: File) {
         val project = selectedOnce(dir)

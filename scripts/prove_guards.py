@@ -2716,6 +2716,12 @@ MUTATIONS = [
      "        override fun visitLineNumber(line: Int, start: Label?) = Unit",
      '        override fun visitLineNumber(line: Int, start: Label?) = feed("line", line, id(start))',
      unit_suite, "a comment-only edit does not move the digest"),
+    # The digest's reproducibility. An array of primitives rendered by its own `toString` names a
+    # heap address, so the class reads as changed on every run and takes its tests with it.
+    ("the class digest renders a boolean array by its address", DIGEST_VISITOR,
+     '        is BooleanArray -> value.joinToString(",", "Z[", "]")\n',
+     "",
+     unit_suite, "a primitive-array annotation value digests the same on every read"),
     # The read side of the same rule. A dropped line reads as "this class did not change", which is
     # the quiet direction, so the table is refused whole rather than half-read.
     ("a torn digest table is half-read instead of refused", COVERAGE_DECODER,
@@ -4977,6 +4983,11 @@ MUTATIONS = [
      "        session.userProperties.stringPropertyNames().associateWith { session.userProperties.getProperty(it) } +\n",
      "        emptyMap<String, String>() +\n",
      maven_suite, "a complement run with another user property runs everything and names the configuration"),
+    # The map keeps the POM's value of a name systemPropertyVariables also sets; the fork gets the command line's.
+    ("a Maven complement stamp lets systemPropertyVariables hide a user property", MAVEN_RECORDING,
+     '                .filter { configuration.getChild("systemPropertyVariables")?.getChild(it) != null }\n',
+     "                .filter { false }\n",
+     maven_suite, "a complement run with another user property a systemPropertyVariables entry names runs everything"),
     # Surefire and Failsafe executions of one module keep their own maps, keyed by the plugin too.
     ("a Maven map key leaves out the plugin", MAVEN_RECORDING,
      '            "${project.groupId}:${project.artifactId}:${execution.artifactId}:${execution.executionId}"',

@@ -40,6 +40,10 @@ class DigestGoldenTest {
         visitSource("Tagged.java", null)
     }
 
+    private val arrayValued = klass("dev/sample/Cases") {
+        visitAnnotation("Ldev/sample/Marker;", true).apply { visit("value", booleanArrayOf(true, false)) }.visitEnd()
+    }
+
     @Test
     fun `class digests are unchanged by the ASM in use`() {
         assertEquals(
@@ -47,8 +51,9 @@ class DigestGoldenTest {
                 "23ca26bef2cde651895eaf26ca7972dfaf7586c3680cde4b0132decc1af4f800",
                 "5fce5e14cab2d137f64242176bfbd57d046612a9da4f56dee9ba04abfe9c4fe6",
                 "0efbe42f83482478ca60e81d8e182c0711c131d0d3862a6b705cbde78f5c6d24",
+                "e9c34220dd9882ce484fbaf1a65f2cb912876764dc1a33d23ce26d5c6f47790f",
             ),
-            listOf(constant, method, annotated).map { Recordability.classDigest(it).value },
+            listOf(constant, method, annotated, arrayValued).map { Recordability.classDigest(it).value },
         )
     }
 }

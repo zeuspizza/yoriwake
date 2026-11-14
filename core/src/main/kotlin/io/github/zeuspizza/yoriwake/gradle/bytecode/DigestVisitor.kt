@@ -74,7 +74,17 @@ internal class DigestVisitor(
         // The type is part of the description: boxed `int 1`, `long 1` and "1" otherwise render
         // alike, and a change of declared type recompiles every consumer.
         is Array<*> -> value.joinToString(",") { describe(it) }
+        // An annotation's array of primitives arrives as one primitive array, whose own `toString`
+        // names its address, not its elements. `IntArray` stays without a type prefix: every Kotlin
+        // class carries one in `@Metadata`, so a prefix would move every recorded digest.
         is IntArray -> value.joinToString(",")
+        is BooleanArray -> value.joinToString(",", "Z[", "]")
+        is ByteArray -> value.joinToString(",", "B[", "]")
+        is CharArray -> value.joinToString(",", "C[", "]") { it.code.toString() }
+        is ShortArray -> value.joinToString(",", "S[", "]")
+        is LongArray -> value.joinToString(",", "J[", "]")
+        is FloatArray -> value.joinToString(",", "F[", "]")
+        is DoubleArray -> value.joinToString(",", "D[", "]")
         is Handle -> "H(${value.tag},${value.owner},${value.name},${value.desc},${value.isInterface})"
         is ConstantDynamic -> "CD(${value.name},${value.descriptor}," +
             "${describe(value.bootstrapMethod)}," +
