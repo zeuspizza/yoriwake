@@ -7,14 +7,14 @@ import java.io.File
 import kotlin.test.assertEquals
 
 /**
- * Pins what a recording, a selecting, an observing and a complement run hand the test JVM, and what they capture, as seen just
- * before the tests start: the selection and refusal properties, whether records are written,
+ * Pins what a recording, a selecting, an observing and a complement run hand the test JVM, and what they capture, as seen right
+ * before the plugin's last look at the task: the selection and refusal properties, whether records are written,
  * `forkEvery`, whether JaCoCo is on, and whether the run is marked as one that executes everything.
  * Every site that reads whether a run selects is behind one of these observations.
  */
 class RunKindCharacterizationTest : FunctionalTestSupport() {
 
-    // Inserted just before the tests run, after every action of the plugin's.
+    // Inserted after every action of the plugin's that runs before the tests but its last look.
     private val probe = """
 
         gradle.taskGraph.whenReady {
@@ -36,8 +36,9 @@ class RunKindCharacterizationTest : FunctionalTestSupport() {
                 )
             }
             val actions = test.actions.toMutableList()
-            val tests = actions.indexOfFirst { (it as? org.gradle.api.Describable)?.displayName?.contains("executeTests") == true }
-            actions.add(tests, probe)
+            fun named(name: String) = actions.indexOfFirst { (it as? org.gradle.api.Describable)?.displayName?.contains(name) == true }
+            // Before the plugin's last look: an action after it makes a run that leaves tests out run them all.
+            actions.add(named("yoriwake last look").takeIf { it >= 0 } ?: named("executeTests"), probe)
             test.actions = actions
         }
     """.trimIndent()

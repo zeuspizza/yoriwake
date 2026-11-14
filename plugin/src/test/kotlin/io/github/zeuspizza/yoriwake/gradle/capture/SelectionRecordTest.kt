@@ -388,6 +388,76 @@ class SelectionRecordTest {
         transformed.writeText("b")
 
         assertEquals(before, digest())
+
+        val module = File(home, "caches/modules-2/files-2.1/dev.sample/lib/1.0/0a1b2c/lib-1.0.jar").apply { parentFile.mkdirs(); writeText("a") }
+        val named = SelectionRecord.classpathDigest(listOf(module), here, home)
+        module.writeText("b")
+        assertEquals(named, SelectionRecord.classpathDigest(listOf(module), here, home), "the module cache's path names its content")
+    }
+
+    @Test
+    fun `the classpath digest reads a jar elsewhere in a Gradle user home inside the checkout whole`(@TempDir root: File) {
+        val here = File(root, "here")
+        val home = File(here, ".gradle")
+        val api = File(home, "caches/8.14/generated-gradle-jars/gradle-api-8.14.jar").apply { parentFile.mkdirs() }
+        val digest = { SelectionRecord.classpathDigest(listOf(api), here, home) }
+        writeZip(api, 1_000_000_000_000L, "a")
+        val before = digest()
+
+        writeZip(api, 1_000_000_000_000L, "b")
+        assertNotEquals(before, digest())
+        writeZip(api, 1_700_000_000_000L, "a")
+        assertNotEquals(before, digest(), "read whole, as with the home outside the checkout")
+    }
+
+    @Test
+    fun `the classpath digest follows the content of a jar under the root's gradle directory, not its timestamps`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val tool = File(here, ".gradle/tools/tool.jar").apply { parentFile.mkdirs() }
+        val digest = { SelectionRecord.classpathDigest(listOf(tool), here, home) }
+        writeZip(tool, 1_000_000_000_000L, "a")
+        val before = digest()
+
+        writeZip(tool, 1_700_000_000_000L, "a")
+        assertEquals(before, digest(), "a jar fetched again keeps the digest of its entries")
+        writeZip(tool, 1_700_000_000_000L, "b")
+        assertNotEquals(before, digest())
+    }
+
+    @Test
+    fun `the classpath digest follows what the manifest of a jar under the root's gradle directory names`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val tool = File(here, ".gradle/tools/tool.jar").also { jar(it, "helper.jar", "a") }
+        val helper = File(here, ".gradle/tools/helper.jar").also { jar(it, null, "a") }
+        val before = SelectionRecord.classpathDigest(listOf(tool), here, home)
+
+        jar(helper, null, "b")
+
+        assertNotEquals(before, SelectionRecord.classpathDigest(listOf(tool), here, home))
+    }
+
+    @Test
+    fun `the classpath digest names the plugin's own agent jar under the root's gradle directory by its path`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val agent = File(here, ".gradle/yoriwake-agent/yoriwake-agent.jar").apply { parentFile.mkdirs(); writeText("a") }
+        val digest = { SelectionRecord.classpathDigest(listOf(agent), here, home) }
+        val before = digest()
+
+        agent.writeText("b")
+
+        assertEquals(before, digest())
+    }
+
+    /** Writes a zip at [target] with one entry stamped [time] holding [flavor]. */
+    private fun writeZip(target: File, time: Long, flavor: String) {
+        java.util.zip.ZipOutputStream(target.outputStream()).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("build-info.properties").apply { this.time = time })
+            zip.write("flavor=$flavor".toByteArray())
+            zip.closeEntry()
+        }
     }
 
     @Test

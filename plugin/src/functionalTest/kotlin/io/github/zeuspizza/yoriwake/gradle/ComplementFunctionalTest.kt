@@ -327,6 +327,30 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a jar the build keeps under its project cache directory, replaced between the two runs, runs every test`(@TempDir dir: File) {
+        val tool = File(dir, ".gradle/tools/tool.jar").apply { parentFile.mkdirs() }
+        val write = { flavor: String ->
+            JarOutputStream(tool.outputStream()).use { out ->
+                out.putNextEntry(JarEntry("tool.properties"))
+                out.write("flavor=$flavor\n".toByteArray())
+                out.closeEntry()
+            }
+        }
+        write("a")
+        captured(dir, extraBuild = "\ndependencies { testRuntimeOnly(files(\".gradle/tools/tool.jar\")) }\n")
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+        write("b")
+
+        val output = complement(dir).output
+
+        assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
+        assertContains(output, "classpath")
+    }
+
+    @Test
     fun `a jar only another jar's manifest names, built from a property differently, runs every test`(@TempDir dir: File) {
         captured(
             dir,
@@ -559,14 +583,21 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `a selecting run whose test task turns on fail-fast in an action after the last look leaves no record`(@TempDir dir: File) {
+        // Every action wrapped, so none is found by its name and the last look cannot tell that one
+        // follows it; fail-fast is turned on around the task's own action.
         captured(
             dir,
             extraBuild = "\n" + """
                 tasks.test {
                     val failFirst = providers.gradleProperty("failFirst").isPresent
                     gradle.taskGraph.whenReady {
-                        val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
-                        actions.add(own, Action<Task> { (this as Test).failFast = failFirst })
+                        actions = actions.map { action ->
+                            val own = (action as? Describable)?.displayName == "Execute executeTests"
+                            Action<Task> {
+                                if (own) (this as Test).failFast = failFirst
+                                action.execute(this)
+                            }
+                        }
                     }
                 }
             """.trimIndent(),
@@ -583,6 +614,103 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(everyTest, ranTests(dir), output)
         assertEquals("complement-no-record", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    /** A build that, given `-Pflavor`, places an action setting it as a system property right before the task's own. */
+    private val lateFlavor = "\n" + """
+        tasks.test {
+            val flavor = providers.gradleProperty("flavor")
+            if (flavor.isPresent) {
+                val value = flavor.get()
+                gradle.taskGraph.whenReady {
+                    val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                    actions.add(own, Action<Task> { (this as Test).systemProperty("flavor", value) })
+                }
+            }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `a complement whose configuration an action after the last look sets differently runs every test`(@TempDir dir: File) {
+        captured(dir, extraBuild = lateFlavor)
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertEquals(everyTest, ranTests(dir), output)
+        assertEquals("late-task-action", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, "every test ran")
+    }
+
+    @Test
+    fun `a complement whose task's own action the build wrapped runs every test`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    val flavor = providers.gradleProperty("flavor")
+                    if (flavor.isPresent) {
+                        val value = flavor.get()
+                        gradle.taskGraph.whenReady {
+                            val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                            val wrapped = actions[own]
+                            actions = actions.toMutableList().also {
+                                it[own] = Action<Task> {
+                                    (this as Test).systemProperty("flavor", value)
+                                    wrapped.execute(this)
+                                }
+                            }
+                        }
+                    }
+                }
+            """.trimIndent(),
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertEquals(everyTest, ranTests(dir), output)
+        assertEquals("late-task-action", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+    }
+
+    @Test
+    fun `a selecting run with an action after the last look runs every test and leaves no record`(@TempDir dir: File) {
+        captured(dir, extraBuild = lateFlavor)
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+
+        val output = runner(dir, "test", SELECT, BASE, "-Pflavor=b").build().output
+
+        assertEquals(everyTest, ranTests(dir), output)
+        assertEquals("late-task-action", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertEquals(null, selectionRecord(dir), "a run that ran every test left a record")
+    }
+
+    @Test
+    fun `a doFirst added once the task graph is ready keeps the complement`(@TempDir dir: File) {
+        captured(
+            dir,
+            extraBuild = "\n" + """
+                tasks.test {
+                    gradle.taskGraph.whenReady { doFirst { (this as Test).systemProperty("flavor", "a") } }
+                }
+            """.trimIndent(),
+        )
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+
+        val output = complement(dir).output
+
+        assertEquals(early, ranTests(dir), output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
     }
 
     @Test
