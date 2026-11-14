@@ -38,6 +38,7 @@ import tomllib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import assert_recall  # noqa: E402  (narrowed_at_all lives with the gate, not in a second copy)
 import cost  # noqa: E402
+import maven_build  # noqa: E402
 import run  # noqa: E402  (coverage_only: which rules coverage alone applies, defined once)
 import own_processes  # noqa: E402
 
@@ -615,6 +616,13 @@ def checkout_relative(name):
     return os.path.relpath(run.checkout_dir(project), BENCH).replace(os.sep, "/")
 
 
+def builds_with_maven(name):
+    """Whether a project's own file says Maven builds it. A file that cannot be read raises: taken
+    for a Gradle project, a Maven project would drop out of its own sweep unseen."""
+    with open(os.path.join(BENCH, "projects", f"{name}.toml"), "rb") as handle:
+        return maven_build.is_maven(tomllib.load(handle))
+
+
 def argument_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=16)
@@ -627,6 +635,9 @@ def argument_parser():
     parser.add_argument("--only", nargs="+", action="extend", help="restrict to these project names")
     parser.add_argument("--skip", nargs="+", action="extend", default=[],
                         help="qualified projects to leave out")
+    # BY THE PROJECT FILE, not a list of names: the next Maven project joins by being qualified.
+    parser.add_argument("--build", choices=(maven_build.MAVEN,),
+                        help="restrict to the projects this build tool builds")
     parser.add_argument("--print-commands", action="store_true",
                         help="print each selected project's run.py flags as JSON and sweep nothing")
     parser.add_argument("--arm", choices=("full", "reduced"), default="full",
@@ -667,6 +678,9 @@ def main(argv=None):
         raise SystemExit(f"{run.FORCING_SET} runs on the full arm, which it limits to the reduced "
                          f"arm's projects; the reduced arm reads its rows as recall rows")
     if args.arm == "reduced":
+        if args.build:
+            raise SystemExit("--arm reduced names its own projects; --build would redefine the "
+                             "arm. Use --arm full --build for the projects one build tool builds.")
         if args.only or args.skip:
             # BOTH, and the omission of --skip was the bug: it is applied AFTER the completeness
             # check below, so it could drop a member the check had just confirmed was present and
@@ -684,6 +698,8 @@ def main(argv=None):
     if args.only:
         names = [n for n in names if n in set(args.only)]
     names = [n for n in names if n not in set(args.skip)]
+    if args.build:
+        names = [n for n in names if builds_with_maven(n)]
     # `forcing/v1` RUNS ON THE REDUCED ARM'S PROJECTS ONLY: each row costs a suite run for an
     # answer the change's path fixes, so the rest of the corpus would add hundreds of runs and no
     # information.
@@ -696,8 +712,8 @@ def main(argv=None):
     # the exact shape of failure the tool under measurement exists to prevent.
     if not names:
         raise SystemExit(
-            f"--only/--skip selected none of the {len(qualified(args.qualification))} qualified "
-            f"projects; refusing to report an empty sweep as a finished one"
+            f"--only/--skip/--build selected none of the {len(qualified(args.qualification))} "
+            f"qualified projects; refusing to report an empty sweep as a finished one"
         )
     if args.print_commands:
         # THE WORKFLOW SHARDS EVERY PROJECT, and `run.py` refuses a sharded `pool/v1` run with a
