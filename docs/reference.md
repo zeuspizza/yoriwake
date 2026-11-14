@@ -272,8 +272,9 @@ names is on the test JVM's class path too, so it counts the same way, its class 
 wherever it lies but in Gradle's module cache under the Gradle user home. A dependency jar or directory that moved runs
 everything (`dependencies-changed`), naming it: one in Gradle's module cache by its path, which
 names its content, one in Gradle's transform cache by its path, which names the transform's input,
-parameters and implementation, and every other one by its content. A transform rerun on a fresh
-machine may write other bytes at the same path, and they run nothing. The limits: a transform
+parameters and implementation, and every other one by its content. A transform's entry written
+again, as on a fresh machine or after Gradle's cache cleanup, may hold other bytes at the same
+path, and they run nothing. The limits: a transform
 that reads something it does not declare (an environment variable, an `@Internal` parameter's
 file) or whose declared input normalization leaves out something its output carries keeps its
 path across that change, as Gradle's own up-to-date check does; what a transformed jar's manifest
