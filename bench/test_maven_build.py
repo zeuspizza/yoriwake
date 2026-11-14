@@ -453,6 +453,21 @@ def case_staging_adds_jacoco_only_where_no_pom_declares_its_agent():
                             {**PROJECT, "test_plugin": "failsafe"})
         if "jacoco prepare-agent-integration added" not in staged:
             failures += fail(f"a Failsafe target gained no prepare-agent-integration: {staged}")
+    with tempfile.TemporaryDirectory() as tmp:
+        reporting = _pom("root", parent=False, group="dev.demo", body=(
+            "  <packaging>pom</packaging>\n  <modules><module>app</module></modules>\n"
+            f"  <build><plugins>{JACOCO.format(goal='report')}</plugins></build>\n"))
+        staged, _ = _staged(tmp, {"pom.xml": reporting, "app/pom.xml": _pom("app"),
+                                  ".gitignore": "target/\n"})
+        root = _read(tmp, "pom.xml")
+        if root.count("<artifactId>jacoco-maven-plugin</artifactId>") != 1:
+            failures += fail("a root POM that declares JaCoCo without its agent gained a second "
+                             "declaration, which Maven 3.10 refuses to read")
+        if "jacoco prepare-agent added" not in staged or \
+                maven_build.STAGED_JACOCO_EXECUTION not in root or \
+                "<goal>prepare-agent</goal>" not in root or "<goal>report</goal>" not in root:
+            failures += fail(f"the guest's JaCoCo declaration did not gain the agent beside its "
+                             f"own goal: {staged}")
     return failures
 
 

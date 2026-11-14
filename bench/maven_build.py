@@ -762,7 +762,8 @@ def stage(checkout, project):
 
     The root POM's own `build/plugins` declaration of the plugin is re-pointed to the harness's
     version; one anywhere else (a module, a profile, plugin management only) refuses, naming it,
-    rather than adding a second. A JaCoCo agent goal is added only where no POM declares one.
+    rather than adding a second. A JaCoCo agent goal is added only where no POM declares one, and
+    into the root POM's own JaCoCo declaration when it has one.
     `target/` is added to `.gitignore` when git does not already ignore it: the plugin counts an
     untracked file by content, so the arms' own output would force every row.
     """
@@ -796,12 +797,22 @@ def stage(checkout, project):
         staged.append("plugin added")
     if not any(execution.agent_goal in other.agent_goals() for other in poms):
         build = build if build is not None else _append(pom.root, pom.element("build"), 1)
-        _append(pom.ensure(build, "plugins", 2), pom.element("plugin", children=[
-            pom.element("groupId", "org.jacoco"), pom.element("artifactId", "jacoco-maven-plugin"),
-            pom.element("version", JACOCO_VERSION),
-            pom.element("executions", children=[pom.element("execution", children=[
-                pom.element("id", STAGED_JACOCO_EXECUTION),
-                pom.element("goals", children=[pom.element("goal", execution.agent_goal)])])])]), 3)
+        agent = pom.element("execution", children=[
+            pom.element("id", STAGED_JACOCO_EXECUTION),
+            pom.element("goals", children=[pom.element("goal", execution.agent_goal)])])
+        theirs = next((p for p in pom.plugins(build)
+                       if pom.is_plugin(p, "jacoco-maven-plugin", "org.jacoco")), None)
+        if theirs is not None:
+            # A guest that declares JaCoCo for other goals (offline instrumentation, a report)
+            # gains the execution in its own declaration: Maven 3.10 refuses a POM that declares
+            # one plugin twice.
+            _append(pom.ensure(theirs, "executions", 4), agent, 5)
+        else:
+            _append(pom.ensure(build, "plugins", 2), pom.element("plugin", children=[
+                pom.element("groupId", "org.jacoco"),
+                pom.element("artifactId", "jacoco-maven-plugin"),
+                pom.element("version", JACOCO_VERSION),
+                pom.element("executions", children=[agent])]), 3)
         staged.append(f"jacoco {execution.agent_goal} added")
     if staged:
         pom.write()

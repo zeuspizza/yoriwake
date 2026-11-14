@@ -5262,6 +5262,9 @@ MUTATIONS = [
     ("staging adds a second JaCoCo agent beside the guest's", MAVEN_HARNESS,
      "    if not any(execution.agent_goal in other.agent_goals() for other in poms):",
      "    if True:", maven_harness_suite, "a reactor with its own agent gained a second"),
+    ("staging declares JaCoCo twice in a root POM that already declares it", MAVEN_HARNESS,
+     "        if theirs is not None:", "        if False:", maven_harness_suite,
+     "gained a second declaration"),
     # A dependency bump selects the tests that reached the moved jars, and forces for all else.
     ("the dependency classifier accepts a line of any shape", COORDINATE_DIFF,
      '                } ?: return Verdict.Refused(path, after, "not a version change of a shape this rule knows")',
