@@ -24,6 +24,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - `yoriwake.isolatedCaptureForks` raises an isolated recording run's parallel test JVMs. Map: left alone.
 - Maven records the loaded-class union under `-Dyoriwake.internal.loaded`, as Gradle does. Map: left alone.
 - Contributors: `-Pyoriwake.functional.forks=<n>` runs a functional suite in `<n>` test JVMs at once. Map: left alone.
+- The reference says an observing or complement run of a parallel suite under `recordSequentially` records nothing. Map: left alone.
 
 ### Changed
 

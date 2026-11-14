@@ -249,6 +249,34 @@ class EnvironmentFingerprintFunctionalTest {
         assertNarrowed(selecting(project))
     }
 
+    /**
+     * The demo captured with the invocation, not the POM, naming a `local.properties` beside the
+     * checkout that holds [content]; the argument that names it, for the selecting run.
+     */
+    private fun capturedWithFileNamedOnTheCommandLine(dir: File, content: String): Pair<File, String> {
+        val file = File(dir, "local.properties").apply { writeText(content) }
+        val named = "-Dsurefire.systemPropertiesFile=${file.absolutePath}"
+        return captured(dir, named, argLine = "") to named
+    }
+
+    @Test
+    fun `another value in a systemPropertiesFile named on the command line runs every test`(@TempDir dir: File) {
+        val (project, named) = capturedWithFileNamedOnTheCommandLine(dir, "mode=fast\n")
+        File(dir, "local.properties").writeText("mode=slow\n")
+
+        val output = selecting(project, named)
+
+        assertRanEverything(project, output)
+        assertContains(refusalLine(output), "sys:mode")
+    }
+
+    @Test
+    fun `the same systemPropertiesFile named on the command line narrows as before`(@TempDir dir: File) {
+        val (project, named) = capturedWithFileNamedOnTheCommandLine(dir, "mode=fast\n")
+
+        assertNarrowed(selecting(project, named))
+    }
+
     @Test
     fun `another time zone in Maven's environment runs every test`(@TempDir dir: File) {
         val project = captured(dir, environment = mapOf("TZ" to "UTC"))

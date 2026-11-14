@@ -1427,7 +1427,9 @@ What it does not show:
   observe that.
 - Each observing run refreshes the map, so the selection it observes was computed against a fresher
   map than a regime that only selects, and refreshes on its default branch, would read. The skipped
-  time is an upper bound for that regime.
+  time is an upper bound for that regime. A parallel suite under `recordSequentially` is the
+  exception: an observing run keeps its scheduling and records nothing
+  ([Recording a parallel suite one test at a time](#recording-a-parallel-suite-one-test-at-a-time)).
 - No would-be miss on a run where no test failed, or where the outcome was `full-run`, says nothing
   about how often selection misses a failure. The report counts; it never gives a rate.
 - The skipped time is not a wall-clock saving: instrumented durations, summed over forks.
@@ -1683,7 +1685,9 @@ cache a pull request wrote, and the record is outside the map's digest, so a bar
 `-Pyoriwake.complement` runs every test as `complement-record-mismatch`.
 
 A run that cannot use a record runs every test and records the map, as a run without the flag
-does, and names why: `complement-no-record` when the task has none, `complement-record-mismatch`
+does (a parallel suite under
+[`recordSequentially`](#recording-a-parallel-suite-one-test-at-a-time) keeps its scheduling and
+records nothing), and names why: `complement-no-record` when the task has none, `complement-record-mismatch`
 when its stamp differs, naming the first field that does (the commit, the working tree, the task,
 the build, the classpath, the configuration). A record from another test JVM is found in that JVM:
 it runs every test without recording, and `decisions.tsv` notes `refusal-kind`
@@ -1872,9 +1876,16 @@ the Gradle plugin.
   tag still selects it) and `narrowPlainRunners`.
 - **Recording a parallel suite**: under `recordSequentially`, a recording run turns Jupiter's and
   Vintage's parallel switches off through `<properties><configurationParameters>`, which outrank
-  every other route, and each test JVM confirms it before recording. Any other run keeps the
-  suite's scheduling, selects as usual and records nothing; the build's JaCoCo agent stays on, so
-  it still pays the toll.
+  every other route, and each test JVM confirms it before recording. Any other run (selecting,
+  observing or complement) keeps the suite's scheduling, decides as usual and records nothing, so
+  only a recording run refreshes that map; the build's JaCoCo agent stays on, so it still pays the
+  toll.
+- **No loaded-class union on Surefire's JUnit 4 provider**: a capture under
+  `-Dyoriwake.internal.loaded` lists the classes the test JVMs loaded once the framework reports
+  the end of its run, which the JUnit Platform and TestNG do and Surefire's JUnit 4 provider does
+  not. An execution on JUnit 4 alone records no such list, so a changed class no test is known to
+  load still runs every test there. Run the JUnit 4 tests on the JUnit Platform
+  (`org.junit.vintage:junit-vintage-engine`) to record one.
 - **JaCoCo's agent** may reach the test JVM through `JAVA_TOOL_OPTIONS` or `JDK_JAVA_OPTIONS`
   instead of the `argLine`, set in the execution's `<environmentVariables>` or in Maven's own
   environment: the execution captures, and its map records the scope that agent was given. A

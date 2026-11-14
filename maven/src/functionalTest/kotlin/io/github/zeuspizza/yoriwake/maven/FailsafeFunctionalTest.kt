@@ -122,6 +122,31 @@ class FailsafeFunctionalTest {
     }
 
     @Test
+    fun `another value in Failsafe's systemPropertiesFile runs every integration test`(@TempDir dir: File) {
+        val project = withIntegrationTests(dir)
+        // Beside the checkout, so no change to the tree says it changed: only its own properties can.
+        val file = File(dir, "local.properties").apply { writeText("mode=fast\n") }
+        val named = "-Dfailsafe.systemPropertiesFile=${file.absolutePath}"
+        FunctionalMaven.run(maven, project, "verify", named).succeeded()
+        file.writeText("mode=slow\n")
+        File(project, "lib/src/main/java/dev/demo/lib/Counter.java").edit { it.replace("n * 2", "n + n") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", named)
+            .succeeded().output
+
+        // Failsafe alone reads the file: Surefire's executions still narrow.
+        val refusal = output.lines().single { "differs from the one the map was recorded in" in it }
+        assertContains(refusal, name)
+        assertContains(refusal, "sys:mode")
+        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-app-") && "failsafe" in it.name }
+        assertContains(File(map, "decisions.tsv").readLines(), "#!refusal-kind\tenvironment-changed")
+        val integration = output.substringAfter(refusal)
+        assertContains(integration, "Running dev.demo.app.AppIT")
+        assertContains(integration, "Running dev.demo.app.CounterIT")
+    }
+
+    @Test
     fun `a failing integration test still decodes the map`(@TempDir dir: File) {
         val project = withIntegrationTests(dir)
         File(project, "app/src/test/java/dev/demo/app/CounterIT.java").edit { it.replace("assertEquals(6,", "assertEquals(7,") }

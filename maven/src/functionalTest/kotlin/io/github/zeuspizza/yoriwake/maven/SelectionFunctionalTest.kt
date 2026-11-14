@@ -264,6 +264,56 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a default base read before HEAD moved still selects in a later execution`(@TempDir dir: File) {
+        // `app`, before it compiles, fast-forwards the checkout to the branch `later`: nothing while
+        // that branch is where HEAD is, as at the capture.
+        val project = FunctionalMaven.copy(FunctionalMaven.demo, dir).also { project ->
+            File(project, "app/pom.xml").edit {
+                it.replace(
+                    "</dependencies>",
+                    "</dependencies>\n  <build><plugins><plugin>\n" +
+                        "    <groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.5.0</version>\n" +
+                        "    <executions><execution><id>move-head</id><phase>initialize</phase><goals><goal>exec</goal></goals>\n" +
+                        "      <configuration><executable>git</executable><workingDirectory>\${project.basedir}</workingDirectory>\n" +
+                        "        <arguments><argument>merge</argument><argument>--ff-only</argument><argument>later</argument></arguments>\n" +
+                        "      </configuration></execution></executions>\n" +
+                        "  </plugin></plugins></build>",
+                )
+            }
+            File(project, ".gitignore").writeText("target/\n")
+            git(project, "init", "-q")
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "demo")
+            git(project, "branch", "-M", "main")
+            git(project, "branch", "later")
+        }
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib,app").succeeded()
+        git(project, "checkout", "-q", "-b", "feature")
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }
+        git(project, "commit", "-q", "-am", "an edit")
+        val feature = git(project, "rev-parse", "HEAD")
+        git(project, "checkout", "-q", "-B", "later")
+        File(project, "app/src/main/java/dev/demo/app/App.java").edit { it.replace("greet(\"app\")", "greet(\"a\" + \"pp\")") }
+        git(project, "commit", "-q", "-am", "an edit made while the build runs")
+        git(project, "checkout", "-q", "feature")
+
+        // No base named: `lib`'s execution reads the default one, the merge base with `main`, with
+        // HEAD still at the Greeter edit; `app`'s reuses it after HEAD moved.
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib,app", "-Dyoriwake.select").succeeded().output
+
+        assertEquals(feature, git(project, "rev-parse", "HEAD~1"), output)
+        val lib = selectingLine(output, "lib")
+        val app = selectingLine(output, "app")
+        assertContains(lib, "(merge base with main): 1 changed classes")
+        // The same base, and the change set asked again: the edit HEAD moved to is in it.
+        assertEquals(lib.substringBefore(": "), app.substringBefore(": "), output)
+        assertContains(app, "(merge base with main): 2 changed classes")
+        assertContains(output, "Running dev.demo.lib.GreeterTest")
+        assertFalse("Running dev.demo.lib.CounterTest" in output, output)
+        assertContains(output, "Running dev.demo.app.AppTest")
+    }
+
+    @Test
     fun `a selecting run that stops after a failure leaves no record, so a complement runs every test`(@TempDir dir: File) {
         // Left out of the environment comparison, so the selecting run narrows rather than running everything.
         val project = committed(dir).also {

@@ -236,4 +236,38 @@ class CaptureFunctionalTest {
 
         assertNull(union(project))
     }
+
+    @Test
+    fun `a capture run through a TestNG suite file discards the union`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "pom.xml").edit {
+            it.replace(
+                Regex("""<groupId>org\.junit\.jupiter</groupId>\s*<artifactId>junit-jupiter</artifactId>"""),
+                "<groupId>org.testng</groupId><artifactId>testng</artifactId><version>7.10.2</version>",
+            )
+        }
+        File(project, "lib/src/test/java/dev/demo/lib").listFiles().orEmpty().forEach { test ->
+            test.edit {
+                it.replace("org.junit.jupiter.api.Assertions.assertEquals", "org.testng.Assert.assertEquals")
+                    .replace("org.junit.jupiter.api.Test", "org.testng.annotations.Test")
+                    .replace("\nclass ", "\npublic class ")
+                    .replace("    void ", "    public void ")
+            }
+        }
+        git(project, "commit", "-q", "-am", "TestNG alone")
+        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
+        assertNotNull(union(project))
+        // A suite file says which tests run, and may leave some out: here it names one class of two.
+        File(project, "lib/testng.xml").writeText(
+            """<suite name="lib"><test name="some"><classes><class name="dev.demo.lib.GreeterTest"/></classes></test></suite>""" + "\n"
+        )
+        git(project, "add", "lib/testng.xml")
+        surefire(project, "<suiteXmlFiles><suiteXmlFile>testng.xml</suiteXmlFile></suiteXmlFiles>")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded().output
+
+        assertContains(output, "Tests run: 1, Failures: 0")
+        assertNull(union(project))
+        assertContains(output, "so the loaded-class union it could not vouch for was discarded")
+    }
 }
