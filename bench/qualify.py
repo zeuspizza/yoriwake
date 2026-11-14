@@ -664,6 +664,14 @@ def qualify_maven(project, checkout, verdict):
         return blocked(f"{seams.name} ran {tests} tests but this run captured no map"
                        + (f"; raw records under {unfinished} were never merged" if unfinished
                           else "") + f"; see {shown}")
+    # A red build with failing tests is a red suite, and qualifies. With none failing, a goal after
+    # the tests failed, and it fails in every arm.
+    if not failures and maven_build.build_failed(log):
+        failure = next((line for line in (maven_build.read_log(log) or "").splitlines()
+                        if line.startswith("[ERROR] Failed to execute goal")), "").strip()
+        return blocked(f"{seams.name} ran {tests} tests, none failing, and the build then failed "
+                       f"(exit {code})" + (f" -- {failure[:300]}" if failure else "")
+                       + f"; see {shown}")
     verdict["qualified"] = True
     audit_log = os.path.join(scratch, "audit.log")
     audit_started = time.time()

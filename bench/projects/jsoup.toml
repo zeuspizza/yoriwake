@@ -1,0 +1,35 @@
+# WHY THIS ONE: a Maven build whose measured tests are Failsafe's, not Surefire's: the `*IT`
+# classes of a single module, run by a Failsafe execution with no id of its own (Maven's
+# `default`) and with JUnit Jupiter's parallel execution switched on in the Failsafe
+# configuration. They read the packaged jar, so the arm goes through `package`. No JaCoCo of its
+# own, so the harness stages `prepare-agent-integration`.
+name = "jsoup"
+url = "https://github.com/jhy/jsoup.git"
+commit = "d90d57521d931db7bf7ee464a4c0a1a9293db088"
+build = "maven"
+module = ""
+test_plugin = "failsafe"
+execution = "default"
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number: one local `--limit 2` run priced
+# nothing. Both rows ran every test, the first because the test classes read as changed with no
+# source change, the second for a compile-time constant. dubbo's depth stands in until a run whose
+# rows narrow gives a ratio. Each row pair cost about 75 s there, compile gate included.
+sweep_limit = 8
+
+flags = [
+    # Failsafe's configuration enables Jupiter's parallel execution, and some integration tests
+    # ask for `CONCURRENT`. A recording run declines tests that interleave inside one JVM unless
+    # it records them one at a time; selecting runs keep the guest's scheduling.
+    "-Dyoriwake.recordSequentially=true",
+    # A Failsafe arm builds to `verify`, past `package`, where this guest also builds its javadoc
+    # and source jars and compares the jar's API with the last release (japicmp, which breaks the
+    # build on an incompatible change). An arm measures tests, so each is switched off by its
+    # plugin's own property. The main jar stays: the integration tests read it.
+    "-Dmaven.javadoc.skip=true",
+    "-Dmaven.source.skip=true",
+    "-Djapicmp.skip=true",
+]
+# The Java 11 overlay in `src/main/java11`, two classes compiled into `META-INF/versions/11`, is
+# left out.
+sources = ["src/main/java"]
