@@ -250,8 +250,9 @@ internal object SelectionRecord {
      * [rootDir] is digested by the content of each file of a directory and each entry of a jar,
      * never a jar whole: the commit and a clean tree do not fix a file generated from git state, a
      * property or the clock, and a jar the build rebuilds need not come out byte for byte alike.
-     * When that walk cannot vouch for every file, or the root itself is on the classpath, the digest
-     * is one no other run produces, carrying why.
+     * When that walk cannot vouch for every file, a manifest names a file that cannot be told or
+     * directories of more files than a walk may read, or the root itself is on the classpath, the
+     * digest is one no other run produces, carrying why.
      */
     fun classpathDigest(
         files: Iterable<File>,
@@ -280,7 +281,8 @@ internal object SelectionRecord {
             read += name to file
             "$name ${contentDigest(file)}"
         }
-        val followed = ClasspathFiles.classPathRows(read, files.toList(), gradleUserHome)
+        val followed = ClasspathFiles.classPathRows(read, files.toList(), gradleUserHome)?.rows
+            ?: return unmatched(ClasspathFiles.namedBudgetSpent().reason)
         val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Refused -> return unmatched(walk.reason)
