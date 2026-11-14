@@ -31,6 +31,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A complement run compares a jar only a dependency's manifest `Class-Path` names too. Map: left alone.
 - Maven: a complement run under another `-D` value of a property `systemPropertyVariables` also sets runs every test. Map: left alone.
 
 ## [0.5.0] - 2026-11-07

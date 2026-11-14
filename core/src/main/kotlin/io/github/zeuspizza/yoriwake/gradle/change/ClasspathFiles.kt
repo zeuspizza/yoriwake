@@ -257,6 +257,25 @@ internal object ClasspathFiles {
             order += key
             if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)
         }
+        rows += classPathRows(following, classpath, gradleUserHome)
+        rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
+        return when (val walk = walk(
+            classpath, buildDirs, rootDir, maxFiles, text = text, dependency = { homeOf(it) != null },
+            gradleUserHome = gradleUserHome,
+        )) {
+            is Walk.Refused -> walk
+            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())
+        }
+    }
+
+    /**
+     * The rows [table] gives what the manifest `Class-Path` of [entries] names, each entry a file
+     * read by content with its row's key, in the order the files are found. A file on [classpath]
+     * or already named, or in Gradle's module cache under [gradleUserHome], gets none.
+     */
+    fun classPathRows(entries: Collection<Pair<String, File>>, classpath: Collection<File>, gradleUserHome: File?): Map<String, String> {
+        val rows = linkedMapOf<String, String>()
+        val following = ArrayDeque(entries)
         val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
         while (following.isNotEmpty()) {
             val (referrer, jar) = following.removeFirst()
@@ -276,14 +295,7 @@ internal object ClasspathFiles {
                 following.addLast(key to named)
             }
         }
-        rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
-        return when (val walk = walk(
-            classpath, buildDirs, rootDir, maxFiles, text = text, dependency = { homeOf(it) != null },
-            gradleUserHome = gradleUserHome,
-        )) {
-            is Walk.Refused -> walk
-            is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())
-        }
+        return rows
     }
 
     /** How [table] reads a dependency entry for its row; [BUILT] marks build output, which has none. */

@@ -3374,6 +3374,20 @@ MUTATIONS = [
      "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text, gradleUserHome = gradleUserHome)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
+    # A jar a dependency's manifest names lies outside the build, where neither the commit nor a
+    # clean tree keeps it from being replaced between a selecting run and its complement.
+    ("the complement's classpath digest does not follow a dependency's manifest Class-Path", SELECTION_RECORD,
+     "            read += name to file\n",
+     "",
+     unit_suite, "the classpath digest follows a jar only a dependency's manifest names, at the same path"),
+    ("a complement run leaves out tests that ran against another jar a dependency's manifest names", SELECTION_RECORD,
+     "            read += name to file\n",
+     "",
+     functional_suite, "a jar only a dependency's manifest names, replaced in place, runs every test"),
+    ("a named jar that cannot be read lets the complement's classpath digest match", SELECTION_RECORD,
+     "        (followed.entries + content.entries).firstOrNull",
+     "        content.entries.firstOrNull",
+     unit_suite, "a jar a dependency's manifest names that cannot be read digests to a value no run matches"),
     # An unreadable selection record must not reach Gradle's configuration-time read.
     ("an unreadable selection record is handed to Gradle to read at configuration", SELECTION_WIRING,
      "    val text = if (!record.isFile || java.nio.file.Files.isReadable(record.toPath())) {",
