@@ -61,10 +61,12 @@ object FunctionalCoverage {
 
     @Synchronized
     private fun server(): CoverageServer = started ?: run {
-        val directory = File(requireNotNull(System.getProperty("yoriwake.functional.coverageDir")) {
+        val task = File(requireNotNull(System.getProperty("yoriwake.functional.coverageDir")) {
             "coverage is on but the build named no directory for it"
         })
-        CoverageServer(directory, sessionId = directory.name).also { it.start(); started = it }
+        // A directory per test JVM: each writes `end-of-run.exec` and `summary.txt`.
+        val directory = File(task, FunctionalGradle.testJvm)
+        CoverageServer(directory, sessionId = "${task.name}-${directory.name}").also { it.start(); started = it }
     }
 
     private val runtimeJar: String by lazy {

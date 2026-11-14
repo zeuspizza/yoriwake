@@ -113,6 +113,18 @@ class FunctionalCoverageTest {
     }
 
     @Test
+    fun `a run with coverage collects it in a directory of this test JVM's own`() {
+        val home = File(dir, "home").also(FunctionalCoverage::configure)
+        if (System.getProperty("yoriwake.functional.coverage") != "true") return
+
+        // Two test JVMs of one task would otherwise overwrite each other's `end-of-run.exec` and summary.
+        val task = File(System.getProperty("yoriwake.functional.coverageDir"))
+        assertTrue(File(task, FunctionalGradle.testJvm).isDirectory, "no ${FunctionalGradle.testJvm} under $task")
+        val session = "-Djacoco-agent.sessionid=${task.name}-${FunctionalGradle.testJvm}"
+        assertTrue(session in File(home, "gradle.properties").readText(), "the daemons do not report as $session")
+    }
+
+    @Test
     fun `every home gives its daemons 2 GB of heap, with coverage or without`() {
         val home = File(dir, "home").also(FunctionalCoverage::configure)
 
