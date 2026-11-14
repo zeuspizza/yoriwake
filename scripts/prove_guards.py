@@ -4842,6 +4842,13 @@ MUTATIONS = [
      "        return ParallelismDetector.detect(parameters, arguments(resolvedArgLine(project, configuration)), classpath)",
      "        return ParallelismDetector.detect(emptyMap(), arguments(resolvedArgLine(project, configuration)), classpath)",
      maven_suite, "parallel execution enabled for the JUnit Platform is declined and captures nothing"),
+    # Surefire builds the fork's system properties from three places in its configuration: a switch
+    # in the two this leaves out would be caught, if at all, only inside the test JVM.
+    ("the Maven parallelism check reads only systemPropertyVariables", MAVEN_RECORDING,
+     "        forkSystemProperties(project, execution, configuration).forEach { parameters[it.name] = valueOf(project, it) }",
+     "        forkSystemProperties(project, execution, configuration).filter { it.source == ForkSystemProperty.SYSTEM_PROPERTY_VARIABLES }"
+     ".forEach { parameters[it.name] = valueOf(project, it) }",
+     maven_suite, "parallel execution enabled in Surefire's systemProperties is declined as well"),
     # What reaches the JVM is the authority: an argLine without JaCoCo's agent records no coverage.
     ("a Maven argLine without JaCoCo's agent is captured", MAVEN_RECORDING,
      "        if (agentMissing) {",
