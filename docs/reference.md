@@ -1880,6 +1880,12 @@ the Gradle plugin.
   observing or complement) keeps the suite's scheduling, decides as usual and records nothing, so
   only a recording run refreshes that map; the build's JaCoCo agent stays on, so it still pays the
   toll.
+- **No loaded-class union on Surefire's JUnit 4 provider**: a capture under
+  `-Dyoriwake.internal.loaded` lists the classes the test JVMs loaded once the framework reports
+  the end of its run, which the JUnit Platform and TestNG do and Surefire's JUnit 4 provider does
+  not. An execution on JUnit 4 alone records no such list, so a changed class no test is known to
+  load still runs every test there. Run the JUnit 4 tests on the JUnit Platform
+  (`org.junit.vintage:junit-vintage-engine`) to record one.
 - **JaCoCo's agent** may reach the test JVM through `JAVA_TOOL_OPTIONS` or `JDK_JAVA_OPTIONS`
   instead of the `argLine`, set in the execution's `<environmentVariables>` or in Maven's own
   environment: the execution captures, and its map records the scope that agent was given. A
