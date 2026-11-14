@@ -196,7 +196,7 @@ internal object ClasspathFiles {
      * entry, such as the jar of a build this one includes or an absolute `files(...)`, is keyed
      * `dependency:<outside>/<name>`, with `#2`, `#3` for a name repeated in classpath order, since
      * its path differs between machines, and read by content: a jar entry by entry (a rebuilt jar
-     * keeps entry timestamps), a directory file by file.
+     * keeps entry timestamps), a directory file by file, its files counted against [maxFiles].
      *
      * What the manifest `Class-Path` of an entry read by content names is on the test JVM's class path
      * too, and on no classpath Gradle or Maven lists, whatever the naming file is called: each file
@@ -204,7 +204,8 @@ internal object ClasspathFiles {
      * Class-Path <token>`, read by content (a directory with each jar in it by its entries),
      * [ABSENT] when missing, since a file that later appears there shadows every later entry. A file on the classpath or already named, or in
      * Gradle's module cache under the [GRADLE_USER_HOME] home, gets none. The files of the
-     * directories named count against [maxFiles] with those [walk] reads; past it the table refuses.
+     * directories named count against [maxFiles] with those of the `<outside>` directories and those
+     * [walk] reads; past it the table refuses.
      */
     fun table(
         classpath: Collection<File>,
@@ -231,6 +232,8 @@ internal object ClasspathFiles {
         val repeated = mutableMapOf<String, Int>()
         // Each entry read by content with its row's key, for what its manifest's `Class-Path` names.
         val following = ArrayDeque<Pair<String, File>>()
+        // The files read in directories from outside the build: any directory may be put there.
+        var outside = 0
         for (entry in classpath.map(File::getAbsoluteFile).distinct()) {
             // The plugin's own agent, not an input of the tests: present or not, it changes nothing they
             // read, and a task the wiring finds without it already runs everything for that reason.
@@ -261,12 +264,19 @@ internal object ClasspathFiles {
                 // its path differs between machines, so it is named by its file name and read.
                 val count = repeated.merge(entry.name, 1, Int::plus)!!
                 val suffix = if (count > 1) "#$count" else ""
-                "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}$suffix".also { rows[it] = contentDigest(entry) }
+                val digest = if (entry.isDirectory) {
+                    runCatching { directoryDigest(entry) { ++outside > maxFiles } }.getOrDefault(UNREADABLE)
+                        ?: return outsideBudgetSpent(maxFiles)
+                } else {
+                    contentDigest(entry)
+                }
+                "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}$suffix".also { rows[it] = digest }
             }
             order += key
             if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)
         }
-        val named = classPathRows(following, classpath, gradleUserHome, maxFiles) ?: return namedBudgetSpent(maxFiles)
+        val named = classPathRows(following, classpath, gradleUserHome, maxFiles, outside)
+            ?: return namedBudgetSpent(maxFiles)
         rows += named.rows
         rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
         return when (val walk = walk(
@@ -278,7 +288,7 @@ internal object ClasspathFiles {
         }
     }
 
-    /** [classPathRows]' rows, and how many files it read in the directories named for them. */
+    /** [classPathRows]' rows, and how many files it read in the directories named for them, with those spent before. */
     data class Named(val rows: Map<String, String>, val files: Int)
 
     /**
@@ -288,17 +298,19 @@ internal object ClasspathFiles {
      * class loader resolves to a file this cannot name, and a directory holding a file that cannot
      * be read, give [UNREADABLE].
      *
-     * Null when the directories named hold more than [maxFiles] files ([namedBudgetSpent]): a
-     * manifest may name any directory, the file system's root included.
+     * Null when the directories named hold more than [maxFiles] files ([namedBudgetSpent]), [spent]
+     * of which the caller has read already: a manifest may name any directory, the file system's
+     * root included.
      */
     fun classPathRows(
         entries: Collection<Pair<String, File>>,
         classpath: Collection<File>,
         gradleUserHome: File?,
         maxFiles: Int = MAX_FILES,
+        spent: Int = 0,
     ): Named? {
         val rows = linkedMapOf<String, String>()
-        var files = 0
+        var files = spent
         val following = ArrayDeque(entries)
         val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
         while (following.isNotEmpty()) {
@@ -329,6 +341,9 @@ internal object ClasspathFiles {
     /** Why a table refuses when [classPathRows] gives none. */
     fun namedBudgetSpent(maxFiles: Int = MAX_FILES) =
         Walk.Refused("the files a manifest Class-Path names exceed the $maxFiles-file budget")
+
+    private fun outsideBudgetSpent(maxFiles: Int) =
+        Walk.Refused("the classpath directories from outside the build exceed the $maxFiles-file budget")
 
     /** How [table] reads a dependency entry for its row; [BUILT] marks build output, which has none. */
     enum class Read { BUILT, NAMED, CONTENT, WHOLE }
@@ -592,7 +607,7 @@ internal object ClasspathFiles {
     private fun wholeDigest(entry: File): String = runCatching {
         when {
             entry.isFile -> entry.inputStream().use(::sha256)
-            entry.isDirectory -> directoryDigest(entry)
+            entry.isDirectory -> checkNotNull(directoryDigest(entry) { false })
             else -> ABSENT
         }
     }.getOrDefault(UNREADABLE)
@@ -612,11 +627,18 @@ internal object ClasspathFiles {
         }
     }
 
-    private fun directoryDigest(directory: File, digest: (File) -> String = { it.inputStream().use(::sha256) }): String {
-        val lines = directory.walkTopDown().filter { it.isFile }
-            .map { it.relativeTo(directory).invariantSeparatorsPath to it }
-            .sortedBy { it.first }
-            .map { (relative, file) -> "$relative\u0000${digest(file)}" }.toList()
+    /**
+     * A directory's files by relative path and bytes. Null once [overBudget] says so; it is asked
+     * per file while the tree is listed, before anything is read.
+     */
+    private fun directoryDigest(directory: File, overBudget: () -> Boolean): String? {
+        val found = mutableListOf<Pair<String, File>>()
+        for (file in directory.walkTopDown().filter { it.isFile }) {
+            if (overBudget()) return null
+            found += file.relativeTo(directory).invariantSeparatorsPath to file
+        }
+        val lines = found.sortedBy { it.first }
+            .map { (relative, file) -> "$relative\u0000${file.inputStream().use(::sha256)}" }
         return sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
     }
 

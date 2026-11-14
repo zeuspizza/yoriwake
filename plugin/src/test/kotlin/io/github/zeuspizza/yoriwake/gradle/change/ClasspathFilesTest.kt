@@ -1093,6 +1093,35 @@ class ClasspathFilesTest {
     }
 
     @Test
+    fun `the files of a classpath directory from outside the build count against the file budget`(@TempDir base: File) {
+        val machine = Machine(base)
+        val classes = File(base, "elsewhere/classes")
+        file(classes, "a.txt", "a")
+        file(classes, "deep/b.txt", "b")
+        file(classes, "deep/c.txt", "c")
+        val table = { maxFiles: Int, classpath: List<File> ->
+            ClasspathFiles.table(classpath, listOf(), machine.root, machine.homes, maxFiles = maxFiles)
+        }
+
+        assertEquals(
+            "the classpath directories from outside the build exceed the 2-file budget",
+            assertIs<ClasspathFiles.Walk.Refused>(table(2, listOf(classes))).reason,
+        )
+        // Under the budget the row is the one an unbounded read gives.
+        assertEquals(found(machine.table(classes)), found(table(3, listOf(classes))))
+        assertNotEquals(ClasspathFiles.UNREADABLE, found(table(3, listOf(classes)))["dependency:<outside>/classes"])
+
+        // One budget for the directories from outside and the build's own files.
+        val resources = File(machine.root, "build/resources/test")
+        repeat(2) { file(resources, "r$it.txt", "$it") }
+        assertEquals(
+            "the build-produced files on the classpath exceed the 4-file budget",
+            assertIs<ClasspathFiles.Walk.Refused>(table(4, listOf(classes, resources))).reason,
+        )
+        assertIs<ClasspathFiles.Walk.Found>(table(5, listOf(classes, resources)))
+    }
+
+    @Test
     fun `a file that cannot be read under a directory a dependency's manifest names never compares equal`(@TempDir base: File) {
         val machine = Machine(base)
         val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("conf/"))
