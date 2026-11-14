@@ -655,11 +655,12 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
                     if (flavor.isPresent) {
                         val value = flavor.get()
                         gradle.taskGraph.whenReady {
-                            actions = actions.map { action ->
-                                if ((action as? Describable)?.displayName != "Execute executeTests") action
-                                else Action<Task> {
+                            val own = actions.indexOfFirst { (it as? Describable)?.displayName == "Execute executeTests" }
+                            val wrapped = actions[own]
+                            actions = actions.toMutableList().also {
+                                it[own] = Action<Task> {
                                     (this as Test).systemProperty("flavor", value)
-                                    action.execute(this)
+                                    wrapped.execute(this)
                                 }
                             }
                         }
