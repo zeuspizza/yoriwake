@@ -115,6 +115,11 @@ internal class TaskArtifacts(
     private val testOutputs: Collection<File> = emptyList(),
     /** The file budget the own-classes walk stops at; a parameter so tests can make it fire. */
     private val maxFiles: Int = MAX_FILES,
+    /**
+     * Each module directory's build directory, relative to the repository root when it lies inside
+     * it and absolute otherwise, with forward slashes. Read only under [Naming.CLASS_SOURCE].
+     */
+    private val moduleBuildDir: Map<String, String> = emptyMap(),
 ) {
 
     private val directories = classpath.filter(File::isDirectory)
@@ -134,6 +139,17 @@ internal class TaskArtifacts(
     /** Each module build directory's part below [moduleDir] (`out` for `<root>/beta/out`). */
     private fun buildDirsBelow(moduleDir: String): List<String> =
         buildDirPaths.mapNotNull { dir -> dir.substringAfterLast("/$moduleDir/", "").ifEmpty { null } }
+
+    /**
+     * What names [moduleDir]'s build directory wherever it lies: each trailing part of its path of
+     * two or more segments, or its name alone when it is one directory below the root. A single
+     * name there can only keep that module's sources.
+     */
+    private fun buildDirForms(moduleDir: String): List<String> {
+        val dir = moduleBuildDir[moduleDir] ?: return emptyList()
+        val parts = dir.split('/').filter { it.isNotEmpty() }
+        return if (parts.size == 1 && !dir.startsWith("/")) parts else (2..parts.size).map { parts.takeLast(it).joinToString("/") }
+    }
 
     /**
      * Every compiled class a changed source file produced, nested and file classes included, since
@@ -197,8 +213,8 @@ internal class TaskArtifacts(
 
         /**
          * For a Java or Kotlin source: the path, an ancestor directory, a part from its module's
-         * name on, a trailing part ending in its file name, or its module's `build` or `target`,
-         * each of two or more segments. A single name such as `java`, a package
+         * name on, a trailing part ending in its file name, its module's `build` or `target`, or
+         * that module's build directory wherever it lies, each of two or more segments. A single name such as `java`, a package
          * root or `Thing.java` is in almost every class, and a class's own name holds no `.java`.
          */
         CLASS_SOURCE,
@@ -255,6 +271,8 @@ internal class TaskArtifacts(
                 listOf(moduleDir, segments[src - 1]).forEach { module ->
                     below.forEach { forms += "$module/$it" }
                 }
+                // One set outside the module (`<root>/build/beta`) holds none of the forms above.
+                forms += buildDirForms(moduleDir)
             }
             return forms
         }

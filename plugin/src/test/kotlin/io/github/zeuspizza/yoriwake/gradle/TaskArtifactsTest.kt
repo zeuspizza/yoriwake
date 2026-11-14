@@ -258,6 +258,34 @@ class TaskArtifactsTest {
     }
 
     @Test
+    fun `a module's build directory outside it is named where it really lies`(@TempDir dir: File) {
+        // Each held string against the module's build directory, as the build reports it.
+        fun named(held: String, source: String, buildDirs: Map<String, String>): Boolean {
+            val classes = File(dir, (held + buildDirs).hashCode().toString()).apply { mkdirs() }
+            classFile(classes, "Reader", "..$held..".toByteArray())
+            return TaskArtifacts(listOf(classes), emptyList(), moduleBuildDir = buildDirs)
+                .pathsNamedInClasses(listOf(source), TaskArtifacts.Naming.CLASS_SOURCE).isNotEmpty()
+        }
+        val source = "beta/src/main/java/dev/Thing.java"
+
+        // Below the root's own build directory.
+        assertTrue(named("../build/beta/libs/beta.jar", source, mapOf("beta" to "build/beta")))
+        assertFalse(named("../build/beta/libs/beta.jar", source, emptyMap()))
+        // One segment below the root: its name alone.
+        assertTrue(named("../beta-out/classes", source, mapOf("beta" to "beta-out")))
+        // Outside the repository: a trailing part of two or more segments, never a single name.
+        val outside = mapOf("beta" to "/elsewhere/out/beta")
+        assertTrue(named("/elsewhere/out/beta/libs", source, outside))
+        assertTrue(named("out/beta/libs", source, outside))
+        listOf("beta", "out").forEach { assertFalse(named(it, source, outside), it) }
+        // A nested module is looked up by its whole directory, and only its own entry counts.
+        val nested = "services/beta/src/main/java/dev/Thing.java"
+        assertTrue(named("out/svc/classes", nested, mapOf("services/beta" to "out/svc")))
+        assertFalse(named("out/svc/classes", nested, emptyMap()))
+        assertFalse(named("out/svc/classes", nested, mapOf("services/alpha" to "out/svc")))
+    }
+
+    @Test
     fun `a class file too large to read counts as naming everything`(@TempDir dir: File) {
         // "Too big to read" must not read as "the name does not appear".
         val classes = File(dir, "pkg").apply { mkdirs() }

@@ -44,6 +44,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A class with a primitive-array annotation value (`@ValueSource(booleans = ...)`) no longer counts as changed on every run.
   Map: left alone; the fix shows from its next recording.
 - Maven: a JaCoCo agent in `JDK_JAVA_OPTIONS` captures, as in `JAVA_TOOL_OPTIONS`; either may name it by a property. Map: left alone.
+- A sibling's source edits are kept when a test reads its build directory set outside the module. Map: left alone.
 - Maven: `yoriwake:explain` compares the environment as the selecting run does and names uncompared variables. Map: left alone.
 
 ## [0.5.0] - 2026-11-07
