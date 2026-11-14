@@ -3,7 +3,12 @@ package io.github.zeuspizza.yoriwake.gradle.change
 import io.github.zeuspizza.yoriwake.gradle.wiring.AgentJar
 import io.github.zeuspizza.yoriwake.agent.capture.ZipContent
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.URI
+import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.util.jar.Attributes
 import java.util.jar.JarFile
@@ -69,6 +74,8 @@ internal object ClasspathFiles {
      * A copy of a tracked text file that git writes with `\r\n` in this checkout is digested with
      * its line endings as `\n` ([TrackedText]), so a checkout with other line-ending settings
      * records the same digest. Every other file is digested by its bytes.
+     *
+     * The walk refuses past [maxFiles] files, [spent] of which [classPathRows] has read already.
      */
     fun walk(
         classpath: Collection<File>,
@@ -79,6 +86,7 @@ internal object ClasspathFiles {
         text: TrackedText = TrackedText(rootDir),
         dependency: (File) -> Boolean = { false },
         gradleUserHome: File? = null,
+        spent: Int = 0,
     ): Walk {
         val roots = buildDirs.map { File(it).absoluteFile } + rootDir.absoluteFile
         // Gradle's and the plugin's own state, such as the agent jar, is not the build's output.
@@ -88,7 +96,7 @@ internal object ClasspathFiles {
                 !dependency(entry)
         }
         val digests = sortedMapOf<String, String>()
-        var files = 0
+        var files = spent
         // Each entry with whether its class files are walked; what a manifest names joins at the end.
         val pending = ArrayDeque(produced.map { it to classes })
         val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
@@ -195,7 +203,8 @@ internal object ClasspathFiles {
      * it names, and what a named file names in turn, gets a row keyed `<the naming row's key>
      * Class-Path <token>`, read by content (a directory with each jar in it by its entries),
      * [ABSENT] when missing, since a file that later appears there shadows every later entry. A file on the classpath or already named, or in
-     * Gradle's module cache under the [GRADLE_USER_HOME] home, gets none.
+     * Gradle's module cache under the [GRADLE_USER_HOME] home, gets none. The files of the
+     * directories named count against [maxFiles] with those [walk] reads; past it the table refuses.
      */
     fun table(
         classpath: Collection<File>,
@@ -257,24 +266,39 @@ internal object ClasspathFiles {
             order += key
             if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)
         }
-        rows += classPathRows(following, classpath, gradleUserHome)
+        val named = classPathRows(following, classpath, gradleUserHome, maxFiles) ?: return namedBudgetSpent(maxFiles)
+        rows += named.rows
         rows[DEPENDENCY_ORDER] = sha256(ByteArrayInputStream(order.joinToString("\n").toByteArray()))
         return when (val walk = walk(
             classpath, buildDirs, rootDir, maxFiles, text = text, dependency = { homeOf(it) != null },
-            gradleUserHome = gradleUserHome,
+            gradleUserHome = gradleUserHome, spent = named.files,
         )) {
             is Walk.Refused -> walk
             is Walk.Found -> Walk.Found((walk.digests + rows).toSortedMap())
         }
     }
 
+    /** [classPathRows]' rows, and how many files it read in the directories named for them. */
+    data class Named(val rows: Map<String, String>, val files: Int)
+
     /**
      * The rows [table] gives what the manifest `Class-Path` of [entries] names, each entry a file
      * read by content with its row's key, in the order the files are found. A file on [classpath]
-     * or already named, or in Gradle's module cache under [gradleUserHome], gets none.
+     * or already named, or in Gradle's module cache under [gradleUserHome], gets none. A token the
+     * class loader resolves to a file this cannot name, and a directory holding a file that cannot
+     * be read, give [UNREADABLE].
+     *
+     * Null when the directories named hold more than [maxFiles] files ([namedBudgetSpent]): a
+     * manifest may name any directory, the file system's root included.
      */
-    fun classPathRows(entries: Collection<Pair<String, File>>, classpath: Collection<File>, gradleUserHome: File?): Map<String, String> {
+    fun classPathRows(
+        entries: Collection<Pair<String, File>>,
+        classpath: Collection<File>,
+        gradleUserHome: File?,
+        maxFiles: Int = MAX_FILES,
+    ): Named? {
         val rows = linkedMapOf<String, String>()
+        var files = 0
         val following = ArrayDeque(entries)
         val seen = classpath.mapTo(mutableSetOf()) { it.absoluteFile.normalize() }
         while (following.isNotEmpty()) {
@@ -284,19 +308,27 @@ internal object ClasspathFiles {
             // A file no zip reader opens has no manifest the JVM can read either; its own row moves with its bytes.
             val manifest = runCatching { JarFile(jar, false).use { it.manifest } }.getOrNull()
             for ((token, named) in classPathOf(jar, manifest)) {
-                // A token that does not resolve is ignored by the JDK too, and an edit to it moves the jar's own row.
-                if (named == null || inModuleCache(named, gradleUserHome) || !seen.add(named)) continue
                 val key = "$referrer Class-Path $token"
+                if (named == null) {
+                    // The class loader does not ignore it, so it forces rather than guesses.
+                    rows[key] = UNREADABLE
+                    continue
+                }
+                if (inModuleCache(named, gradleUserHome) || !seen.add(named)) continue
                 rows[key] = if (named.isDirectory) {
-                    runCatching { directoryDigest(named, ::contentDigest) }.getOrDefault(UNREADABLE)
+                    runCatching { namedDirectoryDigest(named) { ++files > maxFiles } }.getOrDefault(UNREADABLE) ?: return null
                 } else {
                     contentDigest(named)
                 }
                 following.addLast(key to named)
             }
         }
-        return rows
+        return Named(rows, files)
     }
+
+    /** Why a table refuses when [classPathRows] gives none. */
+    fun namedBudgetSpent(maxFiles: Int = MAX_FILES) =
+        Walk.Refused("the files a manifest Class-Path names exceed the $maxFiles-file budget")
 
     /** How [table] reads a dependency entry for its row; [BUILT] marks build output, which has none. */
     enum class Read { BUILT, NAMED, CONTENT, WHOLE }
@@ -349,16 +381,54 @@ internal object ClasspathFiles {
 
     /**
      * Each token of [manifest]'s `Class-Path` with the file it names, resolved against [jar] as the
-     * JDK's class loader resolves it; null when it does not resolve. A URL that is not a `file:` one
-     * is left out: the JVM ignores it.
+     * JDK's class loader resolves it: with `java.net.URL`, which takes characters `java.net.URI`
+     * rejects, and the path's escapes decoded. Null for a `file:` URL the class loader does not
+     * ignore and this cannot turn into a file: one with a malformed escape, which the class loader
+     * throws on, or on another host. A token the class loader ignores or drops is left out: a URL
+     * that is not a `file:` one, or of no known protocol.
      */
     private fun classPathOf(jar: File, manifest: Manifest?): List<Pair<String, File?>> {
         val classPath = manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH).orEmpty()
+        if (classPath.isBlank()) return emptyList()
+        val base = jar.toURI().toURL()
         return classPath.split(' ', '\t', '\n', '\r', '\u000c').filter(String::isNotEmpty).mapNotNull { token ->
-            val uri = runCatching { jar.toURI().resolve(token) }.getOrNull()
-            if (uri != null && !uri.scheme.equals("file", ignoreCase = true)) return@mapNotNull null
-            token to uri?.let { runCatching { File(it).absoluteFile.normalize() }.getOrNull() }
+            @Suppress("DEPRECATION")
+            val url = runCatching { URL(base, token) }.getOrNull() ?: return@mapNotNull null
+            if (!url.protocol.equals("file", ignoreCase = true)) return@mapNotNull null
+            token to runCatching {
+                require(url.host.isNullOrEmpty() || url.host.equals("localhost", ignoreCase = true))
+                // The path with its query, as the class loader takes it; a fragment names nothing.
+                File(URI("file", null, unescaped(url.file), null)).absoluteFile.normalize()
+            }.getOrNull()
         }
+    }
+
+    /**
+     * [path] with each run of `%XX` escapes decoded as UTF-8 and nothing else touched (a `+` stays
+     * one), as the JDK's class loader decodes a `file:` URL's path; throws on a malformed escape.
+     */
+    private fun unescaped(path: String): String {
+        if ('%' !in path) return path
+        val decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+        val text = StringBuilder(path.length)
+        var at = 0
+        while (at < path.length) {
+            if (path[at] != '%') {
+                text.append(path[at++])
+                continue
+            }
+            val bytes = ByteArrayOutputStream()
+            while (at < path.length && path[at] == '%') {
+                val high = path.getOrNull(at + 1)?.let { Character.digit(it, 16) } ?: -1
+                val low = path.getOrNull(at + 2)?.let { Character.digit(it, 16) } ?: -1
+                require(high >= 0 && low >= 0) { "malformed escape in $path" }
+                bytes.write(high * 16 + low)
+                at += 3
+            }
+            text.append(decoder.decode(ByteBuffer.wrap(bytes.toByteArray())))
+        }
+        return text.toString()
     }
 
     /** What moved since the capture, each file with how; empty when nothing did. */
@@ -547,6 +617,34 @@ internal object ClasspathFiles {
             .map { it.relativeTo(directory).invariantSeparatorsPath to it }
             .sortedBy { it.first }
             .map { (relative, file) -> "$relative\u0000${digest(file)}" }.toList()
+        return sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
+    }
+
+    /**
+     * As [directoryDigest] with each jar by its entries, for a directory a `Class-Path` names:
+     * [UNREADABLE] when a directory in it cannot be listed or a file cannot be read. Null once
+     * [overBudget] says so; it is asked per file while the tree is listed, before anything is read.
+     */
+    private fun namedDirectoryDigest(directory: File, overBudget: () -> Boolean): String? {
+        val found = mutableListOf<Pair<String, File>>()
+        val stack = ArrayDeque(listOf(directory))
+        while (stack.isNotEmpty()) {
+            // A directory that cannot be listed may hold anything.
+            val listed = stack.removeLast().listFiles() ?: return UNREADABLE
+            for (file in listed) {
+                if (file.isDirectory) {
+                    stack.addLast(file)
+                } else if (file.isFile) {
+                    if (overBudget()) return null
+                    found += file.relativeTo(directory).invariantSeparatorsPath to file
+                }
+            }
+        }
+        val lines = found.sortedBy { it.first }.map { (relative, file) ->
+            val digest = contentDigest(file)
+            if (digest == UNREADABLE) return UNREADABLE
+            "$relative\u0000$digest"
+        }
         return sha256(ByteArrayInputStream(lines.joinToString("\n").toByteArray()))
     }
 

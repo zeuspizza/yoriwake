@@ -3046,6 +3046,30 @@ MUTATIONS = [
      "                            pending.add(named to true)",
      "                            pending.size",
      functional_suite, "a jar an upper-case JAR a build jar's manifest names runs the test that reads it when it changed"),
+    # The JDK's class loader resolves a `Class-Path` token with `java.net.URL`, which takes
+    # characters `java.net.URI` rejects: a `lib/a[1].jar` is on the class path as any other.
+    ("a manifest's Class-Path token is resolved as a URI, which rejects what the class loader opens", CLASSPATH_FILES,
+     "            val url = runCatching { URL(base, token) }.getOrNull() ?: return@mapNotNull null",
+     "            val url = runCatching { base.toURI().resolve(token).toURL() }.getOrNull() ?: return@mapNotNull null",
+     functional_suite, "a file a dependency's manifest names with brackets runs every test when it is replaced"),
+    # A token the class loader throws on, or opens on another host, is not one it ignores.
+    ("a dependency's token the class loader cannot turn into a file gets no row", CLASSPATH_FILES,
+     "                    rows[key] = UNREADABLE\n                    continue",
+     "                    continue",
+     unit_suite, "a dependency's token the class loader cannot turn into a file never compares equal"),
+    # A manifest may name any directory, the file system's root included.
+    ("a directory a dependency's manifest names is read without a file budget", CLASSPATH_FILES,
+     "                    if (overBudget()) return null",
+     "                    overBudget()",
+     unit_suite, "the files of a directory a dependency's manifest names count against the file budget"),
+    ("the files a manifest's directories hold are not counted with the build's own", CLASSPATH_FILES,
+     "            gradleUserHome = gradleUserHome, spent = named.files,",
+     "            gradleUserHome = gradleUserHome, spent = 0,",
+     unit_suite, "the files of a directory a dependency's manifest names count against the file budget"),
+    ("a file that cannot be read under a directory a manifest names lets its row compare equal", CLASSPATH_FILES,
+     "            if (digest == UNREADABLE) return UNREADABLE\n",
+     "",
+     unit_suite, "a file that cannot be read under a directory a dependency's manifest names never compares equal"),
     # Gradle's module cache is told by where it lies, under the Gradle user home: any other
     # directory may spell its path alike and hold what the tests read.
     ("Gradle's module cache is told by a path that spells caches/modules-2", CLASSPATH_FILES,

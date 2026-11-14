@@ -138,10 +138,10 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
         }
     """.trimIndent()
 
-    /** [name], outside the root, carries no files; its manifest names `lib/a.jar` beside it. */
-    private fun vendorCaptured(dir: File, vendor: File, name: String = "vendor.jar") {
-        jar(File(vendor, name), "lib/a.jar")
-        jar(File(vendor, "lib/a.jar"), null, "vendor.properties" to "flavor=a\n")
+    /** [name], outside the root, carries no files; its manifest names [named] beside it. */
+    private fun vendorCaptured(dir: File, vendor: File, name: String = "vendor.jar", named: String = "lib/a.jar") {
+        jar(File(vendor, name), named)
+        jar(File(vendor, named), null, "vendor.properties" to "flavor=a\n")
         val onClasspath = "dependencies { testRuntimeOnly(files(\"${File(vendor, name).invariantSeparatorsPath}\")) }"
         captured(dir, fromProjectProperty + "\n" + onClasspath, vendorTest)
     }
@@ -178,6 +178,39 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
     @Test
     fun `a dependency whose manifest names a file selects as before when nothing changed`(@TempDir dir: File, @TempDir vendor: File) {
         vendorCaptured(dir, vendor)
+        changeBeta(dir)
+
+        repeat(2) {
+            val output = select(dir)
+
+            assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), output)
+            assertEquals(null, decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        }
+    }
+
+    // The JDK's class loader opens a file whose name `java.net.URI` rejects.
+    @Test
+    fun `a file a dependency's manifest names with brackets runs every test when it is replaced`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        vendorCaptured(dir, vendor, named = "lib/a[1].jar")
+        jar(File(vendor, "lib/a[1].jar"), null, "vendor.properties" to "flavor=b\n")
+        changeBeta(dir)
+
+        val output = select(dir)
+
+        assertTrue("dev.sample.AbVendorTest" in ranTests(dir), output)
+        assertEquals("dependencies-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(output, "vendor.jar Class-Path lib/a[1].jar (changed)")
+    }
+
+    @Test
+    fun `a dependency whose manifest names a bracketed file selects as before when nothing changed`(
+        @TempDir dir: File,
+        @TempDir vendor: File,
+    ) {
+        vendorCaptured(dir, vendor, named = "lib/a[1].jar")
         changeBeta(dir)
 
         repeat(2) {

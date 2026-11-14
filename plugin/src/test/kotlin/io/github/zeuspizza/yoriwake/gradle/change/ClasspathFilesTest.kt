@@ -1,5 +1,8 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
+import io.github.zeuspizza.yoriwake.gradle.makeReadable
+import io.github.zeuspizza.yoriwake.gradle.makeUnreadable
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -945,11 +948,169 @@ class ClasspathFilesTest {
     }
 
     @Test
-    fun `a dependency's token that does not resolve, or is not a file URL, gives no row`(@TempDir base: File) {
+    fun `a dependency's token the class loader cannot turn into a file never compares equal`(@TempDir base: File) {
         val machine = Machine(base)
-        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("%zz https://example.com/x.jar"))
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("%zz %ff.jar //elsewhere/share/x.jar"))
+
+        val table = dependencies(machine.table(vendor))
+
+        assertEquals(
+            setOf(
+                "dependency:<outside>/vendor.jar",
+                "dependency:<outside>/vendor.jar Class-Path %zz",
+                "dependency:<outside>/vendor.jar Class-Path %ff.jar",
+                "dependency:<outside>/vendor.jar Class-Path //elsewhere/share/x.jar",
+                ClasspathFiles.DEPENDENCY_ORDER,
+            ),
+            table.keys,
+        )
+        assertEquals(
+            List(3) { ClasspathFiles.UNREADABLE },
+            table.filterKeys { "Class-Path" in it }.values.toList(),
+        )
+    }
+
+    @Test
+    fun `a dependency's token that is not a file URL, or of no known protocol, gives no row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("https://example.com/x.jar foo:bar.jar"))
 
         assertEquals(setOf("dependency:<outside>/vendor.jar", ClasspathFiles.DEPENDENCY_ORDER), dependencies(machine.table(vendor)).keys)
+    }
+
+    @Test
+    fun `a file a dependency's manifest names with characters a URI rejects gets a row, and moves only that row`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("lib/a[1].jar lib/b{2}.jar file:lib/c[3].jar lib/d^4.jar"))
+        val names = listOf("a[1].jar", "b{2}.jar", "c[3].jar", "d^4.jar")
+        names.forEach { jar(File(base, "vendor/lib/$it"), 0L, "x.txt" to "a") }
+        val before = found(machine.table(vendor))
+
+        assertEquals(
+            setOf("lib/a[1].jar", "lib/b{2}.jar", "file:lib/c[3].jar", "lib/d^4.jar"),
+            before.keys.filter { "Class-Path" in it }.mapTo(mutableSetOf()) { it.substringAfter(" Class-Path ") },
+        )
+        assertTrue(ClasspathFiles.UNREADABLE !in before.values, before.toString())
+
+        jar(File(base, "vendor/lib/b{2}.jar"), 0L, "x.txt" to "b")
+
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path lib/b{2}.jar" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a dependency in a directory whose name a URL escapes names the file beside it`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "ven dor[1]%20#/vendor.jar"), 0L, manifest("lib/a.jar"))
+        jar(File(base, "ven dor[1]%20#/lib/a.jar"), 0L, "x.txt" to "a")
+        val before = found(machine.table(vendor))
+
+        jar(File(base, "ven dor[1]%20#/lib/a.jar"), 0L, "x.txt" to "b")
+
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path lib/a.jar" to "changed"),
+            ClasspathFiles.compare(before, found(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a dependency naming a bracketed file gives the same table on two machines`(@TempDir base: File) {
+        val tables = listOf("one", "two").map { name ->
+            val machine = Machine(File(base, name))
+            val vendor = jar(File(base, "$name/vendor/vendor.jar"), 0L, manifest("lib/a[1].jar"))
+            jar(File(base, "$name/vendor/lib/a[1].jar"), 0L, "a.txt" to "a")
+            found(machine.table(vendor))
+        }
+
+        assertEquals(tables[0], tables[1])
+        assertTrue("dependency:<outside>/vendor.jar Class-Path lib/a[1].jar" in tables[0], tables[0].toString())
+    }
+
+    @Test
+    fun `an escaped token names the file the class loader opens, and a fragment names nothing`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("x%20y.jar a#frag.jar p+q.jar"))
+        val before = found(machine.table(vendor))
+        val moved = { ClasspathFiles.compare(before, found(machine.table(vendor))).files.keys.map { it.substringAfter(" Class-Path ") } }
+
+        jar(File(base, "vendor/x%20y.jar"), 0L, "x.txt" to "a")
+        jar(File(base, "vendor/a#frag.jar"), 0L, "x.txt" to "a")
+        jar(File(base, "vendor/p q.jar"), 0L, "x.txt" to "a")
+        assertEquals(emptyList(), moved(), "none of these is the file its token names")
+
+        jar(File(base, "vendor/x y.jar"), 0L, "x.txt" to "a")
+        assertEquals(listOf("x%20y.jar"), moved())
+        file(base, "vendor/a", "a")
+        assertEquals(listOf("a#frag.jar", "x%20y.jar"), moved())
+        jar(File(base, "vendor/p+q.jar"), 0L, "x.txt" to "a")
+        assertEquals(listOf("a#frag.jar", "p+q.jar", "x%20y.jar"), moved())
+    }
+
+    @Test
+    fun `a built jar naming a bracketed jar gives rows for its entries, and a changed entry moves`(@TempDir root: File) {
+        val libs = File(root, "build/libs")
+        val path = jar(File(libs, "path.jar"), 0L, manifest("a[1].jar"))
+        val named = jar(File(libs, "a[1].jar"), 0L, "a.txt" to "a")
+        val before = files(ClasspathFiles.walk(listOf(path), listOf(), root))
+
+        assertEquals(setOf("build/libs/path.jar!/META-INF/MANIFEST.MF", "build/libs/a[1].jar!/a.txt"), before.keys)
+        assertTrue(ClasspathFiles.UNREADABLE !in before.values, before.toString())
+
+        jar(named, 0L, "a.txt" to "b")
+
+        assertEquals(
+            mapOf("build/libs/a[1].jar!/a.txt" to "changed"),
+            ClasspathFiles.compare(before, files(ClasspathFiles.walk(listOf(path), listOf(), root))).files,
+        )
+    }
+
+    @Test
+    fun `the files of a directory a dependency's manifest names count against the file budget`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("."))
+        file(base, "vendor/a.txt", "a")
+        file(base, "vendor/deep/b.txt", "b")
+        val table = { maxFiles: Int, classpath: List<File> ->
+            ClasspathFiles.table(classpath, listOf(), machine.root, machine.homes, maxFiles = maxFiles)
+        }
+
+        assertEquals(
+            "the files a manifest Class-Path names exceed the 2-file budget",
+            assertIs<ClasspathFiles.Walk.Refused>(table(2, listOf(vendor))).reason,
+        )
+        assertTrue("dependency:<outside>/vendor.jar Class-Path ." in found(table(3, listOf(vendor))))
+
+        // One budget for the directories named and the build's own files.
+        val resources = File(machine.root, "build/resources/test")
+        repeat(2) { file(resources, "r$it.txt", "$it") }
+        assertEquals(
+            "the build-produced files on the classpath exceed the 4-file budget",
+            assertIs<ClasspathFiles.Walk.Refused>(table(4, listOf(vendor, resources))).reason,
+        )
+        assertIs<ClasspathFiles.Walk.Found>(table(5, listOf(vendor, resources)))
+    }
+
+    @Test
+    fun `a file that cannot be read under a directory a dependency's manifest names never compares equal`(@TempDir base: File) {
+        val machine = Machine(base)
+        val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("conf/"))
+        val settings = file(base, "vendor/conf/settings.properties", "mode=a\n")
+        val readable = found(machine.table(vendor))
+        assumeTrue(makeUnreadable(settings), "this user can read a file denied to it (root?)")
+        try {
+            val table = found(machine.table(vendor))
+
+            assertNotEquals(ClasspathFiles.UNREADABLE, readable["dependency:<outside>/vendor.jar Class-Path conf/"])
+            assertEquals(ClasspathFiles.UNREADABLE, table["dependency:<outside>/vendor.jar Class-Path conf/"])
+            assertEquals(
+                mapOf("dependency:<outside>/vendor.jar Class-Path conf/" to "unreadable"),
+                ClasspathFiles.compare(table, found(machine.table(vendor))).files,
+            )
+        } finally {
+            makeReadable(settings)
+        }
     }
 
     @Test

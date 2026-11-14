@@ -32,6 +32,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Fixed
 
 - A complement run compares a jar only a dependency's manifest `Class-Path` names too. Map: left alone.
+- A manifest `Class-Path` name `java.net.URI` rejects, such as `lib/a[1].jar`, is compared, and a named directory
+  counts against the file budget. Map: repaired on the next build, where a manifest names such a file.
 - Maven: a parallel switch in Surefire's `systemProperties` or `systemPropertiesFile` declines in-JVM parallelism. Map: left alone.
 - Maven: a complement run under another `-D` value of a property `systemPropertyVariables` also sets runs every test. Map: left alone.
 - A class with a primitive-array annotation value (`@ValueSource(booleans = ...)`) no longer counts as changed on every run.
