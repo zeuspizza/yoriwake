@@ -825,8 +825,10 @@ Three things differ:
 - **Another module's source a test finds without holding its path.** A Java or Kotlin source of a
   module the test task does not reach counts only when one of the task's classes holds a path to
   it of two or more segments. A test that joins single names (`Path.of("..", "beta", "src", ...)`)
-  or walks the tree to the file is skipped when nothing else selects it. Write the path from the
-  module, or from `src`, as one string, or pin the test.
+  or walks the tree to the file is skipped when nothing else selects it. So is one that holds a
+  middle part of the path, which neither starts at the module's name nor ends in the file's name
+  (`src/main/java/dev/beta`), and joins the rest. Write the path from the module, or from `src` to
+  the file's name, as one string, or pin the test.
 - **Build output a test reads by path.** A file under a build directory that is not on the test
   runtime classpath, such as a fixture under `build/` a test opens with `File`, is build state and
   never a change, so one generated from git state, the clock or the environment can change while
@@ -1873,7 +1875,9 @@ the Gradle plugin.
   of a module keep separate maps.
 - **Develocity's workspace id** (`.mvn/.develocity/develocity-workspace-id`), untracked, is build
   state, as `.yoriwake/` is: it neither forces a selecting run nor keeps a complement run from
-  narrowing. Tracked, a change to it forces like any other path.
+  narrowing. An untracked file of that name in a nested module's `.mvn/.develocity/` directory is
+  passed over the same way, but counts when it appeared or its content changed since the map was
+  captured, as an ignored file does. Tracked, a change to it forces like any other path.
 - **An untracked file that forces** a run is named with `.gitignore` as its remedy, not
   `pathIgnore`: an ignored file counts only when its content changed since the map was captured.
 - **CI**: cache `.yoriwake/` as the [recipe](#without-the-action) caches `.gradle/yoriwake`, leaving
