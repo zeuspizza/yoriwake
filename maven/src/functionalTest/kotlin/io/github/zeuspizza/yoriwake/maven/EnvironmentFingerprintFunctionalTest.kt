@@ -454,6 +454,72 @@ class EnvironmentFingerprintFunctionalTest {
         assertContains(refusalLine(output.substringAfter("[yoriwake] lib surefire:test").substringBefore("[yoriwake] app surefire:test")), "env:DB_MODE")
     }
 
+    private fun explaining(
+        project: File,
+        vararg arguments: String,
+        feature: String,
+        environment: Map<String, String> = emptyMap(),
+    ): String = FunctionalMaven.run(
+        maven, project, "test-compile", "yoriwake:explain", "-pl", "lib", "-Dyoriwake.base=HEAD~1", "-Dfeature=$feature", *arguments,
+        environment = environment,
+    ).succeeded().output
+
+    @Test
+    fun `explain over a map recorded under another user property says the run would run everything`(@TempDir dir: File) {
+        val project = captured(dir)
+
+        val explained = explaining(project, feature = "off")
+
+        val line = explained.lines().single { "[yoriwake] lib surefire:test (default-test) would run everything" in it }
+        assertContains(line, "differs from the one the map was recorded in")
+        assertContains(line, "sys:feature")
+        assertContains(File(libMap(project), "explain.json").readText(), "environment-changed")
+        // As the selecting run it explains decides.
+        assertRanEverything(project, selecting(project, feature = "off"))
+    }
+
+    @Test
+    fun `explain under the test JVM the map was recorded with narrows, as the selecting run does`(@TempDir dir: File) {
+        // Named on the command line only, where the POM's configuration says nothing of it.
+        val bin = File(System.getProperty("java.home"), "bin")
+        val jvm = "-Djvm=${(File(bin, "java.exe").takeIf(File::isFile) ?: File(bin, "java")).path}"
+        val project = captured(dir, jvm)
+
+        val explained = explaining(project, jvm, feature = "on")
+
+        assertContains(explained, "[yoriwake] lib surefire:test (default-test) would run 1 of 2 known tests")
+        assertNarrowed(selecting(project, jvm))
+    }
+
+    @Test
+    fun `explain under the recorded environment narrows and names a variable a test read that nobody compares`(@TempDir dir: File) {
+        val project = captured(dir, environment = mapOf("DB_MODE" to "a")) {
+            File(it, "lib/src/test/java/dev/demo/lib/ModeTest.java").writeText(
+                """
+                package dev.demo.lib;
+
+                import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+                import org.junit.jupiter.api.Test;
+
+                class ModeTest {
+                    @Test
+                    void readsItsMode() {
+                        assertNotNull(System.getenv("DB_MODE"));
+                    }
+                }
+                """.trimIndent() + "\n",
+            )
+        }
+
+        val explained = explaining(project, feature = "on", environment = mapOf("DB_MODE" to "b"))
+
+        assertContains(explained, "[yoriwake] lib surefire:test (default-test) would run 1 of 3 known tests")
+        val line = explained.lines().single { "read by the tests and not compared" in it }
+        assertContains(line, "[yoriwake] lib surefire:test (default-test): ")
+        assertContains(line, "DB_MODE")
+    }
+
     @Test
     fun `an entry of only a star fails the build before any test runs`(@TempDir dir: File) {
         val project = FunctionalMaven.copy(FunctionalMaven.demo, dir)

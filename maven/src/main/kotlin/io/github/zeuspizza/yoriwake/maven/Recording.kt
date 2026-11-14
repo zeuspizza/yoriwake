@@ -87,6 +87,7 @@ internal class Recording(
 
     /** Each module's environment lists and whether it records one test at a time, read now for the same reason. */
     private val environments = session.projects.associate { it.id to Settings.environmentOf(it, session) }
+    private val fork = ForkEnvironment(session, root)
     private val sequential = session.projects.associate { it.id to Settings.recordSequentiallyOf(it, session) }
     private val captureForks = session.projects.associate { it.id to Settings.isolatedCaptureForksOf(it, session) }
 
@@ -224,11 +225,7 @@ internal class Recording(
         val agent = agentJar()
         val ours = "-javaagent:${quoted(agent.path)} -D${AgentContract.HOST_PROPERTY}=${AgentContract.HOST_MAVEN} " +
             quoted("-D${AgentContract.RUN_FILE_PROPERTY}=${runFile.path}")
-        // The host's JaCoCo hands its agent through the `argLine` property; an expression naming a
-        // property nobody set would reach the JVM as its literal text.
-        val defined = Declines.property(project, session, "argLine") != null
-        val host = (configuration.getChild("argLine")?.value?.trim() ?: if (defined) "@{argLine}" else "")
-            .let { if (defined) it else it.replace("\${argLine}", "").replace("@{argLine}", "").trim() }
+        val host = fork.argLine(project, configuration)
         child(configuration, "argLine").value = listOf(host, ours).filter(String::isNotEmpty).joinToString(" ")
         // A JVM per test class, as Gradle's forkEvery=1: a static a class built is never seen by the next.
         val isolated = Declines.property(project, session, SettingNames.ISOLATED_CAPTURE)
@@ -606,38 +603,9 @@ internal class Recording(
         }
         File(mapDir, EnvironmentFingerprint.PENDING_FILE).delete()
         return runCatching {
-            val jvm = resolved(project, configuration.getChild("jvm")?.value)
-            // Another JDK forks the tests, whose version nobody read here.
-            val otherJdk = jvm != null || configuration.getChild("jdkToolchain")?.childCount?.let { it > 0 } == true ||
-                project.getPlugin("org.apache.maven.plugins:maven-toolchains-plugin") != null
-            val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()
-                .associate { it.name to it.value.orEmpty() }
-            // Surefire promotes the invocation's user properties to the test JVM's system properties,
-            // after the POM's; the core compares a name given twice by every value.
-            val userProperties = if (promotesUserProperties(project, execution, configuration)) {
-                session.userProperties.stringPropertyNames().sorted().map { "-D$it=${session.userProperties.getProperty(it)}" }
-            } else emptyList()
-            val view = EnvironmentFingerprint.View(
-                // Maven's own JVM forks the tests unless the POM names another, whose version nobody read.
-                if (otherJdk) null else System.getProperty("java.runtime.version"),
-                if (otherJdk) null else System.getProperty("java.vendor"),
-                jvm, System.getProperty("os.name"), System.getProperty("os.arch"),
-                // As Gradle's JVM arguments carry its system properties.
-                hostArguments + forkSystemProperties(project, execution, configuration)
-                    .map { "-D${it.name}=${valueOf(project, it)}" } + userProperties,
-                environment,
-                // A map recorded before user properties were compared stored none of them, and would
-                // otherwise match a run under a property it never saw.
-                plain = mapOf(USER_PROPERTIES_COMPONENT to "compared"),
-            )
             val lists = environments[project.id] ?: Settings.Environment(emptyList(), emptyList())
-            val rules = EnvironmentFingerprint.Rules(
-                lists.systemPropertyIgnore, lists.environmentInclude, root.path,
-                session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path,
-                System.getProperty("user.home"),
-            )
-            EnvironmentFingerprint.writePending(mapDir, view, rules)
-            view to rules
+            fork.of(project, ForkEnvironment.Execution(execution.artifactId == FAILSAFE, execution.version), configuration, hostArguments, lists)
+                .also { (view, rules) -> EnvironmentFingerprint.writePending(mapDir, view, rules) }
         }.onFailure { log.debug("[yoriwake] ${project.artifactId}: no environment fingerprint recorded ($it)") }.getOrNull()
     }
 
@@ -667,16 +635,9 @@ internal class Recording(
     private fun forkSystemProperties(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom) =
         forkSystemProperties(project, session, configuration, execution.artifactId == FAILSAFE)
 
-    /** [property]'s value as the fork gets it: the POM's resolved, a file's as written. */
-    private fun valueOf(project: MavenProject, property: ForkSystemProperty): String =
-        if (property.fromPom) resolved(project, property.value).orEmpty() else property.value
+    private fun valueOf(project: MavenProject, property: ForkSystemProperty): String = fork.valueOf(project, property)
 
-    private fun resolved(project: MavenProject, value: String?): String? =
-        resolveExpressions(value) { Declines.property(project, session, it) }
-
-    /** A command line's arguments, a double-quoted one kept whole, as Surefire splits an argLine. */
-    private fun arguments(line: String): List<String> =
-        Regex(""""([^"]*)"|(\S+)""").findAll(line).map { it.groupValues[1].ifEmpty { it.groupValues[2] } }.toList()
+    private fun resolved(project: MavenProject, value: String?): String? = fork.resolved(project, value)
 
     /** `.yoriwake/`, ignored by git before anything is written into it. */
     private fun ensureHome() {
@@ -764,7 +725,85 @@ internal class Recording(
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\n", "\\n").replace("=", "\\=").replace(":", "\\:")
 
+    /**
+     * What a test JVM will see and the rules it is compared by, read once for the recording, the
+     * selecting and the explaining run, so that an explanation compares what the run would.
+     */
+    class ForkEnvironment(private val session: MavenSession, private val root: File) {
+
+        /** What the reading needs of an execution: whether Failsafe runs it, and at which version. */
+        class Execution(val failsafe: Boolean, val version: String?)
+
+        /**
+         * The argLine [configuration] gives the fork, as the POM set it. The host's JaCoCo hands its
+         * agent through the `argLine` property; an expression naming a property nobody set would
+         * reach the JVM as its literal text.
+         */
+        fun argLine(project: MavenProject, configuration: Xpp3Dom): String {
+            val defined = Declines.property(project, session, "argLine") != null
+            return (configuration.getChild("argLine")?.value?.trim() ?: if (defined) "@{argLine}" else "")
+                .let { if (defined) it else it.replace("\${argLine}", "").replace("@{argLine}", "").trim() }
+        }
+
+        /** [hostArguments] are the arguments of [argLine], resolved; [lists] the module's [Settings.environmentOf]. */
+        fun of(
+            project: MavenProject,
+            execution: Execution,
+            configuration: Xpp3Dom,
+            hostArguments: List<String>,
+            lists: Settings.Environment,
+        ): Pair<EnvironmentFingerprint.View, EnvironmentFingerprint.Rules> {
+            val jvm = resolved(project, configuration.getChild("jvm")?.value)
+            // Another JDK forks the tests, whose version nobody read here.
+            val otherJdk = jvm != null || configuration.getChild("jdkToolchain")?.childCount?.let { it > 0 } == true ||
+                project.getPlugin("org.apache.maven.plugins:maven-toolchains-plugin") != null
+            val environment = System.getenv() + configuration.getChild("environmentVariables")?.children.orEmpty()
+                .associate { it.name to it.value.orEmpty() }
+            // Surefire promotes the invocation's user properties to the test JVM's system properties,
+            // after the POM's; the core compares a name given twice by every value.
+            val userProperties = if (promotesUserProperties(project, execution, configuration)) {
+                session.userProperties.stringPropertyNames().sorted().map { "-D$it=${session.userProperties.getProperty(it)}" }
+            } else emptyList()
+            val view = EnvironmentFingerprint.View(
+                // Maven's own JVM forks the tests unless the POM names another, whose version nobody read.
+                if (otherJdk) null else System.getProperty("java.runtime.version"),
+                if (otherJdk) null else System.getProperty("java.vendor"),
+                jvm, System.getProperty("os.name"), System.getProperty("os.arch"),
+                // As Gradle's JVM arguments carry its system properties.
+                hostArguments + forkSystemProperties(project, execution, configuration)
+                    .map { "-D${it.name}=${valueOf(project, it)}" } + userProperties,
+                environment,
+                // A map recorded before user properties were compared stored none of them, and would
+                // otherwise match a run under a property it never saw.
+                plain = mapOf(USER_PROPERTIES_COMPONENT to "compared"),
+            )
+            val rules = EnvironmentFingerprint.Rules(
+                lists.systemPropertyIgnore, lists.environmentInclude, root.path,
+                session.localRepository?.basedir ?: File(System.getProperty("user.home"), ".m2/repository").path,
+                System.getProperty("user.home"),
+            )
+            return view to rules
+        }
+
+        private fun promotesUserProperties(project: MavenProject, execution: Execution, configuration: Xpp3Dom): Boolean =
+            promotesUserProperties(resolved(project, configuration.getChild("promoteUserPropertiesToSystemProperties")?.value), execution.version)
+
+        private fun forkSystemProperties(project: MavenProject, execution: Execution, configuration: Xpp3Dom) =
+            forkSystemProperties(project, session, configuration, execution.failsafe)
+
+        /** [property]'s value as the fork gets it: the POM's resolved, a file's as written. */
+        fun valueOf(project: MavenProject, property: ForkSystemProperty): String =
+            if (property.fromPom) resolved(project, property.value).orEmpty() else property.value
+
+        fun resolved(project: MavenProject, value: String?): String? =
+            resolveExpressions(value) { Declines.property(project, session, it) }
+    }
+
     companion object {
+        /** A command line's arguments, a double-quoted one kept whole, as Surefire splits an argLine. */
+        fun arguments(line: String): List<String> =
+            Regex(""""([^"]*)"|(\S+)""").findAll(line).map { it.groupValues[1].ifEmpty { it.groupValues[2] } }.toList()
+
         /** Under the reactor root, beside `.mvn`; it writes its own `.gitignore`, so it is never committed. */
         const val MAPS_HOME = ".yoriwake"
 

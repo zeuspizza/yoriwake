@@ -1916,7 +1916,9 @@ the Gradle plugin.
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.
 - **Goals**: `mvn yoriwake:audit` and `mvn test-compile yoriwake:explain` are `yoriwakeAuditTest`
-  and `yoriwakeExplain`; `-Dyoriwake.execution=<id>` picks one execution.
+  and `yoriwakeExplain`; `-Dyoriwake.execution=<id>` picks one execution. `explain` compares the
+  environment as the selecting run would, so pass it the same `-D` values, and names the variables
+  the tests read that are not compared.
 - **Declined**: such an execution runs every test, captures nothing, and names its token on the
   console:
   - the whole build, on Maven below 3.9.0 or a pre-release (`maven-version`);
