@@ -314,6 +314,35 @@ class SelectionRecordTest {
         }
     }
 
+    @Test
+    fun `the classpath digest follows a jar a dependency's manifest names with brackets`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val vendor = File(root, "vendor/vendor.jar").also { jar(it, "lib/a[1].jar", "") }
+        val named = File(root, "vendor/lib/a[1].jar").also { jar(it, null, "a") }
+        val digest = { SelectionRecord.classpathDigest(listOf(vendor), here, home) }
+        val before = digest()
+
+        assertEquals(before, digest())
+        jar(named, null, "b")
+        assertNotEquals(before, digest(), "the class loader opens a file whose name java.net.URI rejects")
+    }
+
+    @Test
+    fun `a token the class loader cannot turn into a file digests to a value no run matches`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val vendor = File(root, "vendor/vendor.jar").also { jar(it, "%zz", "") }
+        val digest = { SelectionRecord.classpathDigest(listOf(vendor), here, home) }
+        val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", digest(), "d")
+
+        assertNotEquals(digest(), digest())
+        assertContains(
+            SelectionRecord.mismatch(recorded, recorded.copy(classpath = "c")).orEmpty(),
+            "vendor.jar Class-Path %zz could not be read",
+        )
+    }
+
     /** Writes a jar at [target] whose manifest names [classPath], with one entry holding [flavor]. */
     private fun jar(target: File, classPath: String?, flavor: String) {
         target.parentFile.mkdirs()
