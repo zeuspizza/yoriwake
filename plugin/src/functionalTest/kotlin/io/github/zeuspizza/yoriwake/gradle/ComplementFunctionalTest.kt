@@ -8,6 +8,10 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.jar.Attributes
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -354,6 +358,37 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
         assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
 
         val output = runner(dir, "test", COMPLEMENT, "-Pflavor=b").build().output
+
+        assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
+        assertContains(output, "classpath")
+    }
+
+    @Test
+    fun `a jar only a dependency's manifest names, replaced in place, runs every test`(@TempDir dir: File, @TempDir vendor: File) {
+        // Outside the build, so neither the commit nor a clean tree fixes it.
+        val named = File(vendor, "lib/a.jar")
+        val jar = { target: File, classPath: String?, flavor: String ->
+            target.parentFile.mkdirs()
+            val manifest = Manifest().apply {
+                mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+                if (classPath != null) mainAttributes[Attributes.Name.CLASS_PATH] = classPath
+            }
+            JarOutputStream(target.outputStream(), manifest).use { out ->
+                out.putNextEntry(JarEntry("vendor.properties"))
+                out.write("flavor=$flavor\n".toByteArray())
+                out.closeEntry()
+            }
+        }
+        jar(File(vendor, "vendor.jar"), "lib/a.jar", "")
+        jar(named, null, "a")
+        captured(dir, extraBuild = "\ndependencies { testRuntimeOnly(files(\"${File(vendor, "vendor.jar").invariantSeparatorsPath}\")) }\n")
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+        jar(named, null, "b")
+
+        val output = runner(dir, "test", COMPLEMENT).build().output
 
         assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
         assertContains(output, "classpath")
