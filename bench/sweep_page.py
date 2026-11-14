@@ -9,6 +9,10 @@ Every figure is a recorded field of the merged results (docs/sweep-data-dictiona
 older file lacks is an empty cell. The already-failing tests by name are not in the results file,
 so they are read from the record job's `baseline-cache.json` in its unpacked state.
 
+With `--commit-replay`, the page opens with the share of real commits that narrowed
+(`commit_replay.py --merge`): the figure, why the rest ran everything, and each project's counts.
+A run that only replayed commits has no `sweep.json`, and its page is that section alone.
+
 It reports and never judges: it exits 0, and a file it cannot read is a line on the page.
 
     python3 bench/sweep_page.py merged unpacked >> "$GITHUB_STEP_SUMMARY"
@@ -192,12 +196,89 @@ def page(merged_dir, unpacked_dir, run=None):
     return "\n".join(lines)
 
 
+def _share(part, whole):
+    return f"{100 * part / whole:.1f}%" if whole else "n/a"
+
+
+def _count_table(header, counts, whole, of):
+    lines = [f"| {header} | Commits | Share of {of} |", "|---|---:|---:|"]
+    lines += [f"| {_code(name)} | {count} | {_share(count, whole)} |"
+              for name, count in counts.items()]
+    return lines + [""]
+
+
+def replay_section(path):
+    """The real-commit figure of `commit_replay.py --merge`: the share that narrowed and the
+    causes are over the commits replayed, the reasons a commit was not asked over those drawn."""
+    title = "## Real commits replayed"
+    try:
+        with open(path, encoding="utf-8") as handle:
+            merged = json.load(handle)
+        figure, projects = merged["figure"], dict(merged.get("projects") or {})
+        replayed, narrowed = figure["replayed"], figure["narrowed"]
+        lines = [title, "",
+                 f"**{narrowed} of {replayed} real commits narrowed "
+                 f"({_share(narrowed, replayed)})**, over {len(projects)} projects; "
+                 f"{figure['selected_fewer']} of them selected fewer tests than the map knows. "
+                 f"{figure['forced']} ran everything for a named cause, {figure['unrecorded']} "
+                 f"for none recorded. {figure['drawn']} commits were drawn and "
+                 f"{figure['drawn'] - replayed} not asked.", "",
+                 f"Window: {merged.get('window')}; commits per project: "
+                 f"{', '.join(merged.get('commits') or []) or 'not recorded'}. Plugin commit: "
+                 f"{', '.join(_code(c) for c in merged.get('plugin_commits') or []) or 'not recorded'}.",
+                 ""]
+        if not figure.get("sums"):
+            lines += ["**THE COUNTS DO NOT ADD UP: a row carries an outcome this page does not "
+                      "know. Do not quote the figure.**", ""]
+        if figure.get("causes"):
+            lines += ["### Why the rest ran everything", ""]
+            causes = dict(figure["causes"])
+            if figure["unrecorded"]:
+                causes["no kind recorded"] = figure["unrecorded"]
+            lines += _count_table("Cause", causes, replayed, "replayed")
+        if figure.get("not_asked"):
+            lines += ["### Not asked", ""]
+            lines += _count_table("Reason", figure["not_asked"], figure["drawn"], "drawn")
+        for label, names in (("No file from its record job", merged.get("missing")),
+                             ("Stopped by the time budget", merged.get("cut_short")),
+                             ("Tree not put back to the pin", sorted(
+                                 name for name, entry in projects.items()
+                                 if entry.get("tree_restored") is False))):
+            if names:
+                lines += [f"{label} ({len(names)}): {', '.join(names)}.", ""]
+        skipped = merged.get("not_replayed") or {}
+        if skipped:
+            lines += [f"Not replayed ({len(skipped)}): "
+                      + "; ".join(f"{name} ({reason})" for name, reason in sorted(skipped.items()))
+                      + ".", ""]
+        lines += ["### Per project", "",
+                  "| Project | Drawn | Replayed | Narrowed | Forced | No kind | Not asked | "
+                  "Leading cause |", "|---|---:|---:|---:|---:|---:|---:|---|"]
+        for name, entry in sorted(projects.items()):
+            counts = entry["distribution"]
+            leading = next(iter(counts.get("causes") or {}), "")
+            lines.append(f"| {name} | {counts['drawn']} | {counts['replayed']} | "
+                         f"{counts['narrowed']} | {counts['forced']} | {counts['unrecorded']} | "
+                         f"{counts['drawn'] - counts['replayed']} | {_code(leading) if leading else ''} |")
+        lines += [""] + [f"- {caveat}" for caveat in merged.get("caveats") or []] + [""]
+        return "\n".join(lines)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+        return f"{title}\n\n`{path}` could not be read ({type(error).__name__}).\n"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("merged", help="the merge's output directory")
     parser.add_argument("unpacked", help="the record jobs' unpacked state, one directory per project")
+    parser.add_argument("--commit-replay", metavar="FILE",
+                        help="the merged real-commit figure, shown first when the file exists")
     args = parser.parse_args(argv)
-    print(page(args.merged, args.unpacked, os.environ.get("GITHUB_RUN_ID")))
+    replayed = args.commit_replay and os.path.isfile(args.commit_replay)
+    if replayed:
+        print(replay_section(args.commit_replay))
+    # A run that only replayed commits merged no rows, and says so nowhere.
+    if not replayed or find_sweep(args.merged) is not None:
+        print(page(args.merged, args.unpacked, os.environ.get("GITHUB_RUN_ID")))
     return 0
 
 

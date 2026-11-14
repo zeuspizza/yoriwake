@@ -15,6 +15,14 @@ on:
         description: runner seconds per local second, for a project priced from local times
         type: string
         default: ''
+      commits:
+        description: real commits to replay per project after its record, 0 for none
+        type: string
+        default: '8'
+      replay_only:
+        description: record and replay the commits, measure no slice
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -105,6 +113,33 @@ jobs:
           name: record-${{ fromJSON(inputs.project).project }}
           retention-days: 3
           path: record/
+      # What the selector would do on the project's last real commits, each reverted on the pinned
+      # tree and asked without running a test (bench/commit_replay.py). After the record is
+      # uploaded, so no slice starts from a tree or a map this step touched, and a fault or a
+      # timeout here costs the project its line of that figure, never its rows. The slices start
+      # when this job ends, so they wait for it: the budget below, and the build it is in.
+      - name: replay the last real commits
+        if: inputs.commits != '0'
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
+          COMMITS: ${{ inputs.commits }}
+        run: |
+          set -eu
+          unset GITHUB_STEP_SUMMARY
+          python3 bench/commit_replay.py "$(jq -r '.[0]' <<< "$ARGS")" --checkout "bench/$CHECKOUT" \
+            --commits "${COMMITS:-8}" --out "replay/$NAME/commit-replay.json"
+      # Its own artifact, under the project's name as the record is. Not named record-*.
+      - if: ${{ !cancelled() && hashFiles('replay/**') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: replay-${{ fromJSON(inputs.project).project }}
+          retention-days: 3
+          path: replay/
       # A record job that fails says why in its logs, not in the job's own output: the warm-up's
       # build error, the stalled capture's last lines. Not named record-*, which the merge reads.
       # A person reads it to see why the record job failed.
@@ -118,7 +153,7 @@ jobs:
   shard:
     needs: record
     # A project cut into no slices measures nothing; the merge declares it missing.
-    if: needs.record.outputs.shards != '[]'
+    if: needs.record.outputs.shards != '[]' && !inputs.replay_only
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions:

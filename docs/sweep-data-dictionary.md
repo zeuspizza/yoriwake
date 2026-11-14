@@ -300,6 +300,62 @@ disk.
 `bench/readme_charts.py` renders both charts from the results files (a stub for the dry run;
 `--sample` draws from synthetic rows and says so in the title).
 
+## Real commits replayed (`commit-replay.json`)
+
+`bench/commit_replay.py`: per project, its last `commits` first-parent commits up to and including
+the pin, each reverted whole on the pinned tree (a merge as its diff against its first parent)
+and the selector asked, by `yoriwakeExplain<Task>` with `-Pyoriwake.base=HEAD`, what a selecting
+run would do. No test runs, so no field here says anything about recall or seconds saved.
+
+One file per project, in its record job's own artifact for it (`replay-<project>/<project>/`):
+
+| Field | Meaning |
+|---|---|
+| `schema` | `commit-replay/v1` |
+| `project`, `pin`, `plugin_commit` | the project, its pinned commit, and the plugin commit its map was captured with (from the map's capture stamp) |
+| `replayed` | false when the project was not replayed; `reason` says why (no upstream history, a Maven project, no map of this run at the pin, a checkout that is not clean at the pin) and `rows` is empty |
+| `commits`, `window` | how many commits were asked for, and the rule that drew them |
+| `budget_minutes`, `budget_reached` | the time budget, and whether it stopped the loop (the commits left are `not-asked: budget`) |
+| `untracked_reset` | whether files written since the capture were removed before each commit, as before each sweep row |
+| `tree_restored` | whether the checkout was back at the pin, with nothing changed or untracked, when the replay ended |
+| `seconds` | the whole replay |
+| `rows` | one per drawn commit, newest first |
+| `distribution` | the counts over `rows`, below |
+
+A row:
+
+| Field | Meaning |
+|---|---|
+| `sha` | the commit |
+| `outcome` | `narrowed`, `forced`, `unrecorded` (it would run everything and the explanation names no kind) or `not-asked` |
+| `cause` | of a forced commit: `refusal:<kind>` from the explanation's `refusalKind`, else `full-run:<kind>` from its `fullRunKind` |
+| `reason` | of a commit not asked: `duplicate` (the patch of a newer drawn commit), `empty-diff`, `does-not-apply`, `does-not-compile`, `build-stalled` (the compile was stopped for writing nothing), `unanswered` (the explain task wrote no explanation) or `budget` |
+| `selected`, `known` | the explanation's counts: tests it would run, tests the map knows |
+| `unmappable_paths`, `unmappable_sample` | how many changed paths no build input explains, and up to five of them |
+| `seconds` | the revert, the compile and the explain |
+
+A distribution (`distribution` per project, `figure` in the merged file):
+
+| Field | Meaning |
+|---|---|
+| `drawn` | commits in the window |
+| `replayed` | commits that got an answer: `narrowed` + `forced` + `unrecorded` |
+| `narrowed`, `selected_fewer` | commits that narrowed, and those of them that selected fewer tests than the map knows |
+| `forced`, `causes` | commits that ran everything for a named cause, and the count per cause |
+| `unrecorded` | commits that ran everything with no kind recorded |
+| `not_asked` | the count per reason; with `replayed` it makes up `drawn` |
+| `sums` | whether those sums hold; false when a row carries an outcome or a reason outside this table, or a forced commit names no cause |
+
+The merged file (`commit_replay.py --merge`; in a sweep's tarball beside `merged/`, as the
+`commit-replay` artifact, and alone in the draft release of a `replay_only` run): `figure`, the
+distributions summed; `projects`, each replayed project's `pin`, `plugin_commit`, `commits`,
+`budget_reached`, `tree_restored`, `seconds` and `distribution` (counted again from its rows);
+`missing`, planned projects with no readable file; `not_replayed`, project to reason; `cut_short`,
+projects the budget stopped; `commits` and `plugin_commits`, the distinct values over the projects;
+`caveats`, what the figure may claim. The share of real commits that narrowed is
+`figure.narrowed / figure.replayed`: over the commits replayed, never those drawn. A missing or
+not-replayed project is in neither.
+
 ## Raw evidence
 
 Per project and arm, `bench/logs/evidence/`:
