@@ -483,7 +483,11 @@ internal class Recording(
         } +
             // Beside the map, which keeps one value per name: the other sources Surefire reads its system properties from.
             forkSystemProperties(project, execution, configuration).filter { it.source != ForkSystemProperty.SYSTEM_PROPERTY_VARIABLES }
-                .map { "${it.source} ${it.name}=${valueOf(project, it)}" },
+                .map { "${it.source} ${it.name}=${valueOf(project, it)}" } +
+            // Surefire applies the user properties last: the fork gets the command line's value where the map keeps the POM's.
+            session.userProperties.stringPropertyNames()
+                .filter { configuration.getChild("systemPropertyVariables")?.getChild(it) != null }
+                .map { "userProperty $it=${session.userProperties.getProperty(it)}" },
         text,
     )
 
