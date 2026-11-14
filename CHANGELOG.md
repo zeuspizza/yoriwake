@@ -31,6 +31,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A complement run compares a jar only a dependency's manifest `Class-Path` names too. Map: left alone.
 - A class with a primitive-array annotation value (`@ValueSource(booleans = ...)`) no longer counts as changed on every run.
   Map: left alone; the fix shows from its next recording.
 

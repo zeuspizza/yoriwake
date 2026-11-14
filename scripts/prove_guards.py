@@ -40,6 +40,7 @@ by guess; see SUITES. Count what a run will attempt from its first line, not fro
 written anywhere: the table grows, and every written duration has gone stale.
 """
 import argparse, atexit, contextlib, glob, itertools, json, os, re, shutil, signal, subprocess, sys, hashlib, math, time
+from xml.etree import ElementTree
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "bench"))
@@ -105,14 +106,23 @@ def wrapper(tree):
     return os.path.join(tree, "gradlew.bat") if os.name == "nt" else "./gradlew"
 
 
+# The build the suite running in this process started last: its tree, when it started, what it
+# printed and whether it failed. A suite returns only its failing tests' names, and a baseline that
+# fails has to say why.
+_LAST_BUILD = {}
+
+
 def gradle(args):
     """The Gradle wrapper in the tree under test.
 
     No stdin: interrupted, `cmd.exe` would wait on a "Terminate batch job (Y/N)?" nobody sees.
     """
     tree = yoriwake_checkout.root()
-    return subprocess.run([wrapper(tree)] + GRADLE_ARGS + args, capture_output=True, text=True,
+    _LAST_BUILD.update(tree=tree, started=time.time(), output="", failed=False)
+    done = subprocess.run([wrapper(tree)] + GRADLE_ARGS + args, capture_output=True, text=True,
                           stdin=subprocess.DEVNULL, cwd=tree)
+    _LAST_BUILD.update(output=(done.stdout or "") + (done.stderr or ""), failed=done.returncode != 0)
+    return done
 
 
 def _restore_on_signal(path, original):
@@ -3370,6 +3380,20 @@ MUTATIONS = [
      "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      "ClasspathFiles.walk(built, emptyList(), rootDir, classes = false, text = text, gradleUserHome = gradleUserHome)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
+    # A jar a dependency's manifest names lies outside the build, where neither the commit nor a
+    # clean tree keeps it from being replaced between a selecting run and its complement.
+    ("the complement's classpath digest does not follow a dependency's manifest Class-Path", SELECTION_RECORD,
+     "            read += name to file\n",
+     "",
+     unit_suite, "the classpath digest follows a jar only a dependency's manifest names, at the same path"),
+    ("a complement run leaves out tests that ran against another jar a dependency's manifest names", SELECTION_RECORD,
+     "            read += name to file\n",
+     "",
+     functional_suite, "a jar only a dependency's manifest names, replaced in place, runs every test"),
+    ("a named jar that cannot be read lets the complement's classpath digest match", SELECTION_RECORD,
+     "        (followed.entries + content.entries).firstOrNull",
+     "        content.entries.firstOrNull",
+     unit_suite, "a jar a dependency's manifest names that cannot be read digests to a value no run matches"),
     # An unreadable selection record must not reach Gradle's configuration-time read.
     ("an unreadable selection record is handed to Gradle to read at configuration", SELECTION_WIRING,
      "    val text = if (!record.isFile || java.nio.file.Files.isReadable(record.toPath())) {",
@@ -5552,6 +5576,11 @@ def why_affected(mutation, changed, before):
 # them without touching what is ignored.
 
 WORKER_ROOT = os.path.join("sandbox", "prove-guards")
+# Where the results of a build that failed unmutated are kept, in this repository whichever tree
+# the build ran in: that tree's next build of the task replaces them, and a failed CI shard uploads
+# this directory.
+UNMUTATED_RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 WORKER_ROOT, "unmutated")
 _WORKER = {}
 
 
@@ -5681,9 +5710,65 @@ def _run_suite(suite, test_class=None, expect=None):
 def _timed_run(suite, test_class, expect=None):
     """A suite's failures and the seconds it ran. Timed inside the lock, so a wait for another
     worker's build is not counted as this one's cost."""
+    _LAST_BUILD.clear()
     start = time.monotonic()
     fired = _suite_run(suite, test_class, expect)
     return fired, round(time.monotonic() - start, 1)
+
+
+# How much of a failed baseline reaches the log: of each failing test's message, both ends kept,
+# and of the end of Gradle's output. The kept results hold the rest.
+MESSAGE_LINES = 40
+OUTPUT_LINES = 60
+
+
+def why_unmutated_fails():
+    """What the build of the suite that just failed unmutated left, as lines for the log under its
+    refusal: each failing test's message, where the build's results are kept, and the end of
+    Gradle's output. Empty for a suite whose build passed or that started none: what failed then
+    is a check after the build, and a passing build's output would point away from it.
+
+    The refusal alone names a test. A class that failed in one worker tree of one CI run, and
+    passed in every other, left nothing to tell a slow runner from a defect."""
+    if not _LAST_BUILD.get("failed"):
+        return []
+    tree, started = _LAST_BUILD["tree"], _LAST_BUILD["started"]
+    lines, failed = [], []
+    # Only what this build wrote: another task's results in the tree are an earlier build's.
+    for path in sorted(glob.glob(os.path.join(tree, "*", "build", "test-results", "*", "TEST-*.xml"))):
+        # A file that cannot be read costs a line here, never the refusal these lines stand under.
+        try:
+            if os.path.getmtime(path) < started:
+                continue
+            cases = list(ElementTree.parse(path).getroot().iter("testcase"))
+        except (OSError, ElementTree.ParseError) as error:
+            failed.append(path)
+            lines.append(f"    {os.path.basename(path)} cannot be read: {error}")
+            continue
+        for case in cases:
+            for failure in case.findall("failure") + case.findall("error"):
+                if path not in failed:
+                    failed.append(path)
+                message = (failure.get("message") or failure.text or "no message").strip().splitlines()
+                if len(message) > MESSAGE_LINES:
+                    half = MESSAGE_LINES // 2
+                    message[half:-half] = [f"... {len(message) - 2 * half} lines left out ..."]
+                lines.append(f"    {case.get('classname', '').rsplit('.', 1)[-1]} > {case.get('name')}:")
+                lines += ["        " + line for line in message]
+    if failed:
+        kept = os.path.join(UNMUTATED_RESULTS, f"{os.path.basename(tree)}-"
+                            f"{time.strftime('%H%M%S', time.localtime(started))}")
+        try:
+            os.makedirs(kept, exist_ok=True)
+            for path in failed:
+                shutil.copy(path, kept)
+            lines.append(f"    the build's results, whole, are kept in {kept}")
+        except OSError as error:
+            lines.append(f"    the build's results could not be kept in {kept}: {error}")
+    output = _LAST_BUILD["output"].strip().splitlines()
+    if output:
+        lines.append(f"    the last {min(len(output), OUTPUT_LINES)} of the {len(output)} lines Gradle printed:")
+    return lines + ["        " + line for line in output[-OUTPUT_LINES:]]
 
 
 def _prove_in_worker(index):
@@ -5697,13 +5782,16 @@ def _prove_in_worker(index):
     test_class = _class_of(suite, expect)
     key = (name, test_class, expect if test_class else None)
     timing = _timing(name, test_class)
+    why = []
     if key not in _WORKER["baselined"]:
         _WORKER["baselined"][key], timing["baseline_seconds"] = _run_suite(suite, test_class, expect)
+        # Said once, by the guard that paid the baseline; the guards that share it repeat its line.
+        why = why_unmutated_fails() if _WORKER["baselined"][key] else []
     standing = _WORKER["baselined"][key]
     if standing:
         scope = f" ({test_class})" if test_class else ""
-        return index, None, (f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
-                             f"{standing[0]}"), timing
+        return index, None, "\n".join([f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
+                                       f"{standing[0]}"] + why), timing
     target = source(path)
     original = read_bytes(target)
     write_source(target, read_source(target).replace(old, new, 1))
@@ -5884,8 +5972,9 @@ def _report(index, fired, refusal, timing=None):
     if timing:
         _RUN["timings"][label] = timing
     if refusal:
+        # Whole in the log; `--results` keeps its first line, as for a refusal that stops the run.
         print(f"{label:62} -> NOT PROVED: {refusal}", flush=True)
-        outcomes[label] = ("not proved", refusal)
+        outcomes[label] = ("not proved", refusal.splitlines()[0])
         return 1
     # A CRASH IS NOT A GUARD FIRING, with or without an `expect`. Only the expect check used to see
     # this, so a guard with none was proved by a mutation that merely stopped its suite running.
@@ -6384,11 +6473,12 @@ def _main(args, held):
     for name, suite in needed:
         if suite in narrowed and None not in narrowed[suite]:
             continue
-        standing = suite()
+        standing, _seconds = _timed_run(suite, None)
         print(f"  {name:22} -> {len(standing)} failing"
               + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
         if standing:
-            print("\nThe suite fails before any mutation, so nothing below can be believed.")
+            print("\n".join(why_unmutated_fails()
+                            + ["\nThe suite fails before any mutation, so nothing below can be believed."]))
             _RUN["refused"] = f"the {name} suite fails unmutated: {standing[0]}"
             return 1
     print()
@@ -6404,7 +6494,8 @@ def _main(args, held):
             print(f"  baseline {test_class:44} -> {len(standing)} failing"
                   + ("" if not standing else f"  <-- MUST BE 0: {standing[0]}"))
             if standing:
-                print("\nThe guard's tests fail before any mutation, so it cannot be believed.")
+                print("\n".join(why_unmutated_fails()
+                                + ["\nThe guard's tests fail before any mutation, so it cannot be believed."]))
                 _RUN["refused"] = f"{test_class} fails unmutated: {standing[0]}"
                 return 1
             baselined.add((SUITE_NAMES[suite], test_class, expect))
