@@ -4235,6 +4235,10 @@ MUTATIONS = [
      '                val below = listOf("build", "target") + buildDirsBelow(moduleDir)',
      '                val below = listOf("build", "target")',
      unit_suite, "a module's own build directory is named from the module's name on"),
+    ("a module's build directory outside it is not named", TASK_ARTIFACTS,
+     "                forms += buildDirForms(moduleDir)",
+     "",
+     functional_suite, "a sibling's build directory outside its own directory keeps its source edits"),
     # Classes the fork is handed by path put that module in its JVM, whatever its dependencies say.
     ("Maven reads no path in the fork's added classpath elements", MAVEN_CLASSPATH_VIEWS,
      "    ) + added?.children.orEmpty().mapNotNull { it.value }",

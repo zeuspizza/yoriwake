@@ -560,6 +560,55 @@ class SelectionFunctionalTest {
         assertContains(output, "Running dev.demo.modp.LibOutTest")
     }
 
+    /**
+     * lib builds into the root's `build/lib`, outside its own directory, and modp, which does not
+     * depend on lib, has a test that loads lib's classes from there by path.
+     */
+    @Test
+    fun `a sibling's build directory outside its own directory keeps its source edits`(@TempDir dir: File) {
+        val project = committed(dir)
+        File(project, "lib/pom.xml").edit {
+            it.replace(
+                "<artifactId>lib</artifactId>",
+                "<artifactId>lib</artifactId>\n  <build><directory>${'$'}{project.basedir}/../build/lib</directory></build>",
+            )
+        }
+        File(project, ".gitignore").appendText("build/\n")
+        File(project, "modp/src/test/java/dev/demo/modp/LibOutTest.java").writeText(
+            """
+            package dev.demo.modp;
+
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+
+            import java.net.URL;
+            import java.net.URLClassLoader;
+            import java.nio.file.Path;
+            import org.junit.jupiter.api.Test;
+
+            class LibOutTest {
+                @Test
+                void greets() throws Exception {
+                    URL classes = Path.of("..", "build/lib/classes").toUri().toURL();
+                    try (URLClassLoader loader = new URLClassLoader(new URL[] { classes }, null)) {
+                        Object greeter = loader.loadClass("dev.demo.lib.Greeter").getConstructor().newInstance();
+                        assertEquals("Hello, Ada", greeter.getClass().getMethod("greet", String.class).invoke(greeter, "Ada"));
+                    }
+                }
+            }
+            """.trimIndent(),
+        )
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "lib builds into the root's build directory")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        editGreeter(project)
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "modp", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        assertFalse("not on this task's classpath" in selectingLine(output, "modp"), output)
+        assertContains(output, "Running dev.demo.modp.LibOutTest")
+    }
+
     @Test
     fun `a sibling's classes added to the fork's classpath keep its edits`(@TempDir dir: File) {
         val project = modpWith(dir, surefireAdding("\${project.basedir}/../lib/target/classes"), greeterByName)

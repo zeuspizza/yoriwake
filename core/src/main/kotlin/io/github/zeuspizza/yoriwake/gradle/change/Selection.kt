@@ -785,6 +785,18 @@ internal data class ScopedChange(
 }
 
 /**
+ * Each module directory's build directory as a test would spell it: relative to the root when it
+ * lies inside it, absolute otherwise. Normalised, since Maven reports `lib/../build/lib` as written.
+ */
+private fun moduleBuildDirs(facts: ClasspathView): Map<String, String> {
+    val root = facts.rootDir.absoluteFile.normalize()
+    return facts.moduleDirs.mapNotNull { (moduleDir, module) ->
+        val dir = facts.buildDirs[module]?.let { File(it).absoluteFile.normalize() } ?: return@mapNotNull null
+        moduleDir to (if (dir.startsWith(root)) dir.relativeTo(root) else dir).invariantSeparatorsPath
+    }.toMap()
+}
+
+/**
  * The change set with what [ignore] declares, an IDE's state, what [notReadByTests] declares, and
  * other modules' sources removed, computed at execution time. The classpath part keeps every path
  * whenever the classpath or its classes cannot be established.
@@ -797,7 +809,9 @@ internal fun scopedChange(
 ): ScopedChange {
     // The same artifacts `establish` builds, so a path this task's classes name is kept. Lazy: most
     // change sets have no path to ask about.
-    val artifacts by lazy { TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles()) }
+    val artifacts by lazy {
+        TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles(), moduleBuildDir = moduleBuildDirs(facts))
+    }
     val applied = PathIgnore.apply(changed, ignore) { candidates -> artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) }
     val paths = applied.kept
     val declared = NotRead.declared(notReadByTests)

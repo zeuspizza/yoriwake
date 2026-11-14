@@ -32,7 +32,8 @@ guess.
 - **Other modules.** A changed Java or Kotlin source under `src/` of a module the test task does
   not reach is left out of its change set, unless one of the task's compiled classes holds a path
   to it of two or more segments: `../beta/src/main/java/dev/beta/Thing.java`,
-  `src/main/java/dev/beta/Thing.java`, `beta/src` or its output's `beta/build` all keep it. A test that builds the path from
+  `src/main/java/dev/beta/Thing.java`, `beta/src` or its output's `beta/build` all keep it, as
+  does the module's build directory wherever it lies (`build/beta`). A test that builds the path from
   single names or walks the tree to it is not seen. The module's other files keep counting. A
   module counts as reached when a source or resource directory of the tested module, or of a
   module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`); a source
