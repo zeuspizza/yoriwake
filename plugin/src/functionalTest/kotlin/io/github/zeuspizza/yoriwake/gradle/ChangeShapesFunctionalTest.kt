@@ -125,6 +125,48 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a Kotlin function given a new suspend lambda runs its caller's test`(@TempDir dir: File) {
+        // The lambda compiles to a class the map never saw, which carries only the annotations
+        // the compiler writes on every such class. Alpha is as above, for the inline scan.
+        val alpha = "src/main/kotlin/dev/sample/Alpha.kt" to """
+            package dev.sample
+            inline fun doubled(n: Int): Int = n * 2
+            class Alpha { fun twice(n: Int): Int = doubled(n) }
+        """.trimIndent()
+        val beta = "src/main/kotlin/dev/sample/Beta.kt" to """
+            package dev.sample
+            import kotlin.coroutines.*
+            class Beta {
+                fun thrice(n: Int): Int {
+                    var result = 0
+                    val block: suspend () -> Int = { n * 3 }
+                    block.startCoroutine(Continuation(EmptyCoroutineContext) { result = it.getOrThrow() })
+                    return result
+                }
+            }
+        """.trimIndent()
+        val alphaTest = "src/test/kotlin/dev/sample/AlphaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class AlphaTest { @Test fun twice() { assertEquals(2, Alpha().twice(1)) } }
+        """.trimIndent()
+        val betaTest = "src/test/kotlin/dev/sample/BetaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class BetaTest { @Test fun thrice() { assertEquals(3, Beta().thrice(1)) } }
+        """.trimIndent()
+
+        val output = selectAfter(dir, kotlinBuild, alpha, beta, alphaTest, betaTest, edit = {
+            edit(dir, beta.first, "{ n * 3 }", "{\n            val inner: suspend () -> Int = { n * 4 }\n            inner()\n        }")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+    }
+
+    @Test
     fun `an overriding toString deleted runs the test that formatted the class`(@TempDir dir: File) {
         val beta = "src/main/java/dev/sample/Beta.java" to """
             package dev.sample;

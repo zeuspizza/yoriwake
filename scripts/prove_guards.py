@@ -2052,23 +2052,28 @@ MUTATIONS = [
      "    val compared = comparison != null && comparison.silence == null",
      "    val compared = comparison != null",
      unit_suite, "a constant that moved forces when the map holds no digest table to compare the bytes with"),
-    # A test that depends on a class through a framework's scan reads its annotations and never
-    # executes it, so coverage holds no edge; only the annotation digest sees `@Profile("a")` become
-    # `@Profile("b")`. Treating every recorded digest as a match is the silent skip.
-    ("an annotation change on a recorded class reads as unchanged again", SELECTION,
-     "            if (before == current) continue",
-     "            if (before != null) continue",
-     unit_suite, "a changed annotation forces a full run and names it"),
-    # The exemption's boundary. A test class this task runs is exempt because its own tests are
-    # selected anyway; a helper in the same test output (a `@TestConfiguration`, a fixture) runs no
-    # test of its own, so exempting the whole output skips whatever scans it.
+    # A changed annotation on a class the map holds selects the tests that loaded the class or read
+    # its class file. A class the map never saw has no such record: a scan finds it by listing a
+    # directory. Reading every annotation as one the compiler wrote lets a new `@Profile` class
+    # narrow past the test that scans for it.
+    ("a new class's annotations all read as compiler-written", RECORDABILITY,
+     "        !other\n", "        true\n",
+     unit_suite, "a class the table does not hold forces only when someone wrote an annotation on it"),
+    # The same boundary where the refusal is raised, proved through a build.
+    ("a new annotated class no longer forces", SELECTION,
+     "            if (compilerWritten) continue",
+     "            if (compilerWritten || true) continue",
+     functional_suite, "a new annotated class runs every test"),
+    # The exemption's boundary. A new test class this task runs is exempt because its own tests are
+    # selected anyway; a new helper in the same test output (a `@TestConfiguration`, a fixture) runs
+    # no test of its own, so exempting the whole output skips whatever scans it.
     ("every class in this task's test output is exempt from the annotation refusal", SELECTION,
      "            if (prefix in ownTestClasses && Recordability.declaresTestMethod(bytes)) continue",
      "            if (prefix in ownTestClasses) continue",
-     unit_suite, "an annotation change on a test helper that declares no test still forces"),
+     unit_suite, "a new annotated test helper that declares no test still forces"),
     # Spock writes each feature's line into an annotation on its method, so a line added above a
     # feature moves the specification's annotations. Not reading its feature annotation as a test
-    # method sends every such edit to the annotation refusal and the whole suite.
+    # method sends every new specification to the annotation refusal and the whole suite.
     ("a Spock feature is no test method again", RECORDABILITY,
      '        "Lorg/spockframework/runtime/model/FeatureMetadata;",\n', '',
      unit_suite, "a Spock feature method is a test method"),

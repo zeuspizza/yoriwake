@@ -506,6 +506,59 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a changed annotation selects the test that reads it and leaves an unrelated test out`(@TempDir dir: File) {
+        val project = committed(dir)
+        fun app(root: String, name: String, body: String) =
+            File(project, "app/src/$root/java/dev/demo/app/$name.java").also { it.writeText(body.trimIndent()) }
+        app(
+            "main", "Mode",
+            """
+            package dev.demo.app;
+            import java.lang.annotation.*;
+            @Retention(RetentionPolicy.RUNTIME)
+            public @interface Mode { String value(); }
+            """,
+        )
+        val gate = app(
+            "main", "Gate",
+            """
+            package dev.demo.app;
+            @Mode("a")
+            public class Gate { public int one() { return 1; } }
+            """,
+        )
+        fun appTest(name: String, body: String) = app(
+            "test", name,
+            """
+            package dev.demo.app;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            import org.junit.jupiter.api.Test;
+            class $name { @Test void passes() { $body } }
+            """,
+        )
+        // Stands in for a framework's scan: it reads Gate's annotation and runs no line of it.
+        appTest("BScanTest", "assertTrue(Gate.class.getAnnotation(Mode.class).value().length() > 0);")
+        appTest("GateTest", "assertTrue(new Gate().one() > 0);")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "an annotated class and a test that reads the annotation")
+        // By name AppTest runs first, before the shared test JVM loads Gate, and BScanTest is the
+        // test that loads it.
+        val byName = "-Dsurefire.runOrder=alphabetical"
+        FunctionalMaven.run(maven, project, "verify", byName).succeeded()
+        gate.edit { it.replace("@Mode(\"a\")", "@Mode(\"b\")") }
+        git(project, "commit", "-q", "-am", "the annotation's value moves")
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib,app", byName, "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+        ).succeeded().output
+
+        assertFalse("carries annotations" in output, output)
+        assertContains(output, "Running dev.demo.app.BScanTest")
+        assertContains(output, "Running dev.demo.app.GateTest")
+        assertFalse("Running dev.demo.app.AppTest" in output, output)
+    }
+
+    @Test
     fun `a module's pom edit still forces executions off its classpath`(@TempDir dir: File) {
         val project = captured(dir)
         File(project, "lib/pom.xml").edit { it.replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <!-- touched -->") }

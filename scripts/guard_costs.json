@@ -4,6 +4,7 @@
   {"run": 43377912747, "commit": "99ad9fc2", "modes": ["fast"]}
  ],
  "estimated": [
+  "functional/AnnotationFunctionalTest",
   "functional/InJvmParallelismCharacterizationTest",
   "functional/KoverFunctionalTest",
   "maven/ScopeFunctionalTest"
@@ -61,6 +62,7 @@
   "full": 217
  },
  "classes": {
+  "functional/AnnotationFunctionalTest": {"baseline": 60, "guard": 25},
   "functional/AuditAndExplainFunctionalTest": {"baseline": 19, "guard": 19},
   "functional/BootClassPathFunctionalTest": {"baseline": 38, "guard": 28},
   "functional/BranchPolicyFunctionalTest": {"baseline": 38, "guard": 31},

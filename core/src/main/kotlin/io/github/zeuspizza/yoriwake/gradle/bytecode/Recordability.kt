@@ -169,6 +169,103 @@ internal object Recordability {
     }.getOrNull()
 
     /**
+     * Whether every annotation this class carries, on itself or on a field, method, parameter,
+     * record component or type use, is one kotlinc writes of its own accord
+     * ([COMPILER_WRITTEN_ANNOTATIONS]); true for a class that carries none. An annotation
+     * interface's default value counts as an annotation that is not. Null when the bytes cannot be
+     * read.
+     *
+     * What it licenses: a class the map never saw is found by a framework's scan only through an
+     * annotation someone wrote, and these are never written by anyone.
+     */
+    fun carriesOnlyCompilerWrittenAnnotations(classBytes: ByteArray): Boolean? = runCatching {
+        var other = false
+        fun see(descriptor: String?): org.objectweb.asm.AnnotationVisitor? {
+            if (descriptor !in COMPILER_WRITTEN_ANNOTATIONS) other = true
+            return null
+        }
+        ClassReader(classBytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+            override fun visitAnnotation(descriptor: String?, visible: Boolean) = see(descriptor)
+
+            override fun visitTypeAnnotation(
+                typeRef: Int,
+                typePath: org.objectweb.asm.TypePath?,
+                descriptor: String?,
+                visible: Boolean,
+            ) = see(descriptor)
+
+            override fun visitRecordComponent(
+                name: String?,
+                descriptor: String?,
+                signature: String?,
+            ) = object : org.objectweb.asm.RecordComponentVisitor(Opcodes.ASM9) {
+                override fun visitAnnotation(descriptor: String?, visible: Boolean) = see(descriptor)
+
+                override fun visitTypeAnnotation(
+                    typeRef: Int,
+                    typePath: org.objectweb.asm.TypePath?,
+                    descriptor: String?,
+                    visible: Boolean,
+                ) = see(descriptor)
+            }
+
+            override fun visitField(
+                access: Int,
+                name: String?,
+                descriptor: String?,
+                signature: String?,
+                value: Any?,
+            ) = object : org.objectweb.asm.FieldVisitor(Opcodes.ASM9) {
+                override fun visitAnnotation(descriptor: String?, visible: Boolean) = see(descriptor)
+
+                override fun visitTypeAnnotation(
+                    typeRef: Int,
+                    typePath: org.objectweb.asm.TypePath?,
+                    descriptor: String?,
+                    visible: Boolean,
+                ) = see(descriptor)
+            }
+
+            override fun visitMethod(
+                access: Int,
+                name: String?,
+                descriptor: String?,
+                signature: String?,
+                exceptions: Array<out String>?,
+            ) = object : MethodVisitor(Opcodes.ASM9) {
+                override fun visitAnnotationDefault(): org.objectweb.asm.AnnotationVisitor? = see(null)
+
+                override fun visitAnnotation(descriptor: String?, visible: Boolean) = see(descriptor)
+
+                override fun visitTypeAnnotation(
+                    typeRef: Int,
+                    typePath: org.objectweb.asm.TypePath?,
+                    descriptor: String?,
+                    visible: Boolean,
+                ) = see(descriptor)
+
+                override fun visitParameterAnnotation(parameter: Int, descriptor: String?, visible: Boolean) =
+                    see(descriptor)
+            }
+        }, ClassReader.SKIP_CODE or ClassReader.SKIP_FRAMES)
+        !other
+    }.getOrNull()
+
+    /**
+     * The annotations kotlinc writes on a class, lambda, continuation or declaration without being
+     * asked. A framework reads them only through a loaded class (kotlin-reflect, coroutine stack
+     * traces), never to decide which classes a scan picks. A closed list: adding to it takes
+     * evidence that a compiler writes the annotation unasked.
+     */
+    private val COMPILER_WRITTEN_ANNOTATIONS = setOf(
+        KOTLIN_METADATA,
+        "Lkotlin/coroutines/jvm/internal/DebugMetadata;",
+        AnnotationDigestVisitor.KOTLIN_SMAP,
+        "Lorg/jetbrains/annotations/NotNull;",
+        "Lorg/jetbrains/annotations/Nullable;",
+    )
+
+    /**
      * Whether this class declares a method a JUnit, TestNG or Spock engine runs as a test. Only the
      * engines' own annotations count: a meta-annotation, another engine or unreadable bytes answer
      * false.

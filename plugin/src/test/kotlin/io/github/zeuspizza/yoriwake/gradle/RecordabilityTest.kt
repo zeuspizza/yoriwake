@@ -777,6 +777,107 @@ class RecordabilityTest {
         )
     }
 
+    /** A class as kotlinc writes one: metadata, a debug annotation and a not-null parameter. */
+    private fun compilerWritten(more: org.objectweb.asm.ClassWriter.() -> Unit = {}): ByteArray {
+        val writer = org.objectweb.asm.ClassWriter(0)
+        writer.visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, "Service", null,
+            "java/lang/Object", null)
+        writer.visitAnnotation("Lkotlin/Metadata;", true).visitEnd()
+        writer.visitAnnotation("Lkotlin/coroutines/jvm/internal/DebugMetadata;", true).visitEnd()
+        writer.visitAnnotation("Lkotlin/jvm/internal/SourceDebugExtension;", false).visitEnd()
+        writer.visitField(0, "name", "Ljava/lang/String;", null, null).apply {
+            visitAnnotation("Lorg/jetbrains/annotations/Nullable;", false).visitEnd()
+            visitEnd()
+        }
+        writer.visitMethod(org.objectweb.asm.Opcodes.ACC_ABSTRACT, "run", "(Ljava/lang/String;)V", null, null).apply {
+            visitParameterAnnotation(0, "Lorg/jetbrains/annotations/NotNull;", false).visitEnd()
+            visitEnd()
+        }
+        writer.more()
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `a class carrying only what the Kotlin compiler writes reads as compiler-written`() {
+        assertEquals(true, Recordability.carriesOnlyCompilerWrittenAnnotations(compilerWritten()))
+        assertEquals(
+            true,
+            Recordability.carriesOnlyCompilerWrittenAnnotations(
+                javac("public class Plain { public int twice(int n) { return n * 2; } }", "Plain")
+            ),
+            "a class with no annotations at all",
+        )
+    }
+
+    @Test
+    fun `an annotation someone wrote, in any position, does not read as compiler-written`() {
+        val typeUse = org.objectweb.asm.TypeReference.newTypeReference(org.objectweb.asm.TypeReference.FIELD).value
+        val written: Map<String, org.objectweb.asm.ClassWriter.() -> Unit> = mapOf(
+            "on the class" to { visitAnnotation("Lcom/acme/Profile;", true).visitEnd() },
+            "on the class, invisible at run time" to { visitAnnotation("Lcom/acme/Profile;", false).visitEnd() },
+            "on a type use of the class" to {
+                visitTypeAnnotation(
+                    org.objectweb.asm.TypeReference.newSuperTypeReference(-1).value, null, "Lcom/acme/Marker;", true,
+                ).visitEnd()
+            },
+            "on a field" to {
+                visitField(0, "count", "I", null, null).apply {
+                    visitAnnotation("Lcom/acme/Marker;", true).visitEnd()
+                    visitEnd()
+                }
+            },
+            "on a field's type" to {
+                visitField(0, "count", "I", null, null).apply {
+                    visitTypeAnnotation(typeUse, null, "Lcom/acme/Marker;", true).visitEnd()
+                    visitEnd()
+                }
+            },
+            "on a method" to {
+                visitMethod(org.objectweb.asm.Opcodes.ACC_ABSTRACT, "stop", "()V", null, null).apply {
+                    visitAnnotation("Lcom/acme/Marker;", true).visitEnd()
+                    visitEnd()
+                }
+            },
+            "on a method's return type" to {
+                visitMethod(org.objectweb.asm.Opcodes.ACC_ABSTRACT, "stop", "()I", null, null).apply {
+                    visitTypeAnnotation(
+                        org.objectweb.asm.TypeReference.newTypeReference(org.objectweb.asm.TypeReference.METHOD_RETURN).value,
+                        null, "Lcom/acme/Marker;", true,
+                    ).visitEnd()
+                    visitEnd()
+                }
+            },
+            "on a record component" to {
+                visitRecordComponent("count", "I", null).apply {
+                    visitAnnotation("Lcom/acme/Marker;", true).visitEnd()
+                    visitEnd()
+                }
+            },
+            "on a parameter" to {
+                visitMethod(org.objectweb.asm.Opcodes.ACC_ABSTRACT, "stop", "(I)V", null, null).apply {
+                    visitParameterAnnotation(0, "Lcom/acme/Marker;", true).visitEnd()
+                    visitEnd()
+                }
+            },
+        )
+        for ((where, write) in written) {
+            assertEquals(false, Recordability.carriesOnlyCompilerWrittenAnnotations(compilerWritten(write)), where)
+        }
+        // An annotation interface's default is read by every class that uses it.
+        assertEquals(
+            false,
+            Recordability.carriesOnlyCompilerWrittenAnnotations(
+                javac("public @interface Service { String value() default \"a\"; }", "Service")
+            ),
+        )
+    }
+
+    @Test
+    fun `bytes that are not a class cannot be read for compiler-written annotations`() {
+        assertNull(Recordability.carriesOnlyCompilerWrittenAnnotations(byteArrayOf(1, 2, 3)))
+    }
+
     @Test
     fun `bytes that are not a class have no annotation digest`() {
         assertNull(Recordability.annotationDigest(byteArrayOf(1, 2, 3)).value)

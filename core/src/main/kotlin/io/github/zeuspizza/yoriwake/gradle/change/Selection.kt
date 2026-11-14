@@ -429,9 +429,12 @@ internal fun widenForInlining(
      * for tests of the other rules only.
      */
     digestRule: DigestRule? = null,
-    /** The map's annotation digests, from `CoverageDecoder.readAnnotationDigests`; null forces. */
+    /**
+     * The map's annotation digests, from `CoverageDecoder.readAnnotationDigests`; null forces. Only
+     * its class names are read: a class it does not name is new since the capture.
+     */
     recordedAnnotations: Map<String, String>? = null,
-    /** [Established.testClasses], whose test classes an annotation change does not force on. */
+    /** [Established.testClasses], whose new test classes the annotation refusal does not force on. */
     ownTestClasses: Set<String> = emptySet(),
     /** [Established.inlinedAway]: each one found inlined by some class leaves the prefixes. */
     inlinedAway: Set<String> = emptySet(),
@@ -848,19 +851,22 @@ internal fun scopedChange(
 }
 
 /**
- * The annotation refusal, or null when no changed class's annotations moved since the capture. A
- * test that depends on a class through a framework's scan (`@Profile`, `@Component`,
- * `@ConditionalOn...`) reads its annotations without executing it, so coverage holds no edge.
+ * The annotation refusal, or null when no changed class can be reached through an annotation the
+ * map never saw. A test that depends on a class through a framework's scan (`@Profile`,
+ * `@Component`, `@ConditionalOn...`) reads its annotations without executing it, so coverage holds
+ * no edge.
  *
  * [recorded] holds every own class at capture; null (an older map, or a walk that did not finish)
- * forces. A class it lacks is new, and forces only if it carries annotations. An annotated class
- * that is gone forces too: removing a bean is an annotation change to whatever scanned it.
+ * forces. A class it holds never forces here, whatever its annotations are now, and neither does
+ * one that is gone: an annotation acts only through a class someone loaded or a class file someone
+ * read, both of which the map records per test, and the comparison of compiled classes selects
+ * those tests. A class it lacks is new: a scan can find it by listing a directory, which the map
+ * records nowhere, so it forces if it carries an annotation someone wrote
+ * ([Recordability.carriesOnlyCompilerWrittenAnnotations]).
  *
- * A test class this task runs is exempt, because its own tests are selected anyway: the ones the
- * map holds by the rule for an edited own test class, new ones as tests the map has no record of. That is a
- * class from [ownTestClasses] that itself declares a test method; a helper, a base class or a
- * nested configuration beside it still forces. Not covered: a test that reads another test
- * class's annotations.
+ * A new test class this task runs is exempt, because its own tests are selected anyway, as tests
+ * the map has no record of. That is a class from [ownTestClasses] that itself declares a test
+ * method; a new helper, base class or nested configuration beside it still forces.
  */
 internal fun annotationRefusal(
     prefixes: Collection<String>,
@@ -891,36 +897,20 @@ internal fun annotationRefusal(
                 detail = "no compiled class could be established for $prefix",
             )
         for ((name, bytes) in classes) {
-            val current = Recordability.annotationDigest(bytes).value
+            val compilerWritten = Recordability.carriesOnlyCompilerWrittenAnnotations(bytes)
                 ?: return@runCatching InlineWidening.refuse(
                     INLINE_SCAN_REFUSAL,
                     scanExhausted = true,
                     kind = RefusalKind.SCAN_REFUSED,
                     detail = "the annotations of $name could not be read",
                 )
-            val before = recorded[name]
-            if (before == current) continue
+            if (name in recorded) continue
             if (prefix in ownTestClasses && Recordability.declaresTestMethod(bytes)) continue
-            if (before == null) {
-                if (current == Recordability.NO_ANNOTATIONS) continue
-                return@runCatching refuse(
-                    RefusalKind.ANNOTATIONS_UNRECORDED, name,
-                    "carries annotations the map did not record",
-                )
-            }
+            if (compilerWritten) continue
             return@runCatching refuse(
-                RefusalKind.ANNOTATIONS_CHANGED, name,
-                "carries annotations that differ from the ones the map was captured under",
+                RefusalKind.ANNOTATIONS_UNRECORDED, name,
+                "is new and carries annotations the map did not record",
             )
-        }
-        val present = classes.mapTo(HashSet()) { it.first }
-        for ((name, before) in recorded) {
-            if (compiledFrom(name, prefix) && name !in present && before != Recordability.NO_ANNOTATIONS) {
-                return@runCatching refuse(
-                    RefusalKind.ANNOTATIONS_CHANGED, name,
-                    "carried annotations when the map was captured and is no longer compiled",
-                )
-            }
         }
     }
     null

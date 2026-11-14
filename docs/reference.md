@@ -132,10 +132,12 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   [Properties and tasks](#properties-and-tasks);
 - a changed class the map has never recorded, because uncovered and unrecordable look the same. A
   test class this task runs is the exception: discovery runs it whatever the map knows;
-- a changed class whose annotations, on the class or any member and with their values, differ from
-  the ones the map recorded (`annotations-changed`), or an annotated changed class the map recorded
-  no annotations for (`annotations-unrecorded`). A test class this task runs that declares a test
-  is exempt, because its own tests run anyway;
+- a changed source that compiles to a class the map never saw, when that class carries an
+  annotation, on itself or any member, other than the ones the Kotlin compiler writes on its own
+  (`annotations-unrecorded`); a map that recorded no annotations at all forces the same way. A new
+  test class this task runs that declares a test is exempt, because its own tests run anyway. A
+  changed annotation on a class the map holds does not force: it selects like any other change to
+  the class, and `annotations-changed` is no longer produced;
 - compiled bytes that changed with no source change, in a class no test executed
   (`no-coverage-for-changed-bytes`), or a map holding no digest of the compiled classes to compare
   against (`bytes-unrecorded`);
@@ -430,9 +432,11 @@ Coverage records what each test executed. Some tests depend on a class without e
 these are the rules that keep them selected:
 
 - **Annotations.** A framework's scan, condition, profile or qualifier, or an `@Aspect`'s pointcut,
-  acts on a class through its annotations. An annotation change forces a full run, except in a
-  test class this task runs that declares a test (see [above](#when-it-refuses-to-select)). A change
-  confined to method bodies narrows as usual.
+  acts on a class through its annotations, and to read them it loads the class or opens its class
+  file. The map holds both for every test, so a changed annotation runs the tests that executed,
+  loaded or read the class, as any other change to it does. A scan can also find a class by
+  listing a directory, which the map does not hold: a new class that carries an annotation runs
+  everything (see [above](#when-it-refuses-to-select)).
 - **Rewritten bytes.** A weaver, a generator or a post-processor can change a class without
   touching its source. Such a class selects every test that executed it; one no test executed
   forces a full run.
@@ -1500,9 +1504,8 @@ holds what the flag needs the first time it is set.
 ## Line-only changes
 
 A comment edit is a changed source file, so every test that covers its classes runs. In Kotlin the
-same edit costs more: above a `suspend` function it moves the line numbers in the coroutine's
-`DebugMetadata` annotation and runs every test (`annotations-changed`), and in a file declaring an
-`inline` function it changes the SMAP of every class that inlined it. With
+same edit costs more in a file declaring an `inline` function: it changes the SMAP of every class
+that inlined it, and their tests run too. With
 `narrowLineOnlyChanges = true` in the extension (or `-Pyoriwake.narrowLineOnlyChanges` for one
 invocation; on Maven `-Dyoriwake.narrowLineOnlyChanges` or `<narrowLineOnlyChanges>`), a changed
 source whose compiled classes moved in line information only leaves the change set. Off by default.
