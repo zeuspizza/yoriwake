@@ -223,6 +223,10 @@ def case_an_execution_ran_only_when_its_goal_started_and_did_not_skip():
             failures += fail("an execution with its goal line and failing tests did not count as run")
         if maven_build.execution_ran(log, "lib", execution):
             failures += fail("a skipped execution counted as run")
+        by_extension = _log(tmp, SELECTED_LOG.replace("[INFO] Tests are skipped.\n",
+                                                      "[INFO] Skipped\n"), "extension.log")
+        if maven_build.execution_ran(by_extension, "lib", execution):
+            failures += fail("an execution Develocity's extension skipped counted as run")
         early = _log(tmp, "[INFO] --- compiler:3.13.0:compile (default-compile) @ lib ---\n"
                           "[ERROR] COMPILATION ERROR :\n[INFO] BUILD FAILURE\n", "early.log")
         if maven_build.execution_ran(early, "app", execution):
@@ -250,7 +254,7 @@ def case_an_upstream_test_execution_that_ran_refuses_the_row():
     with tempfile.TemporaryDirectory() as tmp:
         seams = _seams(tmp)
         log = _log(tmp, SELECTED_LOG.replace("[INFO] Tests are skipped.\n",
-                                             "[INFO] Tests run: 2, Failures: 0\n"))
+                                             "[INFO] Tests run: 2, Failures: 0, Skipped: 0\n"))
         findings = []
         if seams.executed_or_excluded(log, "T", findings, "ground-truth"):
             failures += fail("a row whose upstream module's tests ran was scored")

@@ -247,6 +247,9 @@ GOAL_LINE = re.compile(r"^\[INFO\] --- (?:maven-)?(surefire|failsafe)(?:-plugin)
                        r"(test|integration-test) \(([^)]+)\) @ (\S+) ---")
 NEXT_STEP = re.compile(r"^\[INFO\] (?:---|-{20,}|BUILD |Reactor Summary)")
 SKIPPED = ("Tests are skipped.", "Skipping execution of surefire because it has already been run")
+# With Develocity's extension loaded a goal whose skip property is set is never handed to its
+# plugin: the extension prints this line in place of the plugin's own.
+EXTENSION_SKIPPED = "[INFO] Skipped"
 
 
 def read_log(log_path):
@@ -279,6 +282,8 @@ def test_runs(log_path):
             found.append(tuple(current))
             current = None
         elif any(marker in line for marker in SKIPPED):
+            current[3] = False
+        elif line.rstrip() == EXTENSION_SKIPPED:
             current[3] = False
     if current:
         found.append(tuple(current))
