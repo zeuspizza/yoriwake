@@ -10,8 +10,10 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -117,22 +119,41 @@ class ScopeFunctionalTest {
         check(process.waitFor() == 0) { "git ${arguments.joinToString(" ")} failed:\n$output" }
     }
 
-    /** The demo, [edit] applied, committed and captured. */
-    private fun captured(dir: File, edit: (File) -> Unit = {}): File = FunctionalMaven.copy(FunctionalMaven.demo, dir).also { project ->
+    /** The demo, [edit] applied and committed. */
+    private fun committed(dir: File, edit: (File) -> Unit = {}): File = FunctionalMaven.copy(FunctionalMaven.demo, dir).also { project ->
         edit(project)
         File(project, ".gitignore").writeText("target/\n")
         git(project, "init", "-q")
         git(project, "add", ".")
         git(project, "commit", "-q", "-m", "demo")
-        FunctionalMaven.run(maven, project, "verify").succeeded()
     }
 
+    /** The demo, [edit] applied, committed and captured. */
+    private fun captured(dir: File, edit: (File) -> Unit = {}): File =
+        committed(dir, edit).also { FunctionalMaven.run(maven, it, "verify").succeeded() }
+
+    /** The map of `lib`'s Surefire `default-test` execution. */
+    private fun libMap(project: File): File? = File(project, ".yoriwake/yoriwake").listFiles().orEmpty()
+        .singleOrNull { it.name.startsWith("dev.demo-lib-maven-surefire-plugin-default-test-") }
+
     /** The scope `lib`'s Surefire map records, one line per pattern. */
-    private fun libScope(project: File): List<String> {
-        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty()
-            .single { it.name.startsWith("dev.demo-lib-maven-surefire-plugin-default-test-") }
-        return File(map, "effective-scope").readLines()
+    private fun libScope(project: File): List<String> = File(assertNotNull(libMap(project)), "effective-scope").readLines()
+
+    /** JaCoCo's agent jar of [version], in the local repository every build shares. */
+    private fun agentJar(version: String): File =
+        File(FunctionalMaven.localRepo, "org/jacoco/org.jacoco.agent/$version/org.jacoco.agent-$version-runtime.jar")
+
+    /** `lib`'s POM, its Surefire configured with [surefire] and [dependencies] declared. */
+    private fun configureLib(project: File, surefire: String, dependencies: String = "") = File(project, "lib/pom.xml").edit {
+        it.replace(
+            "<artifactId>lib</artifactId>",
+            "<artifactId>lib</artifactId>$dependencies<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId>" +
+                "<configuration>$surefire</configuration></plugin></plugins></build>",
+        )
     }
+
+    /** [agent] as the `java` launcher of the fork reads it, from the execution's environment. */
+    private fun launcherOptions(agent: String) = "<environmentVariables><JDK_JAVA_OPTIONS>$agent</JDK_JAVA_OPTIONS></environmentVariables>"
 
     @Test
     fun `a capture records the scope its JaCoCo agent was given`(@TempDir dir: File) {
@@ -158,5 +179,59 @@ class ScopeFunctionalTest {
         }
 
         assertTrue("exclude\tdev.demo.lib.Counter" in libScope(project), libScope(project).toString())
+    }
+
+    @Test
+    fun `a JaCoCo agent handed over only in JDK_JAVA_OPTIONS captures and records its scope`(@TempDir dir: File) {
+        // The argLine drops the agent prepare-agent built, so the launcher's variable is the only way in.
+        val agent = "-javaagent:${agentJar("0.8.12").invariantSeparatorsPath}=destfile=target/launcher.exec,includes=dev.demo.*"
+        val project = committed(dir) { configureLib(it, "<argLine>-Xmx256m</argLine>" + launcherOptions(agent)) }
+
+        val captured = FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded().output
+
+        assertFalse("lib surefire:test (default-test) declined" in captured, captured)
+        assertContains(captured, "[yoriwake] lib surefire:test (default-test) map updated: ")
+        assertEquals(listOf("yoriwake-effective-scope 1", "include\tdev.demo.*"), libScope(project))
+
+        // A class the map has never seen is judged against the scope that agent was given.
+        File(project, "lib/src/main/java/dev/demo/lib/Extra.java").writeText("package dev.demo.lib;\npublic class Extra {}\n")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "a new class")
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+        assertFalse("the map does not record the scope" in output, output)
+    }
+
+    @Test
+    fun `a JaCoCo agent JDK_JAVA_OPTIONS names by a property captures and records its scope`(@TempDir dir: File) {
+        // prepare-agent's property, read by the launcher's variable instead of the argLine.
+        val project = committed(dir) { configureLib(it, "<argLine>-Xmx256m</argLine>" + launcherOptions("\${argLine}")) }
+
+        val captured = FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded().output
+
+        assertFalse("lib surefire:test (default-test) declined" in captured, captured)
+        assertContains(captured, "[yoriwake] lib surefire:test (default-test) map updated: ")
+        assertEquals(listOf("yoriwake-effective-scope 1") + REACTOR.map { "include\t$it" }, libScope(project))
+    }
+
+    @Test
+    fun `a second JaCoCo agent of another version in JDK_JAVA_OPTIONS fails the test JVM and dates no map`(@TempDir dir: File) {
+        val second = agentJar("0.8.13")
+        val project = committed(dir) {
+            configureLib(
+                it,
+                launcherOptions("-javaagent:${second.invariantSeparatorsPath}=destfile=target/second.exec,includes=dev.demo.app.*"),
+                // A dependency of the module, so that this build brings the jar into the local repository.
+                "<dependencies><dependency><groupId>org.jacoco</groupId><artifactId>org.jacoco.agent</artifactId>" +
+                    "<version>0.8.13</version><classifier>runtime</classifier><scope>test</scope></dependency></dependencies>",
+            )
+        }
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib")
+
+        assertNotEquals(0, result.exitCode, result.output)
+        assertTrue(second.isFile, "the second agent's jar is not in the local repository")
+        assertFalse("map updated" in result.output, result.output)
+        assertFalse(libMap(project)?.let { File(it, "capture-commit").exists() } == true, "the map was dated")
     }
 }

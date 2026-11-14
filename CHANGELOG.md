@@ -33,6 +33,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - A complement run compares a jar only a dependency's manifest `Class-Path` names too. Map: left alone.
 - Maven: a parallel switch in Surefire's `systemProperties` or `systemPropertiesFile` declines in-JVM parallelism. Map: left alone.
+- Maven: a JaCoCo agent in `JDK_JAVA_OPTIONS` captures, as in `JAVA_TOOL_OPTIONS`; either may name it by a property. Map: left alone.
 
 ## [0.5.0] - 2026-11-07
 

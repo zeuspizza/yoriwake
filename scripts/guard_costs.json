@@ -5,7 +5,8 @@
  ],
  "estimated": [
   "functional/InJvmParallelismCharacterizationTest",
-  "functional/KoverFunctionalTest"
+  "functional/KoverFunctionalTest",
+  "maven/ScopeFunctionalTest"
  ],
  "suites": {
   "fast/ci": {"baseline": 15, "guard": 8},
@@ -116,6 +117,7 @@
   "maven/MapProvenanceFunctionalTest": {"baseline": 56, "guard": 56},
   "maven/OptimisticModeFunctionalTest": {"baseline": 48, "guard": 46},
   "maven/ReleasedDependenciesFunctionalTest": {"baseline": 27, "guard": 25},
+  "maven/ScopeFunctionalTest": {"baseline": 33, "guard": 32},
   "maven/SelectionFunctionalTest": {"baseline": 53, "guard": 56},
   "maven/SequentialRecordingFunctionalTest": {"baseline": 15, "guard": 11}
  }

@@ -297,7 +297,11 @@ internal class Recording(
             properties.stringPropertyNames().sorted().forEach { append(escape(it)).append('=').append(escape(properties.getProperty(it))).append('\n') }
             append(AgentContract.RUN_FILE_END).append('\n')
         })
-        val scope = EffectiveScope.fromAgentArguments(hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()))
+        // Every place an agent reaches the fork from, so that two of them read as no scope at all.
+        val scope = EffectiveScope.fromAgentArguments(
+            hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()) +
+                arguments(resolved(project, launcherOptionsOf(configuration)).orEmpty())
+        )
         running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize(), wholeTaskOf(project, execution, configuration, undated))
     }
 
@@ -646,12 +650,14 @@ internal class Recording(
     }
 
     /**
-     * Whether JaCoCo's agent reaches the fork: in the argLine it will get, its expressions resolved,
-     * or in the `JAVA_TOOL_OPTIONS` every JVM reads. JaCoCo quotes an agent path holding a space.
+     * Whether JaCoCo's agent reaches the fork: in the argLine it will get, in the `JAVA_TOOL_OPTIONS`
+     * every JVM reads, or in the `JDK_JAVA_OPTIONS` its `java` launcher reads, the expressions of
+     * each resolved. JaCoCo quotes an agent path holding a space.
      */
     private fun reachesJacoco(project: MavenProject, configuration: Xpp3Dom): Boolean {
         val agent = Regex("""-javaagent:("[^"]*|\S*)(jacocoagent|org\.jacoco\.agent)""")
-        return listOfNotNull(resolvedArgLine(project, configuration), toolOptionsOf(configuration)).any(agent::containsMatchIn)
+        val environment = listOf(toolOptionsOf(configuration), launcherOptionsOf(configuration)).mapNotNull { resolved(project, it) }
+        return (environment + resolvedArgLine(project, configuration)).any(agent::containsMatchIn)
     }
 
     /** The argLine the fork will get, its `${x}` and `@{x}` resolved as Maven and Surefire resolve them. */
