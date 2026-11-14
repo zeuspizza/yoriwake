@@ -4,6 +4,7 @@ import io.github.zeuspizza.yoriwake.gradle.breaking.Aim
 import io.github.zeuspizza.yoriwake.gradle.breaking.Outcome
 import io.github.zeuspizza.yoriwake.gradle.breaking.assertOutcome
 import io.github.zeuspizza.yoriwake.maven.FunctionalMaven
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -209,6 +210,63 @@ class MavenAndSurefireAttempts : MavenBreakAttempt() {
             val pom = withDependency(
                 minimalPom,
                 "<dependency><groupId>dev.sample.breakdeps</groupId><artifactId>lib</artifactId><version>1.0</version><scope>test</scope></dependency>",
+            )
+            val valueTest = source(
+                "src/test/java/dev/sample/ValueTest.java",
+                """
+                package dev.sample;
+                import java.io.InputStream;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class ValueTest {
+                    @Test void reads() throws Exception {
+                        try (InputStream in = ValueTest.class.getClassLoader().getResourceAsStream("value.txt")) {
+                            assertEquals("a", new String(in.readAllBytes()));
+                        }
+                    }
+                }
+                """,
+            )
+
+            val result = attempt(dir, "dev.sample.ValueTest", Aim.Forced("dependencies-changed"), twoClasses + valueTest, pom) { project ->
+                rewriteAlpha(project)
+                data("b")
+            }
+
+            assertOutcome(Outcome.HELD_BY_FORCE, result)
+        } finally {
+            home.deleteRecursively()
+        }
+    }
+
+    // Track: code reading. Boundary: a `Class-Path` token of a classpath jar that is a link is
+    // resolved from the link's directory and from its target's. Here a repository jar is a link
+    // into another directory; Surefire hands it to the test JVM through its manifest-only jar, so
+    // the JVM opens the named jar beside the link, never the one beside the target.
+    @Test
+    fun `a jar a symlinked repository jar's manifest names beside the link, replaced in place, runs every test`(
+        @TempDir dir: File,
+        @TempDir elsewhere: File,
+    ) {
+        val home = File(FunctionalMaven.localRepo, "dev/sample/breaklink")
+        val version = File(home, "lib/1.0")
+        fun data(value: String) = jar(File(version, "lib-data.jar"), null, mapOf("value.txt" to value))
+        try {
+            val target = File(elsewhere, "lib-1.0.jar")
+            jar(target, "lib-data.jar", mapOf("dev/sample/breaklink/README" to "data beside\n"))
+            jar(File(elsewhere, "lib-data.jar"), null, mapOf("value.txt" to "beside the target"))
+            version.mkdirs()
+            assumeTrue(
+                runCatching { java.nio.file.Files.createSymbolicLink(File(version, "lib-1.0.jar").toPath(), target.toPath()) }.isSuccess,
+                "this file system or user cannot create a symbolic link",
+            )
+            File(version, "lib-1.0.pom").writeText(
+                "<project><modelVersion>4.0.0</modelVersion><groupId>dev.sample.breaklink</groupId><artifactId>lib</artifactId><version>1.0</version></project>\n",
+            )
+            data("a")
+            val pom = withDependency(
+                minimalPom,
+                "<dependency><groupId>dev.sample.breaklink</groupId><artifactId>lib</artifactId><version>1.0</version><scope>test</scope></dependency>",
             )
             val valueTest = source(
                 "src/test/java/dev/sample/ValueTest.java",

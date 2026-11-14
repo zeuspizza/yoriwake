@@ -1066,6 +1066,129 @@ class ClasspathFilesTest {
         )
     }
 
+    private fun link(link: File, target: File): File {
+        link.parentFile.mkdirs()
+        assumeTrue(
+            runCatching { java.nio.file.Files.createSymbolicLink(link.toPath(), target.toPath()) }.isSuccess,
+            "this file system or user cannot create a symbolic link",
+        )
+        return link
+    }
+
+    @Test
+    fun `a file a linked dependency's manifest names is followed from the link's target too`(@TempDir base: File) {
+        val machine = Machine(base)
+        val target = jar(File(base, "real/vendor.jar"), 0L, manifest("lib/a.jar"))
+        val named = jar(File(base, "real/lib/a.jar"), 0L, "a.txt" to "a")
+        val vendor = link(File(base, "elsewhere/vendor.jar"), target)
+        val before = dependencies(machine.table(vendor))
+
+        assertEquals(
+            setOf(
+                "dependency:<outside>/vendor.jar",
+                "dependency:<outside>/vendor.jar Class-Path lib/a.jar",
+                "dependency:<outside>/vendor.jar Class-Path lib/a.jar (real path)",
+                ClasspathFiles.DEPENDENCY_ORDER,
+            ),
+            before.keys,
+        )
+        jar(named, 0L, "a.txt" to "b")
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path lib/a.jar (real path)" to "changed"),
+            ClasspathFiles.compare(before, dependencies(machine.table(vendor))).files,
+        )
+        // The file beside the link is the one a JVM handed the link through a manifest opens.
+        jar(File(base, "elsewhere/lib/a.jar"), 0L, "a.txt" to "a")
+        assertEquals(
+            setOf("dependency:<outside>/vendor.jar Class-Path lib/a.jar", "dependency:<outside>/vendor.jar Class-Path lib/a.jar (real path)"),
+            ClasspathFiles.compare(before, dependencies(machine.table(vendor))).files.keys,
+        )
+    }
+
+    @Test
+    fun `a link beside its target, or a jar under a linked directory, names each file once`(@TempDir base: File) {
+        val machine = Machine(base)
+        val target = jar(File(base, "vendor/vendor.jar"), 0L, manifest("lib/a.jar"))
+        jar(File(base, "vendor/lib/a.jar"), 0L, "a.txt" to "a")
+        val beside = link(File(base, "vendor/alias.jar"), target)
+        val under = File(link(File(base, "linked"), File(base, "vendor")), "vendor.jar")
+
+        assertEquals(
+            setOf("dependency:<outside>/alias.jar", "dependency:<outside>/alias.jar Class-Path lib/a.jar", ClasspathFiles.DEPENDENCY_ORDER),
+            dependencies(machine.table(beside)).keys,
+        )
+        assertEquals(
+            setOf("dependency:<outside>/vendor.jar", "dependency:<outside>/vendor.jar Class-Path lib/a.jar", ClasspathFiles.DEPENDENCY_ORDER),
+            dependencies(machine.table(under)).keys,
+        )
+    }
+
+    @Test
+    fun `a jar under a linked directory whose manifest names a file above it is followed from the target too`(@TempDir base: File) {
+        val machine = Machine(base)
+        jar(File(base, "store/vendor/vendor.jar"), 0L, manifest("../common/a.jar"))
+        val named = jar(File(base, "store/common/a.jar"), 0L, "a.txt" to "a")
+        val vendor = File(link(File(base, "libs/vendor"), File(base, "store/vendor")), "vendor.jar")
+        val before = dependencies(machine.table(vendor))
+
+        assertEquals(
+            setOf(
+                "dependency:<outside>/vendor.jar",
+                "dependency:<outside>/vendor.jar Class-Path ../common/a.jar",
+                "dependency:<outside>/vendor.jar Class-Path ../common/a.jar (real path)",
+                ClasspathFiles.DEPENDENCY_ORDER,
+            ),
+            before.keys,
+        )
+        jar(named, 0L, "a.txt" to "b")
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path ../common/a.jar (real path)" to "changed"),
+            ClasspathFiles.compare(before, dependencies(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a jar a manifest names is followed from where it was named, link or not`(@TempDir base: File) {
+        val machine = Machine(base)
+        val target = jar(File(base, "real/vendor.jar"), 0L, manifest("lib/a.jar"))
+        link(File(base, "real/lib/a.jar"), jar(File(base, "third/a.jar"), 0L, manifest("b.jar")))
+        val further = jar(File(base, "real/lib/b.jar"), 0L, "b.txt" to "a")
+        jar(File(base, "third/b.jar"), 0L, "b.txt" to "a")
+        val vendor = link(File(base, "elsewhere/vendor.jar"), target)
+        val before = dependencies(machine.table(vendor))
+
+        assertEquals(
+            setOf(
+                "dependency:<outside>/vendor.jar",
+                "dependency:<outside>/vendor.jar Class-Path lib/a.jar",
+                "dependency:<outside>/vendor.jar Class-Path lib/a.jar (real path)",
+                "dependency:<outside>/vendor.jar Class-Path lib/a.jar (real path) Class-Path b.jar",
+                ClasspathFiles.DEPENDENCY_ORDER,
+            ),
+            before.keys,
+        )
+        jar(further, 0L, "b.txt" to "b")
+        assertEquals(
+            mapOf("dependency:<outside>/vendor.jar Class-Path lib/a.jar (real path) Class-Path b.jar" to "changed"),
+            ClasspathFiles.compare(before, dependencies(machine.table(vendor))).files,
+        )
+    }
+
+    @Test
+    fun `a file a linked build jar's manifest names is walked from the link's target too`(@TempDir root: File) {
+        val target = jar(File(root, "store/path.jar"), 0L, manifest("lib/a.jar"))
+        val named = jar(File(root, "store/lib/a.jar"), 0L, "a.txt" to "a")
+        val path = link(File(root, "build/libs/path.jar"), target)
+        val before = files(ClasspathFiles.walk(listOf(path), listOf(), root))
+
+        assertEquals(setOf("build/libs/path.jar!/META-INF/MANIFEST.MF", "store/lib/a.jar!/a.txt"), before.keys)
+        jar(named, 0L, "a.txt" to "b")
+        assertEquals(
+            mapOf("store/lib/a.jar!/a.txt" to "changed"),
+            ClasspathFiles.compare(before, files(ClasspathFiles.walk(listOf(path), listOf(), root))).files,
+        )
+    }
+
     @Test
     fun `the files of a directory a dependency's manifest names count against the file budget`(@TempDir base: File) {
         val machine = Machine(base)

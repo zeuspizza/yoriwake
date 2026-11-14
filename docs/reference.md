@@ -282,8 +282,10 @@ path across that change, as Gradle's own up-to-date check does; what a transform
 under Gradle's default absolute-path normalization, writes under another path there and runs
 everything once. A file a dependency read by its content names
 in its manifest `Class-Path`, such as a `lib/a.jar` beside a vendor jar, counts the same way, by its
-content, whether it is there or not. Each name is read as the JDK's class loader reads it, so a
-`lib/a[1].jar` counts too. A name the class loader takes for a file that cannot be told (a
+content, whether it is there or not. Where such a dependency is reached through a symbolic link,
+each name counts both from its path as given and from its real path, since which one the test JVM
+opens depends on how it was started. Each name is read as the JDK's class loader
+reads it, so a `lib/a[1].jar` counts too. A name the class loader takes for a file that cannot be told (a
 malformed `%` escape, a file on another host) and a named directory holding a file that cannot be
 read run everything on every run, and the files of a named directory count against the same
 200,000 files as the build's own (`classpath-files-unrecorded` past them).

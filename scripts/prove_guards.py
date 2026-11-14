@@ -3066,7 +3066,22 @@ MUTATIONS = [
      "            gradleUserHome = gradleUserHome, spent = named.files,",
      "            gradleUserHome = gradleUserHome, spent = 0,",
      unit_suite, "the files of a directory a dependency's manifest names count against the file budget"),
-    # Any directory may be put on the classpath from outside the build, the file system's root included.
+    # A JVM handed a jar on its class path opens it by its real path, and resolves the jar's
+    # `Class-Path` from there: beside a link's target, not beside the link.
+    ("a symlinked jar's Class-Path is resolved from the link's directory only", CLASSPATH_FILES,
+     "?.takeIf { it != file }",
+     "?.takeIf { false }",
+     functional_suite, "a file a symlinked dependency's manifest names beside its target runs every test when it is replaced"),
+    # A jar a token names is opened by the path the token gave, never by its real path.
+    ("a jar a manifest names has its own Class-Path resolved from its real path too", CLASSPATH_FILES,
+     "classPathOf(jar, manifest, jar.absoluteFile.normalize() in onClasspath)",
+     "classPathOf(jar, manifest, true)",
+     unit_suite, "a jar a manifest names is followed from where it was named, link or not"),
+    # Under a link in a directory above, as macOS's /var, both resolutions name one file.
+    ("a file found from a jar's real path is not spelled as the jar's path as given", CLASSPATH_FILES,
+     "real[token]?.let { respelled(it, above) }",
+     "real[token]",
+     unit_suite, "a link beside its target, or a jar under a linked directory, names each file once"),
     ("a classpath directory from outside the build is read without a file budget", CLASSPATH_FILES,
      "        for (file in directory.walkTopDown().filter { it.isFile }) {\n            if (overBudget()) return null",
      "        for (file in directory.walkTopDown().filter { it.isFile }) {\n            overBudget()",
