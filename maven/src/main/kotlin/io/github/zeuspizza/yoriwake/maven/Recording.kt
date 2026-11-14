@@ -157,7 +157,7 @@ internal class Recording(
         // Nothing runs, so nothing of the last run's is cleared and the map is not touched.
         if (skipsTests(project, execution, configuration)) return
         val classpath = runCatching { project.testClasspathElements.map(::File) }.getOrDefault(emptyList())
-        val inJvm = parallelism(project, configuration, classpath)
+        val inJvm = parallelism(project, execution, configuration, classpath)
         val agentMissing = !reachesJacoco(project, configuration)
         // For the audit, before the declines below, so a declined execution still says what it runs
         // on and why it was declined. A module from a repository is this invocation's, not the build's.
@@ -545,27 +545,30 @@ internal class Recording(
 
     /**
      * Where the JUnit Platform was told to run tests in parallel inside one JVM, or null: Surefire's
-     * `configurationParameters`, its `properties` and `systemPropertyVariables`, the `argLine`, and a
-     * `junit-platform.properties` on the test classpath.
+     * `configurationParameters` and its other `properties`, the system properties it hands the fork
+     * (its `systemProperties`, the file `systemPropertiesFile` names, `systemPropertyVariables`, then
+     * the command line's), the `argLine`, and a `junit-platform.properties` on the test classpath.
      */
-    private fun parallelism(project: MavenProject, configuration: Xpp3Dom, classpath: List<File>): String? {
-        // Surefire hands the fork the command line's -D user properties as system properties.
-        val parameters = session.userProperties.entries.associateTo(mutableMapOf<String, String?>()) { (k, v) -> k.toString() to v?.toString() }
+    private fun parallelism(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom, classpath: List<File>): String? {
+        val parameters = mutableMapOf<String, String?>()
         fun read(text: String?) = text?.let { runCatching { Properties().apply { load(java.io.StringReader(it)) } }.getOrNull() }
             ?.forEach { (k, v) -> parameters[k.toString()] = v.toString() }
-        read(configuration.getChild("configurationParameters")?.value)
+        val launcher = mutableListOf(configuration.getChild("configurationParameters")?.value)
         configuration.getChild("properties")?.children?.forEach { child ->
-            when {
-                child.name == "configurationParameters" -> read(child.value)
-                // The `<property><name/><value/></property>` form.
-                child.name == "property" && child.getChild("name") != null -> parameters[child.getChild("name").value] = child.getChild("value")?.value
-                else -> parameters[child.name] = child.value
-            }
+            // The `<property><name/><value/></property>` form, when the POM used it.
+            val named = child.takeIf { it.name == "property" }?.getChild("name")
+            val name = if (named != null) named.value?.trim() else child.name
+            val value = if (named != null) child.getChild("value")?.value else child.value
+            if (name == "configurationParameters") launcher += value else if (name != null) parameters[name] = value
         }
-        configuration.getChild("systemPropertyVariables")?.children?.forEach { parameters[it.name] = it.value }
-        resolved(project, configuration.getChild("systemPropertiesFile")?.value)?.let { path ->
-            runCatching { read(File(path).readText()) }
+        // The fork's system properties in the order Surefire applies them, a later one winning: its
+        // configuration, then the command line's -D user properties when it promotes them.
+        forkSystemProperties(project, execution, configuration).forEach { parameters[it.name] = valueOf(project, it) }
+        if (promotesUserProperties(project, execution, configuration)) {
+            session.userProperties.forEach { (k, v) -> parameters[k.toString()] = v?.toString() }
         }
+        // The launcher's configuration parameters outrank the JVM's system properties.
+        launcher.forEach(::read)
         return ParallelismDetector.detect(parameters, arguments(resolvedArgLine(project, configuration)), classpath)
     }
 
