@@ -85,6 +85,71 @@ class ForkingFunctionalTest {
     }
 
     @Test
+    fun `parallel execution enabled in Surefire's systemProperties is declined as well`(@TempDir dir: File) {
+        val project = committed(
+            dir,
+            "<systemProperties><junit.jupiter.execution.parallel.enabled>true</junit.jupiter.execution.parallel.enabled></systemProperties>",
+        )
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+    }
+
+    @Test
+    fun `parallel execution enabled in the systemPropertiesFile is declined as well`(@TempDir dir: File) {
+        // A relative path is the module's, also when Maven runs from the root.
+        val project = committed(dir, "<systemPropertiesFile>fork.properties</systemPropertiesFile>")
+        File(project, "lib/fork.properties").writeText("junit.jupiter.execution.parallel.enabled=true\n")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "parallel")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+    }
+
+    @Test
+    fun `parallel execution enabled on the command line outranks the POM's systemPropertyVariables`(@TempDir dir: File) {
+        // Surefire applies the command line's user properties over its own configuration.
+        val project = committed(
+            dir,
+            "<systemPropertyVariables><junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled></systemPropertyVariables>",
+        )
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Djunit.jupiter.execution.parallel.enabled=true").succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+    }
+
+    @Test
+    fun `parallel execution enabled in configurationParameters outranks system properties`(@TempDir dir: File) {
+        // The launcher's configuration parameters outrank the JVM's system properties.
+        val project = committed(
+            dir,
+            "<properties><property><name>configurationParameters</name>" +
+                "<value>junit.jupiter.execution.parallel.enabled=true</value></property></properties>" +
+                "<systemPropertyVariables><junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled></systemPropertyVariables>",
+        )
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib").succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+    }
+
+    @Test
+    fun `parallel execution enabled through a property expression in systemPropertyVariables is declined as well`(@TempDir dir: File) {
+        val project = committed(
+            dir,
+            "<systemPropertyVariables><junit.jupiter.execution.parallel.enabled>\${par}</junit.jupiter.execution.parallel.enabled></systemPropertyVariables>",
+        )
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dpar=true").succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+    }
+
+    @Test
     fun `parallel execution enabled in junit-platform properties is declined as well`(@TempDir dir: File) {
         val project = committed(dir)
         File(project, "lib/src/test/resources").mkdirs()
