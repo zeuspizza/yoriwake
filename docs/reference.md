@@ -1870,6 +1870,11 @@ the Gradle plugin.
   every other route, and each test JVM confirms it before recording. Any other run keeps the
   suite's scheduling, selects as usual and records nothing; the build's JaCoCo agent stays on, so
   it still pays the toll.
+- **JaCoCo's agent** may reach the test JVM through `JAVA_TOOL_OPTIONS` or `JDK_JAVA_OPTIONS`
+  instead of the `argLine`, set in the execution's `<environmentVariables>` or in Maven's own
+  environment: the execution captures, and its map records the scope that agent was given. A
+  second JaCoCo agent beside the first fails the test JVM at start (`duplicate class definition
+  for java.lang.$JaCoCo`), with or without yoriwake.
 - **Maps** live under `.yoriwake/yoriwake/` at the reactor root, one per execution, and survive
   `mvn clean`; yoriwake writes a `.gitignore` into `.yoriwake/`. Surefire and Failsafe executions
   of a module keep separate maps.
@@ -1902,9 +1907,10 @@ the Gradle plugin.
   - Surefire or Failsafe below 3.0.0 (`surefire-version`), a POM that gives it the junit3, junit4,
     junit47 or testng provider (`surefire-legacy-provider`), or `forkCount=0`
     (`surefire-in-process`);
-  - no JaCoCo agent execution for its goal, or an `argLine` that drops the agent
-    (`no-jacoco-plugin`), a skipped one (`jacoco-disabled`), or no packages found in the reactor's
-    sources (`no-packages-derived`);
+  - no JaCoCo agent execution for its goal, or an `argLine` that drops the agent while neither
+    `JAVA_TOOL_OPTIONS` nor `JDK_JAVA_OPTIONS` hands it to the test JVM (`no-jacoco-plugin`), a
+    skipped one (`jacoco-disabled`), or no packages found in the reactor's sources
+    (`no-packages-derived`);
   - tests that may run concurrently in one JVM (`in-jvm-parallelism`), unless `recordSequentially`
     covers them: JUnit Jupiter and Vintage on the JUnit Platform only;
   - an execution Develocity distributes or selects for (`develocity-test-distribution`,

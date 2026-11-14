@@ -4889,6 +4889,22 @@ MUTATIONS = [
      "        if (agentMissing) {",
      "        if (false) {",
      maven_suite, "an argLine that drops JaCoCo's agent captures nothing"),
+    # The fork's java launcher prepends JDK_JAVA_OPTIONS to its arguments: an agent only there
+    # instruments the run, and the map must record the scope it was given.
+    ("Maven reads no JaCoCo agent from JDK_JAVA_OPTIONS", MAVEN_RECORDING,
+     "        val environment = listOf(toolOptionsOf(configuration), launcherOptionsOf(configuration)).mapNotNull { resolved(project, it) }",
+     "        val environment = listOf(toolOptionsOf(configuration)).mapNotNull { resolved(project, it) }",
+     maven_suite, "a JaCoCo agent handed over only in JDK_JAVA_OPTIONS captures and records its scope"),
+    # prepare-agent hands its agent over as a property, which the variable names: read as written, it holds no agent.
+    ("Maven reads the fork's environment options unresolved", MAVEN_RECORDING,
+     "        val environment = listOf(toolOptionsOf(configuration), launcherOptionsOf(configuration)).mapNotNull { resolved(project, it) }",
+     "        val environment = listOfNotNull(toolOptionsOf(configuration), launcherOptionsOf(configuration))",
+     maven_suite, "a JaCoCo agent JDK_JAVA_OPTIONS names by a property captures and records its scope"),
+    ("a Maven map records no scope from JDK_JAVA_OPTIONS", MAVEN_RECORDING,
+     "            hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()) +\n"
+     "                arguments(resolved(project, launcherOptionsOf(configuration)).orEmpty())",
+     "            hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty())",
+     maven_suite, "a JaCoCo agent handed over only in JDK_JAVA_OPTIONS captures and records its scope"),
     # JUnit 4 reports a failing @BeforeClass, @AfterClass or @ClassRule against the class: each
     # test beneath it is recorded failed, so a capture that dates the map leaves none known to pass.
     ("a JUnit 4 class-level failure is dropped", JUNIT4_EVENTS,
