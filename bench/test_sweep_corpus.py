@@ -836,6 +836,44 @@ def case_the_plan_names_the_checkout_each_record_job_hands_to_its_slices():
     return 0 if plan == want else fail(f"the plan names the checkouts {plan}, not {want}")
 
 
+def case_a_sweep_can_be_restricted_to_the_maven_projects():
+    """What a change to the Maven plugin alone asks for: the full arm of the projects Maven builds,
+    read from each project's own file."""
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    failures = 0
+    with tempfile.TemporaryDirectory() as directory:
+        table = os.path.join(directory, "qualification.txt")
+        with open(table, "w", encoding="utf-8") as handle:
+            handle.write("QUALIFIED  demo\nQUALIFIED  demo-maven\nQUALIFIED  dubbo\n")
+        for extra, want in (([], ["demo-maven", "dubbo"]),
+                            (["--only", "dubbo", "demo"], ["dubbo"])):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                sweep_corpus.main(["--qualification", table, "--build", "maven",
+                                   "--print-commands"] + extra)
+            try:
+                planned = [entry["project"] for entry in json.loads(out.getvalue())]
+            except ValueError:
+                return fail(f"--print-commands printed more than JSON: {out.getvalue()[:200]!r}")
+            if planned != want:
+                failures += fail(f"--build maven {' '.join(extra)} planned {planned}, not {want}")
+        try:
+            sweep_corpus.main(["--qualification", table, "--build", "maven", "--only", "demo",
+                               "--print-commands"])
+            failures += fail("--build maven --only demo planned a sweep of no Maven project")
+        except SystemExit as refusal:
+            if "--build" not in str(refusal):
+                failures += fail(f"a --build that matched nothing does not say so: {refusal}")
+    try:
+        sweep_corpus.main(["--arm", "reduced", "--build", "maven", "--print-commands"])
+        failures += fail("--build maven redefined the reduced arm")
+    except SystemExit as refusal:
+        if "--arm reduced" not in str(refusal) or "--build" not in str(refusal):
+            failures += fail(f"--build on the reduced arm refused for another reason: {refusal}")
+    return failures
+
+
 def case_the_headline_states_misses_against_the_rows_that_could_miss_and_the_undetermined():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import readme_charts  # noqa: PLC0415

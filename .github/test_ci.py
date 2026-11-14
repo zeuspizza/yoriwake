@@ -3401,10 +3401,12 @@ def case_the_replay_reads_a_sweep_s_evidence_from_its_tarball_or_its_parts():
     return problems
 
 
-def _sweep_completion_plan(tier, only, completes, changed=(), reachable=True, workflow="sweep"):
+def _sweep_completion_plan(tier, only, completes, changed=(), reachable=True, workflow="sweep",
+                           outputs=None):
     """sweep.yml's plan step for a completion: its exit code, its output, and what it asked
     `sweep_corpus.py` for (None if nothing). `gh` names the earlier run's head commit, `git` the
-    paths changed since it, and `bench/tier.py` is the real one."""
+    paths changed since it, and `bench/tier.py` is the real one. With a list for `outputs`, what
+    the step handed the later jobs is appended to it."""
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         script = _sweep_step(handle.read(), "\n      - id: plan")
     with tempfile.TemporaryDirectory() as root:
@@ -3429,6 +3431,9 @@ def _sweep_completion_plan(tier, only, completes, changed=(), reachable=True, wo
                               env=env, capture_output=True, text=True)
         asked = open(calls, encoding="utf-8").read().split() if os.path.exists(calls) else None
         asked_gh = os.path.exists(os.path.join(root, "gh-calls"))
+        if outputs is not None and os.path.exists(env["GITHUB_OUTPUT"]):
+            with open(env["GITHUB_OUTPUT"], encoding="utf-8") as handle:
+                outputs.append(handle.read())
     return done.returncode, done.stdout + done.stderr, asked, asked_gh
 
 
@@ -3464,6 +3469,36 @@ def case_a_completion_that_cannot_complete_is_refused_before_it_measures():
     if code or asked is None or asked[asked.index("--only") + 1:-1] != ["demo", "kafka"]:
         problems += fail(f"a completion on the earlier run's selector: exit {code}, planned {asked}, "
                          f"said {output!r}")
+    return problems
+
+
+def case_a_change_to_the_maven_plugin_alone_sweeps_the_maven_projects():
+    """An auto tier of `maven` is the full arm of the Maven projects, whatever `only` holds. A
+    selector tier keeps its plan and warns that the Maven projects' figures aged with it."""
+    problems = 0
+    mojo = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/AuditMojo.kt"
+    detection = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
+    for only in ("demo", "all", ""):
+        wrote = []
+        code, output, asked, _ = _sweep_completion_plan("auto", only, "", (mojo, "README.md"),
+                                                        outputs=wrote)
+        if (code or asked is None or "--only" in asked or "--arm full --build maven" not in " ".join(asked)
+                or not wrote or "tier=full\n" not in wrote[0] or mojo not in output
+                or "::warning::" in output):
+            problems += fail(f"the Maven plugin alone, only={only!r}: exit {code}, planned {asked}, "
+                             f"handed on {wrote}, said {output!r}")
+    for changed, warned in (((mojo, detection), True), ((detection,), False)):
+        wrote = []
+        code, output, asked, _ = _sweep_completion_plan("auto", "demo", "", changed, outputs=wrote)
+        warning = [line for line in output.splitlines() if line.startswith("::warning::")]
+        if (code or asked is None or "--build" in asked or "--arm reduced" not in " ".join(asked)
+                or wrote != ["tier=reduced\nprojects=[]\n"] or bool(warning) is not warned
+                or (warned and mojo not in warning[0])):
+            problems += fail(f"a selector change over {changed}: exit {code}, planned {asked}, "
+                             f"handed on {wrote}, said {output!r}")
+    code, output, asked, _ = _sweep_completion_plan("auto", "demo", "", ("README.md",))
+    if code or asked is not None or "tier: none" not in output:
+        problems += fail(f"a change outside both: exit {code}, planned {asked}, said {output!r}")
     return problems
 
 
@@ -4135,6 +4170,7 @@ CASES = (
     case_a_record_job_prices_its_slices_from_the_last_published_sweep_when_it_has_rows,
     case_the_last_published_sweep_s_rows_reach_the_record_jobs_and_no_sweep_is_no_rows,
     case_a_completion_that_cannot_complete_is_refused_before_it_measures,
+    case_a_change_to_the_maven_plugin_alone_sweeps_the_maven_projects,
     case_a_completion_publishes_both_runs_from_the_earlier_runs_newest_draft,
     case_a_completion_of_a_run_with_no_draft_is_refused_and_publishes_nothing,
     case_each_release_asset_of_a_sweep_stays_under_github_s_limit,

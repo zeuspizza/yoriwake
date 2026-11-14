@@ -15,7 +15,8 @@ name: sweep
 # an offline replay of the last published sweep's rows, the reduced arm, or every project. A full
 # sweep covers the projects `only` names: `demo` unless told otherwise, `all` for every project. A
 # dispatch that leaves `only` empty gets its default, `demo`; an empty `only`, which no trigger
-# passes today, sweeps every project.
+# passes today, sweeps every project. A change to the Maven plugin alone asks for a full sweep of
+# the Maven projects, whatever `only` names.
 #
 # A full sweep that lacked some projects is completed by a dispatch that re-runs them, with
 # `completes` naming its run: the draft release then holds both runs' projects as one sweep. It is
@@ -123,19 +124,33 @@ jobs:
               echo "the mutation grammar moved since run $COMPLETES ($sha): $redrawn"; exit 1
             fi
           fi
+          build=()
           if [ "$TIER" = auto ]; then
             base=${BASE:-$(git describe --tags --abbrev=0 --match 'v*')}
             major=()
             [ "$MAJOR" = true ] && major=(--major-release)
-            TIER=$(python3 bench/tier.py "$base" HEAD "${major[@]}" | jq -r .tier)
+            decided=$(python3 bench/tier.py "$base" HEAD "${major[@]}")
+            TIER=$(jq -r .tier <<<"$decided")
+            maven=$(jq -r '.maven_paths | join(" ")' <<<"$decided")
+            if [ "$TIER" = maven ]; then
+              # The full arm, and a full sweep to every later job: only the projects differ.
+              TIER=full
+              build=(--build maven)
+              echo "only the Maven plugin's sources moved: a full sweep of the Maven projects ($maven)"
+            elif [ -n "$maven" ]; then
+              echo "::warning::the Maven plugin's sources moved too ($maven):" \
+                "the Maven projects' figures are stale until a full sweep includes them"
+            fi
           fi
           echo "tier=$TIER" >> "$GITHUB_OUTPUT"
           projects='[]'
           if [ "$TIER" = reduced ] || [ "$TIER" = full ]; then
             only=()
-            # The reduced arm names its own projects and refuses --only.
-            [ -n "$ONLY" ] && [ "$ONLY" != all ] && [ "$TIER" = full ] && only=(--only $ONLY)
-            projects=$(python3 bench/sweep_corpus.py --arm "$TIER" "${only[@]}" --print-commands)
+            # The reduced arm names its own projects and refuses --only; a sweep of the Maven
+            # projects is of all of them, whatever `only` defaults to.
+            [ -n "$ONLY" ] && [ "$ONLY" != all ] && [ "$TIER" = full ] && [ ${#build[@]} -eq 0 ] \
+              && only=(--only $ONLY)
+            projects=$(python3 bench/sweep_corpus.py --arm "$TIER" "${only[@]}" "${build[@]}" --print-commands)
           fi
           echo "projects=$projects" >> "$GITHUB_OUTPUT"
           echo "tier: $TIER"
