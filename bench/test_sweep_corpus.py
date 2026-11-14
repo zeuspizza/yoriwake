@@ -865,6 +865,15 @@ def case_a_sweep_can_be_restricted_to_the_maven_projects():
         except SystemExit as refusal:
             if "--build" not in str(refusal):
                 failures += fail(f"a --build that matched nothing does not say so: {refusal}")
+        with open(table, "a", encoding="utf-8") as handle:
+            handle.write("QUALIFIED  no-such-project\n")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                sweep_corpus.main(["--qualification", table, "--build", "maven",
+                                   "--print-commands"])
+            failures += fail("--build maven passed over a project whose file it could not read")
+        except OSError:
+            pass
     try:
         sweep_corpus.main(["--arm", "reduced", "--build", "maven", "--print-commands"])
         failures += fail("--build maven redefined the reduced arm")

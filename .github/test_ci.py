@@ -3487,15 +3487,27 @@ def case_a_change_to_the_maven_plugin_alone_sweeps_the_maven_projects():
                 or "::warning::" in output):
             problems += fail(f"the Maven plugin alone, only={only!r}: exit {code}, planned {asked}, "
                              f"handed on {wrote}, said {output!r}")
-    for changed, warned in (((mojo, detection), True), ((detection,), False)):
+    selection = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
+    session = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/CaptureSession.java"
+    # What moved, `only`, the tier it is, the arm planned (None: no sweep), whether it warns. A
+    # full sweep of every project includes the Maven projects, so it has nothing to warn of.
+    for changed, only, tier, arm, warned in (
+            ((mojo, detection), "demo", "reduced", "reduced", True),
+            ((detection,), "demo", "reduced", "reduced", False),
+            ((mojo, selection), "demo", "replay", None, True),
+            ((mojo, session), "demo", "full", "full", True),
+            ((mojo, session), "all", "full", "full", False),
+            ((mojo, session), "", "full", "full", False)):
         wrote = []
-        code, output, asked, _ = _sweep_completion_plan("auto", "demo", "", changed, outputs=wrote)
+        code, output, asked, _ = _sweep_completion_plan("auto", only, "", changed, outputs=wrote)
         warning = [line for line in output.splitlines() if line.startswith("::warning::")]
-        if (code or asked is None or "--build" in asked or "--arm reduced" not in " ".join(asked)
-                or wrote != ["tier=reduced\nprojects=[]\n"] or bool(warning) is not warned
+        planned = None if asked is None else " ".join(asked)
+        if (code or (planned is None) is not (arm is None) or "--build" in (planned or "")
+                or (arm and f"--arm {arm}" not in planned)
+                or wrote != [f"tier={tier}\nprojects=[]\n"] or bool(warning) is not warned
                 or (warned and mojo not in warning[0])):
-            problems += fail(f"a selector change over {changed}: exit {code}, planned {asked}, "
-                             f"handed on {wrote}, said {output!r}")
+            problems += fail(f"a selector change over {changed}, only={only!r}: exit {code}, "
+                             f"planned {asked}, handed on {wrote}, said {output!r}")
     code, output, asked, _ = _sweep_completion_plan("auto", "demo", "", ("README.md",))
     if code or asked is not None or "tier: none" not in output:
         problems += fail(f"a change outside both: exit {code}, planned {asked}, said {output!r}")

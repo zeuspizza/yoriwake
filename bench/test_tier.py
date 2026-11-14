@@ -5,7 +5,9 @@ Cases return a count of failed checks; one `test_*` entry point asserts.
     python3 bench/test_tier.py
 """
 
+import json
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -102,6 +104,30 @@ def case_the_maven_tier_fires_on_what_moves_the_maven_digest():
                                  f"the tier {'asked' if asked else 'did not ask'} for the Maven "
                                  f"projects")
     return failures
+
+
+def case_a_source_moved_out_of_the_maven_plugin_asks_for_the_maven_projects():
+    """The digest loses the file where it was, so the path it left counts as much as the one it
+    reached: git names only the latter unless told not to pair them."""
+    with tempfile.TemporaryDirectory() as root:
+        def git(*args):
+            subprocess.run(["git", "-C", root, "-c", "user.email=t@t", "-c", "user.name=t",
+                            "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+        git("init", "-q")
+        os.makedirs(os.path.join(root, os.path.dirname(MOJO)))
+        with open(os.path.join(root, MOJO), "w", encoding="utf-8") as handle:
+            handle.write("".join(f"line {number}\n" for number in range(40)))
+        git("add", "-A")
+        git("commit", "-q", "-m", "before")
+        os.makedirs(os.path.join(root, "maven/src/test/kotlin"))
+        git("mv", MOJO, "maven/src/test/kotlin/AuditMojo.kt")
+        git("commit", "-q", "-m", "moved")
+        done = subprocess.run([sys.executable, os.path.abspath(tier.__file__), "HEAD~1", "HEAD"],
+                              cwd=root, check=True, capture_output=True, text=True)
+    decided = json.loads(done.stdout)
+    if (decided["tier"], decided["maven_paths"]) != ("maven", [MOJO]):
+        return fail(f"a source moved out of maven/src/main -> {decided}")
+    return 0
 
 
 def test_tier():

@@ -61,7 +61,10 @@ def main(argv=None):
     parser.add_argument("head")
     parser.add_argument("--major-release", action="store_true")
     args = parser.parse_args(argv)
-    paths = subprocess.run(["git", "diff", "--name-only", f"{args.base}...{args.head}"],
+    # `--no-renames`: a source moved out of a digest's tree moves that digest, and git otherwise
+    # names only where it went.
+    paths = subprocess.run(["git", "diff", "--name-only", "--no-renames",
+                            f"{args.base}...{args.head}"],
                            check=True, capture_output=True, text=True).stdout.split()
     print(json.dumps(decide(paths, args.major_release)))
     return 0

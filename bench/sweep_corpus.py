@@ -617,13 +617,10 @@ def checkout_relative(name):
 
 
 def builds_with_maven(name):
-    """Whether a project's own file says Maven builds it; a project with no readable file does
-    not."""
-    try:
-        with open(os.path.join(BENCH, "projects", f"{name}.toml"), "rb") as handle:
-            return maven_build.is_maven(tomllib.load(handle))
-    except (OSError, ValueError):
-        return False
+    """Whether a project's own file says Maven builds it. A file that cannot be read raises: taken
+    for a Gradle project, a Maven project would drop out of its own sweep unseen."""
+    with open(os.path.join(BENCH, "projects", f"{name}.toml"), "rb") as handle:
+        return maven_build.is_maven(tomllib.load(handle))
 
 
 def argument_parser():

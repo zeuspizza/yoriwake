@@ -138,8 +138,11 @@ jobs:
               build=(--build maven)
               echo "only the Maven plugin's sources moved: a full sweep of the Maven projects ($maven)"
             elif [ -n "$maven" ]; then
-              echo "::warning::the Maven plugin's sources moved too ($maven):" \
-                "the Maven projects' figures are stale until a full sweep includes them"
+              # A full sweep of every project includes the Maven projects.
+              if [ "$TIER" != full ] || { [ -n "$ONLY" ] && [ "$ONLY" != all ]; }; then
+                echo "::warning::the Maven plugin's sources moved too ($maven):" \
+                  "the Maven projects' figures are stale until a full sweep includes them"
+              fi
             fi
           fi
           echo "tier=$TIER" >> "$GITHUB_OUTPUT"
