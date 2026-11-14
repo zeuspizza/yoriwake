@@ -28,6 +28,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - Kotlin Multiplatform: a change to a `Platform.jvm.kt`-style file, or to a file of only `inline` functions, narrows. Map: left alone.
 - A Groovy source change narrows to the tests that ran it, instead of running everything. Map: left alone.
+- Reference: a transform-cache entry written again after Gradle's cache cleanup also runs nothing. Map: left alone.
 
 ### Fixed
 
