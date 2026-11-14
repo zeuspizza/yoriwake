@@ -511,7 +511,8 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
      * own bytecode and `Reader` stops mentioning `Limits` at all. Change the constant and git
      * reports one file while the compiler recompiles two.
      *
-     * The run still forces on `constant-changed`, which the comparison cannot overrule.
+     * The comparison ran, so the moved constant does not refuse: the consumer it names is what the
+     * selector is handed.
      */
     @Test
     fun `the digest rule names a recompiled consumer the change set never mentioned`(@TempDir dir: File) {
@@ -561,7 +562,7 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
 
         assertContains(explained, """"digestOn": true""")
         assertContains(explained, "dev.sample.Reader")
-        assertContains(explained, """"refusalKind": "constant-changed"""")
+        assertFalse("constant-changed" in explained, explained)
 
         // And the entry stores and reuses, which is where a configuration-cache defect surfaces.
         val again = runner(dir, "yoriwakeExplainTest").build().output
@@ -570,8 +571,8 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
 
     /**
      * `yoriwakeExplain` compiles what the test task compiles before it reads a class file. Asked
-     * before anything recompiled a changed constant holder, it would digest the old bytes, see no
-     * constant move, and predict a narrowed run the real one never makes.
+     * before anything recompiled a changed constant holder, it would digest the old bytes, miss
+     * the class that copied the constant, and predict a run without the test the real one selects.
      */
     @Test
     fun `yoriwakeExplain before a compile answers what the selecting run then does`(@TempDir dir: File) {
@@ -603,7 +604,10 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
                 @Test void doubles() { assertTrue(Limits.twice() > 0); }
             }
         """.trimIndent()
-        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, limits, reader, readerTest, limitsTest)
+        build(
+            dir, "build.gradle.kts" to minimalBuild,
+            oneClass, oneTest, limits, reader, readerTest, limitsTest, classOrderByName,
+        )
         committed(dir)
         runner(dir, "test", "-Pyoriwake.internal.loaded").build()
         File(dir, "src/main/java/dev/sample/Limits.java").writeText(
@@ -618,12 +622,18 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
 
         // No compile step first: the edit is still only in the source.
         val explained = runner(dir, "yoriwakeExplainTest").build().output
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val record = File(mapDir, "explain.json").readText()
+        File(dir, "build/test-results").deleteRecursively()
         val selected = runner(dir, "test", "-Pyoriwake.select").buildAndFail().output
 
-        assertEquals("full-run", decisionNotes(dir)["outcome"], selected)
-        assertContains(explained, ":test would run everything")
-        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
-        assertContains(File(mapDir, "explain.json").readText(), """"refusalKind": "constant-changed"""")
+        // Reader was recompiled with the new value and LimitsTest executes Limits. AlphaTest does
+        // neither and, by name, ran before either class was first loaded.
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], selected)
+        assertEquals(setOf("dev.sample.ReaderTest", "dev.sample.LimitsTest"), ranTests(dir), selected)
+        assertFalse(":test would run everything" in explained, explained)
+        assertContains(record, "dev.sample.Reader")
+        assertFalse("constant-changed" in record, record)
     }
 
     /** BetaTest, pinned in its own source with a tag that needs nothing on the classpath. */
@@ -1157,13 +1167,14 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
     """.trimIndent()
 
     @Test
-    fun `a change to a class that declares a compile-time constant runs the whole suite`(
+    fun `a changed constant runs the whole suite when the map holds no digests to compare the classes with`(
         @TempDir dir: File,
     ) {
         // javac copies a `static final` literal into every consumer, so a test that baked in the
         // old value names the holder nowhere in its bytecode and coverage records no edge to it.
         // BetaTest is that consumer. AlphaTest reaches Limits at runtime, so the map does record an
-        // edge, which is what makes the narrowing possible and the miss observable.
+        // edge, which is what makes the narrowing possible and the miss observable. Only a
+        // comparison of the compiled classes names BetaTest, and this map cannot make one.
         val limits = "src/main/java/dev/sample/Limits.java" to """
             package dev.sample;
             public class Limits {
@@ -1196,6 +1207,8 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
 
         runner(dir, "test").build()
         File(dir, "build/test-results").deleteRecursively()
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertTrue(File(mapDir, CoverageDecoder.CLASS_DIGESTS_FILE).delete(), "the capture recorded no digest table")
 
         File(dir, "src/main/java/dev/sample/Limits.java").writeText(
             """
@@ -1211,12 +1224,67 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         val output = runner(dir, "test", "-Pyoriwake.select").buildAndFail().output
 
         assertContains(output, "declares a compile-time constant")
+        assertEquals("constant-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
         assertEquals(
             setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"),
             ranTests(dir),
             "BetaTest baked the old value into its own bytecode and names Limits nowhere, so no " +
                 "coverage edge exists to select it by. It must run anyway.",
         )
+    }
+
+    @Test
+    fun `a changed constant selects the test that copied it and leaves an unrelated test out`(
+        @TempDir dir: File,
+    ) {
+        // BetaTest copied Limits.MAX and never executes Limits; its own class file is what the
+        // new value changed. LimitsTest executes Limits. AlphaTest touches neither, and by name
+        // runs before either class is first loaded.
+        val limits = "src/main/java/dev/sample/Limits.java" to """
+            package dev.sample;
+            public class Limits {
+                public static final int MAX = 10;
+                public int max() { return MAX; }
+            }
+        """.trimIndent()
+        val readsAtRuntime = "src/test/java/dev/sample/LimitsTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class LimitsTest {
+                @Test void passes() { assertEquals(10, new Limits().max()); }
+            }
+        """.trimIndent()
+        val bakedIn = "src/test/java/dev/sample/BetaTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class BetaTest {
+                @Test void passes() { assertEquals(10, Limits.MAX); }
+            }
+        """.trimIndent()
+        build(
+            dir, "build.gradle.kts" to minimalBuild,
+            limits, oneClass, oneTest, readsAtRuntime, bakedIn, classOrderByName,
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        File(dir, "build/test-results").deleteRecursively()
+        File(dir, "src/main/java/dev/sample/Limits.java").writeText(
+            limits.second.replace("MAX = 10", "MAX = 11")
+        )
+        commit(dir, "the constant moves")
+
+        val output = runner(dir, "test", "-Pyoriwake.select").buildAndFail().output
+
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertFalse("declares a compile-time constant" in output, output)
+        assertEquals(setOf("dev.sample.BetaTest", "dev.sample.LimitsTest"), ranTests(dir), output)
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val betaRules = File(mapDir, AgentContract.DECISIONS_FILE).readLines().single {
+            it.startsWith(AgentContract.RULES_LINE_PREFIX) && "[class:dev.sample.BetaTest]" in it && "[method:" in it
+        }
+        assertContains(betaRules.substringAfter("\t"), "changed-bytes")
     }
 
     @Test
@@ -1268,7 +1336,10 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
                 }
             }
         """.trimIndent()
-        build(dir, "build.gradle.kts" to minimalBuild, limits, limit, gate, limitsTest, gateTest)
+        build(
+            dir, "build.gradle.kts" to minimalBuild,
+            oneClass, oneTest, limits, limit, gate, limitsTest, gateTest, classOrderByName,
+        )
         committed(dir)
 
         runner(dir, "test").build()
@@ -1283,7 +1354,7 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         val output = runner(dir, "test", "-Pyoriwake.select").buildAndFail().output
 
         assertFalse(before.contentEquals(gateClass.readBytes()), "Gate was not recompiled with the new value")
-        assertContains(output, "declares a compile-time constant")
+        assertFalse("declares a compile-time constant" in output, output)
         assertTrue("dev.sample.GateTest" in ranTests(dir), "GateTest executes the copy; ran ${ranTests(dir)}")
     }
 

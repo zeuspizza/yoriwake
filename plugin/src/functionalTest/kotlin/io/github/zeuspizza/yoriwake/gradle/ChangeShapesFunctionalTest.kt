@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * What selection decides for each shape of change the benchmark's mutation families draw, pinned
@@ -323,9 +325,10 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a Groovy constant a Java test copied runs everything`(@TempDir dir: File) {
+    fun `a Groovy constant a Java test copied runs that test`(@TempDir dir: File) {
         // groovyc writes a ConstantValue for a static final primitive or String, so javac copies the
-        // value into the test and the test never loads Beta.
+        // value into the test and the test never loads Beta. The test's own class file, compiled
+        // with the new value, is what names it; the moved constant alone refuses nothing.
         val beta = groovyBeta(
             """
             package dev.sample
@@ -343,8 +346,8 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
             edit(dir, beta.first, "FACTOR = 3", "FACTOR = 4")
         }, run = GradleRunner::buildAndFail)
 
-        assertFullRun(dir, "daemon-refused", both, output)
-        assertEquals("constant-changed", decisionNotes(dir)["refusal-kind"], output)
+        assertTrue("dev.sample.BetaTest" in ranTests(dir), output)
+        assertNotEquals("constant-changed", decisionNotes(dir)["refusal-kind"], output)
     }
 
     @Test

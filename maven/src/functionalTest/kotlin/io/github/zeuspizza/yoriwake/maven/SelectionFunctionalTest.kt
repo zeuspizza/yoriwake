@@ -452,6 +452,60 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a changed constant in one module selects the test of the class in another that copied it`(@TempDir dir: File) {
+        val project = committed(dir)
+        val limits = File(project, "lib/src/main/java/dev/demo/lib/Limits.java")
+        limits.writeText(
+            """
+            package dev.demo.lib;
+            public class Limits {
+                public static final int MAX = 10;
+                public int max() { return MAX; }
+            }
+            """.trimIndent()
+        )
+        // javac copies MAX into Gate, which then names Limits nowhere.
+        File(project, "app/src/main/java/dev/demo/app/Gate.java").writeText(
+            """
+            package dev.demo.app;
+            public class Gate {
+                public String classify(int n) { return n == dev.demo.lib.Limits.MAX ? "max" : "other"; }
+            }
+            """.trimIndent()
+        )
+        fun appTest(name: String, body: String) = File(project, "app/src/test/java/dev/demo/app/$name.java").writeText(
+            """
+            package dev.demo.app;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            import org.junit.jupiter.api.Test;
+            class $name { @Test void passes() { $body } }
+            """.trimIndent()
+        )
+        appTest("GateTest", "assertTrue(new Gate().classify(3).length() > 0);")
+        appTest("LimitsTest", "assertTrue(new dev.demo.lib.Limits().max() > 0);")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "a constant and the class that copies it")
+        // By name AppTest runs first, before the shared test JVM loads Gate or Limits.
+        val byName = "-Dsurefire.runOrder=alphabetical"
+        FunctionalMaven.run(maven, project, "verify", byName).succeeded()
+        limits.edit { it.replace("MAX = 10", "MAX = 11") }
+        git(project, "commit", "-q", "-am", "the constant moves")
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib,app", byName, "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+        ).succeeded().output
+
+        assertFalse("declares a compile-time constant" in output, output)
+        assertTrue(
+            output.lines().any { "changed with no source change behind them" in it && "dev.demo.app.Gate" in it },
+            "Gate was not recompiled with the new value, or the comparison did not name it:\n$output",
+        )
+        assertContains(output, "Running dev.demo.app.GateTest")
+        assertContains(output, "Running dev.demo.app.LimitsTest")
+        assertFalse("Running dev.demo.app.AppTest" in output, output)
+    }
+
+    @Test
     fun `a module's pom edit still forces executions off its classpath`(@TempDir dir: File) {
         val project = captured(dir)
         File(project, "lib/pom.xml").edit { it.replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <!-- touched -->") }

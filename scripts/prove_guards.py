@@ -2045,6 +2045,13 @@ MUTATIONS = [
      "        return if (bytesUnknown) bytesRefusal(digest)",
      "        return if (false) bytesRefusal(digest)",
      unit_suite, "a walk that could not finish forces, even on an empty change set"),
+    # A changed constant narrows only because the bytes comparison names every class compiled with
+    # the new value. A comparison that did not run names none; the run then still forces, but on
+    # the walk's token, and the cause the user can act on (the constant) is no longer said.
+    ("a changed constant stands down though the compiled classes were never compared", SELECTION,
+     "    val compared = comparison != null && comparison.silence == null",
+     "    val compared = comparison != null",
+     unit_suite, "a constant that moved forces when the map holds no digest table to compare the bytes with"),
     # A test that depends on a class through a framework's scan reads its annotations and never
     # executes it, so coverage holds no edge; only the annotation digest sees `@Profile("a")` become
     # `@Profile("b")`. Treating every recorded digest as a match is the silent skip.

@@ -165,7 +165,10 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   first, so a file such an action writes into the source tree is not compared. Untracked files
   under build output and Gradle's own state are never a change, by design;
 - a changed class declaring a compile-time constant another class could reference, when the value
-  differs from the map's;
+  differs from the map's and the compiled classes could not be compared with the map's digests
+  (`constant-changed`), or when the map never recorded the constant (`constant-unrecorded`). When
+  they were compared, the classes compiled with the new value are the ones whose bytes changed,
+  and their tests run as for any other changed bytes;
 - a changed Kotlin source in a build that emits no `SourceDebugExtension` (see [Kotlin](#kotlin));
 - Develocity Test Distribution or Predictive Test Selection is enabled on the task
   (`develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`): a
@@ -1012,8 +1015,6 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   - an edit that adds a closure or a class: groovyc marks the methods it generates with an
     annotation, so the new class carries annotations the map never recorded
     (`annotations-unrecorded`);
-  - a `static final` primitive or `String` changed: groovyc writes it as a compile-time constant,
-    which javac copies into Java callers (`constant-changed`);
   - a file named after none of the classes it declares: its path names a class no test recorded
     (`no-coverage-for-changed`);
   - a global AST transform edited in another module: it runs in the compiler, never in a test

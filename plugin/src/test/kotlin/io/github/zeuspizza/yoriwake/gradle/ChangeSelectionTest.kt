@@ -14,6 +14,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathScope
 import io.github.zeuspizza.yoriwake.gradle.change.DigestSilence
 import io.github.zeuspizza.yoriwake.gradle.change.DigestRule
+import io.github.zeuspizza.yoriwake.gradle.change.DigestWidening
 import io.github.zeuspizza.yoriwake.gradle.change.Established
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_SCAN_REFUSAL
 import io.github.zeuspizza.yoriwake.gradle.change.InlineWidening
@@ -524,7 +525,7 @@ class ChangeSelectionTest {
 
     @Test
     fun `explain names which refusal it was, so nobody has to match English for it`(@TempDir dir: File) {
-        // `constant-unrecorded` is fixed by recapturing and `constant-changed` never is, so the
+        // `constant-unrecorded` is fixed by recapturing and `constant-changed` is not, so the
         // refusals carry distinct tokens rather than prose.
         val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
         val unrecorded = constantHolderRefusal(setOf(name), emptyMap()) { p -> listOf(p to bytesOf(p)) }!!
@@ -1171,11 +1172,39 @@ class ChangeSelectionTest {
         // this forcing protects?
         val holder = javaClassBytes("com.acme.Holder", "LIMIT", 11)
         val facts = oneModule(dir, "com.acme.Holder" to holder)
-        // The map recorded a different value, so the constant rule forces.
         val recorded = mapOf(
             "com.acme.Holder" to Recordability.classDigest(
                 javaClassBytes("com.acme.Holder", "LIMIT", 10)
             ).value!!
+        )
+
+        // The map recorded no constant for the holder, which forces beside a comparison that ran.
+        val widening = widenForInlining(
+            listOf("com.acme.Holder"), facts,
+            recordedConstants = emptyMap(),
+            digestRule = DigestRule(recorded, bytesAreFresh = true),
+            recordedAnnotations = emptyMap(),
+        )
+
+        assertTrue(widening.forces, "a holder the map recorded no constant for must still force")
+        assertEquals(RefusalKind.CONSTANT_UNRECORDED, widening.refusalKind)
+        assertEquals(setOf("com.acme.Holder"), widening.digest!!.added,
+            "the forced run recorded nothing about what the digest rule could see")
+    }
+
+    @Test
+    fun `a constant that moved hands the classes compiled with it to the selector when the bytes were compared`(
+        @TempDir dir: File,
+    ) {
+        // The consumer's source did not change; it was recompiled with the new value.
+        val facts = oneModule(
+            dir,
+            "com.acme.Holder" to javaClassBytes("com.acme.Holder", "LIMIT", 11),
+            "com.acme.Consumer" to javaClassBytes("com.acme.Consumer", "COPY", 11),
+        )
+        val recorded = mapOf(
+            "com.acme.Holder" to Recordability.classDigest(javaClassBytes("com.acme.Holder", "LIMIT", 10)).value!!,
+            "com.acme.Consumer" to Recordability.classDigest(javaClassBytes("com.acme.Consumer", "COPY", 10)).value!!,
         )
 
         val widening = widenForInlining(
@@ -1185,10 +1214,51 @@ class ChangeSelectionTest {
             recordedAnnotations = emptyMap(),
         )
 
-        assertTrue(widening.forces, "the constant refusal must still fire")
+        assertFalse(widening.forces, "a compared build forced on a moved constant: ${widening.refusal}")
+        assertEquals(setOf("com.acme.Consumer"), widening.changedBytes)
+        assertEquals(listOf("com.acme.Holder"), widening.prefixes)
+    }
+
+    @Test
+    fun `a constant that moved forces when the map holds no digest table to compare the bytes with`(
+        @TempDir dir: File,
+    ) {
+        val facts = oneModule(dir, "com.acme.Holder" to javaClassBytes("com.acme.Holder", "LIMIT", 11))
+
+        val widening = widenForInlining(
+            listOf("com.acme.Holder"), facts,
+            recordedConstants = mapOf("com.acme.Holder" to "a-different-constant-digest"),
+            digestRule = DigestRule(recorded = null, bytesAreFresh = true),
+            recordedAnnotations = emptyMap(),
+        )
+
+        assertTrue(widening.forces, "a moved constant narrowed with nothing to name its consumers")
         assertEquals(RefusalKind.CONSTANT_CHANGED, widening.refusalKind)
-        assertEquals(setOf("com.acme.Holder"), widening.digest!!.added,
-            "the forced run recorded nothing about what the digest rule could see")
+        assertContains(widening.refusal!!, DigestSilence.TABLE_ABSENT.token)
+    }
+
+    @Test
+    fun `a constant that moved forces when the walk over the compiled classes stopped`() {
+        val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
+        for (silence in listOf(DigestSilence.WALK_UNREADABLE, DigestSilence.WALK_BUDGET_SPENT)) {
+            val refusal = constantHolderRefusal(
+                setOf(name), mapOf(name to "not-the-digest"), DigestWidening(silence = silence.token),
+            ) { prefix -> listOf(prefix to bytesOf(prefix)) }
+
+            assertEquals(RefusalKind.CONSTANT_CHANGED, refusal?.refusalKind, "after ${silence.token}")
+            assertContains(refusal!!.refusal!!, silence.token)
+        }
+    }
+
+    @Test
+    fun `a constant the map never recorded forces though the bytes were compared`() {
+        val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
+
+        val refusal = constantHolderRefusal(setOf(name), emptyMap(), DigestWidening()) { prefix ->
+            listOf(prefix to bytesOf(prefix))
+        }
+
+        assertEquals(RefusalKind.CONSTANT_UNRECORDED, refusal?.refusalKind)
     }
 
     @Test

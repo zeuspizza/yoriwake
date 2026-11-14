@@ -36,7 +36,10 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     /** The map holds no digest for a changed constant holder. A capture fixes this. */
     CONSTANT_UNRECORDED("constant-unrecorded"),
 
-    /** A constant's value differs from the captured one. Recapturing will not change that. */
+    /**
+     * A constant's value differs from the captured one, and the compiled classes could not be
+     * compared with the map's digests to name the ones compiled with the new value.
+     */
     CONSTANT_CHANGED("constant-changed"),
 
     /** The map holds no annotation digest for a changed class that has annotations. A capture fixes this. */

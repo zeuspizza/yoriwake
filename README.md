@@ -44,7 +44,7 @@ It is meant for:
 
 - **Opt-in.** Without `-Pyoriwake.select` nothing is ever skipped; runs only record.
 - **Refuses rather than guesses.** A change coverage cannot see, such as a build script, a
-  resource, an annotation or a changed constant, runs everything, and the run says which.
+  resource or a changed annotation, runs everything, and the run says which.
 - **New tests always run.** A test the map has never seen, or never saw pass, is never skipped.
 - **Explains every decision.** A console summary per run, and a file with one row per test giving
   its verdict and the rule that decided it.
@@ -124,7 +124,7 @@ flowchart LR
     M --> S
     S -->|"change reaches test,<br>or cannot be proven not to"| R["runs"]
     S -->|"recorded coverage cannot reach the change"| K["skipped"]
-    S -->|"build script, resource, annotation, constant, unknown class"| F["full run, which re-records"]
+    S -->|"build script, resource, annotation, unknown class"| F["full run, which re-records"]
 ```
 
 1. **Record.** A run of the whole suite records which classes each test executed, plus what its
