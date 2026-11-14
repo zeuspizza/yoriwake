@@ -508,8 +508,8 @@ val functionalShardTable = providers.gradleProperty("yoriwake.functional.shardTa
     os to (table as? Map<*, *> ?: throw GradleException("the shard table ${shardTableFile.asFile} is no JSON object"))
 }
 
-// A local run may give each functional suite several test JVMs at once, each with a TestKit home
-// of its own. CI, the guard runs and every run that does not ask keep one.
+// A run may give each functional suite several test JVMs at once, each with a TestKit home of its
+// own. CI's Gradle shards ask for two; the guard runs and every run that does not ask keep one.
 val functionalForks = providers.gradleProperty("yoriwake.functional.forks").orNull?.let { value ->
     value.toIntOrNull()?.takeIf { it >= 1 }
         ?: throw GradleException("yoriwake.functional.forks=$value must be a whole number of test JVMs, 1 or more")

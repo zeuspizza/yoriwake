@@ -1222,6 +1222,15 @@ def case_every_sharded_suite_runs_all_its_shards():
         os_name = "windows" if "runs-on: windows" in job else "linux"
         if f"-Pyoriwake.functional.shardTable={os_name} " not in job:
             problems += fail(f"{name}: it does not name its shard table ({os_name})")
+        # A Gradle shard runs its classes in two test JVMs, which is what its shard count is
+        # sized for. The Maven suite's test support has one home, so it keeps one.
+        # Read from the command alone, every occurrence: Gradle takes the last one it is given.
+        command = re.search(r"\./gradlew :(?:plugin|maven):[^\n]*", job)
+        forks = re.findall(r"-Pyoriwake\.functional\.forks=(\S+)", command.group(0) if command else "")
+        if module == "plugin" and forks != ["2"]:
+            problems += fail(f"{name}: it does not run its shard in two test JVMs (-Pyoriwake.functional.forks=2, once)")
+        if module == "maven" and forks:
+            problems += fail(f"{name}: the Maven suite cannot run in several test JVMs (forks={forks[0]})")
         # Without these a failed shard skips its check, and GitHub counts a skipped required check
         # as passing.
         if not re.search(r"\n    if: always\(\)( &&[^\n]*)?\n", check):

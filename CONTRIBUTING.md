@@ -15,7 +15,7 @@ JVMs at once, each with a TestKit home of its own; without it a suite runs in on
 functional suite in shards by test class;
 `-Pyoriwake.functional.shard=3/6 -Pyoriwake.functional.shardTable=windows` runs the same classes
 as a Windows job's shard 3 of 6 (`=linux` with a Linux job's count), to reproduce one; without the
-table property every class hashes.
+table property every class hashes. CI's Gradle shards also pass `-Pyoriwake.functional.forks=2`.
 `-Pyoriwake.functional.gradleVersion=<v>` runs `functionalTestGradle9` on another Gradle, and
 `-Pyoriwake.functional.junitVersion=<v>` runs the newest-JUnit cases of `EngineSupportTest` on
 another JUnit, either a pre-release, to try it before it is out.

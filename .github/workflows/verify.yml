@@ -214,7 +214,7 @@ jobs:
         with:
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --console=plain
+        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux -Pyoriwake.functional.forks=2 --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
       # read, and the homes' daemon logs, the Tooling API home's included.
@@ -299,7 +299,7 @@ jobs:
         with:
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --console=plain
+        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux -Pyoriwake.functional.forks=2 --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
       # read, and the homes' daemon logs, the Tooling API home's included.
@@ -830,7 +830,7 @@ jobs:
         with:
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/6 -Pyoriwake.functional.shardTable=windows -Pyoriwake.functional.coverage=false --continue --console=plain
+        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/6 -Pyoriwake.functional.shardTable=windows -Pyoriwake.functional.forks=2 -Pyoriwake.functional.coverage=false --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
       # read, and the homes' daemon logs, the Tooling API home's included.
@@ -909,7 +909,7 @@ jobs:
         with:
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/6 -Pyoriwake.functional.shardTable=windows -Pyoriwake.functional.coverage=false --continue --console=plain
+        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/6 -Pyoriwake.functional.shardTable=windows -Pyoriwake.functional.forks=2 -Pyoriwake.functional.coverage=false --continue --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
       # read, and the homes' daemon logs, the Tooling API home's included.
