@@ -165,6 +165,51 @@ class SequentialRecordingFunctionalTest {
     }
 
     @Test
+    fun `a flagged observing run keeps the suite's scheduling and records nothing`(@TempDir dir: File) {
+        val project = committed(dir)
+        verify(project, "-Dyoriwake.recordSequentially")
+        editGreeter(project)
+        val before = mapDigest(project)
+
+        val output = verify(project, "-Dyoriwake.observe", "-Dyoriwake.base=HEAD~1", "-Dyoriwake.recordSequentially")
+
+        // Observed, not refreshed: only a run asked to record takes the suite's parallelism away.
+        assertContains(output, "Tests run: 2, Failures: 0")
+        assertContains(output, "tests run in parallel as configured")
+        assertFalse("recording one test at a time" in output, output)
+        assertEquals("kept-not-captured", notes(project)["parallelism"], output)
+        assertEquals(before, mapDigest(project), output)
+    }
+
+    @Test
+    fun `a flagged parallel suite on JUnit 4 is declined, naming what the setting covers`(@TempDir dir: File) {
+        val project = committed(dir, surefire = "")
+        File(project, "pom.xml").edit {
+            it.replace(
+                Regex("""<groupId>org\.junit\.jupiter</groupId>\s*<artifactId>junit-jupiter</artifactId>"""),
+                "<groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version>",
+            )
+        }
+        File(project, "lib/src/test/java/dev/demo/lib").listFiles().orEmpty().forEach { test ->
+            test.edit {
+                it.replace("org.junit.jupiter.api.Assertions.assertEquals", "org.junit.Assert.assertEquals")
+                    .replace("org.junit.jupiter.api.Test", "org.junit.Test")
+                    .replace("\nclass ", "\npublic class ")
+                    .replace("    void ", "    public void ")
+            }
+        }
+        git(project, "commit", "-q", "-am", "JUnit 4 alone")
+
+        val output = verify(project, "-Djunit.jupiter.execution.parallel.enabled=true", "-Dyoriwake.recordSequentially")
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+        assertContains(output, "-Dyoriwake.recordSequentially covers JUnit Jupiter and Vintage on the JUnit Platform only")
+        assertContains(output, "Tests run: 2, Failures: 0")
+        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().singleOrNull { it.name.startsWith("dev.demo-lib-") }
+        assertFalse(map != null && File(map, "capture-commit").exists(), "a map dated in $map")
+    }
+
+    @Test
     fun `an audit after an unflagged parallel run names the setting`(@TempDir dir: File) {
         val project = committed(dir)
         assertContains(verify(project), "declined, in-jvm-parallelism")

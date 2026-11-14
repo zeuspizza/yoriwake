@@ -645,13 +645,8 @@ internal class Recording(
      * Whether Surefire or Failsafe hands the fork the invocation's user properties: always before
      * 3.4.0, and from then unless `promoteUserPropertiesToSystemProperties` is false.
      */
-    private fun promotesUserProperties(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom): Boolean {
-        val value = resolved(project, configuration.getChild("promoteUserPropertiesToSystemProperties")?.value)?.trim()
-        if (!value.equals("false", ignoreCase = true)) return true
-        val version = execution.version.orEmpty().split('.', '-').map { it.toIntOrNull() ?: 0 }
-        val major = version.getOrElse(0) { 0 }
-        return major < 3 || (major == 3 && version.getOrElse(1) { 0 } < 4)
-    }
+    private fun promotesUserProperties(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom): Boolean =
+        promotesUserProperties(resolved(project, configuration.getChild("promoteUserPropertiesToSystemProperties")?.value), execution.version)
 
     /**
      * Whether JaCoCo's agent reaches the fork: in the argLine it will get, in the `JAVA_TOOL_OPTIONS`
@@ -677,8 +672,7 @@ internal class Recording(
         if (property.fromPom) resolved(project, property.value).orEmpty() else property.value
 
     private fun resolved(project: MavenProject, value: String?): String? =
-        value?.let { Regex("""[$@]\{([^}]+)}""").replace(it) { m -> Declines.property(project, session, m.groupValues[1]).orEmpty() } }
-            ?.takeIf(String::isNotBlank)
+        resolveExpressions(value) { Declines.property(project, session, it) }
 
     /** A command line's arguments, a double-quoted one kept whole, as Surefire splits an argLine. */
     private fun arguments(line: String): List<String> =

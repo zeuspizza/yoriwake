@@ -127,7 +127,9 @@ internal class Selection(private val session: MavenSession, private val root: Fi
      * Settles one execution's run and writes what its test JVM needs into [properties]. Returns what
      * the run is: [RunPlan.Kind.SELECT] keeps no records unless it ran everything, and an
      * [RunPlan.Kind.OBSERVE] run records as a recording run does while its test JVM decides as a
-     * selecting run would. [undated] is why this execution cannot date the map, or null.
+     * selecting run would, except on a parallel suite under `recordSequentially`, which only a run
+     * asked to record ([asksRecording]) records. [undated] is why this execution cannot date the map,
+     * or null.
      */
     fun apply(
         name: String,

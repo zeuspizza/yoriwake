@@ -42,7 +42,14 @@ dependencies {
     compileOnly("org.apache.maven:maven-plugin-api:$mavenFloor")
     compileOnly("org.apache.maven.plugin-tools:maven-plugin-annotations:3.15.1")
     compileOnly("javax.inject:javax.inject:1")
+    // Unit tests of the decisions that need no Maven; the functional suite's configurations extend these.
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation(kotlin("test"))
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
+
+tasks.test { useJUnitPlatform() }
 
 // Maven 3.9.0-3.9.5 skip an extension component compiled for anything newer than Java 11, and
 // say nothing: the build runs as if the extension were absent.
