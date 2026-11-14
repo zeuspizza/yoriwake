@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import org.gradle.testkit.runner.GradleRunner
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -195,6 +196,9 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
      * link `elsewhere/vendor.jar`: the test JVM opens the jar by its real path, so `real/lib/a.jar`.
      */
     private fun linkedVendorCaptured(dir: File, vendor: File) {
+        // On Windows a JVM before 24 does not resolve a link when it canonicalises a class path
+        // entry, so it reads the name beside the link, which the row of the path as given holds.
+        assumeFalse(windows, "the test JVM opens a linked jar by its real path only off Windows")
         val target = File(vendor, "real/vendor.jar")
         jar(target, "lib/a.jar")
         jar(File(vendor, "real/lib/a.jar"), null, "vendor.properties" to "flavor=a\n")
