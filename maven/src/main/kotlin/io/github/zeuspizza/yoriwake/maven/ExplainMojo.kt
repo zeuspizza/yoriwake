@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.agent.select.FilterRule
 import io.github.zeuspizza.yoriwake.agent.select.MapReader
 import io.github.zeuspizza.yoriwake.agent.select.Selector
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
+import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.change.SelectingStep
 import io.github.zeuspizza.yoriwake.gradle.report.PathIgnoreReport
@@ -75,13 +76,25 @@ class ExplainMojo : AbstractMojo() {
             if (mapDir.isDirectory) mapDir.copyRecursively(copy, overwrite = true)
             val properties = Properties().apply { setProperty(AgentContract.MAP_DIR_PROPERTY, copy.path) }
             var worked: Pair<SelectingStep.Worked, String>? = null
+            // Read as the selecting run reads it, so that a map it would refuse is refused here.
+            val environment = runCatching {
+                val configuration = (each.execution.configuration as? Xpp3Dom)?.let { Xpp3Dom(it) } ?: Xpp3Dom("configuration")
+                // The run's configuration carries Surefire's default, which reads the `jvm` user property.
+                if (configuration.getChild("jvm") == null) configuration.addChild(Xpp3Dom("jvm").apply { value = "\${jvm}" })
+                val fork = Recording.ForkEnvironment(session, root)
+                fork.of(
+                    project, Recording.ForkEnvironment.Execution(each.plugin.artifactId == Recording.FAILSAFE, each.plugin.version),
+                    configuration, Recording.arguments(fork.resolved(project, fork.argLine(project, configuration)).orEmpty()),
+                    Settings.environmentOf(project, session),
+                )
+            }.getOrNull()
             selection.apply(
                 name, copy, project.basedir.relativeTo(root).invariantSeparatorsPath,
                 classpathView(
                     session, root, project, classpath, each.execution.configuration as? Xpp3Dom,
                     each.plugin.artifactId == Recording.FAILSAFE,
                 ),
-                environment = null, undated = null, isolatedCapture = false,
+                environment = environment, undated = null, isolatedCapture = false,
                 stamp = { error("an explanation writes no selection record") },
                 stopsAfterFailure = true,
                 properties = properties,
@@ -100,6 +113,10 @@ class ExplainMojo : AbstractMojo() {
                     refusalKind = properties.getProperty(AgentContract.REFUSED_KIND_PROPERTY),
                 )
                 return
+            }
+            // From the last recording, so only where there is one.
+            if (File(copy, AgentContract.MAP_SCHEMA_VERSION_FILE).isFile) environment?.let { (_, rules) ->
+                EnvironmentFingerprint.uncomparedReads(copy, rules).forEach { consoleLog.info("[yoriwake] $name: $it") }
             }
             val (step, base) = done
             val decision = FilterRule.decisionFrom(FilterRule.resolveInputs { properties.getProperty(it) }, copy)

@@ -142,8 +142,8 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - a non-class file the build produced on the test runtime classpath that appeared or is gone
   since the capture, or changed where the map cannot say which tests read it
   (`classpath-files-changed`), or a map that records no such digests (`classpath-files-unrecorded`,
-  once: the forced run records them, unless the classpath holds over 200,000 such files, which are
-  then never recorded). One whose readers the map records runs only them. The run names up to five
+  once: the forced run records them, unless the classpath holds over 200,000 such files, those of
+  its directories from outside the build counted with them, which are then never recorded). One whose readers the map records runs only them. The run names up to five
   files; see [Generated files on the test classpath](#generated-files-on-the-test-classpath);
 - a jar or directory the test runtime classpath takes from outside the build (a dependency) that
   differs from the capture's: another version, one added, removed or reordered, or other content at
@@ -283,8 +283,10 @@ path across that change, as Gradle's own up-to-date check does; what a transform
 under Gradle's default absolute-path normalization, writes under another path there and runs
 everything once. A file a dependency read by its content names
 in its manifest `Class-Path`, such as a `lib/a.jar` beside a vendor jar, counts the same way, by its
-content, whether it is there or not. Each name is read as the JDK's class loader reads it, so a
-`lib/a[1].jar` counts too. A name the class loader takes for a file that cannot be told (a
+content, whether it is there or not. Where such a dependency is reached through a symbolic link,
+each name counts both from its path as given and from its real path, since which one the test JVM
+opens depends on how it was started. Each name is read as the JDK's class loader
+reads it, so a `lib/a[1].jar` counts too. A name the class loader takes for a file that cannot be told (a
 malformed `%` escape, a file on another host) and a named directory holding a file that cannot be
 read run everything on every run, and the files of a named directory count against the same
 200,000 files as the build's own (`classpath-files-unrecorded` past them).
@@ -1917,7 +1919,9 @@ the Gradle plugin.
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.
 - **Goals**: `mvn yoriwake:audit` and `mvn test-compile yoriwake:explain` are `yoriwakeAuditTest`
-  and `yoriwakeExplain`; `-Dyoriwake.execution=<id>` picks one execution.
+  and `yoriwakeExplain`; `-Dyoriwake.execution=<id>` picks one execution. `explain` compares the
+  environment as the selecting run would, so pass it the same `-D` values, and names the variables
+  the tests read that are not compared.
 - **Declined**: such an execution runs every test, captures nothing, and names its token on the
   console:
   - the whole build, on Maven below 3.9.0 or a pre-release (`maven-version`);

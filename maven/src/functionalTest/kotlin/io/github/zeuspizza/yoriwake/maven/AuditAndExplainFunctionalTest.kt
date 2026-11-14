@@ -216,6 +216,7 @@ class AuditAndExplainFunctionalTest {
             .succeeded().output
 
         assertContains(output, "[yoriwake] lib surefire:test (default-test) would run everything")
+        assertFalse("was not observed" in output, output)
     }
 
     @Test

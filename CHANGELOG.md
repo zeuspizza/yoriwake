@@ -37,12 +37,15 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A complement run compares a jar only a dependency's manifest `Class-Path` names too. Map: left alone.
 - A manifest `Class-Path` name `java.net.URI` rejects, such as `lib/a[1].jar`, is compared, and a named directory
   counts against the file budget. Map: repaired on the next build, where a manifest names such a file.
+- A classpath directory from outside the build counts against the 200,000-file budget. Map: left alone.
+- A `Class-Path` name of a jar behind a symlink is followed from its real path too. Map: kept; one full run.
 - Maven: a parallel switch in Surefire's `systemProperties` or `systemPropertiesFile` declines in-JVM parallelism. Map: left alone.
 - Maven: a complement run under another `-D` value of a property `systemPropertyVariables` also sets runs every test. Map: left alone.
 - A class with a primitive-array annotation value (`@ValueSource(booleans = ...)`) no longer counts as changed on every run.
   Map: left alone; the fix shows from its next recording.
 - Maven: a JaCoCo agent in `JDK_JAVA_OPTIONS` captures, as in `JAVA_TOOL_OPTIONS`; either may name it by a property. Map: left alone.
 - A sibling's source edits are kept when a test reads its build directory set outside the module. Map: left alone.
+- Maven: `yoriwake:explain` compares the environment as the selecting run does and names uncompared variables. Map: left alone.
 
 ## [0.5.0] - 2026-11-07
 
