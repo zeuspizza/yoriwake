@@ -13,7 +13,7 @@
 # plugin attached. That is the floor, not a recommendation, and it is never a savings
 # number. See bench/qualify.py's module docstring.
 
-43 of 49 qualified, 6 blocked, 0 unresolved (the attempt died; not a verdict)
+46 of 53 qualified, 7 blocked, 0 unresolved (the attempt died; not a verdict)
 
 QUALIFIED  anki-android             module=AnkiDroid                    already_failing=2 blockers=in-jvm-parallelism,classpath-unresolved-here captured_a_map=False log=bench/logs/anki-android/qualify.log modules=13 named_a_map=True narrowing=no-conclusion parallel_suite=True platform_discovered=None plugin_attached=True recorded_seconds=unknown recorded_workers=unknown seconds=268.3 test_seconds=1872.7 tests=2186
 QUALIFIED  apache-groovy            module=groovy-json                  already_failing=0 blockers=none captured_a_map=True log=bench/logs/apache-groovy/qualify.log modules=62 named_a_map=True narrowing=narrowing-only parallel_suite=True platform_discovered=None plugin_attached=True recorded_duplicated_ids=0 recorded_is_suite_duration=False recorded_seconds=37.077 recorded_without_duration=0 recorded_workers=15 seconds=40.6 test_seconds=45.0 tests=1102
