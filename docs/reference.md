@@ -1640,7 +1640,8 @@ second time.
 **Both runs must test the same code.** After a selecting run that narrowed, the task's map
 directory holds `selection.tsv`: every test whose execution finished `SUCCESSFUL` or `FAILED`,
 stamped with the commit, the task, the build, a digest of the test runtime classpath (what a
-manifest `Class-Path` of a jar the build produced names included) and one of the
+manifest `Class-Path` of a jar the build produced, or of a dependency read by its content, names
+included) and one of the
 task's configuration (its system properties, JVM arguments and test filters), and the test JVM's
 Java version, vendor and VM, OS and architecture. A complement run uses the record only when every
 field equals its own (its classpath looked at again after the task's own `doFirst` actions; see

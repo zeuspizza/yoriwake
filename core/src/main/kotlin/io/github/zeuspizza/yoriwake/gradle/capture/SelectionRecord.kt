@@ -245,7 +245,8 @@ internal object SelectionRecord {
      * A file or directory outside [rootDir] is digested by its content too, unless it is in Gradle's
      * module cache or its transform cache, whose paths name their content and the transform's inputs:
      * a snapshot in a local repository or an included
-     * build elsewhere can change at the same path between two runs at one commit. What is under
+     * build elsewhere can change at the same path between two runs at one commit, and so can what
+     * its manifest `Class-Path` names, which is on the test JVM's class path too. What is under
      * [rootDir] is digested by the content of each file of a directory and each entry of a jar,
      * never a jar whole: the commit and a clean tree do not fix a file generated from git state, a
      * property or the clock, and a jar the build rebuilds need not come out byte for byte alike.
@@ -260,6 +261,8 @@ internal object SelectionRecord {
         text: TrackedText = TrackedText(rootDir),
     ): String {
         val built = mutableListOf<File>()
+        // Each entry digested by its content, with its name, for what its manifest's `Class-Path` names.
+        val read = mutableListOf<Pair<String, File>>()
         val named = files.map { file ->
             // The walk reads only what is beneath the root, so the root itself would be named only.
             if (file.absoluteFile == rootDir.absoluteFile) return unmatched("the build's root directory is on it")
@@ -273,15 +276,19 @@ internal object SelectionRecord {
                 return@map "root:$it"
             }
             if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
-            (inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath) + " " + contentDigest(file)
+            val name = inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath
+            read += name to file
+            "$name ${contentDigest(file)}"
         }
+        val followed = ClasspathFiles.classPathRows(read, files.toList(), gradleUserHome)
         val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome) }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Refused -> return unmatched(walk.reason)
             is ClasspathFiles.Walk.Found -> walk.digests
         }
-        content.entries.firstOrNull { it.value == ClasspathFiles.UNREADABLE }?.let { return unmatched("${it.key} could not be read") }
-        return sha256(named + content.map { (path, digest) -> "built $path $digest" })
+        (followed.entries + content.entries).firstOrNull { it.value == ClasspathFiles.UNREADABLE }
+            ?.let { return unmatched("${it.key} could not be read") }
+        return sha256(named + followed.map { (key, digest) -> "$key $digest" } + content.map { (path, digest) -> "built $path $digest" })
     }
 
     // The reason rides in the digest so that a complement refusing over it can say why.

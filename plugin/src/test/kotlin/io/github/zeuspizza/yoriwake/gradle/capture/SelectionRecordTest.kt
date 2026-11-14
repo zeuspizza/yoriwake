@@ -1,9 +1,16 @@
 package io.github.zeuspizza.yoriwake.gradle.capture
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.makeReadable
+import io.github.zeuspizza.yoriwake.gradle.makeUnreadable
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.jar.Attributes
+import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
+import java.util.zip.ZipEntry
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -267,6 +274,58 @@ class SelectionRecordTest {
         assertNotEquals(before, afterSnapshot)
         File(included, "com/acme/Lib.class").writeText("b")
         assertNotEquals(afterSnapshot, digest())
+    }
+
+    @Test
+    fun `the classpath digest follows a jar only a dependency's manifest names, at the same path`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val vendor = File(root, "vendor/vendor.jar").also { jar(it, "lib/a.jar lib/b.jar", "") }
+        val named = File(root, "vendor/lib/a.jar").also { jar(it, null, "a") }
+        val digest = { SelectionRecord.classpathDigest(listOf(vendor), here, home) }
+        val before = digest()
+
+        assertEquals(before, digest())
+        jar(named, null, "b")
+        val replaced = digest()
+        assertNotEquals(before, replaced, "a named jar replaced in place is on the test JVM's class path")
+        jar(File(root, "vendor/lib/b.jar"), null, "a")
+        assertNotEquals(replaced, digest(), "so is a named jar that was missing and appears")
+    }
+
+    @Test
+    fun `a jar a dependency's manifest names that cannot be read digests to a value no run matches`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val vendor = File(root, "vendor/vendor.jar").also { jar(it, "lib/a.jar", "") }
+        val named = File(root, "vendor/lib/a.jar").also { jar(it, null, "a") }
+        assumeTrue(makeUnreadable(named), "this user can read a file denied to it (root?)")
+        try {
+            val digest = { SelectionRecord.classpathDigest(listOf(vendor), here, home) }
+            val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", digest(), "d")
+
+            assertNotEquals(digest(), digest())
+            assertContains(
+                SelectionRecord.mismatch(recorded, recorded.copy(classpath = "c")).orEmpty(),
+                "vendor.jar Class-Path lib/a.jar could not be read",
+            )
+        } finally {
+            makeReadable(named)
+        }
+    }
+
+    /** Writes a jar at [target] whose manifest names [classPath], with one entry holding [flavor]. */
+    private fun jar(target: File, classPath: String?, flavor: String) {
+        target.parentFile.mkdirs()
+        val manifest = Manifest().apply {
+            mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+            if (classPath != null) mainAttributes[Attributes.Name.CLASS_PATH] = classPath
+        }
+        JarOutputStream(target.outputStream(), manifest).use { out ->
+            out.putNextEntry(ZipEntry("vendor.properties"))
+            out.write("flavor=$flavor".toByteArray())
+            out.closeEntry()
+        }
     }
 
     @Test
