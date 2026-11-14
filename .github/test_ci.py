@@ -2968,9 +2968,10 @@ def case_security_names_the_release_key():
         return fail(f"SECURITY.md names {sorted(named)}, RELEASE-KEY.asc holds {sorted(published)}")
     return 0
 
-def _sweep_plan(tier, only, arm=None):
+def _sweep_plan(tier, only, arm=None, **inputs):
     """The `--only` arguments sweep.yml's plan step passes for these inputs, from the step itself.
-    With a list for `arm`, the `--arm` it asked `sweep_corpus.py` for is appended to it."""
+    With a list for `arm`, the `--arm` it asked `sweep_corpus.py` for is appended to it; `inputs`
+    are further inputs, by the step's variable names."""
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         text = handle.read()
     step = re.search(r"\n      - id: plan\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
@@ -2987,7 +2988,7 @@ def _sweep_plan(tier, only, arm=None):
         os.chmod(stub, 0o755)
         env = {**os.environ, "PATH": root + os.pathsep + os.environ.get("PATH", ""),
                "TIER": tier, "BASE": "", "MAJOR": "false", "ONLY": only,
-               "GITHUB_OUTPUT": os.path.join(root, "output")}
+               "GITHUB_OUTPUT": os.path.join(root, "output"), **inputs}
         subprocess.run(["bash", "-c", script], env=env, check=True, capture_output=True)
         with open(calls, encoding="utf-8") as handle:
             argv = handle.read().split()
@@ -3092,6 +3093,7 @@ def case_every_measuring_step_samples_the_machine_until_it_ends():
 
 
 GUEST_STEPS = (("sweep-project.yml", "\n      - name: record and cut into slices"),
+               ("sweep-project.yml", "\n      - name: replay the last real commits"),
                ("sweep-project.yml", "\n      - name: measure this slice"),
                ("sweep.yml", "\n      - name: sweep the controls"))
 
@@ -3138,6 +3140,49 @@ def case_no_guest_build_writes_to_the_run_page():
     return problems
 
 
+def case_real_commits_are_replayed_after_the_record_is_uploaded_and_cost_no_rows():
+    """The replay reverts commits in the checkout the slices start from: it runs once that state is
+    uploaded, its failure or timeout fails no job and loses no row, and a run that only replays
+    measures no slice and is red when it replayed nothing."""
+    problems = 0
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        project = handle.read()
+    record = _job_block(project, "record")
+    step = record[record.index("      - name: replay the last real commits"):]
+    step = step[:step.index("\n      - ", 1)]
+    if not record.index("state.tar.gz") < record.index("name: record-${{") \
+            < record.index("name: replay the last real commits") < record.index("name: replay-${{"):
+        problems += fail("the replay does not run after the record is uploaded, or uploads nothing")
+    for needed in ("if: inputs.commits != '0'", "continue-on-error: true", "timeout-minutes: ",
+                   '--out "replay/$NAME/commit-replay.json"', '--commits "${COMMITS:-8}"'):
+        if needed not in step:
+            problems += fail(f"the replay step lacks {needed!r}")
+    if "if: needs.record.outputs.shards != '[]' && !inputs.replay_only" not in project:
+        problems += fail("a run that only replays commits still measures slices")
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for needed in ("      commits: ${{ inputs.commits }}\n",
+                   "      replay_only: ${{ inputs.replay_only }}\n"):
+        if needed not in text:
+            problems += fail(f"sweep.yml does not pass {needed.strip()!r} to each project")
+    merge = _job_block(text, "merge")
+    if not merge.index('if [ "$REPLAY_ONLY" = true ]') < merge.index("declared=()"):
+        problems += fail("a run that only replays commits reaches the merge of rows it never measured")
+    if 'if [ -n "$lacking" ] || [ "$drawn" = 0 ]; then' not in merge:
+        problems += fail("a run that only replays commits is green with no commit drawn")
+    if _sweep_plan("full", "demo", REPLAY_ONLY="true", COMMITS="8") != ["demo"]:
+        problems += fail("a full-tier run that only replays commits was not planned")
+    for inputs in ({"tier": "reduced", "REPLAY_ONLY": "true", "COMMITS": "8"},
+                   {"tier": "full", "REPLAY_ONLY": "true", "COMMITS": "0"},
+                   {"tier": "full", "REPLAY_ONLY": "false", "COMMITS": "many"}):
+        try:
+            _sweep_plan(inputs.pop("tier"), "demo", **inputs)
+            problems += fail(f"the plan accepted {inputs}")
+        except subprocess.CalledProcessError:
+            pass
+    return problems
+
+
 def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
     """The page and `sweep-results` come from `merged/`, also on a run that then fails for a missing
     project, and the page never turns the run red. The per-job artifacts keep their three days."""
@@ -3146,20 +3191,30 @@ def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
         text = handle.read()
     merge = _job_block(text, "merge")
     guard = "${{ !cancelled() && hashFiles('merged/**/sweep.json') != '' }}"
+    replayed = "${{ !cancelled() && hashFiles('commit-replay.json') != '' }}"
+    # Also on a run that only replayed commits, which merges no rows.
+    either = ("${{ !cancelled() && (hashFiles('merged/**/sweep.json') != '' "
+              "|| hashFiles('commit-replay.json') != '') }}")
     page = merge[merge.index("      - name: write the run page"):]
     page = page[:page.index("\n      - ", 1)]
-    if f"if: {guard}" not in page or "continue-on-error: true" not in page \
-            or "bench/sweep_page.py merged unpacked" not in page:
+    if f"if: {either}" not in page or "continue-on-error: true" not in page \
+            or "bench/sweep_page.py merged unpacked --commit-replay commit-replay.json" not in page:
         problems += fail(f"the page step does not run sweep_page.py whenever the merge wrote results, "
                          f"without failing the run: {page}")
-    if merge.count("actions/upload-artifact@") != 1:
-        problems += fail("the merge job does not upload exactly one artifact")
+    if merge.count("actions/upload-artifact@") != 2:
+        problems += fail("the merge job does not upload exactly two artifacts")
     else:
-        upload = merge[merge.rindex("\n      - ", 0, merge.index("actions/upload-artifact@")):]
-        for needed in (f"- if: {guard}", "name: sweep-results", "path: merged/", "overwrite: true",
-                       "if-no-files-found: error"):
-            if needed not in upload:
-                problems += fail(f"the sweep-results upload lacks {needed!r}")
+        first = merge.index("actions/upload-artifact@")
+        uploads = (merge[merge.rindex("\n      - ", 0, first):merge.index("\n      # ", first)],
+                   merge[merge.rindex("\n      - "):])
+        for upload, wanted in (
+                (uploads[0], (f"- if: {replayed}", "name: commit-replay", "path: commit-replay.json",
+                              "overwrite: true")),
+                (uploads[1], (f"- if: {guard}", "name: sweep-results", "path: merged/",
+                              "overwrite: true", "if-no-files-found: error"))):
+            for needed in wanted:
+                if needed not in upload:
+                    problems += fail(f"the {wanted[1].split(': ')[1]} upload lacks {needed!r}")
     with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
         project = handle.read()
     for job in ("record", "shard"):
@@ -4191,6 +4246,7 @@ CASES = (
     case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
     case_every_measuring_step_samples_the_machine_until_it_ends,
     case_no_guest_build_writes_to_the_run_page,
+    case_real_commits_are_replayed_after_the_record_is_uploaded_and_cost_no_rows,
     case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged,
     case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure,
     case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported,

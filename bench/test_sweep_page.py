@@ -298,7 +298,108 @@ def case_a_target_with_a_pipe_stays_in_its_cell():
     return problems
 
 
+def _replay_file(root, **over):
+    """A merged real-commit figure, as `commit_replay.py --merge` writes it."""
+    alpha = {"drawn": 8, "replayed": 6, "narrowed": 2, "selected_fewer": 1, "forced": 3,
+             "unrecorded": 1, "causes": {"full-run:unmappable-paths": 2, "refusal:schema": 1},
+             "not_asked": {"does-not-apply": 2}, "sums": True}
+    beta = {"drawn": 8, "replayed": 2, "narrowed": 1, "selected_fewer": 1, "forced": 1,
+            "unrecorded": 0, "causes": {"full-run:unmappable-paths": 1},
+            "not_asked": {"budget": 6}, "sums": True}
+    figure = {"drawn": 16, "replayed": 8, "narrowed": 3, "selected_fewer": 2, "forced": 4,
+              "unrecorded": 1, "causes": {"full-run:unmappable-paths": 3, "refusal:schema": 1},
+              "not_asked": {"budget": 6, "does-not-apply": 2}, "sums": True}
+    merged = {"schema": "commit-replay/v1", "window": "the newest commits", "commits": ["8"],
+              "plugin_commits": ["abc123"], "figure": figure,
+              "projects": {"alpha": {"distribution": alpha, "tree_restored": True},
+                           "beta": {"distribution": beta, "tree_restored": True}},
+              "missing": ["gamma"], "not_replayed": {"demo": "no upstream history"},
+              "cut_short": ["beta"], "caveats": ["A share of commits, not of seconds."]}
+    merged.update(over)
+    path = os.path.join(root, "commit-replay.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(merged, handle)
+    return path
+
+
+def case_the_real_commit_share_is_over_the_replayed_never_the_drawn():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        text = sweep_page.replay_section(_replay_file(root))
+        if "**3 of 8 real commits narrowed (37.5%)**" not in text:
+            problems += fail(f"the figure's line reads {text.splitlines()[2]!r}")
+        if "16 commits were drawn and 8 not asked" not in text:
+            problems += fail("the drawn and the not asked are not counted apart")
+        for line in ("| `full-run:unmappable-paths` | 3 | 37.5% |", "| `no kind recorded` | 1 | 12.5% |",
+                     "| `budget` | 6 | 37.5% |", "| alpha | 8 | 6 | 2 | 3 | 1 | 2 | "
+                     "`full-run:unmappable-paths` |"):
+            if line not in text:
+                problems += fail(f"the page lacks {line!r}")
+        if "- A share of commits, not of seconds." not in text:
+            problems += fail("the page does not say what the figure may claim")
+    return problems
+
+
+def case_a_project_with_no_replay_file_is_named_not_counted_as_zero():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        text = sweep_page.replay_section(_replay_file(root))
+        for line in ("No file from its record job (1): gamma.",
+                     "Stopped by the time budget (1): beta.",
+                     "Not replayed (1): demo (no upstream history)."):
+            if line not in text:
+                problems += fail(f"the page lacks {line!r}")
+        if "| gamma |" in text or "| demo |" in text:
+            problems += fail("a project that was not replayed has a row of counts")
+        if "Tree not put back" in text:
+            problems += fail("a tree that was put back is named as one that was not")
+        with open(_replay_file(root), encoding="utf-8") as handle:
+            dirty = json.load(handle)["projects"]
+        dirty["alpha"]["tree_restored"] = False
+        text = sweep_page.replay_section(_replay_file(root, projects=dirty))
+        if "Tree not put back to the pin (1): alpha." not in text:
+            problems += fail("a checkout left off its pin is not named")
+        figure = {"drawn": 1, "replayed": 0, "narrowed": 0, "selected_fewer": 0, "forced": 0,
+                  "unrecorded": 0, "causes": {}, "not_asked": {"budget": 1}, "sums": False}
+        text = sweep_page.replay_section(_replay_file(root, figure=figure))
+        if "(n/a)" not in text or "DO NOT ADD UP" not in text:
+            problems += fail("no commit replayed, or counts that do not add up, are not said")
+    return problems
+
+
+def case_a_run_that_only_replayed_commits_has_that_section_alone():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        def printed(*extra):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = sweep_page.main([os.path.join(root, "merged"),
+                                        os.path.join(root, "unpacked"), *extra])
+            return code, out.getvalue()
+
+        path = _replay_file(root)
+        code, text = printed("--commit-replay", path)
+        if code != 0 or "real commits narrowed" not in text or "nothing was merged" in text:
+            problems += fail(f"exit {code}: {text!r}")
+        code, text = printed("--commit-replay", os.path.join(root, "absent.json"))
+        if code != 0 or "nothing was merged" not in text:
+            problems += fail("an absent figure changed the page of a run with no rows")
+        _sweep(root, {"demo": _project("demo", [_row("x")])})
+        code, text = printed("--commit-replay", path)
+        if code != 0 or not text.index("## Real commits replayed") < text.index("<summary>demo:"):
+            problems += fail("a run with rows and a figure does not show both, the figure first")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{")
+        code, text = printed("--commit-replay", path)
+        if code != 0 or "could not be read" not in text:
+            problems += fail(f"an unreadable figure: exit {code}")
+    return problems
+
+
 CASES = (
+    case_the_real_commit_share_is_over_the_replayed_never_the_drawn,
+    case_a_project_with_no_replay_file_is_named_not_counted_as_zero,
+    case_a_run_that_only_replayed_commits_has_that_section_alone,
     case_each_project_is_a_section_in_sweep_order_holding_its_rows,
     case_a_skipped_full_arm_shows_the_complement_marked,
     case_failed_reads_induced_plus_already_and_missed_counts_the_misses,

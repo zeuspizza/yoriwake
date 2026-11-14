@@ -89,6 +89,17 @@ reading a stack trace needs the logs of the machine that ran the sweep.
   have drawn more rows where a miss was possible than `reach-stratified/v1`, from results files.
 - `replay_decisions.py`: asks the current selector every recall question a sweep already paid
   for, in seconds and offline.
+- `commit_replay.py <project.toml> --commits N`: how often a commit people wrote narrows. A
+  sweep's rows are generated edits of one source file; a real commit also touches a README, a
+  workflow file, a build script. After `run.py` has captured the project's map, each of its last N
+  first-parent commits up to the pin is reverted whole on the pinned tree, the test classes are
+  compiled, and `yoriwakeExplain<Task>` is asked what a selecting run would do. No test runs. A
+  commit narrowed, ran everything for a named cause, ran everything for none recorded, or was not
+  asked (a duplicate or empty patch, a reverse that does not apply or compile, a stalled build,
+  no answer, or the 30-minute budget). `--merge` sums the projects' files into `commit-replay.json`; `sweep.yml` does both
+  (`commits`, default 8; `replay_only` for that figure alone) and the run page opens with it. It
+  is a share of commits, not of seconds, and a decision, not a run: it says nothing about recall.
+  Fields: [`docs/sweep-data-dictionary.md`](../docs/sweep-data-dictionary.md#real-commits-replayed-commit-replayjson).
 - `config_cost.py`: what applying the plugin costs a project before it runs a test.
 - `cost.py`: what a sweep will cost before it starts, and what it cost after.
 - `corpus_state.py`: per project, whether its recall evidence is clean, and if not, what it is.

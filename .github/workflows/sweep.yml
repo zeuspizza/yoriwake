@@ -23,6 +23,13 @@ name: sweep
 # refused before measuring unless the selector's sources are the earlier run's, and the merge
 # refuses rows measured under another selector or grammar (bench/merge.py --completes).
 #
+# After its record, each project's last `commits` real commits are replayed: each reverted on the
+# pinned tree and the selector asked, without running a test, whether it would narrow
+# (bench/commit_replay.py). The merge sums them into `commit-replay.json`, the share of real commits
+# that narrowed and why the rest ran everything, beside the results and at the top of the run page.
+# `replay_only` records and replays without measuring a row: that figure alone, in a draft release
+# `commit-replay-<run>`.
+#
 # Dispatched in each release check on the gate commit, and again on a candidate whose diff touches
 # product code (`RELEASING.md`), never on a schedule: a full sweep of every
 # project takes about 7.5 to 10 hours.
@@ -56,6 +63,14 @@ on:
         description: the run id of an earlier full sweep, some of whose missing projects only re-runs
         type: string
         default: ''
+      commits:
+        description: real commits to replay per project after its record, 0 for none
+        type: string
+        default: '8'
+      replay_only:
+        description: record and replay the commits only, measuring no row (full tier)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -86,11 +101,23 @@ jobs:
           MAJOR: ${{ inputs.major_release }}
           ONLY: ${{ inputs.only }}
           COMPLETES: ${{ inputs.completes }}
+          COMMITS: ${{ inputs.commits }}
+          REPLAY_ONLY: ${{ inputs.replay_only }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           # A dispatch always carries a tier; the full arm only guards a run without inputs.
           TIER=${TIER:-full}
+          case ${COMMITS:-8} in
+            *[!0-9]*) echo "commits takes a count, not '$COMMITS'"; exit 1 ;;
+          esac
+          if [ "$REPLAY_ONLY" = true ]; then
+            # Refused here: any other tier would measure rows, or nothing, under a name that says
+            # commits; and a completion joins rows, of which this run has none.
+            [ "$TIER" = full ] || { echo "replay_only takes tier full, not $TIER"; exit 1; }
+            [ -z "$COMPLETES" ] || { echo "replay_only completes no earlier run"; exit 1; }
+            [ "${COMMITS:-8}" != 0 ] || { echo "replay_only with commits 0 asks nothing"; exit 1; }
+          fi
           # Refused here rather than after hours of measuring: a completion's rows join the earlier
           # run's only if both measured the same selector.
           if [ -n "$COMPLETES" ]; then
@@ -274,6 +301,8 @@ jobs:
     with:
       project: ${{ toJSON(matrix.project) }}
       factor: ${{ inputs.factor }}
+      commits: ${{ inputs.commits }}
+      replay_only: ${{ inputs.replay_only }}
 
   merge:
     needs: [plan, project]
@@ -297,9 +326,28 @@ jobs:
           RUN: ${{ github.run_id }}
           COMPLETES: ${{ inputs.completes }}
           REPO: ${{ github.repository }}
+          COMMITS: ${{ inputs.commits }}
+          REPLAY_ONLY: ${{ inputs.replay_only }}
         run: |
           set -euo pipefail
           names=$(jq -r '.[].project' <<< "$PLAN")
+          if [ "$REPLAY_ONLY" = true ]; then
+            # No row was measured: the figure alone, under a tag no reader of sweeps takes for one.
+            python3 bench/commit_replay.py --merge downloaded --planned $names --out commit-replay.json
+            lacking=$(jq -r '.missing | join(" ")' commit-replay.json)
+            skipped=$(jq -r '.not_replayed | to_entries | map("\(.key) (\(.value))") | join(", ")' commit-replay.json)
+            drawn=$(jq -r '.figure.drawn' commit-replay.json)
+            title="Real commits replayed, run $RUN"
+            [ -z "$lacking" ] && [ "$drawn" != 0 ] || title="$title (PARTIAL)"
+            gh release create "commit-replay-$RUN" --draft --title "$title" \
+              --notes "What the selector would do on each project's last ${COMMITS:-8} real commits, from run $RUN. No test ran. Without a figure: ${lacking:-none}. Not replayed: ${skipped:-none}." \
+              commit-replay.json
+            if [ -n "$lacking" ] || [ "$drawn" = 0 ]; then
+              echo "::error::$drawn commits drawn; no file from: ${lacking:-none}; not replayed: ${skipped:-none}"
+              exit 1
+            fi
+            exit 0
+          fi
           declared=()
           mkdir -p evidence
           for name in $names; do
@@ -375,6 +423,16 @@ jobs:
             fi
             completes=(--completes previous)
           fi
+          # The real-commit figure, before the rows: a fault in it costs that figure alone.
+          extra=()
+          if [ "${COMMITS:-8}" != 0 ]; then
+            earlier=()
+            [ -z "$COMPLETES" ] || earlier=(--completes previous/commit-replay.json)
+            python3 bench/commit_replay.py --merge downloaded --planned $names \
+              "${earlier[@]+"${earlier[@]}"}" --out commit-replay.json \
+              || echo "::warning::the real-commit figure does not add up; see the run page"
+            [ ! -f commit-replay.json ] || extra=(commit-replay.json)
+          fi
           python3 bench/merge.py art --planned $names "${missing_args[@]+"${missing_args[@]}"}" \
             --arm "$ARM" --out merged "${completes[@]+"${completes[@]}"}"
           partial=("${declared[@]+"${declared[@]}"}")
@@ -398,7 +456,7 @@ jobs:
           # outgrew one in November 2026. The parts in name order are one tar.
           tar -cf - evidence | split -b 1073741824 -a 3 - "sweep-$RUN-evidence.tar.part-"
           python3 bench/sweep_parts.py manifest "sweep-$RUN"-evidence.tar.part-* > evidence-parts.tsv
-          tar -czf "sweep-$RUN.tar.gz" merged art evidence-parts.tsv
+          tar -czf "sweep-$RUN.tar.gz" merged art evidence-parts.tsv "${extra[@]+"${extra[@]}"}"
           if [ "${#partial[@]}" -gt 0 ]; then
             title="${title%)}, PARTIAL)"
             notes="$notes
@@ -417,9 +475,19 @@ jobs:
       # The run page: one section per merged project. Also after the merge step failed for a missing
       # project, which it does after the release; a fault here never turns the sweep red.
       - name: write the run page
-        if: ${{ !cancelled() && hashFiles('merged/**/sweep.json') != '' }}
+        if: ${{ !cancelled() && (hashFiles('merged/**/sweep.json') != '' || hashFiles('commit-replay.json') != '') }}
         continue-on-error: true
-        run: python3 bench/sweep_page.py merged unpacked >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          python3 bench/sweep_page.py merged unpacked --commit-replay commit-replay.json \
+            >> "$GITHUB_STEP_SUMMARY"
+      # The real-commit figure by itself, also of a run that measured no row.
+      - if: ${{ !cancelled() && hashFiles('commit-replay.json') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: commit-replay
+          path: commit-replay.json
+          retention-days: 90
+          overwrite: true
       # The one download a reader needs: the merged results, also of a sweep that ends red for a
       # missing project. The record-* and shard-* artifacts stay for re-running a slice or the
       # merge; a re-run merge replaces this one.
