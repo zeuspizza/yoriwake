@@ -5269,6 +5269,9 @@ MUTATIONS = [
      '                  and (pom.text(e, "id") or "default") == execution.id), None)',
      '                  and pom.text(e, "id") == execution.id), None)', maven_harness_suite,
      "gained a second one named default"),
+    ("staging writes its edit a line early under a root tag spread over lines", MAVEN_HARNESS,
+     '        spread = opening.group().count("\\n") if opening else 0', "        spread = 0",
+     maven_harness_suite, "staging wrote its edit a line early"),
     # A dependency bump selects the tests that reached the moved jars, and forces for all else.
     ("the dependency classifier accepts a line of any shape", COORDINATE_DIFF,
      '                } ?: return Verdict.Refused(path, after, "not a version change of a shape this rule knows")',

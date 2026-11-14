@@ -707,6 +707,11 @@ class _Pom:
             else self.original
         head = self.original[:len(self.original) - len(body)]
         lines = body.split("\n")
+        # The serializer writes the root's start tag on one line. Where a POM spreads it over
+        # several, they count as one, or every later line is matched that many lines early.
+        opening = re.match(r"""<project(?:[^>"']|"[^"]*"|'[^']*')*>""", body)
+        spread = opening.group().count("\n") if opening else 0
+        lines[:spread + 1] = ["\n".join(lines[:spread + 1])]
         if len(lines) < len(before):
             raise SystemExit(f"cannot stage {self.path} without reformatting it; refusing")
         written = []
