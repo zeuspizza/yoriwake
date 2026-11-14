@@ -508,6 +508,13 @@ val functionalShardTable = providers.gradleProperty("yoriwake.functional.shardTa
     os to (table as? Map<*, *> ?: throw GradleException("the shard table ${shardTableFile.asFile} is no JSON object"))
 }
 
+// A local run may give each functional suite several test JVMs at once, each with a TestKit home
+// of its own. CI, the guard runs and every run that does not ask keep one.
+val functionalForks = providers.gradleProperty("yoriwake.functional.forks").orNull?.let { value ->
+    value.toIntOrNull()?.takeIf { it >= 1 }
+        ?: throw GradleException("yoriwake.functional.forks=$value must be a whole number of test JVMs, 1 or more")
+} ?: 1
+
 // The shard of each class the table lists for one suite at one count, by top-level name.
 fun shardTablePlaced(suite: String, count: Int): Map<String, Int> {
     val (os, suites) = functionalShardTable ?: return emptyMap()
@@ -658,7 +665,8 @@ testing {
                             layout.buildDirectory.dir("test-kit-diagnostics/$name").get().asFile.absolutePath,
                         )
                         if (functionalCoverage) {
-                            // One file per test class, from this task's run only: a rerun never mixes in an older one.
+                            // One file per test class, in a directory per test JVM, from this task's run
+                            // only: a rerun never mixes in an older one.
                             val daemonCoverage = layout.buildDirectory.dir("jacoco/daemon-$name")
                             systemProperty("yoriwake.functional.coverageDir", daemonCoverage.get().asFile.absolutePath)
                             val runtime: FileCollection = coverageRuntime
@@ -698,6 +706,7 @@ testing {
                             filter.includeTestsMatching("$breakAttemptsPackage.*")
                         } else {
                             filter.excludeTestsMatching("$breakAttemptsPackage.*")
+                            maxParallelForks = functionalForks
                         }
                         functionalShard?.takeIf { !name.startsWith("breakAttempts") }?.let { (index, count) ->
                             val placed = shardTablePlaced(name, count)
@@ -761,7 +770,7 @@ listOf(tasks.jacocoTestReport, tasks.jacocoTestCoverageVerification).forEach { c
                 executionData.from(tasks.named<Test>(name).map { it.extensions.getByType<JacocoTaskExtension>().destinationFile!! })
             }
             executionData.from(fileTree(layout.buildDirectory.dir("jacoco")) {
-                gatedFunctionalTasks.forEach { include("daemon-$it/*.exec") }
+                gatedFunctionalTasks.forEach { include("daemon-$it/**/*.exec") }
             })
         } else if (name == "jacocoTestReport") {
             // A quick loop without functional coverage still gets a report of the unit tests.
@@ -800,8 +809,9 @@ tasks.jacocoTestCoverageVerification {
     // Without a suite's data the measurement drops for a reason that is not the code's; say which.
     doFirst {
         val missing = suites.filter { task ->
-            summaries.walk().none { file ->
-                file.name == "summary.txt" && file.parentFile.name == "daemon-$task" && pluginClass in file.readLines()
+            // Each test JVM of a suite writes its summary into a directory of its own under the suite's.
+            summaries.walk().filter { it.isDirectory && it.name == "daemon-$task" }.none { suite ->
+                suite.walk().any { it.name == "summary.txt" && pluginClass in it.readLines() }
             }
         }
         if (missing.isNotEmpty()) {

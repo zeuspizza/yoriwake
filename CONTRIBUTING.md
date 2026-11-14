@@ -10,7 +10,9 @@ and is not repeated here.
 
 Requires JDK 21 to run Gradle, and JDKs 11, 17 and 25 where Gradle's toolchain detection finds
 them: the functional suite runs a test JVM on each. `-Pyoriwake.functional.testJvms=21` skips the
-others for a local run. CI runs each functional suite in shards by test class;
+others for a local run. `-Pyoriwake.functional.forks=<n>` runs each functional suite in `<n>` test
+JVMs at once, each with a TestKit home of its own; without it a suite runs in one. CI runs each
+functional suite in shards by test class;
 `-Pyoriwake.functional.shard=3/6 -Pyoriwake.functional.shardTable=windows` runs the same classes
 as a Windows job's shard 3 of 6 (`=linux` with a Linux job's count), to reproduce one; without the
 table property every class hashes.
