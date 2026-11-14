@@ -11,6 +11,12 @@ module = ""
 test_plugin = "failsafe"
 execution = "default"
 
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number: one local `--limit 2` run priced
+# nothing. Both rows ran every test, the first because the test classes read as changed with no
+# source change, the second for a compile-time constant. dubbo's depth stands in until a run whose
+# rows narrow gives a ratio. Each row pair cost about 75 s there, compile gate included.
+sweep_limit = 8
+
 flags = [
     # Failsafe's configuration enables Jupiter's parallel execution, and some integration tests
     # ask for `CONCURRENT`. A recording run declines tests that interleave inside one JVM unless
