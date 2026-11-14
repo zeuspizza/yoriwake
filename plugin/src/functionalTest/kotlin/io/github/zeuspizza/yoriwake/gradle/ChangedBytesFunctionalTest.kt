@@ -61,10 +61,13 @@ class ChangedBytesFunctionalTest : FunctionalTestSupport() {
     private val all = setOf("dev.sample.GreeterTest", "dev.sample.OtherTest", "dev.sample.ThirdTest")
 
     /** Captures, edits Other's source, and leaves the selecting run to the caller. */
-    private fun capturedWithOtherChanged(dir: File) {
+    private fun capturedWithOtherChanged(
+        dir: File,
+        greeterTest: Pair<String, String> = test("Greeter", """assertEquals("hello", new Greeter().greet());"""),
+    ) {
         build(
             dir, "build.gradle.kts" to weavingBuild, greeter, other, third, unused, classOrderByName,
-            test("Greeter", """assertEquals("hello", new Greeter().greet());"""),
+            greeterTest,
             test("Other", "assertEquals(2, new Other().two());"),
             test("Third", "assertEquals(3, new Third().three());"),
         )
@@ -122,5 +125,31 @@ class ChangedBytesFunctionalTest : FunctionalTestSupport() {
         // ThirdTest ran after Other was first loaded; GreeterTest ran before and stays out.
         assertEquals(setOf("dev.sample.OtherTest", "dev.sample.ThirdTest"), ranTests(dir), output)
         assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+    }
+
+    @Test
+    fun `a test class with a boolean-array annotation value is not reported as changed bytes`(@TempDir dir: File) {
+        // The class file holds the two booleans as one array, which is read anew on every run.
+        capturedWithOtherChanged(
+            dir,
+            "src/test/java/dev/sample/GreeterTest.java" to """
+                package dev.sample;
+                import org.junit.jupiter.api.Test;
+                import org.junit.jupiter.params.ParameterizedTest;
+                import org.junit.jupiter.params.provider.ValueSource;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class GreeterTest {
+                    @Test void works() { assertEquals("hello", new Greeter().greet()); }
+                    @ParameterizedTest @ValueSource(booleans = {true, false})
+                    void greetsEitherWay(boolean loud) { assertEquals("hello", new Greeter().greet()); }
+                }
+            """.trimIndent(),
+        )
+
+        val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+
+        // GreeterTest ran before Other was first loaded, so only a report of its own bytes runs it.
+        assertContains(output, "0 changed with no source change behind them")
+        assertEquals(setOf("dev.sample.OtherTest", "dev.sample.ThirdTest"), ranTests(dir), output)
     }
 }

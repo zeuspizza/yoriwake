@@ -510,6 +510,104 @@ class RecordabilityTest {
         assertNotEquals(digestOf(subject), digestOf(subject.replace("LIMIT = 7", "LIMIT = 8")))
     }
 
+    /**
+     * A class whose [site] carries one annotation with [value] as its only element. Built with ASM:
+     * whatever compiler wrote the class, the reader hands an array of primitives over as one
+     * primitive array.
+     */
+    private fun withAnnotationValue(value: Any, site: String = "method"): ByteArray {
+        val abstract = org.objectweb.asm.Opcodes.ACC_PUBLIC or org.objectweb.asm.Opcodes.ACC_ABSTRACT
+        fun org.objectweb.asm.AnnotationVisitor.carrying() {
+            visit("value", value)
+            visitEnd()
+        }
+        val writer = org.objectweb.asm.ClassWriter(0)
+        writer.visit(org.objectweb.asm.Opcodes.V1_8, abstract, "Subject", null, "java/lang/Object", null)
+        if (site == "field") {
+            writer.visitField(org.objectweb.asm.Opcodes.ACC_PUBLIC, "field", "I", null, null).apply {
+                visitAnnotation("LCases;", true).carrying()
+                visitEnd()
+            }
+        } else {
+            writer.visitMethod(abstract, "cases", "(I)V", null, null).apply {
+                when (site) {
+                    "method" -> visitAnnotation("LCases;", true).carrying()
+                    "parameter" -> visitParameterAnnotation(0, "LCases;", true).carrying()
+                    "default" -> visitAnnotationDefault().carrying()
+                    else -> error("no such site: $site")
+                }
+                visitEnd()
+            }
+        }
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    private fun digestOf(classBytes: ByteArray): String {
+        val digest = Recordability.classDigest(classBytes)
+        return assertNotNull(digest.value, "refused: ${digest.reason}")
+    }
+
+    @Test
+    fun `a primitive-array annotation value digests the same on every read`() {
+        // What `@ValueSource(booleans = {true, false})` compiles to. Each read builds a new array,
+        // so a digest that rendered the array itself and not its elements would differ every time.
+        val bytes = withAnnotationValue(booleanArrayOf(true, false))
+
+        assertEquals(digestOf(bytes), digestOf(bytes))
+    }
+
+    @Test
+    fun `every primitive array type digests the same on every read, wherever the annotation sits`() {
+        val values = listOf<Any>(
+            byteArrayOf(1, 2),
+            charArrayOf('a', 'b'),
+            shortArrayOf(1, 2),
+            intArrayOf(1, 2),
+            longArrayOf(1, 2),
+            floatArrayOf(1f, 2f),
+            doubleArrayOf(1.0, 2.0),
+        )
+        for (value in values) {
+            val bytes = withAnnotationValue(value)
+            assertEquals(digestOf(bytes), digestOf(bytes), value.javaClass.simpleName)
+        }
+        for (site in listOf("field", "parameter", "default")) {
+            val bytes = withAnnotationValue(booleanArrayOf(true, false), site)
+            assertEquals(digestOf(bytes), digestOf(bytes), site)
+        }
+    }
+
+    @Test
+    fun `a changed primitive-array annotation value moves the digest`() {
+        val before = digestOf(withAnnotationValue(booleanArrayOf(true, false)))
+
+        assertNotEquals(before, digestOf(withAnnotationValue(booleanArrayOf(true, true))), "an element")
+        assertNotEquals(before, digestOf(withAnnotationValue(booleanArrayOf(true))), "the count")
+        assertNotEquals(
+            digestOf(withAnnotationValue(intArrayOf(1))),
+            digestOf(withAnnotationValue(longArrayOf(1))),
+            "the element type",
+        )
+        // A rendering that kept the type and dropped the elements would be stable, and deaf.
+        val changed = listOf<Pair<Any, Any>>(
+            byteArrayOf(1, 2) to byteArrayOf(1, 3),
+            charArrayOf('a', 'b') to charArrayOf('a', 'c'),
+            shortArrayOf(1, 2) to shortArrayOf(1, 3),
+            intArrayOf(1, 2) to intArrayOf(1, 3),
+            longArrayOf(1, 2) to longArrayOf(1, 3),
+            floatArrayOf(1f, 2f) to floatArrayOf(1f, 3f),
+            doubleArrayOf(1.0, 2.0) to doubleArrayOf(1.0, 3.0),
+        )
+        for ((one, other) in changed) {
+            assertNotEquals(
+                digestOf(withAnnotationValue(one)),
+                digestOf(withAnnotationValue(other)),
+                one.javaClass.simpleName,
+            )
+        }
+    }
+
     /** The same class with a different `SourceDebugExtension`, and nothing else changed. */
     private fun withSmap(classBytes: ByteArray, smap: String?): ByteArray {
         val writer = org.objectweb.asm.ClassWriter(0)
