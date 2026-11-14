@@ -1754,8 +1754,7 @@ What it cannot see:
 
 - a file the test runtime classpath does not hold, such as a fixture git ignores that a test reads
   by its path. Changed between the two runs, it is in neither stamp: the classpath digest reads the
-  content only of what the classpath holds, and only the name of what it holds under the root's
-  `.gradle`, Gradle's and the plugin's own state;
+  content only of what the classpath holds;
 - environment variables, which are in no stamp: a test that reads one runs with whatever the
   complement run has.
 

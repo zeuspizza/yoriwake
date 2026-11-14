@@ -3420,6 +3420,11 @@ MUTATIONS = [
      "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      unit_suite, "the classpath digest follows what the build generated into a directory under it"),
+    # What the classpath holds under the root's `.gradle` is outside that walk, so it is read beside its name.
+    ("a complement's classpath digest names what the classpath holds under .gradle by path only", SELECTION_RECORD,
+     'return@map "root:$it " + digest',
+     'return@map "root:$it"',
+     functional_suite, "a jar the build keeps under its project cache directory, replaced between the two runs, runs every test"),
     ("a complement run leaves out tests that ran against another generated classpath file", SELECTION_RECORD,
      "ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",
      "ClasspathFiles.walk(emptyList(), emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome)",

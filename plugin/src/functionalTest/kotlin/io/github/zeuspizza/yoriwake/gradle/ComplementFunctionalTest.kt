@@ -327,6 +327,30 @@ class ComplementFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a jar the build keeps under its project cache directory, replaced between the two runs, runs every test`(@TempDir dir: File) {
+        val tool = File(dir, ".gradle/tools/tool.jar").apply { parentFile.mkdirs() }
+        val write = { flavor: String ->
+            JarOutputStream(tool.outputStream()).use { out ->
+                out.putNextEntry(JarEntry("tool.properties"))
+                out.write("flavor=$flavor\n".toByteArray())
+                out.closeEntry()
+            }
+        }
+        write("a")
+        captured(dir, extraBuild = "\ndependencies { testRuntimeOnly(files(\".gradle/tools/tool.jar\")) }\n")
+        changeAlpha(dir)
+        commit(dir, "change alpha")
+        runner(dir, "test", SELECT, BASE).build()
+        assertEquals(setOf("XrayTest", "ZuluTest"), selectionRecord(dir)?.let(::ranIn), "the selecting run left no record")
+        write("b")
+
+        val output = complement(dir).output
+
+        assertRecordedInFull(dir, output, AgentContract.COMPLEMENT_RECORD_MISMATCH_KIND)
+        assertContains(output, "classpath")
+    }
+
+    @Test
     fun `a jar only another jar's manifest names, built from a property differently, runs every test`(@TempDir dir: File) {
         captured(
             dir,

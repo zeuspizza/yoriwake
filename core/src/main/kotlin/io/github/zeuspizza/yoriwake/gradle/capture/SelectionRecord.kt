@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.agent.select.SelectionRecordFile
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.TrackedText
+import io.github.zeuspizza.yoriwake.gradle.wiring.AgentJar
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
@@ -250,6 +251,9 @@ internal object SelectionRecord {
      * [rootDir] is digested by the content of each file of a directory and each entry of a jar,
      * never a jar whole: the commit and a clean tree do not fix a file generated from git state, a
      * property or the clock, and a jar the build rebuilds need not come out byte for byte alike.
+     * Under its `.gradle`, which that walk leaves out, each entry is named and read by content, a
+     * jar entry by entry: a tool the build fetches there can be replaced in place. The plugin's own
+     * agent jar there is named only, and a Gradle user home kept there is read as one elsewhere.
      * When that walk cannot vouch for every file, a manifest names a file that cannot be told or
      * directories of more files than a walk may read, or the root itself is on the classpath, the
      * digest is one no other run produces, carrying why.
@@ -273,6 +277,20 @@ internal object SelectionRecord {
             // byte alike; the workspace's name is a hash of the transform's inputs.
             if (inHome != null && TRANSFORM_CACHE.containsMatchIn(inHome)) return@map "gradle:$inHome"
             file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let {
+                // The walk leaves out the root's `.gradle`, so what the build keeps there is read here.
+                if (it.startsWith(".gradle/") && file.name != AgentJar.RESOURCE) when {
+                    inHome == null -> {
+                        val digest = ClasspathFiles.contentDigest(file)
+                        if (digest == ClasspathFiles.UNREADABLE) return unmatched("$it could not be read")
+                        read += "root:$it" to file
+                        return@map "root:$it " + digest
+                    }
+                    // A Gradle user home kept there: as with the home outside the root.
+                    !inHome.startsWith("caches/modules-2/") -> {
+                        read += "root:$it" to file
+                        return@map "root:$it ${contentDigest(file)}"
+                    }
+                }
                 built += file
                 return@map "root:$it"
             }

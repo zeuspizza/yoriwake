@@ -660,7 +660,7 @@ internal object ClasspathFiles {
     }.getOrDefault(UNREADABLE)
 
     /** As [wholeDigest], but a jar by each entry's name and bytes, never its entry timestamps. */
-    private fun contentDigest(entry: File): String {
+    internal fun contentDigest(entry: File): String {
         if (!entry.isFile || !(entry.name.endsWith(".jar") || entry.name.endsWith(".zip"))) return wholeDigest(entry)
         return runCatching {
             JarFile(entry, false).use { zip ->
