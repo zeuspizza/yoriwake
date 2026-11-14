@@ -634,30 +634,63 @@ def case_staging_changes_no_line_it_did_not_edit():
     return failures
 
 
-def case_staging_edits_in_place_under_a_root_tag_spread_over_lines():
+def case_staging_edits_in_place_under_a_tag_spread_over_lines():
     failures = 0
-    pom = ('<?xml version="1.0" encoding="UTF-8"?>\n<project xmlns="http://maven.apache.org/POM/4.0.0"\n'
-           '         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n'
+    opening = ('<?xml version="1.0" encoding="UTF-8"?>\n<project xmlns="http://maven.apache.org/POM/4.0.0"\n'
+               '         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n')
+    middle = ('  <modelVersion>4.0.0</modelVersion>\n  <parent>\n    <groupId>dev.demo</groupId>\n'
+              '    <artifactId>root</artifactId>\n    <version>1.0</version>\n  </parent>\n'
+              '  <artifactId>app</artifactId>\n  <build>\n    <plugins>\n      <plugin>\n'
+              '        <artifactId>maven-jar-plugin</artifactId>\n')
+    nested = ('        <configuration>\n          <archive\n              compress="true"/>\n'
+              '          <!-- <skip\n               a="b"/> -->\n        </configuration>\n')
+    closing = '      </plugin>\n    </plugins>\n  </build>\n</project>\n'
+    one_line = '<?xml version="1.0" encoding="UTF-8"?>\n<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+    for where, pom, kept in (("the root's", opening + middle + closing, opening),
+                             ("a nested", one_line + middle + nested + closing, nested)):
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": pom, ".gitignore": "target/\n"})
+            except SystemExit as refusal:
+                failures += fail(f"staging refused a POM with {where} tag spread over lines: "
+                                 f"{refusal}")
+                continue
+            staged = _read(tmp, "app/pom.xml")
+            if kept not in staged:
+                failures += fail(f"staging rewrote {where} tag spread over lines")
+            jar = staged.find("</plugin>")
+            if not 0 < jar < staged.find("maven-surefire-plugin"):
+                failures += fail(f"under {where} tag spread over lines staging wrote its edit "
+                                 f"early, inside the plugin declared before it")
+    return failures
+
+
+def case_staging_refuses_a_pom_it_would_write_back_as_another_tree():
+    failures = 0
+    # The comment's `<project` is where the text is cut into what comes before the root and the
+    # root itself, so every line is matched one early and the edit lands inside the last element.
+    pom = ('<?xml version="1.0" encoding="UTF-8"?>\n<!-- the <project> of app -->\n'
+           '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
            '  <modelVersion>4.0.0</modelVersion>\n  <parent>\n    <groupId>dev.demo</groupId>\n'
            '    <artifactId>root</artifactId>\n    <version>1.0</version>\n  </parent>\n'
-           '  <artifactId>app</artifactId>\n  <build>\n    <plugins>\n      <plugin>\n'
-           '        <artifactId>maven-jar-plugin</artifactId>\n      </plugin>\n    </plugins>\n'
-           '  </build>\n</project>\n')
+           '  <artifactId>app</artifactId>\n</project>\n')
     with tempfile.TemporaryDirectory() as tmp:
-        _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": pom, ".gitignore": "target/\n"})
-        staged = _read(tmp, "app/pom.xml")
-        if not staged.startswith(pom[:pom.index("  <modelVersion>")]):
-            failures += fail("staging rewrote a root tag spread over two lines")
-        jar = staged.find("</plugin>")
-        if not 0 < jar < staged.find("maven-surefire-plugin"):
-            failures += fail("under a root tag spread over two lines staging wrote its edit a "
-                             "line early, inside the plugin declared before it")
+        try:
+            _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": pom, ".gitignore": "target/\n"})
+            failures += fail("staging wrote a POM that does not read back as the tree it edited: "
+                             + _read(tmp, "app/pom.xml")[-160:].replace("\n", " "))
+        except SystemExit as refusal:
+            if "app/pom.xml" not in str(refusal) or "refusing" not in str(refusal):
+                failures += fail(f"the refusal does not name the POM: {refusal}")
+            if _read(tmp, "app/pom.xml") != pom:
+                failures += fail("a refused POM was written all the same")
     return failures
 
 
 CASES = [
     case_staging_changes_no_line_it_did_not_edit,
-    case_staging_edits_in_place_under_a_root_tag_spread_over_lines,
+    case_staging_edits_in_place_under_a_tag_spread_over_lines,
+    case_staging_refuses_a_pom_it_would_write_back_as_another_tree,
     case_a_maven_capture_without_a_map_refuses_a_recording_run_naming_the_execution,
     case_a_maven_arm_runs_on_the_projects_jdk_or_refuses,
     case_a_resource_a_mutation_added_is_removed_after_the_restore_in_a_later_invocation,

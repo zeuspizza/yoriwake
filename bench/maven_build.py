@@ -646,6 +646,12 @@ def is_build_state(directories, is_maven_module):
 # --- Staging -----------------------------------------------------------------------------------
 
 
+# A comment, a CDATA section, a processing instruction or a tag, each whole: a `<` inside one of the
+# first three opens nothing.
+MARKUP = re.compile(r"""<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<(?:[^<>"']|"[^"]*"|'[^']*')*>""",
+                    re.S)
+
+
 class _Pom:
     """One POM, parsed with its comments, edited in place and written back. Elements are named in
     the POM's own namespace, which a POM may also leave out."""
@@ -712,11 +718,14 @@ class _Pom:
             else self.original
         head = self.original[:len(self.original) - len(body)]
         lines = body.split("\n")
-        # The serializer writes the root's start tag on one line. Where a POM spreads it over
-        # several, they count as one, or every later line is matched that many lines early.
-        opening = re.match(r"""<project(?:[^>"']|"[^"]*"|'[^']*')*>""", body)
-        spread = opening.group().count("\n") if opening else 0
-        lines[:spread + 1] = ["\n".join(lines[:spread + 1])]
+        # The serializer writes a tag on one line. Where a POM spreads one over several, they
+        # count as one, or every later line is matched that many lines early. Last tag first, so
+        # the lines before it keep their numbers.
+        for markup in reversed(list(MARKUP.finditer(body))):
+            spread = markup.group().count("\n")
+            if spread and not markup.group().startswith(("<!", "<?")):
+                first = body.count("\n", 0, markup.start())
+                lines[first:first + spread + 1] = ["\n".join(lines[first:first + spread + 1])]
         if len(lines) < len(before):
             raise SystemExit(f"cannot stage {self.path} without reformatting it; refusing")
         written = []
@@ -724,8 +733,18 @@ class _Pom:
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             written += lines[i1:i2] if tag == "equal" else after[j1:j2]
         written += lines[len(before):]
+        text = head + "\n".join(written)
+        # Lines the two forms do not share one for one put an edit in the wrong element, and the
+        # result can still be XML. What is written must read back as the edited tree.
+        try:
+            reread = ET.ElementTree(ET.fromstring(
+                text, ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))))
+        except ET.ParseError:
+            reread = None
+        if reread is None or self.serialized(reread) != self.serialized(self.tree):
+            raise SystemExit(f"cannot stage {self.path} without reformatting it; refusing")
         with open(self.path, "w", encoding="utf-8") as handle:
-            handle.write(head + "\n".join(written))
+            handle.write(text)
 
 
 def _append(parent, child, depth):
