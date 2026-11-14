@@ -247,6 +247,9 @@ GOAL_LINE = re.compile(r"^\[INFO\] --- (?:maven-)?(surefire|failsafe)(?:-plugin)
                        r"(test|integration-test) \(([^)]+)\) @ (\S+) ---")
 NEXT_STEP = re.compile(r"^\[INFO\] (?:---|-{20,}|BUILD |Reactor Summary)")
 SKIPPED = ("Tests are skipped.", "Skipping execution of surefire because it has already been run")
+# With Develocity's extension loaded a goal whose skip property is set is never handed to its
+# plugin: the extension prints this line in place of the plugin's own.
+EXTENSION_SKIPPED = "[INFO] Skipped"
 
 
 def read_log(log_path):
@@ -279,6 +282,8 @@ def test_runs(log_path):
             found.append(tuple(current))
             current = None
         elif any(marker in line for marker in SKIPPED):
+            current[3] = False
+        elif line.rstrip() == EXTENSION_SKIPPED:
             current[3] = False
     if current:
         found.append(tuple(current))
@@ -641,6 +646,12 @@ def is_build_state(directories, is_maven_module):
 # --- Staging -----------------------------------------------------------------------------------
 
 
+# A comment, a CDATA section, a processing instruction or a tag, each whole: a `<` inside one of the
+# first three opens nothing.
+MARKUP = re.compile(r"""<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<(?:[^<>"']|"[^"]*"|'[^']*')*>""",
+                    re.S)
+
+
 class _Pom:
     """One POM, parsed with its comments, edited in place and written back. Elements are named in
     the POM's own namespace, which a POM may also leave out."""
@@ -707,6 +718,14 @@ class _Pom:
             else self.original
         head = self.original[:len(self.original) - len(body)]
         lines = body.split("\n")
+        # The serializer writes a tag on one line. Where a POM spreads one over several, they
+        # count as one, or every later line is matched that many lines early. Last tag first, so
+        # the lines before it keep their numbers.
+        for markup in reversed(list(MARKUP.finditer(body))):
+            spread = markup.group().count("\n")
+            if spread and not markup.group().startswith(("<!", "<?")):
+                first = body.count("\n", 0, markup.start())
+                lines[first:first + spread + 1] = ["\n".join(lines[first:first + spread + 1])]
         if len(lines) < len(before):
             raise SystemExit(f"cannot stage {self.path} without reformatting it; refusing")
         written = []
@@ -714,8 +733,18 @@ class _Pom:
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             written += lines[i1:i2] if tag == "equal" else after[j1:j2]
         written += lines[len(before):]
+        text = head + "\n".join(written)
+        # Lines the two forms do not share one for one put an edit in the wrong element, and the
+        # result can still be XML. What is written must read back as the edited tree.
+        try:
+            reread = ET.ElementTree(ET.fromstring(
+                text, ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))))
+        except ET.ParseError:
+            reread = None
+        if reread is None or self.serialized(reread) != self.serialized(self.tree):
+            raise SystemExit(f"cannot stage {self.path} without reformatting it; refusing")
         with open(self.path, "w", encoding="utf-8") as handle:
-            handle.write(head + "\n".join(written))
+            handle.write(text)
 
 
 def _append(parent, child, depth):
@@ -762,7 +791,8 @@ def stage(checkout, project):
 
     The root POM's own `build/plugins` declaration of the plugin is re-pointed to the harness's
     version; one anywhere else (a module, a profile, plugin management only) refuses, naming it,
-    rather than adding a second. A JaCoCo agent goal is added only where no POM declares one.
+    rather than adding a second. A JaCoCo agent goal is added only where no POM declares one, and
+    into the root POM's own JaCoCo declaration when it has one.
     `target/` is added to `.gitignore` when git does not already ignore it: the plugin counts an
     untracked file by content, so the arms' own output would force every row.
     """
@@ -796,12 +826,22 @@ def stage(checkout, project):
         staged.append("plugin added")
     if not any(execution.agent_goal in other.agent_goals() for other in poms):
         build = build if build is not None else _append(pom.root, pom.element("build"), 1)
-        _append(pom.ensure(build, "plugins", 2), pom.element("plugin", children=[
-            pom.element("groupId", "org.jacoco"), pom.element("artifactId", "jacoco-maven-plugin"),
-            pom.element("version", JACOCO_VERSION),
-            pom.element("executions", children=[pom.element("execution", children=[
-                pom.element("id", STAGED_JACOCO_EXECUTION),
-                pom.element("goals", children=[pom.element("goal", execution.agent_goal)])])])]), 3)
+        agent = pom.element("execution", children=[
+            pom.element("id", STAGED_JACOCO_EXECUTION),
+            pom.element("goals", children=[pom.element("goal", execution.agent_goal)])])
+        theirs = next((p for p in pom.plugins(build)
+                       if pom.is_plugin(p, "jacoco-maven-plugin", "org.jacoco")), None)
+        if theirs is not None:
+            # A guest that declares JaCoCo for other goals (offline instrumentation, a report)
+            # gains the execution in its own declaration: Maven 3.10 refuses a POM that declares
+            # one plugin twice.
+            _append(pom.ensure(theirs, "executions", 4), agent, 5)
+        else:
+            _append(pom.ensure(build, "plugins", 2), pom.element("plugin", children=[
+                pom.element("groupId", "org.jacoco"),
+                pom.element("artifactId", "jacoco-maven-plugin"),
+                pom.element("version", JACOCO_VERSION),
+                pom.element("executions", children=[agent])]), 3)
         staged.append(f"jacoco {execution.agent_goal} added")
     if staged:
         pom.write()
@@ -815,7 +855,10 @@ def stage(checkout, project):
             pom.element("groupId", "org.apache.maven.plugins"),
             pom.element("artifactId", execution.artifact)]), 3)
     executions = pom.ensure(plugin, "executions", 4)
-    entry = next((e for e in executions if pom.text(e, "id") == execution.id), None)
+    # An execution declared without an id has Maven's `default`; adding one under that id beside
+    # it would be a duplicate, which Maven refuses to read.
+    entry = next((e for e in executions if e.tag == pom.q("execution")
+                  and (pom.text(e, "id") or "default") == execution.id), None)
     if entry is None:
         entry = _append(executions, pom.element("execution", children=[
             pom.element("id", execution.id)]), 5)

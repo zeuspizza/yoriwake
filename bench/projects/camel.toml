@@ -1,0 +1,43 @@
+# WHY THIS ONE: a Maven build that loads the Develocity extension itself
+# (`develocity-maven-extension` in `.mvn/extensions.xml`, with a build cache and build scans
+# configured in `.mvn/develocity.xml`), beside four other core extensions. A reactor of several
+# hundred modules; `core/camel-util` has no reactor dependency of its own, so `-am` builds only
+# its parents and the build tools they need.
+name = "camel"
+url = "https://github.com/apache/camel.git"
+commit = "c8eb7a83cae967b52088f935eebff71d06f5c15d"
+build = "maven"
+module = "core/camel-util"
+
+# The enforcer requires JDK 21 or later.
+daemon_java_version = 21
+
+# HOW DEEP A SWEEP OF THIS PROJECT GOES, and why this number: one local `--limit 2` run had both
+# rows narrow and neither break a test, so it gave no ratio of rows where a miss was possible to
+# price four such rows by. dubbo's depth stands in until a sweep of this project gives one. Each
+# row pair cost about 57 s there, compile gate included.
+sweep_limit = 8
+
+flags = [
+    # JaCoCo is declared only in the parent's `coverage` profile, which also puts the agent on the
+    # Surefire argLine. Without it the plugin has no agent to adopt. Both arms of every row run
+    # with the profile.
+    "-Pcoverage",
+    # license:format walks the whole tree from the root module and fails the build on a file whose
+    # extension it has no comment style for; the plugin's capture files under `.yoriwake/` are two.
+    "-Dlicense.skip=true",
+    # formatter:format and impsort:sort rewrite the sources in place before they compile. An arm
+    # measures tests, and a row's edited source must reach the compiler as it was written.
+    "-Dformat.skip=true",
+    "-Dimpsort.skip=true",
+    # The parent's Surefire configuration enables Jupiter's parallel execution, classes
+    # concurrently. A recording run declines tests that interleave inside one JVM unless it records
+    # them one at a time; selecting runs keep the guest's scheduling.
+    "-Dyoriwake.recordSequentially=true",
+    # The Nisse extension puts the checkout's git state into the user properties (`nisse.jgit.clean`,
+    # the commit and its date), and Surefire hands every user property to the test JVM. An edited
+    # tree is not clean, so every selecting run would differ from the recording and run everything.
+    # The build itself reads only Nisse's OS properties.
+    "-Dnisse.source.jgit.active=false",
+]
+sources = ["core/camel-util/src/main/java"]

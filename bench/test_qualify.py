@@ -642,8 +642,9 @@ MAVEN_POM = ('<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4
              '</project>')
 
 
-def _maven_qualify(log_text):
-    """`qualify` over a staged-looking Maven checkout whose one build writes `log_text`."""
+def _maven_qualify(log_text, tests=None, failures=0):
+    """`qualify` over a staged-looking Maven checkout whose one build writes `log_text` and, given
+    `tests`, a report of that many with `failures` failing and the execution's map."""
     tmp = tempfile.mkdtemp(prefix="yoriwake-qualify-maven-")
     for relative, artifact in (("pom.xml", "root"), ("app/pom.xml", "app")):
         os.makedirs(os.path.dirname(os.path.join(tmp, relative)), exist_ok=True)
@@ -653,8 +654,19 @@ def _maven_qualify(log_text):
     def build(command, cwd, log, **_):
         with open(log, "w", encoding="utf-8") as handle:
             handle.write(log_text)
+        if tests:
+            reports = qualify.maven_build.reports_dir(tmp, "app", "surefire-reports")
+            captured = qualify.maven_build.map_dir_of(tmp, qualify.harness.Seams(project, tmp).key)
+            for directory, name, body in (
+                    (reports, "TEST-com.acme.Test.xml",
+                     SUITE.format(tests=tests, failures=failures, seconds="2.0")),
+                    (captured, "coverage.tsv", "")):
+                os.makedirs(directory, exist_ok=True)
+                with open(os.path.join(directory, name), "w", encoding="utf-8") as handle:
+                    handle.write(body)
         return 1, 3.0
 
+    project = {"name": "m", "build": "maven", "module": "app", "url": "u", "commit": "a" * 40}
     saved = (qualify.run, qualify.harness.checkout_project, qualify.harness.stage_checkout,
              qualify.maven_build.stage, qualify.maven_build.executable)
     qualify.run = build
@@ -663,8 +675,7 @@ def _maven_qualify(log_text):
     qualify.maven_build.stage = lambda checkout, project: []
     qualify.maven_build.executable = lambda checkout: "mvn"
     try:
-        return qualify.qualify({"name": "m", "build": "maven", "module": "app", "url": "u",
-                                "commit": "a" * 40})
+        return qualify.qualify(project)
     finally:
         (qualify.run, qualify.harness.checkout_project, qualify.harness.stage_checkout,
          qualify.maven_build.stage, qualify.maven_build.executable) = saved
@@ -681,6 +692,30 @@ def case_a_declined_maven_execution_is_not_qualified_and_names_its_token():
         print(f"  FAIL: a declined execution qualified, or its token is missing: {blocker[:160]}")
         return 1
     return 0
+
+
+def case_a_maven_build_that_fails_after_its_tests_is_not_qualified():
+    failures = 0
+    log = ("[INFO] --- surefire:3.5.6:test (default-test) @ app ---\n"
+           "[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0\n"
+           "[INFO] BUILD FAILURE\n"
+           "[ERROR] Failed to execute goal dev.demo:schema:1.0:validate (default) on project app: "
+           "2 documents are invalid -> [Help 1]\n")
+    verdict = _maven_qualify(log, tests=5)
+    blocker = verdict["blocker"] or ""
+    if verdict["qualified"] or "dev.demo:schema:1.0:validate" not in blocker:
+        print("  FAIL: a build that failed after its tests, none failing, qualified, or its goal is "
+              f"missing: {blocker[:160]}")
+        failures += 1
+    verdict = _maven_qualify(log, tests=5, failures=1)
+    if not verdict["qualified"]:
+        print(f"  FAIL: a red suite did not qualify: {(verdict['blocker'] or '')[:160]}")
+        failures += 1
+    verdict = _maven_qualify(log.replace("BUILD FAILURE", "BUILD SUCCESS"), tests=5)
+    if not verdict["qualified"]:
+        print(f"  FAIL: a green build did not qualify: {(verdict['blocker'] or '')[:160]}")
+        failures += 1
+    return failures
 
 
 def case_a_maven_run_that_ran_no_tests_does_not_read_an_earlier_runs_reports():
@@ -736,6 +771,7 @@ def case_a_maven_fixture_copy_commits_no_target_and_target_survives_restore():
 
 CASES = (case_a_maven_root_is_screened_only_when_the_project_file_says_maven,
          case_a_declined_maven_execution_is_not_qualified_and_names_its_token,
+         case_a_maven_build_that_fails_after_its_tests_is_not_qualified,
          case_a_maven_run_that_ran_no_tests_does_not_read_an_earlier_runs_reports,
          case_a_maven_fixture_copy_commits_no_target_and_target_survives_restore,
          case_results_are_counted_from_a_build_directory_that_is_not_called_build,

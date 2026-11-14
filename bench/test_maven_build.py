@@ -223,6 +223,10 @@ def case_an_execution_ran_only_when_its_goal_started_and_did_not_skip():
             failures += fail("an execution with its goal line and failing tests did not count as run")
         if maven_build.execution_ran(log, "lib", execution):
             failures += fail("a skipped execution counted as run")
+        by_extension = _log(tmp, SELECTED_LOG.replace("[INFO] Tests are skipped.\n",
+                                                      "[INFO] Skipped\n"), "extension.log")
+        if maven_build.execution_ran(by_extension, "lib", execution):
+            failures += fail("an execution Develocity's extension skipped counted as run")
         early = _log(tmp, "[INFO] --- compiler:3.13.0:compile (default-compile) @ lib ---\n"
                           "[ERROR] COMPILATION ERROR :\n[INFO] BUILD FAILURE\n", "early.log")
         if maven_build.execution_ran(early, "app", execution):
@@ -250,7 +254,7 @@ def case_an_upstream_test_execution_that_ran_refuses_the_row():
     with tempfile.TemporaryDirectory() as tmp:
         seams = _seams(tmp)
         log = _log(tmp, SELECTED_LOG.replace("[INFO] Tests are skipped.\n",
-                                             "[INFO] Tests run: 2, Failures: 0\n"))
+                                             "[INFO] Tests run: 2, Failures: 0, Skipped: 0\n"))
         findings = []
         if seams.executed_or_excluded(log, "T", findings, "ground-truth"):
             failures += fail("a row whose upstream module's tests ran was scored")
@@ -453,6 +457,48 @@ def case_staging_adds_jacoco_only_where_no_pom_declares_its_agent():
                             {**PROJECT, "test_plugin": "failsafe"})
         if "jacoco prepare-agent-integration added" not in staged:
             failures += fail(f"a Failsafe target gained no prepare-agent-integration: {staged}")
+    with tempfile.TemporaryDirectory() as tmp:
+        reporting = _pom("root", parent=False, group="dev.demo", body=(
+            "  <packaging>pom</packaging>\n  <modules><module>app</module></modules>\n"
+            f"  <build><plugins>{JACOCO.format(goal='report')}</plugins></build>\n"))
+        staged, _ = _staged(tmp, {"pom.xml": reporting, "app/pom.xml": _pom("app"),
+                                  ".gitignore": "target/\n"})
+        root = _read(tmp, "pom.xml")
+        if root.count("<artifactId>jacoco-maven-plugin</artifactId>") != 1:
+            failures += fail("a root POM that declares JaCoCo without its agent gained a second "
+                             "declaration, which Maven 3.10 refuses to read")
+        if "jacoco prepare-agent added" not in staged or \
+                maven_build.STAGED_JACOCO_EXECUTION not in root or \
+                "<goal>prepare-agent</goal>" not in root or "<goal>report</goal>" not in root:
+            failures += fail(f"the guest's JaCoCo declaration did not gain the agent beside its "
+                             f"own goal: {staged}")
+    return failures
+
+
+def case_staging_finds_an_execution_declared_without_an_id_under_mavens_default():
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _pom("app", body=(
+            "  <build><plugins><plugin>\n"
+            "    <artifactId>maven-failsafe-plugin</artifactId>\n"
+            "    <executions>\n"
+            "      <!-- the integration tests -->\n"
+            "      <execution>\n"
+            "        <goals><goal>integration-test</goal><goal>verify</goal></goals>\n"
+            "      </execution>\n"
+            "    </executions>\n"
+            "  </plugin></plugins></build>\n"))
+        staged, _ = _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": app,
+                                  ".gitignore": "target/\n"},
+                            {**PROJECT, "test_plugin": "failsafe", "execution": "default"})
+        module = _read(tmp, "app/pom.xml")
+        if module.count("<execution>") != 1 or "<id>default</id>" in module:
+            failures += fail("an execution declared without an id gained a second one named "
+                             "default beside it, which Maven refuses to read")
+        if "default skipTests=false" not in staged or \
+                "<skipTests>false</skipTests>" not in module:
+            failures += fail(f"the execution without an id was not staged with skipTests=false: "
+                             f"{staged}")
     return failures
 
 
@@ -588,8 +634,63 @@ def case_staging_changes_no_line_it_did_not_edit():
     return failures
 
 
+def case_staging_edits_in_place_under_a_tag_spread_over_lines():
+    failures = 0
+    opening = ('<?xml version="1.0" encoding="UTF-8"?>\n<project xmlns="http://maven.apache.org/POM/4.0.0"\n'
+               '         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n')
+    middle = ('  <modelVersion>4.0.0</modelVersion>\n  <parent>\n    <groupId>dev.demo</groupId>\n'
+              '    <artifactId>root</artifactId>\n    <version>1.0</version>\n  </parent>\n'
+              '  <artifactId>app</artifactId>\n  <build>\n    <plugins>\n      <plugin>\n'
+              '        <artifactId>maven-jar-plugin</artifactId>\n')
+    nested = ('        <configuration>\n          <archive\n              compress="true"/>\n'
+              '          <!-- <skip\n               a="b"/> -->\n        </configuration>\n')
+    closing = '      </plugin>\n    </plugins>\n  </build>\n</project>\n'
+    one_line = '<?xml version="1.0" encoding="UTF-8"?>\n<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+    for where, pom, kept in (("the root's", opening + middle + closing, opening),
+                             ("a nested", one_line + middle + nested + closing, nested)):
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": pom, ".gitignore": "target/\n"})
+            except SystemExit as refusal:
+                failures += fail(f"staging refused a POM with {where} tag spread over lines: "
+                                 f"{refusal}")
+                continue
+            staged = _read(tmp, "app/pom.xml")
+            if kept not in staged:
+                failures += fail(f"staging rewrote {where} tag spread over lines")
+            jar = staged.find("</plugin>")
+            if not 0 < jar < staged.find("maven-surefire-plugin"):
+                failures += fail(f"under {where} tag spread over lines staging wrote its edit "
+                                 f"early, inside the plugin declared before it")
+    return failures
+
+
+def case_staging_refuses_a_pom_it_would_write_back_as_another_tree():
+    failures = 0
+    # The comment's `<project` is where the text is cut into what comes before the root and the
+    # root itself, so every line is matched one early and the edit lands inside the last element.
+    pom = ('<?xml version="1.0" encoding="UTF-8"?>\n<!-- the <project> of app -->\n'
+           '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+           '  <modelVersion>4.0.0</modelVersion>\n  <parent>\n    <groupId>dev.demo</groupId>\n'
+           '    <artifactId>root</artifactId>\n    <version>1.0</version>\n  </parent>\n'
+           '  <artifactId>app</artifactId>\n</project>\n')
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": pom, ".gitignore": "target/\n"})
+            failures += fail("staging wrote a POM that does not read back as the tree it edited: "
+                             + _read(tmp, "app/pom.xml")[-160:].replace("\n", " "))
+        except SystemExit as refusal:
+            if "app/pom.xml" not in str(refusal) or "refusing" not in str(refusal):
+                failures += fail(f"the refusal does not name the POM: {refusal}")
+            if _read(tmp, "app/pom.xml") != pom:
+                failures += fail("a refused POM was written all the same")
+    return failures
+
+
 CASES = [
     case_staging_changes_no_line_it_did_not_edit,
+    case_staging_edits_in_place_under_a_tag_spread_over_lines,
+    case_staging_refuses_a_pom_it_would_write_back_as_another_tree,
     case_a_maven_capture_without_a_map_refuses_a_recording_run_naming_the_execution,
     case_a_maven_arm_runs_on_the_projects_jdk_or_refuses,
     case_a_resource_a_mutation_added_is_removed_after_the_restore_in_a_later_invocation,
@@ -608,6 +709,7 @@ CASES = [
     case_a_gradle_project_takes_the_gradle_seam_with_its_arguments_unchanged,
     case_a_maven_run_refuses_the_arms_it_has_no_meaning_for,
     case_staging_adds_jacoco_only_where_no_pom_declares_its_agent,
+    case_staging_finds_an_execution_declared_without_an_id_under_mavens_default,
     case_staging_twice_from_one_commit_gives_one_sha,
     case_staging_re_points_an_existing_declaration_and_refuses_one_it_cannot,
 ]

@@ -757,12 +757,22 @@ def change_names(label, declared=None):
     return relative, {n for n in names if n}
 
 
+# After a name that ends a path: an extension that is neither source nor a class file.
+OTHER_FILE = re.compile(r"\.(?!(?:class|java|kt|groovy|scala)\b)\w")
+
+
 def names_change(reason, label, declared=None):
     """Whether a decision reason names the row's changed file or one of its classes."""
     relative, names = change_names(label, declared)
     if relative in reason or os.path.basename(relative) in reason:
         return True
-    return any(re.search(rf"(?<![\w$]){re.escape(name)}(?!\w)", reason) for name in names)
+    for name in names:
+        for found in re.finditer(rf"(?<![\w$]){re.escape(name)}(?!\w)", reason):
+            # `.../meta/Foo.xml` is another file that shares the class's name, not the class.
+            if not (reason[found.start() - 1:found.start()] == "/"
+                    and OTHER_FILE.match(reason, found.end())):
+                return True
+    return False
 
 
 def setup_forced_reason(decisions, label, declared=None):
