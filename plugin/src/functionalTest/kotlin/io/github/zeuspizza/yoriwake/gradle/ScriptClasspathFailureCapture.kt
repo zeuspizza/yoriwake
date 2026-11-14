@@ -34,7 +34,8 @@ class ScriptClasspathFailureCapture : TestExecutionExceptionHandler {
         val directory = System.getProperty("yoriwake.functional.diagnosticsDir")
         val project = if (directory != null && SIGNATURE in message) projectOf(message) else null
         if (project != null && captured.incrementAndGet() <= LIMIT) {
-            runCatching { capture(File(directory), "${captured.get()}-${context.displayName}", project) }
+            // Each test JVM numbers its captures from 1, so each files them in a directory of its own.
+            runCatching { capture(File(directory, FunctionalGradle.testJvm), "${captured.get()}-${context.displayName}", project) }
                 .onFailure { System.err.println("could not capture the script classpath failure: $it") }
         }
         throw throwable
