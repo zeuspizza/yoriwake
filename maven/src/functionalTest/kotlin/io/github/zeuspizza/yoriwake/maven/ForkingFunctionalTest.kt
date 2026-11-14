@@ -123,6 +123,20 @@ class ForkingFunctionalTest {
     }
 
     @Test
+    fun `a command line switch Surefire does not promote leaves the POM's parallel execution declined`(@TempDir dir: File) {
+        // With promotion off the fork never gets the command line's false, and runs in parallel.
+        val project = committed(
+            dir,
+            "<promoteUserPropertiesToSystemProperties>false</promoteUserPropertiesToSystemProperties>" +
+                "<systemPropertyVariables><junit.jupiter.execution.parallel.enabled>true</junit.jupiter.execution.parallel.enabled></systemPropertyVariables>",
+        )
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Djunit.jupiter.execution.parallel.enabled=false").succeeded().output
+
+        assertContains(output, "[yoriwake] lib surefire:test (default-test) declined, in-jvm-parallelism")
+    }
+
+    @Test
     fun `parallel execution enabled in configurationParameters outranks system properties`(@TempDir dir: File) {
         // The launcher's configuration parameters outrank the JVM's system properties.
         val project = committed(

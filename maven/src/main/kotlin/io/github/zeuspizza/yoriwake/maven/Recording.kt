@@ -562,9 +562,11 @@ internal class Recording(
             if (name == "configurationParameters") launcher += value else if (name != null) parameters[name] = value
         }
         // The fork's system properties in the order Surefire applies them, a later one winning: its
-        // configuration, then the command line's -D user properties.
+        // configuration, then the command line's -D user properties when it promotes them.
         forkSystemProperties(project, execution, configuration).forEach { parameters[it.name] = valueOf(project, it) }
-        session.userProperties.forEach { (k, v) -> parameters[k.toString()] = v?.toString() }
+        if (promotesUserProperties(project, execution, configuration)) {
+            session.userProperties.forEach { (k, v) -> parameters[k.toString()] = v?.toString() }
+        }
         // The launcher's configuration parameters outrank the JVM's system properties.
         launcher.forEach(::read)
         return ParallelismDetector.detect(parameters, arguments(resolvedArgLine(project, configuration)), classpath)
