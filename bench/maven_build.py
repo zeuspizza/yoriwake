@@ -826,7 +826,10 @@ def stage(checkout, project):
             pom.element("groupId", "org.apache.maven.plugins"),
             pom.element("artifactId", execution.artifact)]), 3)
     executions = pom.ensure(plugin, "executions", 4)
-    entry = next((e for e in executions if pom.text(e, "id") == execution.id), None)
+    # An execution declared without an id has Maven's `default`; adding one under that id beside
+    # it would be a duplicate, which Maven refuses to read.
+    entry = next((e for e in executions if e.tag == pom.q("execution")
+                  and (pom.text(e, "id") or "default") == execution.id), None)
     if entry is None:
         entry = _append(executions, pom.element("execution", children=[
             pom.element("id", execution.id)]), 5)

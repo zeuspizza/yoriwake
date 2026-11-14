@@ -471,6 +471,33 @@ def case_staging_adds_jacoco_only_where_no_pom_declares_its_agent():
     return failures
 
 
+def case_staging_finds_an_execution_declared_without_an_id_under_mavens_default():
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _pom("app", body=(
+            "  <build><plugins><plugin>\n"
+            "    <artifactId>maven-failsafe-plugin</artifactId>\n"
+            "    <executions>\n"
+            "      <!-- the integration tests -->\n"
+            "      <execution>\n"
+            "        <goals><goal>integration-test</goal><goal>verify</goal></goals>\n"
+            "      </execution>\n"
+            "    </executions>\n"
+            "  </plugin></plugins></build>\n"))
+        staged, _ = _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": app,
+                                  ".gitignore": "target/\n"},
+                            {**PROJECT, "test_plugin": "failsafe", "execution": "default"})
+        module = _read(tmp, "app/pom.xml")
+        if module.count("<execution>") != 1 or "<id>default</id>" in module:
+            failures += fail("an execution declared without an id gained a second one named "
+                             "default beside it, which Maven refuses to read")
+        if "default skipTests=false" not in staged or \
+                "<skipTests>false</skipTests>" not in module:
+            failures += fail(f"the execution without an id was not staged with skipTests=false: "
+                             f"{staged}")
+    return failures
+
+
 def case_staging_twice_from_one_commit_gives_one_sha():
     with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as two:
         files = {"pom.xml": ROOT_POM, "app/pom.xml": _pom("app")}
@@ -623,6 +650,7 @@ CASES = [
     case_a_gradle_project_takes_the_gradle_seam_with_its_arguments_unchanged,
     case_a_maven_run_refuses_the_arms_it_has_no_meaning_for,
     case_staging_adds_jacoco_only_where_no_pom_declares_its_agent,
+    case_staging_finds_an_execution_declared_without_an_id_under_mavens_default,
     case_staging_twice_from_one_commit_gives_one_sha,
     case_staging_re_points_an_existing_declaration_and_refuses_one_it_cannot,
 ]

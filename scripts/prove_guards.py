@@ -5265,6 +5265,10 @@ MUTATIONS = [
     ("staging declares JaCoCo twice in a root POM that already declares it", MAVEN_HARNESS,
      "        if theirs is not None:", "        if False:", maven_harness_suite,
      "gained a second declaration"),
+    ("staging adds a second execution beside one declared without an id", MAVEN_HARNESS,
+     '                  and (pom.text(e, "id") or "default") == execution.id), None)',
+     '                  and pom.text(e, "id") == execution.id), None)', maven_harness_suite,
+     "gained a second one named default"),
     # A dependency bump selects the tests that reached the moved jars, and forces for all else.
     ("the dependency classifier accepts a line of any shape", COORDINATE_DIFF,
      '                } ?: return Verdict.Refused(path, after, "not a version change of a shape this rule knows")',
