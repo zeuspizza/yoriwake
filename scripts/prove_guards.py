@@ -5160,6 +5160,15 @@ MUTATIONS = [
      "                name, copy, project.basedir",
      "                name, mapDir, project.basedir",
      maven_suite, "explain says what a selecting run would run and writes its file"),
+    # Explain compares the environment the selecting run would, and names what nobody compares.
+    ("Maven explain compares no environment", MAVEN_EXPLAIN,
+     "                environment = environment, undated = null,",
+     "                environment = null, undated = null,",
+     maven_suite, "explain over a map recorded under another user property says the run would run everything"),
+    ("Maven explain names no variable the tests read uncompared", MAVEN_EXPLAIN,
+     "                EnvironmentFingerprint.uncomparedReads(copy, rules).forEach {",
+     "                emptyList<String>().forEach {",
+     maven_suite, "explain under the recorded environment narrows and names a variable a test read that nobody compares"),
     # With a trusted-map list, a map it does not vouch for never narrows.
     ("the Maven provenance check refuses nothing", MAVEN_SELECTION,
      "            MapProvenance.verify(mapDir, listed[listedName]).refusal?.let { (refusal, reason) ->",
