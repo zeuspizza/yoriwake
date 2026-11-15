@@ -19,6 +19,10 @@ has no recall denominator. Its figure counts, per family, the rows and the force
 everything; with the narrowing flags off, a row that narrowed is a finding that fails the project.
 With a narrowing flag in the project's `flags`, its rows are a population of their own.
 
+`run.py --narrow-dependencies` turns `-Pyoriwake.narrowDependencies` on for a run and draws
+`dependency-revert` alone, up to `NARROW_DEPENDENCIES_ROWS` rows a project, into a results folder
+of its own: with the flag the moved jars decide, so the figure is how far each row narrowed.
+
 WHY A FILE OF ITS OWN. `grammar_digest` hashes the default grammar's files; adding these generators
 to them would move the default set's digest and restart every default results file. This file is
 digested with `forcing/v1` only, beside the two it reuses (`revert.py` and `census.py`).
@@ -39,6 +43,12 @@ FAMILIES = ("resource-value", "services", "build-script", "dependency-revert")
 # ROWS A FAMILY DRAWS A PROJECT. One, since the path decides the outcome; two once each force kind
 # also has its own cap on suite runs.
 ROWS_PER_FAMILY = 1
+
+# ROWS `dependency-revert` DRAWS A PROJECT UNDER `run.py --narrow-dependencies`, the only family
+# such a run draws. With the flag the moved jars decide the outcome, not the path, so one row says
+# little; four bound a project at eight suite runs.
+NARROW_DEPENDENCIES_FAMILY = "dependency-revert"
+NARROW_DEPENDENCIES_ROWS = 4
 
 # Plugin properties that let a forcing path narrow. With one of them on, a narrowed row is what the
 # flag is for, not a finding.

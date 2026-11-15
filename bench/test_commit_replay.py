@@ -608,6 +608,111 @@ def case_the_command_line_merges_and_fails_a_figure_that_does_not_add_up():
     return failures
 
 
+def bumps():
+    """A repository whose pin follows a version-only bump of the catalog, a bump of a build
+    script's version line, and a code commit."""
+    root = os.path.join(tempfile.mkdtemp(prefix="commit-replay-"), "repo")
+    TMP.append(os.path.dirname(root))
+    repo = Repo(root)
+    repo.commit("base", {"gradle/libs.versions.toml": '[versions]\nokio = "3.0.0"\n',
+                         "core/build.gradle.kts": 'dependencies { implementation("a:b:1.0") }\n',
+                         "core/src/A.java": "class A { int a = 1; }\n"})
+    repo.commit("catalog", {"gradle/libs.versions.toml": '[versions]\nokio = "3.1.0"\n'})
+    repo.commit("script", {"core/build.gradle.kts": 'dependencies { implementation("a:b:1.1") }\n'})
+    repo.commit("code", {"core/src/A.java": "class A { int a = 2; }\n"})
+    return repo
+
+
+FORCED_BUMP = {"fullRun": True, "fullRunKind": "unmappable-paths", "selected": 9, "known": 9}
+REFUSED_BUMP = {"fullRun": True, "fullRunKind": "daemon-refused",
+                "refusalKind": "dependency-added", "selected": 9, "known": 9}
+
+
+def paired(repo, narrow_answers, budget_seconds=3600, clock=time.monotonic):
+    names = {sha: name for name, sha in repo.shas.items()}
+    asked = []
+
+    def explain_narrow(sha):
+        asked.append(names[sha])
+        return narrow_answers.get(names[sha], NARROW)
+
+    drawn = commit_replay.draw(repo.root, pin(repo), 3)
+    rows = commit_replay.replay(repo.root, drawn, budget_seconds=budget_seconds, clock=clock,
+                                explain_narrow=explain_narrow,
+                                **stubs(repo, answers={"catalog": FORCED_BUMP,
+                                                       "script": FORCED_BUMP}))
+    return by_name(repo, rows), asked
+
+
+def case_a_version_only_commit_is_asked_twice_and_any_other_once():
+    repo = bumps()
+    failures = 0
+    rows, asked = paired(repo, {"script": REFUSED_BUMP})
+    if sorted(asked) != ["catalog", "script"]:
+        failures += fail(f"the flag-on ask went to {asked}")
+    if rows["code"].get("version_only") is not False or "with_narrow_dependencies" in rows["code"]:
+        failures += fail(f"the code commit reads {rows['code']}")
+    catalog, script = rows["catalog"], rows["script"]
+    if catalog["outcome"] != "forced" or catalog["with_narrow_dependencies"]["outcome"] != "narrowed":
+        failures += fail(f"the catalog bump reads {catalog}")
+    if script["with_narrow_dependencies"].get("cause") != "refusal:dependency-added":
+        failures += fail(f"the script bump reads {script}")
+    block = commit_replay.narrow_dependencies_block(list(rows.values()))
+    want = {"replayed": 2, "asked": 2, "narrowed": 1, "per_jar": 1, "forced": 1,
+            "causes": {"refusal:dependency-added": 1}, "median_share": round(2 / 9, 4),
+            "sums": True}
+    if {key: block[key] for key in want} != want:
+        failures += fail(f"the block reads {block}")
+    if commit_replay.distribution(list(rows.values()))["forced"] != 2:
+        failures += fail("the headline is not the answer without the flag")
+    return failures
+
+
+def case_the_budget_ending_between_the_two_asks_leaves_the_second_not_asked():
+    repo = bumps()
+    # Newest first: the code commit, then the script bump's first ask, pass inside the budget; its
+    # second does not.
+    ticks = iter([0, 0, 0, 1, 1, 1, 200] + list(range(300, 10_000, 100)))
+    rows, asked = paired(repo, {}, budget_seconds=100, clock=lambda: next(ticks))
+    failures = 0
+    script = rows["script"]
+    if script["outcome"] != "forced" or script.get("with_narrow_dependencies") != {
+            "outcome": "not-asked", "reason": "budget"} or asked:
+        failures += fail(f"the script bump past the budget reads {script}, asked {asked}")
+    block = commit_replay.narrow_dependencies_block(list(rows.values()))
+    if block["not_asked"] != {"budget": 1} or block["asked"] != 0 or not block["sums"]:
+        failures += fail(f"the block past the budget reads {block}")
+    return failures
+
+
+def case_a_file_from_before_the_paired_ask_merges_with_the_block_absent():
+    failures = 0
+    directory = downloads()
+    record(directory, "alpha")
+    record(directory, "beta", rows=[
+        {"sha": "a", "outcome": "forced", "cause": "full-run:unmappable-paths",
+         "version_only": True,
+         "with_narrow_dependencies": {"outcome": "narrowed", "selected": 3, "known": 10}},
+        {"sha": "b", "outcome": "forced", "cause": "full-run:unmappable-paths",
+         "version_only": True,
+         "with_narrow_dependencies": {"outcome": "forced", "cause": "refusal:dependency-added"}},
+        {"sha": "c", "outcome": "narrowed", "selected": 1, "known": 10, "version_only": False}])
+    merged = commit_replay.merge(directory, ["alpha", "beta"])
+    if "narrow_dependencies" in merged["projects"]["alpha"]:
+        failures += fail("a file from before the paired ask grew a block")
+    block = merged["narrow_dependencies"] or {}
+    want = {"projects": 1, "replayed": 2, "narrowed": 1, "per_jar": 1, "forced": 1,
+            "median_share": 0.3, "sums": True}
+    if {key: block.get(key) for key in want} != want:
+        failures += fail(f"the merged block reads {block}")
+    if merged["figure"]["replayed"] != 9:
+        failures += fail("the paired ask changed the headline")
+    record(directory, "gamma")
+    if commit_replay.merge(directory, ["alpha", "gamma"])["narrow_dependencies"] is not None:
+        failures += fail("files from before the paired ask merged into a zero block")
+    return failures
+
+
 def test_commit_replay():
     failures = 0
     try:

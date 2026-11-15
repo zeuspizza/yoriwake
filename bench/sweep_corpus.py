@@ -125,12 +125,13 @@ def result_key_fields(rows):
             "result_keys_fallbacks": dict(causes.most_common()) or None}
 
 
-def results_file(name, shapes, isolated=False):
+def results_file(name, shapes, isolated=False, narrow_dependencies=False):
     """The results file `run.py` writes for this project under this shape set."""
-    return run.results_location(os.path.join(BENCH, "results"), "", name, shapes, isolated)[0]
+    return run.results_location(os.path.join(BENCH, "results"), "", name, shapes, isolated,
+                                narrow_dependencies=narrow_dependencies)[0]
 
 
-def summarise(name, capture_mode="shared", shapes=run.DEFAULT_SHAPES):
+def summarise(name, capture_mode="shared", shapes=run.DEFAULT_SHAPES, narrow_dependencies=False):
     """What this project's results file now says, or why it says nothing.
 
     `capture_mode` picks the arm's file: `<name>.json` for the shared arm, `<name>.isolated.json`
@@ -141,7 +142,7 @@ def summarise(name, capture_mode="shared", shapes=run.DEFAULT_SHAPES):
     failures asked nothing, and reporting its zero as a safety result is the failure mode this
     corpus exists to avoid.
     """
-    path = results_file(name, shapes, capture_mode == "isolated")
+    path = results_file(name, shapes, capture_mode == "isolated", narrow_dependencies)
     if not os.path.isfile(path):
         return {"project": name, "capture_mode": capture_mode, "shape_set": shapes,
                 "status": "no results file"}
@@ -265,6 +266,13 @@ def summarise(name, capture_mode="shared", shapes=run.DEFAULT_SHAPES):
     # rules are not one sample. `narrowed_target_rows` is how many rows counted toward it.
     targets = sorted({r["narrowed_target"] for r in rows
                       if isinstance(r.get("narrowed_target"), int)})
+    # A FLAG-ON FORCING FILE'S FIGURE: how far each family's rows narrowed, and the eligible
+    # commits and rejected reverts its stamp records.
+    flag_on = (data.get("target_shapes") == run.FORCING_SET
+               and run.forcing_mutations.population(data.get("flags")) == "flag-on")
+    narrowing = ({"forcing": assert_recall.forcing_summary(rows, flag_on=True),
+                  "dependency_reverts": assert_recall.dependency_reverts(data.get("forcing"))}
+                 if flag_on else {})
     return {
         "project": name,
         "status": "swept",
@@ -374,6 +382,7 @@ def summarise(name, capture_mode="shared", shapes=run.DEFAULT_SHAPES):
         "maps": len(fingerprints),
         "daemon_uptime_range": [min(uptimes), max(uptimes)] if uptimes else None,
         "load_range": [min(loads), max(loads)] if loads else None,
+        **narrowing,
     }
 
 
@@ -530,7 +539,7 @@ ISOLATED_ALSO = ("opentelemetry-java", "spring-framework", "spring-boot-webmvc-t
 
 
 def shared_arm_command(name, project, limit, recapture, lighter, ground_truth="full",
-                       shapes=run.DEFAULT_SHAPES):
+                       shapes=run.DEFAULT_SHAPES, narrow_dependencies=False):
     """`run.py`'s arguments for one project's shared arm. `lighter` applies the 0.1.0 stopping rule
     above; both arms time only the timing subset, its first `TIMING_CAP` rows, from 0.2."""
     command = [sys.executable, os.path.join(BENCH, "run.py"), project, "--limit", str(limit)]
@@ -540,6 +549,7 @@ def shared_arm_command(name, project, limit, recapture, lighter, ground_truth="f
     if ground_truth != "full":
         command += ["--ground-truth", ground_truth]
     command += ["--recapture"] if recapture else []
+    command += ["--narrow-dependencies"] if narrow_dependencies else []
     return command + (["--shapes", shapes] if shapes != run.DEFAULT_SHAPES else [])
 
 
@@ -657,6 +667,9 @@ def argument_parser():
     # It always re-captures: the map on disk is the shared arm's.
     parser.add_argument("--no-isolated-arm", action="store_true",
                         help="sweep the shared arm only")
+    parser.add_argument("--narrow-dependencies", action="store_true",
+                        help=f"with --set {run.FORCING_SET}: run.py --narrow-dependencies on each "
+                             f"project, the shared arm only")
     # COMPLEMENT GROUND TRUTH, passed through to every project's shared arm. `auto` only
     # once the maintainer has enabled it; the reduced arm always runs `check`.
     parser.add_argument("--ground-truth", choices=run.GROUND_TRUTH_MODES, default="full",
@@ -674,6 +687,9 @@ def main(argv=None):
         raise SystemExit(f"no QUALIFIED rows in {args.qualification}; refusing to sweep nothing")
     # THE REDUCED ARM'S OWN GATES ARE RECALL GATES: it would refuse a sweep whose every row
     # forced, which is what this set expects of its rows.
+    if args.narrow_dependencies and args.set != run.FORCING_SET:
+        raise SystemExit(f"--narrow-dependencies draws {run.FORCING_SET}'s dependency reverts; "
+                         f"pass --set {run.FORCING_SET}")
     if args.set == run.FORCING_SET and args.arm == "reduced":
         raise SystemExit(f"{run.FORCING_SET} runs on the full arm, which it limits to the reduced "
                          f"arm's projects; the reduced arm reads its rows as recall rows")
@@ -716,6 +732,10 @@ def main(argv=None):
             f"qualified projects; refusing to report an empty sweep as a finished one"
         )
     if args.print_commands:
+        # A CI PLAN SHARDS EVERY PROJECT, and `run.py` refuses `--narrow-dependencies` sharded.
+        if args.narrow_dependencies:
+            raise SystemExit("--narrow-dependencies is an unsharded local run; the workflow's "
+                             "plan shards every project")
         # THE WORKFLOW SHARDS EVERY PROJECT, and `run.py` refuses a sharded `pool/v1` run with a
         # timing cap: refused here, before any project is recorded.
         timed = [n for n in names if n in TIMING_SUBSET]
@@ -734,6 +754,7 @@ def main(argv=None):
                                                                    f"{name}.toml"), args.limit),
                                         recapture=True, lighter=args.arm == "full",
                                         shapes=args.set,
+                                        narrow_dependencies=args.narrow_dependencies,
                                         ground_truth=ground_truth_for(name, args.arm,
                                                                       args.ground_truth))[2:]}
             for name in names]))
@@ -753,7 +774,9 @@ def main(argv=None):
     # WHAT THIS SWEEP WILL COST, before it starts; it moves no cap and stops nothing.
     limits = {name: project_limit(os.path.join(BENCH, "projects", f"{name}.toml"), args.limit)
               for name in names}
-    projected = cost_projection(names, os.path.dirname(results_file("x", args.set)), limits,
+    projected = cost_projection(names, os.path.dirname(results_file(
+                                    "x", args.set, narrow_dependencies=args.narrow_dependencies)),
+                                limits,
                                 qualification_seconds(args.qualification), args.arm,
                                 args.ground_truth)
     print(f"  projected: {sum(p['hours'] for p in projected.values()):.1f} h over "
@@ -793,10 +816,11 @@ def main(argv=None):
                                    recapture=args.recapture or args.arm == "reduced",
                                    lighter=args.arm == "full", shapes=args.set,
                                    ground_truth=ground_truth_for(name, args.arm,
-                                                                 args.ground_truth)),
+                                                                 args.ground_truth),
+                                   narrow_dependencies=args.narrow_dependencies),
                 stdout=handle, stderr=subprocess.STDOUT, cwd=ROOT,
             ).returncode
-        summary = summarise(name, shapes=args.set)
+        summary = summarise(name, shapes=args.set, narrow_dependencies=args.narrow_dependencies)
         # ON THE ROW AND NOT ONLY ON THE BANNER. `sweep-summary.jsonl` is a durable log read
         # long after the run that wrote it, and a reduced-arm line that does not say so is a recall
         # figure a later reader can mistake for a corpus one.
@@ -809,10 +833,15 @@ def main(argv=None):
         print("    " + json.dumps(summary), flush=True)
 
         # Not reaped first: the daemon the shared arm warmed is the one its rows were timed in.
-        shared_results = results_file(name, args.set)
+        shared_results = results_file(name, args.set,
+                                      narrow_dependencies=args.narrow_dependencies)
         if args.no_isolated_arm or not os.path.isfile(shared_results):
             continue
-        skip, workers = (isolated_arm_skip_reason(name, shared_results) if args.arm == "full"
+        # THE ISOLATED ARM PAIRS THROUGH `--pair-with`, which `--narrow-dependencies` refuses.
+        skip, workers = (("isolated arm: not asked (--narrow-dependencies runs the shared arm only)",
+                          None)
+                         if args.narrow_dependencies else
+                         isolated_arm_skip_reason(name, shared_results) if args.arm == "full"
                          else (None, None))
         if skip:
             # A LINE, not silence: a project with no isolated row must read as not asked, never as
@@ -822,7 +851,8 @@ def main(argv=None):
             summaries.append(summary)
             with open(SUMMARY, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(summary) + "\n")
-            print(f"[{position}/{len(names)}] {name}: {skip}, {workers} test JVMs", flush=True)
+            print(f"[{position}/{len(names)}] {name}: {skip}"
+                  f"{'' if args.narrow_dependencies else f', {workers} test JVMs'}", flush=True)
             continue
         isolated_log = os.path.join(SCRATCH, f"sweep-{name}.isolated.log")
         print(f"[{position}/{len(names)}] {name}, isolated arm -> {isolated_log}", flush=True)
@@ -844,13 +874,28 @@ def main(argv=None):
         print("    " + json.dumps(summary), flush=True)
 
     print(f"{args.arm} sweep finished", flush=True)
+    unsummed = []
+    if args.narrow_dependencies:
+        families, reverts = assert_recall.narrowing_total(summaries)
+        print(f"  {run.FORCING_SET} with {run.NARROW_DEPENDENCIES_FLAG}, summed over "
+              f"{sum(1 for s in summaries if s.get('forcing') is not None)} project(s): "
+              f"{reverts['eligible']} eligible commit(s) as the harness classifies them, "
+              f"rejected reverts {reverts['rejected'] or 'none'}", flush=True)
+        for family, entry in families.items():
+            print(f"    {assert_recall.narrowing_line(family, entry)}", flush=True)
+        unsummed = [family for family, entry in families.items() if not entry["sums"]]
+        with open(SUMMARY, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"narrow_dependencies": families, "dependency_reverts": reverts,
+                                     "arm": args.arm}) + "\n")
 
     # WHAT IT COST, beside what it was projected to: hours per family and per row where
     # a miss was possible, split by ground truth and timing; follow-up re-runs left out.
     reports = []
     for name in dict.fromkeys(s["project"] for s in summaries):
         try:
-            with open(results_file(name, args.set), encoding="utf-8") as handle:
+            with open(results_file(name, args.set,
+                                   narrow_dependencies=args.narrow_dependencies),
+                      encoding="utf-8") as handle:
                 reports.append(cost.report(json.load(handle)))
         except (OSError, ValueError):
             continue
@@ -890,6 +935,8 @@ def main(argv=None):
     silent = [f"{s['project']}: {s['unattributed_rows']} of {s['rows']} rows carry no decision at all"
               for s in summaries
               if s.get("rows") and s.get("unattributed_rows") == s.get("rows")]
+    unclassified += [f"{family}: narrowed, forced and not-measured rows do not make its flag-on rows"
+                     for family in unsummed]
     if unclassified or silent:
         print("\nrows that entered no bucket:", flush=True)
         for line in unclassified + silent:

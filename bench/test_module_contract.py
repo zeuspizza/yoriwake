@@ -135,6 +135,7 @@ def case_the_rule_names_run_py_reads_are_the_ones_the_agent_writes():
         ("RULE_CLASS_RUNS_WHOLE", run.CLASS_RUNS_WHOLE_RULE),
         ("RULE_NONE", run.RULE_NONE),
         ("RULE_UNKNOWN", run.RULE_UNKNOWN),
+        ("RULE_SHARES_JVM_CHANGED_JAR", run.SHARES_JVM_CHANGED_JAR_RULE),
     ):
         written = _java_constant(contract, constant)
         if written is None:

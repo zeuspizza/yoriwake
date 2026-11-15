@@ -169,7 +169,7 @@ failure would save more hours and keep fewer of those rows.
 | `paired_with` | `--pair-with`; each row is matched to its paired row per mutation, `(target, kind, index)`, and a paired file holding one mutation twice is refused (files written before 2026-10-08 matched by label, so two declarations of one name could take each other's ground truth) | provenance of the isolated rows' ground truth |
 | `rejected_mutations` | the compile gate's rejections as `[target, kind, index]`, beside the labels in `rejected_targets`; None before 2026-10-08 | resume: a rejected declaration does not skip its namesakes |
 | `revert` | `revert/v1` only: the census window and classifier, eligible commits per stratum, not-eligible counts by reason, rejections as `[target, reason, variant, census labels]` and counted by reason and label, and per inverted label the rows, the miss-possible rows and whether the shape is reached | published beside a revert figure; no rejection ceiling applies |
-| `forcing` | `forcing/v1` only: `population` (`flag-on` when a narrowing flag is in `flags`, else `flag-off`), `rows_per_family`, the dependency reverts' window, eligible count and not-eligible counts by reason, and rejections as `[target, reason]` | a forcing figure; flag-on rows are never pooled with flag-off ones; no rejection ceiling applies |
+| `forcing` | `forcing/v1` only: `population` (`flag-on` when a narrowing flag is in `flags`, else `flag-off`), `rows_per_family` (a number; under `--narrow-dependencies` `{"dependency-revert": 4}`, the one family drawn), the dependency reverts' window, eligible count and not-eligible counts by reason, and rejections as `[target, reason]` | a forcing figure; flag-on rows are never pooled with flag-off ones; no rejection ceiling applies |
 | `narrowed_target` | `--narrowed-target` of the invocation that last wrote the file; None = no rule | sample definition (rows carry their own) |
 | `recall_only` | `--recall-only` of that invocation | true: forced rows ran once, no time-saved figure from this file |
 | `ground_truth_mode` | `--ground-truth` of the invocation; None in older files | which rows could have taken a complement |
@@ -320,6 +320,33 @@ disk.
 `bench/readme_charts.py` renders both charts from the results files (a stub for the dry run;
 `--sample` draws from synthetic rows and says so in the title).
 
+## Flag-on forcing rows (`--narrow-dependencies`)
+
+`run.py --shapes forcing/v1 --narrow-dependencies` (and `sweep_corpus.py --set forcing/v1
+--narrow-dependencies`, which passes it to each project) adds `-Pyoriwake.narrowDependencies` to
+every build of the run and to the `flags` it stamps, so the file reads `flag-on`, and writes
+`results/forcing-v1-narrow-dependencies/<project>.json` with its own scratch: a flag-off forcing
+file is neither restarted nor overwritten. It draws `dependency-revert` alone, up to four rows a
+project. Refused with another set, `--pair-with`, `--replay`, a shard, and on Maven (and by
+`sweep_corpus.py --print-commands`, whose plan shards every project); the sweep writes `isolated arm: not asked (--narrow-dependencies runs the shared arm only)` for each project.
+`corpus_state.py --set forcing/v1 --narrow-dependencies` surveys that folder.
+
+`assert_recall.py` on a flag-on forcing file adds, per family of its summary: `narrowed` (rows that
+did not force), `shares` (each narrowed row's `selected_distinct / full_distinct`) and `share`
+(their median, minimum and maximum), `per_jar` (narrowed rows whose `rule_counts` hold
+`shares-jvm-changed-jar`), `not_measured` (rows whose status is neither `checked` nor `no-effect`,
+such as a `cache-hit` test task, by status) and `sums` (narrowed, forced and not measured make the
+rows; false fails the file),
+and prints the stamp's eligible commits and rejected reverts beside them. A missed failure fails
+the file first, as on any other. A flag-off file's output is unchanged.
+
+`sweep_corpus.summarise` adds to a flag-on forcing summary that `forcing` figure and
+`dependency_reverts` (`window`, `eligible`, `not_eligible`, `rejected` by reason); after the sweep
+it prints the families summed over the projects (shares pooled) and appends them to
+`sweep-summary.jsonl` as `narrow_dependencies` with the summed `dependency_reverts`. Eligible
+commits are as the harness classifies them (`forcing_mutations._version_only`), not as the
+plugin does.
+
 ## Real commits replayed (`commit-replay.json`)
 
 `bench/commit_replay.py`: per project, its last `commits` first-parent commits up to and including
@@ -352,7 +379,9 @@ A row:
 | `reason` | of a commit not asked: `duplicate` (the patch of a newer drawn commit), `empty-diff`, `does-not-apply`, `does-not-compile`, `build-stalled` (the compile was stopped for writing nothing), `unanswered` (the explain task wrote no explanation) or `budget` |
 | `selected`, `known` | the explanation's counts: tests it would run, tests the map knows |
 | `unmappable_paths`, `unmappable_sample` | how many changed paths no build input explains, and up to five of them |
-| `seconds` | the revert, the compile and the explain |
+| `version_only` | on a commit that got an answer: whether the harness classifies it version-only (a version catalog, or build-script lines that only move a version, `forcing_mutations._version_only`); absent in files written before the paired ask |
+| `with_narrow_dependencies` | on a version-only commit: the same question asked again on the same compiled tree with `-Pyoriwake.narrowDependencies`, as `outcome` and `cause`, `reason`, `selected` and `known`; `not-asked: budget` when the budget ran out between the two asks |
+| `seconds` | the revert, the compile and the explain (both explains on a version-only commit) |
 
 A distribution (`distribution` per project, `figure` in the merged file):
 
@@ -375,6 +404,14 @@ projects the budget stopped; `commits` and `plugin_commits`, the distinct values
 `caveats`, what the figure may claim. The share of real commits that narrowed is
 `figure.narrowed / figure.replayed`: over the commits replayed, never those drawn. A missing or
 not-replayed project is in neither.
+
+`narrow_dependencies`, per project and summed at the top level, is the paired ask over the
+version-only commits replayed: `replayed`, `asked` (a second time; the page's share narrowed is
+over these), `narrowed` with the flag, `per_jar` (of those, the ones
+forced without it, so by the per-jar rule alone), `shares` and `median_share` (`selected / known`
+of the narrowed answers), `forced` and `causes` with the flag, `unrecorded`, `not_asked` by reason,
+`sums`, and at the top `projects`. Absent (None at the top) when no file carries `version_only`,
+never zero. The headline `figure` stays the answer without the flag.
 
 ## Raw evidence
 

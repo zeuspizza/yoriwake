@@ -706,5 +706,88 @@ class ForcingRows(unittest.TestCase):
         self.assertEqual(1, code, out)
 
 
+class FlagOnDependencyRows(unittest.TestCase):
+    """A flag-on forcing file's figure: how far each family's rows narrowed, which rule selected,
+    and why the rest forced; narrowed and forced make the rows."""
+
+    FLAG = "-Pyoriwake.narrowDependencies"
+
+    def row(self, sha, **overrides):
+        return mutation(**{"target": f"{sha}::dependency-revert::{sha}", "kind": "dependency-revert",
+                           "decision_outcome": "narrowed", "full_distinct": 10,
+                           "selected_distinct": 4,
+                           "rule_counts": {"shares-jvm-changed-jar": 2, "none": 2}, **overrides})
+
+    def forced(self, sha):
+        return self.row(sha, decision_outcome="full-run", full_run_kind="daemon-refused",
+                        refusal_kind="dependency-added", selected_distinct=10,
+                        rule_counts=None)
+
+    def file(self, rows):
+        return {"project": "p", "target_shapes": "forcing/v1", "flags": [self.FLAG],
+                "mutations": rows,
+                "forcing": {"population": "flag-on", "rows_per_family": {"dependency-revert": 4},
+                            "dependency_reverts": {"window": 200, "eligible": 5,
+                                                   "not_eligible": {"does-not-apply": 1}},
+                            "rejections": [["x::dependency-revert::x", "dependency-resolution"]]}}
+
+    def test_two_narrowed_rows_and_one_forced_sum_and_print(self):
+        rows = [self.row("a"), self.row("b", selected_distinct=6, rule_counts={"none": 6}),
+                self.forced("c")]
+        summary = assert_recall.forcing_summary(rows, flag_on=True)["dependency-revert"]
+        self.assertEqual((3, 2, 1, 1, True), (summary["rows"], summary["narrowed"],
+                                              summary["forced"], summary["per_jar"],
+                                              summary["sums"]))
+        self.assertEqual({"median": 0.5, "min": 0.4, "max": 0.6}, summary["share"])
+        code, out = run_gate(self.file(rows))
+        self.assertEqual(0, code, out)
+        self.assertIn("dependency-revert: 3 row(s), 2 narrowed, ran 50.0% of the tests at the "
+                      "median (40.0%-60.0%), 1 of them by the per-jar rule; 1 forced "
+                      "(daemon-refused/dependency-added 1)", out)
+        self.assertIn("dependency reverts: 5 eligible in the last 200 commits, not eligible "
+                      "{'does-not-apply': 1}, rejected {'dependency-resolution': 1}", out)
+
+    def test_a_row_that_selected_every_test_but_narrowed_has_a_share_of_one(self):
+        summary = assert_recall.forcing_summary([self.row("a", selected_distinct=10)],
+                                                flag_on=True)["dependency-revert"]
+        self.assertEqual((1, 0, 1.0), (summary["narrowed"], summary["forced"],
+                                       summary["share"]["median"]))
+
+    def test_a_forced_row_whose_rules_hold_the_per_jar_rule_is_not_per_jar(self):
+        forced = self.forced("a")
+        forced["rule_counts"] = {"shares-jvm-changed-jar": 3}
+        summary = assert_recall.forcing_summary([forced], flag_on=True)["dependency-revert"]
+        self.assertEqual((0, 0, 1), (summary["per_jar"], summary["narrowed"], summary["forced"]))
+
+    def test_a_row_that_asked_nothing_is_not_measured_and_the_sum_holds(self):
+        rows = [self.row("a"), mutation(target="b::dependency-revert::b", kind="dependency-revert",
+                                        status="cache-hit")]
+        summary = assert_recall.forcing_summary(rows, flag_on=True)["dependency-revert"]
+        self.assertEqual(({"cache-hit": 1}, True), (summary["not_measured"], summary["sums"]))
+        code, out = run_gate(self.file(rows))
+        self.assertEqual(0, code, out)
+        self.assertIn("1 not measured ({'cache-hit': 1})", out)
+
+    def test_a_row_neither_narrowed_nor_forced_fails_the_sum(self):
+        rows = [self.row("a"), self.row("b", decision_outcome="not-decided", selected_distinct=10)]
+        self.assertFalse(assert_recall.forcing_summary(rows, flag_on=True)
+                         ["dependency-revert"]["sums"])
+        code, out = run_gate(self.file(rows))
+        self.assertEqual(1, code, out)
+        self.assertIn("do not make the rows", out)
+
+    def test_a_missed_failure_fails_before_the_figure(self):
+        code, out = run_gate(self.file([self.row("a", missed=["k.ATest::a"])]))
+        self.assertEqual(1, code, out)
+        self.assertIn("MISSED", out)
+        self.assertNotIn("narrowed, ran", out)
+
+    def test_a_flag_off_summary_carries_no_narrowing_fields(self):
+        rows = [self.forced("a")]
+        self.assertEqual({"dependency-revert": {"rows": 1, "forced": 1,
+                                                "kinds": {"daemon-refused/dependency-added": 1}}},
+                         assert_recall.forcing_summary(rows))
+
+
 if __name__ == "__main__":
     unittest.main()

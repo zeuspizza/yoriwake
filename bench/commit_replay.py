@@ -23,6 +23,14 @@ Every drawn commit ends in exactly one outcome:
   for writing nothing), `unanswered` (the explain task wrote no explanation) or `budget` (the
   time budget ran out first).
 
+A commit the harness classifies version-only (`forcing_mutations._version_only`: a version catalog,
+or build-script lines that only move a version) is asked a second time on the same compiled tree
+with `-Pyoriwake.narrowDependencies`, under `with_narrow_dependencies`, in the shape of the first
+answer; one the time budget leaves no room for is `not-asked: budget`. The figure sums them in a
+block of its own (`narrow_dependencies`): forced without the flag and narrowed with it is the
+per-jar rule's doing (`per_jar`), as nothing else differs between the two asks. The headline stays
+the answer without the flag.
+
 What the figure may claim is printed with it (`CAVEATS`): a share of commits, not of seconds; a
 decision, not a run, so it says nothing about recall.
 
@@ -37,12 +45,14 @@ commit-replay.json`, into one figure.
 import argparse
 import json
 import os
+import statistics
 import sys
 import time
 import tomllib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import forcing_mutations  # noqa: E402
 import revert  # noqa: E402
 from process import STALLED  # noqa: E402
 
@@ -69,6 +79,8 @@ CAVEATS = (
     "Commits not asked are counted apart, never as narrowed or forced.",
     "Each commit is asked under the CI values of the build that recorded the map, so a build "
     "that a per-run CI variable forces is not seen here; a sweep's selecting rows show it.",
+    "Version-only commits are as the harness classifies them, which is looser than the plugin's "
+    "classifier; one the plugin refuses comes back forced under its kind.",
 )
 
 
@@ -155,6 +167,88 @@ def total(distributions):
     return result
 
 
+def _share(row):
+    selected, known = row.get("selected"), row.get("known")
+    return round(selected / known, 4) if isinstance(selected, int) and isinstance(known, int) \
+        and known else None
+
+
+def narrow_dependencies_block(rows):
+    """The paired ask over the version-only commits replayed: `asked` a second time, narrowed with
+    the flag (and the tests' share, `shares` and its median), `per_jar` (forced without the flag,
+    narrowed with it), forced with it by cause, unrecorded, and not asked by reason, with `sums`. None for rows written
+    before the paired ask, which carry no `version_only`: absent, never zero."""
+    if not any("version_only" in row for row in rows):
+        return None
+    block = _empty_block()
+    for row in rows:
+        if not row.get("version_only"):
+            continue
+        block["replayed"] += 1
+        second = row.get("with_narrow_dependencies") or {}
+        outcome = second.get("outcome")
+        if outcome == NARROWED:
+            block["narrowed"] += 1
+            block["per_jar"] += row.get("outcome") == FORCED
+            if _share(second) is not None:
+                block["shares"].append(_share(second))
+        elif outcome == FORCED:
+            block["forced"] += 1
+            cause = second.get("cause") or "unnamed"
+            block["causes"][cause] = block["causes"].get(cause, 0) + 1
+        elif outcome == UNRECORDED:
+            block["unrecorded"] += 1
+        else:
+            reason = second.get("reason") or "unanswered"
+            block["not_asked"][reason] = block["not_asked"].get(reason, 0) + 1
+    return _closed_block(block)
+
+
+def _empty_block():
+    return {"replayed": 0, "narrowed": 0, "per_jar": 0, "shares": [], "forced": 0,
+            "unrecorded": 0, "causes": {}, "not_asked": {}}
+
+
+def _closed_block(block):
+    block["shares"] = sorted(block["shares"])
+    block["median_share"] = (round(statistics.median(block["shares"]), 4)
+                             if block["shares"] else None)
+    block["causes"], block["not_asked"] = _by_count(block["causes"]), _by_count(block["not_asked"])
+    # The share narrowed is over the commits asked twice, never over those the budget cut.
+    block["asked"] = block["replayed"] - sum(block["not_asked"].values())
+    block["sums"] = (block["narrowed"] + block["forced"] + block["unrecorded"]
+                     + sum(block["not_asked"].values()) == block["replayed"]
+                     and sum(block["causes"].values()) == block["forced"])
+    return block
+
+
+def total_block(blocks):
+    """Several projects' paired-ask blocks as one, or None when no project has one."""
+    blocks = [block for block in blocks if block is not None]
+    if not blocks:
+        return None
+    result = _empty_block()
+    for block in blocks:
+        for key in ("replayed", "narrowed", "per_jar", "forced", "unrecorded"):
+            result[key] += block.get(key) or 0
+        result["shares"] += block.get("shares") or []
+        for field in ("causes", "not_asked"):
+            for name, count in (block.get(field) or {}).items():
+                result[field][name] = result[field].get(name, 0) + count
+    _closed_block(result)
+    result["projects"] = len(blocks)
+    result["sums"] = result["sums"] and all(block.get("sums") for block in blocks)
+    return result
+
+
+def version_only(checkout, sha):
+    """Whether the harness classifies `sha` version-only, as `forcing/v1`'s dependency reverts do."""
+    parent = revert._parent(checkout, sha)
+    paths = sorted({path for _, old, new in revert._changes(checkout, parent, sha)
+                    for path in (old, new)})
+    return forcing_mutations._version_only(checkout, parent, sha, paths)
+
+
 def whole_patch(checkout, sha):
     """The diff of `sha` against its first parent over every path, ready for `git apply -R`."""
     return revert._git(checkout, "diff", "--binary", "-M", "--full-index",
@@ -162,26 +256,29 @@ def whole_patch(checkout, sha):
 
 
 def draw(checkout, pin, count):
-    """The window: `[{"sha", "patch", "duplicate"}]`, newest first, at most `count`. A commit
-    whose patch a newer drawn commit already made stays in the window, marked."""
+    """The window: `[{"sha", "patch", "duplicate", "version_only"}]`, newest first, at most
+    `count`. A commit whose patch a newer drawn commit already made stays in the window, marked."""
     shas = revert._git(checkout, "rev-list", "--first-parent", "-n", str(count), pin).stdout.split()
     seen, drawn = set(), []
     for sha in shas:
         text = whole_patch(checkout, sha)
         patch_id = revert._patch_id(checkout, text) if text else None
-        drawn.append({"sha": sha, "patch": text, "duplicate": patch_id in seen})
+        drawn.append({"sha": sha, "patch": text, "duplicate": patch_id in seen,
+                      "version_only": bool(text) and version_only(checkout, sha)})
         if patch_id:
             seen.add(patch_id)
     return drawn
 
 
-def replay(checkout, drawn, *, reset, compile_tests, explain, budget_seconds, clock=time.monotonic):
+def replay(checkout, drawn, *, reset, compile_tests, explain, budget_seconds, clock=time.monotonic,
+           explain_narrow=None):
     """One row per drawn commit, in order.
 
     `reset()` puts the tree back to the pin and returns whether it did; `compile_tests(sha)`
     compiles the reverted tree and returns its exit code; `explain(sha)` asks the explain task and
-    returns the explanation it wrote, or None. Once `budget_seconds` have passed, the commits
-    left are not asked.
+    returns the explanation it wrote, or None. `explain_narrow(sha)` asks it again on the same tree
+    with `-Pyoriwake.narrowDependencies`, for a version-only commit. Once `budget_seconds` have
+    passed, the commits and second asks left are not asked.
     """
     rows, started = [], clock()
     try:
@@ -196,6 +293,13 @@ def replay(checkout, drawn, *, reset, compile_tests, explain, budget_seconds, cl
             else:
                 began = clock()
                 row.update(_one(checkout, commit, reset, compile_tests, explain))
+                if explain_narrow is not None and row["outcome"] != NOT_ASKED:
+                    row["version_only"] = commit.get("version_only", False)
+                    if row["version_only"]:
+                        row["with_narrow_dependencies"] = (
+                            {"outcome": NOT_ASKED, "reason": "budget"}
+                            if clock() - started >= budget_seconds
+                            else _asked(explain_narrow(commit["sha"])))
                 row["seconds"] = round(clock() - began, 1)
             rows.append(row)
             print(f"  {row['sha'][:12]} {row['outcome']} "
@@ -220,10 +324,14 @@ def _one(checkout, commit, reset, compile_tests, explain):
         return {"reason": "build-stalled"}
     if compiled != 0:
         return {"reason": "does-not-compile"}
-    explanation = explain(commit["sha"])
+    return _asked(explain(commit["sha"]))
+
+
+def _asked(explanation):
+    """A row's outcome fields from one explanation."""
     outcome, detail = classify(explanation)
     if outcome == NOT_ASKED:
-        return {"reason": detail}
+        return {"outcome": NOT_ASKED, "reason": detail}
     row = {"outcome": outcome, "selected": explanation.get("selected"),
            "known": explanation.get("known"),
            "unmappable_paths": explanation.get("unmappablePaths"),
@@ -299,22 +407,25 @@ def replay_project(project, checkout, commits, budget_minutes, scratch=None):
         return run.gradle(checkout, project, classes_args,
                           os.path.join(logs, f"compile-{sha[:12]}.log"))[0]
 
-    def explain(sha):
+    def explain(sha, flags=(), stem="explain"):
         # The compile may have written an ignored file the selector would read as a change.
         if snapshot is not None:
             run.reset_untracked(checkout, project, set(snapshot) | created)
         since = time.time()
         run.gradle(checkout, project,
                    [*run.INIT_SCRIPT_ARGS, explain_task(task_path), "-Pyoriwake.base=HEAD",
-                    *run.TIMING_ARM_FLAGS], os.path.join(logs, f"explain-{sha[:12]}.log"))
+                    *run.TIMING_ARM_FLAGS, *flags], os.path.join(logs, f"{stem}-{sha[:12]}.log"))
         return read_explanation(os.path.join(map_dir, "explain.json"), since)
+
+    def explain_narrow(sha):
+        return explain(sha, [run.NARROW_DEPENDENCIES_FLAG], "explain-narrow-dependencies")
 
     if not reset() or not at_pin(checkout, head):
         return not_replayed(project, "the checkout is not clean at the pin")
     started = time.monotonic()
     drawn = draw(checkout, project["commit"], commits)
     rows = replay(checkout, drawn, reset=reset, compile_tests=compile_tests, explain=explain,
-                  budget_seconds=budget_minutes * 60)
+                  budget_seconds=budget_minutes * 60, explain_narrow=explain_narrow)
     return {"schema": SCHEMA, "project": project["name"], "replayed": True,
             "pin": project["commit"], "plugin_commit": stamp.get("plugin_commit"),
             "commits": commits, "window": WINDOW_RULE, "budget_minutes": budget_minutes,
@@ -359,6 +470,9 @@ def merge(directory, planned, previous=None):
                                "tree_restored", "seconds")}
             # Counted again from the rows, so the figure never rests on a file's own arithmetic.
             projects[name]["distribution"] = distribution(data["rows"])
+            block = narrow_dependencies_block(data["rows"])
+            if block is not None:
+                projects[name]["narrow_dependencies"] = block
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             missing.append(name)
     def distinct(key):
@@ -367,6 +481,8 @@ def merge(directory, planned, previous=None):
     return {"schema": SCHEMA, "window": WINDOW_RULE,
             "commits": distinct("commits"), "plugin_commits": distinct("plugin_commit"),
             "figure": total([entry["distribution"] for entry in projects.values()]),
+            "narrow_dependencies": total_block([entry.get("narrow_dependencies")
+                                                for entry in projects.values()]),
             "projects": dict(sorted(projects.items())), "missing": sorted(missing),
             "not_replayed": dict(sorted(skipped.items())),
             "cut_short": sorted(name for name, entry in projects.items()

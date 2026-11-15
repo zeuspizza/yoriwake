@@ -559,9 +559,15 @@ def main():
     parser.add_argument("--json", action="store_true", help="the entries, for a table generator")
     parser.add_argument("--set", default="default",
                         help="the shape set to survey: its files are under --results/<set>/")
+    parser.add_argument("--narrow-dependencies", action="store_true",
+                        help=f"with --set {run.FORCING_SET}: survey the files run.py "
+                             f"--narrow-dependencies wrote, a population of their own")
     args = parser.parse_args()
+    if args.narrow_dependencies and args.set != run.FORCING_SET:
+        parser.error(f"--narrow-dependencies surveys {run.FORCING_SET}'s flag-on files; pass "
+                     f"--set {run.FORCING_SET}")
     results_dir = args.results if args.set == "default" else os.path.join(
-        args.results, run.shape_folder(args.set))
+        args.results, run.shape_folder(args.set, args.narrow_dependencies))
 
     # REFUSED, NOT REPORTED AS CLEAN. `all([])` is True, so a missing or format-drifted
     # qualification table produced an empty corpus, an empty composition line and exit 0 -- the
