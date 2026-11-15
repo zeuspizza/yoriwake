@@ -122,9 +122,11 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 return;
             }
             Map<String, String> modules = modulesOf(HostBuild.current().property(AgentContract.JAR_MODULES_PROPERTY));
-            ReadHooks.Installed hooks = ReadHooks.install(instrumentation, this::read, this::lookup, this::defined,
+            // Bound to the sinks themselves, not this class's delegates: the stack walks those sinks
+            // make count frames from the hook, so a frame between them would push the JDK's own out.
+            ReadHooks.Installed hooks = ReadHooks.install(instrumentation, reads::read, this::lookup, this::defined,
                     this::childProcess, this::nativeCode, this::library, this::resolved, this::environmentRead,
-                    this::entry, this::enumerated, this::stack);
+                    jars::entry, jars::enumerated, this::stack);
             if (modules != null && hooks.entries == null) {
                 recordJars(modules);
             }

@@ -81,6 +81,12 @@ class CoordinateDiffTest {
     }
 
     @Test
+    fun `a value under a quoted table header is not read as the section's above it`() {
+        val quoted = catalog.replace("kotlin = \"2.0.0\"\n", "kotlin = \"2.0.0\"\n[\"extra\"]\nlib-other = \"1.0\"\n")
+        assertIs<Verdict.Refused>(classify(Shape.CATALOG, quoted, quoted.replace("lib-other = \"1.0\"", "lib-other = \"1.1\"")))
+    }
+
+    @Test
     fun `a rich version or an interpolated one is refused`() {
         assertIs<Verdict.Refused>(classify(Shape.CATALOG, catalog, catalog.replace("lib-json = \"1.0\"", "lib-json = \"[1.0,2.0)\"")))
         assertIs<Verdict.Refused>(classify(Shape.SCRIPT, script, script.replace("dev.lib:lib-json:1.0", "dev.lib:lib-json:\$v")))
