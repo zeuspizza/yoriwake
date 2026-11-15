@@ -252,6 +252,125 @@ def case_the_sweep_says_whether_the_isolated_arm_ran():
     return 0 if summary.get("isolated_arm") == "not run" else fail(f"summary: {summary}")
 
 
+def _isolated(root, name, rows, slices=(1,), of=1, **stamps):
+    """A project's paired isolated arm as the workflow lays it out beside the shared files."""
+    header = {**STAMPS, "project": name, **stamps}
+    files = [("isolated-recording.json", {**header, "capture_seconds": 30.0, "mutations": []})]
+    files += [(f"isolated-shard-{k}-of-{of}.json", {**_shard(rows, k, of), **header})
+              for k in slices]
+    for file, data in files:
+        with open(os.path.join(root, name, file), "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+
+
+def _paired(row, narrowed):
+    return {**row, "selected_distinct": 1 if narrowed else 5, "selected_seconds": 2.0,
+            "decision_outcome": "narrowed" if narrowed else "full-run", "timed": False,
+            "ground_truth_from": "paired"}
+
+
+def case_a_paired_isolated_arm_merges_beside_the_shared_file_with_both_arms_figures():
+    shared = [{**_row(i, narrowed=i == 0, broke=i == 0), "selected_seconds": 9.0,
+               "decision_outcome": "narrowed" if i == 0 else "full-run"} for i in range(3)]
+    with tempfile.TemporaryDirectory() as root:
+        art, out = os.path.join(root, "art"), os.path.join(root, "out")
+        _project(art, "demo", shared)
+        _isolated(art, "demo", [_paired(row, narrowed=True) for row in shared])
+        code, summary = _merge([art, "--planned", "demo", "--arm", "full", "--isolated",
+                                "--out", out])
+        if code != 0:
+            return fail(f"a paired isolated arm was refused: {summary}")
+        state = summary["isolated"]["demo"]
+        with open(os.path.join(out, "demo.isolated.json"), encoding="utf-8") as handle:
+            written = json.load(handle)
+    failures = 0
+    if state["status"] != "ran" or state["paired_rows"] != 3 or \
+            (state["slices_measured"], state["slices"], state["shared_rows"]) != (1, 1, 3):
+        failures += fail(f"the arm's state: {state}")
+    if state["shared"] != {"rows": 3, "narrowed": 1, "tests_run": 11, "selected_seconds": 27.0,
+                           "recording_seconds": 10.0}:
+        failures += fail(f"the shared arm's figures: {state['shared']}")
+    if state["isolated"] != {"rows": 3, "narrowed": 3, "tests_run": 3, "selected_seconds": 6.0,
+                             "recording_seconds": 30.0}:
+        failures += fail(f"the isolated arm's figures: {state['isolated']}")
+    if [row["index"] for row in written["mutations"]] != [0, 1, 2] or \
+            written["baseline_seconds"] != 4.0 or written["paired_with"] != "demo.json":
+        failures += fail("the isolated file is not the shared file's rows under its own map")
+    return failures
+
+
+def case_a_slice_without_its_isolated_rows_takes_them_out_of_both_arms_figures():
+    shared = [{**_row(i, narrowed=i == 0, broke=i == 0), "selected_seconds": 9.0} for i in range(2)]
+    merged = {**_recording(), "mutations": shared, "shards": 2}
+    recording = {**_recording(), "capture_seconds": 30.0, "mutations": []}
+    second = {**_recording(), **_shard([_paired(shared[1], narrowed=True)], 2, 2)}
+    data, state = merge.merge_isolated(merged, recording, [second])
+    failures = 0
+    if state["status"] != "ran" or (state["slices_measured"], state["slices"]) != (1, 2) or \
+            (state["paired_rows"], state["shared_rows"]) != (1, 2):
+        failures += fail(f"one slice of two: {state}")
+    if state["shared"]["rows"] != 1 or state["shared"]["selected_seconds"] != 9.0 or \
+            state["isolated"]["rows"] != 1 or [r["index"] for r in data["mutations"]] != [1]:
+        failures += fail(f"the figures are not over the rows both arms have: {state}")
+    return failures
+
+
+def case_an_isolated_arm_that_did_not_finish_costs_no_shared_row():
+    shared = [_row(i, narrowed=True, broke=i == 0) for i in range(2)]
+    with tempfile.TemporaryDirectory() as root:
+        art = os.path.join(root, "art")
+        for name in ("unrecorded", "half", "stale", "plain", "broken"):
+            _project(art, name, shared)
+        # A file that is JSON and not a results file.
+        with open(os.path.join(art, "broken", "isolated-recording.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump([], f)
+        os.makedirs(os.path.join(root, "alone"))
+        _project(os.path.join(root, "alone"), "plain", shared)
+        # No recording; a slice short; a recording of another plugin build.
+        _isolated(art, "half", shared, slices=())
+        os.remove(os.path.join(art, "unrecorded", "shard-1-of-1.json"))
+        with open(os.path.join(art, "unrecorded", "accepted.json"), "w", encoding="utf-8") as f:
+            json.dump({**_accepted(2, [[0, 1], [1, 2]]), "project": "unrecorded"}, f)
+        for k in (1, 2):
+            with open(os.path.join(art, "unrecorded", f"shard-{k}-of-2.json"), "w",
+                      encoding="utf-8") as f:
+                json.dump({**_shard(shared[k - 1:k], k, 2), "project": "unrecorded"}, f)
+        _isolated(art, "stale", shared, plugin_commit="p0")
+        out = os.path.join(root, "out")
+        code, summary = _merge([art, "--planned", "broken", "half", "plain", "stale", "unrecorded",
+                                "--arm", "full", "--isolated", "--out", out])
+        if code != 0:
+            return fail(f"an unfinished isolated arm refused the shared merge: {summary}")
+        _, without = _merge([os.path.join(root, "alone"), "--planned", "plain", "--arm", "full",
+                             "--out", os.path.join(root, "out-alone")])
+        with open(os.path.join(out, "plain.json"), encoding="utf-8") as with_arm, \
+                open(os.path.join(root, "out-alone", "plain.json"), encoding="utf-8") as alone:
+            same = with_arm.read() == alone.read()
+        wrote = [name for name in os.listdir(out) if name.endswith(".isolated.json")]
+    failures = 0
+    states = summary["isolated"]
+    for name, reason in (("unrecorded", "no map"), ("plain", "no map"),
+                         ("half", "0 of 1 slices"), ("stale", "plugin_commit"),
+                         ("broken", "could not be read")):
+        if states[name]["status"] != "did-not-finish" or reason not in states[name]["reason"]:
+            failures += fail(f"{name}: {states[name]}")
+    if wrote or not same:
+        failures += fail(f"an unfinished arm wrote {wrote}, or changed the shared file")
+    if summary["isolated_arm"] != "did-not-finish":
+        failures += fail(f"a sweep whose isolated arm finished nowhere says: {summary['isolated_arm']}")
+    if "isolated" in without or without["isolated_arm"] != "not run":
+        failures += fail(f"a run without the arm says of it: {without}")
+    return failures
+
+
+def case_a_maven_project_has_no_isolated_arm_and_says_so():
+    merged = {**_recording(), "build_tool": "maven", "mutations": MISS, "shards": 1}
+    data, state = merge.merge_isolated(merged, None, [])
+    return 0 if data is None and state["status"] == "not run" and "Maven" in state["reason"] \
+        else fail(f"a Maven project's isolated arm: {state}")
+
+
 def case_a_named_set_merges_into_its_own_directory_and_refuses_another_sets_shard():
     import tempfile
     failures = 0

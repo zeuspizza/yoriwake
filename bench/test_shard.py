@@ -47,6 +47,17 @@ def case_a_row_too_long_for_any_job_is_refused():
     return fail("a row longer than a job's limit was planned")
 
 
+def case_a_second_pass_never_refuses_a_row_the_first_pass_fits():
+    # 5 h of the shared arm and 2 h of the paired one: the second pass stops itself in the job.
+    slices = shard.plan([25_200.0], overhead=0.0, required=[18_000.0])
+    failures = 0 if slices == [[0, 1]] else fail(f"slices: {slices}")
+    try:
+        shard.plan([30_000.0], overhead=0.0, required=[22_000.0])
+    except SystemExit:
+        return failures
+    return failures + fail("a row whose first pass alone is over the job's limit was planned")
+
+
 def case_a_row_over_the_budget_but_under_the_limit_gets_its_own_slice():
     slices = shard.plan([100.0, 12_000.0, 100.0], overhead=0.0, budget=10_800)
     return 0 if slices == [[0, 1], [1, 2], [2, 3]] else fail(f"slices: {slices}")
@@ -57,7 +68,7 @@ def case_a_row_over_the_default_budget_gets_its_own_slice():
     return 0 if slices == [[0, 1], [1, 2], [2, 3]] else fail(f"a 100-minute row: {slices}")
 
 
-def _sliced(accepted, bench=None, priced_from=None, factor="3"):
+def _sliced(accepted, bench=None, priced_from=None, factor="3", isolated=False):
     """`shard.py`'s slices and its per-slice costs for this list, with `bench` as the bench
     directory a record job's header and the qualification table are read from."""
     with tempfile.TemporaryDirectory() as root:
@@ -69,7 +80,7 @@ def _sliced(accepted, bench=None, priced_from=None, factor="3"):
         err = io.StringIO()
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-                shard.main([path, "--factor", factor]
+                shard.main([path, "--factor", factor] + (["--isolated"] if isolated else [])
                            + (["--priced-from", priced_from] if priced_from else []))
         finally:
             sweep_corpus.BENCH = saved
@@ -111,6 +122,23 @@ def case_a_record_header_alone_prices_every_untimed_row_at_both_arms():
     if not minutes or any(abs(m / (end - start) - 24.6) > 0.1
                           for m, (start, end) in zip(minutes, slices)) or any(m > 90 for m in minutes):
         failures += fail(f"untimed rows from a 12-minute header: {slices}, {minutes} min of rows")
+    return failures
+
+
+def case_a_paired_isolated_arm_makes_each_row_dearer_and_the_slices_shorter():
+    failures = 0
+    with tempfile.TemporaryDirectory() as bench:
+        os.makedirs(os.path.join(bench, "results"))
+        with open(os.path.join(bench, "results", "kafka.json"), "w", encoding="utf-8") as handle:
+            json.dump({"baseline_seconds": 720, "mutations": []}, handle)
+        alone, _ = _sliced(_accepted(21, recall_only=True), bench=bench)
+        slices, minutes = _sliced(_accepted(21, recall_only=True), bench=bench, isolated=True)
+    # The shared row's 24.6 minutes, and two gates and one more 12-minute selected arm.
+    if not minutes or any(abs(m / (end - start) - 37.7) > 0.5
+                          for m, (start, end) in zip(minutes, slices)) or any(m > 90 for m in minutes):
+        failures += fail(f"rows of both arms from a 12-minute header: {slices}, {minutes}")
+    if not len(slices) > len(alone):
+        failures += fail(f"both arms fit the slices of one: {slices}, {alone}")
     return failures
 
 

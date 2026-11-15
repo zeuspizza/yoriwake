@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 
@@ -2968,10 +2969,11 @@ def case_security_names_the_release_key():
         return fail(f"SECURITY.md names {sorted(named)}, RELEASE-KEY.asc holds {sorted(published)}")
     return 0
 
-def _sweep_plan(tier, only, arm=None, **inputs):
+def _sweep_plan(tier, only, arm=None, outputs=None, **inputs):
     """The `--only` arguments sweep.yml's plan step passes for these inputs, from the step itself.
-    With a list for `arm`, the `--arm` it asked `sweep_corpus.py` for is appended to it; `inputs`
-    are further inputs, by the step's variable names."""
+    With a list for `arm`, the `--arm` it asked `sweep_corpus.py` for is appended to it, and with
+    one for `outputs`, what the step handed on; `inputs` are further inputs, by the step's
+    variable names."""
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         text = handle.read()
     step = re.search(r"\n      - id: plan\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
@@ -2992,6 +2994,9 @@ def _sweep_plan(tier, only, arm=None, **inputs):
         subprocess.run(["bash", "-c", script], env=env, check=True, capture_output=True)
         with open(calls, encoding="utf-8") as handle:
             argv = handle.read().split()
+        if outputs is not None:
+            with open(env["GITHUB_OUTPUT"], encoding="utf-8") as handle:
+                outputs.append(handle.read())
     if arm is not None and "--arm" in argv:
         arm.append(argv[argv.index("--arm") + 1])
     return argv[argv.index("--only") + 1:-1] if "--only" in argv else []
@@ -3094,7 +3099,9 @@ def case_every_measuring_step_samples_the_machine_until_it_ends():
 
 GUEST_STEPS = (("sweep-project.yml", "\n      - name: record and cut into slices"),
                ("sweep-project.yml", "\n      - name: replay the last real commits"),
+               ("sweep-project.yml", "\n      - name: record the isolated map"),
                ("sweep-project.yml", "\n      - name: measure this slice"),
+               ("sweep-project.yml", "\n      - name: measure this slice against the isolated map"),
                ("sweep.yml", "\n      - name: sweep the controls"))
 
 
@@ -3183,6 +3190,183 @@ def case_real_commits_are_replayed_after_the_record_is_uploaded_and_cost_no_rows
     return problems
 
 
+def case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_row_to_it():
+    """The second map is recorded last in the record job, inside what the job has left, and each
+    slice asks it about its rows after their shared arms: a failure of either is no failed job,
+    and the merge is told of that arm and handed whatever it left. Only a full run takes it."""
+    problems = 0
+    for inputs, wanted in (({"tier": "full"}, "paired"), ({"tier": "full", "ISOLATED": "off"}, "off"),
+                           ({"tier": "reduced"}, "off"),
+                           ({"tier": "full", "REPLAY_ONLY": "true", "COMMITS": "8"}, "off")):
+        wrote = []
+        _sweep_plan(inputs.pop("tier"), "demo", outputs=wrote, **inputs)
+        if f"isolated={wanted}\n" not in wrote[0]:
+            problems += fail(f"a plan of {inputs} hands on {wrote}, not isolated={wanted}")
+    try:
+        _sweep_plan("full", "demo", ISOLATED="both")
+        problems += fail("the plan accepted isolated=both")
+    except subprocess.CalledProcessError:
+        pass
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        if "      isolated: ${{ needs.plan.outputs.isolated }}\n" not in _job(handle.read(), "project"):
+            problems += fail("sweep.yml does not pass the plan's isolated arm to each project")
+        handle.seek(0)
+        if "rm -f bench/results/sweep.json bench/results/*.isolated.json\n" not in handle.read():
+            problems += fail("the replay of a published run would replay its isolated rows too")
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        project = handle.read()
+    record, shard = _job_block(project, "record"), _job_block(project, "shard")
+
+    def step_of(job, name):
+        step = job[job.index(f"      - name: {name}\n"):]
+        return step[:step.index("\n      - ", 1)]
+    recording = step_of(record, "record the isolated map")
+    if not record.index("name: replay-${{") < record.index("name: record the isolated map"):
+        problems += fail("the isolated recording runs before the shared state and the replay are "
+                         "uploaded")
+    for needed in ("if: inputs.isolated == 'paired' && !inputs.replay_only && "
+                   "steps.record.outputs.shards != '[]'", "continue-on-error: true",
+                   'timeout --kill-after=60 "$left" python3 bench/run.py',
+                   "--isolated-capture --recapture --capture-only",
+                   '"$CHECKOUT/.gradle/yoriwake"', 'echo "recorded=true" >> "$GITHUB_OUTPUT"'):
+        if needed not in recording:
+            problems += fail(f"the isolated recording lacks {needed!r}")
+    # The slices are told of a map that was uploaded, by an upload that cannot fail the job.
+    upload = record[record.index("id: isolated-upload\n") - 200:]
+    upload = upload[:upload.index("name: isolated-${{")]
+    for needed in ("      - if: ${{ !cancelled() && steps.isolated.outputs.recorded == 'true' }}\n",
+                   "        continue-on-error: true\n"):
+        if needed not in upload:
+            problems += fail(f"the isolated map's upload lacks {needed!r}")
+    if "      isolated: ${{ steps.isolated-upload.outcome == 'success' }}\n" not in record:
+        problems += fail("the record job does not tell its slices whether the map was uploaded")
+    second = step_of(shard, "measure this slice against the isolated map")
+    # The shared rows are uploaded before the second pass starts, and its own after it.
+    if not shard.index("name: measure this slice\n") < shard.index("name: shard-${{") < shard.index(
+            "name: measure this slice against the isolated map") < shard.index(
+                "name: isolated-shard-${{"):
+        problems += fail("a slice's shared rows are not uploaded before its second pass")
+    theirs = shard[shard.index("name: shard-${{"):shard.index(
+        "name: measure this slice against the isolated map")]
+    if ".isolated" in theirs:
+        problems += fail("the shared rows' artifact waits for a file of the second pass")
+    own = shard[shard.index("      - if: ${{ !cancelled() && steps.second.outcome == 'success' }}\n"):]
+    for needed in ("        continue-on-error: true\n", "path: ${{ runner.temp }}/isolated-slice/\n"):
+        if needed not in own:
+            problems += fail(f"the second pass's upload lacks {needed!r}")
+    for needed in ("if: needs.record.outputs.isolated == 'true' && steps.isolated.outcome == 'success'",
+                   "continue-on-error: true", 'rm -rf "bench/$CHECKOUT/.gradle/yoriwake"',
+                   'timeout --kill-after=60 "$left" python3 bench/run.py',
+                   '--isolated-capture --pair-with "bench/logs/$NAME/$SLICE"',
+                   '--accepted "bench/logs/$NAME/accepted.json" --shard "$SHARD"'):
+        if needed not in second:
+            problems += fail(f"a slice's second pass lacks {needed!r}")
+    problems += _isolated_steps_keep_inside_their_job(project)
+    for arm, files in (("paired", True), ("off", False)):
+        with tempfile.TemporaryDirectory() as root:
+            _recorded(root, "okio", 2, (1, 2))
+            # The recording, and the second pass of one slice of two.
+            kept = os.path.join(root, "downloaded", "isolated-okio", "okio")
+            os.makedirs(kept)
+            open(os.path.join(kept, "recording.json"), "w").close()
+            passed = os.path.join(root, "downloaded", "isolated-shard-okio-1-of-2")
+            os.makedirs(passed)
+            open(os.path.join(passed, "shard-1-of-2.json"), "w").close()
+            done = _sweep_merge(root, ("okio",), isolated=arm)
+            asked = json.load(open(os.path.join(root, "merge-args")))
+            art = sorted(os.listdir(os.path.join(root, "art", "okio")))
+        if done.returncode or ("--isolated" in asked) is not files:
+            problems += fail(f"isolated={arm}: exit {done.returncode}, merge.py asked {asked}")
+        if [name for name in art if name.startswith("isolated-")] != [
+                "isolated-recording.json", "isolated-shard-1-of-2.json"]:
+            problems += fail(f"isolated={arm}: the merge was handed {art}")
+    return problems
+
+
+# Stands in for `timeout`: records what it was asked, and on success leaves what `run.py` would.
+STUB_TIMEOUT = r"""import json, os, sys
+root, name = os.environ["STUB_ROOT"], os.environ["NAME"]
+json.dump(sys.argv[1:], open(os.path.join(root, "timeout-args"), "w"))
+code = int(os.environ.get("STUB_EXIT", "0"))
+if code == 0:
+    logs = os.path.join("bench", "logs", name + ".isolated")
+    os.makedirs(logs, exist_ok=True)
+    if "--capture-only" in sys.argv:
+        os.makedirs(os.path.join("bench", "results"), exist_ok=True)
+        open(os.path.join("bench", "results", name + ".isolated.json"), "w").close()
+        os.makedirs(os.path.join("bench", "checkouts", name, ".gradle", "yoriwake"), exist_ok=True)
+    else:
+        open(os.path.join(logs, "shard-1-of-2.json"), "w").close()
+sys.exit(code)
+"""
+# Stands in for `python3`: the step asks it only which build tool the project file names.
+STUB_BUILD = 'import os\nprint(os.environ.get("STUB_BUILD", "gradle"))\n'
+
+
+def _isolated_step(text, opener, started_minutes_ago, **env):
+    """One of the two isolated steps, run in a scratch checkout: `(exit, what timeout was asked or
+    None, the step's outputs, the scratch root's files)`."""
+    with tempfile.TemporaryDirectory() as root:
+        bin_dir, temp = os.path.join(root, "bin"), os.path.join(root, "temp")
+        os.makedirs(bin_dir)
+        os.makedirs(os.path.join(root, "bench"))
+        os.makedirs(os.path.join(temp, "isolated", "okio"))
+        _stub(bin_dir, "timeout", STUB_TIMEOUT)
+        _stub(bin_dir, "python3", STUB_BUILD)
+        _stub(os.path.join(root, "bench"), "machine_sampler.sh", "")
+        with tarfile.open(os.path.join(temp, "isolated", "okio", "state.tar.gz"), "w:gz"):
+            pass
+        for stamp in ("record-start", "slice-start"):
+            with open(os.path.join(temp, stamp), "w", encoding="utf-8") as handle:
+                handle.write(f"{int(time.time()) - 60 * started_minutes_ago}\n")
+        output = os.path.join(root, "output")
+        done = subprocess.run(
+            ["bash", "-c", _sweep_step(text, opener)], cwd=root, capture_output=True, text=True,
+            env={**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+                 "STUB_ROOT": root, "RUNNER_TEMP": temp, "GITHUB_OUTPUT": output, "NAME": "okio",
+                 "ARGS": json.dumps(["bench/projects/okio.toml", "--recapture"]),
+                 "CHECKOUT": "checkouts/okio", "SHARD": "1/2", "SLICE": "shard-1-of-2.json", **env})
+        asked = None
+        if os.path.exists(os.path.join(root, "timeout-args")):
+            with open(os.path.join(root, "timeout-args"), encoding="utf-8") as handle:
+                asked = json.load(handle)
+        wrote = ""
+        if os.path.exists(output):
+            with open(output, encoding="utf-8") as handle:
+                wrote = handle.read()
+        files = sorted(os.path.relpath(os.path.join(at, name), root)
+                       for top in ("isolated", os.path.join("temp", "isolated-slice"))
+                       for at, _, names in os.walk(os.path.join(root, top)) for name in names)
+    return done.returncode, asked, wrote, files
+
+
+def _isolated_steps_keep_inside_their_job(project):
+    """Each isolated step asks for no more than its job has left of 340 minutes, starts nothing
+    with too little left, and hands on a map or a slice only when its run ended."""
+    problems = 0
+    recording, second = ("\n      - name: record the isolated map",
+                         "\n      - name: measure this slice against the isolated map")
+    whole = ["isolated/okio/recording.json", "isolated/okio/state.tar.gz"]
+    for opener, ago, env, exits, seconds, output, files in (
+            (recording, 100, {}, 0, 240 * 60, "recorded=true\n", whole),
+            (recording, 335, {}, 0, None, "", []),
+            (recording, 0, {"STUB_EXIT": "124"}, 0, 340 * 60, "", []),
+            (recording, 0, {"STUB_BUILD": "maven"}, 0, None, "", []),
+            (second, 100, {}, 0, 240 * 60, "", ["temp/isolated-slice/shard-1-of-2.json"]),
+            (second, 337, {}, 0, None, "", []),
+            (second, 0, {"STUB_EXIT": "124"}, 124, 340 * 60, "", [])):
+        code, asked, wrote, left = _isolated_step(project, opener, ago, **env)
+        about = f"{opener.split('name: ')[1]}, {ago} minutes into its job, {env}"
+        if code != exits or wrote != output or left != files:
+            problems += fail(f"{about}: exit {code}, outputs {wrote!r}, files {left}")
+        if (asked is None) is not (seconds is None):
+            problems += fail(f"{about}: timeout was asked {asked}")
+        elif asked and not (asked[0] == "--kill-after=60"
+                            and seconds - 30 <= int(asked[1]) <= seconds):
+            problems += fail(f"{about}: the run was given {asked[:2]}, not {seconds} s")
+    return problems
+
+
 def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
     """The page and `sweep-results` come from `merged/`, also on a run that then fails for a missing
     project, and the page never turns the run red. The per-job artifacts keep their three days."""
@@ -3258,7 +3442,7 @@ def case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_
     return problems
 
 
-def _sweep_merge(root, plan, arm="full", split_bytes=None):
+def _sweep_merge(root, plan, arm="full", split_bytes=None, isolated="off"):
     """sweep.yml's merge step over `root/downloaded`, `merge.py` stubbed to record its arguments
     and to refuse a reduced arm short of a member, as the real one does; `split_bytes` replaces
     the evidence parts' size."""
@@ -3278,7 +3462,8 @@ def _sweep_merge(root, plan, arm="full", split_bytes=None):
                      "if 'reduced' in sys.argv and '--missing' in sys.argv: sys.exit(1)\n"
                      "os.makedirs('merged', exist_ok=True)\n")
     env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
-           "PLAN": json.dumps([{"project": n} for n in plan]), "ARM": arm, "RUN": "7"}
+           "PLAN": json.dumps([{"project": n} for n in plan]), "ARM": arm, "RUN": "7",
+           "ISOLATED": isolated}
     return subprocess.run(["bash", "-c", merge], cwd=root, env=env, capture_output=True, text=True)
 
 
@@ -3559,7 +3744,8 @@ def case_a_change_to_the_maven_plugin_alone_sweeps_the_maven_projects():
         planned = None if asked is None else " ".join(asked)
         if (code or (planned is None) is not (arm is None) or "--build" in (planned or "")
                 or (arm and f"--arm {arm}" not in planned)
-                or wrote != [f"tier={tier}\nprojects=[]\n"] or bool(warning) is not warned
+                or wrote != [f"tier={tier}\nisolated={'paired' if tier == 'full' else 'off'}\n"
+                             f"projects=[]\n"] or bool(warning) is not warned
                 or (warned and mojo not in warning[0])):
             problems += fail(f"a selector change over {changed}, only={only!r}: exit {code}, "
                              f"planned {asked}, handed on {wrote}, said {output!r}")
@@ -4247,6 +4433,7 @@ CASES = (
     case_every_measuring_step_samples_the_machine_until_it_ends,
     case_no_guest_build_writes_to_the_run_page,
     case_real_commits_are_replayed_after_the_record_is_uploaded_and_cost_no_rows,
+    case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_row_to_it,
     case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged,
     case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure,
     case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported,

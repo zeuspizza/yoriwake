@@ -18,10 +18,15 @@ corpus-wide estimate per row, the same for every project: `UNRECORDED_ROW_SECOND
 happen only on rows that missed, so pricing them would charge a project for missing. Stalls are a
 term of their own: a project whose earlier rows stalled is said to have, never averaged in.
 
+A PAIRED ISOLATED ARM (`--isolated`) is priced on top: one more recording, with a fresh test JVM
+per class, and per row the gate, the question whether the change forces a full run, and the
+selected arm where it does not. Its ground truth is the shared row's, so no full arm.
+
 REPORT, after the sweep, from the results files it wrote: hours per family (the row's `kind`) and
 per row where a miss was possible, per project and in total, split by `ground_truth` and `timed`.
 
     python bench/cost.py --project grpc-java --limit 16 --timing-cap 8
+    python bench/cost.py --project grpc-java --limit 16 --recall-only --isolated
     python bench/cost.py --report bench/results/ktlint.json
 """
 
@@ -44,6 +49,13 @@ import run  # noqa: E402
 # this tool prices as stalls, not as the per-row cost.
 UNRECORDED_ROW_SECONDS = 34.0
 ANSWERED = ("checked", "no-effect")
+
+# AN ISOLATED RECORDING OVER A SHARED ONE, in seconds of the same project: 1.9 times in the median
+# and 5.6 at most, over 22 projects recorded both ways on one 10-core machine with 10 forks. A
+# runner has fewer cores, so the high figure is what a plan allows for, and a recording is given
+# the time its job has left, not this estimate.
+ISOLATED_RECORDING_RATIO = 1.9
+ISOLATED_RECORDING_RATIO_HIGH = 5.6
 
 
 def _median(values, default):
@@ -98,6 +110,27 @@ def project(data, rows, timing_cap=None, recall_only=False, ground_truth="full",
             "stalled_rows_before": unit["stalled_rows"]}
 
 
+def isolated_arm(data, rows, forced_share_without_rows=0.0):
+    """What a paired isolated arm adds to one project's sweep of `rows` rows.
+
+    The recording is priced from the shared one by the measured ratios. A row pays the gate twice
+    (the compile, and the question whether the change forces a full run, which starts no test) and
+    its selected arm when the answer is no. How many rows force under an isolated map is what the
+    arm measures, so without a share every row is priced as running its selected arm.
+    """
+    unit = per_row(data, forced_share_without_rows)
+    suite = data.get("baseline_seconds") or unit["full"]
+    shared = data.get("capture_seconds") or suite
+    forced = forced_share_without_rows
+    row = 2 * unit["gate"] + (1 - forced) * unit["selected"]
+    recording, high = (shared * ISOLATED_RECORDING_RATIO, shared * ISOLATED_RECORDING_RATIO_HIGH)
+    return {"rows": rows, "row_minutes": round(row / 60, 1),
+            "recording_minutes": round(recording / 60, 1),
+            "recording_minutes_high": round(high / 60, 1),
+            "hours": round((recording + rows * row) / 3600, 2),
+            "hours_high": round((high + rows * row) / 3600, 2)}
+
+
 def from_qualification(seconds):
     """A stand-in results header for a project swept never: every arm one qualification run."""
     return {"capture_seconds": seconds, "baseline_seconds": seconds, "mutations": []}
@@ -139,6 +172,8 @@ def main(argv=None):
     parser.add_argument("--timing-cap", type=int, default=None)
     parser.add_argument("--recall-only", action="store_true")
     parser.add_argument("--ground-truth", choices=run.GROUND_TRUTH_MODES, default="full")
+    parser.add_argument("--isolated", action="store_true",
+                        help="also project what a paired isolated arm adds")
     parser.add_argument("--report", nargs="+", default=[], help="results files to report on")
     args = parser.parse_args(argv)
     for name in args.project:
@@ -147,6 +182,8 @@ def main(argv=None):
             data = json.load(handle)
         print(json.dumps({"project": name, **project(data, args.limit, args.timing_cap,
                                                      args.recall_only, args.ground_truth)}))
+        if args.isolated:
+            print(json.dumps({"project": name, "isolated_arm": isolated_arm(data, args.limit)}))
     reports = []
     for path in args.report:
         with open(path, encoding="utf-8") as handle:
