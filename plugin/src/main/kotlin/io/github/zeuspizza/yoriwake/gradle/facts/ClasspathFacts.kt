@@ -21,7 +21,10 @@ internal data class ClasspathFacts(
     override val moduleDirs: Map<String, String>,
     /** Gradle path to build directory, so a classpath entry can be traced back to its module. */
     override val buildDirs: Map<String, String>,
-    /** Modules Gradle's resolution names; null means "could not be asked", not "none". */
+    /**
+     * Modules Gradle's resolution names; null means "could not be asked", not "none". The modules
+     * the task reaches by [handed] and [closure] are added to it as [declaredModules] answers.
+     */
     val declared: org.gradle.api.provider.Provider<Set<String>?>,
     /** Compile and annotation-processor classpaths, which the test runtime classpath omits. */
     val compileTime: org.gradle.api.file.FileCollection,
@@ -42,6 +45,12 @@ internal data class ClasspathFacts(
     val agentCeiling: org.gradle.api.provider.Provider<String>? = null,
     /** Plain directories taken at configuration, so nothing resolves or reads a jar then. */
     override val dependencyHomes: Map<String, File> = emptyMap(),
+    /** Gradle path to the project's build file, repository-relative. */
+    override val buildFiles: Map<String, String> = emptyMap(),
+    /** See [ClasspathView.handedPaths]; absent, or null here, when it cannot be told. */
+    val handed: org.gradle.api.provider.Provider<Set<File>>? = null,
+    /** See [ClasspathView.closureModules]; absent, or null here, when it cannot be told. */
+    val closure: org.gradle.api.provider.Provider<Set<String>>? = null,
 ) : ClasspathView {
     override fun classpathFiles(): Set<File> = classpath.files
 
@@ -49,7 +58,14 @@ internal data class ClasspathFacts(
 
     override fun compileTimeFiles(): Set<File> = compileTime.files
 
-    override fun declaredModules(): Set<String>? = declared.getOrNull()
+    /**
+     * [declared] with the modules the task reaches by a path it hands its test JVM or a task it
+     * depends on, as Maven counts the modules its fork values name; null when any part is unknown.
+     */
+    override fun declaredModules(): Set<String>? {
+        val named = declared.getOrNull() ?: return null
+        return named + (reachedModules() ?: return null)
+    }
 
     override fun jacocoVersion(): String? = jacocoVersion?.let { it.readOrNull() ?: "" }
 
@@ -58,6 +74,10 @@ internal data class ClasspathFacts(
     override fun testJvm(): Int? = testJvm.readOrNull()
 
     override fun agentCeiling(): String? = agentCeiling.readOrNull()
+
+    override fun handedPaths(): Set<File>? = handed.readOrNull()
+
+    override fun closureModules(): Set<String>? = closure.readOrNull()
 }
 
 /** A provider's value, or null when it is absent, unset or throws. */
@@ -104,6 +124,10 @@ internal fun classpathFacts(
     memo?.count(YoriwakePlugin.CLASSPATH_FACTS_COUNTER)
     val facts = projectFacts(project, memo)
     val ownPath = project.path
+    // What `declared` asks, for the facts read beside it; an empty change set reads none of them.
+    val reaches = changedPaths == null || changedPaths.isNotEmpty() && reachesOutsideModule(
+        project.projectDir.relativeTo(project.rootDir).invariantSeparatorsPath.trim('/'), ownPath, changedPaths, facts.moduleDirs,
+    )
     return ClasspathFacts(
     rootDir = project.rootDir,
     moduleDirs = facts.moduleDirs,
@@ -146,7 +170,65 @@ internal fun classpathFacts(
         project.provider { properties[io.github.zeuspizza.yoriwake.agent.contract.AgentContract.AGENT_ASM_CEILING_PROPERTY]?.toString() }
     },
     dependencyHomes = dependencyHomes(project),
+    buildFiles = facts.buildFiles,
+    // Read when the change set reaches outside this module, as `declared` is.
+    // Absent, never thrown, when an input cannot be resolved: the configuration cache stores it.
+    handed = project.provider { if (reaches) runCatching { handedPaths(test) }.getOrNull() else emptySet() },
+    closure = if (reaches) dependencyClosure(project, test, facts.moduleDirs) else project.provider { emptySet<String>() },
     )
+}
+
+/** What [test] hands its test JVM by path; see [ClasspathView.handedPaths]. */
+internal fun handedPaths(test: Test): Set<File> {
+    val workingDir = test.workingDir
+    val values = io.github.zeuspizza.yoriwake.gradle.capture.JvmArgFiles.expand(test.allJvmArgs, workingDir) +
+        test.environment.values.map { it?.toString().orEmpty() }
+    return handedPathTokens(values, workingDir) + workingDir + test.inputs.files.files
+}
+
+/**
+ * The modules owning a task [test] depends on, directly or not, and those holding a file such a
+ * task reads (a copy from a sibling's `src`), as the task graph has them once it is ready: before
+ * the configuration cache stores its entry, and never from a task action. A task not in the graph,
+ * as the test task is when only `yoriwakeExplain` runs, is asked for its own dependencies then.
+ * Unset, so unknown, when the graph never becomes ready for it or a walk fails.
+ */
+internal fun dependencyClosure(
+    project: Project,
+    test: Test,
+    moduleDirs: Map<String, String>,
+): org.gradle.api.provider.Provider<Set<String>> {
+    val closure = project.objects.setProperty(String::class.java)
+    closure.set(null as Iterable<String>?)
+    val build = project.rootProject
+    val rootDir = project.rootDir
+    project.gradle.taskGraph.whenReady { graph ->
+        runCatching {
+            val read = mutableSetOf<File>()
+            modulesDependedOn(test, build) { task ->
+                if (task != test) read += task.inputs.files.files
+                if (graph.hasTask(task)) graph.getDependencies(task) else task.taskDependencies.getDependencies(task)
+            } + modulesHolding(read, rootDir, moduleDirs)
+        }.getOrNull()?.let { closure.set(it) }
+    }
+    return closure
+}
+
+/** The modules of [build] owning a task [test] depends on, through [dependencies], directly or not. */
+internal fun modulesDependedOn(
+    test: org.gradle.api.Task,
+    build: Project,
+    dependencies: (org.gradle.api.Task) -> Set<org.gradle.api.Task>,
+): Set<String> {
+    val seen = mutableSetOf<org.gradle.api.Task>()
+    val pending = ArrayDeque(listOf(test))
+    while (pending.isNotEmpty()) {
+        dependencies(pending.removeFirst()).forEach { if (seen.add(it)) pending += it }
+    }
+    // A task of another build has a project of that build, whose paths are not this build's modules.
+    return seen.mapNotNullTo(mutableSetOf()) { task ->
+        runCatching { task.project.takeIf { it.rootProject == build }?.path }.getOrNull()
+    }
 }
 
 /** Where a Gradle test classpath takes dependencies from; see [ClasspathView.dependencyHomes]. */

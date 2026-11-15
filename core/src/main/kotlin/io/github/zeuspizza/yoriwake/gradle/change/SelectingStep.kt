@@ -102,6 +102,10 @@ internal object SelectingStep {
         val narrowLineOnlyChanges: Boolean = false,
         /** The test task's input files under the root beyond its classpath and test classes; asked only when a default entry matched. */
         val taskInputs: () -> List<String> = { emptyList() },
+        /** The commit the map was captured at, a second base a changed build file is read at. */
+        val stamp: String? = null,
+        /** Changed paths only the working tree's drift since the capture names: no base text stands for them. */
+        val moved: Set<String> = emptySet(),
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -127,9 +131,17 @@ internal object SelectingStep {
         reportDependencies(host, dependency)
         val scoped = scopedChange(
             if (bump == null) paths else paths - bump.paths.toSet(),
-            classpathFacts, inputs.notReadByTests, inputs.ignore, mapDir, inputs.taskInputs,
+            classpathFacts, inputs.notReadByTests, inputs.ignore, mapDir,
+            bases = listOfNotNull(against, inputs.stamp), moved = inputs.moved, taskInputs = inputs.taskInputs,
         )
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
+        if (scoped.droppedFiles.isNotEmpty()) {
+            host.lifecycle(
+                "[yoriwake] ${host.name}: ${scoped.droppedFiles.size} changed file(s) of modules this task neither " +
+                    "loads nor reaches, which no class, resource or build script of it names, are no change: " +
+                    scoped.droppedFiles.take(REPORTED).joinToString() + if (scoped.droppedFiles.size > REPORTED) ", ..." else ""
+            )
+        }
         val established = establish(
             { message -> host.lifecycle("[yoriwake] ${host.name}: $message") },
             mapDir, scoped.change, classpathFacts,

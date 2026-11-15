@@ -202,4 +202,106 @@ class ClasspathScopeTest {
         assertEquals(paths, threw.kept)
         assertTrue(threw.dropped.isEmpty())
     }
+
+    /** Every fact a build file or another `src` file needs, each clearing it. */
+    private fun clearing(
+        reached: Set<String>? = emptySet(),
+        named: Set<String>? = emptySet(),
+        refusal: String? = null,
+        ownBuild: Set<String> = emptySet(),
+    ) = ClasspathScope.Others(
+        buildFiles = modules.values.associateWith { path -> path.removePrefix(":").let { if (it.isEmpty()) "build.gradle.kts" else "$it/build.gradle.kts" } },
+        reached = { reached },
+        named = { named },
+        refusal = { _, _, _ -> refusal },
+        ownBuild = { it in ownBuild },
+    )
+
+    @Test
+    fun `a sibling's build file and resource drop when every fact clears them`() {
+        val paths = listOf("webserver/build.gradle.kts", "webserver/src/main/resources/application.yml")
+
+        val result = ClasspathScope.restrict(paths, modules, onlyCore, nothingNamed, clearing())
+
+        assertTrue(result.kept.isEmpty())
+        assertEquals(paths, result.dropped)
+        assertEquals(paths, result.droppedFiles)
+    }
+
+    @Test
+    fun `a sibling's build file or resource is kept when any fact is unknown or refuses`() {
+        val paths = listOf("webserver/build.gradle.kts", "webserver/src/main/resources/application.yml")
+        val holding = listOf(
+            clearing(reached = null),
+            clearing(reached = setOf(":webserver")),
+            clearing(named = null),
+            clearing(named = paths.toSet()),
+            clearing(refusal = "it names allprojects"),
+            ClasspathScope.Others(emptyMap(), { error("no graph") }, { emptySet() }, { _, _, _ -> null }, { false }),
+            ClasspathScope.Others(emptyMap(), { emptySet() }, { error("no artifacts") }, { _, _, _ -> null }, { false }),
+            ClasspathScope.Others(emptyMap(), { emptySet() }, { emptySet() }, { _, _, _ -> error("unreadable") }, { false }),
+        )
+
+        holding.forEach { others ->
+            val result = ClasspathScope.restrict(paths, modules, onlyCore, nothingNamed, others)
+            assertEquals(paths, result.kept)
+        }
+    }
+
+    @Test
+    fun `a sibling's file outside src, or not its build file, keeps forcing whatever the facts say`() {
+        val paths = listOf(
+            "webserver/gradle.properties",
+            "webserver/scripts/common.gradle",
+            "webserver/Dockerfile",
+            "webserver/build.gradle",
+        )
+
+        val result = ClasspathScope.restrict(paths, modules, onlyCore, nothingNamed, clearing())
+
+        assertEquals(paths, result.kept)
+    }
+
+    @Test
+    fun `a file under a directory with its own settings script keeps forcing`() {
+        val path = "webserver/src/test/resources/project/src/main/resources/x.txt"
+
+        val result = ClasspathScope.restrict(
+            listOf(path), modules, onlyCore, nothingNamed, clearing(ownBuild = setOf("webserver/src/test/resources/project")),
+        )
+
+        assertEquals(listOf(path), result.kept)
+    }
+
+    @Test
+    fun `a nested module's file is that module's, so a reached parent does not vouch for it`() {
+        val nested = modules + ("webserver/admin" to ":webserver:admin")
+
+        val result = ClasspathScope.restrict(
+            listOf("webserver/admin/src/main/resources/a.yml"), nested, onlyCore, nothingNamed,
+            clearing(reached = setOf(":webserver:admin")),
+        )
+
+        assertEquals(listOf("webserver/admin/src/main/resources/a.yml"), result.kept)
+    }
+
+    @Test
+    fun `a class source drops as before whatever the facts for other files say`() {
+        val source = "webserver/src/main/java/io/kestra/webserver/Api.java"
+
+        listOf(null, clearing(reached = null), clearing(named = null), clearing(refusal = "no")).forEach { others ->
+            val result = ClasspathScope.restrict(listOf(source), modules, onlyCore, nothingNamed, others)
+            assertEquals(listOf(source), result.dropped)
+            assertTrue(result.droppedFiles.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a sibling's POM drops like a build script, and is kept when a fact is unknown`() {
+        val poms = mapOf(":webserver" to "webserver/pom.xml")
+        fun others(reached: Set<String>?) = ClasspathScope.Others(poms, { reached }, { emptySet() }, { _, _, _ -> null }, { false })
+
+        assertEquals(listOf("webserver/pom.xml"), ClasspathScope.restrict(listOf("webserver/pom.xml"), modules, onlyCore, nothingNamed, others(emptySet())).dropped)
+        assertEquals(listOf("webserver/pom.xml"), ClasspathScope.restrict(listOf("webserver/pom.xml"), modules, onlyCore, nothingNamed, others(null)).kept)
+    }
 }

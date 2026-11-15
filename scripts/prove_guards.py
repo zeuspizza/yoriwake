@@ -197,6 +197,9 @@ TEST_CLASS_IDS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contrac
 # ChangeSelection.kt was split by responsibility; each anchor followed its function, unchanged.
 SELECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 CLASSPATH_SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
+BUILD_FILE_REACH = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/BuildFileReach.kt"
+POM_REACH = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PomReach.kt"
+CLASSPATH_VIEW = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ClasspathView.kt"
 NOT_READ = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
 PATH_IGNORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
@@ -4361,7 +4364,72 @@ MUTATIONS = [
     ("any file under an absent module's src drops again", CLASSPATH_SCOPE,
      "            owner != null && owner.second !in present && isClassSource(path, owner.first)",
      '            owner != null && owner.second !in present && path.startsWith("${owner.first}/src/")',
-     functional_suite, "a resource of a module off the classpath the build script hands a test by path forces the run"),
+     functional_suite, "a sibling's file an own resource lists forces the run"),
+    # A sibling's build file or other `src` file drops only when nothing carries it to the test: a
+    # class or resource naming it, a path the task hands into its module, a task of it the test
+    # task depends on, or a build script reaching across. Each check alone keeps its attempt.
+    ("a sibling's build file or resource is dropped though a class names it", SELECTION,
+     "            artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE) +\n"
+     "                artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) +\n"
+     "                candidates.filter { path -> forms.getValue(path).any { it in inResources } }",
+     "            emptySet<String>()",
+     functional_suite, "a sibling's file a test reads by path still selects that test"),
+    ("a path the task hands into a module reaches nothing", CLASSPATH_VIEW,
+     "        reached += modulesHolding(handed, rootDir, moduleDirs)",
+     "",
+     functional_suite, "a sibling's resource a test walks to from the directory its environment hands it forces the run"),
+    ("a task the test task depends on reaches nothing", CLASSPATH_VIEW,
+     "        val reached = closure.toMutableSet()",
+     "        val reached = mutableSetOf<String>()",
+     functional_suite, "a sibling's resource in a jar a task the test depends on copies outside the sibling forces the run"),
+    ("a file a task the test task depends on reads reaches nothing", CLASSPATH_FACTS,
+     "                if (task != test) read += task.inputs.files.files",
+     "",
+     functional_suite, "a sibling's file a task the test depends on copies elsewhere forces the run"),
+    ("a sibling's script may call project(...) anywhere", BUILD_FILE_REACH,
+     "            if (!asDependency(text, call.range.first, call.range.last)) return",
+     "            if (false) return",
+     functional_suite, "a sibling's build script that starts configuring the tested project forces the run"),
+    ("a sibling's script may name rootProject and its kin", BUILD_FILE_REACH,
+     "        REACHING.forEach { (pattern, what) -> pattern.find(text)?.let { return",
+     "        emptyList<Pair<Regex, String?>>().forEach { (pattern, what) -> pattern.find(text)?.let { return",
+     functional_suite, "a sibling's build script that configures the root project's test task forces the run"),
+    ("a sibling's script may change the plugins it applies", BUILD_FILE_REACH,
+     "                    if (pluginsDiffer(then.text, current)) return",
+     "                    if (false) return",
+     functional_suite, "a sibling's build script that newly applies a plugin which configures every test task forces the run"),
+    ("no script the tested project reads is asked whether it names a sibling", BUILD_FILE_REACH,
+     "        return readerRefusal(module, dir, view, read, exists)",
+     "        return null",
+     functional_suite, "a sibling's version the tested project's script hands its test forces the run when it changes"),
+    # On Gradle a module the test task reaches by a handed path or a task it depends on is present,
+    # as Maven counts a module its fork values name, so its class sources stay too.
+    ("Gradle counts no module the test task reaches as present", CLASSPATH_FACTS,
+     "        return named + (reachedModules() ?: return null)",
+     "        return named",
+     functional_suite, "a sibling's jar the test task builds and hands as a system property keeps its source edits"),
+    # On Maven a sibling's POM or `src/` file drops on the same terms: the paths the tested module's
+    # build reads keep its module, and a POM that reaches out or changes its plugins keeps forcing.
+    ("Maven reads no path of the effective model", MAVEN_CLASSPATH_VIEWS,
+     "    val values = modelValues(project).toMutableList()",
+     "    val values = mutableListOf<String>()",
+     maven_suite, "a sibling's file the build reads as a resource filter still forces"),
+    ("Maven reads no file that activates a profile", MAVEN_CLASSPATH_VIEWS,
+     "                profile.activation?.file?.let { file -> activations += listOfNotNull(file.exists, file.missing) }",
+     "",
+     maven_suite, "a sibling's file that activates a profile still forces"),
+    ("a sibling POM may name its parent's directory", POM_REACH,
+     "            KEYWORDS.firstOrNull { it.containsMatchIn(value) }?.let { keyword ->",
+     "            emptyList<Regex>().firstOrNull { it.containsMatchIn(value) }?.let { keyword ->",
+     maven_suite, "a sibling's pom that names its parent's directory, adds a plugin or declares an extension still forces"),
+    ("a sibling POM may change its plugins", POM_REACH,
+     "                if (plugins(then) != plugins(now)) return",
+     "                if (false) return",
+     maven_suite, "a sibling's pom that names its parent's directory, adds a plugin or declares an extension still forces"),
+    ("a sibling POM may declare a build extension", POM_REACH,
+     "        if (elements(project).any { it.isExtension() }) return",
+     "        if (false) return",
+     maven_suite, "a sibling's pom that names its parent's directory, adds a plugin or declares an extension still forces"),
     # A test reads a sibling's source by a path it holds, often relative to that module.
     ("a class source off the classpath is named by none of its trailing parts", TASK_ARTIFACTS,
      "            (2 until segments.size).flatMapTo(forms) { n ->",
@@ -4404,7 +4472,7 @@ MUTATIONS = [
     ("Gradle names no module by a source directory", CLASSPATH_FACTS,
      "            withSourceRootModules(project, facts.moduleDirs, resolvedProjectDependencies(project))",
      "            resolvedProjectDependencies(project)",
-     functional_suite, "a sibling's sources a srcDir compiles in keep their edits"),
+     functional_suite, "a sibling's sources a source set the tests do not build compiles in keep their edits"),
     # The two exemptions from that: an IDE's state, and what the build declares unread.
     ("an IDE state directory is a change again", NOT_READ,
      '    private val IDE_STATE_DIRECTORIES = setOf(".idea", ".vscode", ".fleet")',

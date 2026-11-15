@@ -37,7 +37,71 @@ internal fun classpathView(
         override fun jacocoSetting(): String = "jacoco-maven-plugin `<version>`"
         override fun testJvm(): Int? = null
         override fun agentCeiling(): String? = null
+        override val buildFiles = session.allProjects.mapNotNull { module ->
+            module.file?.let { module.id to it.relativeTo(root).invariantSeparatorsPath }
+        }.toMap()
+        override fun handedPaths(): Set<File>? = modelPaths(session, root, project)
+        override fun closureModules(): Set<String>? = runCatching {
+            session.projectDependencyGraph.getUpstreamProjects(project, true).mapTo(mutableSetOf()) { it.id }
+        }.getOrNull()
     }
+
+/**
+ * The paths [project]'s build reads, whichever plugin reads them: every value of its effective
+ * `<build>` (its directories, filters, resource roots, and each plugin's configuration, text and
+ * attributes, in the build and its management) and `<properties>`, which Maven has interpolated with
+ * the parent chain and the active profiles merged in, and the files that activate a profile of its
+ * POM or of a parent's in the checkout. Relative to the module's directory. Null when one of them
+ * holds an expression that cannot be resolved here, so a path it names is unknown.
+ */
+internal fun modelPaths(session: MavenSession, root: File, project: MavenProject): Set<File>? = runCatching {
+    val values = modelValues(project).toMutableList()
+    val activations = mutableListOf<String>()
+    generateSequence(project) { it.parent }
+        .filter { pom -> pom.file?.absoluteFile?.normalize()?.startsWith(root.absoluteFile.normalize()) == true }
+        .forEach { pom ->
+            pom.originalModel?.profiles.orEmpty().forEach { profile ->
+                profile.activation?.file?.let { file -> activations += listOfNotNull(file.exists, file.missing) }
+            }
+        }
+    val basedir = project.basedir.absolutePath
+    val resolved = values + activations.map { activation ->
+        val located = activation.replace("\${basedir}", basedir).replace("\${project.basedir}", basedir)
+            .replace("\${project.rootDirectory}", root.absolutePath)
+        resolve(project, session, located) ?: return null
+    }
+    resolved.flatMap { text -> PATH.findAll(text).map { it.value }.toList() }.mapTo(mutableSetOf()) { piece ->
+        if ("\${" in piece || "@{" in piece) return null
+        File(piece).let { if (it.isAbsolute) it else File(project.basedir, piece) }
+    }
+}.getOrNull()
+
+/** The text values of [project]'s effective `<build>` and `<properties>`; see [modelPaths]. */
+private fun modelValues(project: MavenProject): List<String> {
+    val values = mutableListOf<String>()
+    project.model.properties?.values?.forEach { values += it.toString() }
+    val build = project.model.build ?: return values
+    values += listOfNotNull(
+        build.directory, build.outputDirectory, build.testOutputDirectory, build.sourceDirectory,
+        build.testSourceDirectory, build.scriptSourceDirectory, build.finalName,
+    )
+    values += build.filters.orEmpty()
+    (build.resources.orEmpty() + build.testResources.orEmpty()).forEach { resource ->
+        values += listOfNotNull(resource.directory, resource.targetPath) + resource.includes.orEmpty() + resource.excludes.orEmpty()
+    }
+    (build.plugins.orEmpty() + build.pluginManagement?.plugins.orEmpty()).forEach { plugin ->
+        (listOf(plugin.configuration) + plugin.executions.orEmpty().map { it.configuration })
+            .filterIsInstance<Xpp3Dom>().forEach { domValues(it, values) }
+    }
+    return values
+}
+
+/** Every value and attribute of [node] and the nodes under it, into [values]. */
+private fun domValues(node: Xpp3Dom, values: MutableList<String>) {
+    node.value?.let(values::add)
+    node.attributeNames.orEmpty().forEach { name -> node.getAttribute(name)?.let(values::add) }
+    node.children.forEach { domValues(it, values) }
+}
 
 /**
  * The ids of the reactor modules [project]'s build names, other than itself: by coordinates in a
