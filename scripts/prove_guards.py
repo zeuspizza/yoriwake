@@ -94,7 +94,12 @@ def source(path):
 # Guards prove test outcomes, and the functional suite's coverage would only add time; the same
 # arguments everywhere, so the warm-up's configuration cache entry is the one the runs reuse.
 # A mutation may leave the compiler something to warn about; it is judged on its test, not refused.
-GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false", "-Pyoriwake.kotlinWarningsAsErrors=false"]
+# The Kotlin daemon gets 2 GB instead of the Gradle daemon's 512 MB it inherits: one daemon
+# compiles every worker tree in turn, and at 512 MB it crashed on CI in the second to fourth tree,
+# never the first ("Exception during IR lowering", "Couldn't transform method node"); the same code
+# compiled when the shard ran again.
+GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false", "-Pyoriwake.kotlinWarningsAsErrors=false",
+               "-Pkotlin.daemon.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"]
 
 
 def wrapper(tree):
@@ -5946,7 +5951,8 @@ def compile_errors(output, limit=10):
 
 def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
-    error lines below it, or None."""
+    error lines below it, or None. A failed build's whole output is kept in UNMUTATED_RESULTS: the
+    error lines alone left a compiler crash without its cause."""
     for tree in trees:
         done = subprocess.run([wrapper(tree), "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True,
                               stdin=subprocess.DEVNULL, cwd=tree)
@@ -5954,7 +5960,15 @@ def _warm_up(trees, tasks):
             output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
             refusal = f"{tree} does not compile unmutated: {tail[-1] if tail else '?'}"
-            return "\n".join([refusal] + ["    " + line for line in compile_errors(output)])
+            kept = os.path.join(UNMUTATED_RESULTS, f"warm-up-{os.path.basename(os.path.normpath(tree))}.log")
+            try:
+                os.makedirs(UNMUTATED_RESULTS, exist_ok=True)
+                with open(kept, "w", encoding="utf-8") as handle:
+                    handle.write(output)
+                note = f"    the build's output, whole, is kept in {kept}"
+            except OSError as error:
+                note = f"    the build's output could not be kept in {kept}: {error}"
+            return "\n".join([refusal] + ["    " + line for line in compile_errors(output)] + [note])
     return None
 
 
