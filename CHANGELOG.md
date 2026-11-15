@@ -34,6 +34,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Reference: a transform-cache entry written again after Gradle's cache cleanup also runs nothing. Map: left alone.
 - Code that ran before a JVM's first test runs only the tests of the JVMs that loaded it, not everything. Map: left alone.
 - Gradle: README, Markdown, `docs/` and `.github/` changes are ignored by default (`pathIgnoreDefaults`). Map: left alone.
+- Gradle: a changed class no test executed, loaded or names selects nothing by default. Map: left alone;
+  the next capture of the whole task records the classes its test JVMs loaded.
 
 ### Fixed
 

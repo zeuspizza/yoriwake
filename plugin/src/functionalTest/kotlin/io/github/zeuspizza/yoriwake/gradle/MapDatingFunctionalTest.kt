@@ -925,14 +925,14 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
     private fun capturedThenFiltered(dir: File, buildScript: String, vararg sources: Pair<String, String>): String {
         build(dir, "build.gradle.kts" to buildScript, oneClass, secondClass, *sources)
         committed(dir)
-        runner(dir, "test", "-Pyoriwake.internal.loaded").build()
+        runner(dir, "test").build()
         assertEquals(head(dir), captureStamp(dir))
         assertTrue(mapIds(dir).any { "AlphaTest" in it }, "the whole capture did not record AlphaTest")
         assertTrue(unionWritten(dir), "the whole capture wrote no loaded-class union")
 
         changeBeta(dir)
         commit(dir, "a change")
-        val output = runner(dir, "test", "-Pquick", "-Pyoriwake.internal.loaded").build().output
+        val output = runner(dir, "test", "-Pquick").build().output
 
         // Dated, because it drops the records of what it left out, which then run as not in the
         // map; never the whole task, because a union of part of the suite would skip more.
@@ -940,6 +940,9 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         assertEquals(head(dir), captureStamp(dir), "a run under this filter did not date the map")
         assertEquals(emptyList(), mapIds(dir).filter { "AlphaTest" in it }, "what it left out kept its records")
         assertFalse(unionWritten(dir), "a filtered run wrote a loaded-class union")
+        // The union the whole capture wrote is gone, and the run says which kinds of run do that.
+        assertContains(output, "the run left tests out by tag, engine, category or group")
+        assertContains(output, "so the loaded-class union was discarded")
         return output
     }
 

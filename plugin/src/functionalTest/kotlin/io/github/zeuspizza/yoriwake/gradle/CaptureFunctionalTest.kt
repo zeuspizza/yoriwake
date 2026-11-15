@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -333,7 +334,7 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
         git(dir, "add", ".")
         git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
 
-        val captured = runner(dir, "test", "-Pyoriwake.internal.loaded").build().output
+        val captured = runner(dir, "test").build().output
         assertContains(captured, "map updated:")
 
         val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
@@ -383,10 +384,81 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
         // union stamped `full`.
         build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest)
 
-        runner(dir, "test", "-Pyoriwake.internal.loaded", "--tests", "dev.sample.AlphaTest").build()
+        runner(dir, "test", "--tests", "dev.sample.AlphaTest").build()
 
         val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
         assertTrue(!File(mapDir, "loaded.txt").exists(), "a filtered run must not write a union")
+    }
+
+    @Test
+    fun `the agent's path is not among the test task's configured JVM arguments`(@TempDir dir: File) {
+        // An absolute path there is part of the task's cache key, which then differs on every
+        // machine. Read once the task graph is ready: after configuration, before any action.
+        build(
+            dir,
+            "build.gradle.kts" to (
+                minimalBuild + System.lineSeparator() + """
+                    gradle.taskGraph.whenReady { println("configured-jvm-args=" + tasks.test.get().jvmArgs) }
+                """.trimIndent()
+                ),
+            oneClass, oneTest,
+        )
+
+        val output = runner(dir, "test").build().output
+
+        val configured = output.lines().first { it.startsWith("configured-jvm-args=") }
+        assertFalse("-javaagent" in configured, configured)
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertTrue(File(mapDir, "loaded.txt").isFile, "the capture wrote no loaded-class union; output: $output")
+    }
+
+    @Test
+    fun `a selecting run's test JVMs list no loaded classes, and the union stays as captured`(@TempDir dir: File) {
+        // The decode takes no union from a selecting run, so its JVMs are not asked for the lists.
+        val probed = minimalBuild.replace(
+            "tasks.test { useJUnitPlatform() }",
+            """
+            tasks.test {
+                useJUnitPlatform()
+                systemProperty("probe.out", layout.buildDirectory.file("probe.txt").get().asFile.absolutePath)
+            }
+            """.trimIndent(),
+        )
+        val probe = "src/test/java/dev/sample/ProbeTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            class ProbeTest {
+                @Test void probe() throws Exception {
+                    new Alpha().twice(1);
+                    java.nio.file.Files.writeString(java.nio.file.Path.of(System.getProperty("probe.out")),
+                        "loaded=" + System.getProperty("${AgentContract.LOADED_DIR_PROPERTY}"));
+                }
+            }
+        """.trimIndent()
+        build(dir, "build.gradle.kts" to probed, oneClass, oneTest, probe)
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        commit(dir, "sample")
+
+        runner(dir, "test").build()
+
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val probeFile = File(dir, "build/probe.txt")
+        assertEquals(File(mapDir, "loaded").canonicalFile, File(probeFile.readText().removePrefix("loaded=")).canonicalFile)
+        val union = File(mapDir, "loaded.txt").readText()
+        assertContains(union, "dev.sample.Alpha")
+
+        File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
+            """
+            package dev.sample;
+            public class Alpha { public int twice(int n) { return n + n; } }
+            """.trimIndent()
+        )
+        probeFile.delete()
+        runner(dir, "test", "-Pyoriwake.select").build()
+
+        assertEquals("loaded=null", probeFile.readText())
+        assertEquals(union, File(mapDir, "loaded.txt").readText())
     }
 
     @Test

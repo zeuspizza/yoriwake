@@ -350,16 +350,17 @@ internal class TestTaskWiring(internal val settings: Settings) {
         )
         afterTest.attachTo(test)
 
-        // Opt-in (-Pyoriwake.internal.loaded): a second -javaagent learns which classes the test
-        // JVM loaded. Cleared every run, so old files never pass for this run's output.
+        // Where the test JVMs list the classes they loaded. Cleared every run, so old files never
+        // pass for this run's output.
         val loadedDir = CoverageDecoder.loadedDir(mapDir)
         test.doFirst { loadedDir.deleteRecursively() }
 
-        if (recording) {
-            agent?.let { test.jvmArgs(AgentJar.argument(it)) }
+        // Not on a selecting run: the decode never takes a union from one, even when it ran
+        // every test, so its JVMs are not asked to write the lists.
+        if (recording && !selecting) {
             test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)
         }
-        configureNonPlatformRunner(test, agent, recording, selecting, runPlan.observing, narrowPlainRunners)
+        configureNonPlatformRunner(test, agent, selecting, runPlan.observing, narrowPlainRunners)
 
         // Carried as serialized text: a plain String round-trips through the configuration cache
         // unchanged. Typed explicitly because Kotlin 2.0 infers `Provider<String?>` here.
@@ -412,9 +413,9 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
         }
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
-        declineUnderDevelocity(project, test, mapDir, agent)
+        declineUnderDevelocity(project, test, mapDir)
         // Decided at execution time, since Gradle applies --tests after afterEvaluate. `wholeTask`
-        // also requires recording: only a recording run produces a loaded-class union.
+        // also requires recording: a run with the lists switched off produces no union.
         val wholeTask = project.provider { unfiltered.get() && recording }
         // Only a run that executed the whole suite may date the map, since unobserved records keep
         // their age; a fail-fast run may not. For selecting runs that is known only at execution
@@ -942,9 +943,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
      * then runs as without yoriwake, but for the agent jar on its classpath, inert with selection
      * off. Registered last, so its action runs first.
      */
-    private fun declineUnderDevelocity(project: Project, test: Test, mapDir: File, agent: File?) {
+    private fun declineUnderDevelocity(project: Project, test: Test, mapDir: File) {
         val develocity = DevelocityDetection.provider(project, test)
-        val agentArgument = agent?.let(AgentJar::argument)
         val marker = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir))
         test.doFirst {
             val (kind, reason) = DevelocityDetection.decode(develocity.orNull) ?: run {
@@ -970,8 +970,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
             test.setSystemProperties(
                 test.systemProperties.filterKeys { it != MAP_DIR_PROPERTY && it != CHANGE_SET_FILE_PROPERTY }
             )
-            // Added at configuration on a run that records loaded classes.
-            agentArgument?.let { argument -> test.setJvmArgs(test.jvmArgs.orEmpty().filterNot { it == argument }) }
             test.logger.lifecycle(
                 "[yoriwake] ${test.path}: $reason. The map is left exactly as it was. " +
                     "`yoriwakeAudit${test.name.replaceFirstChar(Char::uppercase)}` reports this as `${kind.token}`."
@@ -1028,7 +1026,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
     private fun configureNonPlatformRunner(
         test: Test,
         agent: java.io.File?,
-        alreadyAttached: Boolean,
         selecting: Boolean,
         observing: Boolean,
         narrowPlainRunners: Boolean,
@@ -1044,7 +1041,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             // Every framework: only the attached agent sees what a test JVM loads and reads, which
             // is what dates the code a JVM runs once. Attached here rather than at configuration,
             // so the jar's absolute path stays out of the task's cache key.
-            if (path != null && !alreadyAttached) {
+            if (path != null) {
                 (task as Test).jvmArgs("-javaagent:$path")
             }
             if ((task as Test).options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions) {

@@ -131,8 +131,15 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   the first two and names each of the third;
 - a changed path a `dependsOn` entry matches, for that entry's task (`declared-path-changed`); see
   [Properties and tasks](#properties-and-tasks);
-- a changed class the map has never recorded, because uncovered and unrecordable look the same. A
-  test class this task runs is the exception: discovery runs it whatever the map knows;
+- a changed class the map has never recorded (`no-coverage-for-changed`), because uncovered and
+  unrecordable look the same. A test class this task runs is the exception: discovery runs it
+  whatever the map knows. On Gradle a second exception selects nothing for the class: a capture of
+  the whole task lists the classes its test JVMs loaded, and a class that is absent from that list,
+  that no recording test JVM defined, and that JaCoCo was instrumenting is one no test depended on.
+  It still forces when it is a Kotlin class, declares a constant, carries a class annotation, or is
+  named in a resource the task can read; when the capture left tests out by tag, engine, category or
+  group, or one of its test JVMs listed nothing; and after `-Pyoriwake.internal.loaded=false`,
+  which records no list. On Maven the list is recorded only under `-Dyoriwake.internal.loaded`;
 - a changed class whose annotations, on the class or any member and with their values, differ from
   the ones the map recorded (`annotations-changed`), or an annotated changed class the map recorded
   no annotations for (`annotations-unrecorded`). A test class this task runs that declares a test
@@ -790,7 +797,10 @@ Three things differ:
   writes and a later one reads. The agent sees only its own JVM, and a socket or a database
   connection says nothing about which classes the other side depends on; forcing on them would run
   most integration suites in full every time. A child process started from a test JVM is the one
-  case it can see begin, so every later test in that JVM runs after any change.
+  case it can see begin, so every later test in that JVM runs after any change. A changed class
+  that no test JVM loaded selects nothing ([When it refuses to select](#when-it-refuses-to-select)),
+  so a class only such an outside process loads, from the build's output rather than through a
+  test JVM, is not protected by a full run any more; pin the tests that drive it with `alwaysRun`.
 - **What the agent cannot observe.** The rules in [what coverage does not
   record](#what-coverage-does-not-record) rest on what the agent sees in the test JVM: every class
   a class loader defines and every hidden class your code defines, every file open, copy or link

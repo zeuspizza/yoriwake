@@ -62,8 +62,8 @@ internal class DecodeRun(
     private val taskArtifacts: () -> TaskArtifacts,
     /** The host's JUnit XML for the run, read for failures a stopped test JVM never recorded. */
     private val junitXml: File?,
-    /** How the host spells the flag that records loaded classes, for the line that names it. */
-    private val loadedFlag: String,
+    /** What the host prints after the task's path when a full run drops the loaded-class union: why, and until when. */
+    private val unionDiscarded: String,
     private val logger: Log,
     /** Untracked paths the host's tools write, which leave the tree clean for the selection record. */
     private val buildState: (String) -> Boolean = { false },
@@ -461,15 +461,10 @@ internal class DecodeRun(
                             "common one) is the usual cause."
                     )
                 }
-                // A full run that did not record drops the loaded-class union until the
-                // next recording capture. Said out loud: a capability disappears.
+                // A full run that cannot speak for the whole task drops the loaded-class union
+                // until one that can. Said out loud: a capability disappears.
                 if (decoded.unionDiscarded) {
-                    logger.lifecycle(
-                        "[yoriwake] $taskPath ran without $loadedFlag, so the " +
-                            "loaded-class union it could not vouch for was discarded. " +
-                            "Changes to code no test executes will force a full run " +
-                            "until the next capture with $loadedFlag."
-                    )
+                    logger.lifecycle("[yoriwake] $taskPath $unionDiscarded")
                 }
             }
         }

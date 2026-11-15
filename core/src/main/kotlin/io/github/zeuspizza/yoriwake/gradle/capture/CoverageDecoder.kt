@@ -707,7 +707,7 @@ internal object CoverageDecoder {
 
     /**
      * Drops the union and reports whether there was one, so the caller can say so: a full run
-     * without `yoriwake.internal.loaded` otherwise silently ends narrowing of unexercised code.
+     * that cannot speak for the whole task otherwise silently ends narrowing of unexercised code.
      */
     private fun discardUnion(mapDir: File): Boolean {
         val had = File(mapDir, LOADED_FILE).isFile

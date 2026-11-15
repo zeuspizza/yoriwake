@@ -122,7 +122,7 @@ internal abstract class DecodeTask : DefaultTask() {
             facts = facts,
             taskArtifacts = { TaskArtifacts(facts.classpath.files, facts.buildDirs.values, facts.testOutputs.files) },
             junitXml = junitXml,
-            loadedFlag = "-P${Settings.LOADED}",
+            unionDiscarded = UNION_DISCARDED,
             logger = object : DecodeRun.Log {
                 override fun lifecycle(message: String) = logger.lifecycle(message)
                 override fun warn(message: String) = logger.warn(message)
@@ -162,6 +162,12 @@ internal abstract class DecodeTask : DefaultTask() {
     )
 
     internal companion object {
+        /** The causes left now that every whole capture lists its loaded classes. */
+        const val UNION_DISCARDED = "could not take the classes its test JVMs loaded as the whole task's (the run " +
+            "left tests out by tag, engine, category or group, a test JVM listed none, or it ran with " +
+            "-P${Settings.LOADED}=false), so the loaded-class union was discarded. Changes to code no test " +
+            "executes will force a full run until the next capture of the whole task."
+
         fun nameFor(testName: String) = "yoriwakeDecode${testName.replaceFirstChar(Char::uppercase)}"
 
         /**

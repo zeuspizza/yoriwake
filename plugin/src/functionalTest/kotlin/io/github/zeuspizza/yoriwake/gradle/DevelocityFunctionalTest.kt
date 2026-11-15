@@ -65,6 +65,9 @@ class DevelocityFunctionalTest : FunctionalTestSupport() {
     /** Every file of the map directory but the run's own scratch and reports, as bytes. */
     private fun mapState(dir: File): Map<String, List<Byte>> = mapDir(dir).walkTopDown()
         .filter { it.isFile && "/raw/" !in it.invariantSeparatorsPath && !it.name.startsWith(AgentContract.DECISIONS_FILE) }
+        // The test JVMs' own lists of loaded classes, cleared when a run starts; the union read
+        // from them is `loaded.txt`, which stays in.
+        .filter { "/loaded/" !in it.invariantSeparatorsPath }
         // The pending start files are written at configuration, on every run alike.
         .filter { it.name != Audit.TaskFacts.FILE && !it.name.endsWith(".pending") && !it.name.endsWith(".dated") }
         .filter { it.name != "explain.json" }
@@ -120,9 +123,9 @@ class DevelocityFunctionalTest : FunctionalTestSupport() {
     fun `a declined run starts its test JVM without the yoriwake agent`(@TempDir dir: File) {
         recorded(dir, standInBuild())
 
-        // Attached in an action on an ordinary run, and at configuration on one recording loaded
-        // classes; the host's JaCoCo agent stays either way.
-        for (args in listOf(arrayOf("-Ptd"), arrayOf("-Ptd", "-Pyoriwake.internal.loaded"))) {
+        // With the loaded-class lists on, as they are by default, and with them switched off; the
+        // host's JaCoCo agent stays either way.
+        for (args in listOf(arrayOf("-Ptd"), arrayOf("-Ptd", "-Pyoriwake.internal.loaded=false"))) {
             runDeclined(dir, *args)
             val jvm = probe(dir).lines().first { it.startsWith("args=") }
             assertFalse("yoriwake-agent" in jvm, "${args.toList()}: $jvm")

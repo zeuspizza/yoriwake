@@ -19,9 +19,15 @@ class SettingsTest {
         val settings = settings()
         assertFalse(settings.select)
         assertFalse(settings.disabled)
-        assertFalse(settings.loaded)
+        assertTrue(settings.loaded)
         assertNull(settings.base)
         assertEquals(emptyList(), settings.alwaysRun)
+    }
+
+    @Test
+    fun `the loaded-class lists are on unless switched off`() {
+        assertTrue(settings(Settings.LOADED to "").loaded)
+        assertFalse(settings(Settings.LOADED to "false").loaded)
     }
 
     @Test
