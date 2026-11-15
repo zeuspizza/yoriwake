@@ -190,7 +190,10 @@ internal object ClasspathFiles {
      * Named by their path and never read: Gradle's module cache wherever it lies (a read-only cache
      * included, keyed alike), whose paths carry each file's SHA-1, Gradle's transform cache (whose
      * directory is a hash of the transform's input, parameters and implementation, so a fresh user
-     * home running it again keeps the path). The plugin's own agent jar gets no row. Every other
+     * home running it again keeps the path). A transform cache entry in [projectArtifacts], the
+     * files Gradle resolves to one of the build's own projects, is read by content instead, a jar
+     * entry by entry: the build's runtime classpath normalization takes part in that hash, so a
+     * change in a file it ignores leaves the path as it was. The plugin's own agent jar gets no row. Every other
      * entry under a home is read whole: a released version in the Maven repository, a generated
      * Gradle API jar or a wrapper distribution's jar can be replaced in place, its path unchanged.
      * `mavenLocal()` under the user's home and what a build keeps under [PROJECT_CACHE_DIR] are
@@ -207,7 +210,8 @@ internal object ClasspathFiles {
      * [ABSENT] when missing, since a file that later appears there shadows every later entry. A
      * classpath entry that is a link into another directory has each token resolved from the
      * link's target too ([classPathOf]), that row keyed with [REAL_PATH] appended. A file on the classpath or already named, or in
-     * Gradle's module cache under the [GRADLE_USER_HOME] home, gets none. The files of the
+     * Gradle's module cache under the [GRADLE_USER_HOME] home, gets none, and so does what a transform
+     * cache entry in [projectArtifacts] names, as for any transform cache entry. The files of the
      * directories named count against [maxFiles] with those of the `<outside>` directories and those
      * [walk] reads; past it the table refuses.
      */
@@ -218,8 +222,10 @@ internal object ClasspathFiles {
         homes: Map<String, File>,
         maxFiles: Int = MAX_FILES,
         text: TrackedText = TrackedText(rootDir),
+        projectArtifacts: Set<File> = emptySet(),
     ): Walk {
         val root = rootDir.absoluteFile
+        val projects = projectArtifacts.mapTo(hashSetOf(), File::getAbsoluteFile)
         val roots = buildDirs.map { File(it).absoluteFile } + root
         val state = File(root, ".gradle")
         fun File.holds(entry: File) = entry == this || entry.path.startsWith(path + File.separator)
@@ -256,7 +262,8 @@ internal object ClasspathFiles {
                 "$DEPENDENCY_PREFIX$MODULE_CACHE/$moduleCache".also { rows[it] = NAMED_BY_PATH }
             } else if (home != null && relative != null && (home.key != USER_HOME || relative.startsWith(MAVEN_LOCAL))) {
                 val digest = when {
-                    home.key == GRADLE_USER_HOME && NAMED_LAYOUTS.any { it.containsMatchIn(relative) } -> NAMED_BY_PATH
+                    home.key == GRADLE_USER_HOME && NAMED_LAYOUTS.any { it.containsMatchIn(relative) } ->
+                        if (entry in projects) contentDigest(entry) else NAMED_BY_PATH
                     // A jar the build writes there itself is made again on each fresh checkout.
                     home.key == PROJECT_CACHE_DIR -> contentDigest(entry)
                     home.key == USER_HOME -> contentDigest(entry)
@@ -277,6 +284,8 @@ internal object ClasspathFiles {
                 "$DEPENDENCY_PREFIX$OUTSIDE/${entry.name}$suffix".also { rows[it] = digest }
             }
             order += key
+            // What a transformed jar's manifest names is never compared, whichever way its row is read.
+            if (home?.key == GRADLE_USER_HOME && entry in projects) continue
             if (rows[key] != NAMED_BY_PATH) following.addLast(key to entry)
         }
         val named = classPathRows(following, classpath, gradleUserHome, maxFiles, outside)
@@ -643,7 +652,8 @@ internal object ClasspathFiles {
 
     /**
      * Layouts under the Gradle user home whose paths name what they hold: the module cache by each
-     * file's SHA-1, the transform cache by a hash of what produced the file.
+     * file's SHA-1, the transform cache by a hash of what produced the file, but for a project's
+     * artifact ([table]'s `projectArtifacts`).
      */
     private val NAMED_LAYOUTS = listOf(
         Regex("^caches/modules-2/"),

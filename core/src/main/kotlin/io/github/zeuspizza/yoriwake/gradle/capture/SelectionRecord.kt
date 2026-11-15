@@ -249,7 +249,9 @@ internal object SelectionRecord {
      * one, so the same resolution on another machine digests alike.
      *
      * A file or directory outside [rootDir] is digested by its content too, unless it is in Gradle's
-     * module cache or its transform cache, whose paths name their content and the transform's inputs:
+     * module cache or its transform cache, whose paths name their content and the transform's inputs
+     * (but for a transform of a project's artifact in [projectArtifacts], read as the
+     * classpath-files table reads it, without what its manifest names):
      * a snapshot in a local repository or an included
      * build elsewhere can change at the same path between two runs at one commit, and so can what
      * its manifest `Class-Path` names, which is on the test JVM's class path too. What is under
@@ -269,7 +271,10 @@ internal object SelectionRecord {
         gradleUserHome: File,
         /** Which copies of tracked text files git wrote with `\r\n`; shared within one Maven execution. */
         text: TrackedText = TrackedText(rootDir),
+        /** The files Gradle resolves to one of the build's own projects; see [ClasspathFiles.table]. */
+        projectArtifacts: Set<File> = emptySet(),
     ): String {
+        val projects = projectArtifacts.mapTo(hashSetOf(), File::getAbsoluteFile)
         val built = mutableListOf<File>()
         // Each entry digested by its content, with its name, for what its manifest's `Class-Path` names.
         val read = mutableListOf<Pair<String, File>>()
@@ -280,6 +285,11 @@ internal object SelectionRecord {
             // Before the root, as the classpath-files table does, for a Gradle user home kept in the checkout.
             // A fresh Gradle user home runs a transform again, and its output need not come out byte for
             // byte alike; the workspace's name is a hash of the transform's inputs.
+            if (inHome != null && TRANSFORM_CACHE.containsMatchIn(inHome) && file.absoluteFile in projects) {
+                val digest = ClasspathFiles.contentDigest(file)
+                if (digest == ClasspathFiles.UNREADABLE) return unmatched("gradle:$inHome could not be read")
+                return@map "gradle:$inHome $digest"
+            }
             if (inHome != null && TRANSFORM_CACHE.containsMatchIn(inHome)) return@map "gradle:$inHome"
             file.relativeToOrNull(rootDir)?.takeUnless { it.path.startsWith("..") }?.invariantSeparatorsPath?.let {
                 // The walk leaves out the root's `.gradle`, so what the build keeps there is read here.

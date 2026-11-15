@@ -42,8 +42,16 @@ internal data class ClasspathFacts(
     val agentCeiling: org.gradle.api.provider.Provider<String>? = null,
     /** Plain directories taken at configuration, so nothing resolves or reads a jar then. */
     override val dependencyHomes: Map<String, File> = emptyMap(),
+    /** The runtime classpaths' artifacts, read when a task runs; none in tests of other rules. */
+    val runtimeArtifacts: org.gradle.api.provider.Provider<List<org.gradle.api.artifacts.ArtifactCollection>>? = null,
 ) : ClasspathView {
     override fun classpathFiles(): Set<File> = classpath.files
+
+    override fun projectArtifacts(): Set<File> {
+        val artifacts = runtimeArtifacts ?: return emptySet()
+        val gradleUserHome = dependencyHomes[ClasspathFiles.GRADLE_USER_HOME] ?: return emptySet()
+        return projectArtifacts(artifacts, classpath.files, gradleUserHome)
+    }
 
     override fun testOutputFiles(): Set<File> = testOutputs.files
 
@@ -146,6 +154,7 @@ internal fun classpathFacts(
         project.provider { properties[io.github.zeuspizza.yoriwake.agent.contract.AgentContract.AGENT_ASM_CEILING_PROPERTY]?.toString() }
     },
     dependencyHomes = dependencyHomes(project),
+    runtimeArtifacts = runtimeArtifacts(project),
     )
 }
 

@@ -398,6 +398,146 @@ class ChangedDependenciesFunctionalTest : FunctionalTestSupport() {
         assertTrue(output.lines().any { it.startsWith("[yoriwake] :test: ") && "/transforms/" in it }, output)
     }
 
+    /**
+     * A root project whose test runtime classpath takes `:lib`'s jar only through an artifact
+     * transform that copies it, requested by the classpath's own attributes, with every project
+     * ignoring `ignored.txt` in its runtime classpath normalization. The jar holds `ignored.txt`
+     * from the git-ignored `lib/gen/` and a file named for this test alone, so no earlier build
+     * of the suite left a workspace under its transform's hash. The transform prints where it
+     * wrote; the test task prints each transformed artifact of its classpath with whether Gradle
+     * reports a project for it.
+     */
+    private fun projectTransformedBuild(dir: File, ignored: String) {
+        val script = "import java.nio.file.Files\n" + minimalBuild + "\n" + """
+            allprojects { normalization { runtimeClasspath { ignore("ignored.txt") } } }
+            val copied = Attribute.of("copied", Boolean::class.javaObjectType)
+            abstract class CopyJar : TransformAction<TransformParameters.None> {
+                @get:Classpath @get:InputArtifact abstract val input: Provider<FileSystemLocation>
+                override fun transform(outputs: TransformOutputs) {
+                    val jar = input.get().asFile
+                    val out = outputs.file("copied-" + jar.name)
+                    Files.copy(jar.toPath(), out.toPath())
+                    println("[stamp] transformed into " + out.absolutePath)
+                }
+            }
+            dependencies {
+                attributesSchema { attribute(copied) }
+                artifactTypes.getByName("jar").attributes.attribute(copied, false)
+                registerTransform(CopyJar::class) {
+                    from.attribute(copied, false).attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, "jar")
+                    to.attribute(copied, true).attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, "jar")
+                }
+                testRuntimeOnly(project(":lib"))
+            }
+            configurations.testRuntimeClasspath { attributes.attribute(copied, true) }
+            tasks.test {
+                val artifacts = configurations.testRuntimeClasspath.get().incoming.artifacts
+                doFirst {
+                    artifacts.artifacts.filter { "/transforms/" in it.file.invariantSeparatorsPath }.forEach {
+                        val project = it.id.componentIdentifier is org.gradle.api.artifacts.component.ProjectComponentIdentifier
+                        println("[artifact] project=" + project + " " + it.file.absolutePath)
+                    }
+                }
+            }
+        """.trimIndent()
+        val ignoredTest = "src/test/java/dev/sample/AaIgnoredTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+            class AaIgnoredTest {
+                @Test void reads() { assertNotNull(getClass().getResource("/ignored.txt")); }
+            }
+        """.trimIndent()
+        build(
+            dir, "build.gradle.kts" to script, oneClass, oneTest, secondClass, secondTest, ignoredTest, classOrderByName,
+            "lib/build.gradle.kts" to """
+                plugins { java }
+                tasks.jar {
+                    from("gen")
+                    isPreserveFileTimestamps = false
+                    isReproducibleFileOrder = true
+                }
+            """.trimIndent(),
+            "lib/src/main/resources/kept-${UUID.randomUUID()}.txt" to "kept\n",
+            "lib/gen/ignored.txt" to ignored,
+        )
+        File(dir, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\ninclude(\"lib\")\n")
+        ignoreBuildOutputs(dir)
+        File(dir, ".gitignore").appendText(System.lineSeparator() + "lib/gen/")
+        git(dir, "init")
+        commit(dir, "base")
+    }
+
+    /**
+     * `:lib`'s transformed copy on the test task's classpath in [output], with whether Gradle reports
+     * a project for it; null when the task did not run. Taken from the task, not from where the
+     * transform printed it wrote: resolving the classpath while configuring may run the transform on
+     * the jar from before the build into a workspace of its own.
+     */
+    private fun libArtifact(output: String): Pair<Boolean, File>? = output.lines()
+        .firstOrNull { it.startsWith("[artifact] ") && it.endsWith("copied-lib.jar") }
+        ?.removePrefix("[artifact] project=")?.let { it.substringBefore(' ').toBoolean() to File(it.substringAfter(' ')) }
+
+    /** The table row of `:lib`'s transformed copy. */
+    private fun libRow(dir: File): String? = table(dir).readLines()
+        .firstOrNull { "/transforms/" in it && it.substringBefore('\t').endsWith("copied-lib.jar") }?.substringAfter('\t')
+
+    private fun ignoredIn(jar: File): String = java.util.jar.JarFile(jar).use { zip ->
+        zip.getInputStream(zip.getJarEntry("ignored.txt")).use { String(it.readBytes()) }
+    }
+
+    @Test
+    fun `a transformed jar of the build's own project Gradle writes again with other content runs every test`(@TempDir dir: File) {
+        projectTransformedBuild(dir, "X")
+        val capture = runner(dir, "test").build().output
+        val (project, captured) = assertNotNull(libArtifact(capture), capture)
+        assertTrue(project, "Gradle reports no project for the transformed jar\n$capture")
+        val capturedRow = assertNotNull(libRow(dir), table(dir).readText())
+        assertTrue(capturedRow != "named", "the transformed project jar is named by its path: $capturedRow")
+        // The same transform's output for each module jar stays named by its path.
+        val moduleRows = table(dir).readLines().filter { "/transforms/" in it && !it.substringBefore('\t').endsWith("copied-lib.jar") }
+        assertTrue(moduleRows.isNotEmpty() && moduleRows.all { it.substringAfter('\t') == "named" }, moduleRows.joinToString("\n"))
+
+        changeBeta(dir)
+        File(dir, "lib/gen/ignored.txt").writeText("Y")
+        val atChange = select(dir)
+
+        // The route: Gradle keeps the workspace of the jar with X, as the build's rule tells it to.
+        assertEquals(captured, libArtifact(atChange)?.second, atChange)
+        assertEquals("X", ignoredIn(captured), atChange)
+        assertEquals(setOf("dev.sample.AaIgnoredTest", "dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), atChange)
+        assertEquals(capturedRow, libRow(dir), atChange)
+
+        val home = File(FunctionalGradle.testKitDir().parentFile, ".gradle-test-kit-fresh-${UUID.randomUUID()}")
+        val output = selectOnAFreshMachine(dir, home)
+
+        val refilled = assertNotNull(libArtifact(output), output).second
+        assertEquals(
+            captured.invariantSeparatorsPath.substringAfter("/caches/"),
+            refilled.invariantSeparatorsPath.substringAfter("/caches/"),
+        )
+        assertEquals("Y", ignoredIn(refilled), output)
+        assertEquals(setOf("dev.sample.AaIgnoredTest", "dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
+        assertEquals("dependencies-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertTrue(output.lines().any { it.startsWith("[yoriwake] :test: ") && "/transforms/" in it && "copied-lib.jar" in it }, output)
+        val refilledRow = assertNotNull(libRow(dir), table(dir).readText())
+        assertTrue(refilledRow != "named" && refilledRow != capturedRow, "the row did not move with the content: $refilledRow")
+    }
+
+    @Test
+    fun `a transformed jar of the build's own project selects as before when nothing changed`(@TempDir dir: File) {
+        projectTransformedBuild(dir, "X")
+        val capture = runner(dir, "test").build().output
+        val row = assertNotNull(libRow(dir), capture)
+        assertTrue(row != "named", "the transformed project jar is named by its path: $row")
+        changeBeta(dir)
+
+        val first = select(dir)
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), first)
+        val second = select(dir)
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir), second)
+    }
+
     /** Before Beta by name; reads the resource only the jar under the Gradle user home holds. */
     private val homeJarTest = "src/test/java/dev/sample/AbHomeJarTest.java" to """
         package dev.sample;

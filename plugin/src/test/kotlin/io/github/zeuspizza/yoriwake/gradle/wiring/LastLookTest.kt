@@ -148,6 +148,33 @@ class LastLookTest {
     }
 
     @Test
+    fun `a selecting run's hand-over carries the project artifacts its table read by content`(@TempDir base: File) {
+        val root = File(base, "repo").apply { mkdirs() }
+        val home = File(base, "gradle-home")
+        val transformed = File(home, "caches/9.8.0/transforms/abc/transformed/lib.jar").apply { parentFile.mkdirs() }
+        java.util.zip.ZipOutputStream(transformed.outputStream()).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("a.txt"))
+            zip.write("one".toByteArray())
+            zip.closeEntry()
+        }
+        val classpath = listOf(transformed)
+        val homes = mapOf(ClasspathFiles.GRADLE_USER_HOME to home)
+        val table = assertIs<ClasspathFiles.Walk.Found>(
+            ClasspathFiles.table(classpath, emptyList(), root, homes, projectArtifacts = setOf(transformed)),
+        ).digests
+
+        LastLook.write(base, root, emptyList(), classes = false, table, homes, projectArtifacts = setOf(transformed))
+        val handed = LastLook.read(LastLook.handOver(base).readText())!!
+        LastLook.write(base, root, emptyList(), classes = false, table, homes)
+        val without = LastLook.read(LastLook.handOver(base).readText())!!
+
+        assertEquals(setOf(transformed.absoluteFile), handed.projectArtifacts)
+        assertNull(LastLook.whatMoved(handed) { LastLook.again(classpath, it) })
+        assertEquals(emptySet(), without.projectArtifacts)
+        assertNotNull(LastLook.whatMoved(without) { LastLook.again(classpath, it) })
+    }
+
+    @Test
     fun `the actions between the last look and the task's own are the ones the build placed there`() {
         val look = "Execute ${LastLook.NAME}"
         val own = "Execute executeTests"
