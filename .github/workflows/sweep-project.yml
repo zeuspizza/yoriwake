@@ -4,6 +4,10 @@ name: sweep-project
 # slice of its accepted target list. A project's slices wait for its own record job only, so a slow
 # project's record does not hold back the others' slices. The merge, in sweep.yml, reads what these
 # jobs upload.
+#
+# With `isolated` at `paired` the record job also records the project's map a second time, with a
+# fresh test JVM per class, and each slice measures its rows against that map once their shared arms
+# are done. Both are extra: neither can cost the project a shared row.
 on:
   workflow_call:
     inputs:
@@ -23,6 +27,10 @@ on:
         description: record and replay the commits, measure no slice
         type: boolean
         default: false
+      isolated:
+        description: paired also measures each row against an isolated map
+        type: string
+        default: 'off'
 
 permissions:
   contents: read
@@ -45,6 +53,7 @@ jobs:
     outputs:
       shards: ${{ steps.record.outputs.shards }}
       of: ${{ steps.record.outputs.of }}
+      isolated: ${{ steps.isolated-upload.outcome == 'success' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,8 +86,11 @@ jobs:
           # Relative to bench/; another project's clone for one measured in it (detekt-junk).
           CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
           FACTOR: ${{ inputs.factor }}
+          ISOLATED: ${{ inputs.isolated }}
         run: |
           set -eu
+          # What the isolated recording below may still spend is counted from here.
+          date +%s > "$RUNNER_TEMP/record-start"
           # A guest's own test report on the run page is unlabelled and repeated for every build it
           # runs (anki-android's build writes one per test task); the merge job writes the page.
           unset GITHUB_STEP_SUMMARY
@@ -93,9 +105,14 @@ jobs:
           priced=()
           last="$RUNNER_TEMP/published-rows/$NAME.json"
           [ -f "$last" ] && priced=(--priced-from "$last")
+          # A slice that measures its rows against both maps holds fewer of them. A Maven project
+          # has one map only.
+          paired=()
+          build=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("build", "gradle"))' "${args[0]}")
+          [ "${ISOLATED:-off}" != paired ] || [ "$build" = maven ] || paired=(--isolated)
           # The dispatch input's default, for a run that has none.
           shards=$(python3 bench/shard.py "bench/logs/$NAME/accepted.json" --factor "${FACTOR:-1.5}" \
-            "${priced[@]+"${priced[@]}"}")
+            "${priced[@]+"${priced[@]}"}" "${paired[@]+"${paired[@]}"}")
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
           echo "of=$(jq length <<< "$shards")" >> "$GITHUB_OUTPUT"
           [ "$shards" != "[]" ] || echo "::warning::$NAME was cut into no slices"
@@ -140,6 +157,60 @@ jobs:
           name: replay-${{ fromJSON(inputs.project).project }}
           retention-days: 3
           path: replay/
+      # The same map again with a fresh test JVM per class, for the slices' second pass: on this
+      # runner, so both recordings' seconds are one machine's. Last, so the shared state, the replay
+      # and the slices' list are what they are without it. It gets what the job has left and no
+      # more: a job that hit its own limit would fail, and its slices would not start. The slices
+      # wait for it, and a runner lost during it takes them with it, as one lost during the replay
+      # above does: the step's own faults and its time are bounded here, a runner's are not.
+      - name: record the isolated map
+        id: isolated
+        if: inputs.isolated == 'paired' && !inputs.replay_only && steps.record.outputs.shards != '[]'
+        continue-on-error: true
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
+        run: |
+          set -eu
+          unset GITHUB_STEP_SUMMARY
+          toml=$(jq -r '.[0]' <<< "$ARGS")
+          build=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("build", "gradle"))' "$toml")
+          if [ "$build" = maven ]; then
+            echo "$NAME is a Maven project, which has no isolated capture"
+            exit 0
+          fi
+          # The job ends at 360 minutes; 20 are kept for packing and uploading the map.
+          left=$(( $(cat "$RUNNER_TEMP/record-start") + 340 * 60 - $(date +%s) ))
+          if [ "$left" -lt 600 ]; then
+            echo "::warning::$NAME: $((left / 60)) minutes left in the job, too few for an isolated recording"
+            exit 0
+          fi
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          mapfile -t shapes < <(jq -r 'index("--shapes") as $at | if $at then .[$at], .[$at + 1] else empty end' <<< "$ARGS")
+          timeout --kill-after=60 "$left" python3 bench/run.py "$toml" "${shapes[@]+"${shapes[@]}"}" \
+            --isolated-capture --recapture --capture-only || {
+            echo "::warning::$NAME: the isolated recording did not finish in $((left / 60)) minutes; its slices measure the shared arm only"
+            exit 0
+          }
+          mkdir -p "isolated/$NAME"
+          cp "bench/results/$NAME.isolated.json" "isolated/$NAME/recording.json"
+          tar -czf "isolated/$NAME/state.tar.gz" -C bench "logs/$NAME.isolated" \
+            "results/$NAME.isolated.json" "$CHECKOUT/.gradle/yoriwake"
+          echo "recorded=true" >> "$GITHUB_OUTPUT"
+      # Its own artifact: a project without one has no isolated arm, which the merge reads from
+      # its absence. Only a whole one, and the slices measure that arm only when it was uploaded: a
+      # fault here costs the project that arm, never its slices.
+      - if: ${{ !cancelled() && steps.isolated.outputs.recorded == 'true' }}
+        id: isolated-upload
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: isolated-${{ fromJSON(inputs.project).project }}
+          retention-days: 3
+          path: isolated/
       # A record job that fails says why in its logs, not in the job's own output: the warm-up's
       # build error, the stalled capture's last lines. Not named record-*, which the merge reads.
       # A person reads it to see why the record job failed.
@@ -186,6 +257,13 @@ jobs:
           name: record-${{ fromJSON(inputs.project).project }}
           # Outside the checkout: an untracked file in it makes run.py refuse the tree as dirty.
           path: ${{ runner.temp }}/record
+      - if: needs.record.outputs.isolated == 'true'
+        id: isolated
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: isolated-${{ fromJSON(inputs.project).project }}
+          path: ${{ runner.temp }}/isolated
       - name: measure this slice
         env:
           NAME: ${{ fromJSON(inputs.project).project }}
@@ -194,6 +272,8 @@ jobs:
           SHARD: ${{ matrix.shard }}/${{ needs.record.outputs.of }}
         run: |
           set -eu
+          # What the second pass below may still spend is counted from here.
+          date +%s > "$RUNNER_TEMP/slice-start"
           # A guest's own test report on the run page is unlabelled and repeated for every build it
           # runs (anki-android's build writes one per test task); the merge job writes the page.
           unset GITHUB_STEP_SUMMARY
@@ -205,7 +285,8 @@ jobs:
           mapfile -t args < <(jq -r '.[] | select(. != "--recapture")' <<< "$ARGS")
           python3 bench/run.py "${args[@]}" --accepted "bench/logs/$NAME/accepted.json" \
             --shard "$SHARD"
-      # The merge reads it; kept as long as the records it was cut from.
+      # The merge reads it; kept as long as the records it was cut from. Before the second pass,
+      # which nothing of it waits for.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shard-${{ fromJSON(inputs.project).project }}-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}
@@ -215,3 +296,47 @@ jobs:
             bench/logs/evidence/
             bench/logs/${{ fromJSON(inputs.project).project }}/**/*.stall-*.log
             bench/logs/${{ fromJSON(inputs.project).project }}/**/*.network-*.log
+      # The same rows against the isolated map, their ground truth taken from the rows above. The
+      # task has one map directory, so the shared map makes way for the isolated one: nothing after
+      # this step reads it. A fault or a timeout here leaves the shared rows as they are, uploaded
+      # above, and the step stops before the job's own limit.
+      - name: measure this slice against the isolated map
+        id: second
+        if: needs.record.outputs.isolated == 'true' && steps.isolated.outcome == 'success'
+        continue-on-error: true
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
+          SHARD: ${{ matrix.shard }}/${{ needs.record.outputs.of }}
+          SLICE: shard-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}.json
+        run: |
+          set -eu
+          unset GITHUB_STEP_SUMMARY
+          left=$(( $(cat "$RUNNER_TEMP/slice-start") + 340 * 60 - $(date +%s) ))
+          if [ "$left" -lt 300 ]; then
+            echo "::warning::$NAME $SHARD: no time left in the job for the isolated arm"
+            exit 0
+          fi
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          rm -rf "bench/$CHECKOUT/.gradle/yoriwake"
+          tar -xzf "$RUNNER_TEMP/isolated/$NAME/state.tar.gz" -C bench
+          mapfile -t shapes < <(jq -r 'index("--shapes") as $at | if $at then .[$at], .[$at + 1] else empty end' <<< "$ARGS")
+          timeout --kill-after=60 "$left" python3 bench/run.py "$(jq -r '.[0]' <<< "$ARGS")" \
+            "${shapes[@]+"${shapes[@]}"}" --isolated-capture --pair-with "bench/logs/$NAME/$SLICE" \
+            --accepted "bench/logs/$NAME/accepted.json" --shard "$SHARD"
+          # Only a pass that ended: one cut short leaves rows the merge would count as the slice's.
+          mkdir -p "$RUNNER_TEMP/isolated-slice/evidence"
+          cp "bench/logs/$NAME.isolated/$SLICE" "$RUNNER_TEMP/isolated-slice/"
+          cp "bench/logs/evidence/$NAME-isolated.tar.gz" "$RUNNER_TEMP/isolated-slice/evidence/" \
+            2>/dev/null || true
+      # Its own artifact, which the merge reads where it is there.
+      - if: ${{ !cancelled() && steps.second.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: isolated-shard-${{ fromJSON(inputs.project).project }}-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}
+          retention-days: 3
+          path: ${{ runner.temp }}/isolated-slice/

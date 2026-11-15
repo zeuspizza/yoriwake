@@ -3935,6 +3935,68 @@ def case_a_projects_fork_cap_reaches_every_build_of_both_arms():
     return failures
 
 
+def _slice_flags(**given):
+    flags = dict(accepted_out=None, shard=None, only_target=None, replay=None, control=False,
+                 isolated_capture=False, pair_with=None)
+    flags.update(given)
+    return argparse.Namespace(**flags)
+
+
+def case_a_slice_takes_an_isolated_arm_only_paired_with_its_own_rows():
+    failures = 0
+    accepted = (_slice_flags(shard="1/2"), _slice_flags(accepted_out="a.json"),
+                _slice_flags(shard="1/2", isolated_capture=True, pair_with="shard-1-of-2.json"),
+                _slice_flags(isolated_capture=True), _slice_flags())
+    for flags in accepted:
+        if run.sharded_arm_refusal(flags):
+            failures += fail(f"{flags} was refused: {run.sharded_arm_refusal(flags)}")
+    refused = (_slice_flags(shard="1/2", isolated_capture=True),
+               _slice_flags(shard="1/2", pair_with="shard-1-of-2.json"),
+               _slice_flags(accepted_out="a.json", isolated_capture=True),
+               _slice_flags(accepted_out="a.json", isolated_capture=True, pair_with="x.json"),
+               _slice_flags(shard="1/2", control=True), _slice_flags(shard="1/2", replay=3),
+               _slice_flags(shard="1/2", only_target=["T"]))
+    for flags in refused:
+        if not run.sharded_arm_refusal(flags):
+            failures += fail(f"{flags} was accepted")
+    return failures
+
+
+def case_a_change_known_to_force_takes_the_paired_full_arm_as_its_selected_arm():
+    failures = 0
+    for explanation in (None, {}, {"fullRun": False}, {"fullRun": "true"}, ["fullRun"]):
+        if run.forced_before_running(explanation) is not None:
+            failures += fail(f"{explanation!r} was read as a forced change")
+    forced = run.forced_before_running({"fullRun": True, "refusalKind": "constant-changed"})
+    if forced != (None, "constant-changed"):
+        failures += fail(f"a refusal was read as {forced}")
+    paired = {"target": "T", "kind": "body", "index": 2, "status": "checked", "full_distinct": 40,
+              "induced": ["p.A::a()", "p.B::b()"], "collapsed_induced": [], "ground_truth": "full",
+              "result_keys": run.PER_METHOD, "full_seconds": 61.5, "selected_seconds": 9.0,
+              "ci": {"job": "shard"}}
+    row = run.paired_forced_row(paired, "T", "body", 2, forced, 7, 3.2)
+    wanted = {"selected_distinct": 40, "full_distinct": 40, "selected_seconds": 61.5,
+              "induced": ["p.A::a()", "p.B::b()"], "missed": [], "status": "checked",
+              "timed": False, "ground_truth_from": "paired", "selected_arm_from": "paired",
+              "decision_outcome": "full-run", "refusal_kind": "constant-changed",
+              "full_ci": {"job": "shard"}, "gate_seconds": 3.2, "sweep_limit": 7}
+    wrong = {key: row.get(key) for key, value in wanted.items() if row.get(key) != value}
+    if wrong:
+        failures += fail(f"the forced row carried {wrong}")
+    if run.row_key(row) != run.row_key(paired):
+        failures += fail(f"the forced row is keyed {run.row_key(row)}, its pair "
+                         f"{run.row_key(paired)}")
+    if run.counts_toward_narrowed_target(row):
+        failures += fail("a forced row counted toward the narrowed target")
+    # The shared arm ran everything and timed no second arm: its selected arm is the full arm.
+    untimed = {**paired, "full_seconds": None, "full_arm_skipped": True}
+    if run.paired_selected_seconds(untimed) != 9.0:
+        failures += fail(f"an untimed forced pair gave {run.paired_selected_seconds(untimed)}s")
+    if run.paired_selected_seconds({**paired, "full_seconds": None}) is not None:
+        failures += fail("a narrowed pair's selected seconds were read as its full arm's")
+    return failures
+
+
 def case_a_projects_fork_cap_bounds_the_isolated_recording_and_is_stamped():
     failures = 0
     args = argparse.Namespace(isolated_capture=True, isolated_forks=4)
@@ -5533,6 +5595,8 @@ def case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows():
 
 CASES = (case_every_case_in_this_file_is_registered,
          case_rows_under_another_fork_cap_are_not_resumed_or_paired,
+         case_a_slice_takes_an_isolated_arm_only_paired_with_its_own_rows,
+         case_a_change_known_to_force_takes_the_paired_full_arm_as_its_selected_arm,
          case_the_neutral_set_is_a_null_change_and_a_neutral_edit,
          case_the_pool_set_digests_its_own_generators_and_leaves_the_default_digest_alone,
          case_a_family_is_redrawn_only_until_it_is_refused_whatever_follows,

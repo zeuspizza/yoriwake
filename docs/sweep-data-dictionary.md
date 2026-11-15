@@ -35,6 +35,26 @@ or "does not apply", never zero. Figures derived from these fields carry the cav
     `full_distinct`, `full_seconds`, `full_arm`), marked `ground_truth_from: "paired"`; no
     baseline or already-failing run of its own;
   - refused when the paired file's `selector_digest` differs.
+- **Isolated, paired, on Actions** (`sweep.yml`, input `isolated`: `paired`, the default of a
+  `full` run, or `off`): every Gradle project, whatever its test JVM count. The record job records
+  the second map last (`run.py --isolated-capture --recapture --capture-only`), inside what its
+  six hours have left, and each slice asks it about its own rows after their shared arms
+  (`--isolated-capture --pair-with <its shared slice> --shard K/N`). Only the selected arm runs
+  again, and only where it can differ: each row first asks `yoriwakeExplain<Task>`, and a change
+  that forces every test is not run, the paired row's full arm standing in for its selected arm
+  (`selected_arm_from: "paired"`, `paired_decision: "forced"`, `decision_source: "explain"`); a
+  row that runs says `selected_arm_from: "own"` and `paired_decision` `narrowed` or
+  `unanswered`. `merge.py --isolated` writes
+  `<project>.isolated.json` beside the shared file and, in `sweep.json`, `isolated.<project>`:
+  `status` (`ran`, `did-not-finish`, `not run`) with a `reason`, or `slices_measured` of `slices`,
+  `paired_rows` of `shared_rows`, and for each arm over the rows both measured `rows`, `narrowed`,
+  `tests_run`, `selected_seconds` (null when a row has none) and `recording_seconds`. Those
+  seconds are single untimed runs on shared runners. `sweep.json`'s `isolated_arm` is the best of
+  those states: `ran` once one project has its file. A recording or a slice's second pass that
+  fails or runs out of time costs the shared arm nothing: the slices' shared rows are uploaded
+  before the second pass starts. Not covered: the slices start when the record job ends, so they
+  wait for the second recording, and a runner lost during it loses the project's slices, as one
+  lost during the commit replay does. A Maven project has no isolated capture.
 - **Setup errors fail fast** (from 0.2): every row and the preflight start from the
   untracked and ignored files present when the checkout was prepared plus those the capture wrote
   (`logs/<project>/untracked-snapshot.json`); files a baseline or an earlier row wrote are removed,

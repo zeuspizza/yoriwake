@@ -121,11 +121,27 @@ def case_a_project_never_swept_is_projected_from_its_qualification_run():
     return 0
 
 
+def case_a_paired_isolated_arm_adds_a_recording_and_no_full_arm():
+    arm = cost.isolated_arm(BITWARDEN, 16)
+    failures = 0
+    # Two ten-minute gates and the selected arm a row; the shared recording times the ratios.
+    if arm["row_minutes"] != 31.7 or arm["recording_minutes"] != 31.7 \
+            or arm["recording_minutes_high"] != 93.3:
+        failures += fail(f"a paired isolated bitwarden-android arm: {arm}")
+    if not arm["hours"] < arm["hours_high"] or \
+            not arm["row_minutes"] < cost.project(BITWARDEN, 16)["timed_row_minutes"]:
+        failures += fail(f"the arm was priced with a full arm of its own: {arm}")
+    if cost.isolated_arm(BITWARDEN, 16, forced_share_without_rows=1.0)["row_minutes"] != 20.0:
+        failures += fail("a row known to force was priced with a selected arm")
+    return failures
+
+
 CASES = (case_the_worked_example_prices_a_timed_and_a_capped_row,
          case_follow_up_re_runs_are_in_neither_figure,
          case_the_report_splits_hours_per_family_and_per_miss_possible_row,
          case_neither_figure_reads_a_miss,
-         case_a_project_never_swept_is_projected_from_its_qualification_run)
+         case_a_project_never_swept_is_projected_from_its_qualification_run,
+         case_a_paired_isolated_arm_adds_a_recording_and_no_full_arm)
 
 
 def test_cost():

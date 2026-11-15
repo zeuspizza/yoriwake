@@ -30,6 +30,13 @@ name: sweep
 # `replay_only` records and replays without measuring a row: that figure alone, in a draft release
 # `commit-replay-<run>`.
 #
+# With `isolated` at `paired`, its default, a full sweep measures every row a second time against a
+# map recorded with a fresh test JVM per class: each record job records that map after the shared
+# one, on the same runner, and each slice asks it about its own rows once their shared arms are
+# done, reusing their ground truth. The page and `sweep.json` then hold both arms side by side per
+# project. That arm is extra: a recording that does not fit what its job has left, or a slice whose
+# second pass fails, is named as not finished and costs no shared row. Other tiers do not take it.
+#
 # Dispatched in each release check on the gate commit, and again on a candidate whose diff touches
 # product code (`RELEASING.md`), never on a schedule: a full sweep of every
 # project takes about 7.5 to 10 hours.
@@ -71,6 +78,11 @@ on:
         description: record and replay the commits only, measuring no row (full tier)
         type: boolean
         default: false
+      isolated:
+        description: paired also measures each row against an isolated map (full tier only)
+        type: choice
+        options: [paired, 'off']
+        default: paired
 
 permissions:
   contents: read
@@ -90,6 +102,7 @@ jobs:
     outputs:
       tier: ${{ steps.plan.outputs.tier }}
       projects: ${{ steps.plan.outputs.projects }}
+      isolated: ${{ steps.plan.outputs.isolated }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,11 +116,16 @@ jobs:
           COMPLETES: ${{ inputs.completes }}
           COMMITS: ${{ inputs.commits }}
           REPLAY_ONLY: ${{ inputs.replay_only }}
+          ISOLATED: ${{ inputs.isolated }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           # A dispatch always carries a tier; the full arm only guards a run without inputs.
           TIER=${TIER:-full}
+          case ${ISOLATED:-paired} in
+            paired|off) ;;
+            *) echo "isolated takes paired or off, not '$ISOLATED'"; exit 1 ;;
+          esac
           case ${COMMITS:-8} in
             *[!0-9]*) echo "commits takes a count, not '$COMMITS'"; exit 1 ;;
           esac
@@ -173,6 +191,11 @@ jobs:
             fi
           fi
           echo "tier=$TIER" >> "$GITHUB_OUTPUT"
+          # The paired isolated arm rides a full sweep's rows; a run that measures none has none.
+          isolated=off
+          [ "$TIER" = full ] && [ "$REPLAY_ONLY" != true ] && isolated=${ISOLATED:-paired}
+          echo "isolated=$isolated" >> "$GITHUB_OUTPUT"
+          echo "isolated arm: $isolated"
           projects='[]'
           if [ "$TIER" = reduced ] || [ "$TIER" = full ]; then
             only=()
@@ -277,7 +300,9 @@ jobs:
           fi
           mkdir -p bench/results bench/logs
           cp published/merged/*.json bench/results/
-          rm -f bench/results/sweep.json
+          # The shared arm's rows, as before the sweep had a second arm: its rows hold arms no
+          # job of theirs ran.
+          rm -f bench/results/sweep.json bench/results/*.isolated.json
           for kept in published/evidence/*.tar.gz; do tar -xzf "$kept" -C bench/logs; done
           python3 bench/replay_decisions.py
 
@@ -303,6 +328,7 @@ jobs:
       factor: ${{ inputs.factor }}
       commits: ${{ inputs.commits }}
       replay_only: ${{ inputs.replay_only }}
+      isolated: ${{ needs.plan.outputs.isolated }}
 
   merge:
     needs: [plan, project]
@@ -328,6 +354,7 @@ jobs:
           REPO: ${{ github.repository }}
           COMMITS: ${{ inputs.commits }}
           REPLAY_ONLY: ${{ inputs.replay_only }}
+          ISOLATED: ${{ needs.plan.outputs.isolated }}
         run: |
           set -euo pipefail
           names=$(jq -r '.[].project' <<< "$PLAN")
@@ -390,7 +417,18 @@ jobs:
               for kept in "$shard"/evidence/*.tar.gz; do
                 cp "$kept" "evidence/shard-$name-$k-of-$of-$(basename "$kept")"
               done
+              # The slice's second pass, where it ran: absent is an arm that did not finish.
+              second="downloaded/isolated-shard-$name-$k-of-$of"
+              if [ -f "$second/shard-$k-of-$of.json" ]; then
+                cp "$second/shard-$k-of-$of.json" "art/$name/isolated-shard-$k-of-$of.json"
+                for kept in "$second"/evidence/*.tar.gz; do
+                  [ ! -f "$kept" ] || cp "$kept" "evidence/shard-$name-$k-of-$of-$(basename "$kept")"
+                done
+              fi
             done
+            if [ -f "downloaded/isolated-$name/$name/recording.json" ]; then
+              cp "downloaded/isolated-$name/$name/recording.json" "art/$name/isolated-recording.json"
+            fi
           done
           missing_args=()
           for entry in "${declared[@]+"${declared[@]}"}"; do missing_args+=(--missing "$entry"); done
@@ -433,8 +471,11 @@ jobs:
               || echo "::warning::the real-commit figure does not add up; see the run page"
             [ ! -f commit-replay.json ] || extra=(commit-replay.json)
           fi
+          isolated=()
+          [ "${ISOLATED:-off}" != paired ] || isolated=(--isolated)
           python3 bench/merge.py art --planned $names "${missing_args[@]+"${missing_args[@]}"}" \
-            --arm "$ARM" --out merged "${completes[@]+"${completes[@]}"}"
+            --arm "$ARM" --out merged "${completes[@]+"${completes[@]}"}" \
+            "${isolated[@]+"${isolated[@]}"}"
           partial=("${declared[@]+"${declared[@]}"}")
           title="Benchmark sweep $RUN ($ARM arm)"
           notes="Merged results of sweep run $RUN, with the maps and decision records."

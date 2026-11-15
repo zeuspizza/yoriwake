@@ -13,6 +13,10 @@ With `--commit-replay`, the page opens with the share of real commits that narro
 (`commit_replay.py --merge`): the figure, why the rest ran everything, and each project's counts.
 A run that only replayed commits has no `sweep.json`, and its page is that section alone.
 
+Where the run measured a paired isolated arm, the page has one table of both arms over the rows
+both measured (rows narrowed, tests run, selected seconds, recording seconds), and names each
+project whose isolated arm did not run or did not finish, with the reason.
+
 It reports and never judges: it exits 0, and a file it cannot read is a line on the page.
 
     python3 bench/sweep_page.py merged unpacked >> "$GITHUB_STEP_SUMMARY"
@@ -163,6 +167,41 @@ def project_section(name, path, unpacked_dir):
     return lines
 
 
+def isolated_section(states):
+    """Both arms side by side per project, from `sweep.json`'s `isolated` entry, over the rows both
+    arms measured; a project whose isolated arm did not run or finish is a line with its reason."""
+    if not isinstance(states, dict) or not states:
+        return []
+    ran = {name: state for name, state in sorted(states.items())
+           if isinstance(state, dict) and state.get("status") == "ran"
+           and isinstance(state.get("shared"), dict) and isinstance(state.get("isolated"), dict)}
+    lines = [f"### Isolated capture, paired ({len(ran)} of {len(states)} projects)", ""]
+    if ran:
+        lines += ["Each row's change measured a second time against a map recorded with a fresh "
+                  "test JVM per class, shared arm → isolated arm, over the rows both measured. "
+                  "The seconds are single untimed runs.", "",
+                  "| Project | Rows | Narrowed | Tests run | Selected s | Recording s |",
+                  "|---|---:|---:|---:|---:|---:|"]
+        for name, state in ran.items():
+            shared, isolated = state["shared"], state["isolated"]
+            pair = lambda field, show=_cell: (  # noqa: E731
+                f"{show(shared.get(field))} → {show(isolated.get(field))}")
+            rows = _cell(state.get("paired_rows"))
+            if state.get("slices_measured") != state.get("slices"):
+                # Fewer slices than the shared arm's: say so where the figures are read.
+                rows += (f" ({_cell(state.get('slices_measured'))} of "
+                         f"{_cell(state.get('slices'))} slices)")
+            lines.append(f"| {name} | {rows} | {pair('narrowed')} | "
+                         f"{pair('tests_run')} | {pair('selected_seconds', _seconds)} | "
+                         f"{pair('recording_seconds', _seconds)} |")
+        lines.append("")
+    lines += [f"- **{name}**: isolated arm {_cell((state or {}).get('status')) or 'unknown'}"
+              f"{': ' + str(state['reason']) if (state or {}).get('reason') else ''}"
+              for name, state in sorted(states.items())
+              if name not in ran and isinstance(state, (dict, type(None)))]
+    return lines + [""]
+
+
 def page(merged_dir, unpacked_dir, run=None):
     sweep_path = find_sweep(merged_dir)
     if sweep_path is None:
@@ -184,7 +223,12 @@ def page(merged_dir, unpacked_dir, run=None):
         # Named, not checked: the merge step may have stopped before it created the release.
         where += (f"; the draft release `sweep-{run}`, once the merge step has created it, holds them "
                   f"with the maps and decision records")
-    lines += [f"Results: {where}.", "", f"### Projects ({len(projects)})", ""]
+    lines += [f"Results: {where}.", ""]
+    try:
+        lines += isolated_section(sweep.get("isolated"))
+    except Exception as error:  # noqa: BLE001 -- an odd entry must not cost the page its rows
+        lines += [f"The isolated arm's figures could not be shown ({type(error).__name__}).", ""]
+    lines += [f"### Projects ({len(projects)})", ""]
     folder = os.path.dirname(sweep_path)
     for name in projects:
         path = os.path.join(folder, f"{name}.json")
