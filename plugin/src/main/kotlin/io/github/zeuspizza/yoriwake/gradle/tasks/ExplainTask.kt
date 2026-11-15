@@ -313,10 +313,12 @@ internal abstract class ExplainTask : DefaultTask() {
         val base = widenedBase.ref
         val baseOrigin = widenedBase.origin
         // With the capture commit's diff, as the run takes it.
-        val paths = listOfNotNull(base, age.stamp)
+        val tracked = listOfNotNull(base, age.stamp)
             .map { ChangeDetection.changedPaths(git, rootDir, it) }
             .takeUnless { null in it }?.flatMap { it.orEmpty() }
-            ?.let { tracked -> (drift as? WorkingTree.Drift.Moved)?.let { (tracked + it.paths).distinct() } }
+        val paths = tracked?.let { (drift as? WorkingTree.Drift.Moved)?.let { moved -> (tracked + moved.paths).distinct() } }
+        // As the run takes them: the paths only the drift since the capture names.
+        val driftOnly = (drift as? WorkingTree.Drift.Moved)?.paths.orEmpty() - tracked.orEmpty().toSet()
         // Printed first, because when it fires it explains every line below it.
         logger.lifecycle("[yoriwake] $taskPath: base $base ($baseOrigin)")
         if (paths == null) {
@@ -445,7 +447,7 @@ internal abstract class ExplainTask : DefaultTask() {
             }
             verdict as? DependencyRule.Verdict.Accepted
         }
-        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, listOfNotNull(base, age.stamp), (drift as? WorkingTree.Drift.Moved)?.paths.orEmpty())
+        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, listOfNotNull(base, age.stamp), driftOnly)
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         val found = establish(
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },

@@ -235,7 +235,7 @@ internal object BuildFileReach {
     ).map { identifier(it) to null } + listOf(
         // A top-level `configure(...)` reaches the projects it is handed; `x.configure {}` is a task's own.
         Regex("""(?<![\w$.])configure(?![\w$])""") to null,
-        // `gradle.` as a receiver, not `org.gradle.` or a catalog alias `libs.gradle.x`.
+        // `gradle.` as a receiver, not inside a package name or a catalog alias such as `libs.gradle.x`.
         Regex("""(?:(?<![\w$.])|(?<=\bproject\.))gradle\s*\.""") to "`gradle.`",
         Regex("""\bapply\s*\(?\s*from\b""") to "`apply from`",
         Regex("""\bSystem\s*\.\s*(?:setProperty|setProperties|getProperties)\b""") to "the JVM's system properties",

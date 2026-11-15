@@ -124,8 +124,8 @@ internal fun classpathFacts(
     memo?.count(YoriwakePlugin.CLASSPATH_FACTS_COUNTER)
     val facts = projectFacts(project, memo)
     val ownPath = project.path
-    // What `declared` asks, for the facts read beside it.
-    val reaches = changedPaths == null || reachesOutsideModule(
+    // What `declared` asks, for the facts read beside it; an empty change set reads none of them.
+    val reaches = changedPaths == null || changedPaths.isNotEmpty() && reachesOutsideModule(
         project.projectDir.relativeTo(project.rootDir).invariantSeparatorsPath.trim('/'), ownPath, changedPaths, facts.moduleDirs,
     )
     return ClasspathFacts(
@@ -172,7 +172,8 @@ internal fun classpathFacts(
     dependencyHomes = dependencyHomes(project),
     buildFiles = facts.buildFiles,
     // Read when the change set reaches outside this module, as `declared` is.
-    handed = project.provider { if (reaches) handedPaths(test) else emptySet() },
+    // Absent, never thrown, when an input cannot be resolved: the configuration cache stores it.
+    handed = project.provider { if (reaches) runCatching { handedPaths(test) }.getOrNull() else emptySet() },
     closure = if (reaches) dependencyClosure(project, test, facts.moduleDirs) else project.provider { emptySet<String>() },
     )
 }

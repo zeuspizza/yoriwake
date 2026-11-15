@@ -4441,8 +4441,8 @@ MUTATIONS = [
      "            \"\",",
      functional_suite, "editing the same declared file twice runs the task both times"),
     ("yoriwakeExplain applies no pathIgnore", EXPLAIN_TASK,
-     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, listOfNotNull(base, age.stamp), (drift as? WorkingTree.Drift.Moved)?.paths.orEmpty())",
-     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), null, listOfNotNull(base, age.stamp), (drift as? WorkingTree.Drift.Moved)?.paths.orEmpty())",
+     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, listOfNotNull(base, age.stamp), driftOnly)",
+     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), null, listOfNotNull(base, age.stamp), driftOnly)",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
     # A class a framework can only run or skip whole is left out only when it holds a test and
     # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.
