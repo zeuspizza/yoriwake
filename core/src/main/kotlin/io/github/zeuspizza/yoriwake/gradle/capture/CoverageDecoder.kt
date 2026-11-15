@@ -63,6 +63,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.TOUCH_STACK_ALL
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNATTRIBUTED_RECORD_ID
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLEL_UNCONFIRMED_FILE
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WORKER_DIR_PREFIX
+import io.github.zeuspizza.yoriwake.agent.contract.TestClassIds
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
@@ -839,7 +840,9 @@ internal object CoverageDecoder {
     /** The binary names of the test classes that own a record: none for startup coverage. */
     private fun ownersOf(testId: String): List<String> {
         if (testId == UNATTRIBUTED_RECORD_ID) return emptyList()
-        return Regex("""\[class:([^\]]+)]""").findAll(testId).map { it.groupValues[1] }.toList()
+        // A class-scoped record names every class whose scope it was written under.
+        return testId.removePrefix(CLASS_SCOPED_RECORD_PREFIX).split('|')
+            .mapNotNull { TestClassIds.nameOf(TestClassIds.scopeOf(it)) }
     }
 
     private fun ownedBy(className: String, owner: String) =
