@@ -215,4 +215,51 @@ class DependencyBumpFunctionalTest : FunctionalTestSupport() {
         assertEquals(all, ranTests(dir), output)
         assertContains(output, "is not a dependency version bump")
     }
+
+    /** Reads its own module's build script as a file, as a test of a build's layout does. */
+    private val scriptTest = javaTest("ScriptTest", "assertNotNull(java.nio.file.Files.readString(java.nio.file.Path.of(\"build.gradle.kts\")));")
+
+    private fun bumpScript(dir: File, from: String, to: String) =
+        File(dir, "build.gradle.kts").writeText(File(dir, "build.gradle.kts").readText().replace(from, to))
+
+    @Test
+    fun `a notation bump in a build script runs the tests that reached the moved jar or read the script, and only with the flag`(@TempDir dir: File) {
+        captured(dir, "dependencies {\n    testImplementation(\"dev.lib:lib-math:1.0\")\n}", scriptTest)
+        bumpScript(dir, "lib-math:1.0", "lib-math:1.1")
+
+        val narrowed = select(dir, "-Pyoriwake.narrowDependencies")
+
+        assertEquals(setOf("dev.sample.MathTest", "dev.sample.ScriptTest"), ranTests(dir), narrowed)
+        assertContains(narrowed, "change dependency versions only")
+
+        val withoutFlag = select(dir)
+
+        assertEquals(all + "dev.sample.ScriptTest", ranTests(dir), withoutFlag)
+        assertContains(withoutFlag, "1 paths coverage cannot see")
+    }
+
+    @Test
+    fun `a version value only notations read runs the tests that reached the moved jar`(@TempDir dir: File) {
+        captured(dir, "val mathVersion = \"1.0\"\ndependencies {\n    testImplementation(\"dev.lib:lib-math:${'$'}mathVersion\")\n}")
+        bumpScript(dir, "mathVersion = \"1.0\"", "mathVersion = \"1.1\"")
+
+        val output = select(dir, "-Pyoriwake.narrowDependencies")
+
+        assertEquals(setOf("dev.sample.MathTest"), ranTests(dir), output)
+    }
+
+    @Test
+    fun `a version value also read outside a notation runs every test, naming it`(@TempDir dir: File) {
+        captured(
+            dir,
+            "val mathVersion = \"1.0\"\ndependencies {\n    testImplementation(\"dev.lib:lib-math:${'$'}mathVersion\")\n}\n" +
+                "tasks.test { systemProperty(\"math.version\", mathVersion) }",
+        )
+        bumpScript(dir, "mathVersion = \"1.0\"", "mathVersion = \"1.1\"")
+
+        val output = select(dir, "-Pyoriwake.narrowDependencies")
+
+        assertEquals(all, ranTests(dir), output)
+        assertContains(output, "names the value `mathVersion` outside a dependency notation's version")
+    }
 }

@@ -1,0 +1,10 @@
+diff --git a/framework-platform/framework-platform.gradle b/framework-platform/framework-platform.gradle
+index 48d45a0f9f..1976abe193 100644
+--- a/framework-platform/framework-platform.gradle
++++ b/framework-platform/framework-platform.gradle
+@@ -11 +11 @@ dependencies {
+-	api(platform("io.micrometer:micrometer-bom:1.16.6"))
++	api(platform("io.micrometer:micrometer-bom:1.18.0-SNAPSHOT"))
+@@ -13 +13 @@ dependencies {
+-	api(platform("io.projectreactor:reactor-bom:2025.0.6"))
++	api(platform("io.projectreactor:reactor-bom:2026.0.0-SNAPSHOT"))

@@ -1,0 +1,7 @@
+diff --git a/build.gradle b/build.gradle
+index f34c8413f..666f82319 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -22 +22 @@ ext {
+-    guavaVersion = "33.6.0-jre"
++    guavaVersion = "33.7.1-jre"

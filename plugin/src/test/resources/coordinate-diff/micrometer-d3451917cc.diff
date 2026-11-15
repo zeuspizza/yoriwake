@@ -1,0 +1,7 @@
+diff --git a/samples/micrometer-samples-jooq/build.gradle b/samples/micrometer-samples-jooq/build.gradle
+index b117ec681..b01d436d6 100644
+--- a/samples/micrometer-samples-jooq/build.gradle
++++ b/samples/micrometer-samples-jooq/build.gradle
+@@ -13 +13 @@ dependencies {
+-    implementation "org.jooq:jooq:3.21.6"
++    implementation "org.jooq:jooq:3.21.7"

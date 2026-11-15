@@ -1,0 +1,9 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index ade9059e..2dcda44f 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -40,2 +40,2 @@ janino = "org.codehaus.janino:janino:3.1.12"
+-junit5-jupiter = "org.junit.jupiter:junit-jupiter:6.1.1"
+-junit5-platform-launcher = "org.junit.platform:junit-platform-launcher:6.1.1"
++junit5-jupiter = "org.junit.jupiter:junit-jupiter:6.1.2"
++junit5-platform-launcher = "org.junit.platform:junit-platform-launcher:6.1.2"

@@ -7,13 +7,15 @@ package io.github.zeuspizza.yoriwake.gradle.change
  * task, so its model cannot say what an edit reaches. The rule only says yes for line shapes it
  * knows, each pair of removed and added lines identical but for one version literal:
  * - a version catalog's `[versions]` value, or a `[libraries]` entry's own version;
- * - a `"group:name:version"` notation inside a `dependencies {}` block of a module build script,
- *   outside `buildscript`, `plugins` and the like;
+ * - a `"group:name:version"` notation inside a `dependencies {}` block at the top level of a
+ *   project's build script, or in a `constraints {}` block within it;
+ * - a version held in a named value of a build script (a top-level `val` or `def`, an `ext` or
+ *   `extra` entry), which [DependencyRule] accepts only when every reader is such a notation;
  * - on Maven, a `<version>` of a `<dependency>` under a POM's own `<dependencies>` or
  *   `<dependencyManagement>`, or a `<properties>` value.
  *
- * Everything else refuses the file, which then forces as before: a version held in a variable, a
- * lockfile, verification metadata, a plugin, a comment, a rich version, a script of `buildSrc`, of
+ * Everything else refuses the file, which then forces as before: a notation nested in any other
+ * block (`subprojects`, `allprojects`, `project(...)`, a source set's), a lockfile, verification metadata, a plugin, a comment, a rich version, a script of `buildSrc`, of
  * `build-logic` or of an included build. What the versions moved is resolution's to say, never this
  * rule's.
  */
@@ -33,6 +35,10 @@ internal object CoordinateDiff {
         val coordinate: String? = null,
         /** The configuration a notation is declared in. */
         val configuration: String? = null,
+        /** The build script value whose version changed. */
+        val valueName: String? = null,
+        /** The changed line's index in the new text, for a [valueName]. */
+        val line: Int? = null,
     )
 
     sealed interface Verdict {
@@ -94,7 +100,7 @@ internal object CoordinateDiff {
                 }
                 val bump = when (shape) {
                     Shape.CATALOG -> catalogLine(path, before, after, newAt)
-                    Shape.SCRIPT -> scriptLine(path, before, after, newAt)
+                    Shape.SCRIPT -> scriptLine(path, before, after, newAt) ?: valueLine(path, before, after, newAt, hunk.newStart - 1 + i)
                     Shape.POM -> pomLine(path, before, after, newAt, newLines, hunk.newStart - 1 + i)
                 } ?: return Verdict.Refused(path, after, "not a version change of a shape this rule knows")
                 bumps += bump
@@ -210,7 +216,7 @@ internal object CoordinateDiff {
      * The blocks each line of a build script is in, outermost first, by line: `dependencies`,
      * `buildscript`, or `?` for a brace no name precedes. Strings and comments are left out.
      */
-    private fun blocks(lines: List<String>): List<String> {
+    fun blocks(lines: List<String>): List<String> {
         val stack = ArrayDeque<String>()
         var inBlockComment = false
         return lines.map { raw ->
@@ -261,12 +267,15 @@ internal object CoordinateDiff {
         return out.toString()
     }
 
-    /** Blocks a dependency notation in may not be inside: they configure the build, not the tests. */
-    private val BUILD_BLOCKS = setOf("buildscript", "plugins", "pluginManagement", "settings", "initscript")
+    /**
+     * The blocks a dependency notation may be in. Any other nesting declares for other projects
+     * (`subprojects`, `allprojects`, `project(...)`), for the build itself (`buildscript`, `plugins`), or
+     * into a derived configuration (a source set's), none of which the task's classpath bounds.
+     */
+    val NOTATION_BLOCKS = setOf("dependencies", "dependencies/constraints")
 
     private fun scriptLine(path: String, before: String, after: String, blocks: String): Bump? {
-        val nested = blocks.split('/')
-        if ("dependencies" !in nested || nested.any { it in BUILD_BLOCKS }) return null
+        if (blocks !in NOTATION_BLOCKS) return null
         val (index, oldValue, newValue) = oneQuotedDiffers(before, after) ?: return null
         val (oldVersion, oldCoordinate) = notationParts(oldValue) ?: return null
         val (newVersion, coordinate) = notationParts(newValue) ?: return null
@@ -275,6 +284,25 @@ internal object CoordinateDiff {
         if (quoted(after).size != 1 || index != 0) return null
         val configuration = Regex("""^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[( ]""").find(after)?.groupValues?.get(1) ?: return null
         return Bump(path, Shape.SCRIPT, coordinate = coordinate, configuration = configuration)
+    }
+
+    /**
+     * A named version value: `val`/`def name = "v"` at the top level, `ext.name = "v"`,
+     * `ext["name"] = "v"` or `extra["name"] = "v"`, or `name = "v"` in a top-level `ext {}` block.
+     */
+    private fun valueLine(path: String, before: String, after: String, blocks: String, index: Int): Bump? {
+        val (_, oldValue, newValue) = oneQuotedDiffers(before, after) ?: return null
+        if (!isVersion(oldValue) || !isVersion(newValue)) return null
+        val value = """\s*=\s*(?:"[^"\\]*"|'[^'\\]*')\s*;?\s*(?://.*)?$"""
+        val name = when (blocks) {
+            "" -> Regex("""^\s*(?:val|def)\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*String)?$value""").matchEntire(after)
+                ?: Regex("""^\s*ext\.([A-Za-z_][A-Za-z0-9_]*)$value""").matchEntire(after)
+                ?: Regex("""^\s*(?:ext|extra)\[\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\1\s*]$value""").matchEntire(after)
+                    ?.let { return Bump(path, Shape.SCRIPT, valueName = it.groupValues[2], line = index) }
+            "ext" -> Regex("""^\s*([A-Za-z_][A-Za-z0-9_]*)$value""").matchEntire(after)
+            else -> null
+        } ?: return null
+        return Bump(path, Shape.SCRIPT, valueName = name.groupValues[1], line = index)
     }
 
     // ---------------------------------------------------------------- POMs

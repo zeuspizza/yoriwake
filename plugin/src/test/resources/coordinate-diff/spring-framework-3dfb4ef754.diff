@@ -1,0 +1,7 @@
+diff --git a/framework-platform/framework-platform.gradle b/framework-platform/framework-platform.gradle
+index f25cdcb169..9b46109e9c 100644
+--- a/framework-platform/framework-platform.gradle
++++ b/framework-platform/framework-platform.gradle
+@@ -20 +20 @@ dependencies {
+-	api(platform("org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2"))
++	api(platform("org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0"))

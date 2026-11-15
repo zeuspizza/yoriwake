@@ -1,0 +1,7 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 495cdbc0..a842ff6c 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -31 +31 @@ logging = "io.github.oshai:kotlin-logging-jvm:8.0.4"
+-slf4j = "org.slf4j:slf4j-simple:2.0.17"
++slf4j = "org.slf4j:slf4j-simple:2.0.18"

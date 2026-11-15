@@ -1,0 +1,304 @@
+
+plugins {
+    id("java-library")
+    id("checkstyle")
+    id("eclipse")
+    id("maven-publish")
+    id("me.champeau.jmh") version "0.7.3"
+    id("com.github.hierynomus.license") version "0.16.1"
+    id("biz.aQute.bnd.builder") version "7.3.0"
+    id("com.vanniktech.maven.publish") version "0.37.0"
+    id("org.beryx.jar") version "2.0.0"
+    id("signing")
+}
+
+ext {
+    reactiveStreamsVersion = "1.0.4"
+    junitVersion = "4.13.2"
+    testNgVersion = "7.12.0"
+    mockitoVersion = "5.23.0"
+    mockitoJUnitVersion = "5.23.0"
+    jmhLibVersion = "1.37"
+    guavaVersion = "33.6.0-jre"
+    jupiterVersion = "6.1.2"
+    jupiterLauncherVersion = "6.1.2"
+}
+
+def releaseTag = System.getenv("BUILD_TAG")
+if (releaseTag != null && !releaseTag.isEmpty()) {
+    if (releaseTag.startsWith("v")) {
+        releaseTag = releaseTag.substring(1)
+    }
+    project.version = releaseTag
+
+    logger.lifecycle("Releasing with version: " + project.version)
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation "org.mockito:mockito-core:$mockitoVersion"
+    testImplementation "org.mockito:mockito-junit-jupiter:$mockitoJUnitVersion"
+
+    testImplementation "org.reactivestreams:reactive-streams-tck:$reactiveStreamsVersion"
+    testImplementation "org.testng:testng:$testNgVersion"
+    testImplementation "com.google.guava:guava:$guavaVersion"
+    testImplementation "org.reactivestreams:reactive-streams-tck-flow:$reactiveStreamsVersion"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:$jupiterVersion"
+
+    // Explicitly add these for IDE compatibility (especially Eclipse)
+    testImplementation "org.junit.platform:junit-platform-commons:$jupiterLauncherVersion"
+    testImplementation "org.junit.platform:junit-platform-launcher:$jupiterLauncherVersion"
+
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:$jupiterLauncherVersion"  // already have this
+}
+
+// === Experimental JDK handling for Outreach Program ===
+def experimental = System.getenv("JDK_EXPERIMENTAL")
+def toolchainJdk = "26"   // default / baseline
+
+if (experimental != null && !experimental.trim().isEmpty()) {
+    toolchainJdk = experimental  // e.g. "27"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(toolchainJdk)
+    }
+    sourceCompatibility = JavaVersion.VERSION_26
+    targetCompatibility = JavaVersion.VERSION_26
+}
+
+tasks.withType(JavaCompile) {
+    options.compilerArgs << "-parameters"
+    options.compilerArgs += '-Xlint:-module'
+    options.compilerArgs += '-Xlint:unchecked'
+}
+
+apply from: file("gradle/javadoc_cleanup.gradle")
+
+javadoc {
+    source = sourceSets.main.allJava.matching {
+        include 'io/reactivex/rxjava4/**'
+        exclude '**/internal/**'
+        exclude '**/test/**'
+        exclude '**/perf/**'
+        exclude '**/jmh/**'
+        exclude 'module-info.java'
+    }
+
+    // Explicitly disable modularity inference (prevents Gradle adding module flags)
+    modularity.inferModulePath = false
+
+    classpath = sourceSets.main.runtimeClasspath + sourceSets.main.output
+
+    options {
+        windowTitle = "RxJava Javadoc ${project.version}"
+    }
+    // Clear the following options to make the docs consistent with the old format
+    options.addStringOption("top").value = ""
+    options.addStringOption("doctitle").value = ""
+    options.addStringOption("header").value = ""
+    options.addBooleanOption('Xdoclint:none', true)   // disables all doclint checks (modern JDKs)
+
+    failOnError = false
+
+    options.links(
+            "https://docs.oracle.com/en/java/javase/26/docs/api/",
+            "https://reactivex.io/RxJava/org.reactivestreams.javadoc/${reactiveStreamsVersion}/"
+    )
+
+    // modularity.inferModulePath = true  // let Gradle handle deps on --module-path
+
+
+    finalizedBy javadocCleanup
+}
+
+moduleConfig {
+    moduleInfoPath = 'src/main/module/module-info.java'
+    multiReleaseVersion = 9
+	version = project.version
+}
+
+import aQute.bnd.gradle.Bundle   // ← important import
+
+tasks.register('bundle', Bundle) {
+    archiveBaseName.set('rxjava')           // or archiveFileName = "rxjava-${version}.jar"
+    archiveVersion.set(project.version)
+    archiveClassifier.set('')               // empty → no classifier
+
+    from sourceSets.main.output             // your classes
+    from('.') {
+        include 'LICENSE'
+        include 'COPYRIGHT'
+        into 'META-INF/'
+    }
+
+    // Exclude module-info.class from root (you already had this)
+    exclude 'module-info.class'
+
+    // All your Bnd instructions go here
+    bundle {
+        bnd('-fixupmessages': '^Classes found in the wrong directory: \\{META-INF/versions/9/module-info\\.class=module-info\\}$')
+
+        bnd('Bundle-Name': 'rxjava')
+        bnd('Bundle-Vendor': 'RxJava Contributors')
+        bnd('Bundle-Description': 'Reactive Extensions for the JVM - a library for composing asynchronous and event-based programs using observable sequences for the Java VM.')
+        bnd('Import-Package': '!org.junit,!junit.framework,!org.mockito.*,!org.testng.*,*')
+        bnd('Bundle-DocURL': 'https://github.com/ReactiveX/RxJava')
+        bnd('Eclipse-ExtensibleAPI': 'true')
+        bnd('Export-Package': '!io.reactivex.rxjava4.internal.*,io.reactivex.rxjava4.*')
+        bnd('Bundle-SymbolicName': 'io.reactivex.rxjava4.rxjava')
+        bnd('Multi-Release': 'true')
+    }
+}
+
+license {
+    header = project.file("config/license/HEADER")
+    ext.year = Calendar.getInstance().get(Calendar.YEAR)
+    skipExistingHeaders = true
+    ignoreFailures = true
+    excludes(["**/*.md", "**/*.txt"])
+}
+
+jmh {
+    jmhVersion = jmhLibVersion
+    humanOutputFile = null
+    includeTests = false
+    jvmArgs = ["-Djmh.ignoreLock=true"]
+    jvmArgsAppend = ["-Djmh.separateClasspathJAR=true"]
+
+    if (project.hasProperty("jmh")) {
+        includes = [".*" + project.jmh + ".*"]
+        logger.info("JMH: {}", includes)
+    }
+}
+
+def isCI = System.getenv("CI") != null
+def testLoggingConfig = ["skipped", "failed"]
+def parallelism = Runtime.runtime.availableProcessors()
+
+if (!isCI) {
+    testLoggingConfig = ["failed"]
+    parallelism = parallelism.intdiv(2) ?: 1
+}
+
+test {
+    maxHeapSize = "1200m"
+    maxParallelForks = parallelism
+    timeout = Duration.ofMinutes(30)
+
+    useJUnitPlatform()
+}
+
+
+tasks.register('testNG', Test) {
+    description = 'Runs TestNG tests'
+    group = 'verification'
+
+    // Important: point to the same compiled test classes
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    // Tell it to use TestNG explicitly
+    useTestNG()
+
+    maxHeapSize = "1200m"
+    maxParallelForks = parallelism
+    timeout = Duration.ofMinutes(30)
+
+    // Ensure JUnit-compatible XML output in the standard location
+    reports {
+        html.required = true
+        junitXml.required = true
+        junitXml.outputLocation = file("${buildDir}/test-results/test")   // ← important
+    }
+
+    // Optional: fine-tune includes/excludes
+    // include '**/*NgTest.class', '**/*TestNG.class'
+    // exclude '**/*JUnitTest.class'
+
+    // Optional: reports, listeners, etc.
+    testLogging {
+        events = testLoggingConfig
+        exceptionFormat = "full"
+
+        debug.events = testLoggingConfig
+        debug.exceptionFormat = "full"
+
+        info.events = testLoggingConfig
+        info.exceptionFormat = "full"
+
+        warn.events = testLoggingConfig
+        warn.exceptionFormat = "full"
+    }
+}
+
+check.dependsOn testNG
+
+tasks.withType(Test) {
+    testLogging {
+        events = testLoggingConfig
+        exceptionFormat = "full"
+
+        debug.events = testLoggingConfig
+        debug.exceptionFormat = "full"
+
+        info.events = testLoggingConfig
+        info.exceptionFormat = "full"
+
+        warn.events = testLoggingConfig
+        warn.exceptionFormat = "full"
+    }
+}
+
+if (experimental == null || "".equals(experimental)) {
+    apply plugin: "jacoco"
+
+    jacocoTestReport {
+        dependsOn test
+        dependsOn testNG
+    
+        reports {
+            xml.required.set(true)
+            csv.required.set(false)
+            html.required.set(true)
+        }
+    }
+    
+    check.dependsOn jacocoTestReport
+}
+
+
+checkstyle {
+    configFile = project.file("config/checkstyle/checkstyle.xml")
+    configProperties = [
+            "checkstyle.suppressions.file": project.file("config/checkstyle/suppressions.xml"),
+            "checkstyle.header.file"      : project.file("config/license/HEADER_JAVA"),
+            "project_loc"                 : project.projectDir.absolutePath
+    ]
+    checkstyleMain.exclude '**/module-info.java'
+}
+
+if (project.hasProperty("releaseMode")) {
+    logger.lifecycle("ReleaseMode: {}", project.releaseMode)
+
+
+  if ("full" == project.releaseMode) {
+    signing {
+      if (project.hasProperty("SIGNING_PRIVATE_KEY") && project.hasProperty("SIGNING_PASSWORD")) {
+         useInMemoryPgpKeys(project.getProperty("SIGNING_PRIVATE_KEY"), project.getProperty("SIGNING_PASSWORD"))
+         sign(publishing.publications)
+      }
+    }
+  }
+  mavenPublishing {
+      // or when publishing to https://central.sonatype.com/
+      publishToMavenCentral(true, com.vanniktech.maven.publish.DeploymentValidation.PUBLISHED)
+
+      // signAllPublications()
+  }
+}

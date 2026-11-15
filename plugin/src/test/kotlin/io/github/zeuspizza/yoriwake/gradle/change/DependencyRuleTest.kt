@@ -94,6 +94,7 @@ class DependencyRuleTest {
         current: ClasspathRecord.Record?,
         jvmArguments: List<String>? = emptyList(),
         configurations: Set<String>? = setOf("implementation", "runtimeClasspath", "testRuntimeClasspath"),
+        ownBuildFile: (String) -> Boolean = { it == "app/build.gradle.kts" },
     ) = DependencyRule.decide(
         DependencyRule.Inputs(
             root, paths, "HEAD", mapDir,
@@ -103,7 +104,7 @@ class DependencyRuleTest {
                 current = { current },
                 jvmArguments = { jvmArguments ?: error("unreadable") },
                 configurations = { configurations },
-                ownBuildFile = { it == "app/build.gradle.kts" },
+                ownBuildFile = ownBuildFile,
             ),
         )
     )
@@ -420,5 +421,146 @@ class DependencyRuleTest {
 
         val verdict = assertIs<Verdict.Accepted>(decide(listOf("app/build.gradle.kts"), unreadable))
         assertEquals(listOf("dev.lib:lib-math"), verdict.modules)
+    }
+
+    // ---------------------------------------------------------------- build script values
+
+    private val d = "$"
+
+    /** A root Groovy script declaring `mathVersion` in `ext`, read by a notation, plus [more]. */
+    private fun groovyValue(more: String = "", reader: String = "implementation \"dev.lib:lib-math:${d}mathVersion\"") = """
+        ext {
+            mathVersion = "1.0"
+        }
+        dependencies {
+            $reader
+        }
+    """.trimIndent() + "\n" + more
+
+    private val mathNew get() = jar("repo/lib-math-1.1.jar", "lib/math/Add.class")
+
+    /** Commits [files] as the base, applies [bumped], and decides the change set of the changed ones. */
+    private fun decideValue(files: Map<String, String>, bumped: Map<String, String>, configurations: Set<String> = setOf("implementation")): Verdict {
+        files.forEach { (path, text) -> write(path, text) }
+        git("add", "-A")
+        git("commit", "-q", "-m", "values")
+        val newMath = mathNew
+        recordInMap(record(own, jsonOld, math))
+        bumped.forEach { (path, text) -> write(path, text) }
+        return decide(
+            bumped.keys.toList(), record(own, jsonOld, newMath, identities = identities + (newMath to "dev.lib:lib-math")),
+            configurations = configurations,
+            ownBuildFile = { it == "build.gradle" || it == "build.gradle.kts" || it.endsWith("/build.gradle") || it == "app/build.gradle.kts" },
+        )
+    }
+
+    private fun bumpGroovy(text: String) = text.replace("mathVersion = \"1.0\"", "mathVersion = \"1.1\"")
+
+    @Test
+    fun `an ext value only dependency notations read is accepted, and moves what they declare`() {
+        // A lookup by a literal name reads that name only.
+        val text = groovyValue("if (project.hasProperty(\"jmh\")) {\n    println(findProperty(\"jmh\"))\n}")
+        val verdict = assertIs<Verdict.Accepted>(decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text))))
+        assertEquals(listOf("build.gradle"), verdict.paths)
+        assertEquals(listOf("dev.lib:lib-math"), verdict.modules)
+    }
+
+    @Test
+    fun `a Kotlin top-level val read in a notation is accepted, its name in the group or artifact being no reader`() {
+        val text = "val math = \"1.0\"\ndependencies {\n    implementation(\"dev.math:lib-math:${d}math\")\n}\n"
+        val newMath = jar("repo/math-1.1.jar", "lib/math/Add.class")
+        write("app/build.gradle.kts", text)
+        git("add", "-A")
+        git("commit", "-q", "-m", "values")
+        val identities = identities + (math to "dev.math:lib-math") + (newMath to "dev.math:lib-math")
+        recordInMap(record(own, jsonOld, math, identities = identities))
+        write("app/build.gradle.kts", text.replace("\"1.0\"", "\"1.1\""))
+        val verdict = assertIs<Verdict.Accepted>(decide(listOf("app/build.gradle.kts"), record(own, jsonOld, newMath, identities = identities)))
+        assertEquals(listOf("dev.math:lib-math"), verdict.modules)
+    }
+
+    @Test
+    fun `a value also read as a system property, a tool's version or a plugin's classpath stays unaccepted, naming it`() {
+        for (more in listOf(
+            "test {\n    systemProperty(\"math.version\", mathVersion)\n}",
+            "checkstyle {\n    toolVersion = mathVersion\n}",
+            "buildscript {\n    dependencies {\n        classpath \"dev.tools:plugin:${d}mathVersion\"\n    }\n}",
+            "subprojects {\n    dependencies {\n        implementation \"dev.lib:lib-math:${d}mathVersion\"\n    }\n}",
+        )) {
+            val text = groovyValue(more)
+            val verdict = assertIs<Verdict.Unaccepted>(decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text))), more)
+            assertContains(verdict.why, "`mathVersion`")
+            git("reset", "-q", "--hard")
+        }
+    }
+
+    @Test
+    fun `a value read in buildSrc stays unaccepted`() {
+        val text = groovyValue()
+        val verdict = assertIs<Verdict.Unaccepted>(
+            decideValue(
+                mapOf("build.gradle" to text, "buildSrc/src/main/kotlin/Versions.kt" to "val v = project.extra.get(\"mathVersion\")\n"),
+                mapOf("build.gradle" to bumpGroovy(text)),
+            )
+        )
+        assertContains(verdict.why, "buildSrc")
+    }
+
+    @Test
+    fun `a value read by a notation of an applied script, or through the root project's ext, is accepted`() {
+        val text = groovyValue("apply from: \"gradle/deps.gradle\"", reader = "")
+        val verdict = decideValue(
+            mapOf(
+                "build.gradle" to text,
+                "gradle/deps.gradle" to "dependencies {\n    implementation \"dev.lib:lib-math:${d}mathVersion\"\n}\n",
+                "app/build.gradle" to "dependencies {\n    implementation \"dev.lib:lib-math:${d}{rootProject.ext.mathVersion}\"\n}\n",
+            ),
+            mapOf("build.gradle" to bumpGroovy(text)),
+        )
+        assertEquals(listOf("dev.lib:lib-math"), assertIs<Verdict.Accepted>(verdict).modules)
+    }
+
+    @Test
+    fun `a value no script reads stays unaccepted`() {
+        val text = groovyValue(reader = "")
+        val verdict = assertIs<Verdict.Unaccepted>(decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text))))
+        assertContains(verdict.why, "no build script")
+    }
+
+    @Test
+    fun `an extra accessor in a notation is accepted, and one anywhere else stays unaccepted`() {
+        val kotlin = "extra[\"math\"] = \"1.0\"\ndependencies {\n    implementation(\"dev.lib:lib-math:${d}{extra[\"math\"]}\")\n}\n"
+        assertIs<Verdict.Accepted>(decideValue(mapOf("build.gradle.kts" to kotlin), mapOf("build.gradle.kts" to kotlin.replace("= \"1.0\"", "= \"1.1\""))))
+        git("reset", "-q", "--hard")
+        val outside = kotlin + "tasks.test {\n    environment(\"MATH\", property(\"math\"))\n}\n"
+        assertIs<Verdict.Unaccepted>(decideValue(mapOf("build.gradle.kts" to outside), mapOf("build.gradle.kts" to outside.replace("= \"1.0\"", "= \"1.1\""))))
+    }
+
+    @Test
+    fun `the build's properties read in bulk, or a property looked up by a computed name, leave a value unaccepted`() {
+        for (more in listOf("processResources {\n    expand(project.properties)\n}", "def lib = \"math\"\nprintln(property(\"${d}{lib}Version\"))")) {
+            val text = groovyValue(more)
+            val verdict = assertIs<Verdict.Unaccepted>(decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text))), more)
+            assertContains(verdict.why, "`mathVersion`")
+            git("reset", "-q", "--hard")
+        }
+    }
+
+    @Test
+    fun `a value read by a notation in a configuration no classpath extends forces as unlocated`() {
+        val text = groovyValue(reader = "agent \"dev.lib:lib-math:${d}mathVersion\"")
+        val verdict = assertIs<Verdict.Forced>(decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text))))
+        assertEquals(RefusalKind.DEPENDENCY_UNLOCATED, verdict.kind)
+    }
+
+    @Test
+    fun `a bump beside another build file's change leaves the whole change set unaccepted`() {
+        val text = groovyValue()
+        val module = "dependencies {\n    implementation \"dev.lib:lib-math:1.0\"\n}\ntest {\n    jvmArgs \"-Xmx1g\"\n}\n"
+        val verdict = decideValue(
+            mapOf("build.gradle" to text, "app/build.gradle" to module),
+            mapOf("build.gradle" to bumpGroovy(text), "app/build.gradle" to module.replace("-Xmx1g", "-Xmx2g")),
+        )
+        assertEquals("app/build.gradle", assertIs<Verdict.Unaccepted>(verdict).path)
     }
 }

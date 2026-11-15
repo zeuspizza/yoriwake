@@ -1,0 +1,15 @@
+diff --git a/framework-platform/framework-platform.gradle b/framework-platform/framework-platform.gradle
+index 4eebc15719..855389263f 100644
+--- a/framework-platform/framework-platform.gradle
++++ b/framework-platform/framework-platform.gradle
+@@ -10 +10 @@ dependencies {
+-	api(platform("com.fasterxml.jackson:jackson-bom:2.21.2"))
++	api(platform("com.fasterxml.jackson:jackson-bom:2.21.4"))
+@@ -24 +24 @@ dependencies {
+-	api(platform("tools.jackson:jackson-bom:3.1.1"))
++	api(platform("tools.jackson:jackson-bom:3.1.4"))
+@@ -123,2 +123,2 @@ dependencies {
+-		api("org.hibernate.orm:hibernate-core:7.4.0.Final")
+-		api("org.hibernate.validator:hibernate-validator:9.1.0.Final")
++		api("org.hibernate.orm:hibernate-core:7.4.2.Final")
++		api("org.hibernate.validator:hibernate-validator:9.1.1.Final")

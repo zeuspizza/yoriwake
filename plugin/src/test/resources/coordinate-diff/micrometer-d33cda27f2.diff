@@ -1,0 +1,7 @@
+diff --git a/samples/micrometer-samples-caffeine3/build.gradle b/samples/micrometer-samples-caffeine3/build.gradle
+index 842203604..2cf681d03 100644
+--- a/samples/micrometer-samples-caffeine3/build.gradle
++++ b/samples/micrometer-samples-caffeine3/build.gradle
+@@ -3 +3 @@ dependencies {
+-    implementation "com.github.ben-manes.caffeine:caffeine:3.2.3"
++    implementation "com.github.ben-manes.caffeine:caffeine:3.2.4"

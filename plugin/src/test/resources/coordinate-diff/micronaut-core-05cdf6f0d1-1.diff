@@ -1,0 +1,7 @@
+diff --git a/inject-python-test/build.gradle.kts b/inject-python-test/build.gradle.kts
+index 6560a25ae4..6864ea706a 100644
+--- a/inject-python-test/build.gradle.kts
++++ b/inject-python-test/build.gradle.kts
+@@ -44 +44 @@ dependencies {
+-    testImplementation("jakarta.data:jakarta.data-api:1.1.0-M1")
++    testImplementation("jakarta.data:jakarta.data-api:1.1.0-M3")

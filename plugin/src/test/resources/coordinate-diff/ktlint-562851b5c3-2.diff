@@ -1,0 +1,7 @@
+diff --git a/ktlint-ruleset-template/build.gradle.kts b/ktlint-ruleset-template/build.gradle.kts
+index 95939ece..d4434851 100644
+--- a/ktlint-ruleset-template/build.gradle.kts
++++ b/ktlint-ruleset-template/build.gradle.kts
+@@ -41 +41 @@ dependencies {
+-    testImplementation("org.slf4j:slf4j-simple:2.0.17")
++    testImplementation("org.slf4j:slf4j-simple:2.0.18")

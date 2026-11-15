@@ -12,7 +12,8 @@ import java.util.zip.ZipFile
  * - a module new to the classpath, a changed order, a bumped module that now shadows a later entry;
  * - a bumped coordinate on no compared classpath, or declared in a configuration it does not extend;
  * - a bumped module's jar named in the test JVM's arguments;
- * - a version key a plugin shares, a library alias build logic names, a version read as a value.
+ * - a version key a plugin shares, a library alias build logic names, a version read as a value;
+ * - a build script value read anywhere but a notation's version, read in bulk or by a computed name.
  *
  * Bytes an own class compiled against the new version holds (an inlined constant, a Kotlin `inline`
  * body) are the class-digest rule's, which refuses whenever it cannot compare.
@@ -115,10 +116,12 @@ internal object DependencyRule {
             if (shape == CoordinateDiff.Shape.CATALOG) catalogs[path] = new
         }
         val propertyReaders = mutableMapOf<String, List<String>>()
+        val valueReaders = mutableMapOf<String, List<Pair<String, String>>>()
         if (inputs.context.maven != null) {
             pomReads(inputs, inputs.context.maven, bumps, propertyReaders)?.let { return it }
         } else {
             buildLogicReads(inputs, bumps, catalogs, includedBuilds)?.let { return it }
+            valueReads(inputs, bumps, includedBuilds, valueReaders)?.let { return it }
         }
 
         val recorded = ClasspathRecord.readMap(inputs.mapDir)
@@ -132,7 +135,7 @@ internal object DependencyRule {
                 RefusalKind.CLASSPATH_UNRECORDED,
                 "${candidates.joinToString()} change dependency versions only, but this task's resolved classpath could not be read",
             )
-        located(inputs, bumps, catalogs, propertyReaders, recorded, current)?.let { return it }
+        located(inputs, bumps, catalogs, propertyReaders, valueReaders, recorded, current)?.let { return it }
         return compare(inputs, candidates, recorded, current)
     }
 
@@ -233,6 +236,199 @@ internal object DependencyRule {
 
     private val SOURCE_SUFFIXES = listOf(".gradle", ".gradle.kts", ".kt", ".kts", ".java", ".groovy")
 
+    /**
+     * A build script value whose version changed is accepted only when every place the build names
+     * it is the version of a dependency notation [CoordinateDiff] reads: then the resolved classpath
+     * shows all the change did. [readers] gets each value's notations, by `group:name` and
+     * configuration. A value named anywhere else (a system property, a tool's version, `buildSrc`, a
+     * plugin's classpath), named nowhere, or reachable unnamed (the build's properties read in bulk,
+     * a lookup by a computed name) stays a path coverage cannot see. A text search, so a name that
+     * only looks alike refuses too.
+     */
+    private fun valueReads(
+        inputs: Inputs,
+        bumps: List<CoordinateDiff.Bump>,
+        includedBuilds: List<String>,
+        readers: MutableMap<String, List<Pair<String, String>>>,
+    ): Verdict? {
+        val values = bumps.filter { it.valueName != null }
+        if (values.isEmpty()) return null
+        val first = values.first()
+        fun unaccepted(why: String) = Verdict.Unaccepted(first.path, why)
+        val sources = inputs.git.run(
+            listOf(
+                "ls-files", "--cached", "--others", "--exclude-standard", "--",
+                "*.gradle", "*.gradle.kts", "buildSrc/*", "build-logic/*", "gradle.properties", "*/gradle.properties",
+            ) + includedBuilds.map { "$it/*" }
+        ).orEmpty().filter { path -> path.substringAfterLast('/') == "gradle.properties" || SOURCE_SUFFIXES.any(path::endsWith) }.distinct()
+        val texts = sources.mapNotNull { path -> runCatching { File(inputs.rootDir, path).readText() }.getOrNull()?.let { path to it } }
+        val scanned = texts.associate { (path, text) -> path to if (path.endsWith("gradle.properties")) null else scan(text) }
+        for ((path, scan) in scanned) {
+            scan ?: continue
+            BULK_READ.find(scan.masked)?.let {
+                return unaccepted("$path reads the build's properties in bulk (`${it.value.trim()}`), which hands over the value `${first.valueName}` unnamed")
+            }
+            DYNAMIC_LOOKUPS.firstNotNullOfOrNull { it.find(scan.masked) }?.let {
+                return unaccepted("$path looks a property up by a name it computes (`${lineAt(texts.first { t -> t.first == path }.second, it.range.first).trim()}`), which may be the value `${first.valueName}`")
+            }
+        }
+        for (name in values.map { it.valueName!! }.distinct()) {
+            val word = Regex("(?<![A-Za-z0-9_])${Regex.escape(name)}(?![A-Za-z0-9_])")
+            val notation = notationOf(name)
+            val found = mutableListOf<Pair<String, String>>()
+            for ((path, text) in texts) {
+                val scan = scanned.getValue(path)
+                if (scan == null) {
+                    if (word.containsMatchIn(text)) return unaccepted("$path names the value `$name`, which is no dependency notation's version")
+                    continue
+                }
+                val script = path.endsWith(".gradle") || path.endsWith(".gradle.kts")
+                val buildLogic = path.substringAfterLast('/').startsWith("settings.gradle") ||
+                    path.startsWith("buildSrc/") || path.startsWith("build-logic/") || path.contains("/buildSrc/") ||
+                    includedBuilds.any { path.startsWith("$it/") }
+                val lineStarts = listOf(0) + text.indices.filter { text[it] == '\n' }.map { it + 1 }
+                val lineOf = { offset: Int -> lineStarts.binarySearch(offset).let { if (it >= 0) it else -it - 2 } }
+                val blocks by lazy { CoordinateDiff.blocks(text.lines()) }
+                val occurrences = word.findAll(scan.masked).map { it.range.first } +
+                    scan.strings.filter { it.plain && it.content(text) == name }.map { it.start }
+                for (offset in occurrences) {
+                    val line = lineOf(offset)
+                    if (values.any { it.valueName == name && it.path == path && it.line == line }) continue
+                    // The outermost string around the occurrence: a notation names the value in its version.
+                    val outer = scan.strings.filter { it.start < offset && offset < it.end }.minByOrNull { it.start }
+                    val reader = outer?.takeIf { script && !buildLogic && it.quote == "\"" }?.let { string ->
+                        val parts = notation.matchEntire(string.content(text)) ?: return@let null
+                        if (lineOf(string.end - 1) != line || blocks.getOrNull(line) !in CoordinateDiff.NOTATION_BLOCKS) return@let null
+                        val start = lineStarts[line]
+                        val end = lineStarts.getOrNull(line + 1)?.minus(1) ?: text.length
+                        val prefix = scan.masked.substring(start, string.start)
+                        val suffix = scan.masked.substring(string.end, end)
+                        val configuration = NOTATION_PREFIX.matchEntire(prefix)?.groupValues?.get(1) ?: return@let null
+                        if (!NOTATION_SUFFIX.matches(suffix) || prefix.count { it == '(' } != suffix.count { it == ')' }) return@let null
+                        "${parts.groupValues[1]}:${parts.groupValues[2]}" to configuration
+                    } ?: return unaccepted("$path names the value `$name` outside a dependency notation's version: `${lineAt(text, offset).trim()}`")
+                    found += reader
+                }
+            }
+            if (found.isEmpty()) return unaccepted("no build script of the checkout reads the value `$name`, so whatever reads it lies outside")
+            readers[name] = found.distinct()
+        }
+        return null
+    }
+
+    /**
+     * A dependency notation's whole string whose version reads [name]: `g:a:${'$'}name`,
+     * `g:a:${'$'}{rootProject.ext.name}`, or an accessor naming it in full (`extra["name"]`,
+     * `property("name")`).
+     */
+    private fun notationOf(name: String): Regex {
+        val n = Regex.escape(name)
+        val qualifier = "(?:[A-Za-z_][A-Za-z0-9_]*\\.)*"
+        val literal = "[\"']$n[\"']"
+        val expression = "$qualifier(?:$n|(?:ext|extra)\\[\\s*$literal\\s*]|(?:ext|extra)\\.get\\(\\s*$literal\\s*\\)|(?:property|findProperty)\\(\\s*$literal\\s*\\))"
+        return Regex("^([^:\"'$\\s]+):([^:\"'$\\s]+):(?:\\$\\{\\s*$expression\\s*}|\\$$qualifier$n)$")
+    }
+
+    /** What precedes a notation on its line, comments blanked: its configuration, maybe a platform wrapper. */
+    private val NOTATION_PREFIX = Regex("""^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\s*)?(?:(?:platform|enforcedPlatform)\s*\(\s*)?$""")
+    private val NOTATION_SUFFIX = Regex("""^\s*\)?\s*\)?\s*;?\s*$""")
+
+    /** A read of every property at once: `project.properties` holds every `ext` value too. */
+    private val BULK_READ = Regex("""(?<![A-Za-z0-9_])(?:properties|getProperties|gradlePropertiesPrefixedBy)(?![A-Za-z0-9_])""")
+
+    /** A property looked up by anything but a whole literal name; string contents are blanked to [BLANK]. */
+    private val DYNAMIC_LOOKUPS = listOf(
+        Regex("""(?<![A-Za-z0-9_])(?<!objects\.)(?:property|findProperty|getProperty|hasProperty|gradleProperty)\s*+(?:\(\s*+)?+(?!["']\u0001*+["'])"""),
+        Regex("""(?<![A-Za-z0-9_])(?:ext|extra)\s*+\[\s*+(?!["']\u0001*+["']\s*+])"""),
+        Regex("""(?<![A-Za-z0-9_])(?:ext|extra)\s*+\.\s*+(?:get|set|has)\s*+\(\s*+(?!["']\u0001*+["'])"""),
+    )
+
+    private const val BLANK = '\u0001'
+
+    private fun lineAt(text: String, offset: Int): String =
+        text.substring(text.lastIndexOf('\n', offset - 1) + 1, text.indexOf('\n', offset).let { if (it < 0) text.length else it })
+
+    /** A string literal of a script, from its opening quote to past its closing one. */
+    private class StringLiteral(val start: Int, val end: Int, val quote: String, val plain: Boolean) {
+        fun content(text: String) = text.substring(start + quote.length, maxOf(start + quote.length, end - quote.length))
+    }
+
+    /** A script with comments blanked and string contents set to [BLANK], interpolations kept, and its strings. */
+    private class Scan(val masked: String, val strings: List<StringLiteral>)
+
+    /**
+     * Reads a Kotlin, Groovy or Java source as code, comments and strings, an interpolation
+     * (`${'$'}name`, `${'$'}{...}`) of a double-quoted string read as code.
+     */
+    private fun scan(text: String): Scan {
+        val out = StringBuilder(text)
+        val strings = mutableListOf<StringLiteral>()
+        fun blank(from: Int, to: Int, with: Char) {
+            for (k in from until minOf(to, text.length)) if (text[k] != '\n') out.setCharAt(k, with)
+        }
+        lateinit var code: (Int, Boolean) -> Int
+        fun string(start: Int): Int {
+            val quote = when {
+                text.startsWith("\"\"\"", start) -> "\"\"\""
+                text.startsWith("'''", start) -> "'''"
+                else -> text[start].toString()
+            }
+            val interpolating = quote[0] == '"'
+            var plain = true
+            var i = start + quote.length
+            while (i < text.length) {
+                if (text.startsWith(quote, i)) { i += quote.length; break }
+                val c = text[i]
+                if (quote.length == 1 && c == '\n') break
+                when {
+                    c == '\\' && quote.length == 1 -> { blank(i, i + 2, BLANK); i += 2 }
+                    interpolating && c == '$' && text.getOrNull(i + 1) == '{' -> {
+                        plain = false
+                        i = code(i + 2, true) + 1
+                    }
+                    interpolating && c == '$' && text.getOrNull(i + 1)?.let { it.isLetter() || it == '_' } == true -> {
+                        plain = false
+                        i++
+                        while (i < text.length && (text[i].isLetterOrDigit() || text[i] == '_' ||
+                                (text[i] == '.' && text.getOrNull(i + 1)?.let { it.isLetter() || it == '_' } == true))
+                        ) i++
+                    }
+                    else -> { blank(i, i + 1, BLANK); i++ }
+                }
+            }
+            strings += StringLiteral(start, minOf(i, text.length), quote, plain)
+            return i
+        }
+        code = { from, nested ->
+            var i = from
+            var depth = 0
+            var result = text.length
+            while (i < text.length) {
+                val c = text[i]
+                when {
+                    text.startsWith("//", i) -> {
+                        val end = text.indexOf('\n', i).let { if (it < 0) text.length else it }
+                        blank(i, end, ' '); i = end
+                    }
+                    text.startsWith("/*", i) -> {
+                        val end = text.indexOf("*/", i + 2).let { if (it < 0) text.length else it + 2 }
+                        blank(i, end, ' '); i = end
+                    }
+                    c == '"' || c == '\'' -> i = string(i)
+                    c == '{' -> { depth++; i++ }
+                    c == '}' -> {
+                        if (nested && depth == 0) { result = i; break }
+                        depth--; i++
+                    }
+                    else -> i++
+                }
+            }
+            result
+        }
+        code(0, false)
+        return Scan(out.toString(), strings)
+    }
+
     /** Whether [accessor] occurs inside a `buildscript {}` block of [text]. */
     private fun inBuildscript(text: String, accessor: Regex): Boolean {
         var at = 0
@@ -309,28 +505,31 @@ internal object DependencyRule {
         catalogs: Map<String, String>,
         /** On Maven, each bumped property's readers, by `group:name`. */
         propertyReaders: Map<String, List<String>>,
+        /** Each bumped build script value's notations, by `group:name` and configuration. */
+        valueReaders: Map<String, List<Pair<String, String>>>,
         recorded: ClasspathRecord.Record,
         current: ClasspathRecord.Record,
     ): Verdict? {
         val onClasspath = (recorded.modules + current.modules).mapTo(HashSet()) { coordinateOf(it.identity) }
         for (bump in bumps) {
-            val coordinates = when {
+            val declared: List<Pair<String, String?>> = when {
                 bump.coordinate == "?" -> return unlocated("a dependency bumped in ${bump.path} names no literal `groupId` and `artifactId`")
-                bump.coordinate != null -> listOf(bump.coordinate)
-                bump.versionKey != null && bump.shape == CoordinateDiff.Shape.POM -> propertyReaders[bump.versionKey].orEmpty()
+                bump.coordinate != null -> listOf(bump.coordinate to bump.configuration)
+                bump.valueName != null -> valueReaders[bump.valueName].orEmpty()
+                bump.versionKey != null && bump.shape == CoordinateDiff.Shape.POM -> propertyReaders[bump.versionKey].orEmpty().map { it to null }
                 bump.versionKey != null -> catalogs.values.flatMap { librariesUsing(it, bump.versionKey).values }
-                    .map { it ?: return unlocated("the version `${bump.versionKey}` is used by a library whose coordinate cannot be read") }
+                    .map { (it ?: return unlocated("the version `${bump.versionKey}` is used by a library whose coordinate cannot be read")) to null }
                 else -> emptyList()
             }
-            for (coordinate in coordinates) {
+            for ((coordinate, configuration) in declared) {
                 if (coordinate !in onClasspath) {
                     return unlocated("`$coordinate`, bumped in ${bump.path}, is on none of this task's classpaths")
                 }
-            }
-            val configuration = bump.configuration ?: continue
-            val configurations = runCatching { inputs.context.configurations() }.getOrNull()
-            if (configurations == null || configuration !in configurations) {
-                return unlocated("`${bump.coordinate}`, bumped in ${bump.path}, is declared in `$configuration`, which this task's classpath does not extend")
+                configuration ?: continue
+                val configurations = runCatching { inputs.context.configurations() }.getOrNull()
+                if (configurations == null || configuration !in configurations) {
+                    return unlocated("`$coordinate`, bumped in ${bump.path}, is declared in `$configuration`, which this task's classpath does not extend")
+                }
             }
         }
         return null

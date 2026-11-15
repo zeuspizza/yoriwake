@@ -1,0 +1,7 @@
+diff --git a/build.gradle b/build.gradle
+index 00c64472a..90fcac972 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -24 +24 @@ ext {
+-    jupiterLauncherVersion = "6.1.1"
++    jupiterLauncherVersion = "6.1.2"

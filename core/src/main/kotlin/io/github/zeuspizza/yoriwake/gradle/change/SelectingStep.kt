@@ -162,6 +162,9 @@ internal object SelectingStep {
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
         ) { message -> host.lifecycle("[yoriwake] ${host.name}: $message") }
+            // An accepted build file left the change set, yet a test may read it as a file: it runs
+            // the tests from each JVM's first read of it on, as a moved classpath file does.
+            .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }
         reportDigest(widening) { message -> host.lifecycle("[yoriwake] ${host.name}: $message") }
         reportLines(widening.lines).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
         val lines = widening.lines

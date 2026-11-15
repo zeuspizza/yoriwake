@@ -111,9 +111,59 @@ class CoordinateDiffTest {
     }
 
     @Test
-    fun `the same bump in buildscript, or a version held in a variable, is refused`() {
+    fun `the same bump in buildscript is refused`() {
         assertIs<Verdict.Refused>(classify(Shape.SCRIPT, script, script.replace("tool:1.0", "tool:1.1")))
-        assertIs<Verdict.Refused>(classify(Shape.SCRIPT, script, script.replace("val v = \"1.0\"", "val v = \"1.1\"")))
+    }
+
+    @Test
+    fun `a notation in a constraints block, or wrapped in a platform, is accepted`() {
+        val platform = "dependencies {\n    api(platform(\"g:bom:2.0\"))\n    constraints {\n        api(\"g:a:1.0\")\n    }\n}"
+        assertEquals(
+            listOf("g:a" to "api"),
+            accepted(classify(Shape.SCRIPT, platform, platform.replace("g:a:1.0", "g:a:1.1"))).map { it.coordinate to it.configuration },
+        )
+        assertEquals(listOf("g:bom"), accepted(classify(Shape.SCRIPT, platform, platform.replace("bom:2.0", "bom:2.1"))).map { it.coordinate })
+    }
+
+    @Test
+    fun `a notation nested for other projects, a source set or a plugin is refused`() {
+        for (outer in listOf("subprojects {\n", "allprojects {\n", "project(\":x\") {\n", "configure(subprojects) {\n", "kotlin {\n    sourceSets {\n        commonMain.")) {
+            val text = "${outer}dependencies {\n    implementation(\"g:a:1.0\")\n}\n" + "}\n".repeat(outer.count { it == '{' })
+            assertIs<Verdict.Refused>(classify(Shape.SCRIPT, text, text.replace("g:a:1.0", "g:a:1.1")), outer)
+        }
+        val plugin = "plugins {\n    id(\"p\") version \"2.0\"\n}\nversion = \"2.0\""
+        assertIs<Verdict.Refused>(classify(Shape.SCRIPT, plugin, plugin.replace("version \"2.0\"", "version \"2.1\"")))
+        assertIs<Verdict.Refused>(classify(Shape.SCRIPT, plugin, plugin.replace("version = \"2.0\"", "version = \"2.1\"")))
+    }
+
+    @Test
+    fun `a version changed beside anything else in its hunk is refused`() {
+        val old = "dependencies {\n    implementation(\"g:a:1.0\")\n}"
+        val new = "dependencies {\n    implementation(\"g:a:1.1\") { exclude(group = \"g\") }\n}"
+        assertIs<Verdict.Refused>(classify(Shape.SCRIPT, old, new))
+    }
+
+    @Test
+    fun `a named version value is accepted with its name, and left to the rule after`() {
+        val values = """
+            val v = "1.0"
+            def w = '1.0'
+            ext.x = "1.0"
+            extra["y"] = "1.0"
+            ext {
+                z = "1.0"
+            }
+            tasks {
+                q = "1.0"
+            }
+        """.trimIndent()
+        for (name in listOf("v", "w", "x", "y", "z")) {
+            val line = values.lines().first { Regex("\\b$name\\b").containsMatchIn(it) }
+            val bumps = accepted(classify(Shape.SCRIPT, values, values.replace(line, line.replace("1.0", "1.1"))))
+            assertEquals(listOf(name), bumps.map { it.valueName }, line)
+            assertEquals(listOf(values.lines().indexOf(line)), bumps.map { it.line })
+        }
+        assertIs<Verdict.Refused>(classify(Shape.SCRIPT, values, values.replace("q = \"1.0\"", "q = \"1.1\"")))
     }
 
     @Test
@@ -210,7 +260,9 @@ class CoordinateDiffTest {
         val index = resource("index.tsv").lines().filter(String::isNotBlank)
         for (row in index) {
             val (expected, name, _, _, path) = row.split('\t')
-            val shape = CoordinateDiff.shapeOf(path) ?: fail("$name: $path has no shape")
+            // A module script the settings name otherwise (`buildFileName`) has no shape, and its lines are still a notation's.
+            val shape = CoordinateDiff.shapeOf(path) ?: Shape.SCRIPT.takeIf { path.endsWith(".gradle") || path.endsWith(".gradle.kts") }
+                ?: fail("$name: $path has no shape")
             val verdict = CoordinateDiff.classify(path, shape, resource("$name.diff").lines(), resource("$name.old"), resource("$name.new"))
             val got = if (verdict is Verdict.Accepted) "accepted" else "refused"
             assertEquals(expected, got, "$name ($path): $verdict")
