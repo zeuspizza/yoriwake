@@ -193,6 +193,7 @@ AUDIT_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/A
 DECODE_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks/DecodeTask.kt"
 DECODE_RUN = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/DecodeRun.kt"
 AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contract/AgentContract.java"
+TEST_CLASS_IDS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contract/TestClassIds.java"
 # ChangeSelection.kt was split by responsibility; each anchor followed its function, unchanged.
 SELECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 CLASSPATH_SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
@@ -1489,8 +1490,8 @@ MUTATIONS = [
     # the INNERMOST class leaves the enclosing class's other tests skipped, which is the shared
     # static state that actually breaks them.
     ("class granularity rounds to the innermost class instead of the outermost", SELECTION_FILTER,
-     '            if (at.getUniqueId().toString().contains("[class:")) {',
-     '            if (found == null && at.getUniqueId().toString().contains("[class:")) {',
+     '            if (TestClassIds.scopeOf(at.getUniqueId().toString()) != null) {',
+     '            if (found == null && TestClassIds.scopeOf(at.getUniqueId().toString()) != null) {',
      agent_suite, "rounding is to the outermost class, so a nested sibling is included"),
     ("the filter stops asking the container-aware rule", FILTER_RULE,
      "        return isTest ? decision.reasonForTest(id) : decision.subtreeReason(id);",
@@ -2316,6 +2317,24 @@ MUTATIONS = [
      "            inScopeClasses.filter { name -> owners.none { ownedBy(name, it) } }.forEach { touchNamed(it, sequence) }",
      "            owners.size",
      decoder_suite, "lookups and reads during discovery do not date a test class, and those after do"),
+    # A Spock specification is the class its features belong to, read alike by capture, selection
+    # and the decoder; any other engine's spec segment is not.
+    ("any engine's spec segment is read as a class", TEST_CLASS_IDS,
+     "        int start = earliest(id.indexOf(CLASS_SEGMENT), specSegmentAt(id.indexOf(SPOCK_SPEC)));",
+     '        int start = earliest(id.indexOf(CLASS_SEGMENT), id.indexOf("[spec:"));',
+     agent_suite, "a spec segment under another engine is not a class"),
+    ("capture stops scoping a window to a Spock specification", CAPTURE_SESSION,
+     "        return TestClassIds.scopeOf(id);",
+     '        return id == null || !id.contains("[class:") ? null : TestClassIds.scopeOf(id);',
+     agent_suite, "a Spock feature and its iterations are scoped to their specification"),
+    ("an edited Spock specification stops being its features' own class", SELECTOR,
+     "        return TestClassIds.nameOf(TestClassIds.scopeOf(testId));",
+     '        return testId.contains("[class:") ? TestClassIds.nameOf(TestClassIds.scopeOf(testId)) : null;',
+     agent_suite, "an edited Spock specification runs its own features and those after it, not those before it"),
+    ("a Spock specification stops owning its windows in the decoder", COVERAGE_DECODER,
+     "            .mapNotNull { TestClassIds.nameOf(TestClassIds.scopeOf(it)) }",
+     '            .filter { "[class:" in it }.mapNotNull { TestClassIds.nameOf(TestClassIds.scopeOf(it)) }',
+     decoder_suite, "a Spock specification owns its windows, so its own code there is no named touch"),
     ("touches with no plan start are read as though discovery ended at once", COVERAGE_DECODER,
      "        if (!planStarted) touchNamed(FIRST_TOUCH_ANY, 0)",
      "        if (false) touchNamed(FIRST_TOUCH_ANY, 0)",
