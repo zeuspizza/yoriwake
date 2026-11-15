@@ -253,7 +253,8 @@ internal class TaskArtifacts(
         return found + unsearchable
     }
 
-    private fun needles(path: String, naming: Naming): Set<String> {
+    /** The strings that name [path] under [naming]; see [Naming]. */
+    internal fun needles(path: String, naming: Naming): Set<String> {
         if (naming == Naming.CLASS_SOURCE) {
             val segments = path.split('/')
             val forms = mutableSetOf(path)
@@ -406,9 +407,7 @@ internal class TaskArtifacts(
             return emptySet()
         }
         val needles = names.associateWith { it.toByteArray(Charsets.ISO_8859_1) }
-        val found = mutableSetOf<String>()
-        directories.forEach { root -> searchTree(root, needles, found) }
-        ownJars.forEach { jar -> searchJar(jar, needles, found) }
+        val found = namedInOwnResources(needles)
         val budget = longArrayOf(MAX_SCAN_BYTES)
         otherJars.forEach { jar ->
             if (found.size == needles.size) return found
@@ -418,6 +417,20 @@ internal class TaskArtifacts(
             }
             searchJar(jar, needles, found, budget)
         }
+        return found
+    }
+
+    /**
+     * As [namedInResources], over this build's own output alone: for names no dependency can know,
+     * such as a path in this repository.
+     */
+    fun namedInOwnResources(names: Collection<String>): Set<String> =
+        if (names.isEmpty()) emptySet() else namedInOwnResources(names.associateWith { it.toByteArray(Charsets.ISO_8859_1) })
+
+    private fun namedInOwnResources(needles: Map<String, ByteArray>): MutableSet<String> {
+        val found = mutableSetOf<String>()
+        directories.forEach { root -> searchTree(root, needles, found) }
+        ownJars.forEach { jar -> searchJar(jar, needles, found) }
         return found
     }
 

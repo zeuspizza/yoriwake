@@ -22,6 +22,8 @@ internal class ProjectFacts(
      * path lies; [sourceDirs] stays main-only because the instrumentation scope is derived from it.
      */
     val allSourceDirs: List<File>,
+    /** Gradle path to the project's build file, repository-relative, whether or not it exists. */
+    val buildFiles: Map<String, String> = emptyMap(),
 )
 
 /** [ProjectFacts] for this build, computed once and keyed by the root it was read from. */
@@ -31,7 +33,9 @@ internal fun projectFacts(project: Project, memo: BuildMemo?): ProjectFacts {
         val buildDirs = mutableMapOf<String, String>()
         val sourceDirs = mutableListOf<File>()
         val allSourceDirs = mutableListOf<File>()
+        val buildFiles = mutableMapOf<String, String>()
         project.rootProject.allprojects.forEach { candidate ->
+            buildFiles[candidate.path] = candidate.buildFile.relativeTo(project.rootDir).invariantSeparatorsPath
             moduleDirs[
                 candidate.projectDir.relativeTo(project.rootDir).invariantSeparatorsPath.trim('/')
             ] = candidate.path
@@ -55,7 +59,7 @@ internal fun projectFacts(project: Project, memo: BuildMemo?): ProjectFacts {
                 File(candidate.projectDir, "src").listFiles()?.filter(File::isDirectory).orEmpty()
             }
         }
-        ProjectFacts(moduleDirs, buildDirs, sourceDirs, allSourceDirs)
+        ProjectFacts(moduleDirs, buildDirs, sourceDirs, allSourceDirs, buildFiles)
     }
     val compute = { memo?.time(YoriwakePlugin.WALK_COUNTER, walk) ?: walk() }
     return if (memo == null) compute() else memo.value(YoriwakePlugin.FACTS_KEY + project.rootDir.path, compute)

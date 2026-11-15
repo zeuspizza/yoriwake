@@ -232,7 +232,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             { ChangeDetection.changedPaths(git, root, it) { path -> Recording.isBuildState(path) } },
             settings.largeChangeThreshold,
         ) { _, changed -> LargeChange.counted(changed, null) }
-        val (widened, paths) = when (settled) {
+        val selected = when (settled) {
             is SelectionSetup.Outcome.RunEverything -> {
                 host.refuse(settled.kind, settled.reason)
                 SelectingStep.runEverything(
@@ -245,8 +245,10 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 SelectingStep.withoutChangeSet(host, mapDir, observing = observing, settled.against)
                 return kind
             }
-            is SelectionSetup.Outcome.Select -> settled.widened to settled.paths
+            is SelectionSetup.Outcome.Select -> settled
         }
+        val widened = selected.widened
+        val paths = selected.paths
         // First of the checks a selecting run makes once it has a change set, as on Gradle.
         trusted?.let { listed ->
             MapProvenance.verify(mapDir, listed[listedName]).refusal?.let { (refusal, reason) ->
@@ -298,7 +300,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 mapDir, root, paths, widened.ref, widened.origin, sourceDirs, view,
                 notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing, text = text,
                 dependencies = dependencies,
-                narrowLineOnlyChanges = narrowLineOnlyChanges,
+                narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = selected.stamp, moved = selected.moved,
             ),
             host,
         )

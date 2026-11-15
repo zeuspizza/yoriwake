@@ -34,10 +34,22 @@ guess.
   to it of two or more segments: `../beta/src/main/java/dev/beta/Thing.java`,
   `src/main/java/dev/beta/Thing.java`, `beta/src` or its output's `beta/build` all keep it, as
   does the module's build directory wherever it lies (`build/beta`). A test that builds the path from
-  single names or walks the tree to it is not seen. The module's other files keep counting. A
-  module counts as reached when a source or resource directory of the tested module, or of a
-  module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`); a source
-  added on a compile task alone (`tasks.compileJava { source(...) }`) is not read.
+  single names or walks the tree to it is not seen. The module's build script and its other files
+  under `src/` are left out too when nothing else can carry them to a test: no class or resource
+  of the task holds their path or file name, the task hands its test JVM no path into the module
+  (in a JVM argument, an environment value, a declared input or its working directory) and depends
+  on no task of it, and no build script reaches across. The build script reaches across when either
+  revision configures another project or the build at large (`project(":x") {}`, `rootProject`,
+  `allprojects`, `gradle.`, `apply from`, a `..` path), changes the plugins it applies, or belongs
+  to a module that holds the tested one; and so does the settings script, or the build script of
+  the tested module, one above it or the root, that names the module. The module's other files keep
+  counting. A module counts as reached when a source or resource directory of the tested module, or
+  of a module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`), when the
+  test task hands its test JVM a path in it or above it below the root (`-javaagent:beta/build/...`,
+  a system property, an environment value, a declared input), or when the test task depends on a
+  task of it (`dependsOn(":beta:jar")`) or on a task that reads a file of it; a source added on a
+  compile task alone
+  (`tasks.compileJava { source(...) }`) is not read.
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
   now and always runs one the map has never seen.
@@ -69,6 +81,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
 | `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore` (on Maven, ignore them in git); see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `:test: N changed file(s) of modules this task neither loads nor reaches, … are no change: <paths>` | another module's build script or files under `src/` left out of the change set, as nothing carries them to a test; see [How it works](#how-it-works) |
 | `pathIgnore left out N changed paths (…): <paths>` | the changed paths `pathIgnore` took out of the change set, counted by entry; see [Paths no test reads](#paths-no-test-reads) |
 | `pathIgnore entry '<entry>' matches <path>, which stays in the change set (<protection>)` | a declared path that is protected, and why |
 | `<path> was read at capture, … despite pathIgnore entry '<entry>' …` | a test JVM read a declared path when the map was recorded, so the tests from that read on run |
@@ -127,8 +140,10 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   (see [Properties and tasks](#properties-and-tasks)); a path the build's `pathIgnore` declares, or
   on Gradle one of its [defaults](#the-defaults) matches (README and Markdown files, `docs/` and
   `.github/`), unless kept (see [Paths no test reads](#paths-no-test-reads)); and a Java or Kotlin source of a module that is not
-  on the task's runtime classpath, which no compiled class of the task names. The console counts
-  the first two and names each of the third;
+  on the task's runtime classpath, which no compiled class of the task names, or that module's build
+  script or other file under `src/` when nothing carries it to a test (see [How it
+  works](#how-it-works)). The console counts the first two and names each of the third, and each
+  build script or other file of the fourth;
 - a changed path a `dependsOn` entry matches, for that entry's task (`declared-path-changed`); see
   [Properties and tasks](#properties-and-tasks);
 - a changed class the map has never recorded (`no-coverage-for-changed`), because uncovered and
@@ -859,11 +874,19 @@ Three things differ:
     loads the class is seen.
 - **Another module's source a test finds without holding its path.** A Java or Kotlin source of a
   module the test task does not reach counts only when one of the task's classes holds a path to
-  it of two or more segments. A test that joins single names (`Path.of("..", "beta", "src", ...)`)
+  it of two or more segments. A module the test task hands a path into, or depends on a task of,
+  is reached. A test that joins single names (`Path.of("..", "beta", "src", ...)`)
   or walks the tree to the file is skipped when nothing else selects it. So is one that holds a
   middle part of the path, which neither starts at the module's name nor ends in the file's name
   (`src/main/java/dev/beta`), and joins the rest. Write the path from the module, or from `src` to
-  the file's name, as one string, or pin the test.
+  the file's name, as one string, or pin the test. The same holds for that module's build script
+  and other files under `src/`, and for a test handed the repository root, or a directory above
+  it, that walks to one of them. So does a convention plugin, already applied and unchanged, that
+  configures the test from a value the module's build script sets, a script of the tested module,
+  one above it or the root that reads every project without naming one
+  (`subprojects.map { it.version }`), and a `buildSrc` or `build-logic` class that reads the
+  module's file. A `dependsOn` entry, or a test's
+  `yoriwake-depends-on:` tag, naming the path keeps such a test running.
 - **Build output a test reads by path.** A file under a build directory that is not on the test
   runtime classpath, such as a fixture under `build/` a test opens with `File`, is build state and
   never a change, so one generated from git state, the clock or the environment can change while
@@ -1998,7 +2021,15 @@ the Gradle plugin.
   environment, and the invocation's `-D` properties, or a source or resource root of its own or of
   a module it reaches (build-helper's, the compiler's `compileSourceRoots`, `<sourceDirectory>`,
   `<resources>`) that lies in it or above it. Edits to the others' sources are left out as on
-  Gradle. An expression there that the build's properties cannot resolve leaves them in.
+  Gradle. An expression there that the build's properties cannot resolve leaves them in. Their POMs
+  and other files under `src/` are left out too when no class or resource of the execution names
+  them, no path any value of the module's effective `<build>` or `<properties>`, or a file that
+  activates a profile of its POM or a parent's, holds lies in them or above them, they are not
+  upstream of the module in the reactor, and the POM, in either revision, is not a parent, BOM,
+  aggregator or `maven-plugin`, declares no build extension, names no path outside its module (`..`,
+  an absolute path, `${project.parent.basedir}`, `${maven.multiModuleProjectDirectory}`, the
+  session) and keeps its plugins. A plugin already declared and unchanged that changes another
+  module from a value the POM sets is not seen.
 - **`-pl` and `-am`**: a module built against a module of the same reactor that this invocation
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.
