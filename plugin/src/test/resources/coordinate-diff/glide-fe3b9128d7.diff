@@ -1,0 +1,7 @@
+diff --git a/third_party/disklrucache/build.gradle b/third_party/disklrucache/build.gradle
+index e9190b280..bb7bea96a 100644
+--- a/third_party/disklrucache/build.gradle
++++ b/third_party/disklrucache/build.gradle
+@@ -4 +4 @@ checkstyle {
+-    toolVersion = "6.6"
++    toolVersion = "6.19"

@@ -1,0 +1,10 @@
+diff --git a/framework-platform/framework-platform.gradle b/framework-platform/framework-platform.gradle
+index db7fbb403d..1f5baf961d 100644
+--- a/framework-platform/framework-platform.gradle
++++ b/framework-platform/framework-platform.gradle
+@@ -15 +15 @@ dependencies {
+-	api(platform("org.apache.groovy:groovy-bom:5.0.8"))
++	api(platform("org.apache.groovy:groovy-bom:5.1.1"))
+@@ -123 +123 @@ dependencies {
+-		api("org.hibernate.orm:hibernate-core:7.4.5.Final")
++		api("org.hibernate.orm:hibernate-core:7.4.7.Final")

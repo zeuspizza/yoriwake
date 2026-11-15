@@ -1,0 +1,12 @@
+diff --git a/framework-platform/framework-platform.gradle b/framework-platform/framework-platform.gradle
+index 38bc207802..db7fbb403d 100644
+--- a/framework-platform/framework-platform.gradle
++++ b/framework-platform/framework-platform.gradle
+@@ -126 +126 @@ dependencies {
+-		api("org.htmlunit:htmlunit:4.21.0")
++		api("org.htmlunit:htmlunit:5.4.0")
+@@ -137,2 +137,2 @@ dependencies {
+-		api("org.seleniumhq.selenium:htmlunit3-driver:4.41.0")
+-		api("org.seleniumhq.selenium:selenium-java:4.41.0")
++		api("org.seleniumhq.selenium:htmlunit3-driver:4.47.0")
++		api("org.seleniumhq.selenium:selenium-java:4.47.0")
