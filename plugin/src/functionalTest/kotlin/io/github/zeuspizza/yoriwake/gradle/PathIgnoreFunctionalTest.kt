@@ -15,8 +15,9 @@ import kotlin.test.assertTrue
 /** `pathIgnore`: declared paths leave the change set, protected paths stay, and every use is named. */
 class PathIgnoreFunctionalTest : FunctionalTestSupport() {
 
+    /** A build declaring [entries] alone: the defaults are off, so each test sees only its own entries. */
     private fun declaring(vararg entries: String, extra: String = "") =
-        minimalBuild + "\n$extra\nyoriwake { pathIgnore.addAll(${entries.joinToString { "\"$it\"" }}) }\n"
+        minimalBuild + "\n$extra\nyoriwake { pathIgnoreDefaults.set(false); pathIgnore.addAll(${entries.joinToString { "\"$it\"" }}) }\n"
 
     private val guide = "docs/guide.md" to "# Guide\n"
 
@@ -91,8 +92,33 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `without a declaration a change to documentation forces as before`(@TempDir dir: File) {
-        captured(dir, minimalBuild, guide)
+    fun `with nothing set a change to documentation and CI configuration only runs nothing extra`(@TempDir dir: File) {
+        captured(dir, minimalBuild, guide, "README.md" to "# Sample\n", ".github/workflows/ci.yml" to "on: push\n")
+        File(dir, "README.md").writeText("# Sample, again\n")
+        File(dir, "docs/guide.md").writeText("# Guide, again\n")
+        File(dir, ".github/workflows/ci.yml").writeText("on: pull_request\n")
+
+        val output = selecting(dir)
+
+        assertEquals(emptySet(), ranTests(dir), output)
+        val notes = decisionNotes(dir)
+        assertEquals("narrowed", notes["outcome"], output)
+        assertEquals("3", notes["paths-ignored"], output)
+        assertContains(notes["input.yoriwake.change.ignored"].orEmpty(), "default:docs/")
+        assertContains(
+            output,
+            "pathIgnore left out 3 changed paths (1 by 'default:.github/', 1 by 'default:**/README*', " +
+                "1 by 'default:docs/'): .github/workflows/ci.yml, README.md, docs/guide.md",
+        )
+
+        val explanation = explained(dir)
+        assertContains(explanation, """{ "path": "docs/guide.md", "entry": "docs/", "evidence": "not-read", "default": true }""")
+        assertContains(explanation, """"fullRun": false""")
+    }
+
+    @Test
+    fun `with the defaults turned off a change to documentation forces as before`(@TempDir dir: File) {
+        captured(dir, minimalBuild + "\nyoriwake { pathIgnoreDefaults.set(false) }\n", guide)
         File(dir, "docs/guide.md").writeText("# Guide, again\n")
 
         val output = selecting(dir)
@@ -100,6 +126,54 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
         assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir), output)
         assertFalse("pathIgnore" in output, output)
+
+        val explanation = explained(dir)
+        assertContains(explanation, """"fullRun": true""")
+        assertFalse(""""default": true""" in explanation, explanation)
+    }
+
+    @Test
+    fun `a stock test task with JaCoCo declares no input under the root beyond its classpath and classes`(
+        @TempDir dir: File,
+    ) {
+        // What the defaults' task-input rule relies on: otherwise every build would keep them.
+        val listing = """
+            tasks.register("extraInputs") {
+                val test = tasks.test.get()
+                val inputs = test.inputs.files
+                val within = test.classpath + test.testClassesDirs
+                val root = rootDir
+                doLast {
+                    val owned = within.files
+                    inputs.files.filter { it.startsWith(root) && owned.none { o -> it.startsWith(o) } }
+                        .forEach { println("extra input: " + it) }
+                    println("inputs listed")
+                }
+            }
+        """.trimIndent()
+        build(dir, "build.gradle.kts" to minimalBuild + "\n" + listing + "\n", oneClass, oneTest)
+
+        val output = runner(dir, "extraInputs").build().output
+
+        assertContains(output, "inputs listed")
+        assertFalse("extra input:" in output, output)
+    }
+
+    @Test
+    fun `a default-matched path stays when the test task declares an input of its own under the root`(
+        @TempDir dir: File,
+    ) {
+        captured(dir, minimalBuild + "\ntasks.test { inputs.dir(\"docs\") }\n", guide)
+        File(dir, "docs/guide.md").writeText("# Guide, again\n")
+
+        val output = selecting(dir)
+
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
+        assertContains(output, "pathIgnore entry 'default:docs/' matches docs/guide.md, which stays in the change set (task-input)")
+        assertContains(
+            explained(dir),
+            """{ "path": "docs/guide.md", "entry": "docs/", "protection": "task-input", "default": true }""",
+        )
     }
 
     @Test

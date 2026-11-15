@@ -214,6 +214,116 @@ class PathIgnoreTest {
         assertEquals(PathIgnore.Evidence.NO_READ_EVIDENCE, PathIgnoreReport.evidence(applied, File(root, "no-map"))["docs/a.md"])
     }
 
+    private fun withDefaults(root: File, vararg entries: String, sourceDirs: List<String> = emptyList()) =
+        PathIgnore.Declaration(entries.toList(), root, sourceDirs, emptyList(), emptySet(), PathIgnore.DEFAULTS)
+
+    private val noInputs: () -> List<String> = { emptyList() }
+
+    private val everyJvmRecorded: () -> Boolean = { true }
+
+    @Test
+    fun `a build's own entry wins over a default that matches the same path`(@TempDir root: File) {
+        val applied = PathIgnore.apply(listOf("docs/guide.md", "README.md"), withDefaults(root, "docs/**"), namesNothing)
+        assertEquals(
+            listOf(PathIgnore.Ignored("README.md", "**/README*", default = true), PathIgnore.Ignored("docs/guide.md", "docs/**")),
+            applied.ignored,
+        )
+    }
+
+    @Test
+    fun `the docs default is the top-level directory only`(@TempDir root: File) {
+        val applied = PathIgnore.apply(listOf("docs/a/b.txt", "core/docs/a.txt"), withDefaults(root), namesNothing)
+        assertEquals(listOf(PathIgnore.Ignored("docs/a/b.txt", "docs/", default = true)), applied.ignored)
+        assertEquals(listOf("core/docs/a.txt"), applied.kept)
+    }
+
+    @Test
+    fun `a readme under src is kept from a default as source-set`(@TempDir root: File) {
+        val applied = PathIgnore.apply(listOf("src/test/resources/README.txt"), withDefaults(root), namesNothing)
+        assertEquals(
+            PathIgnore.Kept("src/test/resources/README.txt", "**/README*", Protection.SOURCE_SET, default = true),
+            applied.notIgnored.single(),
+        )
+    }
+
+    @Test
+    fun `a default-matched path the map cannot show unread stays, where a build's own entry leaves it out`(
+        @TempDir root: File,
+    ) {
+        val noMap = File(root, "no-map")
+        val byDefault = PathIgnore.gated(
+            PathIgnore.apply(listOf("docs/x.md"), withDefaults(root), namesNothing),
+            { PathIgnore.recordsEveryJvm(noMap) }, noInputs,
+        )
+        assertEquals(listOf("docs/x.md"), byDefault.kept)
+        assertEquals(PathIgnore.Kept("docs/x.md", "docs/", Protection.NO_READ_EVIDENCE, default = true), byDefault.notIgnored.single())
+
+        val declared = PathIgnore.gated(
+            PathIgnore.apply(listOf("docs/x.md"), withDefaults(root, "docs/**"), namesNothing),
+            { PathIgnore.recordsEveryJvm(noMap) }, noInputs,
+        )
+        assertEquals(emptyList(), declared.kept)
+        assertEquals(listOf(PathIgnore.Ignored("docs/x.md", "docs/**")), declared.ignored)
+    }
+
+    @Test
+    fun `a default-matched path stays left out when the map recorded every test JVM's reads`(@TempDir root: File) {
+        val applied = PathIgnore.gated(PathIgnore.apply(listOf("docs/x.md"), withDefaults(root), namesNothing), everyJvmRecorded, noInputs)
+        assertEquals(listOf(PathIgnore.Ignored("docs/x.md", "docs/", default = true)), applied.ignored)
+    }
+
+    @Test
+    fun `a default-matched path stays when some test JVM's reads went unrecorded, whatever another JVM read`(@TempDir root: File) {
+        // A read in a recorded JVM opens no window in an unrecorded one, so it cannot leave a default standing.
+        val applied = PathIgnore.gated(PathIgnore.apply(listOf("docs/x.md"), withDefaults(root), namesNothing), { false }, noInputs)
+        assertEquals(emptyList(), applied.ignored)
+        assertEquals(PathIgnore.Kept("docs/x.md", "docs/", Protection.NO_READ_EVIDENCE, default = true), applied.notIgnored.single())
+    }
+
+    @Test
+    fun `a test task input of its own under the root keeps every default-matched path`(@TempDir root: File) {
+        val applied = PathIgnore.gated(
+            PathIgnore.apply(listOf("docs/x.md", "README.md", "notes/a.txt"), withDefaults(root, "notes/**"), namesNothing),
+            everyJvmRecorded, { listOf("docs/x.md") },
+        )
+        assertEquals(listOf(PathIgnore.Ignored("notes/a.txt", "notes/**")), applied.ignored)
+        assertEquals(setOf(Protection.TASK_INPUT), applied.notIgnored.map { it.protection }.toSet())
+        assertEquals(listOf("README.md", "docs/x.md"), applied.notIgnored.map { it.path })
+    }
+
+    @Test
+    fun `no default left a path out, so neither the map nor the task's inputs are asked`(@TempDir root: File) {
+        val applied = PathIgnore.apply(listOf("notes/a.txt"), withDefaults(root, "notes/**"), namesNothing)
+        assertTrue(applied === PathIgnore.gated(applied, { error("map asked") }, { error("inputs asked") }))
+    }
+
+    @Test
+    fun `a task input is any file under the root outside the classpath and the test classes`(@TempDir root: File) {
+        val classes = File(root, "build/classes/java/test")
+        val extra = io.github.zeuspizza.yoriwake.gradle.wiring.extraTaskInputs(
+            root,
+            setOf(File(classes, "dev/ATest.class"), File(root, "libs/a.jar"), File(root, "docs/x.md"), File("/elsewhere/agent.jar")),
+            setOf(classes, File(root, "libs/a.jar")),
+        )
+        assertEquals(listOf("docs/x.md"), extra)
+    }
+
+    @Test
+    fun `a build whose changed paths match no entry or default builds no declaration`(@TempDir root: File) {
+        val project = ProjectBuilder.builder().withProjectDir(root).build()
+        val declare = { paths: List<String>, defaults: Boolean ->
+            io.github.zeuspizza.yoriwake.gradle.wiring.pathIgnoreDeclaration(project, emptyList(), defaults, emptyList(), listOf("HEAD"), paths, null)
+        }
+        assertNull(declare(listOf("src/main/java/A.java"), true))
+        assertNull(declare(listOf("docs/x.md"), false))
+        assertEquals(PathIgnore.DEFAULTS, declare(listOf("docs/x.md"), true)!!.defaults)
+    }
+
+    @Test
+    fun `a default entry is written with its prefix in the change set`() {
+        assertEquals("docs/x.md\tdefault:docs/", PathIgnore.encode(PathIgnore.Ignored("docs/x.md", "docs/", default = true)))
+    }
+
     @Test
     fun `an encoded item keeps commas and percent signs apart from the list`() {
         assertEquals("a%2Cb%25c.md\tdocs/**", PathIgnore.encode(PathIgnore.Ignored("a,b%c.md", "docs/**")))

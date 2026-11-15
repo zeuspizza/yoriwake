@@ -801,24 +801,33 @@ private fun moduleBuildDirs(facts: ClasspathView): Map<String, String> {
 /**
  * The change set with what [ignore] declares, an IDE's state, what [notReadByTests] declares, and
  * other modules' sources removed, computed at execution time. The classpath part keeps every path
- * whenever the classpath or its classes cannot be established.
+ * whenever the classpath or its classes cannot be established. A path a default entry matches
+ * also stays unless the map at [mapDir] shows it unread and [taskInputs] answers none
+ * ([PathIgnore.gated]).
  */
 internal fun scopedChange(
     changed: List<String>,
     facts: ClasspathView,
     notReadByTests: List<String> = emptyList(),
     ignore: PathIgnore.Declaration? = null,
+    mapDir: File? = null,
     /** The bases the change set was taken against, each an earlier text of a build file; none keeps every build file. */
     bases: List<String> = emptyList(),
     /** Changed paths whose earlier text no base holds: the working tree's drift since the capture. */
     moved: Set<String> = emptySet(),
+    /** The test task's input files under the root beyond its classpath and test classes, root-relative. */
+    taskInputs: () -> List<String> = { emptyList() },
 ): ScopedChange {
     // The same artifacts `establish` builds, so a path this task's classes name is kept. Lazy: most
     // change sets have no path to ask about.
     val artifacts by lazy {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles(), moduleBuildDir = moduleBuildDirs(facts))
     }
-    val applied = PathIgnore.apply(changed, ignore) { candidates -> artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) }
+    val applied = PathIgnore.gated(
+        PathIgnore.apply(changed, ignore) { candidates -> artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) },
+        { mapDir?.let { PathIgnore.recordsEveryJvm(it) } ?: false },
+        taskInputs,
+    )
     val paths = applied.kept
     val declared = NotRead.declared(notReadByTests)
     val ideState = paths.count(NotRead::isIdeState)

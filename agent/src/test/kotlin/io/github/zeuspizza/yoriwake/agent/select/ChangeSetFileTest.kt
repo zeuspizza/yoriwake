@@ -49,10 +49,10 @@ class ChangeSetFileTest {
     }
 
     @Test
-    fun `the ignored paths come from the file, each without its entry and with commas restored`(@TempDir dir: File) {
+    fun `the ignored paths come from the file, each without its entry, a default one included, and with commas restored`(@TempDir dir: File) {
         val file = written(
             File(dir, "change-set"),
-            AgentContract.IGNORED_PATHS_PROPERTY to "docs/a%2Cb.md\tdocs/**,notes/100%25.md\t**/*.md,x\ty\t*",
+            AgentContract.IGNORED_PATHS_PROPERTY to "docs/a%2Cb.md\tdocs/**,notes/100%25.md\t**/*.md,x\ty\t*,README.md\tdefault:**/README*",
         )
         val inputs = FilterRule.resolveInputs(system(
             AgentContract.CHANGE_SET_FILE_PROPERTY to file.path,
@@ -60,7 +60,7 @@ class ChangeSetFileTest {
         ))
 
         assertEquals(
-            listOf("docs/a,b.md", "notes/100%.md", "x\ty"),
+            listOf("docs/a,b.md", "notes/100%.md", "x\ty", "README.md"),
             FilterRule.ignoredPaths(inputs.apply(AgentContract.IGNORED_PATHS_PROPERTY)),
         )
     }

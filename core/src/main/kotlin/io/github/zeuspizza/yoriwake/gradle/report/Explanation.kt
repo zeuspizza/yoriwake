@@ -74,15 +74,15 @@ internal fun writeExplanation(
         // Every path, not a sample: a wrong declaration is found by reading this list.
         append("""  "ignoredPaths": [""")
         append(
-            scoped.ignore.ignored.joinToString(", ") { (path, entry) ->
-                """{ "path": ${Json.string(path)}, "entry": ${Json.string(entry)}, "evidence": ${Json.string(ignoredEvidence[path]?.token)} }"""
+            scoped.ignore.ignored.joinToString(", ") { (path, entry, default) ->
+                """{ "path": ${Json.string(path)}, "entry": ${Json.string(entry)}, "evidence": ${Json.string(ignoredEvidence[path]?.token)}${defaultField(default)} }"""
             }
         )
         append("],").append('\n')
         append("""  "notIgnored": [""")
         append(
-            scoped.ignore.notIgnored.joinToString(", ") { (path, entry, protection) ->
-                """{ "path": ${Json.string(path)}, "entry": ${Json.string(entry)}, "protection": ${Json.string(protection.token)} }"""
+            scoped.ignore.notIgnored.joinToString(", ") { (path, entry, protection, default) ->
+                """{ "path": ${Json.string(path)}, "entry": ${Json.string(entry)}, "protection": ${Json.string(protection.token)}${defaultField(default)} }"""
             }
         )
         append("],").append('\n')
@@ -238,3 +238,6 @@ internal fun writeUnanswered(
  */
 internal fun selectionShare(selected: Int, known: Int): String =
     String.format(java.util.Locale.ROOT, "(%.1f%%)", if (known == 0) 0.0 else 100.0 * selected / known)
+
+/** Marks a `pathIgnore` entry that is one of the defaults; a build's own entry carries no field. */
+private fun defaultField(default: Boolean) = if (default) """, "default": true""" else ""

@@ -77,7 +77,7 @@ class PublicApiTest {
 
         assertEquals(
             setOf(
-                "enabled", "alwaysRun", "fullRunBranches", "fullRunEveryBuilds", "fullRunEveryDays", "notReadByTests", "pathIgnore",
+                "enabled", "alwaysRun", "fullRunBranches", "fullRunEveryBuilds", "fullRunEveryDays", "notReadByTests", "pathIgnore", "pathIgnoreDefaults",
                 "environmentInclude", "systemPropertyIgnore", "dependsOn", "largeChangeThreshold", "narrowPlainRunners", "recordSequentially", "narrowDependencies", "narrowLineOnlyChanges",
             ),
             properties,

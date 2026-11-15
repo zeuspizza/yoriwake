@@ -214,9 +214,10 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `a Markdown file a test finds by walking the project forces the run`(@TempDir dir: File) {
+        // Without the defaults, which leave a Markdown file out and run the walking test by its read.
         val output = selectsAfterAnUnnamedFileChanged(
             dir,
-            minimalBuild,
+            minimalBuild + "\nyoriwake { pathIgnoreDefaults.set(false) }\n",
             "notes.md" to "# Notes\n\nAll done.\n",
             "src/test/java/dev/sample/DocsTest.java" to """
                 package dev.sample;
@@ -248,7 +249,8 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
     fun `a changed file notReadByTests lists is no change`(@TempDir dir: File) {
         val output = selectsAfterAnUnnamedFileChanged(
             dir,
-            minimalBuild + "\nyoriwake { notReadByTests.addAll(\"docs/*\", \"*.md\") }\n",
+            // Without the defaults, which would leave both files out before notReadByTests sees them.
+            minimalBuild + "\nyoriwake { pathIgnoreDefaults.set(false); notReadByTests.addAll(\"docs/*\", \"*.md\") }\n",
             "notes.md" to "# Notes\n",
             "docs/guide.txt" to "Guide\n",
             classOrderByName,

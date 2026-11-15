@@ -138,6 +138,7 @@ internal fun TestTaskWiring.configureSelection(
     fromBuildScript: TestPatterns,
     notReadByTests: List<String>,
     pathIgnore: List<String>,
+    pathIgnoreDefaults: Boolean,
     environment: EnvironmentFingerprint.Rules,
     projectDir: String,
     declarations: List<Declarations.Declaration>,
@@ -160,7 +161,7 @@ internal fun TestTaskWiring.configureSelection(
         largeChange,
     ) { base, changed ->
         LargeChange.counted(
-            changed, pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOf(base), changed, buildMemo),
+            changed, pathIgnoreDeclaration(project, pathIgnore, pathIgnoreDefaults, sourceDirs, listOf(base), changed, buildMemo),
             notReadByTests,
         )
     }
@@ -193,7 +194,7 @@ internal fun TestTaskWiring.configureSelection(
     // the configuration cache.
     val classpathFacts = classpathFacts(project, test, paths)
     val rootDir = project.rootDir
-    val ignore = pathIgnoreDeclaration(project, pathIgnore, sourceDirs, listOfNotNull(against, stamp), paths, buildMemo)
+    val ignore = pathIgnoreDeclaration(project, pathIgnore, pathIgnoreDefaults, sourceDirs, listOfNotNull(against, stamp), paths, buildMemo)
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
@@ -248,6 +249,8 @@ internal fun TestTaskWiring.configureSelection(
                 mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
                 notReadByTests, ignore, declared, observing, dependencies = dependencies,
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = stamp, moved = moved,
+                // The task's own inputs, read only when a default entry left a path out.
+                taskInputs = { extraTaskInputs(rootDir, test.inputs.files.files, test.classpath.files + test.testClassesDirs.files) },
             ),
             GradleSelectingHost(test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes),
         )
@@ -734,19 +737,22 @@ private fun TestTaskWiring.refuseAStaleChangeSet(
 }
 
 /**
- * The declaration a selecting run applies, or null when [entries] is empty. Plain values, read at
- * configuration: a task action may not touch Project. A path outside the root that git could not
- * place is treated as outside, so it is kept.
+ * The declaration a selecting run applies, or null when no changed path matches [entries] or,
+ * with [defaults] on, [PathIgnore.DEFAULTS]: a build with nothing to leave out asks git nothing
+ * more. Plain values, read at configuration: a task action may not touch Project. A path outside
+ * the root that git could not place is treated as outside, so it is kept.
  */
 internal fun pathIgnoreDeclaration(
     project: Project,
     entries: List<String>,
+    defaults: Boolean,
     sourceDirs: List<String>,
     against: List<String>,
     paths: List<String>,
     buildMemo: BuildMemo?,
 ): PathIgnore.Declaration? {
-    if (entries.isEmpty()) return null
+    val defaultEntries = if (defaults) PathIgnore.DEFAULTS else emptyList()
+    if (paths.none { path -> (entries + defaultEntries).any { PathIgnore.matches(it, path) } }) return null
     val outside = against.map { ChangeDetection.outsideRoot(project.providers, project.rootDir, it, buildMemo) }
     return PathIgnore.Declaration(
         entries,
@@ -754,7 +760,22 @@ internal fun pathIgnoreDeclaration(
         sourceDirs,
         buildLogicDirs(project),
         if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
+        defaultEntries,
     )
+}
+
+/**
+ * The files among [inputs] under [rootDir] that neither are nor lie under one of [owned] (the test
+ * task's classpath and test classes directories), root-relative. Gradle registers a directory input
+ * as the files in it, so containment, not equality, decides.
+ */
+internal fun extraTaskInputs(rootDir: File, inputs: Set<File>, owned: Set<File>): List<String> {
+    val root = rootDir.absoluteFile.normalize()
+    val ownedDirs = owned.map { it.absoluteFile.normalize() }
+    return inputs.map { it.absoluteFile.normalize() }
+        .filter { file -> file.startsWith(root) && ownedDirs.none { file.startsWith(it) } }
+        .map { it.relativeTo(root).invariantSeparatorsPath }
+        .sorted()
 }
 
 /** The root-relative directories of the builds this one includes, which hold build logic. */
@@ -768,8 +789,8 @@ internal fun buildLogicDirs(project: Project): List<String> =
  */
 private fun ignoredContentDigest(project: Project, declaration: PathIgnore.Declaration, paths: List<String>): String {
     val digest = java.security.MessageDigest.getInstance("SHA-256")
-    (declaration.entries + "\u0000").forEach { digest.update(it.toByteArray(Charsets.UTF_8)); digest.update(0) }
-    paths.filter { path -> declaration.entries.any { PathIgnore.matches(it, path) } }.sorted().forEach { path ->
+    (declaration.entries + "\u0000" + declaration.defaults + "\u0000").forEach { digest.update(it.toByteArray(Charsets.UTF_8)); digest.update(0) }
+    paths.filter(declaration::matches).sorted().forEach { path ->
         val file = File(project.rootDir, path)
         val content = if (file.isFile) {
             project.providers.fileContents(project.objects.fileProperty().fileValue(file)).asBytes.orNull
