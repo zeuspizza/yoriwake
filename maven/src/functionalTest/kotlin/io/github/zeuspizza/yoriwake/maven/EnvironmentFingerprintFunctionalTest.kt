@@ -313,9 +313,23 @@ class EnvironmentFingerprintFunctionalTest {
         assertRanEverything(project, output)
         val line = refusalLine(output)
         assertContains(line, "sys:feature")
+        assertContains(line, "systemPropertyIgnore leaves out a property that differs between builds or checkouts")
         assertFalse(Regex("""\b(on|off)\b""").containsMatchIn(line), line)
         val stored = File(libMap(project), "environment-fingerprints.tsv").readText()
         assertFalse(Regex("""\t(on|off)\n""").containsMatchIn(stored), stored)
+    }
+
+    @Test
+    fun `two user properties that differ are both named with the setting that leaves them out`(@TempDir dir: File) {
+        val project = captured(dir, "-Dother=a", argLine = "")
+
+        val output = selecting(project, "-Dother=b", feature = "off")
+
+        assertRanEverything(project, output)
+        assertContains(
+            refusalLine(output),
+            "sys:feature has another value than when the map was recorded (1 other system property differs too: sys:other; systemPropertyIgnore",
+        )
     }
 
     @Test

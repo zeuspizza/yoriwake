@@ -5675,6 +5675,10 @@ MUTATIONS = [
      '    if (set.excludes.any { ".yoriwake" in it }) return false',
      '    if (true) return false',
      maven_suite, "a licence plugin without the exclude is named with the exclude to add"),
+    ("a differing system property's reason names no remedy", ENVIRONMENT_FINGERPRINT,
+     '            " ($also$REMEDY)"',
+     '            ""',
+     maven_suite, "another value of a user property runs every test"),
 ]
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
 SUITE_TESTS = {

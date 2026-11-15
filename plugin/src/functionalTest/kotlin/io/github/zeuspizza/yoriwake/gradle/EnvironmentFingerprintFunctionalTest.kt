@@ -148,6 +148,7 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         assertEquals("environment-changed", decisionNotes(dir)["refusal-kind"], output)
         val line = refusalLine(output)
         assertContains(line, "sys:feature.x")
+        assertContains(line, "systemPropertyIgnore leaves out a property that differs between builds or checkouts")
         assertFalse(Regex("""\b(on|off)\b""").containsMatchIn(line), line)
         // Recorded again with the new value, and neither value is a field of any map file.
         val fields = mapDir(dir).walk().filter(File::isFile)
