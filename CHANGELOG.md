@@ -33,6 +33,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Reference: a transform-cache entry written again after Gradle's cache cleanup also runs nothing. Map: left alone.
 - Code that ran before a JVM's first test runs only the tests of the JVMs that loaded it, not everything. Map: left alone.
 - A build script or resource of a module the tests neither load nor reach no longer runs every test. Map: left alone.
+- Maven: a POM or resource of a module the tests neither load nor reach no longer runs every test. Map: left alone.
 
 ### Fixed
 

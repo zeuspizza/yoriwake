@@ -5,7 +5,8 @@ import java.io.File
 
 /**
  * Whether a changed build file or `src/` file of a module off this task's classpath can still reach
- * the test, through what a build script does rather than through a class.
+ * the test, through what a build script does rather than through a class. A Maven module's POM is
+ * judged by [PomReach].
  *
  * A module's build script can configure another project, the build at large, or files outside its
  * module; and a script that applies a plugin runs that plugin's code, which can configure every
@@ -47,9 +48,12 @@ internal object BuildFileReach {
         base: (String) -> Base,
     ): String? {
         val dir = view.moduleDirs.entries.firstOrNull { it.value == module }?.key ?: return "its module has no directory"
+        // A Maven module's: no settings script to read, and the reactor POM lists every module.
+        val pom = view.buildFiles[module]?.endsWith(".xml") == true
         if (buildFile) {
             if (holds(module, dir, view)) return "its module holds the tested module"
             val current = read(path) ?: return "it cannot be read"
+            if (pom) return PomReach.refusal(base(path), current)
             reach(current)?.let { return it }
             when (val then = base(path)) {
                 is Base.Text -> {
@@ -60,6 +64,7 @@ internal object BuildFileReach {
                 Base.Unknown -> return "its base revision cannot be read"
             }
         }
+        if (pom) return null
         return readerRefusal(module, dir, view, read, exists)
     }
 

@@ -192,6 +192,7 @@ AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contrac
 SELECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 CLASSPATH_SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
 BUILD_FILE_REACH = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/BuildFileReach.kt"
+POM_REACH = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PomReach.kt"
 CLASSPATH_VIEW = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ClasspathView.kt"
 NOT_READ = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
 PATH_IGNORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
@@ -4319,6 +4320,28 @@ MUTATIONS = [
      "        return named + (reachedModules() ?: return null)",
      "        return named",
      functional_suite, "a sibling's jar the test task builds and hands as a system property keeps its source edits"),
+    # On Maven a sibling's POM or `src/` file drops on the same terms: the paths the tested module's
+    # build reads keep its module, and a POM that reaches out or changes its plugins keeps forcing.
+    ("Maven reads no path of the effective model", MAVEN_CLASSPATH_VIEWS,
+     "        if (section is org.w3c.dom.Element && section.tagName in MODEL_SECTIONS) walk(section)",
+     "        if (false) walk(section)",
+     maven_suite, "a sibling's file the build reads as a resource filter still forces"),
+    ("Maven reads no file that activates a profile", MAVEN_CLASSPATH_VIEWS,
+     "                profile.activation?.file?.let { file -> activations += listOfNotNull(file.exists, file.missing) }",
+     "",
+     maven_suite, "a sibling's file that activates a profile still forces"),
+    ("a sibling POM may name its parent's directory", POM_REACH,
+     "            KEYWORDS.firstOrNull { it.containsMatchIn(value) }?.let { keyword ->",
+     "            emptyList<Regex>().firstOrNull { it.containsMatchIn(value) }?.let { keyword ->",
+     maven_suite, "a sibling's pom that names its parent's directory, adds a plugin or declares an extension still forces"),
+    ("a sibling POM may change its plugins", POM_REACH,
+     "                if (plugins(then) != plugins(now)) return",
+     "                if (false) return",
+     maven_suite, "a sibling's pom that names its parent's directory, adds a plugin or declares an extension still forces"),
+    ("a sibling POM may declare a build extension", POM_REACH,
+     "        if (elements(project).any { it.isExtension() }) return",
+     "        if (false) return",
+     maven_suite, "a sibling's pom that names its parent's directory, adds a plugin or declares an extension still forces"),
     # A test reads a sibling's source by a path it holds, often relative to that module.
     ("a class source off the classpath is named by none of its trailing parts", TASK_ARTIFACTS,
      "            (2 until segments.size).flatMapTo(forms) { n ->",

@@ -1946,7 +1946,15 @@ the Gradle plugin.
   environment, and the invocation's `-D` properties, or a source or resource root of its own or of
   a module it reaches (build-helper's, the compiler's `compileSourceRoots`, `<sourceDirectory>`,
   `<resources>`) that lies in it or above it. Edits to the others' sources are left out as on
-  Gradle. An expression there that the build's properties cannot resolve leaves them in.
+  Gradle. An expression there that the build's properties cannot resolve leaves them in. Their POMs
+  and other files under `src/` are left out too when no class or resource of the execution names
+  them, no path any value of the module's effective `<build>` or `<properties>`, or a file that
+  activates a profile of its POM or a parent's, holds lies in them or above them, they are not
+  upstream of the module in the reactor, and the POM, in either revision, is not a parent, BOM,
+  aggregator or `maven-plugin`, declares no build extension, names no path outside its module (`..`,
+  an absolute path, `${project.parent.basedir}`, `${maven.multiModuleProjectDirectory}`, the
+  session) and keeps its plugins. A plugin already declared and unchanged that changes another
+  module from a value the POM sets is not seen.
 - **`-pl` and `-am`**: a module built against a module of the same reactor that this invocation
   did not build gets its bytes from a repository, not the checkout, so it neither captures nor
   selects (`reactor-module-from-repository`). Build it with `-am`.

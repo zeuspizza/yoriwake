@@ -37,7 +37,68 @@ internal fun classpathView(
         override fun jacocoSetting(): String = "jacoco-maven-plugin `<version>`"
         override fun testJvm(): Int? = null
         override fun agentCeiling(): String? = null
+        override val buildFiles = session.allProjects.mapNotNull { module ->
+            module.file?.let { module.id to it.relativeTo(root).invariantSeparatorsPath }
+        }.toMap()
+        override fun handedPaths(): Set<File>? = modelPaths(session, root, project)
+        override fun closureModules(): Set<String>? = runCatching {
+            session.projectDependencyGraph.getUpstreamProjects(project, true).mapTo(mutableSetOf()) { it.id }
+        }.getOrNull()
     }
+
+/**
+ * The paths [project]'s build reads, whichever plugin reads them: every text and attribute value of
+ * its effective `<build>` and `<properties>`, which Maven has interpolated with the parent chain and
+ * the active profiles merged in, and the files that activate a profile of its POM or of a parent's
+ * in the checkout. Relative to the module's directory. Null when one of them holds an expression
+ * that cannot be resolved here, so a path it names is unknown.
+ */
+internal fun modelPaths(session: MavenSession, root: File, project: MavenProject): Set<File>? = runCatching {
+    val values = mutableListOf<String>()
+    val written = java.io.StringWriter().also { org.apache.maven.model.io.xpp3.MavenXpp3Writer().write(it, project.model) }.toString()
+    val model = javax.xml.parsers.DocumentBuilderFactory.newDefaultInstance().apply { isNamespaceAware = false }
+        .newDocumentBuilder().parse(org.xml.sax.InputSource(java.io.StringReader(written))).documentElement
+    fun walk(node: org.w3c.dom.Node) {
+        when (node.nodeType) {
+            org.w3c.dom.Node.TEXT_NODE, org.w3c.dom.Node.CDATA_SECTION_NODE -> values += node.nodeValue
+            org.w3c.dom.Node.ELEMENT_NODE -> {
+                val attributes = node.attributes
+                for (i in 0 until attributes.length) values += attributes.item(i).nodeValue
+            }
+        }
+        var child = node.firstChild
+        while (child != null) {
+            walk(child)
+            child = child.nextSibling
+        }
+    }
+    var section = model.firstChild
+    while (section != null) {
+        if (section is org.w3c.dom.Element && section.tagName in MODEL_SECTIONS) walk(section)
+        section = section.nextSibling
+    }
+    val activations = mutableListOf<String>()
+    generateSequence(project) { it.parent }
+        .filter { pom -> pom.file?.absoluteFile?.normalize()?.startsWith(root.absoluteFile.normalize()) == true }
+        .forEach { pom ->
+            pom.originalModel?.profiles.orEmpty().forEach { profile ->
+                profile.activation?.file?.let { file -> activations += listOfNotNull(file.exists, file.missing) }
+            }
+        }
+    val basedir = project.basedir.absolutePath
+    val resolved = values + activations.map { activation ->
+        val located = activation.replace("\${basedir}", basedir).replace("\${project.basedir}", basedir)
+            .replace("\${project.rootDirectory}", root.absolutePath)
+        resolve(project, session, located) ?: return null
+    }
+    resolved.flatMap { text -> PATH.findAll(text).map { it.value }.toList() }.mapTo(mutableSetOf()) { piece ->
+        if ("\${" in piece || "@{" in piece) return null
+        File(piece).let { if (it.isAbsolute) it else File(project.basedir, piece) }
+    }
+}.getOrNull()
+
+/** The effective model's sections whose values a build reads paths from. */
+private val MODEL_SECTIONS = setOf("build", "properties")
 
 /**
  * The ids of the reactor modules [project]'s build names, other than itself: by coordinates in a

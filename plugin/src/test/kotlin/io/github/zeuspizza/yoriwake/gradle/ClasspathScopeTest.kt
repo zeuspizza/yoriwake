@@ -295,4 +295,13 @@ class ClasspathScopeTest {
             assertTrue(result.droppedFiles.isEmpty())
         }
     }
+
+    @Test
+    fun `a sibling's POM drops like a build script, and is kept when a fact is unknown`() {
+        val poms = mapOf(":webserver" to "webserver/pom.xml")
+        fun others(reached: Set<String>?) = ClasspathScope.Others(poms, { reached }, { emptySet() }, { _, _, _ -> null }, { false })
+
+        assertEquals(listOf("webserver/pom.xml"), ClasspathScope.restrict(listOf("webserver/pom.xml"), modules, onlyCore, nothingNamed, others(emptySet())).dropped)
+        assertEquals(listOf("webserver/pom.xml"), ClasspathScope.restrict(listOf("webserver/pom.xml"), modules, onlyCore, nothingNamed, others(null)).kept)
+    }
 }
