@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
+import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.select.MapReader
 import io.github.zeuspizza.yoriwake.agent.select.Selector
 import java.io.File
@@ -242,9 +243,13 @@ internal object PathIgnore {
         if (map == null || !map.isUsable) return false
         val reads = map.resourceReads() ?: return false
         // A test with no position ran in a JVM nobody can name, so nothing shows its reads recorded.
+        // The records that stand for no single test (code run outside any test, a class's static
+        // setup) have no position by design; the tests they serve carry their own.
         return map.entries().all { entry ->
-            val positions = map.positionsOf(entry.testId())
-            positions.isNotEmpty() && positions.all { reads.recorded(it.jvm()) }
+            val id = entry.testId()
+            val positions = map.positionsOf(id)
+            id == AgentContract.UNATTRIBUTED_RECORD_ID || id.startsWith(AgentContract.CLASS_SCOPED_RECORD_PREFIX) ||
+                (positions.isNotEmpty() && positions.all { reads.recorded(it.jvm()) })
         }
     }
 
