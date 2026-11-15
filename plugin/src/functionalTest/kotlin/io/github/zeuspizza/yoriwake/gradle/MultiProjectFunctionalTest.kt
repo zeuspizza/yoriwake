@@ -135,9 +135,9 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
         // not run at all", and only the first is the claim being made.
         assertContains(output, "[yoriwake] of 1 tests discovered: skipped=1")
 
+        // The results stay: only the change set, an input of the test task, makes the task run again.
         File(dir, "beta/src/main/kotlin/zq/Flow.kt").delete()
         File(dir, "beta/build.gradle.kts").appendText(System.lineSeparator() + "// touched")
-        File(dir, "alpha/build/test-results").deleteRecursively()
 
         val script = runner(dir, ":alpha:test", "-Pyoriwake.select").build().output
 
