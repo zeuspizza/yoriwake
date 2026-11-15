@@ -152,11 +152,15 @@ internal object CoordinateDiff {
 
     // ---------------------------------------------------------------- catalogs
 
-    /** The `[section]` each line of a TOML file is in, by line. */
-    private fun sections(lines: List<String>): List<String> {
+    /**
+     * The `[section]` each line of a TOML file is in, by line, and `[header]` for a header line. Any
+     * line that opens with a bracketed name is a header, quoted or not: a line left in the section
+     * before it would be read as that section's.
+     */
+    internal fun sections(lines: List<String>): List<String> {
         var section = ""
         return lines.map { line ->
-            Regex("""^\s*\[\s*([A-Za-z0-9_.-]+)\s*]\s*(#.*)?$""").matchEntire(line)?.let { section = it.groupValues[1]; "[header]" }
+            Regex("""^\s*\[\s*([^\]]+?)\s*]""").find(line)?.let { section = it.groupValues[1]; "[header]" }
                 ?: section
         }
     }

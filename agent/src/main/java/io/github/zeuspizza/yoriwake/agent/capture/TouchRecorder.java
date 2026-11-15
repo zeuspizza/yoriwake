@@ -4,14 +4,12 @@ import io.github.zeuspizza.yoriwake.agent.host.HostBuild;
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.ProtectionDomain;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -19,8 +17,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Supplier;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /**
  * The first time this JVM loaded each class, or read each class or source file.
@@ -38,56 +34,32 @@ public final class TouchRecorder implements CaptureSession.Touches {
     /** The one recorder the agent's premain feeds. */
     public static final TouchRecorder JVM = new TouchRecorder();
 
-    private final Object lock = new Object();
+    final Object lock = new Object();
     private final Set<String> seen = new HashSet<>();
     /** Reads and lookups seen since the plan started, so the first one after discovery is kept. */
     private final Set<String> seenNamed = new HashSet<>();
-    /** Archives found to hold no class, source or archive, by path, with the length and time they had. */
-    private final Map<String, String> classless = new HashMap<>();
     /** Written under {@link #lock}; volatile so the environment sink reads it without the lock. */
     private volatile boolean planStarted;
     private List<String[]> pending = new ArrayList<>();
     private boolean installed;
-    private volatile String incomplete = "the yoriwake agent was not attached to this JVM";
+    volatile String incomplete = "the yoriwake agent was not attached to this JVM";
     /** Why this JVM is newer than the agent reads; kept apart, so no later failure renames it. */
     private volatile String unsupported;
     private volatile String lookupsIncomplete = "the yoriwake agent was not attached to this JVM";
     /** Variables read by name, and {@link AgentContract#ENV_READ_WHOLE} for the whole environment. */
     private final Set<String> environmentReads = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile String environmentIncomplete = "the yoriwake agent was not attached to this JVM";
-    private final ThreadLocal<Boolean> inside = new ThreadLocal<>();
+    final ThreadLocal<Boolean> inside = new ThreadLocal<>();
     /**
      * The guards of conditional reviewed libraries; null, and none armed, until the agent installs
      * them. Not built eagerly: they need the agent's ASM, which a recorder made without the agent
      * jar does not have.
      */
     volatile GuardHooks guards;
-    /**
-     * The root project's directory, as given and as resolved, each ending in a separator; empty
-     * when it was not given, and then no non-class file is recorded.
-     */
-    private volatile List<String> roots = new ArrayList<>();
-    /** The paths each path read so far is recorded under, so each is resolved at most once. */
-    private final Map<String, List<String>> rootChecked = new java.util.concurrent.ConcurrentHashMap<>();
-    /** Whether each directory checked so far is the root under another name. */
-    private final Map<String, Boolean> rootAliases = new java.util.concurrent.ConcurrentHashMap<>();
-    /** Whether two paths name the same file: a bind mount or a drive alias of the root is one. */
-    private final SameFile sameFile;
-    /**
-     * The library module jars this JVM records touches of, each under the path the plugin named it
-     * by, and under its resolved path; null when none were named or their entries cannot be seen.
-     */
-    private volatile Map<String, String> moduleJars;
-    /** The module path each jar or code-source path seen so far stands for, empty for none. */
-    private final Map<String, String> modulePathOf = new java.util.concurrent.ConcurrentHashMap<>();
-    /** The module jars reached so far, so each is recorded once without the lock. */
-    private final Set<String> reachedJars = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /** Names looked up in a module jar and not found since the last drain, with their directories. */
-    private final Map<String, String> pendingMisses = new HashMap<>();
-    /** Class files found or classes defined since the last drain, which cancel a miss of the same name. */
-    private final Set<String> answered = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /** Directories a miss was recorded in; read without the lock, written under it. */
-    private final Set<String> missedDirectories = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** The module jars this JVM reaches, and the names it misses in them. */
+    private final JarReaches jars = new JarReaches(this);
+    /** The class, source and other files this JVM reads. */
+    private final ResourceReads reads;
     /** Classes a stack trace element named so far, so a trace logged again costs no lock. */
     private final Set<String> stackSeen = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Set when a stack trace's failure could not even be recorded; the next drain records it. */
@@ -101,7 +73,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     TouchRecorder() {
-        sameFile = java.nio.file.Files::isSameFile;
+        reads = new ResourceReads(this, jars, java.nio.file.Files::isSameFile);
     }
 
     /** A recorder that records the non-class files read beneath {@code root}, as an attached one does. */
@@ -110,8 +82,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     TouchRecorder(String root, SameFile sameFile) {
-        this.sameFile = sameFile;
-        roots = rootsOf(root);
+        reads = new ResourceReads(this, jars, sameFile);
+        reads.roots = ResourceReads.rootsOf(root);
     }
 
     /** Starts observing. Called once from premain, and only when this JVM captures. */
@@ -126,7 +98,8 @@ public final class TouchRecorder implements CaptureSession.Touches {
             }
             installed = true;
         }
-        roots = rootsOf(HostBuild.current().property(AgentContract.CAPTURE_ROOT_PROPERTY));
+        List<String> roots = ResourceReads.rootsOf(HostBuild.current().property(AgentContract.CAPTURE_ROOT_PROPERTY));
+        reads.roots = roots;
         if (!roots.isEmpty()) {
             touch(AgentContract.TOUCH_RESOURCES_RECORDED, roots.get(0));
         }
@@ -191,22 +164,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
     @Override
     public List<String[]> drain() {
         synchronized (lock) {
-            // A class-path search misses in every jar before the one that holds the class, so a class
-            // miss that some jar or definition answered in the same window is no miss. A resource is
-            // looked for in every jar, and a new version that adds it changes the answer, so its miss
-            // always stands. A directory is written once, for the first miss that stands.
-            for (Map.Entry<String, String> miss : pendingMisses.entrySet()) {
-                String name = miss.getKey();
-                if (name.endsWith(".class") && answered.contains(name)) {
-                    continue;
-                }
-                String directory = miss.getValue();
-                if (missedDirectories.add(directory)) {
-                    pending.add(new String[] {AgentContract.TOUCH_MISSED, directory});
-                }
-            }
-            pendingMisses.clear();
-            answered.clear();
+            jars.drainMisses(pending);
             if (stacksLost) {
                 pending.add(new String[] {AgentContract.TOUCH_STACK_ALL, "a stack trace could not be recorded"});
             }
@@ -247,178 +205,24 @@ public final class TouchRecorder implements CaptureSession.Touches {
         }
     }
 
-    /**
-     * Records from here on which of {@code modules} ({@link #modulesOf}) this JVM reaches, and the
-     * absent names it looks up in them. Only once every entry hook is in place: a lookup unseen would
-     * leave a jar unreached.
-     */
+    /** {@link JarReaches#record}. */
     void recordJars(Map<String, String> modules) {
-        moduleJars = modules;
-        touch(AgentContract.TOUCH_JARS_RECORDED, "");
+        jars.record(modules);
     }
 
-    /** The module path {@code path} stands for, or null when it is no module jar's. */
-    private String modulePath(String path) {
-        Map<String, String> modules = moduleJars;
-        if (modules == null || path == null) {
-            return null;
-        }
-        String direct = modules.get(path);
-        if (direct != null) {
-            return direct;
-        }
-        String known = modulePathOf.get(path);
-        if (known == null) {
-            known = "";
-            try {
-                String resolved = Paths.get(path).toAbsolutePath().toRealPath().toString();
-                String module = modules.get(resolved);
-                if (module != null) {
-                    known = module;
-                }
-            } catch (IOException | RuntimeException unresolved) {
-                // Asked again next time: the file may appear.
-                return null;
-            }
-            modulePathOf.put(path, known);
-        }
-        return known.isEmpty() ? null : known;
-    }
-
-    /**
-     * Whether looking up or reading {@code name} is the JDK's class loader opening a jar of the class
-     * path (its manifest, for {@code Class-Path} and {@code Multi-Release}) or defining a package from
-     * it: the class-path search does that for every jar it walks, whatever the class it looks for. What
-     * the loader takes from a manifest is compared by the daemon; a manifest read by anything else is a
-     * reach.
-     */
-    private static boolean loaderOpening(String name) {
-        return MANIFEST.equals(name) && loaderReadingManifest();
-    }
-
-    /** Records that this JVM reached the module jar at {@code module}, once. */
-    private void reached(String module) {
-        if (reachedJars.add(module)) {
-            touch(AgentContract.TOUCH_JAR_REACHED, module);
-        }
-    }
-
-    /**
-     * The entry hooks' sink: {zip, name, entry or null} for every lookup of a jar entry by name. A
-     * hit in a module jar reaches it; a miss there is kept until the window drains, and a hit
-     * anywhere answers a class miss of the same name.
-     */
+    /** The entry hooks' sink: {@link JarReaches#entry}. */
     void entry(Object looked) {
-        if (moduleJars == null || inside.get() != null) {
-            return;
-        }
-        inside.set(Boolean.TRUE);
-        try {
-            Object[] triple = (Object[]) looked;
-            String name = (String) triple[1];
-            boolean found = triple[2] != null;
-            String module = modulePath(((ZipFile) triple[0]).getName());
-            if (found) {
-                if (module != null && !loaderOpening(name)) {
-                    reached(module);
-                }
-                // Only a library jar's answer is the class path's; a child loader's jar answering the same
-                // name leaves the class path's miss standing.
-                if (module != null && name.endsWith(".class")) {
-                    answered.add(name);
-                }
-                return;
-            }
-            if (module == null) {
-                return;
-            }
-            // The JDK's loader asks every jar it opens for its index (JDK 11 and 17); no test asked.
-            if (INDEX.equals(name) && byClassPathLoader()) {
-                return;
-            }
-            int slash = name.lastIndexOf('/');
-            String directory = slash < 0 ? "/" : name.substring(0, slash + 1);
-            if (missedDirectories.contains(directory)) {
-                return;
-            }
-            synchronized (lock) {
-                pendingMisses.putIfAbsent(name, directory);
-            }
-        } catch (Throwable t) {
-            incomplete = "a jar entry lookup could not be recorded: " + t;
-        } finally {
-            inside.remove();
-        }
+        jars.entry(looked);
     }
 
-    /**
-     * The enumeration hooks' sink: code listed a jar's entries, as a classpath scanner does. Listing
-     * a module jar reaches it, whatever the scanner then reads or finds nothing to read.
-     */
+    /** The enumeration hooks' sink: {@link JarReaches#enumerated}. */
     void enumerated(Object zip) {
-        if (moduleJars == null || inside.get() != null) {
-            return;
-        }
-        inside.set(Boolean.TRUE);
-        try {
-            String module = modulePath(((ZipFile) zip).getName());
-            if (module != null) {
-                reached(module);
-            }
-        } catch (Throwable t) {
-            incomplete = "a jar listing could not be recorded: " + t;
-        } finally {
-            inside.remove();
-        }
+        jars.enumerated(zip);
     }
 
-    private static final String INDEX = "META-INF/INDEX.LIST";
-
-    /** Whether the JDK's own class-path loader made the hooked call. Anything that cannot tell says no. */
-    private static boolean byClassPathLoader() {
-        try {
-            return StackWalker.getInstance().walk(frames -> frames.limit(24)
-                    .anyMatch(frame -> frame.getClassName().startsWith("jdk.internal.loader.")));
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    /** A class defined from {@code domain}'s code source: when that is a module jar, the jar was reached. */
+    /** {@link JarReaches#definedFrom}. */
     void definedFrom(ProtectionDomain domain, String internalName, boolean byClassPath) {
-        if (moduleJars == null) {
-            return;
-        }
-        // Only a definition by the class path's own loaders answers a class-path search.
-        if (byClassPath) {
-            answered.add(internalName + ".class");
-        }
-        if (domain == null || inside.get() != null) {
-            return;
-        }
-        inside.set(Boolean.TRUE);
-        try {
-            java.security.CodeSource source = domain.getCodeSource();
-            java.net.URL location = source == null ? null : source.getLocation();
-            if (location == null || !"file".equals(location.getProtocol())) {
-                return;
-            }
-            // Keyed by the URL, so each code source is turned into a path once.
-            String key = "url:" + location;
-            String module = modulePathOf.get(key);
-            if (module == null) {
-                String found = modulePath(new File(location.toURI()).getPath());
-                module = found == null ? "" : found;
-                modulePathOf.put(key, module);
-            }
-            if (!module.isEmpty()) {
-                reached(module);
-            }
-        } catch (Throwable t) {
-            incomplete = "a class's code source could not be recorded: " + t;
-        } finally {
-            inside.remove();
-        }
+        jars.definedFrom(domain, internalName, byClassPath);
     }
 
     @Override
@@ -848,84 +652,16 @@ public final class TouchRecorder implements CaptureSession.Touches {
                 || name.equals("java.lang.reflect.Constructor");
     }
 
-    private static final String AGENT_PACKAGE = "io.github.zeuspizza.yoriwake.";
+    static final String AGENT_PACKAGE = "io.github.zeuspizza.yoriwake.";
 
     private static final String UNNAMED = "a class was defined from bytes whose name could not be read";
 
-    /** The read hooks' sink: a {@link File}, a {@link Path}, or a {@code {ZipFile, ZipEntry}} pair. */
+    /** The read hooks' sink: {@link ResourceReads#read}. */
     void read(Object opened) {
-        if (inside.get() != null) {
-            return;
-        }
-        inside.set(Boolean.TRUE);
-        try {
-            if (opened instanceof Object[]) {
-                Object[] pair = (Object[]) opened;
-                ZipFile zip = (ZipFile) pair[0];
-                ZipEntry entry = (ZipEntry) pair[1];
-                String module = modulePath(zip.getName());
-                if (module != null && !loaderOpening(entry.getName())) {
-                    reached(module);
-                }
-                if (isClassOrSource(entry.getName())) {
-                    if (!definingAClass()) {
-                        touchNamed(AgentContract.TOUCH_READ, entry.getName());
-                    }
-                } else {
-                    String jar = new File(zip.getName()).getAbsolutePath();
-                    if (entryHoldsAZip(zip, entry)) {
-                        // An archive inside an archive: what reads it scans its entries with its own code.
-                        touchNamed(AgentContract.TOUCH_JAR, jar);
-                    }
-                    List<String> forms = recordedAs(jar);
-                    if (!forms.isEmpty()) {
-                        String kind = MANIFEST.equals(entry.getName()) && loaderReadingManifest()
-                                ? AgentContract.TOUCH_LOADER_MANIFEST : AgentContract.TOUCH_RESOURCE;
-                        for (String form : forms) {
-                            touchNamed(kind, form + "!/" + entry.getName());
-                        }
-                    }
-                }
-                return;
-            }
-            String path = opened instanceof File ? ((File) opened).getPath() : String.valueOf(opened);
-            if (isClassOrSource(path)) {
-                if (!definingAClass()) {
-                    touchNamed(AgentContract.TOUCH_READ, path);
-                }
-                // A source file a test opens is also a file it read, by its path: a snippet under
-                // `docs/` is one, and its class name, if any, says nothing about where it lives.
-                if (!path.endsWith(".class")) {
-                    for (String form : recordedAs(new File(path).getAbsolutePath())) {
-                        touchNamed(AgentContract.TOUCH_RESOURCE, form);
-                    }
-                }
-                return;
-            }
-            File file = new File(path);
-            String absolute = file.getAbsolutePath();
-            boolean archive = path.endsWith(".jar") || ZipContent.holdsAZip(file);
-            // The JDK's zip code opening an archive reads its entries through the entry hook.
-            if (archive && openedByJdkZip()) {
-                return;
-            }
-            if (archive && (path.endsWith(".jar") || mayHoldClasses(file))) {
-                // A scanner reading an archive with its own zip code: every class in it may be read.
-                // Known by content, not name: a war, an aar, or a zip of the classes is one too.
-                touchNamed(AgentContract.TOUCH_JAR, absolute);
-            }
-            // An archive read whole is a read of every entry in it.
-            for (String form : recordedAs(absolute)) {
-                touchNamed(AgentContract.TOUCH_RESOURCE, form);
-            }
-        } catch (Throwable t) {
-            incomplete = "a read could not be recorded: " + t;
-        } finally {
-            inside.remove();
-        }
+        reads.read(opened);
     }
 
-    private void touch(String kind, String value) {
+    void touch(String kind, String value) {
         synchronized (lock) {
             if (seen.add(kind + '\t' + value)) {
                 pending.add(new String[] {kind, value});
@@ -934,7 +670,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     /** Kept from the plan's start on, whether or not discovery already saw the same one. */
-    private void touchNamed(String kind, String value) {
+    void touchNamed(String kind, String value) {
         synchronized (lock) {
             boolean fresh = seen.add(kind + '\t' + value);
             if (planStarted ? seenNamed.add(kind + '\t' + value) : fresh) {
@@ -943,181 +679,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
         }
     }
 
-    /**
-     * Whether this read is the JDK defining a class from its file, which the load observer already
-     * records as a load. Only the JDK's own loaders count: anything else reading a class file is a
-     * reader, and misreading a load as a read only opens a window earlier.
-     *
-     * Only the JDK's own frames may stand between the read and the definition: a definition calls
-     * code it does not own (a loader's {@code getPermissions}, a transformer, a URL handler), and a
-     * class file that code reads is its read. Hidden frames are shown, so a hidden class of the
-     * project's cannot leave only the JDK's frames in view. Anything that cannot tell says no, the
-     * side that records.
-     */
-    private static boolean definingAClass() {
-        try {
-            StackWalker walker = StackWalker.getInstance(java.util.EnumSet.of(
-                    StackWalker.Option.RETAIN_CLASS_REFERENCE, StackWalker.Option.SHOW_HIDDEN_FRAMES));
-            return walker.walk(frames -> {
-                boolean pastAgent = false;
-                for (java.util.Iterator<StackWalker.StackFrame> it = frames.limit(24).iterator(); it.hasNext(); ) {
-                    StackWalker.StackFrame frame = it.next();
-                    if (!pastAgent && frame.getClassName().startsWith(AGENT_PACKAGE)) {
-                        continue;
-                    }
-                    pastAgent = true;
-                    if (!JdkCode.isJdk(frame.getDeclaringClass())) {
-                        return false;
-                    }
-                    if ("defineClass".equals(frame.getMethodName())
-                            && (frame.getClassName().startsWith("jdk.internal.loader.")
-                                    || frame.getClassName().equals("java.net.URLClassLoader")
-                                    || frame.getClassName().equals("java.security.SecureClassLoader")
-                                    || frame.getClassName().equals("java.lang.ClassLoader"))) {
-                        return true;
-                    }
-                }
-                return false;
-            });
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    private static final String MANIFEST = "META-INF/MANIFEST.MF";
-
-    /** {@link #roots} for a root directory as the plugin gives it. */
-    static List<String> rootsOf(String root) {
-        List<String> found = new ArrayList<>();
-        if (root == null || root.isEmpty()) {
-            return found;
-        }
-        File dir = new File(root).getAbsoluteFile();
-        found.add(dir.getPath() + File.separator);
-        try {
-            // Resolves links on every platform, which a canonical path does not on Windows.
-            String resolved = dir.toPath().toRealPath().toString() + File.separator;
-            if (!found.contains(resolved)) {
-                found.add(resolved);
-            }
-            // Spells out a short (8.3) name the real path keeps on Windows.
-            String canonical = dir.getCanonicalPath() + File.separator;
-            if (!found.contains(canonical)) {
-                found.add(canonical);
-            }
-        } catch (IOException | RuntimeException e) {
-            // The path as given still matches what is opened by it.
-        }
-        return found;
-    }
-
-    /**
-     * The paths a read of an absolute path is recorded under; none when it is not beneath the
-     * root. The decoder keys each form to the file it names, so every name the read went by that
-     * could match the walked file is kept:
-     * <ul>
-     * <li>the path as given, when it or its resolved form is beneath the root;</li>
-     * <li>besides, the resolved form, when it names the file differently below the root (another
-     * letter case, a short name, a link inside the root). Resolved now, while a link the test may
-     * delete still exists;</li>
-     * <li>for a path beneath the root under another name (a bind mount, a drive alias), the root
-     * as given with the rest of the path;</li>
-     * <li>the path as given when whether it is beneath the root cannot be told, which the decoder
-     * counts as a read of every file.</li>
-     * </ul>
-     */
-    private List<String> recordedAs(String absolute) {
-        List<String> prefixes = roots;
-        if (prefixes.isEmpty()) {
-            return java.util.Collections.emptyList();
-        }
-        // Resolved outside the map's lock: the answer is the same whichever thread computes it.
-        List<String> known = rootChecked.get(absolute);
-        if (known == null) {
-            known = forms(absolute, prefixes);
-            // A file not there yet, or one reached through a link inside the root, is asked about
-            // again: the file may appear, or the link be created or pointed elsewhere.
-            if (known == null) {
-                return java.util.Collections.emptyList();
-            }
-            if (known.size() == 1) {
-                rootChecked.putIfAbsent(absolute, known);
-            }
-        }
-        return known;
-    }
-
-    /** {@link #recordedAs}'s answer, or null when the file is not there to read. */
-    private List<String> forms(String absolute, List<String> prefixes) {
-        String resolved;
-        try {
-            resolved = new File(absolute).toPath().toRealPath().toString();
-        } catch (IOException | RuntimeException e) {
-            resolved = null;
-        }
-        if (resolved != null && File.separatorChar == '\\' && resolved.indexOf('~') >= 0) {
-            // Windows keeps a short (8.3) name in the real path; the canonical path spells it out.
-            try {
-                resolved = new File(resolved).getCanonicalPath();
-            } catch (IOException | RuntimeException e) {
-                // The real path still names the file.
-            }
-        }
-        String below = below(absolute, prefixes);
-        if (below != null) {
-            String resolvedBelow = resolved == null ? null : below(resolved, prefixes);
-            return resolvedBelow == null || resolvedBelow.equals(below)
-                    ? java.util.Collections.singletonList(absolute)
-                    : java.util.Arrays.asList(absolute, resolved);
-        }
-        if (resolved != null && below(resolved, prefixes) != null) {
-            // Through a link to the root, or a short name above it: the resolved path is the one
-            // the decoder can key, even once the link is gone.
-            return java.util.Arrays.asList(absolute, resolved);
-        }
-        if (resolved == null) {
-            // Nothing was read, and a file that is gone forces anyway.
-            return null;
-        }
-        try {
-            // From the resolved path, so a link outside the root into an alias of it is followed.
-            String aliased = throughAlias(resolved, prefixes.get(0));
-            return aliased == null ? java.util.Collections.<String>emptyList() : java.util.Collections.singletonList(aliased);
-        } catch (IOException | RuntimeException e) {
-            return java.util.Collections.singletonList(absolute);
-        }
-    }
-
-    /** What follows the first of {@code prefixes} that {@code path} starts with; null for none. */
-    private static String below(String path, List<String> prefixes) {
-        for (String prefix : prefixes) {
-            if (path.startsWith(prefix)) {
-                return path.substring(prefix.length());
-            }
-        }
-        return null;
-    }
-
-    /**
-     * The path rewritten onto {@code root} when one of its directories is the root under another
-     * name; null when none is.
-     */
-    private String throughAlias(String absolute, String root) throws IOException {
-        Path rootDir = Paths.get(root);
-        Path path = Paths.get(absolute);
-        for (Path dir = path.getParent(); dir != null; dir = dir.getParent()) {
-            String key = dir.toString();
-            Boolean same = rootAliases.get(key);
-            if (same == null) {
-                same = sameFile.test(dir, rootDir);
-                rootAliases.putIfAbsent(key, same);
-            }
-            if (same) {
-                return root + dir.relativize(path);
-            }
-        }
-        return null;
-    }
+    static final String MANIFEST = "META-INF/MANIFEST.MF";
 
     /**
      * Whether this manifest read is the JDK's application or platform class loader opening a jar
@@ -1167,76 +729,6 @@ public final class TouchRecorder implements CaptureSession.Touches {
         } catch (Throwable t) {
             return false;
         }
-    }
-
-    private static boolean isClassOrSource(String path) {
-        return path.endsWith(".class") || path.endsWith(".java") || path.endsWith(".kt")
-                || path.endsWith(".groovy") || path.endsWith(".scala");
-    }
-
-    /**
-     * Whether an archive found by its content can hold a class: a class or source entry, an archive
-     * entry, or no listing at all. One that holds none (a spreadsheet, a document, a zip of data)
-     * names no class, and is not reported, so one gone by the time the records are read cannot
-     * count as every class. Checked again when its length or time changes.
-     */
-    private boolean mayHoldClasses(File file) {
-        String path = file.getAbsolutePath();
-        String stamp = file.length() + "/" + file.lastModified();
-        synchronized (lock) {
-            if (stamp.equals(classless.get(path))) {
-                return false;
-            }
-        }
-        try (ZipFile zip = new ZipFile(file)) {
-            for (Enumeration<? extends ZipEntry> entries = zip.entries(); entries.hasMoreElements(); ) {
-                ZipEntry entry = entries.nextElement();
-                if (isClassOrSource(entry.getName()) || holdsAZip(zip, entry)) {
-                    return true;
-                }
-            }
-        } catch (IOException | RuntimeException unlisted) {
-            return true;
-        }
-        synchronized (lock) {
-            classless.put(path, stamp);
-        }
-        return false;
-    }
-
-    /**
-     * Whether an entry the JDK's zip code hands out holds a zip archive itself, such as a jar nested
-     * in a war. Read through a zip of its own: calling back into the hooked one, a jar file, would
-     * re-enter its signature verification.
-     */
-    private static boolean entryHoldsAZip(ZipFile hooked, ZipEntry entry) {
-        long size = entry.getSize();
-        if (entry.isDirectory() || (size >= 0 && size < ZipContent.END_RECORD)) {
-            return false;
-        }
-        try (ZipFile own = new ZipFile(hooked.getName())) {
-            ZipEntry same = own.getEntry(entry.getName());
-            return same != null && holdsAZip(own, same);
-        } catch (IOException | RuntimeException unreadable) {
-            return false;
-        }
-    }
-
-    /** Whether an entry of a zip this class opened itself holds a zip archive. */
-    private static boolean holdsAZip(ZipFile zip, ZipEntry entry) throws IOException {
-        long size = entry.getSize();
-        if (entry.isDirectory() || (size >= 0 && size < ZipContent.END_RECORD)) {
-            return false;
-        }
-        try (InputStream in = zip.getInputStream(entry)) {
-            return in != null && ZipContent.startsAZip(in.readNBytes(4));
-        }
-    }
-
-    /** The JDK's own zip code opens every jar it reads entries from; those entries are hooked. */
-    private static boolean openedByJdkZip() {
-        return StackWalker.getInstance().walk(frames -> frames.limit(12)
-                .anyMatch(frame -> frame.getClassName().startsWith("java.util.zip.ZipFile")));
     }
 
     /**
