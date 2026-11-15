@@ -1238,8 +1238,8 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         @TempDir dir: File,
     ) {
         // BetaTest copied Limits.MAX and never executes Limits; its own class file is what the
-        // new value changed. LimitsTest executes Limits. AlphaTest touches neither, and by name
-        // runs before either class is first loaded.
+        // new value changed. LimitsTest executes Limits. AlphaTest touches neither, and runs in a
+        // JVM of its own: in a shared one, discovery loads every test class before the first test.
         val limits = "src/main/java/dev/sample/Limits.java" to """
             package dev.sample;
             public class Limits {
@@ -1264,7 +1264,9 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
             }
         """.trimIndent()
         build(
-            dir, "build.gradle.kts" to minimalBuild,
+            dir, "build.gradle.kts" to minimalBuild.replace(
+                "tasks.test { useJUnitPlatform() }", "tasks.test { useJUnitPlatform(); forkEvery = 1 }",
+            ),
             limits, oneClass, oneTest, readsAtRuntime, bakedIn, classOrderByName,
         )
         committed(dir)
@@ -1280,11 +1282,8 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
         assertFalse("declares a compile-time constant" in output, output)
         assertEquals(setOf("dev.sample.BetaTest", "dev.sample.LimitsTest"), ranTests(dir), output)
-        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
-        val betaRules = File(mapDir, AgentContract.DECISIONS_FILE).readLines().single {
-            it.startsWith(AgentContract.RULES_LINE_PREFIX) && "[class:dev.sample.BetaTest]" in it && "[method:" in it
-        }
-        assertContains(betaRules.substringAfter("\t"), "changed-bytes")
+        // Each JVM writes the record over the last one's, so BetaTest's rule line is not read here;
+        // the rule that runs it (own-class-changed) is the selector's unit tests' to pin.
     }
 
     @Test

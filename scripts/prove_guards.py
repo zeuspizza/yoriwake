@@ -1896,8 +1896,8 @@ MUTATIONS = [
     # An edited test class JaCoCo could not instrument records nothing of itself, so its known tests
     # run by a rule of their own, not through their coverage of it.
     ("an edited own test class's known tests are not selected", SELECTOR,
-     "            if (ofChangedOwnClass(test.testId(), ownTestClasses, changedClassPrefixes)) {",
-     "            if (false) {",
+     "            if (ofChangedOwnClass(test.testId(), ownTestClasses, changedClassPrefixes)\n",
+     "            if (false\n",
      agent_suite, "an edited test class with no coverage of itself runs its known tests"),
     ("the own-class rule stops being recorded", SELECTOR,
      "                add(byTest, test.testId(), Rule.OWN_CLASS_CHANGED);",
@@ -2026,7 +2026,7 @@ MUTATIONS = [
      "    if False:",
      preflight_suite, "was not named"),
     ("changed bytes no test recorded stop forcing", SELECTOR,
-     "            if (!recordedByAny(map.entries(), name)) {",
+     "            if (!recordedByAny(map.entries(), name) && !ownTestClasses.contains(name)) {",
      "            if (false) {",
      agent_suite, "a class whose bytes changed and that no test recorded forces a full run"),
     # The nested-class rule's anchor set, from the agent's side: bytes merged into the change set
@@ -2045,6 +2045,21 @@ MUTATIONS = [
      "        return if (bytesUnknown) bytesRefusal(digest)",
      "        return if (false) bytesRefusal(digest)",
      unit_suite, "a walk that could not finish forces, even on an empty change set"),
+    # A test class that copied a constant moves its own bytes with no source change, and discovery
+    # is what loads it, so no test may have recorded it. Its tests are known all the same; forcing
+    # here is a cost, and selecting none of its tests is the miss the second guard catches.
+    ("an own test class whose bytes moved forces as unrecorded again", SELECTOR,
+     "            if (!recordedByAny(map.entries(), name) && !ownTestClasses.contains(name)) {",
+     "            if (!recordedByAny(map.entries(), name)) {",
+     agent_suite, "an own test class whose bytes moved with no source change runs its known tests"),
+    ("an own test class whose bytes moved no longer selects its own tests", SELECTOR,
+     "                    || ofChangedOwnClass(test.testId(), ownTestClasses, changedBytes)) {",
+     "                    || false) {",
+     agent_suite, "an own test class whose bytes moved with no source change runs its known tests"),
+    ("the rules record no longer names the tests of an own test class whose bytes moved", SELECTOR,
+     "                    || ofChangedOwnClass(test.testId(), change.ownTestClasses(), bytes)) {",
+     "                    || false) {",
+     agent_suite, "own-class-changed names the tests of an own test class whose bytes moved"),
     # A changed constant narrows only because the bytes comparison names every class compiled with
     # the new value. A comparison that did not run names none; the run then still forces, but on
     # the walk's token, and the cause the user can act on (the constant) is no longer said.

@@ -320,4 +320,20 @@ class RulesTest {
         assertEquals("reaches-change", changedNotOwn.tokens(id("dev.EditedTest")))
         assertEquals("reaches-change", ownNotChanged.tokens(id("dev.EditedTest")))
     }
+
+    @Test
+    fun `own-class-changed names the tests of an own test class whose bytes moved`(@TempDir dir: File) {
+        val tests = listOf(id("dev.EditedTest") to "dev.Calc", id("dev.OtherTest") to "dev.Calc")
+
+        val decision = decide(
+            map(dir, tests),
+            AgentContract.CHANGED_CLASSES_PROPERTY to "", AgentContract.ACCOUNTED_PROPERTY to "true",
+            AgentContract.CHANGED_BYTES_PROPERTY to "dev.EditedTest",
+            AgentContract.OWN_TEST_CLASSES_PROPERTY to "dev.EditedTest",
+        )
+
+        assertEquals("own-class-changed", decision.tokens(id("dev.EditedTest")))
+        assertEquals("none", decision.tokens(id("dev.OtherTest")))
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+    }
 }

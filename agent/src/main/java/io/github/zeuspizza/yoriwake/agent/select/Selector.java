@@ -410,10 +410,11 @@ public final class Selector {
         }
 
         // No absence rule here: bytes that changed where no test looked are as unknown as a
-        // changed class the map never saw.
+        // changed class the map never saw. An own test class is the exception, as above: its
+        // tests are known, and a constant it copied moves its bytes with no source change.
         List<String> unrecorded = new ArrayList<>();
         for (String name : changedBytes) {
-            if (!recordedByAny(map.entries(), name)) {
+            if (!recordedByAny(map.entries(), name) && !ownTestClasses.contains(name)) {
                 unrecorded.add(name);
             }
         }
@@ -450,7 +451,8 @@ public final class Selector {
         // Not left to the class's coverage of itself, which JaCoCo records none of for a class it
         // could not instrument.
         for (MapReader.Entry test : tests) {
-            if (ofChangedOwnClass(test.testId(), ownTestClasses, changedClassPrefixes)) {
+            if (ofChangedOwnClass(test.testId(), ownTestClasses, changedClassPrefixes)
+                    || ofChangedOwnClass(test.testId(), ownTestClasses, changedBytes)) {
                 selected.add(test.testId());
             }
         }
@@ -567,7 +569,7 @@ public final class Selector {
             }
         }
         for (String name : bytes) {
-            if (!recordedByAny(entries, name)) {
+            if (!recordedByAny(entries, name) && !change.ownTestClasses().contains(name)) {
                 forcing.add(Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED_BYTES);
                 break;
             }
@@ -581,7 +583,8 @@ public final class Selector {
             if (intersects(test, changed)) {
                 add(byTest, test.testId(), Rule.REACHES_CHANGE);
             }
-            if (ofChangedOwnClass(test.testId(), change.ownTestClasses(), changed)) {
+            if (ofChangedOwnClass(test.testId(), change.ownTestClasses(), changed)
+                    || ofChangedOwnClass(test.testId(), change.ownTestClasses(), bytes)) {
                 add(byTest, test.testId(), Rule.OWN_CLASS_CHANGED);
             }
             if (recordsAny(test, bytes)) {
