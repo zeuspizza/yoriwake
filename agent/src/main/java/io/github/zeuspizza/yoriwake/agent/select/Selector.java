@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Decides which tests a change can reach. Every rule that forces a full run is evaluated before
@@ -378,10 +379,24 @@ public final class Selector {
         // Never merged into the change set, which also anchors isNestedUnder.
         Set<String> changedBytes = bytesOnly(change.changedBytes(), changedClassPrefixes);
 
-        for (MapReader.Entry entry : global) {
-            if (intersects(entry, changedClassPrefixes) || recordsAny(entry, changedBytes)) {
+        // Startup work is a first touch of each JVM that ran it, before its first test, so the
+        // shared-JVM windows select every test that could see it. The force stays where they cannot
+        // stand in: a class no JVM's touches date, a loosened window, or a selection of every test,
+        // which would run the whole suite without recording.
+        boolean startupTouched = touchesStartup(global, changedClassPrefixes, changedBytes);
+        if (startupTouched) {
+            String undated = undatedStartup(map, tests, global, changedClassPrefixes, changedBytes, knownTestIds,
+                    change.exemptTestClasses());
+            if (undated != null) {
                 return Decision.fullRun(
-                        "the change touches startup coverage, which no test owns",
+                        "the change touches startup coverage of " + undated
+                                + ", which no JVM's first touches date to its start",
+                        Decision.FullRunKind.STARTUP_COVERAGE, knownTestIds);
+            }
+            if (!loosened.isEmpty()) {
+                return Decision.fullRun(
+                        "the change touches startup coverage, which only the shared-JVM windows this"
+                                + " mode drops would select from",
                         Decision.FullRunKind.STARTUP_COVERAGE, knownTestIds);
             }
         }
@@ -496,6 +511,12 @@ public final class Selector {
             }
         }
 
+        if (startupTouched && selected.containsAll(knownTestIds)) {
+            return Decision.fullRun(
+                    "the change touches startup coverage that every test depends on",
+                    Decision.FullRunKind.STARTUP_COVERAGE, knownTestIds);
+        }
+
         return Decision.selecting(selected, knownTestIds, notKnownToPass(tests), sharedJvmOnly);
     }
 
@@ -552,11 +573,11 @@ public final class Selector {
             forcing.add(Decision.FullRunKind.EMPTY_CHANGE_SET);
         }
         Set<String> bytes = bytesOnly(change.changedBytes(), changed);
-        for (MapReader.Entry entry : global) {
-            if (intersects(entry, changed) || recordsAny(entry, bytes)) {
-                forcing.add(Decision.FullRunKind.STARTUP_COVERAGE);
-                break;
-            }
+        boolean startupTouched = touchesStartup(global, changed, bytes);
+        boolean startupUndated = startupTouched
+                && undatedStartup(map, tests, global, changed, bytes, knownTestIds, change.exemptTestClasses()) != null;
+        if (startupUndated) {
+            forcing.add(Decision.FullRunKind.STARTUP_COVERAGE);
         }
         for (String prefix : changed) {
             if (!knownToMap(entries, prefix, changed)
@@ -612,7 +633,77 @@ public final class Selector {
                 add(byTest, id, map.positionsOf(id).isEmpty() ? Rule.SHARES_JVM_UNPOSITIONED : Rule.SHARES_JVM_LINES_OBSERVED);
             }
         }
+        if (startupTouched && !startupUndated && byTest.keySet().containsAll(knownTestIds)) {
+            forcing.add(Decision.FullRunKind.STARTUP_COVERAGE);
+        }
         return new Rules(basis, forcing, byTest, knownTestIds);
+    }
+
+    private static boolean touchesStartup(List<MapReader.Entry> global, Collection<String> changedClassPrefixes,
+            Set<String> changedBytes) {
+        for (MapReader.Entry entry : global) {
+            if (intersects(entry, changedClassPrefixes) || recordsAny(entry, changedBytes)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A changed class or changed-bytes class in startup coverage that the touches cannot date to the
+     * start of the JVMs that ran it, by the table its window opens from; null when every one is
+     * dated. Startup records outlive the touches a later full run replaced, so one no JVM names may
+     * come from a JVM the map no longer describes. And the record no test owns also holds windows
+     * taken after tests (a teardown between classes, a shutdown tail): a class first touched after a
+     * JVM's first test may have run there for a class whose tests came before it, so it is dated
+     * only when every JVM that touched it, or touched every class, did so before its first test.
+     */
+    private static String undatedStartup(MapReader.Result map, List<MapReader.Entry> tests,
+            List<MapReader.Entry> global, Collection<String> changedClassPrefixes, Set<String> changedBytes,
+            Set<String> knownTestIds, Collection<String> exemptTestClasses) {
+        Set<String> exempt = exemptKnownToMap(exemptTestClasses, changedClassPrefixes, knownTestIds);
+        Map<String, Integer> firstTests = new HashMap<>();
+        for (MapReader.Entry test : tests) {
+            for (MapReader.Position position : map.positionsOf(test.testId())) {
+                firstTests.merge(position.jvm(), position.sequence(), Math::min);
+            }
+        }
+        for (String prefix : changedClassPrefixes) {
+            if (!knownToMap(global, prefix, changedClassPrefixes)) {
+                continue;
+            }
+            // An exempt test class is dated by named touches, which hold every class a startup window ran.
+            List<MapReader.FirstTouch> dating = exempt.contains(prefix) ? map.namedTouches() : map.firstTouches();
+            if (!datedAtStart(dating, firstTests, name -> touchMatches(name, prefix, changedClassPrefixes))) {
+                return prefix;
+            }
+        }
+        for (String name : changedBytes) {
+            if (recordedByAny(global, name) && !datedAtStart(map.firstTouches(), firstTests, name::equals)) {
+                return name;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether some touch names the class, and every touch naming it or every class came no later
+     * than its JVM's first test. A JVM that ran no test cannot leave one out.
+     */
+    private static boolean datedAtStart(List<MapReader.FirstTouch> touches, Map<String, Integer> firstTests,
+            Predicate<String> namesClass) {
+        boolean named = false;
+        for (MapReader.FirstTouch touch : touches) {
+            if (!AgentContract.FIRST_TOUCH_ANY.equals(touch.className()) && !namesClass.test(touch.className())) {
+                continue;
+            }
+            named = true;
+            Integer firstTest = firstTests.get(touch.jvm());
+            if (firstTest != null && touch.sequence() > firstTest) {
+                return false;
+            }
+        }
+        return named;
     }
 
     /** {@link #ranAfterFirstTouch}, with each window kept apart by what opened it. */

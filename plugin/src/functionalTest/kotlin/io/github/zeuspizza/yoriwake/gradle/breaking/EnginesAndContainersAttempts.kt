@@ -363,9 +363,10 @@ class EnginesAndContainersAttempts : BreakAttempt() {
 
     // Track: code reading. Boundary: Spock runs setupSpec before any feature starts, so no feature's
     // own record holds what it runs. A feature that only reads a @Shared field setupSpec filled
-    // depends on the change through it. In a JVM of its own, the spec's setup is the JVM's startup.
+    // depends on the change through it. In a JVM of its own, the spec's setup is the JVM's startup,
+    // which runs that JVM's tests and leaves out the JVMs that never ran it.
     @Test
-    fun `a Spock feature that reads what setupSpec computed in its own JVM runs every test as startup coverage`(@TempDir dir: File) {
+    fun `a Spock feature that reads what setupSpec computed in its own JVM runs the tests of that JVM`(@TempDir dir: File) {
         val build = """
             plugins {
                 groovy
@@ -394,7 +395,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             """,
         )
         val result = attempt(
-            dir, "dev.sample.A1SetupSpec", Aim.Forced("startup-coverage"),
+            dir, "dev.sample.A1SetupSpec", Aim.Row("shares-jvm-changed-class"),
             listOf(
                 codec, other,
                 spec("A0UnrelatedSpec", "def \"runs first\"() { expect: new Other().one() == 1 }"),
@@ -411,7 +412,7 @@ class EnginesAndContainersAttempts : BreakAttempt() {
             buildScript = build,
         ) { changeCodec(it) }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: engineRunsEverything finds Kotest by its engine segment at any
