@@ -4280,7 +4280,7 @@ MUTATIONS = [
     ("any file under an absent module's src drops again", CLASSPATH_SCOPE,
      "            owner != null && owner.second !in present && isClassSource(path, owner.first)",
      '            owner != null && owner.second !in present && path.startsWith("${owner.first}/src/")',
-     functional_suite, "a resource of a module off the classpath the build script hands a test by path forces the run"),
+     functional_suite, "a sibling's file an own resource lists forces the run"),
     # A sibling's build file or other `src` file drops only when nothing carries it to the test: a
     # class or resource naming it, a path the task hands into its module, a task of it the test
     # task depends on, or a build script reaching across. Each check alone keeps its attempt.
@@ -4388,7 +4388,7 @@ MUTATIONS = [
     ("Gradle names no module by a source directory", CLASSPATH_FACTS,
      "            withSourceRootModules(project, facts.moduleDirs, resolvedProjectDependencies(project))",
      "            resolvedProjectDependencies(project)",
-     functional_suite, "a sibling's sources a srcDir compiles in keep their edits"),
+     functional_suite, "a sibling's sources a source set the tests do not build compiles in keep their edits"),
     # The two exemptions from that: an IDE's state, and what the build declares unread.
     ("an IDE state directory is a change again", NOT_READ,
      '    private val IDE_STATE_DIRECTORIES = setOf(".idea", ".vscode", ".fleet")',

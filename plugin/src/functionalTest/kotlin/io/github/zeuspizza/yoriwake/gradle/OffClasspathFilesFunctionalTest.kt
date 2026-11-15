@@ -177,6 +177,73 @@ class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
         assertForcedAndFailed(output, dir, "FixtureTest > maxIsThree()")
     }
 
+    /**
+     * A resource of the tested project lists the sibling's file, and the test reads the file from
+     * that list: no class holds the path, the test is handed no path into the sibling, and no task it
+     * depends on reads the file.
+     */
+    @Test
+    fun `a sibling's file an own resource lists forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir, rootBuild(),
+            maxFixture,
+            "src/test/resources/fixtures.list" to "beta/src/fixtures/limits/max.fixture\n",
+            "src/test/java/dev/sample/ListedTest.java" to """
+                package dev.sample;
+                import java.io.InputStream;
+                import java.nio.charset.StandardCharsets;
+                import java.nio.file.Files;
+                import java.nio.file.Paths;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class ListedTest {
+                    @Test void maxIsThree() throws Exception {
+                        try (InputStream list = getClass().getResourceAsStream("/fixtures.list")) {
+                            String path = new String(list.readAllBytes(), StandardCharsets.UTF_8).trim();
+                            assertEquals("3", Files.readString(Paths.get(path)).trim());
+                        }
+                    }
+                }
+            """.trimIndent(),
+        ) { changeMax(it) }
+
+        assertForcedAndFailed(output, dir, "ListedTest > maxIsThree()")
+    }
+
+    /**
+     * A source set of the tested project the tests never build compiles the sibling's sources, so the
+     * sibling counts as on the classpath though no task the test depends on reads them and no path
+     * into it reaches the test JVM. The test walks the checkout to the source, which alone is the
+     * documented limit.
+     */
+    @Test
+    fun `a sibling's sources a source set the tests do not build compiles in keep their edits`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild() + "\nsourceSets.create(\"docs\") { java.srcDir(\"beta/src/main/java\") }\n",
+            betaThing,
+            "src/test/java/dev/sample/SourceTest.java" to """
+                package dev.sample;
+                import java.nio.file.Files;
+                import java.nio.file.Path;
+                import java.nio.file.Paths;
+                import java.util.stream.Stream;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertTrue;
+                class SourceTest {
+                    @Test void firstVersion() throws Exception {
+                        try (Stream<Path> files = Files.walk(Paths.get(""))) {
+                            Path found = files.filter(p -> p.endsWith("Thing.java")).findFirst().get();
+                            assertTrue(Files.readString(found).contains("v1"));
+                        }
+                    }
+                }
+            """.trimIndent(),
+        ) { changeThing(it) }
+
+        assertContains(output, "SourceTest > firstVersion() FAILED")
+    }
+
     /** A test asserting that its JVM's `FROM_BETA` variable is [expected], or unset for null. */
     private fun environmentTest(expected: String?) = "src/test/java/dev/sample/EnvironmentTest.java" to """
         package dev.sample;
