@@ -7,6 +7,10 @@ package io.github.zeuspizza.yoriwake.gradle.change
  * path, so a Java or Kotlin source under an absent module's `src` drops only when no compiled class
  * of this task holds a path to it of two or more segments (`TaskArtifacts.Naming.CLASS_SOURCE`).
  *
+ * On Gradle a module is absent only when, besides its output not being on the classpath, the task
+ * neither hands its test JVM a path into it nor depends on a task of it
+ * (`ClasspathView.reachedModules`).
+ *
  * The module's build file and its other files under `src` drop only with more said of them
  * ([Others]): a test or the build can read a resource without naming its path, found by a pattern,
  * by walking a directory, or handed over by path, and a build script can configure another project.
@@ -31,7 +35,10 @@ internal object ClasspathScope {
     class Others(
         /** Module path to its build file, repository-relative. */
         val buildFiles: Map<String, String>,
-        /** The modules the task reaches outside its classpath; null when unknown. Asked only for a candidate. */
+        /**
+         * The modules the task reaches outside its classpath; null when unknown. Asked only for a
+         * candidate. Gradle counts them present too, so its class sources stay; Maven does not.
+         */
         val reached: () -> Set<String>?,
         /** Which of these files a compiled class or a resource of the task names; null when it cannot be asked. */
         val named: (Collection<String>) -> Set<String>?,

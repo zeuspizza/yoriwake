@@ -705,6 +705,12 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a sibling's path in the argLine keeps its edits`(@TempDir dir: File) {
+        val configuration = surefireConfigured("<argLine>@{argLine} -Dlib.dir=../lib/src/main/java</argLine>")
+        assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader))
+    }
+
+    @Test
     fun `a sibling a plugin copies into the build keeps its edits`(@TempDir dir: File) {
         val copy = """
             <plugin>

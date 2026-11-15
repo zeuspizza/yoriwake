@@ -4313,6 +4313,12 @@ MUTATIONS = [
      "        return readerRefusal(module, dir, view, read, exists)",
      "        return null",
      functional_suite, "a sibling's version the tested project's script hands its test forces the run when it changes"),
+    # On Gradle a module the test task reaches by a handed path or a task it depends on is present,
+    # as Maven counts a module its fork values name, so its class sources stay too.
+    ("Gradle counts no module the test task reaches as present", CLASSPATH_FACTS,
+     "        return named + (reachedModules() ?: return null)",
+     "        return named",
+     functional_suite, "a sibling's jar the test task builds and hands as a system property keeps its source edits"),
     # A test reads a sibling's source by a path it holds, often relative to that module.
     ("a class source off the classpath is named by none of its trailing parts", TASK_ARTIFACTS,
      "            (2 until segments.size).flatMapTo(forms) { n ->",

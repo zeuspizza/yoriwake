@@ -21,7 +21,10 @@ internal data class ClasspathFacts(
     override val moduleDirs: Map<String, String>,
     /** Gradle path to build directory, so a classpath entry can be traced back to its module. */
     override val buildDirs: Map<String, String>,
-    /** Modules Gradle's resolution names; null means "could not be asked", not "none". */
+    /**
+     * Modules Gradle's resolution names; null means "could not be asked", not "none". The modules
+     * the task reaches by [handed] and [closure] are added to it as [declaredModules] answers.
+     */
     val declared: org.gradle.api.provider.Provider<Set<String>?>,
     /** Compile and annotation-processor classpaths, which the test runtime classpath omits. */
     val compileTime: org.gradle.api.file.FileCollection,
@@ -55,7 +58,14 @@ internal data class ClasspathFacts(
 
     override fun compileTimeFiles(): Set<File> = compileTime.files
 
-    override fun declaredModules(): Set<String>? = declared.getOrNull()
+    /**
+     * [declared] with the modules the task reaches by a path it hands its test JVM or a task it
+     * depends on, as Maven counts the modules its fork values name; null when any part is unknown.
+     */
+    override fun declaredModules(): Set<String>? {
+        val named = declared.getOrNull() ?: return null
+        return named + (reachedModules() ?: return null)
+    }
 
     override fun jacocoVersion(): String? = jacocoVersion?.let { it.readOrNull() ?: "" }
 

@@ -44,8 +44,11 @@ guess.
   to a module that holds the tested one; and so does the settings script, or the build script of
   the tested module, one above it or the root, that names the module. The module's other files keep
   counting. A module counts as reached when a source or resource directory of the tested module, or
-  of a module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`); a source
-  added on a compile task alone (`tasks.compileJava { source(...) }`) is not read.
+  of a module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`), when the
+  test task hands its test JVM a path in it or above it below the root (`-javaagent:beta/build/...`,
+  a system property, an environment value, a declared input), or when the test task depends on a
+  task of it (`dependsOn(":beta:jar")`); a source added on a compile task alone
+  (`tasks.compileJava { source(...) }`) is not read.
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
   now and always runs one the map has never seen.
@@ -845,7 +848,8 @@ Three things differ:
     loads the class is seen.
 - **Another module's source a test finds without holding its path.** A Java or Kotlin source of a
   module the test task does not reach counts only when one of the task's classes holds a path to
-  it of two or more segments. A test that joins single names (`Path.of("..", "beta", "src", ...)`)
+  it of two or more segments. A module the test task hands a path into, or depends on a task of,
+  is reached. A test that joins single names (`Path.of("..", "beta", "src", ...)`)
   or walks the tree to the file is skipped when nothing else selects it. So is one that holds a
   middle part of the path, which neither starts at the module's name nor ends in the file's name
   (`src/main/java/dev/beta`), and joins the rest. Write the path from the module, or from `src` to

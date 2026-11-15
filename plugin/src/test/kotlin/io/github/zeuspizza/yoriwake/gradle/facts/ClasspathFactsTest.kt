@@ -18,7 +18,13 @@ class ClasspathFactsTest {
     /** A module `:app` at `app/` beside `:lib` at `lib/` and `:lib:nested` at `lib/nested/`. */
     private val moduleDirs = mapOf("app" to ":app", "lib" to ":lib", "lib/nested" to ":lib:nested")
 
-    private fun facts(dir: File, classpath: List<File>, declared: Set<String>?): ClasspathFacts {
+    private fun facts(
+        dir: File,
+        classpath: List<File>,
+        declared: Set<String>?,
+        handed: Set<File>? = emptySet(),
+        closure: Set<String>? = emptySet(),
+    ): ClasspathFacts {
         val project = ProjectBuilder.builder().withProjectDir(dir).build()
         return ClasspathFacts(
             rootDir = dir,
@@ -33,6 +39,8 @@ class ClasspathFactsTest {
             ownPath = ":app",
             testOutputs = project.files(),
             classpath = project.files(classpath),
+            handed = handed?.let { known -> project.provider { known } },
+            closure = closure?.let { known -> project.provider { known } },
         )
     }
 
@@ -187,5 +195,40 @@ class ClasspathFactsTest {
         val closure = modulesDependedOn(test, root) { it.taskDependencies.getDependencies(it) }
 
         assertEquals(setOf(":lib"), closure)
+    }
+
+    @Test
+    fun `a module the task hands a path into, or depends on a task of, is declared`(@TempDir dir: File) {
+        val app = File(dir, "app")
+        listOf(
+            "-Dlib.jar=${File(dir, "lib/build/libs/lib.jar").absolutePath}",
+            "-javaagent:${File(dir, "lib/build/libs/lib.jar").absolutePath}",
+            File(dir, "lib/build/libs").absolutePath,
+        ).forEach { value ->
+            val declared = facts(dir, emptyList(), emptySet(), handed = handedPathTokens(listOf(value), app)).declaredModules()
+            assertEquals(setOf(":lib"), declared, value)
+        }
+        assertEquals(setOf(":lib"), facts(dir, emptyList(), emptySet(), closure = setOf(":lib")).declaredModules())
+        assertEquals(emptySet(), facts(dir, emptyList(), emptySet(), handed = setOf(dir)).declaredModules())
+    }
+
+    @Test
+    fun `reach that cannot be told leaves the declared modules unknown`(@TempDir dir: File) {
+        assertEquals(null, facts(dir, emptyList(), emptySet(), closure = null).declaredModules())
+        assertEquals(null, facts(dir, emptyList(), emptySet(), handed = null).declaredModules())
+    }
+
+    @Test
+    fun `a sibling's source the task hands by path keeps its change`(@TempDir dir: File) {
+        val scoped = scopedChange(
+            listOf("lib/nested/src/main/java/dev/N.java"),
+            facts(
+                dir, listOf(jar(dir, "lib/build/libs/lib.jar")), setOf(":lib"),
+                handed = setOf(File(dir, "lib/nested/build/libs/nested.jar")),
+            ),
+        )
+
+        assertEquals(0, scoped.dropped)
+        assertEquals(setOf("dev.N"), scoped.change.classPrefixes)
     }
 }

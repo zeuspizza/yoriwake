@@ -795,6 +795,8 @@ class ChangeSelectionTest {
             ownPath = ":app",
             testOutputs = project.files(),
             classpath = project.files(onClasspath),
+            handed = project.provider { emptySet() },
+            closure = project.provider { emptySet() },
         )
 
         // Unknown -> empty -> restrict keeps everything.

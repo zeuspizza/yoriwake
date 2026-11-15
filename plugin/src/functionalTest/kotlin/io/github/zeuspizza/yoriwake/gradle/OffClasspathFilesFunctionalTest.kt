@@ -7,11 +7,11 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 
 /**
- * A sibling module's build script or resource that reaches the tested project's tests although the
- * sibling is not on its classpath: handed to the test JVM by path, built by a task the test task
- * depends on, configuring the tested project, or named by a script the tested project reads. Each
- * keeps forcing the run, and the change in each breaks the test that reads it, so a skip is a
- * passing build and a run is a failing one.
+ * A sibling module's file that reaches the tested project's tests although the sibling is not on
+ * its classpath: handed to the test JVM by path, built by a task the test task depends on,
+ * configuring the tested project, or named by a script the tested project reads. Each keeps its
+ * edits, and the change in each breaks the test that reads it, so a skip is a passing build and a
+ * run is a failing one.
  */
 class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
 
@@ -279,5 +279,103 @@ class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
         ) { changeSchema(it) }
 
         assertForcedAndFailed(output, dir, "SchemaTest > firstVersion()")
+    }
+    private val betaThing = "beta/src/main/java/dev/beta/Thing.java" to
+        "package dev.beta;\npublic class Thing { public String v() { return \"v1\"; } }\n"
+
+    private fun changeThing(dir: File) =
+        File(dir, betaThing.first).writeText(betaThing.second.replace("v1", "v2"))
+
+    /** A test loading the sibling's class from the jar at [jar], a Java expression, and asserting its first version. */
+    private fun jarLoadingTest(jar: String) = "src/test/java/dev/sample/BetaJarTest.java" to """
+        package dev.sample;
+        import java.net.URL;
+        import java.net.URLClassLoader;
+        import java.nio.file.Paths;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class BetaJarTest {
+            @Test void firstVersion() throws Exception {
+                URL url = Paths.get($jar).toUri().toURL();
+                try (URLClassLoader loader = new URLClassLoader(new URL[] { url }, null)) {
+                    Object thing = loader.loadClass("dev.beta.Thing").getDeclaredConstructor().newInstance();
+                    assertEquals("v1", thing.getClass().getMethod("v").invoke(thing));
+                }
+            }
+        }
+    """.trimIndent()
+
+    /**
+     * The test task builds the sibling's jar and hands its path in a system property; the test
+     * loads the sibling's class from it. Neither its classpath nor any class of it names the sibling.
+     */
+    @Test
+    fun `a sibling's jar the test task builds and hands as a system property keeps its source edits`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild("dependsOn(\":beta:jar\")\n    systemProperty(\"beta.jar\", file(\"beta/build/libs/beta.jar\").absolutePath)"),
+            betaThing, jarLoadingTest("System.getProperty(\"beta.jar\")"),
+        ) { changeThing(it) }
+
+        assertContains(output, "BetaJarTest > firstVersion() FAILED")
+    }
+
+    @Test
+    fun `a sibling's jar the test task builds and hands as an environment value keeps its source edits`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild("dependsOn(\":beta:jar\")\n    environment(\"BETA_JAR\", file(\"beta/build/libs/beta.jar\").absolutePath)"),
+            betaThing, jarLoadingTest("System.getenv(\"BETA_JAR\")"),
+        ) { changeThing(it) }
+
+        assertContains(output, "BetaJarTest > firstVersion() FAILED")
+    }
+
+    /** The sibling's jar is an agent the test JVM starts with; its `premain` sets what the test asserts. */
+    @Test
+    fun `a sibling's agent jar the test task hands with -javaagent keeps its source edits`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild("dependsOn(\":beta:jar\")\n    jvmArgs(\"-javaagent:\" + file(\"beta/build/libs/beta.jar\").absolutePath)"),
+            "beta/build.gradle.kts" to "plugins { java }\ntasks.jar { manifest { attributes(\"Premain-Class\" to \"dev.beta.Agent\") } }\n",
+            "beta/src/main/java/dev/beta/Agent.java" to
+                "package dev.beta;\npublic class Agent { public static void premain(String args) { System.setProperty(\"agent.value\", \"v1\"); } }\n",
+            "src/test/java/dev/sample/AgentTest.java" to """
+                package dev.sample;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class AgentTest { @Test void premainRan() { assertEquals("v1", System.getProperty("agent.value")); } }
+            """.trimIndent(),
+        ) {
+            val agent = File(it, "beta/src/main/java/dev/beta/Agent.java")
+            agent.writeText(agent.readText().replace("\"v1\"", "\"v2\""))
+        }
+
+        assertContains(output, "AgentTest > premainRan() FAILED")
+    }
+
+    /**
+     * A task of the sibling, which the test task depends on, copies its jar below the root's build
+     * directory, outside the sibling's own; the path the test is handed holds no part of the sibling's.
+     */
+    @Test
+    fun `a sibling's jar a task the test depends on copies outside the sibling keeps its source edits`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild(
+                "dependsOn(\":beta:fixtureJar\")\n" +
+                    "    systemProperty(\"beta.jar\", layout.buildDirectory.file(\"fixtures/beta.jar\").get().asFile.absolutePath)",
+            ),
+            "beta/build.gradle.kts" to """
+                plugins { java }
+                tasks.register<Copy>("fixtureJar") {
+                    from(tasks.jar)
+                    into(rootProject.layout.buildDirectory.dir("fixtures"))
+                }
+            """.trimIndent(),
+            betaThing, jarLoadingTest("System.getProperty(\"beta.jar\")"),
+        ) { changeThing(it) }
+
+        assertContains(output, "BetaJarTest > firstVersion() FAILED")
     }
 }
