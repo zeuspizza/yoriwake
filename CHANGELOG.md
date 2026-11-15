@@ -26,6 +26,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Maven records the loaded-class union under `-Dyoriwake.internal.loaded`. Map: left alone.
 - Contributors: `-Pyoriwake.functional.forks=<n>` runs a functional suite in `<n>` test JVMs at once. Map: left alone.
 - The reference says an observing or complement run of a parallel suite under `recordSequentially` records nothing. Map: left alone.
+- Maven: a licence plugin that would check `.yoriwake/` is named with the exclude to add. Map: left alone.
 
 ### Changed
 

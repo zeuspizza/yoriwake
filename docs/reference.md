@@ -1978,6 +1978,10 @@ the Gradle plugin.
 - **Maps** live under `.yoriwake/yoriwake/` at the reactor root, one per execution, and survive
   `mvn clean`; yoriwake writes a `.gitignore` into `.yoriwake/`. Surefire and Failsafe executions
   of a module keep separate maps.
+- **A licence check that walks the root module's tree** sees `.yoriwake/` too, which `.gitignore`
+  does not hide from it: `com.mycila:license-maven-plugin` fails `check` on its files and adds
+  headers to some with `format`. Add `<exclude>.yoriwake/**</exclude>` to its `<excludes>`; until
+  then each build prints a warning naming the plugin.
 - **Develocity's workspace id** (`.mvn/.develocity/develocity-workspace-id`), untracked, is build
   state, as `.yoriwake/` is: it neither forces a selecting run nor keeps a complement run from
   narrowing. An untracked file of that name in a nested module's `.mvn/.develocity/` directory is

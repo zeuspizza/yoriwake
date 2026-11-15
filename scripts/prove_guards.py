@@ -245,6 +245,7 @@ MAVEN_FORK_SYSTEM_PROPERTIES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwa
 MAVEN_BUILD_CACHE = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/BuildCache.kt"
 MAVEN_DEVELOCITY = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/DevelocityDetection.kt"
 MAVEN_AUDIT = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/AuditMojo.kt"
+MAVEN_LICENCE_WALK = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/LicenceWalk.kt"
 RAN_TESTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/RanTests.java"
 SELECTION_RECORD_FILE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/SelectionRecordFile.java"
 SELECTION_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/SelectionRecord.kt"
@@ -5670,6 +5671,10 @@ MUTATIONS = [
      "        override fun visitLineNumber(line: Int, start: Label?) = Unit",
      "        override fun visitLineNumber(line: Int, start: Label?) = feed(\"line\", line)",
      line_only_suite, "a line number alone does not"),
+    ("a licence plugin that lists the state directory is not named", MAVEN_LICENCE_WALK,
+     '    if (set.excludes.any { ".yoriwake" in it }) return false',
+     '    if (true) return false',
+     maven_suite, "a licence plugin without the exclude is named with the exclude to add"),
 ]
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
 SUITE_TESTS = {
