@@ -315,4 +315,36 @@ class AbsenceAttempts : BreakAttempt() {
         assertEquals(false, passedIn(File(dir, "build/test-results/test/TEST-dev.sample.A1DyingTest.xml")), output)
         assertContains(ranTests(dir), "dev.sample.A0UnrelatedTest", "with no list, the change did not run every test")
     }
+
+    // Track: code reading. Boundary: the list and the touches speak for classes the capture held.
+    // A class added afterwards is in neither, and a test that lists the classes' directory depends
+    // on it without having read a file that existed then.
+    @Test
+    fun `a class added after the capture that a directory listing would find`(@TempDir dir: File) {
+        val scan = source(
+            "src/test/java/dev/sample/A1ScanTest.java",
+            """
+            package dev.sample;
+            import java.io.File;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1ScanTest {
+                @Test void noClassIsNamedForbidden() {
+                    String[] names = new File(System.getProperty("main.classes"), "dev/sample").list((d, n) -> n.startsWith("Forbidden"));
+                    assertEquals(0, names.length);
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1ScanTest", Aim.Forced("no-coverage-for-changed"),
+            listOf(orphan, other, first, scan, classOrderByName),
+            buildScript = buildWith(),
+        ) {
+            File(it, "src/main/java/dev/sample/Forbidden.java")
+                .writeText("package dev.sample;\npublic class Forbidden { public int one() { return 1; } }\n")
+        }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
 }
