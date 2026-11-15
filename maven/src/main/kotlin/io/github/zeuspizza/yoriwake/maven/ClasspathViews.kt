@@ -47,36 +47,15 @@ internal fun classpathView(
     }
 
 /**
- * The paths [project]'s build reads, whichever plugin reads them: every text and attribute value of
- * its effective `<build>` and `<properties>`, which Maven has interpolated with the parent chain and
- * the active profiles merged in, and the files that activate a profile of its POM or of a parent's
- * in the checkout. Relative to the module's directory. Null when one of them holds an expression
- * that cannot be resolved here, so a path it names is unknown.
+ * The paths [project]'s build reads, whichever plugin reads them: every value of its effective
+ * `<build>` (its directories, filters, resource roots, and each plugin's configuration, text and
+ * attributes, in the build and its management) and `<properties>`, which Maven has interpolated with
+ * the parent chain and the active profiles merged in, and the files that activate a profile of its
+ * POM or of a parent's in the checkout. Relative to the module's directory. Null when one of them
+ * holds an expression that cannot be resolved here, so a path it names is unknown.
  */
 internal fun modelPaths(session: MavenSession, root: File, project: MavenProject): Set<File>? = runCatching {
-    val values = mutableListOf<String>()
-    val written = java.io.StringWriter().also { org.apache.maven.model.io.xpp3.MavenXpp3Writer().write(it, project.model) }.toString()
-    val model = javax.xml.parsers.DocumentBuilderFactory.newDefaultInstance().apply { isNamespaceAware = false }
-        .newDocumentBuilder().parse(org.xml.sax.InputSource(java.io.StringReader(written))).documentElement
-    fun walk(node: org.w3c.dom.Node) {
-        when (node.nodeType) {
-            org.w3c.dom.Node.TEXT_NODE, org.w3c.dom.Node.CDATA_SECTION_NODE -> values += node.nodeValue
-            org.w3c.dom.Node.ELEMENT_NODE -> {
-                val attributes = node.attributes
-                for (i in 0 until attributes.length) values += attributes.item(i).nodeValue
-            }
-        }
-        var child = node.firstChild
-        while (child != null) {
-            walk(child)
-            child = child.nextSibling
-        }
-    }
-    var section = model.firstChild
-    while (section != null) {
-        if (section is org.w3c.dom.Element && section.tagName in MODEL_SECTIONS) walk(section)
-        section = section.nextSibling
-    }
+    val values = modelValues(project).toMutableList()
     val activations = mutableListOf<String>()
     generateSequence(project) { it.parent }
         .filter { pom -> pom.file?.absoluteFile?.normalize()?.startsWith(root.absoluteFile.normalize()) == true }
@@ -97,8 +76,32 @@ internal fun modelPaths(session: MavenSession, root: File, project: MavenProject
     }
 }.getOrNull()
 
-/** The effective model's sections whose values a build reads paths from. */
-private val MODEL_SECTIONS = setOf("build", "properties")
+/** The text values of [project]'s effective `<build>` and `<properties>`; see [modelPaths]. */
+private fun modelValues(project: MavenProject): List<String> {
+    val values = mutableListOf<String>()
+    project.model.properties?.values?.forEach { values += it.toString() }
+    val build = project.model.build ?: return values
+    values += listOfNotNull(
+        build.directory, build.outputDirectory, build.testOutputDirectory, build.sourceDirectory,
+        build.testSourceDirectory, build.scriptSourceDirectory, build.finalName,
+    )
+    values += build.filters.orEmpty()
+    (build.resources.orEmpty() + build.testResources.orEmpty()).forEach { resource ->
+        values += listOfNotNull(resource.directory, resource.targetPath) + resource.includes.orEmpty() + resource.excludes.orEmpty()
+    }
+    (build.plugins.orEmpty() + build.pluginManagement?.plugins.orEmpty()).forEach { plugin ->
+        (listOf(plugin.configuration) + plugin.executions.orEmpty().map { it.configuration })
+            .filterIsInstance<Xpp3Dom>().forEach { domValues(it, values) }
+    }
+    return values
+}
+
+/** Every value and attribute of [node] and the nodes under it, into [values]. */
+private fun domValues(node: Xpp3Dom, values: MutableList<String>) {
+    node.value?.let(values::add)
+    node.attributeNames.orEmpty().forEach { name -> node.getAttribute(name)?.let(values::add) }
+    node.children.forEach { domValues(it, values) }
+}
 
 /**
  * The ids of the reactor modules [project]'s build names, other than itself: by coordinates in a

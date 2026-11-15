@@ -4327,8 +4327,8 @@ MUTATIONS = [
     # On Maven a sibling's POM or `src/` file drops on the same terms: the paths the tested module's
     # build reads keep its module, and a POM that reaches out or changes its plugins keeps forcing.
     ("Maven reads no path of the effective model", MAVEN_CLASSPATH_VIEWS,
-     "        if (section is org.w3c.dom.Element && section.tagName in MODEL_SECTIONS) walk(section)",
-     "        if (false) walk(section)",
+     "    val values = modelValues(project).toMutableList()",
+     "    val values = mutableListOf<String>()",
      maven_suite, "a sibling's file the build reads as a resource filter still forces"),
     ("Maven reads no file that activates a profile", MAVEN_CLASSPATH_VIEWS,
      "                profile.activation?.file?.let { file -> activations += listOfNotNull(file.exists, file.missing) }",

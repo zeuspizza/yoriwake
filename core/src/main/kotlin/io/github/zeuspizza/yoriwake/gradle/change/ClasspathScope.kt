@@ -67,7 +67,7 @@ internal object ClasspathScope {
         moduleDirs: Map<String, String>,
         present: Set<String>,
         namedInClasses: (Collection<String>) -> Set<String>?,
-        others: Others? = null,
+        others: Others?,
     ): Restriction {
         if (present.isEmpty()) {
             return Restriction(paths.toList(), emptyList())
@@ -85,6 +85,14 @@ internal object ClasspathScope {
         val (gone, kept) = paths.partition { it in dropped || it in files }
         return Restriction(kept, gone, gone.filter { it in files })
     }
+
+    /** [restrict] for class sources alone: every build file and other `src` file is kept. */
+    fun restrict(
+        paths: Collection<String>,
+        moduleDirs: Map<String, String>,
+        present: Set<String>,
+        namedInClasses: (Collection<String>) -> Set<String>?,
+    ): Restriction = restrict(paths, moduleDirs, present, namedInClasses, null)
 
     /** The build files and other `src` files of absent modules that clear [others]. */
     private fun droppedOthers(
