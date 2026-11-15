@@ -5410,6 +5410,86 @@ def case_a_named_shape_set_writes_its_own_results_and_scratch():
     return failures
 
 
+def case_narrow_dependencies_is_on_once_for_the_run_and_writes_its_own_folder():
+    """`--narrow-dependencies` puts the property in the run's flags once, whatever the project file
+    said of it, so the file is stamped flag-on; and its results never share the flag-off file."""
+    import forcing_mutations  # noqa: PLC0415
+    failures = 0
+    flag = run.NARROW_DEPENDENCIES_FLAG
+    for given in ([], ["--offline"], [flag], [f"{flag}=false"], [f"{flag}=true", "--offline"]):
+        got = run.narrow_dependencies_flags(given)
+        if got.count(flag) != 1 or any(f.startswith(f"{flag}=") for f in got):
+            failures += fail(f"{given} became {got}, not the property once")
+        if forcing_mutations.population(got) != "flag-on":
+            failures += fail(f"{given} with the option reads {forcing_mutations.population(got)}")
+    if run.narrow_dependencies_flags(["--offline"])[0] != "--offline":
+        failures += fail("the project's own flags were not kept")
+    off = run.results_location("R", "L", "demo", run.FORCING_SET)
+    on = run.results_location("R", "L", "demo", run.FORCING_SET, narrow_dependencies=True)
+    if off != (os.path.join("R", "forcing-v1", "demo.json"), os.path.join("L", "demo.forcing-v1")):
+        failures += fail(f"the flag-off forcing paths moved: {off}")
+    if on != (os.path.join("R", "forcing-v1-narrow-dependencies", "demo.json"),
+              os.path.join("L", "demo.forcing-v1-narrow-dependencies")):
+        failures += fail(f"the flag-on paths are not their own: {on}")
+    return failures
+
+
+def case_narrow_dependencies_is_a_shared_arm_unsharded_forcing_run_on_gradle():
+    """Refused with another set, with the isolated arm's pairing, a replay or a shard, and on
+    Maven; accepted on a plain forcing run."""
+    failures = 0
+    parser = run.argument_parser()
+    project = "bench/projects/demo.toml"
+    forcing = ["--shapes", run.FORCING_SET, "--narrow-dependencies"]
+    for refused in (["--narrow-dependencies"], ["--shapes", run.POOL_SHAPES, "--narrow-dependencies"],
+                    forcing + ["--isolated-capture", "--pair-with", "x.json"],
+                    forcing + ["--replay", "3"], forcing + ["--accepted", "a", "--shard", "1/2"],
+                    forcing + ["--accepted-out", "a"]):
+        if run.narrow_dependencies_refusal(parser.parse_args([project] + refused)) is None:
+            failures += fail(f"{refused} was accepted")
+    args = parser.parse_args([project] + forcing)
+    if run.narrow_dependencies_refusal(args) is not None:
+        failures += fail(f"a forcing run was refused: {run.narrow_dependencies_refusal(args)}")
+    if "--narrow-dependencies" not in (run.maven_refusal(args) or ""):
+        failures += fail("a Maven project took --narrow-dependencies")
+    if run.narrow_dependencies_refusal(parser.parse_args([project])) is not None:
+        failures += fail("a run without the option was refused")
+    return failures
+
+
+def case_narrow_dependencies_draws_the_dependency_family_alone_up_to_its_cap():
+    """With the option only dependency reverts are drawn, up to their own cap counting rows
+    recorded for shards; without it every family draws one row, whatever the project's flags."""
+    import forcing_mutations  # noqa: PLC0415
+    failures = 0
+    with tempfile.TemporaryDirectory() as checkout:
+        with open(os.path.join(checkout, "build.gradle.kts"), "w", encoding="utf-8") as handle:
+            handle.write("plugins { java }\n")
+        project = {"name": "t", "sources": ["src/main/java"]}
+        commits = [{"sha": "a" * 40}, {"sha": "b" * 40}]
+        off = run.forcing_targets(checkout, project, commits, False)
+        on = run.forcing_targets(checkout, project, commits, True)
+    if {kind for _, kind, _ in off} != {"build-script", "dependency-revert"}:
+        failures += fail(f"without the option the families drawn were {off}")
+    if on != [("a" * 40, "dependency-revert", 0), ("b" * 40, "dependency-revert", 0)]:
+        failures += fail(f"with the option the targets were {on}")
+    cap = forcing_mutations.NARROW_DEPENDENCIES_ROWS
+    rows = [{"kind": "dependency-revert"}] * (cap - 1)
+    if run.forcing_rows_limit("dependency-revert", True) != cap:
+        failures += fail("the option does not give the dependency family its cap")
+    for kind in forcing_mutations.FAMILIES:
+        if run.forcing_rows_limit(kind, False) != forcing_mutations.ROWS_PER_FAMILY:
+            failures += fail(f"without the option {kind} draws more than one row")
+    if forcing_mutations.family_full("dependency-revert", rows, (), cap):
+        failures += fail(f"{cap - 1} rows filled a cap of {cap}")
+    if not forcing_mutations.family_full("dependency-revert", rows,
+                                         [("x", "dependency-revert", 0)], cap):
+        failures += fail("a row recorded for a shard did not count toward the cap")
+    if not forcing_mutations.family_full("dependency-revert", rows[:1], ()):
+        failures += fail("without the option one row did not fill the family")
+    return failures
+
+
 def case_a_mutation_row_counts_the_files_and_modules_it_changed():
     """A mutation's own diff decides its change counts, not a constant 1."""
     import subprocess
@@ -5605,6 +5685,9 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_editing_the_shape_composition_moves_the_grammar_digest,
          case_a_mutation_row_counts_the_files_and_modules_it_changed,
          case_a_named_shape_set_writes_its_own_results_and_scratch,
+         case_narrow_dependencies_is_on_once_for_the_run_and_writes_its_own_folder,
+         case_narrow_dependencies_is_a_shared_arm_unsharded_forcing_run_on_gradle,
+         case_narrow_dependencies_draws_the_dependency_family_alone_up_to_its_cap,
          case_a_shard_is_named_k_of_n,
          case_every_row_a_target_appends_carries_its_kind_and_index,
          case_a_row_measured_on_ci_names_the_runner_and_the_job,

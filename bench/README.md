@@ -78,6 +78,9 @@ reading a stack trace needs the logs of the machine that ran the sweep.
 ## The other instruments
 
 - `sweep_corpus.py`: `run.py` over every qualified project, one at a time, and what each answered.
+  `--set forcing/v1 --narrow-dependencies` reverts recent version-only commits with
+  `-Pyoriwake.narrowDependencies` on and reports how far each narrowed, into a results folder of
+  its own ([fields](../docs/sweep-data-dictionary.md#flag-on-forcing-rows---narrow-dependencies)).
 - `qualify.py <project.toml>`: does it build, run tests hermetically, attach the plugin, and would
   it narrow? `write_qualification.py` collates the answers into `qualification.txt`.
 - `controls.py`: sweeps small fixtures against a plugin built to miss, and fails unless the harness
@@ -96,7 +99,8 @@ reading a stack trace needs the logs of the machine that ran the sweep.
   compiled, and `yoriwakeExplain<Task>` is asked what a selecting run would do. No test runs. A
   commit narrowed, ran everything for a named cause, ran everything for none recorded, or was not
   asked (a duplicate or empty patch, a reverse that does not apply or compile, a stalled build,
-  no answer, or the 30-minute budget). `--merge` sums the projects' files into `commit-replay.json`; `sweep.yml` does both
+  no answer, or the 30-minute budget). A version-only commit is asked a second time with
+  `-Pyoriwake.narrowDependencies`, summed apart from the headline. `--merge` sums the projects' files into `commit-replay.json`; `sweep.yml` does both
   (`commits`, default 8; `replay_only` for that figure alone) and the run page opens with it. It
   is a share of commits, not of seconds, and a decision, not a run: it says nothing about recall.
   Fields: [`docs/sweep-data-dictionary.md`](../docs/sweep-data-dictionary.md#real-commits-replayed-commit-replayjson).

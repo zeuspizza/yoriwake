@@ -251,6 +251,32 @@ def _count_table(header, counts, whole, of):
     return lines + [""]
 
 
+def narrow_dependencies_lines(block):
+    """The paired ask's block of the real-commit figure, or nothing when the merge has none."""
+    if not block:
+        return []
+    replayed, asked = block["replayed"], block["asked"]
+    median = block.get("median_share")
+    lines = ["### Version-only commits with `-Pyoriwake.narrowDependencies`", "",
+             f"{replayed} version-only commits replayed, as the harness classifies them, over "
+             f"{block.get('projects')} projects, {asked} asked a second time with the flag. "
+             f"**{block['narrowed']} narrowed ({_share(block['narrowed'], asked)} of those "
+             f"asked)**, {block['per_jar']} of them forced "
+             f"without it, so by the per-jar rule"
+             f"{f'; median share of the tests {100 * median:.1f}%' if median is not None else ''}. "
+             f"{block['forced']} ran everything with the flag for a named cause, "
+             f"{block['unrecorded']} for none recorded, {sum(block['not_asked'].values())} were not "
+             f"asked a second time. The share above stays the answer without the flag.", ""]
+    if not block.get("sums"):
+        lines += ["**THE COUNTS DO NOT ADD UP. Do not quote this block.**", ""]
+    if block.get("causes"):
+        lines += _count_table("Cause with the flag", block["causes"], asked, "asked twice")
+    if block.get("not_asked"):
+        lines += _count_table("Not asked with the flag", block["not_asked"], replayed,
+                              "version-only")
+    return lines
+
+
 def replay_section(path):
     """The real-commit figure of `commit_replay.py --merge`: the share that narrowed and the
     causes are over the commits replayed, the reasons a commit was not asked over those drawn."""
@@ -283,6 +309,7 @@ def replay_section(path):
         if figure.get("not_asked"):
             lines += ["### Not asked", ""]
             lines += _count_table("Reason", figure["not_asked"], figure["drawn"], "drawn")
+        lines += narrow_dependencies_lines(merged.get("narrow_dependencies"))
         for label, names in (("No file from its record job", merged.get("missing")),
                              ("Stopped by the time budget", merged.get("cut_short")),
                              ("Tree not put back to the pin", sorted(

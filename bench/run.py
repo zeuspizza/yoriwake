@@ -2420,25 +2420,41 @@ SET_GRAMMAR_FILES = {POOL_SHAPES: ("bench/pool_mutations.py", "bench/family_orde
                                    "bench/census.py")}
 
 
-def shape_folder(shapes):
+# `--narrow-dependencies`: the plugin property it turns on for every build of a run, and the
+# suffix of the results folder that run writes, so flag-on rows never share a file with flag-off
+# ones (a changed `flags` stamp would otherwise restart the flag-off file).
+NARROW_DEPENDENCIES_FLAG = "-Pyoriwake.narrowDependencies"
+NARROW_DEPENDENCIES_FOLDER = "narrow-dependencies"
+
+
+def narrow_dependencies_flags(flags):
+    """`flags` with `NARROW_DEPENDENCIES_FLAG` on, once, whatever the project file said of it."""
+    kept = [flag for flag in flags or [] if flag.partition("=")[0] != NARROW_DEPENDENCIES_FLAG]
+    return kept + [NARROW_DEPENDENCIES_FLAG]
+
+
+def shape_folder(shapes, narrow_dependencies=False):
     """The directory name a named shape set's files live under."""
-    return shapes.replace("/", "-")
+    folder = shapes.replace("/", "-")
+    return f"{folder}-{NARROW_DEPENDENCIES_FOLDER}" if narrow_dependencies else folder
 
 
-def results_location(results_root, logs_root, name, shapes, isolated=False, control=False):
+def results_location(results_root, logs_root, name, shapes, isolated=False, control=False,
+                     narrow_dependencies=False):
     """`(results file, scratch directory)` for a project under a shape set.
 
     The default set keeps `<results>/<project>.json`, so every earlier comparison still reads the
     same file. A named set writes `<results>/<set>/<project>.json` and its own scratch, so its map
     backups are its own too: one path for every set once let a named run overwrite the published
-    default file, and its rows were restored by hand.
+    default file, and its rows were restored by hand. `--narrow-dependencies` writes under the
+    set's folder with its own suffix.
     """
     stem = name + (".isolated" if isolated else "")
     if shapes == DEFAULT_SHAPES:
         out_path = os.path.join(results_root, stem + ".json")
         scratch = os.path.join(logs_root, stem + (".control" if control else ""))
     else:
-        folder = shape_folder(shapes)
+        folder = shape_folder(shapes, narrow_dependencies)
         out_path = os.path.join(results_root, folder, stem + ".json")
         scratch = os.path.join(logs_root, stem + (".control" if control else "") + "." + folder)
     return out_path, scratch
@@ -2738,6 +2754,9 @@ OPTIMISTIC_MODE = "optimistic"
 # rounding, which is derived from other selections. Every other rule is part of the selection
 # coverage alone makes -- the one beneath a refusal, and the one a looser mode would start from.
 SHARES_JVM_RULE_PREFIX = "shares-jvm-"
+# The per-jar rule a version-only bump selects through under `-Pyoriwake.narrowDependencies`; a
+# flag-on forcing row whose `rule_counts` hold it narrowed by that rule.
+SHARES_JVM_CHANGED_JAR_RULE = "shares-jvm-changed-jar"
 CLASS_GRANULARITY_RULE = "class-granularity"
 CLASS_RUNS_WHOLE_RULE = "class-runs-whole"
 # The `rules` note values under which rule lines are written, AgentContract's RULES_COMPLETE and
@@ -4768,6 +4787,43 @@ def maven_digest_changed(stored, current):
     return current is not None and stored.get("maven_digest") != current
 
 
+def forcing_targets(checkout, project, dependency_order, narrow_dependencies):
+    """A `forcing/v1` run's targets: the generator families' and one per dependency revert.
+
+    Under `--narrow-dependencies` the reverts alone, the one family the flag changes: a path
+    decides the others whatever the flag, so their rows would be suite runs that say nothing new.
+    """
+    reverts = [(c["sha"], "dependency-revert", 0) for c in dependency_order]
+    if narrow_dependencies:
+        return reverts
+    return forcing_mutations.mutation_targets(checkout, project) + reverts
+
+
+def forcing_rows_limit(kind, narrow_dependencies):
+    """How many rows a `forcing/v1` family draws a project in this run."""
+    if narrow_dependencies and kind == forcing_mutations.NARROW_DEPENDENCIES_FAMILY:
+        return forcing_mutations.NARROW_DEPENDENCIES_ROWS
+    return forcing_mutations.ROWS_PER_FAMILY
+
+
+def narrow_dependencies_refusal(args):
+    """Why `--narrow-dependencies` is refused with the rest of this command line, or None.
+
+    The isolated arm pairs through `--pair-with`, which would read and write the flag-off folder;
+    a replay asks no forcing row; a shard measures a list recorded without the option.
+    """
+    if not args.narrow_dependencies:
+        return None
+    if args.shapes != FORCING_SET:
+        return f"--narrow-dependencies draws {FORCING_SET}'s dependency reverts; pass --shapes {FORCING_SET}"
+    asked = [flag for flag, on in (("--pair-with", args.pair_with), ("--replay", args.replay),
+                                   ("--shard", args.shard), ("--accepted-out", args.accepted_out))
+             if on]
+    if asked:
+        return f"--narrow-dependencies is a shared-arm, unsharded forcing run; not with {', '.join(asked)}"
+    return None
+
+
 def maven_refusal(args):
     """Why this run cannot measure a Maven project, or None.
 
@@ -4783,7 +4839,8 @@ def maven_refusal(args):
                                    ("--replay", args.replay),
                                    (f"--ground-truth {args.ground_truth}",
                                     args.ground_truth != "full"),
-                                   (f"--shapes {REVERT_SET}", args.shapes == REVERT_SET)) if on]
+                                   (f"--shapes {REVERT_SET}", args.shapes == REVERT_SET),
+                                   ("--narrow-dependencies", args.narrow_dependencies)) if on]
     if not asked:
         return None
     return (f"{', '.join(asked)} has no Maven meaning the harness has proven; a Maven project "
@@ -4893,6 +4950,12 @@ def argument_parser():
     # measurement, whose population is the whole set.
     parser.add_argument("--families", nargs="+", default=None, metavar="KIND",
                         help="with --control and pool/v1: draw only these families' targets")
+    # THE PER-JAR RULE FOR VERSION-ONLY BUMPS, on for every build of the run without editing the
+    # project file; see `forcing_mutations` for what such a run draws and where it writes.
+    parser.add_argument("--narrow-dependencies", action="store_true",
+                        help=f"with --shapes {FORCING_SET}: add {NARROW_DEPENDENCIES_FLAG} to every "
+                             f"build and draw up to {forcing_mutations.NARROW_DEPENDENCIES_ROWS} "
+                             f"dependency reverts a project into a results folder of their own")
     parser.add_argument("--no-untracked-reset", action="store_true",
                         help="leave untracked and ignored files earlier runs wrote in the tree")
     # A SHARDED SWEEP, for CI: one recording job fixes the list, shards measure slices of it, and
@@ -4924,6 +4987,9 @@ def main():
         parser.error("--timing-cap needs N of at least 1 and a timing sweep, not --recall-only")
     if bool(args.accepted) != bool(args.shard):
         parser.error("--accepted and --shard go together")
+    refusal = narrow_dependencies_refusal(args)
+    if refusal:
+        parser.error(refusal)
     sharding = args.accepted_out or args.shard
     refusal = sharded_arm_refusal(args)
     if refusal:
@@ -4956,6 +5022,10 @@ def main():
 
     with open(args.project, "rb") as handle:
         project = tomllib.load(handle)
+    # THE RUN'S EFFECTIVE FLAGS, set once: every build reads `project["flags"]`, and so do the
+    # results file's `flags` stamp, the baseline key and the forcing population.
+    if args.narrow_dependencies:
+        project["flags"] = narrow_dependencies_flags(project.get("flags"))
     refusal = control_refusal(project, args.shapes, args.control, args.families)
     if refusal:
         parser.error(refusal)
@@ -5009,7 +5079,8 @@ def main():
     arm_label = arm_name + ("-control" if args.control else "")
     results_root = CONTROL_RESULTS if args.control else RESULTS
     out_path, scratch = results_location(results_root, os.path.join(HERE, "logs"), project["name"],
-                                         args.shapes, args.isolated_capture, args.control)
+                                         args.shapes, args.isolated_capture, args.control,
+                                         args.narrow_dependencies)
     os.makedirs(scratch, exist_ok=True)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     if shard:
@@ -5675,22 +5746,26 @@ def main():
         dependency_order, dependency_not_eligible = forcing_mutations.dependency_candidates(
             checkout, project, args.target_seed)
         dependency_by_sha = {c["sha"]: c for c in dependency_order}
-        all_targets = (forcing_mutations.mutation_targets(checkout, project)
-                       + [(c["sha"], "dependency-revert", 0) for c in dependency_order])
+        all_targets = forcing_targets(checkout, project, dependency_order,
+                                      args.narrow_dependencies)
         targets_available = len(all_targets)
         ordered = forcing_mutations.draw_order(pending_targets(all_targets, findings),
                                                args.target_seed)
         provenance = {}
+        rows_per_family = ({forcing_mutations.NARROW_DEPENDENCIES_FAMILY:
+                            forcing_mutations.NARROW_DEPENDENCIES_ROWS}
+                           if args.narrow_dependencies else forcing_mutations.ROWS_PER_FAMILY)
         RUN_STAMPS["forcing"] = {
             "population": forcing_mutations.population(project.get("flags")),
-            "rows_per_family": forcing_mutations.ROWS_PER_FAMILY,
+            "rows_per_family": rows_per_family,
             "dependency_reverts": {"window": revert.SWEEP_WINDOW,
                                    "eligible": len(dependency_order),
                                    "not_eligible": dependency_not_eligible},
             "rejections": forcing_rejections}
         print(f"  {FORCING_SET} ({RUN_STAMPS['forcing']['population']}): "
               f"{dict(Counter(kind for _, kind, _ in all_targets))}; up to "
-              f"{forcing_mutations.ROWS_PER_FAMILY} row(s) a family", flush=True)
+              f"{forcing_rows_limit('dependency-revert', args.narrow_dependencies)} row(s) a family",
+              flush=True)
     elif neutral:
         all_targets = neutral_targets(checkout, project)
         targets_available = len(all_targets)
@@ -5932,7 +6007,8 @@ def main():
             # A FORCING FAMILY STOPS AT ITS ROWS A PROJECT, whatever they showed: the path decides
             # the outcome. No narrowed target: the set has no recall denominator.
             elif forcing and not rerunning and not shard:
-                if forcing_mutations.family_full(kind, findings, recorded):
+                if forcing_mutations.family_full(kind, findings, recorded,
+                                                 forcing_rows_limit(kind, args.narrow_dependencies)):
                     continue
             elif not rerunning and not shard and narrowed_target_reached(findings,
                                                                          args.narrowed_target):

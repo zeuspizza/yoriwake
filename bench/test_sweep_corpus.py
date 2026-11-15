@@ -21,6 +21,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import assert_recall  # noqa: E402
+import run  # noqa: E402
 import sweep_corpus  # noqa: E402
 
 
@@ -783,6 +785,86 @@ def case_the_forcing_set_refuses_the_reduced_arm():
             return 0
         return fail(f"forcing/v1 on the reduced arm refused for another reason: {refusal}")
     return fail("forcing/v1 ran on the reduced arm")
+
+
+def case_narrow_dependencies_reaches_run_py_and_refuses_another_set():
+    """`--narrow-dependencies` is passed to every project's run, and only with forcing/v1."""
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    failures = 0
+    command = sweep_corpus.shared_arm_command("p", "p.toml", 4, False, True, shapes="forcing/v1",
+                                              narrow_dependencies=True)
+    if "--narrow-dependencies" not in command:
+        failures += fail(f"the option did not reach run.py: {command}")
+    try:
+        sweep_corpus.main(["--set", "forcing/v1", "--narrow-dependencies", "--print-commands"])
+        failures += fail("a sharded CI plan took --narrow-dependencies")
+    except SystemExit as refusal:
+        if "unsharded" not in str(refusal):
+            failures += fail(f"the CI plan was refused for another reason: {refusal}")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sweep_corpus.main(["--set", "forcing/v1", "--print-commands"])
+    if "--narrow-dependencies" in out.getvalue():
+        failures += fail("a forcing plan without the option carries it")
+    try:
+        sweep_corpus.main(["--narrow-dependencies", "--print-commands"])
+        failures += fail("--narrow-dependencies was accepted with the default set")
+    except SystemExit as refusal:
+        if "forcing/v1" not in str(refusal):
+            failures += fail(f"refused for another reason: {refusal}")
+    if sweep_corpus.results_file("p", "forcing/v1", narrow_dependencies=True) \
+            == sweep_corpus.results_file("p", "forcing/v1"):
+        failures += fail("the flag-on results file is the flag-off one")
+    return failures
+
+
+def case_a_flag_on_forcing_file_is_summarised_and_summed_over_projects():
+    """Each flag-on forcing summary carries its families' narrowing and its stamp's reverts; the
+    sweep sums them, shares pooled, and a flag-off file carries neither."""
+    failures = 0
+    flag = run.NARROW_DEPENDENCIES_FLAG
+
+    def row(selected, kind="dependency-revert", **extra):
+        return _row("narrowed", kind=kind, selected_distinct=selected,
+                    rule_counts={"shares-jvm-changed-jar": 1}, **extra)
+
+    forced = _row("full-run", kind="dependency-revert", selected_distinct=10,
+                  full_run_kind="daemon-refused", refusal_kind="dependency-added")
+    stamp = {"dependency_reverts": {"window": 200, "eligible": 3, "not_eligible": {}},
+             "rejections": [["x", "dependency-resolution"]]}
+    summaries = []
+    for name, rows in (("a", [row(2), forced]), ("b", [row(6)])):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = os.path.join(directory, "results", "forcing-v1-narrow-dependencies")
+            os.makedirs(folder)
+            with open(os.path.join(folder, f"{name}.json"), "w", encoding="utf-8") as handle:
+                json.dump({"target_shapes": "forcing/v1", "flags": [flag], "mutations": rows,
+                           "forcing": stamp}, handle)
+            original = sweep_corpus.BENCH
+            sweep_corpus.BENCH = directory
+            try:
+                summaries.append(sweep_corpus.summarise(name, shapes="forcing/v1",
+                                                        narrow_dependencies=True))
+            finally:
+                sweep_corpus.BENCH = original
+    entry = (summaries[0].get("forcing") or {}).get("dependency-revert") or {}
+    if (entry.get("narrowed"), entry.get("forced"), entry.get("per_jar")) != (1, 1, 1):
+        failures += fail(f"project a's figure: {summaries[0].get('forcing')}")
+    if (summaries[0].get("dependency_reverts") or {}).get("rejected") != {"dependency-resolution": 1}:
+        failures += fail(f"project a's reverts: {summaries[0].get('dependency_reverts')}")
+    families, reverts = assert_recall.narrowing_total(summaries)
+    total = families.get("dependency-revert") or {}
+    if (total.get("rows"), total.get("narrowed"), total.get("forced"), total.get("sums")) \
+            != (3, 2, 1, True) or total.get("share") != {"median": 0.4, "min": 0.2, "max": 0.6}:
+        failures += fail(f"the summed figure: {total}")
+    if reverts != {"eligible": 6, "rejected": {"dependency-resolution": 2}}:
+        failures += fail(f"the summed reverts: {reverts}")
+    flag_off = _summarise("c", [_row("full-run", full_run_kind="unmappable-paths")],
+                          target_shapes="forcing/v1", flags=[])
+    if "forcing" in flag_off or "dependency_reverts" in flag_off:
+        failures += fail(f"a flag-off summary grew the flag-on fields: {flag_off}")
+    return failures
 
 
 def case_the_pool_set_refuses_a_sharded_plan_with_a_timing_cap():

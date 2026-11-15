@@ -383,6 +383,25 @@ def case_the_real_commit_share_is_over_the_replayed_never_the_drawn():
     return problems
 
 
+def case_the_paired_ask_is_a_block_of_its_own_and_absent_without_one():
+    problems = 0
+    block = {"projects": 2, "replayed": 4, "narrowed": 3, "per_jar": 2, "shares": [0.1, 0.2, 0.5],
+             "median_share": 0.2, "forced": 1, "unrecorded": 0, "asked": 4,
+             "causes": {"refusal:dependency-added": 1}, "not_asked": {}, "sums": True}
+    with tempfile.TemporaryDirectory() as root:
+        text = sweep_page.replay_section(_replay_file(root, narrow_dependencies=block))
+        for line in ("### Version-only commits with `-Pyoriwake.narrowDependencies`",
+                     "**3 narrowed (75.0% of those asked)**, 2 of them forced without it, so by "
+                     "the per-jar rule; median share of the tests 20.0%.",
+                     "| `refusal:dependency-added` | 1 | 25.0% |",
+                     "**3 of 8 real commits narrowed (37.5%)**"):
+            if line not in text:
+                problems += fail(f"the page lacks {line!r}")
+        if "narrowDependencies" in sweep_page.replay_section(_replay_file(root)):
+            problems += fail("a merge with no paired ask shows its block")
+    return problems
+
+
 def case_a_project_with_no_replay_file_is_named_not_counted_as_zero():
     problems = 0
     with tempfile.TemporaryDirectory() as root:

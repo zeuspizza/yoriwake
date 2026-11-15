@@ -764,6 +764,38 @@ def case_a_results_directory_holds_one_shape_set_and_no_history_rows():
     return failed
 
 
+def case_the_flag_on_forcing_files_are_surveyed_as_their_own_folder():
+    """`--narrow-dependencies` surveys the folder run.py wrote under that option, and only with
+    forcing/v1."""
+    import subprocess as sp
+    failed = 0
+    with tempfile.TemporaryDirectory() as root:
+        table(root, ["QUALIFIED  p  module=m blockers=none tests=10"])
+        write(root, "results/forcing-v1-narrow-dependencies/p.json", json.dumps({
+            "target_shapes": run.FORCING_SET, "flags": [run.NARROW_DEPENDENCIES_FLAG],
+            "selector_digest": run.selector_digest(),
+            "mutations": [narrowed_row(kind="dependency-revert")]}))
+        command = [sys.executable, os.path.join(HERE, "corpus_state.py"), "--json",
+                   "--results", os.path.join(root, "results"),
+                   "--qualification", os.path.join(root, "qualification.txt"),
+                   "--set", run.FORCING_SET]
+        done = sp.run(command + ["--narrow-dependencies"], capture_output=True, text=True)
+        entries = json.loads(done.stdout or "[]")
+        if not entries or entries[0]["verdict"] != cs.NO_QUESTION_ASKED \
+                or "flag-on" not in (entries[0].get("reason") or ""):
+            print(f"  FAIL: the flag-on folder read {entries} ({done.stderr[-200:]})")
+            failed += 1
+        flag_off = json.loads(sp.run(command, capture_output=True, text=True).stdout or "[]")
+        if not flag_off or flag_off[0]["verdict"] != cs.NEVER_SWEPT:
+            print(f"  FAIL: the flag-off survey read the flag-on file: {flag_off}")
+            failed += 1
+        refused = sp.run(command[:-2] + ["--narrow-dependencies"], capture_output=True, text=True)
+        if refused.returncode == 0:
+            print("  FAIL: --narrow-dependencies was accepted with the default set")
+            failed += 1
+    return failed
+
+
 CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
          case_a_maven_file_is_current_only_on_the_current_maven_plugin,
          case_a_revert_file_has_no_rejection_ceiling_and_no_other_set_shares_it,
@@ -796,7 +828,8 @@ CASES = (case_a_setup_forced_project_is_failed_and_its_rows_count_nowhere,
          case_the_composition_counts_only_rows_where_a_miss_was_possible,
          case_a_blocked_project_is_cannot_answer_rather_than_absent,
          case_a_file_from_before_the_grammar_stamp_is_reported_unstamped_not_matching,
-         case_a_forcing_file_is_in_no_recall_figure_and_a_narrowed_row_is_dirty)
+         case_a_forcing_file_is_in_no_recall_figure_and_a_narrowed_row_is_dirty,
+         case_the_flag_on_forcing_files_are_surveyed_as_their_own_folder)
 
 
 def test_corpus_state():

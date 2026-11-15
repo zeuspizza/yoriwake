@@ -99,20 +99,119 @@ def forcing_row_narrowed(finding):
     return narrowed_at_all(finding) or finding.get("decision_outcome") == "narrowed"
 
 
-def forcing_summary(findings):
+# A row whose selecting arm answered: it narrowed or forced. Any other status asked nothing.
+MEASURED_STATUSES = ("checked", "no-effect")
+
+
+def forcing_summary(findings, flag_on=False):
     """`forcing/v1`'s figure, per family: the rows, the forced rows that ran everything, and the
-    kinds they forced on (`full_run_kind`, with the refusal kind where the daemon refused)."""
+    kinds they forced on (`full_run_kind`, with the refusal kind where the daemon refused).
+
+    `flag_on` adds how the rest narrowed: `narrowed` rows, each one's share of the tests
+    (`selected_distinct / full_distinct`, under `shares` and summarised by `share`), `per_jar`
+    narrowed rows whose rules hold the per-jar rule, `not_measured` rows by status (a row whose
+    selecting arm answered nothing, as a test task Gradle took from its cache), and `sums`,
+    whether narrowed, forced and not measured make the rows.
+    """
     families = {}
     for row in findings:
         entry = families.setdefault(row.get("kind"), {"rows": 0, "forced": 0, "kinds": {}})
         entry["rows"] += 1
+        if flag_on:
+            entry.setdefault("narrowed", 0)
+            entry.setdefault("shares", [])
+            entry.setdefault("per_jar", 0)
+            entry.setdefault("not_measured", {})
+            if row.get("status") not in MEASURED_STATUSES:
+                status = row.get("status") or "unstated"
+                entry["not_measured"][status] = entry["not_measured"].get(status, 0) + 1
+                continue
         if declined_to_narrow(row):
             entry["forced"] += 1
             kind = row.get("full_run_kind") or "unknown"
             if row.get("refusal_kind"):
                 kind = f"{kind}/{row['refusal_kind']}"
             entry["kinds"][kind] = entry["kinds"].get(kind, 0) + 1
+        elif flag_on and forcing_row_narrowed(row):
+            entry["narrowed"] += 1
+            if run.SHARES_JVM_CHANGED_JAR_RULE in (row.get("rule_counts") or {}):
+                entry["per_jar"] += 1
+            if isinstance(row.get("selected_distinct"), int) \
+                    and isinstance(row.get("full_distinct"), int) and row["full_distinct"]:
+                entry["shares"].append(round(row["selected_distinct"] / row["full_distinct"], 4))
+    if flag_on:
+        for entry in families.values():
+            close_narrowing(entry)
     return dict(sorted(families.items(), key=lambda item: str(item[0])))
+
+
+def close_narrowing(entry):
+    """Adds `share` (median, minimum, maximum of `shares`) and `sums` to a flag-on family entry."""
+    shares = entry["shares"] = sorted(entry["shares"])
+    entry["share"] = ({"median": round(statistics.median(shares), 4), "min": shares[0],
+                       "max": shares[-1]} if shares else None)
+    entry["sums"] = (entry["narrowed"] + entry["forced"] + sum(entry["not_measured"].values())
+                     == entry["rows"])
+    return entry
+
+
+def narrowing_line(family, entry):
+    """One flag-on family's figure as a line."""
+    share = entry.get("share")
+    shares = (f", ran {100 * share['median']:.1f}% of the tests at the median "
+              f"({100 * share['min']:.1f}%-{100 * share['max']:.1f}%)" if share else "")
+    unmeasured = entry["not_measured"]
+    return (f"{family}: {entry['rows']} row(s), {entry['narrowed']} narrowed{shares}, "
+            f"{entry['per_jar']} of them by the per-jar rule; {entry['forced']} forced "
+            f"({', '.join(f'{k} {v}' for k, v in entry['kinds'].items()) or '-'})"
+            f"{f'; {sum(unmeasured.values())} not measured ({unmeasured})' if unmeasured else ''}")
+
+
+def narrowing_total(summaries):
+    """The flag-on forcing figure summed over projects' `sweep_corpus.summarise` entries, per
+    family, and the eligible commits and rejected reverts beside it."""
+    families, eligible, rejected = {}, 0, {}
+    for summary in summaries:
+        for family, entry in (summary.get("forcing") or {}).items():
+            total = families.setdefault(family, {"rows": 0, "forced": 0, "kinds": {},
+                                                 "narrowed": 0, "shares": [], "per_jar": 0,
+                                                 "not_measured": {}})
+            for key in ("rows", "forced", "narrowed", "per_jar"):
+                total[key] += entry.get(key) or 0
+            total["shares"] += entry.get("shares") or []
+            for field in ("kinds", "not_measured"):
+                for name, count in (entry.get(field) or {}).items():
+                    total[field][name] = total[field].get(name, 0) + count
+        reverts = summary.get("dependency_reverts") or {}
+        eligible += reverts.get("eligible") or 0
+        for reason, count in (reverts.get("rejected") or {}).items():
+            rejected[reason] = rejected.get(reason, 0) + count
+    return ({family: close_narrowing(entry)
+             for family, entry in sorted(families.items(), key=lambda item: str(item[0]))},
+            {"eligible": eligible, "rejected": dict(sorted(rejected.items()))})
+
+
+def dependency_reverts(stamp):
+    """A `forcing` stamp's dependency reverts: the window, the eligible commits, the not-eligible
+    ones by reason, and the rejected reverts by reason; None when it records none."""
+    reverts = (stamp or {}).get("dependency_reverts")
+    if not reverts:
+        return None
+    rejected = {}
+    for _, reason in (stamp.get("rejections") or []):
+        rejected[reason] = rejected.get(reason, 0) + 1
+    return {"window": reverts.get("window"), "eligible": reverts.get("eligible"),
+            "not_eligible": reverts.get("not_eligible") or {}, "rejected": dict(sorted(rejected.items()))}
+
+
+def dependency_reverts_line(stamp):
+    """`dependency_reverts` as a line, or None."""
+    reverts = dependency_reverts(stamp)
+    if reverts is None:
+        return None
+    return (f"dependency reverts: {reverts['eligible']} eligible in the last {reverts['window']} "
+            f"commits, not eligible {reverts['not_eligible'] or 'none'}, "
+            f"rejected {reverts['rejected'] or 'none'}")
 
 
 def established_nothing(finding):
@@ -490,11 +589,25 @@ def main(path, summary_path=None):
     # on, narrowing is what the flag is for, and the rows are a population of their own.
     if forcing:
         population = run.forcing_mutations.population(results.get("flags"))
-        summary = forcing_summary(findings)
+        flag_on = population == "flag-on"
+        summary = forcing_summary(findings, flag_on)
         print(f"  {run.FORCING_SET}, {population}:")
         for family, entry in summary.items():
+            if flag_on:
+                print(f"    {narrowing_line(family, entry)}")
+                continue
             print(f"    {family}: {entry['rows']} row(s), {entry['forced']} forced and ran "
                   f"everything ({', '.join(f'{k} {v}' for k, v in entry['kinds'].items()) or '-'})")
+        reverts = dependency_reverts_line(results.get("forcing")) if flag_on else None
+        if reverts:
+            print(f"    {reverts}")
+        # A ROW THAT IS NEITHER NARROWED NOR FORCED is one this figure cannot attribute.
+        unsummed = [family for family, entry in summary.items() if flag_on and not entry["sums"]]
+        if unsummed:
+            print(f"FAIL: {', '.join(map(str, unsummed))}: narrowed, forced and not-measured rows "
+                  f"do not make the rows; a measured row carries neither outcome. Do not quote "
+                  f"the figure.")
+            return 1
         narrowed = [f for f in findings if forcing_row_narrowed(f)]
         if narrowed and population == "flag-off":
             for f in narrowed:
