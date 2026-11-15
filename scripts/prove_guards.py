@@ -94,7 +94,12 @@ def source(path):
 # Guards prove test outcomes, and the functional suite's coverage would only add time; the same
 # arguments everywhere, so the warm-up's configuration cache entry is the one the runs reuse.
 # A mutation may leave the compiler something to warn about; it is judged on its test, not refused.
-GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false", "-Pyoriwake.kotlinWarningsAsErrors=false"]
+# The Kotlin daemon gets 2 GB instead of the Gradle daemon's 512 MB it inherits: one daemon
+# compiles every worker tree in turn, and at 512 MB it crashed on CI in the second to fourth tree,
+# never the first ("Exception during IR lowering", "Couldn't transform method node"); the same code
+# compiled when the shard ran again.
+GRADLE_ARGS = ["-Pyoriwake.functional.coverage=false", "-Pyoriwake.kotlinWarningsAsErrors=false",
+               "-Pkotlin.daemon.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"]
 
 
 def wrapper(tree):
@@ -220,6 +225,8 @@ AGENT_LOOKUP = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/A
 JUNIT4_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Events.java"
 TESTNG_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/TestNgEvents.java"
 TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/TouchRecorder.java"
+JAR_REACHES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JarReaches.java"
+RESOURCE_READS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ResourceReads.java"
 # Whether a class is the JDK's own, judged by the runtime image rather than by the loader alone.
 JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCode.java"
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
@@ -2333,19 +2340,19 @@ MUTATIONS = [
      agent_suite, "a call that can reach any class, such as the whole loaded set, counts as a lookup of every class"),
     # A class file read by anything but the JDK's own loaders is a read; calling every read a load
     # would drop the reader's touch.
-    ("every class-file read is taken for the JDK defining a class", TOUCH_RECORDER,
+    ("every class-file read is taken for the JDK defining a class", RESOURCE_READS,
      "    private static boolean definingAClass() {",
      "    private static boolean definingAClass() {\n        if (true) { return true; }",
      functional_suite, "a test that reads a class file is selected when the class it reads changes"),
     # Only the JDK's own frames may stand between a class-file read and the JDK's definition: a
     # loader override, a transformer or a URL handler running inside the definition is a reader.
-    ("project code running inside a class definition is taken for the JDK reading the class", TOUCH_RECORDER,
+    ("project code running inside a class definition is taken for the JDK reading the class", RESOURCE_READS,
      "                    if (!JdkCode.isJdk(frame.getDeclaringClass())) {",
      "                    if (false) {",
      agent_suite, "a class file read by project code running inside a class definition is a read"),
     # The agent's own leading frames are passed over; judging them as the project's would take every
     # JDK definition read for a reader's read.
-    ("the agent's own frames are taken for project code standing inside a class definition", TOUCH_RECORDER,
+    ("the agent's own frames are taken for project code standing inside a class definition", RESOURCE_READS,
      "                    if (!pastAgent && frame.getClassName().startsWith(AGENT_PACKAGE)) {",
      "                    if (false) {",
      agent_suite, "a class file read with only the JDK's frames between it and the definition is not a read"),
@@ -2482,11 +2489,11 @@ MUTATIONS = [
     # A scanner's own zip code reads entries no hook sees; an archive is known by its content, not
     # its name, and a jar nested in one counts too.
     # Re-anchored: the content test moved to a class the plugin shares.
-    ("an archive the test opens itself counts only when its name ends in .jar", TOUCH_RECORDER,
+    ("an archive the test opens itself counts only when its name ends in .jar", RESOURCE_READS,
      '            boolean archive = path.endsWith(".jar") || ZipContent.holdsAZip(file);',
      '            boolean archive = path.endsWith(".jar");',
      functional_suite, "a test that reads a class out of a zip with its own zip code is selected when the class changes"),
-    ("an archive a JDK zip entry holds is taken for a plain entry", TOUCH_RECORDER,
+    ("an archive a JDK zip entry holds is taken for a plain entry", RESOURCE_READS,
      "                    if (entryHoldsAZip(zip, entry)) {",
      "                    if (false) {",
      agent_suite, "an archive entry that is an archive itself counts as every class in the outer archive"),
@@ -2735,6 +2742,23 @@ MUTATIONS = [
      "    val isolatedCapture: Boolean = parseFlag(ISOLATED_CAPTURE, lookup(ISOLATED_CAPTURE))",
      "    val isolatedCapture: Boolean = lookup(ISOLATED_CAPTURE) != null",
      functional_suite, "an isolatedCapture value that is not a boolean fails the build and names the flag"),
+    ("a narrowed selecting run's lists replace the union", COVERAGE_DECODER,
+     "            (!selecting || datesTheMap) &&\n",
+     "",
+     decoder_suite, "a selecting decode that does not date the map keeps the union"),
+    ("the agent is attached to the test task at configuration time", TEST_TASK_WIRING,
+     "        if (recording) {\n            test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)\n",
+     "        if (recording) {\n            agent?.let { test.jvmArgs(AgentJar.argument(it)) }\n"
+     "            test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)\n",
+     functional_suite, "the agent's path is not among the test task's configured JVM arguments"),
+    ("a capture lists no loaded classes unless asked to", SETTINGS,
+     "    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: true",
+     "    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: false",
+     functional_suite, "a class nothing executes, loads or names stops forcing a full run"),
+    ("a class the capture did not hold is absent for a reason", SELECTION,
+     "    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)\n",
+     "    val unheld = emptyMap<String, AbsenceEvidence.Verdict>()\n",
+     functional_suite, "a class newer than it forces until the next capture"),
     ("the decoder labels a JVM isolated without the run having asked", COVERAGE_DECODER,
      "        val mode = if (isolated && testClasses.size <= 1 && null !in testClasses) MODE_ISOLATED else MODE_SHARED",
      "        val mode = if (testClasses.size <= 1 && null !in testClasses) MODE_ISOLATED else MODE_SHARED",
@@ -2942,21 +2966,21 @@ MUTATIONS = [
      '            if (file.equals(path) || path.startsWith(file + "!/")) {',
      functional_suite, "a build time a test reads from the whole jar runs that test"),
     # Re-anchored: a jar entry read is recorded under every name its jar went by.
-    ("every manifest read is taken for the class loader's", TOUCH_RECORDER,
+    ("every manifest read is taken for the class loader's", RESOURCE_READS,
      "                        String kind = MANIFEST.equals(entry.getName()) && loaderReadingManifest()",
      "                        String kind = MANIFEST.equals(entry.getName())",
      functional_suite, "a revision stamped into a sibling jar's manifest runs the test that reads it"),
     # A read is kept under each name that can match the walked file: the resolved one carries the
     # case on disk and outlives a link the test removes.
-    ("a read is recorded under its given path alone", TOUCH_RECORDER,
+    ("a read is recorded under its given path alone", RESOURCE_READS,
      "                    : java.util.Arrays.asList(absolute, resolved);",
      "                    : java.util.Collections.singletonList(absolute);",
      agent_suite, "a file read through a link inside the root is kept under the file it reached, after the link is gone"),
-    ("a read under an alias of the root is dropped", TOUCH_RECORDER,
+    ("a read under an alias of the root is dropped", RESOURCE_READS,
      "                return root + dir.relativize(path);",
      "                return null;",
      agent_suite, "a file read through another name for the root is kept beneath the root"),
-    ("a read that cannot be placed is dropped", TOUCH_RECORDER,
+    ("a read that cannot be placed is dropped", RESOURCE_READS,
      "        } catch (IOException | RuntimeException e) {\n            return java.util.Collections.singletonList(absolute);",
      "        } catch (IOException | RuntimeException e) {\n            return java.util.Collections.emptyList();",
      agent_suite, "a read whose place cannot be told is kept as given, which counts as a read of every file"),
@@ -3189,7 +3213,7 @@ MUTATIONS = [
      "                        .getOrElse { null }",
      unit_suite, "an extension whose getter throws is undetermined"),
     ("the Develocity decline is not registered", TEST_TASK_WIRING,
-     "        declineUnderDevelocity(project, test, mapDir, agent)\n",
+     "        declineUnderDevelocity(project, test, mapDir)\n",
      "",
      functional_suite, "a test task with Test Distribution enabled declines and leaves the map byte-identical"),
     ("a declined run's records are decoded", DECODE_RUN,
@@ -3198,10 +3222,6 @@ MUTATIONS = [
      functional_suite, "a declined run's decode reports the decline and nothing else"),
     ("the agent is attached on a declined run", TEST_TASK_WIRING,
      "            if (declinedUnderDevelocity(task as Test)) return@doFirst\n",
-     "",
-     functional_suite, "a declined run starts its test JVM without the yoriwake agent"),
-    ("the decline leaves yoriwake's configured agent attached", TEST_TASK_WIRING,
-     "            agentArgument?.let { argument -> test.setJvmArgs(test.jvmArgs.orEmpty().filterNot { it == argument }) }\n",
      "",
      functional_suite, "a declined run starts its test JVM without the yoriwake agent"),
     ("the provenance check runs on a declined run", SELECTION_WIRING,
@@ -4636,7 +4656,7 @@ MUTATIONS = [
      "    runCatching { project.gradle.includedBuilds.map { it.projectDir } }.getOrDefault(emptyList())",
      "    emptyList<File>()",
      functional_suite, "a declared path in a build this one includes stays in the change set"),
-    ("a source file a test opens is not a read of its path", TOUCH_RECORDER,
+    ("a source file a test opens is not a read of its path", RESOURCE_READS,
      '                if (!path.endsWith(".class")) {',
      "                if (false) {",
      agent_suite, "a source file read beneath the root is kept by its path too"),
@@ -5614,11 +5634,11 @@ MUTATIONS = [
      "                identity != null -> Entry(MODULE,",
      "                identity != null && read != ClasspathFiles.Read.BUILT -> Entry(MODULE,",
      functional_suite, "a catalog bump runs the tests that reached the moved jar, and only with the flag"),
-    ("a resource miss is dropped, as an answered class miss is", TOUCH_RECORDER,
+    ("a resource miss is dropped, as an answered class miss is", JAR_REACHES,
      '                if (name.endsWith(".class") && answered.contains(name)) {',
      '                if (!name.endsWith(".class") || answered.contains(name)) {',
      agent_suite, "a resource two of three jars lack stands as a miss though the third holds it"),
-    ("a miss is deduplicated when it is looked up, not when it stands", TOUCH_RECORDER,
+    ("a miss is deduplicated when it is looked up, not when it stands", JAR_REACHES,
      "            if (missedDirectories.contains(directory)) {",
      "            if (!missedDirectories.add(directory)) {",
      agent_suite, "a probe of an absent class after a class of its package loaded from a later jar still stands"),
@@ -5999,7 +6019,8 @@ def compile_errors(output, limit=10):
 
 def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
-    error lines below it, or None."""
+    error lines below it, or None. A failed build's whole output is kept in UNMUTATED_RESULTS: the
+    error lines alone left a compiler crash without its cause."""
     for tree in trees:
         done = subprocess.run([wrapper(tree), "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True,
                               stdin=subprocess.DEVNULL, cwd=tree)
@@ -6007,7 +6028,15 @@ def _warm_up(trees, tasks):
             output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
             refusal = f"{tree} does not compile unmutated: {tail[-1] if tail else '?'}"
-            return "\n".join([refusal] + ["    " + line for line in compile_errors(output)])
+            kept = os.path.join(UNMUTATED_RESULTS, f"warm-up-{os.path.basename(os.path.normpath(tree))}.log")
+            try:
+                os.makedirs(UNMUTATED_RESULTS, exist_ok=True)
+                with open(kept, "w", encoding="utf-8") as handle:
+                    handle.write(output)
+                note = f"    the build's output, whole, is kept in {kept}"
+            except OSError as error:
+                note = f"    the build's output could not be kept in {kept}: {error}"
+            return "\n".join([refusal] + ["    " + line for line in compile_errors(output)] + [note])
     return None
 
 

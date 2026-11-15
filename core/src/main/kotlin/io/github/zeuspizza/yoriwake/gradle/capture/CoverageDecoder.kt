@@ -322,7 +322,7 @@ internal object CoverageDecoder {
             carriesOlderRecords = retained.isNotEmpty(),
             fullCapture = datesTheMap,
         )
-        val unionDiscarded = writeLoaded(mapDir, selecting, wholeTask, jvmCount(workers), loadedScope)
+        val unionDiscarded = writeLoaded(mapDir, selecting, datesTheMap, wholeTask, jvmCount(workers), loadedScope)
         writeCaptureCommit(mapDir, captureCommit, datesTheMap)
         // After the capture commit, which both stamps name.
         writeDebugTouches(mapDir, positions, debugTouches)
@@ -650,17 +650,38 @@ internal object CoverageDecoder {
     }
 
     /**
-     * Replaces the loaded-class union from a full run. A selecting run contributes nothing: a
-     * narrowed set looks exactly like a complete one and would make the selector skip more.
+     * Replaces the loaded-class union from a full run. A narrowed selecting run contributes
+     * nothing and keeps the union: a narrowed set looks exactly like a complete one and would make
+     * the selector skip more. A selecting run that ran everything and dates the map replaces it,
+     * or discards it: the union must describe the commit the map is stamped with, or a class
+     * added since would be absent from it for no reason a test could answer for.
      */
     private fun writeLoaded(
         mapDir: File,
         selecting: Boolean,
+        datesTheMap: Boolean,
         wholeTask: Boolean,
         workers: Int,
         loadedScope: List<String>,
     ): Boolean {
         val directory = loadedDir(mapDir)
+        try {
+            return takeUnion(mapDir, directory, selecting, datesTheMap, wholeTask, workers, loadedScope)
+        } finally {
+            // Run scratch, one unfiltered list per test JVM; the union is what the map keeps.
+            directory.deleteRecursively()
+        }
+    }
+
+    private fun takeUnion(
+        mapDir: File,
+        directory: File,
+        selecting: Boolean,
+        datesTheMap: Boolean,
+        wholeTask: Boolean,
+        workers: Int,
+        loadedScope: List<String>,
+    ): Boolean {
         val perWorker = directory
             .listFiles { f: File -> f.isFile && f.name.startsWith(LOADED_WORKER_PREFIX) && f.name.endsWith(LOADED_WORKER_SUFFIX) }
             .orEmpty()
@@ -670,13 +691,13 @@ internal object CoverageDecoder {
             .orEmpty()
 
         val trustworthy = wholeTask &&
-            !selecting &&
+            (!selecting || datesTheMap) &&
             loadedScope.isNotEmpty() &&
             perWorker.size == workers &&
             completed.size == workers
 
         if (!trustworthy) {
-            if (selecting) {
+            if (selecting && !datesTheMap) {
                 // The union still describes the full run it came from.
                 return false
             }
@@ -707,7 +728,7 @@ internal object CoverageDecoder {
 
     /**
      * Drops the union and reports whether there was one, so the caller can say so: a full run
-     * without `yoriwake.internal.loaded` otherwise silently ends narrowing of unexercised code.
+     * that cannot speak for the whole task otherwise silently ends narrowing of unexercised code.
      */
     private fun discardUnion(mapDir: File): Boolean {
         val had = File(mapDir, LOADED_FILE).isFile

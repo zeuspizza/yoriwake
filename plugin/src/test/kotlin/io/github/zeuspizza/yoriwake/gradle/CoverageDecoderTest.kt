@@ -491,6 +491,26 @@ class CoverageDecoderTest {
     }
 
     @Test
+    fun `a selecting decode that does not date the map keeps the union`(@TempDir dir: File) {
+        // A narrowed selecting run's JVMs list what they loaded too, and the lists are complete;
+        // only a run that dates the map may replace the union with them.
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A", "com.acme.B", "com.acme.C")
+        CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = listOf("com.acme"))
+        CoverageDecoder.recordsDir(dir).deleteRecursively()
+
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A")
+        CoverageDecoder.decode(
+            dir, listOf("com.acme"), selecting = true, wholeTask = true, loadedScope = listOf("com.acme"), datesTheMap = false,
+        )
+
+        val union = File(dir, AgentContract.LOADED_FILE).readLines().filter(String::isNotBlank)
+        assertEquals(listOf("com.acme.A", "com.acme.B", "com.acme.C"), union)
+        assertFalse(CoverageDecoder.loadedDir(dir).exists(), "the lists outlived the decode that read them")
+    }
+
+    @Test
     fun `a capture without the recorder discards a union it cannot vouch for`(@TempDir dir: File) {
         // A full capture moves the map forward on evidence the union does not cover, so a stale
         // loaded directory must not be re-stamped as a fresh, complete union.

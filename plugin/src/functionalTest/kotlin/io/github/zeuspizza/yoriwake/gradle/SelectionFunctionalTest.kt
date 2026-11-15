@@ -427,10 +427,10 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         git(dir, "add", ".")
         git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
 
-        // -Pyoriwake.internal.loaded, because the rule refuses without a loaded-class union:
-        // coverage proves only that nothing executed the class, and a test can load one and assert
-        // on its fields and annotations without executing a line of it.
-        runner(dir, "test", "-Pyoriwake.internal.loaded").build()
+        // No property: a whole capture records the loaded-class union itself, and the rule refuses
+        // without one. Coverage proves only that nothing executed the class, and a test can load
+        // one and assert on its fields and annotations without executing a line of it.
+        runner(dir, "test").build()
 
         File(dir, "src/main/java/dev/sample/Orphan.java").writeText(
             """
@@ -448,7 +448,7 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
             .writeText("tasks:" + System.lineSeparator() + "  - type: dev.sample.Orphan")
         git(dir, "add", ".")
         git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "flow")
-        runner(dir, "test", "-Pyoriwake.internal.loaded").build()
+        runner(dir, "test").build()
         File(dir, "src/main/java/dev/sample/Orphan.java").writeText(
             """
             package dev.sample;
@@ -459,6 +459,31 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         val forced = runner(dir, "test", "-Pyoriwake.select").build().output
 
         assertContains(forced, "[yoriwake] of 1 tests discovered: full-run=1")
+    }
+
+    /** The switch that turns the lists off: with no union, the same edit is back to forcing. */
+    @Test
+    fun `a capture with the loaded-class lists switched off keeps a class nothing executes forcing`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, orphanClass)
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        commit(dir, "sample")
+
+        runner(dir, "test", "-Pyoriwake.internal.loaded=false").build()
+
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertFalse(File(mapDir, "loaded.txt").exists(), "a capture with the lists off wrote a union")
+        File(dir, "src/main/java/dev/sample/Orphan.java").writeText(
+            """
+            package dev.sample;
+            public class Orphan { public int once() { return 2; } }
+            """.trimIndent()
+        )
+
+        val forced = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertContains(forced, "[yoriwake] of 1 tests discovered: full-run=1")
+        assertEquals("no-coverage-for-changed", decisionNotes(dir)["full-run-kind"], forced)
     }
 
     /**
