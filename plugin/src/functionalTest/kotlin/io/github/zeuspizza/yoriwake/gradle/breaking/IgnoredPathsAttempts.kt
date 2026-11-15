@@ -16,8 +16,9 @@ class IgnoredPathsAttempts : BreakAttempt() {
 
     private fun source(path: String, body: String) = path to body.trimIndent()
 
+    /** A build declaring [entries] alone: the defaults are off, so each attempt meets only its own entries. */
     private fun ignoring(vararg entries: String, extra: String = "") =
-        minimalBuild + "\n$extra\nyoriwake { pathIgnore.addAll(${entries.joinToString { "\"$it\"" }}) }\n"
+        minimalBuild + "\n$extra\nyoriwake { pathIgnoreDefaults.set(false); pathIgnore.addAll(${entries.joinToString { "\"$it\"" }}) }\n"
 
     /** A Java expression for [path] that no compiled class holds: the name is reversed at run time. */
     private fun builtAtRunTime(path: String): String {
@@ -692,6 +693,126 @@ class IgnoredPathsAttempts : BreakAttempt() {
             listOf(other, first, resourceReader("NOTES.md", "v1"), "NOTES.md" to "v1", classOrderByName),
             buildScript = build,
         ) { File(it, "NOTES.md").writeText("v2") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // The attempts below run with nothing set: the default entries are what leaves each path out.
+
+    // Track: fixtures. Boundary: what a build task derives from a default-matched file reaches a
+    // test through the classpath, which is compared as generated files are.
+    @Test
+    fun `a docs file the build copies onto the test classpath runs the test that reads the copy`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1ResourceTest", Aim.Row("shares-jvm-moved-classpath-file"),
+            listOf(other, first, resourceReader("sample.md", "v1"), "docs/sample.md" to "v1", classOrderByName),
+            buildScript = minimalBuild + """\ntasks.processTestResources { from("docs/sample.md") }\n""",
+        ) { File(it, "docs/sample.md").writeText("v2") }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: fixtures. Boundary: a test task that declares an input file of its own under the root
+    // may receive there what a build task derived from a default-matched file, so every
+    // default-matched path stays a change.
+    @Test
+    fun `a docs file a task copies into an input the test task declares runs every test`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1ReaderTest", Aim.Forced("unmappable-paths"),
+            listOf(other, first, reader("build/testdata/sample.md", "v1"), "docs/sample.md" to "v1", classOrderByName),
+            buildScript = minimalBuild + """
+                val testData = tasks.register<Copy>("testData") {
+                    from("docs/sample.md")
+                    into(layout.buildDirectory.dir("testdata"))
+                }
+                tasks.test { inputs.files(testData) }
+            """.trimIndent(),
+        ) { File(it, "docs/sample.md").writeText("v2") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertKept(dir, "docs/", "task-input")
+    }
+
+    // Track: fixtures. Boundary: a default-matched file's content the build passes as a system
+    // property changes the test JVM's environment, which is compared before anything narrows.
+    @Test
+    fun `a docs file the build passes as a system property runs every test`(@TempDir dir: File) {
+        val property = source(
+            "src/test/java/dev/sample/A1PropertyTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1PropertyTest { @Test void reads() { assertEquals("v1", System.getProperty("sample")); } }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1PropertyTest", Aim.Forced("environment-changed"),
+            listOf(other, first, property, "docs/sample.md" to "v1", classOrderByName),
+            buildScript = minimalBuild + """\ntasks.test { systemProperty("sample", file("docs/sample.md").readText()) }\n""",
+        ) { File(it, "docs/sample.md").writeText("v2") }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: fixtures. Boundary: a test that walks a directory for its Markdown files reads the
+    // directory above each, so its JVM runs from the walk on.
+    @Test
+    fun `a test that walks the docs directory for Markdown files runs when one changes`(@TempDir dir: File) {
+        val walker = source(
+            "src/test/java/dev/sample/A1DocsTest.java",
+            """
+            package dev.sample;
+            import java.nio.file.Files;
+            import java.nio.file.Path;
+            import java.nio.file.Paths;
+            import java.util.List;
+            import java.util.stream.Collectors;
+            import java.util.stream.Stream;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertFalse;
+            class A1DocsTest {
+                @Test void noOpenItems() throws Exception {
+                    List<Path> docs;
+                    try (Stream<Path> all = Files.walk(Paths.get(${builtAtRunTime("docs")}))) {
+                        docs = all.filter(p -> p.toString().endsWith(".md")).collect(Collectors.toList());
+                    }
+                    for (Path doc : docs) assertFalse(Files.readString(doc).contains("TODO"), doc.toString());
+                }
+            }
+            """,
+        )
+        val result = attempt(
+            dir, "dev.sample.A1DocsTest", Aim.Row("shares-jvm-ignored-path"),
+            listOf(other, first, walker, "docs/notes.md" to "# Notes\n", classOrderByName),
+        ) { File(it, "docs/notes.md").appendText("TODO: one more thing.\n") }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: fixtures. Boundary: a test that reads a CI workflow is seen reading it.
+    @Test
+    fun `a test that reads a CI workflow runs when the workflow changes`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1ReaderTest", Aim.Row("shares-jvm-ignored-path"),
+            listOf(other, first, reader(".github/workflows/ci.yml", "on: push"), ".github/workflows/ci.yml" to "on: push", classOrderByName),
+        ) { File(it, ".github/workflows/ci.yml").writeText("on: pull_request") }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: fixtures. Boundary: a default entry leaves a path out only on the map's word that no
+    // test JVM read it; a map that recorded no reads cannot give it, so the path stays a change.
+    @Test
+    fun `a docs file a test reads runs every test when the map recorded no reads`(@TempDir dir: File) {
+        val result = attempt(
+            dir, "dev.sample.A1ReaderTest", Aim.Forced("unmappable-paths"),
+            listOf(other, first, reader("docs/sample.md", "v1"), "docs/sample.md" to "v1", classOrderByName),
+        ) {
+            val map = File(it, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+            check(File(map, "resource-touch.tsv").delete()) { "the capture recorded no reads" }
+            File(it, "docs/sample.md").writeText("v2")
+        }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }

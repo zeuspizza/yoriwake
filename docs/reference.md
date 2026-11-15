@@ -97,7 +97,7 @@ Files in the map directory that are meant to be read:
   `generated-in-sources`, `untracked`, or no origin for a path HEAD tracks. `ignoredPaths` lists
   every path `pathIgnore` left out, with its entry and what the map says about it (`read`,
   `not-read` or `no-read-evidence`); `notIgnored` each one an entry matched that stayed, with its
-  protection.
+  protection. An entry that is one of the [defaults](#the-defaults) carries `"default": true`.
   `parallelismUnconfirmed` says why the last run's test JVM recorded nothing, when it found its
   tests may run concurrently.
 - `audit.json`: written by `yoriwakeAudit<Task>`. The suite's shape and every blocker as tokens.
@@ -124,8 +124,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   each such file; see [Files written into the source tree](#files-written-into-the-source-tree).
   Four kinds of file are no change: an IDE's state (anything under an `.idea`, `.vscode` or
   `.fleet` directory at any depth, and `*.iml` files); a file the build's `notReadByTests` lists
-  (see [Properties and tasks](#properties-and-tasks)); a path the build's `pathIgnore` declares (see
-  [Paths no test reads](#paths-no-test-reads)); and a Java or Kotlin source of a module that is not
+  (see [Properties and tasks](#properties-and-tasks)); a path the build's `pathIgnore` declares, or
+  on Gradle one of its [defaults](#the-defaults) matches (README and Markdown files, `docs/` and
+  `.github/`), unless kept (see [Paths no test reads](#paths-no-test-reads)); and a Java or Kotlin source of a module that is not
   on the task's runtime classpath, which no compiled class of the task names. The console counts
   the first two and names each of the third;
 - a changed path a `dependsOn` entry matches, for that entry's task (`declared-path-changed`); see
@@ -1637,6 +1638,34 @@ reading the file and passing it on. Every run that left a path out names it in t
 [`-Pyoriwake.observe`](#observing-before-you-select): the run applies it, runs every test, and lists
 each failing test selection would have left out.
 
+### The defaults
+
+A Gradle build that sets nothing ignores four entries, matched after its own: `.github/`, `docs/`
+(the root project's `docs` directory only), `**/README*` and `**/*.md`. So a commit that touches
+only documentation or CI configuration runs nothing extra. A default entry has every protection
+above and the same read check, and two rules a declared entry does not, since nobody vouched for it:
+
+- `no-read-evidence`: every path a default matches stays in the change set unless the map recorded
+  the reads of every test JVM. A declared entry is left as made instead.
+- `task-input`: every path a default matches stays when the test task declares an input file of
+  its own under the root project's directory, beyond its runtime classpath and test classes, such
+  as `inputs.dir("docs")` or a file another task writes for the test to read. A stock `Test` task,
+  JaCoCo's included, declares none.
+
+The console and `decisions.tsv` name a default entry `default:docs/`. The defaults
+leave the same tests exposed as a declaration does: one that only asks whether a README exists,
+or that receives a `docs/` file through a container, a server or the build without the test task
+declaring it, is skipped when only that file changed. To turn them off, the declared entries
+still applying:
+
+```kotlin
+yoriwake {
+    pathIgnoreDefaults = false
+}
+```
+
+Maven builds have no `pathIgnore`, and so no defaults.
+
 `notReadByTests` takes a list for the same purpose with none of this: its `*` crosses directories,
 nothing is protected, no read is checked, and only a count is printed. It is deprecated: a build
 that sets it is warned, and a later release removes it.
@@ -2001,7 +2030,8 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `fullRunEveryBuilds` | `Int` | unset | Run every test on a task's Nth build since its last full run, N being this value. |
 | `fullRunEveryDays` | `Int` | unset | Run every test once this many days have passed since a task's last full run; with both set, whichever comes first. |
 | `notReadByTests` | `List<String>` | empty | Deprecated: use `pathIgnore`. Globs of files no test or build reads: a changed one is no change. |
-| `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. See [Paths no test reads](#paths-no-test-reads). |
+| `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. Matched before the defaults. See [Paths no test reads](#paths-no-test-reads). |
+| `pathIgnoreDefaults` | `Boolean` | `true` | Ignore README and Markdown files, `docs/` and `.github/` without listing them. See [The defaults](#the-defaults). |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
 | `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |
@@ -2168,6 +2198,14 @@ format versioning.
   revision with a build number) runs everything, naming the property, until the per-build ones are
   listed in `<systemPropertyIgnore>`. `<systemPropertyIgnore>` and `<environmentInclude>` take one
   child element per name; text placed directly in them, ignored before, now fails the build.
+
+### From 0.5.0 to 0.6.0
+
+- **Your map is left alone.**
+- **What runs changes without a new flag (Gradle):** a change to README or Markdown files, `docs/`
+  or `.github/` alone runs nothing extra where the map records every test JVM's reads, instead of
+  every test as `unmappable-paths`; see [The defaults](#the-defaults). `pathIgnoreDefaults = false`
+  restores the old behaviour.
 
 ## Prior art
 

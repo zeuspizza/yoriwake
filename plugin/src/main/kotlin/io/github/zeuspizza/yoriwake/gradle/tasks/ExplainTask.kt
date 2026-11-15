@@ -55,6 +55,7 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.buildLogicDirs
 import io.github.zeuspizza.yoriwake.gradle.wiring.checkEnvironment
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentRefusal
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentView
+import io.github.zeuspizza.yoriwake.gradle.wiring.extraTaskInputs
 import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
 import java.io.File
@@ -124,6 +125,21 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val pathIgnore: ListProperty<String>
+
+    /** The build's `pathIgnoreDefaults`: whether the default entries are matched after [pathIgnore]. */
+    @get:Input
+    @get:Optional
+    abstract val pathIgnoreDefaults: Property<Boolean>
+
+    /**
+     * The test task's input files, and its classpath and test classes beside them: what the run's
+     * task-input rule for the default entries compares.
+     */
+    @get:Internal("read only when a default entry matched; the task is untracked")
+    var testInputs: org.gradle.api.file.FileCollection? = null
+
+    @get:Internal("read only when a default entry matched; the task is untracked")
+    var testOwned: org.gradle.api.file.FileCollection? = null
 
     @get:Internal("only names where build logic lies; the task is untracked")
     var buildLogicDirs: List<String> = emptyList()
@@ -335,11 +351,8 @@ internal abstract class ExplainTask : DefaultTask() {
         // As the run checks it, against the base it was asked about, before any analysis.
         ChangeDetection.changedPaths(git, rootDir, resolvedBase.ref)?.let { askedPaths ->
             val changed = (askedPaths + ((drift as? WorkingTree.Drift.Moved)?.paths ?: emptyList())).distinct()
-            val ignore = pathIgnore.getOrElse(emptyList()).takeIf { it.isNotEmpty() }?.let { entries ->
-                PathIgnore.Declaration(
-                    entries, rootDir, sourceDirs, buildLogicDirs,
-                    ChangeDetection.outsideRoot(git, rootDir, resolvedBase.ref)?.toSet() ?: changed.toSet(),
-                )
+            val ignore = ignoreDeclaration(changed) {
+                ChangeDetection.outsideRoot(git, rootDir, resolvedBase.ref)?.toSet() ?: changed.toSet()
             }
             val count = LargeChange.counted(changed, ignore, notReadByTests.getOrElse(emptyList()))
             LargeChange.refusal(count, largeChangeThreshold.get(), resolvedBase.ref)?.let { reason ->
@@ -405,12 +418,9 @@ internal abstract class ExplainTask : DefaultTask() {
         }
         logger.lifecycle("[yoriwake] $taskPath: the map was recorded $recorded ($mode)")
         // As the run applies it, with the same diffs to place paths outside the root.
-        val ignore = pathIgnore.getOrElse(emptyList()).takeIf { it.isNotEmpty() }?.let { entries ->
+        val ignore = ignoreDeclaration(paths) {
             val outside = listOfNotNull(base, age.stamp).map { ChangeDetection.outsideRoot(git, rootDir, it) }
-            PathIgnore.Declaration(
-                entries, rootDir, sourceDirs, buildLogicDirs,
-                if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
-            )
+            if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet()
         }
         // As the run decides it, before anything else reads the change set.
         val bump = dependencies?.let { held ->
@@ -445,7 +455,9 @@ internal abstract class ExplainTask : DefaultTask() {
             }
             verdict as? DependencyRule.Verdict.Accepted
         }
-        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore)
+        val scoped = scopedChange(
+            if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, mapDir,
+        ) { extraTaskInputs(rootDir, testInputs?.files.orEmpty(), testOwned?.files.orEmpty()) }
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         val found = establish(
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },
@@ -575,6 +587,17 @@ internal abstract class ExplainTask : DefaultTask() {
         logger.lifecycle("[yoriwake] $taskPath: ${capture.reason}")
     }
 
+    /**
+     * The declaration as the run builds it (`pathIgnoreDeclaration`): null when no path in [paths]
+     * matches an entry or a default; [outsideRoot] only asked otherwise.
+     */
+    private fun ignoreDeclaration(paths: List<String>, outsideRoot: () -> Set<String>): PathIgnore.Declaration? {
+        val entries = pathIgnore.getOrElse(emptyList())
+        val defaults = if (pathIgnoreDefaults.getOrElse(true)) PathIgnore.DEFAULTS else emptyList()
+        if (paths.none { path -> (entries + defaults).any { PathIgnore.matches(it, path) } }) return null
+        return PathIgnore.Declaration(entries, rootDir, sourceDirs, buildLogicDirs, outsideRoot(), defaults)
+    }
+
     internal companion object {
         fun nameFor(testName: String) = "yoriwakeExplain${testName.replaceFirstChar(Char::uppercase)}"
 
@@ -590,6 +613,7 @@ internal abstract class ExplainTask : DefaultTask() {
             schedule: Schedule.Limits,
             notReadByTests: List<String>,
             pathIgnore: List<String>,
+            pathIgnoreDefaults: Boolean,
             environment: EnvironmentFingerprint.Rules,
             largeChange: Int,
             narrowPlainRunners: Boolean,
@@ -622,6 +646,9 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.fullRunBranches.set(fullRunBranches)
                 task.notReadByTests.set(notReadByTests)
                 task.pathIgnore.set(pathIgnore)
+                task.pathIgnoreDefaults.set(pathIgnoreDefaults)
+                task.testInputs = test.inputs.files
+                task.testOwned = test.classpath + test.testClassesDirs
                 task.buildLogicDirs = buildLogicDirs(project)
                 schedule.builds?.let(task.fullRunEveryBuilds::set)
                 schedule.days?.let(task.fullRunEveryDays::set)
