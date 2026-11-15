@@ -63,8 +63,8 @@ internal interface ClasspathView {
     fun handedPaths(): Set<File>? = null
 
     /**
-     * The modules that own a task the test task depends on, directly or not. Null when it cannot be
-     * told, or when these facts do not say.
+     * The modules that own a task the test task depends on, directly or not, or hold a file such a
+     * task reads. Null when it cannot be told, or when these facts do not say.
      */
     fun closureModules(): Set<String>? = null
 
@@ -78,20 +78,30 @@ internal interface ClasspathView {
     fun reachedModules(): Set<String>? {
         val closure = closureModules() ?: return null
         val handed = handedPaths() ?: return null
-        val root = rootDir.absoluteFile.toPath().normalize()
-        val dirs = moduleDirs.filterKeys { it.isNotEmpty() }
-            .map { (dir, module) -> root.resolve(dir).normalize() to module }
         val reached = closure.toMutableSet()
-        handed.forEach { file ->
-            val path = pathOf(file) ?: return@forEach
-            dirs.forEach { (dir, module) ->
-                if (path.startsWith(dir) || (dir.startsWith(path) && path.startsWith(root) && path != root)) {
-                    reached += module
-                }
-            }
-        }
+        reached += modulesHolding(handed, rootDir, moduleDirs)
         return reached - ownPath
     }
+}
+
+/**
+ * The modules [paths] lie in, or lie above strictly below [rootDir]: a directory above a module
+ * hands over every module under it, and the root or anything above it hands over none.
+ */
+internal fun modulesHolding(paths: Collection<File>, rootDir: File, moduleDirs: Map<String, String>): Set<String> {
+    val root = rootDir.absoluteFile.toPath().normalize()
+    val dirs = moduleDirs.filterKeys { it.isNotEmpty() }
+        .map { (dir, module) -> root.resolve(dir).normalize() to module }
+    val held = mutableSetOf<String>()
+    paths.forEach { file ->
+        val path = pathOf(file) ?: return@forEach
+        dirs.forEach { (dir, module) ->
+            if (path.startsWith(dir) || (dir.startsWith(path) && path.startsWith(root) && path != root)) {
+                held += module
+            }
+        }
+    }
+    return held
 }
 
 /**

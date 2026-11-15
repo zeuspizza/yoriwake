@@ -808,8 +808,10 @@ internal fun scopedChange(
     facts: ClasspathView,
     notReadByTests: List<String> = emptyList(),
     ignore: PathIgnore.Declaration? = null,
-    /** The base the change set was taken against, for a build file's earlier text; null keeps every build file. */
-    against: String? = null,
+    /** The bases the change set was taken against, each an earlier text of a build file; none keeps every build file. */
+    bases: List<String> = emptyList(),
+    /** Changed paths whose earlier text no base holds: the working tree's drift since the capture. */
+    moved: Set<String> = emptySet(),
 ): ScopedChange {
     // The same artifacts `establish` builds, so a path this task's classes name is kept. Lazy: most
     // change sets have no path to ask about.
@@ -829,18 +831,21 @@ internal fun scopedChange(
         // By a class source's forms or its file name alone, in a class or in a resource of the
         // build's own: a dependency knows no path of this repository.
         named = { candidates ->
-            val inResources = artifacts.namedInOwnResources(candidates.flatMap { listOf(it, it.substringAfterLast('/')) })
+            val forms = candidates.associateWith { path ->
+                (artifacts.needles(path, TaskArtifacts.Naming.CLASS_SOURCE) + path.substringAfterLast('/')).filter { it.isNotEmpty() }
+            }
+            val inResources = artifacts.namedInOwnResources(forms.values.flatten().distinct())
             artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE) +
                 artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) +
-                candidates.filter { it in inResources || it.substringAfterLast('/') in inResources }
+                candidates.filter { path -> forms.getValue(path).any { it in inResources } }
         },
         refusal = { path, module, buildFile ->
             BuildFileReach.refusal(
                 path, module, buildFile, facts, BuildFileReach.reader(rootDir), { File(rootDir, it).isFile },
-                BuildFileReach.base(rootDir, against),
+                BuildFileReach.bases(rootDir, bases, moved),
             )
         },
-        ownBuild = { dir -> listOf("settings.gradle", "settings.gradle.kts").any { File(rootDir, "$dir/$it").exists() } },
+        ownBuild = { dir -> BuildFileReach.SETTINGS.any { File(rootDir, "$dir/$it").exists() } },
     )
     val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present, { candidates ->
         artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE)

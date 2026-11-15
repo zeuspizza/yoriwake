@@ -445,7 +445,7 @@ internal abstract class ExplainTask : DefaultTask() {
             }
             verdict as? DependencyRule.Verdict.Accepted
         }
-        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, base)
+        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, listOfNotNull(base, age.stamp), (drift as? WorkingTree.Drift.Moved)?.paths.orEmpty())
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
         val found = establish(
             { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },

@@ -47,7 +47,8 @@ guess.
   of a module it reaches, lies in it or above it (`java.srcDir("../beta/src/main/java")`), when the
   test task hands its test JVM a path in it or above it below the root (`-javaagent:beta/build/...`,
   a system property, an environment value, a declared input), or when the test task depends on a
-  task of it (`dependsOn(":beta:jar")`); a source added on a compile task alone
+  task of it (`dependsOn(":beta:jar")`) or on a task that reads a file of it; a source added on a
+  compile task alone
   (`tasks.compileJava { source(...) }`) is not read.
 - **Selection.** A JUnit Platform `PostDiscoveryFilter` in the test JVM deselects every test whose
   recorded coverage cannot reach the change. It runs at discovery, so it sees the tests that exist
@@ -856,8 +857,10 @@ Three things differ:
   the file's name, as one string, or pin the test. The same holds for that module's build script
   and other files under `src/`, and for a test handed the repository root, or a directory above
   it, that walks to one of them. So does a convention plugin, already applied and unchanged, that
-  configures the test from a value the module's build script sets, and a `buildSrc` or
-  `build-logic` class that reads the module's file. A `dependsOn` entry, or a test's
+  configures the test from a value the module's build script sets, a script of the tested module,
+  one above it or the root that reads every project without naming one
+  (`subprojects.map { it.version }`), and a `buildSrc` or `build-logic` class that reads the
+  module's file. A `dependsOn` entry, or a test's
   `yoriwake-depends-on:` tag, naming the path keeps such a test running.
 - **Build output a test reads by path.** A file under a build directory that is not on the test
   runtime classpath, such as a fixture under `build/` a test opens with `File`, is build state and

@@ -321,7 +321,7 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
         assertContains(output, "ParentTest > fromParent() FAILED")
     }
 
-    /** What R7 leaves forcing: a sibling's properties and a script another build applies. */
+    /** A sibling's files outside `src` keep forcing: its properties and a script another build applies. */
     @Test
     fun `a sibling's gradle properties or applied script still forces`(@TempDir dir: File) {
         captured(dir, files = listOf("beta/gradle.properties" to "x=1\n", "beta/scripts/common.gradle" to "// common\n"))

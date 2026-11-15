@@ -36,7 +36,7 @@ internal object BuildFileReach {
      * tested module reads names the module.
      *
      * @param read a repository-relative file's text in the working tree; null when it cannot be read
-     * @param base a repository-relative file's text at the base
+     * @param bases a repository-relative file's text at each base the change set was taken against
      */
     fun refusal(
         path: String,
@@ -45,7 +45,7 @@ internal object BuildFileReach {
         view: ClasspathView,
         read: (String) -> String?,
         exists: (String) -> Boolean,
-        base: (String) -> Base,
+        bases: (String) -> List<Base>,
     ): String? {
         val dir = view.moduleDirs.entries.firstOrNull { it.value == module }?.key ?: return "its module has no directory"
         // A Maven module's: no settings script to read, and the reactor POM lists every module.
@@ -53,15 +53,18 @@ internal object BuildFileReach {
         if (buildFile) {
             if (holds(module, dir, view)) return "its module holds the tested module"
             val current = read(path) ?: return "it cannot be read"
-            if (pom) return PomReach.refusal(base(path), current)
+            val earlier = bases(path).ifEmpty { listOf(Base.Unknown) }
+            if (pom) return earlier.firstNotNullOfOrNull { PomReach.refusal(it, current) }
             reach(current)?.let { return it }
-            when (val then = base(path)) {
-                is Base.Text -> {
-                    reach(then.text)?.let { return "its base revision $it" }
-                    if (pluginsDiffer(then.text, current)) return "it changes the plugins it applies"
+            for (then in earlier) {
+                when (then) {
+                    is Base.Text -> {
+                        reach(then.text)?.let { return "its base revision $it" }
+                        if (pluginsDiffer(then.text, current)) return "it changes the plugins it applies"
+                    }
+                    Base.Absent -> Unit
+                    Base.Unknown -> return "its base revision cannot be read"
                 }
-                Base.Absent -> Unit
-                Base.Unknown -> return "its base revision cannot be read"
             }
         }
         if (pom) return null
@@ -116,19 +119,22 @@ internal object BuildFileReach {
     /** Why [text] reaches another project, the build at large, or files outside its module; else null. */
     fun reach(text: String): String? {
         REACHING.forEach { (pattern, what) -> pattern.find(text)?.let { return "names ${what ?: it.value.trim()}" } }
-        if (literals(text).any { PARENT_SEGMENT.containsMatchIn(it) }) return "names a path above its module (`..`)"
+        // Split, so `"-Dx=../alpha"` or `"a ../b"` count as the path they hold.
+        if (literals(text).any { literal -> literal.split(PIECE).any { PARENT_SEGMENT.containsMatchIn(it) } }) {
+            return "names a path above its module (`..`)"
+        }
         PROJECT_CALL.findAll(text).forEach { call ->
             if (!asDependency(text, call.range.first, call.range.last)) return "reaches another project with `project(...)`"
         }
         return null
     }
 
-    /** Whether the `plugins {}` block, the `buildscript {}` block or a line applying a plugin differs. */
+    /** Whether the `plugins {}`, `buildscript {}` or `apply {}` block, or a line applying a plugin, differs. */
     fun pluginsDiffer(base: String, current: String): Boolean = plugins(base) != plugins(current)
 
     private fun plugins(text: String): List<String> {
         val parts = mutableListOf<String>()
-        listOf(PLUGINS_BLOCK, BUILDSCRIPT_BLOCK).forEach { block ->
+        listOf(PLUGINS_BLOCK, BUILDSCRIPT_BLOCK, APPLY_BLOCK).forEach { block ->
             block.findAll(text).forEach { start ->
                 val open = start.range.last
                 parts += text.substring(open, closing(text, open, '{', '}')).collapse()
@@ -216,7 +222,7 @@ internal object BuildFileReach {
     private fun String.collapse() = replace(Regex("""\s+"""), " ").trim()
 
     /** Every settings script Gradle reads at the root, relative to it. */
-    private val SETTINGS = listOf("settings.gradle.kts", "settings.gradle")
+    val SETTINGS = listOf("settings.gradle.kts", "settings.gradle")
 
     private fun identifier(name: String) = Regex("""(?<![\w$])$name(?![\w$])""")
 
@@ -236,6 +242,8 @@ internal object BuildFileReach {
     )
 
     private val PARENT_SEGMENT = Regex("""(?:^|[/\\"'])\.\.(?:[/\\"']|$)""")
+
+    private val PIECE = Regex("""[\s,;=:]+""")
 
     private val LITERAL = Regex(""""{3}[\s\S]*?"{3}|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""")
 
@@ -257,8 +265,11 @@ internal object BuildFileReach {
 
     private val BUILDSCRIPT_BLOCK = Regex("""(?<![\w$.])buildscript\s*\{""")
 
+    /** `apply { plugin("x") }` in Kotlin, whose body names the plugins. */
+    private val APPLY_BLOCK = Regex("""(?<![\w$.])apply\s*\{""")
+
     private val APPLIED = Regex(
-        """(?:\bapply\s*\(?\s*plugin\b|\bpluginManager\s*\.\s*apply\b|(?<![\w$])plugins\s*\.\s*(?:apply|withId)\b)[^\n]*"""
+        """(?:\bapply\s*\(?\s*plugin\b|\bapply\s*<|\bapply\s*\(\s*mapOf\b|\bpluginManager\s*\.\s*apply\b|(?<![\w$])plugins\s*\.\s*(?:apply|withId)\b)[^\n]*"""
     )
 
     private val INCLUDE_CALL = Regex("""(?<![\w$.])include(?:Flat)?\s*\(""")
@@ -272,17 +283,19 @@ internal object BuildFileReach {
     /** Repository-relative text through the working tree, null when it cannot be read. */
     fun reader(rootDir: File): (String) -> String? = { path -> runCatching { File(rootDir, path).readText() }.getOrNull() }
 
-    /** The base revision of a repository-relative file, through git. */
-    fun base(rootDir: File, against: String?): (String) -> Base = { path ->
-        if (against == null) Base.Unknown
-        else {
+    /**
+     * A repository-relative file's text at each of [against], through git; unknown for one the
+     * working tree's drift since the capture changed ([moved]), whose captured text git does not hold.
+     */
+    fun bases(rootDir: File, against: List<String>, moved: Set<String>): (String) -> List<Base> = { path ->
+        against.distinct().map { base ->
             // `./`: the path is relative to the root project, which git runs in, not to the repository.
-            val text = ChangeDetection.rawGit(rootDir, listOf("show", "$against:./$path"))
+            val text = ChangeDetection.rawGit(rootDir, listOf("show", "$base:./$path"))
             when {
                 text != null -> Base.Text(text)
-                ChangeDetection.rawGit(rootDir, listOf("ls-tree", "--name-only", against, "--", path))?.isBlank() == true -> Base.Absent
+                ChangeDetection.rawGit(rootDir, listOf("ls-tree", "--name-only", base, "--", path))?.isBlank() == true -> Base.Absent
                 else -> Base.Unknown
             }
-        }
+        } + if (path in moved) listOf(Base.Unknown) else emptyList()
     }
 }

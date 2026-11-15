@@ -253,7 +253,8 @@ internal class TaskArtifacts(
         return found + unsearchable
     }
 
-    private fun needles(path: String, naming: Naming): Set<String> {
+    /** The strings that name [path] under [naming]; see [Naming]. */
+    internal fun needles(path: String, naming: Naming): Set<String> {
         if (naming == Naming.CLASS_SOURCE) {
             val segments = path.split('/')
             val forms = mutableSetOf(path)

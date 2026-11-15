@@ -45,6 +45,7 @@ class BuildFileReachTest {
             """apply(from = "common.gradle")""",
             """File(rootDir, "build/x")""",
             """file("../alpha/src/test/resources/gen.txt")""",
+            """jvmArgs("-Dfixtures=../alpha/src/test/resources")""",
             """configure(listOf(project)) { }""",
             "evaluationDependsOn(\":alpha\")",
             "project.parent?.version",
@@ -60,6 +61,9 @@ class BuildFileReachTest {
         assertNull(refusal(base, bumped))
         assertNotNull(refusal(base, "plugins { java; id(\"local.convention\") }\n"))
         assertNotNull(refusal("apply plugin: 'java'\n", "apply plugin: 'java'\napply plugin: 'local'\n"))
+        assertNotNull(refusal(base, base + "apply<JavaPlugin>()\n"))
+        assertNotNull(refusal(base, base + "apply {\n    plugin(\"local\")\n}\n"))
+        assertNotNull(refusal(base, base + "apply(mapOf(\"plugin\" to \"local\"))\n"))
         assertNotNull(refusal("buildscript { dependencies { classpath(\"a:b:1\") } }\n", "buildscript { dependencies { classpath(\"a:b:2\") } }\n"))
     }
 
@@ -70,6 +74,16 @@ class BuildFileReachTest {
         assertNotNull(refusal(reaching, "plugins { java }\n"))
         assertNull(refusal(Base.Absent, "plugins { java }\n"))
         assertNotNull(refusal(Base.Unknown, "plugins { java }\n"))
+    }
+
+    @Test
+    fun `every base revision is read, and one only the drift since the capture names refuses`() {
+        val reaching = "allprojects { }\n"
+
+        assertNotNull(refusal(listOf(Base.Text(SCRIPT), Base.Text(reaching)), SCRIPT))
+        assertNull(refusal(listOf(Base.Text(SCRIPT), Base.Absent), SCRIPT))
+        assertNotNull(refusal(listOf(Base.Text(SCRIPT), Base.Unknown), SCRIPT))
+        assertNotNull(refusal(emptyList(), SCRIPT))
     }
 
     @Test
@@ -102,13 +116,16 @@ class BuildFileReachTest {
     fun `a module that holds the tested module never drops its build file`() {
         val view = view(mapOf("a" to ":a", "a/b" to ":a:b"), ":a:b")
 
-        assertNotNull(BuildFileReach.refusal("a/build.gradle.kts", ":a", true, view, { SCRIPT }, { true }, { Base.Text(SCRIPT) }))
+        assertNotNull(BuildFileReach.refusal("a/build.gradle.kts", ":a", true, view, { SCRIPT }, { true }, { listOf(Base.Text(SCRIPT)) }))
     }
 
     private fun refusal(base: String, current: String?) = refusal(Base.Text(base), current)
 
+    private fun refusal(base: Base, current: String?, settings: String? = "include(\"alpha\", \"beta\")", alpha: String = SCRIPT, root: String = "") =
+        refusal(listOf(base), current, settings, alpha, root)
+
     private fun refusal(
-        base: Base,
+        bases: List<Base>,
         current: String?,
         settings: String? = "include(\"alpha\", \"beta\")",
         alpha: String = SCRIPT,
@@ -123,7 +140,7 @@ class BuildFileReachTest {
         val view = view(mapOf("" to ":", "alpha" to ":alpha", "beta" to ":beta"), ":alpha")
         return BuildFileReach.refusal(
             "beta/build.gradle.kts", ":beta", true, view,
-            { files[it] }, { path -> path in files && (path != "settings.gradle.kts" || settings != null) }, { base },
+            { files[it] }, { path -> path in files && (path != "settings.gradle.kts" || settings != null) }, { bases },
         )
     }
 

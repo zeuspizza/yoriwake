@@ -19,8 +19,16 @@ internal object SelectionSetup {
             val reason get() = "git could not report changes against $against, so there is no change set to select from"
         }
 
-        /** Selects from [paths], every changed path against [widened] and the map's [stamp]. */
-        class Select(val widened: ChangeDetection.Base, val stamp: String?, val paths: List<String>) : Outcome
+        /**
+         * Selects from [paths], every changed path against [widened] and the map's [stamp]; [moved] are
+         * those the working tree's drift since the capture adds, whose captured text git does not hold.
+         */
+        class Select(
+            val widened: ChangeDetection.Base,
+            val stamp: String?,
+            val paths: List<String>,
+            val moved: Set<String> = emptySet(),
+        ) : Outcome
     }
 
     /**
@@ -69,6 +77,6 @@ internal object SelectionSetup {
                 )
             }
         }
-        return Outcome.Select(widened, stamp, paths)
+        return Outcome.Select(widened, stamp, paths, moved.orEmpty())
     }
 }

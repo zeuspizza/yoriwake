@@ -62,7 +62,8 @@ class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
         }
     """.trimIndent()
 
-    private val maxFixture = "beta/src/test/resources/limits/max.fixture" to "3"
+    // Under no resource directory, so no build step copies it and a walk finds this one alone.
+    private val maxFixture = "beta/src/fixtures/limits/max.fixture" to "3"
 
     private fun changeMax(dir: File) = File(dir, maxFixture.first).writeText("4")
 
@@ -92,7 +93,7 @@ class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
         val output = selectingFails(
             dir, rootBuild(),
             "beta/build.gradle.kts" to "plugins { java }\n" +
-                "rootProject.tasks.withType<Test>().configureEach { systemProperty(\"fixtures\", file(\"src/test/resources\").absolutePath) }\n",
+                "rootProject.tasks.withType<Test>().configureEach { systemProperty(\"fixtures\", file(\"src/fixtures\").absolutePath) }\n",
             maxFixture, walkingTest("System.getProperty(\"fixtures\")"),
         ) { changeMax(it) }
 
@@ -105,7 +106,7 @@ class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
         val output = selectingFails(
             dir, rootBuild(),
             "beta/build.gradle.kts" to "plugins { java }\n" +
-                "rootProject.tasks.withType<Test>().configureEach { inputs.dir(file(\"src/test/resources\")) }\n",
+                "rootProject.tasks.withType<Test>().configureEach { inputs.dir(file(\"src/fixtures\")) }\n",
             maxFixture, walkingTest("\"\""),
         ) { changeMax(it) }
 
@@ -151,6 +152,29 @@ class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
         ) { File(it, "beta/src/main/resources/value.txt").writeText("v2") }
 
         assertForcedAndFailed(output, dir, "JarTest > firstVersion()")
+    }
+
+    /**
+     * A task of another module, gamma, copies a file of beta's `src` into gamma's build directory;
+     * the test task depends on it and hands the test that directory. No script of the tested project
+     * names beta, and no path the test is handed lies in it.
+     */
+    @Test
+    fun `a sibling's file a task the test depends on copies elsewhere forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild(
+                "dependsOn(\":gamma:shared\")\n" +
+                    "    systemProperty(\"shared\", file(\"gamma/build/shared\").absolutePath)",
+            ),
+            "settings.gradle.kts" to "rootProject.name = \"sample\"\ninclude(\"beta\", \"gamma\")\n",
+            "gamma/build.gradle.kts" to "tasks.register<Copy>(\"shared\") {\n" +
+                "    from(rootDir.resolve(\"beta/src/shared\"))\n    into(layout.buildDirectory.dir(\"shared\"))\n}\n",
+            "beta/src/shared/limits/max.fixture" to "3",
+            walkingTest("System.getProperty(\"shared\")"),
+        ) { File(it, "beta/src/shared/limits/max.fixture").writeText("4") }
+
+        assertForcedAndFailed(output, dir, "FixtureTest > maxIsThree()")
     }
 
     /** A test asserting that its JVM's `FROM_BETA` variable is [expected], or unset for null. */

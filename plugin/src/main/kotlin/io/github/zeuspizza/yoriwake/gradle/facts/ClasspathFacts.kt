@@ -173,7 +173,7 @@ internal fun classpathFacts(
     buildFiles = facts.buildFiles,
     // Read when the change set reaches outside this module, as `declared` is.
     handed = project.provider { if (reaches) handedPaths(test) else emptySet() },
-    closure = if (reaches) dependencyClosure(project, test) else project.provider { emptySet<String>() },
+    closure = if (reaches) dependencyClosure(project, test, facts.moduleDirs) else project.provider { emptySet<String>() },
     )
 }
 
@@ -186,20 +186,28 @@ internal fun handedPaths(test: Test): Set<File> {
 }
 
 /**
- * The modules owning a task [test] depends on, directly or not, as the task graph has them once it
- * is ready: before the configuration cache stores its entry, and never from a task action. A task
- * not in the graph, as the test task is when only `yoriwakeExplain` runs, is asked for its own
- * dependencies then. Unset, so unknown, when the graph never becomes ready for it or a walk fails.
+ * The modules owning a task [test] depends on, directly or not, and those holding a file such a
+ * task reads (a copy from a sibling's `src`), as the task graph has them once it is ready: before
+ * the configuration cache stores its entry, and never from a task action. A task not in the graph,
+ * as the test task is when only `yoriwakeExplain` runs, is asked for its own dependencies then.
+ * Unset, so unknown, when the graph never becomes ready for it or a walk fails.
  */
-internal fun dependencyClosure(project: Project, test: Test): org.gradle.api.provider.Provider<Set<String>> {
+internal fun dependencyClosure(
+    project: Project,
+    test: Test,
+    moduleDirs: Map<String, String>,
+): org.gradle.api.provider.Provider<Set<String>> {
     val closure = project.objects.setProperty(String::class.java)
     closure.set(null as Iterable<String>?)
     val build = project.rootProject
+    val rootDir = project.rootDir
     project.gradle.taskGraph.whenReady { graph ->
         runCatching {
+            val read = mutableSetOf<File>()
             modulesDependedOn(test, build) { task ->
+                if (task != test) read += task.inputs.files.files
                 if (graph.hasTask(task)) graph.getDependencies(task) else task.taskDependencies.getDependencies(task)
-            }
+            } + modulesHolding(read, rootDir, moduleDirs)
         }.getOrNull()?.let { closure.set(it) }
     }
     return closure

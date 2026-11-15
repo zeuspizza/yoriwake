@@ -100,6 +100,10 @@ internal object SelectingStep {
         val dependencies: DependencyRule.Context? = null,
         /** Whether `narrowLineOnlyChanges` is on. */
         val narrowLineOnlyChanges: Boolean = false,
+        /** The commit the map was captured at, a second base a changed build file is read at. */
+        val stamp: String? = null,
+        /** Changed paths only the working tree's drift since the capture names: no base text stands for them. */
+        val moved: Set<String> = emptySet(),
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -125,7 +129,7 @@ internal object SelectingStep {
         reportDependencies(host, dependency)
         val scoped = scopedChange(
             if (bump == null) paths else paths - bump.paths.toSet(),
-            classpathFacts, inputs.notReadByTests, inputs.ignore, against,
+            classpathFacts, inputs.notReadByTests, inputs.ignore, listOfNotNull(against, inputs.stamp), inputs.moved,
         )
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
         if (scoped.droppedFiles.isNotEmpty()) {

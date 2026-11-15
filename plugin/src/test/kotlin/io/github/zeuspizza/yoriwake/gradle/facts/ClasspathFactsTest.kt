@@ -163,7 +163,8 @@ class ClasspathFactsTest {
         )
 
         assertEquals(setOf(":lib", ":lib:nested"), reaching(dir, handedPathTokens(values, app)).reachedModules())
-        assertEquals(setOf(":lib"), reaching(dir, handedPathTokens(listOf("-Dlib=../lib"), app)).reachedModules())
+        // A directory above a module, below the root, reaches every module under it.
+        assertEquals(setOf(":lib", ":lib:nested"), reaching(dir, handedPathTokens(listOf("-Dlib=../lib"), app)).reachedModules())
     }
 
     @Test
@@ -230,5 +231,20 @@ class ClasspathFactsTest {
 
         assertEquals(0, scoped.dropped)
         assertEquals(setOf("dev.N"), scoped.change.classPrefixes)
+    }
+
+    @Test
+    fun `a sibling's resource drops unless an own resource names its directory`(@TempDir dir: File) {
+        File(dir, "settings.gradle.kts").writeText("include(\"app\", \"lib\", \"lib:nested\")\n")
+        val resources = File(dir, "app/build/resources/test").apply { mkdirs() }
+        File(resources, "a.properties").writeText("unrelated=1\n")
+        val change = listOf("lib/nested/src/test/fixtures/max.fixture")
+
+        val unnamed = scopedChange(change, facts(dir, listOf(resources), setOf(":lib")))
+        File(resources, "a.properties").writeText("fixtures=../lib/nested/src/test/fixtures\n")
+        val named = scopedChange(change, facts(dir, listOf(resources), setOf(":lib")))
+
+        assertEquals(change, unnamed.droppedFiles)
+        assertEquals(change, named.change.unmappablePaths)
     }
 }
