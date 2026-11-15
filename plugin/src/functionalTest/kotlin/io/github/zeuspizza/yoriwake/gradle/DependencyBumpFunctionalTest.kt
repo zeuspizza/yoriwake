@@ -253,7 +253,8 @@ class DependencyBumpFunctionalTest : FunctionalTestSupport() {
         captured(
             dir,
             "val mathVersion = \"1.0\"\ndependencies {\n    testImplementation(\"dev.lib:lib-math:${'$'}mathVersion\")\n}\n" +
-                "tasks.test { systemProperty(\"math.version\", mathVersion) }",
+                // A resource input, not a system property: the environment check would refuse that first.
+                "tasks.processTestResources { inputs.property(\"math\", mathVersion) }",
         )
         bumpScript(dir, "mathVersion = \"1.0\"", "mathVersion = \"1.1\"")
 
