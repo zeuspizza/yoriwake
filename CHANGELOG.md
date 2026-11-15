@@ -23,7 +23,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A trusted-map list written before this version names no map now; the default branch's next run writes one. Map: left alone.
 - `-Pyoriwake.mode=optimistic` (`-D` on Maven) selects without the shared-JVM change windows, loudly. Map: left alone.
 - `yoriwake.isolatedCaptureForks` raises an isolated recording run's parallel test JVMs. Map: left alone.
-- Maven records the loaded-class union under `-Dyoriwake.internal.loaded`, as Gradle does. Map: left alone.
+- Maven records the loaded-class union under `-Dyoriwake.internal.loaded`. Map: left alone.
 - Contributors: `-Pyoriwake.functional.forks=<n>` runs a functional suite in `<n>` test JVMs at once. Map: left alone.
 - The reference says an observing or complement run of a parallel suite under `recordSequentially` records nothing. Map: left alone.
 
@@ -36,6 +36,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Reference: a transform-cache entry written again after Gradle's cache cleanup also runs nothing. Map: left alone.
 - Code that ran before a JVM's first test runs only the tests of the JVMs that loaded it, not everything. Map: left alone.
 - Gradle: README, Markdown, `docs/` and `.github/` changes are ignored by default (`pathIgnoreDefaults`). Map: left alone.
+- Gradle: a changed class no test executed or loaded, and no resource names, selects nothing by default.
+  Map: left alone; the next capture of the whole task records the classes its test JVMs loaded.
 
 ### Fixed
 

@@ -177,6 +177,76 @@ def case_a_row_without_replay_inputs_is_left_out_with_its_reason():
     return failures
 
 
+def orphan_fixture(root, union):
+    """[fixture] with a change to com.acme.Orphan, which no record covers and no JVM touched, whose
+    absence the build could prove, and a loaded-class union holding [union]."""
+    results = fixture(root, FAITHFUL, [])
+    map_dir = os.path.join(root, "map")
+    with open(os.path.join(map_dir, "loaded.txt"), "w") as handle:
+        handle.write("".join(name + "\n" for name in union))
+    with open(os.path.join(map_dir, "loaded-scope"), "w") as handle:
+        handle.write("com.acme\n")
+    with open(os.path.join(map_dir, "loaded-provenance"), "w") as handle:
+        handle.write("full\n")
+    part = os.path.join(root, "decisions.parts", f"{run.DECISIONS_FILE}.1-1{run.DECISION_PART_SUFFIX}")
+    text = open(part).read()
+    text = text.replace("input.yoriwake.change.classes\tcom.acme.A", "input.yoriwake.change.classes\tcom.acme.Orphan")
+    text = text.replace("input.yoriwake.change.absenceProvable\t", "input.yoriwake.change.absenceProvable\tcom.acme.Orphan")
+    text = text.replace("included\tREACHES_CHANGE", "excluded\tSKIPPED")
+    with open(part, "w") as handle:
+        handle.write(text)
+    data = json.load(open(results))
+    data["mutations"][0]["status"] = "no-effect"
+    with open(results, "w") as handle:
+        json.dump(data, handle)
+    return results
+
+
+def case_a_test_left_out_only_through_the_union_is_counted_and_one_run_either_way_is_not():
+    failures = 0
+    with tempfile.TemporaryDirectory(dir=os.path.join(ROOT, "sandbox")) as root:
+        rows, _ = rd.rows_to_replay([orphan_fixture(root, ["com.acme.A", "com.acme.B"])],
+                                    statuses=("checked", "no-effect"))
+        entry = rd.union_effect(rows)[0]
+        # Alpha and Beta are left out as nothing they need changed; Gamma is not in the map and runs
+        # in both passes. Without the union the change forces every test.
+        if (entry["verdict"], entry.get("left_out"), entry.get("only_through_union")) != ("union", 2, 2):
+            failures += fail(f"the tests the union leaves out were not counted: {entry}")
+        if not os.path.isfile(os.path.join(root, "map", "loaded.txt")):
+            failures += fail("the pass without the union removed it from the kept map")
+    with tempfile.TemporaryDirectory(dir=os.path.join(ROOT, "sandbox")) as root:
+        rows, _ = rd.rows_to_replay([orphan_fixture(root, ["com.acme.Orphan"])],
+                                    statuses=("checked", "no-effect"))
+        # The record leaves Alpha and Beta out, which this union does not allow: under the selector
+        # that recorded it that is drift, under another it is that selector's answer.
+        if rd.union_effect(rows)[0]["verdict"] != "drift":
+            failures += fail("a first pass that does not reproduce its record was counted")
+        rows[0][1]["replay"]["digest"] = "another selector"
+        entry = rd.union_effect(rows)[0]
+        if (entry["verdict"], entry.get("left_out"), entry.get("only_through_union")) != ("union", 0, 0):
+            failures += fail(f"a union that holds the changed class left tests out: {entry}")
+    return failures
+
+
+def case_a_row_whose_map_has_no_union_is_not_counted():
+    failures = 0
+    with tempfile.TemporaryDirectory(dir=os.path.join(ROOT, "sandbox")) as root:
+        rows, _ = rd.rows_to_replay([fixture(root, FAITHFUL, ["Alpha::t"])])
+        entry = rd.union_effect(rows)[0]
+        if entry["verdict"] != "no-union":
+            failures += fail(f"a map with no union was counted: {entry}")
+    return failures
+
+
+def case_a_row_whose_change_failed_nothing_asks_no_recall_question():
+    failures = 0
+    with tempfile.TemporaryDirectory(dir=os.path.join(ROOT, "sandbox")) as root:
+        rows, skipped = rd.rows_to_replay([orphan_fixture(root, [])])
+        if rows or skipped != {"the row asked no recall question": 1}:
+            failures += fail(f"a row with no induced failure was asked a recall question: {skipped}")
+    return failures
+
+
 def case_names_are_read_from_each_engine_s_ids():
     failures = 0
     for test, expected in (
@@ -222,6 +292,9 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_record_missing_an_input_the_rule_reads_is_not_replayed,
          case_a_map_of_another_schema_is_not_replayed,
          case_a_row_without_replay_inputs_is_left_out_with_its_reason,
+         case_a_test_left_out_only_through_the_union_is_counted_and_one_run_either_way_is_not,
+         case_a_row_whose_map_has_no_union_is_not_counted,
+         case_a_row_whose_change_failed_nothing_asks_no_recall_question,
          case_names_are_read_from_each_engine_s_ids)
 
 

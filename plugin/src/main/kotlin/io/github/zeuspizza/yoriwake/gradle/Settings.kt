@@ -65,7 +65,8 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
     val instrumentedSeconds: String? = lookup(INSTRUMENTED_SECONDS)
     val uninstrumentedSeconds: String? = lookup(UNINSTRUMENTED_SECONDS)
 
-    val loaded: Boolean = parseFlag(LOADED, lookup(LOADED))
+    /** On unless `=false`: a whole recording capture lists the classes its test JVMs loaded. */
+    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: true
     val classGranularity: Boolean = parseFlag(CLASS_GRANULARITY, lookup(CLASS_GRANULARITY))
     /** Null when not passed, so the build's `narrowPlainRunners` answers. */
     val narrowPlainRunners: Boolean? = lookup(NARROW_PLAIN_RUNNERS)?.let { parseFlag(NARROW_PLAIN_RUNNERS, it) }
