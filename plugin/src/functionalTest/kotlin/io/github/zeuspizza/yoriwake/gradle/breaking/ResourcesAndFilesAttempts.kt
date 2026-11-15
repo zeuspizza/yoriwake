@@ -671,9 +671,12 @@ class ResourcesAndFilesAttempts : BreakAttempt() {
             }
             """,
         )
+        // Without the pathIgnore defaults, which leave a Markdown file out; the walk row of the
+        // ignored-path attempts covers them.
         val result = attempt(
             dir, "dev.sample.A1DocsTest", Aim.Forced("unmappable-paths"),
             listOf(codec, other, first, notes, docs, codecTest, classOrderByName),
+            buildScript = minimalBuild + "\nyoriwake { pathIgnoreDefaults.set(false) }\n",
         ) {
             changeCodec(it)
             File(it, "notes.md").appendText("\nTODO: one more thing.\n")

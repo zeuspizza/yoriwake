@@ -431,9 +431,18 @@ public abstract class YoriwakeExtension {
      * `include` takes them: `pathIgnore.add("CHANGELOG.md")`, and `docs/` for everything under
      * `docs`. A changed path one matches leaves the change set, and every run that leaves one out
      * names it. Sources, resources, build files and anything under a `src` directory are never left
-     * out, and a test the map saw reading a path runs when it changes. Empty by default.
+     * out, and a test the map saw reading a path runs when it changes. Empty by default; its
+     * entries are matched before the defaults [pathIgnoreDefaults] adds.
      */
     public abstract val pathIgnore: org.gradle.api.provider.ListProperty<String>
+
+    /**
+     * Whether README files, Markdown files and whatever lies under the root project's `docs` and
+     * `.github` directories are ignored as [pathIgnore] entries without being listed. A path one matches is also kept unless the map recorded every
+     * test JVM's reads, and whenever the test task declares an input file of its own under the root.
+     * On by default: `pathIgnoreDefaults = false` turns them off.
+     */
+    public abstract val pathIgnoreDefaults: org.gradle.api.provider.Property<Boolean>
 
     /**
      * Environment variables compared between the run that recorded the map and a selecting run, as
@@ -521,5 +530,7 @@ public abstract class YoriwakeExtension {
         narrowDependencies.convention(false)
         @Suppress("LeakingThis")
         narrowLineOnlyChanges.convention(false)
+        @Suppress("LeakingThis")
+        pathIgnoreDefaults.convention(true)
     }
 }

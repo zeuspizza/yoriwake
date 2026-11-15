@@ -1,5 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
+import io.github.zeuspizza.yoriwake.agent.select.MapReader
+import io.github.zeuspizza.yoriwake.agent.select.Selector
 import java.io.File
 
 /**
@@ -7,8 +9,18 @@ import java.io.File
  * set before anything else sees it. Paths that change what compiles or what a build reads are never
  * taken out, whatever an entry matches, and each match is reported either way, so a wrong
  * declaration can be found.
+ *
+ * A Gradle build also gets [DEFAULTS], unless it turns them off: documentation and CI
+ * configuration, which no build reads as a rule. A default entry is held to more than a user's,
+ * since nobody vouched for it: see [gated].
  */
 internal object PathIgnore {
+
+    /** Matched after the build's own entries. `docs/` is the top-level directory only. */
+    val DEFAULTS = listOf(".github/", "docs/", "**/README*", "**/*.md")
+
+    /** How a default entry is spelled where an entry is written as text: the console and the change set. */
+    private const val DEFAULT_PREFIX = "default:"
 
     /** Why a path an entry matches stays in the change set. */
     enum class Protection(val token: String) {
@@ -29,6 +41,15 @@ internal object PathIgnore {
 
         /** A compiled class of the task holds the path or its file name. */
         NAMED_IN_CLASSES("named-in-classes"),
+
+        /** A default entry, and the map cannot show that no test JVM read the path. */
+        NO_READ_EVIDENCE("no-read-evidence"),
+
+        /**
+         * A default entry, and the test task declares an input file under the root beyond its
+         * classpath and test classes: what a build task derived from the path may reach the test there.
+         */
+        TASK_INPUT("task-input"),
     }
 
     /** What the map says about whether a test read an ignored path. */
@@ -43,9 +64,18 @@ internal object PathIgnore {
         NO_READ_EVIDENCE("no-read-evidence"),
     }
 
-    data class Ignored(val path: String, val entry: String)
+    /** [default] when [entry] is one of [DEFAULTS] rather than the build's own. */
+    data class Ignored(val path: String, val entry: String, val default: Boolean = false) {
+        /** [entry] as text names it: `default:docs/` for a default. */
+        val label: String get() = labelOf(entry, default)
+    }
 
-    data class Kept(val path: String, val entry: String, val protection: Protection)
+    data class Kept(val path: String, val entry: String, val protection: Protection, val default: Boolean = false) {
+        /** [entry] as text names it: `default:docs/` for a default. */
+        val label: String get() = labelOf(entry, default)
+    }
+
+    private fun labelOf(entry: String, default: Boolean) = if (default) DEFAULT_PREFIX + entry else entry
 
     /** The change set after the declaration: [kept] goes on, [ignored] is logged, [notIgnored] too. */
     class Applied(val kept: List<String>, val ignored: List<Ignored>, val notIgnored: List<Kept>) {
@@ -57,7 +87,7 @@ internal object PathIgnore {
     /**
      * The entries and what protects a path from them, as plain values a task action may hold.
      * [sourceDirs] and [buildLogicDirs] are root-relative; [outsideRoot] holds the changed paths git
-     * reported outside the Gradle root.
+     * reported outside the Gradle root. [defaults] are tried after [entries].
      */
     class Declaration(
         val entries: List<String>,
@@ -65,7 +95,11 @@ internal object PathIgnore {
         val sourceDirs: List<String>,
         val buildLogicDirs: List<String>,
         val outsideRoot: Set<String>,
-    ) : java.io.Serializable
+        val defaults: List<String> = emptyList(),
+    ) : java.io.Serializable {
+        /** Whether [path] matches an entry or a default. */
+        fun matches(path: String): Boolean = (entries + defaults).any { PathIgnore.matches(it, path) }
+    }
 
     /**
      * Why [entry] is not an entry this grammar reads, or null when it is. A pattern written for
@@ -130,9 +164,10 @@ internal object PathIgnore {
         declaration: Declaration?,
         namedInClasses: (Collection<String>) -> Set<String>?,
     ): Applied {
-        if (declaration == null || declaration.entries.isEmpty()) return Applied.none(paths)
+        if (declaration == null || (declaration.entries.isEmpty() && declaration.defaults.isEmpty())) return Applied.none(paths)
         val matched = paths.distinct().mapNotNull { path ->
-            declaration.entries.firstOrNull { matches(it, path) }?.let { path to it }
+            declaration.entries.firstOrNull { matches(it, path) }?.let { path to (it to false) }
+                ?: declaration.defaults.firstOrNull { matches(it, path) }?.let { path to (it to true) }
         }.toMap()
         if (matched.isEmpty()) return Applied.none(paths)
         val protectedBy = mutableMapOf<String, Protection>()
@@ -147,9 +182,70 @@ internal object PathIgnore {
         val ignored = matched.filterKeys { it !in protectedBy }
         return Applied(
             paths.filterNot { it in ignored },
-            ignored.map { (path, entry) -> Ignored(path, entry) }.sortedBy { it.path },
-            protectedBy.map { (path, why) -> Kept(path, matched.getValue(path), why) }.sortedBy { it.path },
+            ignored.map { (path, entry) -> Ignored(path, entry.first, entry.second) }.sortedBy { it.path },
+            protectedBy.map { (path, why) -> matched.getValue(path).let { Kept(path, it.first, why, it.second) } }.sortedBy { it.path },
         )
+    }
+
+    /**
+     * [applied] with every path a default entry left out put back when [taskInputs] answers any
+     * file (`task-input`), and otherwise when [everyJvmRecorded] does not hold (`no-read-evidence`).
+     * A user's entry stands as declared without read evidence; a default has nobody to vouch for it.
+     * Neither question is asked when no default left a path out.
+     */
+    fun gated(
+        applied: Applied,
+        everyJvmRecorded: () -> Boolean,
+        taskInputs: () -> List<String>,
+    ): Applied {
+        val defaults = applied.ignored.filter { it.default }
+        if (defaults.isEmpty()) return applied
+        // Not the per-path evidence: a path one JVM read is still unvouched for in a JVM whose
+        // reads went unrecorded, and the selector opens no window there, so its tests would skip.
+        val putBack: Map<Ignored, Protection> = if (taskInputs().isNotEmpty()) {
+            defaults.associateWith { Protection.TASK_INPUT }
+        } else if (!everyJvmRecorded()) {
+            defaults.associateWith { Protection.NO_READ_EVIDENCE }
+        } else {
+            emptyMap()
+        }
+        if (putBack.isEmpty()) return applied
+        return Applied(
+            applied.kept + putBack.keys.map { it.path },
+            applied.ignored - putBack.keys,
+            (applied.notIgnored + putBack.map { (it, why) -> Kept(it.path, it.entry, why, default = true) }).sortedBy { it.path },
+        )
+    }
+
+    /**
+     * What the map at [mapDir] says about each of [paths]: read when the selector opens a window for
+     * it in some JVM; otherwise not read when every JVM that ran a test recorded its reads, and no
+     * read evidence when any did not.
+     */
+    fun evidence(paths: Collection<String>, mapDir: File): Map<String, Evidence> {
+        if (paths.isEmpty()) return emptyMap()
+        val map = runCatching { MapReader.read(mapDir) }.getOrNull()
+        val everyJvmRecorded = recordedEveryJvm(map)
+        return paths.associateWith { path ->
+            when {
+                map != null && map.isUsable && Selector.ignoredPathWindows(map, listOf(path)).isNotEmpty() -> Evidence.READ
+                everyJvmRecorded -> Evidence.NOT_READ
+                else -> Evidence.NO_READ_EVIDENCE
+            }
+        }
+    }
+
+    /** Whether the map at [mapDir] recorded the reads of every JVM that ran a test. */
+    fun recordsEveryJvm(mapDir: File): Boolean = recordedEveryJvm(runCatching { MapReader.read(mapDir) }.getOrNull())
+
+    private fun recordedEveryJvm(map: MapReader.Result?): Boolean {
+        if (map == null || !map.isUsable) return false
+        val reads = map.resourceReads() ?: return false
+        // A test with no position ran in a JVM nobody can name, so nothing shows its reads recorded.
+        return map.entries().all { entry ->
+            val positions = map.positionsOf(entry.testId())
+            positions.isNotEmpty() && positions.all { reads.recorded(it.jvm()) }
+        }
     }
 
     /** What keeps [path] in the change set whatever matched it, or null when nothing does. */
@@ -188,9 +284,9 @@ internal object PathIgnore {
 
     /**
      * One change-set list item: path and entry, with `%` and `,` escaped, since the list is
-     * comma-separated and either can be in a path.
+     * comma-separated and either can be in a path. A default entry is written `default:<entry>`.
      */
-    fun encode(ignored: Ignored): String = escape(ignored.path) + "\t" + escape(ignored.entry)
+    fun encode(ignored: Ignored): String = escape(ignored.path) + "\t" + escape(ignored.label)
 
     /** [value] with `%` and `,` escaped, for a comma-separated change-set list. */
     fun escape(value: String) = value.replace("%", "%25").replace(",", "%2C")
