@@ -451,7 +451,7 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
         """.trimIndent()
         val orphan = "src/main/java/dev/sample/Orphan.java" to
             "package dev.sample;\npublic class Orphan { public int once() { return 1; } }"
-        build(dir, "build.gradle.kts" to probed, oneClass, oneTest, probe, orphan)
+        build(dir, "build.gradle.kts" to probed, oneClass, oneTest, secondClass, secondTest, probe, orphan)
         ignoreBuildOutputs(dir)
         git(dir, "init")
         commit(dir, "sample")
@@ -465,6 +465,8 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
         assertFalse(listsDir.exists(), "the lists outlived the decode that read them")
         val union = File(mapDir, "loaded.txt").readText()
         assertContains(union, "dev.sample.Alpha")
+        // Beta is loaded only by the test the narrowed run below leaves out.
+        assertContains(union, "dev.sample.Beta")
         assertFalse("dev.sample.Orphan" in union.lines())
 
         File(dir, "src/main/java/dev/sample/Alpha.java").writeText(

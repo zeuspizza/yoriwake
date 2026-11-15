@@ -92,6 +92,18 @@ internal class DecodeRun(
     }
 
     fun run() {
+        // A declined run wrote no lists and leaves the map exactly as it was.
+        val declined = develocityRefusalMarker(CoverageDecoder.recordsDir(mapDir)).isFile
+        try {
+            decodeRun()
+        } finally {
+            // This run's test JVMs' lists of loaded classes: scratch the decode reads, or not;
+            // the union is what the map keeps.
+            if (!declined) CoverageDecoder.loadedDir(mapDir).deleteRecursively()
+        }
+    }
+
+    private fun decodeRun() {
         if (selecting) Audit.TaskFacts.recordPlainNarrowed(mapDir)
         val marker = ranMarker(CoverageDecoder.recordsDir(mapDir))
         val fullRunMarker = fullRunMarker(CoverageDecoder.recordsDir(mapDir))

@@ -2708,7 +2708,7 @@ MUTATIONS = [
     ("a narrowed selecting run's lists replace the union", COVERAGE_DECODER,
      "            (!selecting || datesTheMap) &&\n",
      "",
-     functional_suite, "a narrowed selecting run keeps the union, and one that runs everything records it anew"),
+     decoder_suite, "a selecting decode that does not date the map keeps the union"),
     ("the agent is attached to the test task at configuration time", TEST_TASK_WIRING,
      "        if (recording) {\n            test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)\n",
      "        if (recording) {\n            agent?.let { test.jvmArgs(AgentJar.argument(it)) }\n"
