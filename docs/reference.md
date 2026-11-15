@@ -1799,7 +1799,9 @@ windows exist for, and with them dropped such a test fails only on the full run.
 In Groovy, a method an extension module or a category adds that shadows another (a GDK method or
 one of your own) changes what a test's call does without the test executing the class that adds
 it: Groovy's metaclass registry only loads that class. Such a test reaches the change through the
-shared-JVM window alone, so optimistic mode leaves it out.
+shared-JVM window alone, so optimistic mode leaves it out. So does a test that only reads a
+changed constant or annotation (a scan, a condition, a reflective lookup), which the safe rule
+selects through the same windows.
 
 What it misses, measured: replayed offline from the per-test rules the 0.1.0 benchmark recorded
 (plugin `30be0e8`, 161 narrowed changes in 22 projects, all generated edits; no real commit was
