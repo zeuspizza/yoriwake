@@ -1,0 +1,283 @@
+package io.github.zeuspizza.yoriwake.gradle
+
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
+
+/**
+ * A sibling module's build script or resource that reaches the tested project's tests although the
+ * sibling is not on its classpath: handed to the test JVM by path, built by a task the test task
+ * depends on, configuring the tested project, or named by a script the tested project reads. Each
+ * keeps forcing the run, and the change in each breaks the test that reads it, so a skip is a
+ * passing build and a run is a failing one.
+ */
+class OffClasspathFilesFunctionalTest : FunctionalTestSupport() {
+
+    /**
+     * The root project, with [rootScript], beside a sibling `beta` and [files]; committed and
+     * captured. [edit] then changes the working tree, and the selecting run that follows must fail.
+     */
+    private fun selectingFails(
+        dir: File,
+        rootScript: String,
+        vararg files: Pair<String, String>,
+        edit: (File) -> Unit,
+    ): String {
+        build(
+            dir,
+            "settings.gradle.kts" to "rootProject.name = \"sample\"\ninclude(\"beta\")\n",
+            "build.gradle.kts" to rootScript,
+            "beta/build.gradle.kts" to "plugins { java }\n",
+            oneClass, oneTest, *files,
+        )
+        committed(dir)
+        runner(dir, "test").build()
+        edit(dir)
+        File(dir, "build/test-results").deleteRecursively()
+        return runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").buildAndFail().output
+    }
+
+    /** [minimalBuild] with [extra] inside the test task's block. */
+    private fun rootBuild(extra: String = "") =
+        minimalBuild.replace("tasks.test { useJUnitPlatform() }", "tasks.test {\n    useJUnitPlatform()\n    $extra\n}")
+
+    /** A test reading the first file under a directory it walks whose name ends in `.fixture`, as `3`. */
+    private fun walkingTest(root: String) = "src/test/java/dev/sample/FixtureTest.java" to """
+        package dev.sample;
+        import java.nio.file.Files;
+        import java.nio.file.Path;
+        import java.nio.file.Paths;
+        import java.util.stream.Stream;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class FixtureTest {
+            @Test void maxIsThree() throws Exception {
+                try (Stream<Path> files = Files.walk(Paths.get($root))) {
+                    Path found = files.filter(p -> p.toString().endsWith(".fixture")).findFirst().get();
+                    assertEquals("3", Files.readString(found).trim());
+                }
+            }
+        }
+    """.trimIndent()
+
+    private val maxFixture = "beta/src/test/resources/limits/max.fixture" to "3"
+
+    private fun changeMax(dir: File) = File(dir, maxFixture.first).writeText("4")
+
+    private fun assertForcedAndFailed(output: String, dir: File, failed: String) {
+        assertContains(output, "$failed FAILED")
+        assertEquals("unmappable-paths", decisionNotes(dir)["full-run-kind"], output)
+    }
+
+    /**
+     * The sibling's script hands the test its directory in an environment variable, and the test
+     * walks it: no class names the file, and the tested project's scripts name no sibling.
+     */
+    @Test
+    fun `a sibling's resource a test walks to from the directory its environment hands it forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir, rootBuild(),
+            "beta/build.gradle.kts" to "plugins { java }\n" +
+                "rootProject.tasks.withType<Test>().configureEach { environment(\"FIXTURE_HOME\", projectDir.absolutePath) }\n",
+            maxFixture, walkingTest("System.getenv(\"FIXTURE_HOME\")"),
+        ) { changeMax(it) }
+
+        assertForcedAndFailed(output, dir, "FixtureTest > maxIsThree()")
+    }
+
+    @Test
+    fun `a sibling's resource a test walks to from the directory a system property hands it forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir, rootBuild(),
+            "beta/build.gradle.kts" to "plugins { java }\n" +
+                "rootProject.tasks.withType<Test>().configureEach { systemProperty(\"fixtures\", file(\"src/test/resources\").absolutePath) }\n",
+            maxFixture, walkingTest("System.getProperty(\"fixtures\")"),
+        ) { changeMax(it) }
+
+        assertForcedAndFailed(output, dir, "FixtureTest > maxIsThree()")
+    }
+
+    /** The test walks the whole checkout, which alone is the documented limit; the declared input is not. */
+    @Test
+    fun `a sibling's resource under a directory the test task declares as an input forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir, rootBuild(),
+            "beta/build.gradle.kts" to "plugins { java }\n" +
+                "rootProject.tasks.withType<Test>().configureEach { inputs.dir(file(\"src/test/resources\")) }\n",
+            maxFixture, walkingTest("\"\""),
+        ) { changeMax(it) }
+
+        assertForcedAndFailed(output, dir, "FixtureTest > maxIsThree()")
+    }
+
+    /**
+     * The sibling's jar is copied below the root's build directory, outside the sibling's own, by a
+     * task the test task depends on; the test reads the one text entry it holds, by no name of it.
+     */
+    @Test
+    fun `a sibling's resource in a jar a task the test depends on copies outside the sibling forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir, rootBuild(),
+            "beta/build.gradle.kts" to """
+                plugins { java }
+                val fixtureJar = tasks.register<Copy>("fixtureJar") {
+                    from(tasks.jar)
+                    into(rootProject.layout.buildDirectory.dir("fixtures"))
+                    rename { "beta.jar" }
+                }
+                rootProject.tasks.withType<Test>().configureEach {
+                    dependsOn(fixtureJar)
+                    systemProperty("fixture.jar", rootProject.layout.buildDirectory.file("fixtures/beta.jar").get().asFile.absolutePath)
+                }
+            """.trimIndent(),
+            "beta/src/main/resources/value.txt" to "v1",
+            "src/test/java/dev/sample/JarTest.java" to """
+                package dev.sample;
+                import java.util.jar.JarEntry;
+                import java.util.jar.JarFile;
+                import org.junit.jupiter.api.Test;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class JarTest {
+                    @Test void firstVersion() throws Exception {
+                        try (JarFile jar = new JarFile(System.getProperty("fixture.jar"))) {
+                            JarEntry entry = jar.stream().filter(e -> e.getName().endsWith(".txt")).findFirst().get();
+                            assertEquals("v1", new String(jar.getInputStream(entry).readAllBytes()).trim());
+                        }
+                    }
+                }
+            """.trimIndent(),
+        ) { File(it, "beta/src/main/resources/value.txt").writeText("v2") }
+
+        assertForcedAndFailed(output, dir, "JarTest > firstVersion()")
+    }
+
+    /** A test asserting that its JVM's `FROM_BETA` variable is [expected], or unset for null. */
+    private fun environmentTest(expected: String?) = "src/test/java/dev/sample/EnvironmentTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class EnvironmentTest {
+            @Test void variable() { assertEquals(${if (expected == null) "null" else "\"$expected\""}, System.getenv("FROM_BETA")); }
+        }
+    """.trimIndent()
+
+    private fun appendToBeta(dir: File, text: String) = File(dir, "beta/build.gradle.kts").appendText("$text\n")
+
+    /** A `project(":")` block in the sibling's script sets a variable on the tested project's test task. */
+    @Test
+    fun `a sibling's build script that starts configuring the tested project forces the run`(@TempDir dir: File) {
+        val output = selectingFails(dir, rootBuild(), environmentTest(null)) {
+            appendToBeta(it, "project(\":\") { tasks.withType<Test>().configureEach { environment(\"FROM_BETA\", \"2\") } }")
+        }
+
+        assertForcedAndFailed(output, dir, "EnvironmentTest > variable()")
+    }
+
+    /** The base revision reaches across, the working tree no longer does. */
+    @Test
+    fun `a sibling's build script that stops configuring the tested project forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir, rootBuild(),
+            "beta/build.gradle.kts" to "plugins { java }\n" +
+                "project(\":\") { tasks.withType<Test>().configureEach { environment(\"FROM_BETA\", \"1\") } }\n",
+            environmentTest("1"),
+        ) { File(it, "beta/build.gradle.kts").writeText("plugins { java }\n") }
+
+        assertForcedAndFailed(output, dir, "EnvironmentTest > variable()")
+    }
+
+    @Test
+    fun `a sibling's build script that configures the root project's test task forces the run`(@TempDir dir: File) {
+        val output = selectingFails(dir, rootBuild(), environmentTest(null)) {
+            appendToBeta(it, "rootProject.tasks.withType<Test>().configureEach { environment(\"FROM_BETA\", \"2\") }")
+        }
+
+        assertForcedAndFailed(output, dir, "EnvironmentTest > variable()")
+    }
+
+    /** The sibling newly applies a convention plugin of the build's own, whose code configures every test task. */
+    @Test
+    fun `a sibling's build script that newly applies a plugin which configures every test task forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir, rootBuild(),
+            "buildSrc/build.gradle" to "plugins { id 'groovy-gradle-plugin' }\n",
+            "buildSrc/src/main/groovy/local.convention.gradle" to
+                "rootProject.tasks.withType(Test).configureEach { environment 'FROM_BETA', '2' }\n",
+            environmentTest(null),
+        ) { File(it, "beta/build.gradle.kts").writeText("plugins { java; id(\"local.convention\") }\n") }
+
+        assertForcedAndFailed(output, dir, "EnvironmentTest > variable()")
+    }
+
+    /**
+     * The tested project's script hands the test the sibling's version in a variable no
+     * fingerprint lists, so only its naming the sibling keeps the bump forcing.
+     */
+    @Test
+    fun `a sibling's version the tested project's script hands its test forces the run when it changes`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            // Evaluated first, so the version is set by the time the test task is configured.
+            rootBuild("environment(\"FROM_BETA\", project(\":beta\").version.toString())") + "\nevaluationDependsOn(\":beta\")\n",
+            "beta/build.gradle.kts" to "plugins { java }\nversion = \"1\"\n",
+            environmentTest("1"),
+        ) { File(it, "beta/build.gradle.kts").writeText("plugins { java }\nversion = \"2\"\n") }
+
+        assertForcedAndFailed(output, dir, "EnvironmentTest > variable()")
+    }
+
+    /** A test reading the first `.sql` file under a directory its class loader serves, as `v1`. */
+    private val schemaTest = "src/test/java/dev/sample/SchemaTest.java" to """
+        package dev.sample;
+        import java.net.URL;
+        import java.nio.file.Files;
+        import java.nio.file.Path;
+        import java.nio.file.Paths;
+        import java.util.Collections;
+        import java.util.stream.Stream;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class SchemaTest {
+            @Test void firstVersion() throws Exception {
+                for (URL root : Collections.list(getClass().getClassLoader().getResources(""))) {
+                    if (!"file".equals(root.getProtocol())) continue;
+                    try (Stream<Path> files = Files.walk(Paths.get(root.toURI()))) {
+                        Path found = files.filter(p -> p.toString().endsWith(".sql")).findFirst().orElse(null);
+                        if (found != null) { assertEquals("v1", Files.readString(found).trim()); return; }
+                    }
+                }
+                throw new AssertionError("no schema");
+            }
+        }
+    """.trimIndent()
+
+    private val schema = "beta/src/main/resources/db/schema.sql" to "v1"
+
+    private fun changeSchema(dir: File) = File(dir, schema.first).writeText("v2")
+
+    /** The tested project's script copies the sibling's file into its test resources; the test finds it by extension. */
+    @Test
+    fun `a sibling's file the tested project's test resources copy in forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild() + "\ntasks.processTestResources { from(project(\":beta\").file(\"src/main/resources/db\")) }\n",
+            schema, schemaTest,
+        ) { changeSchema(it) }
+
+        assertForcedAndFailed(output, dir, "SchemaTest > firstVersion()")
+    }
+
+    /** A module holding a resource directory of the tested project is on its classpath; none of its files drops. */
+    @Test
+    fun `a sibling's resource directory the tested project adds to its own forces the run`(@TempDir dir: File) {
+        val output = selectingFails(
+            dir,
+            rootBuild() + "\nsourceSets.test { resources.srcDir(\"beta/src/main/resources\") }\n",
+            schema, schemaTest,
+        ) { changeSchema(it) }
+
+        assertForcedAndFailed(output, dir, "SchemaTest > firstVersion()")
+    }
+}

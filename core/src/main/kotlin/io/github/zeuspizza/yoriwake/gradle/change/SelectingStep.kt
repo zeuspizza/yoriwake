@@ -125,9 +125,16 @@ internal object SelectingStep {
         reportDependencies(host, dependency)
         val scoped = scopedChange(
             if (bump == null) paths else paths - bump.paths.toSet(),
-            classpathFacts, inputs.notReadByTests, inputs.ignore,
+            classpathFacts, inputs.notReadByTests, inputs.ignore, against,
         )
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
+        if (scoped.droppedFiles.isNotEmpty()) {
+            host.lifecycle(
+                "[yoriwake] ${host.name}: ${scoped.droppedFiles.size} changed file(s) of modules this task neither " +
+                    "loads nor reaches, which no class, resource or build script of it names, are no change: " +
+                    scoped.droppedFiles.take(REPORTED).joinToString() + if (scoped.droppedFiles.size > REPORTED) ", ..." else ""
+            )
+        }
         val established = establish(
             { message -> host.lifecycle("[yoriwake] ${host.name}: $message") },
             mapDir, scoped.change, classpathFacts,

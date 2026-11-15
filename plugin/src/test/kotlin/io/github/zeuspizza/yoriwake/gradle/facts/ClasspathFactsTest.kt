@@ -134,4 +134,58 @@ class ClasspathFactsTest {
         assertEquals(emptySet(), established.provable)
         assertEquals(emptySet(), established.testClasses)
     }
+
+    /** [facts] whose task hands [handed] and depends on tasks of [closure]. */
+    private fun reaching(dir: File, handed: Set<File>?, closure: Set<String>? = emptySet()): ClasspathView {
+        val base = facts(dir, emptyList(), emptySet())
+        return object : ClasspathView by base {
+            override fun handedPaths() = handed
+            override fun closureModules() = closure
+            override fun reachedModules() = super<ClasspathView>.reachedModules()
+        }
+    }
+
+    @Test
+    fun `a path the task hands into a module, or above it below the root, reaches that module`(@TempDir dir: File) {
+        val app = File(dir, "app")
+        val values = listOf(
+            "-Dfixtures=${File(dir, "lib/src/test/resources").absolutePath}",
+            "-javaagent:${File(dir, "lib/nested/a.jar").absolutePath}",
+            "/x/y${File.pathSeparator}${File(dir, "lib/build/libs").absolutePath}",
+        )
+
+        assertEquals(setOf(":lib", ":lib:nested"), reaching(dir, handedPathTokens(values, app)).reachedModules())
+        assertEquals(setOf(":lib"), reaching(dir, handedPathTokens(listOf("-Dlib=../lib"), app)).reachedModules())
+    }
+
+    @Test
+    fun `the repository root, a directory above it, and the plugin's own properties reach nothing`(@TempDir dir: File) {
+        val values = listOf(
+            "-Droot=${dir.absolutePath}",
+            dir.parentFile.absolutePath,
+            "-Dyoriwake.changeSetFile=${File(dir, "lib/x").absolutePath}",
+        )
+
+        assertEquals(emptySet(), reaching(dir, handedPathTokens(values, File(dir, "app"))).reachedModules())
+    }
+
+    @Test
+    fun `a module with a task in the closure is reached, and either part unknown is unknown`(@TempDir dir: File) {
+        assertEquals(setOf(":lib"), reaching(dir, emptySet(), setOf(":lib")).reachedModules())
+        assertEquals(null, reaching(dir, null).reachedModules())
+        assertEquals(null, reaching(dir, emptySet(), null).reachedModules())
+    }
+
+    @Test
+    fun `a task the test task depends on puts its module in the closure`(@TempDir dir: File) {
+        val root = ProjectBuilder.builder().withProjectDir(dir).build()
+        val app = ProjectBuilder.builder().withName("app").withParent(root).build()
+        val lib = ProjectBuilder.builder().withName("lib").withParent(root).build()
+        val fixture = lib.tasks.register("fixture")
+        val test = app.tasks.register("test") { it.dependsOn(fixture) }.get()
+
+        val closure = modulesDependedOn(test, root) { it.taskDependencies.getDependencies(it) }
+
+        assertEquals(setOf(":lib"), closure)
+    }
 }

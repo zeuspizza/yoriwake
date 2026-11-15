@@ -70,11 +70,12 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
      * The change is a new Kotlin source in beta. A sibling's class source is dropped only when
      * nothing alpha compiled holds a path to it of two or more segments.
      *
-     * The second half: beta's build script still forces, because another module's script can change
-     * this task's dependencies.
+     * The second half: beta's build script drops too. Alpha's test task neither hands it beta's
+     * directory nor depends on a task of beta, and neither revision of the script reaches another
+     * project or changes its plugins.
      */
     @Test
-    fun `a change in a module this task cannot see selects nothing, but its build script still forces`(
+    fun `a change in a module this task cannot see selects nothing, and so does its build script`(
         @TempDir dir: File,
     ) {
         File(dir, "settings.gradle.kts").writeText(
@@ -134,14 +135,203 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
         // not run at all", and only the first is the claim being made.
         assertContains(output, "[yoriwake] of 1 tests discovered: skipped=1")
 
-        // A build script in the same module is not a source file, and it can change what alpha
-        // compiles against. It has to keep forcing.
+        File(dir, "beta/src/main/kotlin/zq/Flow.kt").delete()
         File(dir, "beta/build.gradle.kts").appendText(System.lineSeparator() + "// touched")
+        File(dir, "alpha/build/test-results").deleteRecursively()
 
-        val forced = runner(dir, ":alpha:test", "-Pyoriwake.select").build().output
+        val script = runner(dir, ":alpha:test", "-Pyoriwake.select").build().output
+
+        assertContains(script, "1 in modules that are not on this task's classpath")
+        assertContains(script, "are no change: beta/build.gradle.kts")
+        assertContains(script, "[yoriwake] of 1 tests discovered: skipped=1")
+    }
+
+    /**
+     * Alpha and beta, neither depending on the other, each with a class; alpha's test is [alphaTest]
+     * and its build script ends with [alphaScript]; [files] are written last and [removed] deleted.
+     * Committed, with alpha's map recorded.
+     */
+    private fun captured(
+        dir: File,
+        alphaTest: String = THING_TEST,
+        alphaScript: String = "",
+        files: List<Pair<String, String>> = emptyList(),
+        removed: List<String> = emptyList(),
+    ) {
+        twoJavaModules(dir, alphaTest, alphaScript)
+        files.forEach { (path, text) -> File(dir, path).apply { parentFile.mkdirs() }.writeText(text) }
+        removed.forEach { File(dir, it).delete() }
+        git(dir, "add", "-A")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--allow-empty", "-m", "files")
+        runner(dir, ":alpha:test").build()
+        File(dir, "alpha/build/test-results").deleteRecursively()
+    }
+
+    private fun selectingAlpha(dir: File) = runner(dir, ":alpha:test", "-Pyoriwake.select").build().output
+
+    @Test
+    fun `a sibling's resource this task cannot read selects nothing`(@TempDir dir: File) {
+        captured(dir, files = listOf("beta/src/main/resources/x.json" to "{\"n\":1}"))
+
+        File(dir, "beta/src/main/resources/x.json").writeText("{\"n\":2}")
+        val output = selectingAlpha(dir)
+
+        assertContains(output, "are no change: beta/src/main/resources/x.json")
+        assertContains(output, "[yoriwake] of 1 tests discovered: skipped=1")
+    }
+
+    @Test
+    fun `a sibling's build script and an own class change select the class's tests only`(@TempDir dir: File) {
+        captured(
+            dir,
+            files = listOf(
+                "alpha/src/test/java/dev/alpha/A0OtherTest.java" to """
+                    package dev.alpha;
+                    import org.junit.jupiter.api.Test;
+                    import static org.junit.jupiter.api.Assertions.assertEquals;
+                    class A0OtherTest { @Test void two() { assertEquals(2, 1 + 1); } }
+                """.trimIndent(),
+                "alpha/src/test/resources/junit-platform.properties" to classOrderByName.second,
+            ),
+        )
+
+        File(dir, "alpha/src/main/java/dev/alpha/Thing.java")
+            .writeText("package dev.alpha; public class Thing { public int n() { return 1; } public int m() { return 2; } }")
+        File(dir, "beta/build.gradle.kts").appendText(System.lineSeparator() + "// touched")
+        val output = selectingAlpha(dir)
+
+        assertContains(output, "are no change: beta/build.gradle.kts")
+        assertContains(output, "reaches-change=1")
+        assertContains(output, "skipped=1")
+    }
+
+    @Test
+    fun `a sibling's build file of another name drops, and a build script beside it that Gradle does not read forces`(
+        @TempDir dir: File,
+    ) {
+        captured(
+            dir,
+            files = listOf(
+                "settings.gradle.kts" to "rootProject.name = \"multi\"\ninclude(\"alpha\", \"beta\")\nproject(\":beta\").buildFileName = \"beta.gradle\"\n",
+                "beta/beta.gradle" to "plugins { id 'java' }\n",
+            ),
+            removed = listOf("beta/build.gradle.kts"),
+        )
+
+        File(dir, "beta/beta.gradle").appendText("// touched\n")
+        val dropped = selectingAlpha(dir)
+
+        assertContains(dropped, "are no change: beta/beta.gradle")
+        assertContains(dropped, "[yoriwake] of 1 tests discovered: skipped=1")
+
+        git(dir, "checkout", "--", "beta/beta.gradle")
+        File(dir, "beta/build.gradle").writeText("// not read\n")
+        File(dir, "alpha/build/test-results").deleteRecursively()
+        val forced = selectingAlpha(dir)
 
         assertContains(forced, "1 paths coverage cannot see")
         assertContains(forced, "[yoriwake] of 1 tests discovered: full-run=1")
+    }
+
+    /**
+     * The repository root and a directory above it, handed to the test JVM as a system property
+     * and an environment value, reach no module: every task hands one, and counting them would
+     * keep every sibling's file.
+     */
+    @Test
+    fun `a sibling's resource drops though the task hands its JVM the root and a directory above it`(@TempDir dir: File) {
+        captured(
+            dir,
+            alphaScript = """
+                tasks.test {
+                    systemProperty("repository", rootDir.absolutePath)
+                    environment("ABOVE_THE_CHECKOUT", rootDir.parentFile.absolutePath)
+                }
+            """.trimIndent(),
+            files = listOf("beta/src/main/resources/x.json" to "{\"n\":1}"),
+        )
+
+        File(dir, "beta/src/main/resources/x.json").writeText("{\"n\":2}")
+        val output = selectingAlpha(dir)
+
+        assertContains(output, "are no change: beta/src/main/resources/x.json")
+        assertContains(output, "[yoriwake] of 1 tests discovered: skipped=1")
+    }
+
+    @Test
+    fun `the explanation counts a sibling's build script as off the classpath`(@TempDir dir: File) {
+        captured(dir)
+
+        File(dir, "beta/build.gradle.kts").appendText(System.lineSeparator() + "// touched")
+        runner(dir, ":alpha:yoriwakeExplainTest").build()
+        val explanation = File(dir, ".gradle/yoriwake").listFiles()!!
+            .map { File(it, "explain.json") }.single(File::isFile).readText()
+
+        assertContains(explanation, "\"offClasspath\": 1,")
+        assertContains(explanation, "\"unmappablePaths\": 0,")
+    }
+
+    /**
+     * A parent project's script configures every project under it, so the tested `:a:b` reads what
+     * `:a`'s script sets though `:a` is not on its classpath. A module that holds the tested one never
+     * drops its build file.
+     */
+    @Test
+    fun `a parent project's build script still forces its children's tests`(@TempDir dir: File) {
+        File(dir, "settings.gradle.kts").writeText("rootProject.name = \"multi\"\ninclude(\"a\", \"a:b\")\n")
+        File(dir, "a/build.gradle.kts").apply { parentFile.mkdirs() }.writeText(
+            "subprojects { tasks.withType<Test>().configureEach { environment(\"FROM_PARENT\", \"1\") } }\n"
+        )
+        File(dir, "a/b/build.gradle.kts").apply { parentFile.mkdirs() }.writeText(
+            """
+            plugins { java; jacoco; id("io.github.zeuspizza.yoriwake") }
+            repositories { mavenCentral() }
+            dependencies {
+                testImplementation(platform("org.junit:junit-bom:5.11.4"))
+                testImplementation("org.junit.jupiter:junit-jupiter")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            }
+            tasks.test { useJUnitPlatform() }
+            """.trimIndent()
+        )
+        File(dir, "a/b/src/main/java/dev/b/Thing.java").apply { parentFile.mkdirs() }
+            .writeText("package dev.b; public class Thing { public int n() { return 1; } }")
+        File(dir, "a/b/src/test/java/dev/b/ParentTest.java").apply { parentFile.mkdirs() }.writeText(
+            """
+            package dev.b;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ParentTest { @Test void fromParent() { assertEquals("1", System.getenv("FROM_PARENT")); } }
+            """.trimIndent()
+        )
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--allow-empty", "-m", "base")
+        git(dir, "add", ".")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
+        runner(dir, ":a:b:test").build()
+
+        File(dir, "a/build.gradle.kts").writeText(
+            "subprojects { tasks.withType<Test>().configureEach { environment(\"FROM_PARENT\", \"2\") } }\n"
+        )
+        File(dir, "a/b/build/test-results").deleteRecursively()
+        val output = runner(dir, ":a:b:test", "-Pyoriwake.select").buildAndFail().output
+
+        assertContains(output, "1 paths coverage cannot see")
+        assertContains(output, "ParentTest > fromParent() FAILED")
+    }
+
+    /** What R7 leaves forcing: a sibling's properties and a script another build applies. */
+    @Test
+    fun `a sibling's gradle properties or applied script still forces`(@TempDir dir: File) {
+        captured(dir, files = listOf("beta/gradle.properties" to "x=1\n", "beta/scripts/common.gradle" to "// common\n"))
+
+        File(dir, "beta/gradle.properties").writeText("x=2\n")
+        File(dir, "beta/scripts/common.gradle").writeText("// common, again\n")
+        val output = selectingAlpha(dir)
+
+        assertContains(output, "2 paths coverage cannot see")
+        assertContains(output, "[yoriwake] of 1 tests discovered: full-run=1")
     }
 
     /**
@@ -482,5 +672,14 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
 
         assertContains(output, "1 changed classes")
         assertContains(output, "[yoriwake] of 1 tests discovered: reaches-change=1")
+    }
+
+    private companion object {
+        val THING_TEST = """
+            package dev.alpha;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ThingTest { @Test void n() { assertEquals(1, new Thing().n()); } }
+        """.trimIndent()
     }
 }

@@ -191,6 +191,8 @@ AGENT_CONTRACT = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/contrac
 # ChangeSelection.kt was split by responsibility; each anchor followed its function, unchanged.
 SELECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/Selection.kt"
 CLASSPATH_SCOPE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathScope.kt"
+BUILD_FILE_REACH = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/BuildFileReach.kt"
+CLASSPATH_VIEW = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/ClasspathView.kt"
 NOT_READ = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/NotRead.kt"
 PATH_IGNORE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/PathIgnore.kt"
 SELECTION_WIRING = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/SelectionWiring.kt"
@@ -4278,6 +4280,39 @@ MUTATIONS = [
      "            owner != null && owner.second !in present && isClassSource(path, owner.first)",
      '            owner != null && owner.second !in present && path.startsWith("${owner.first}/src/")',
      functional_suite, "a resource of a module off the classpath the build script hands a test by path forces the run"),
+    # A sibling's build file or other `src` file drops only when nothing carries it to the test: a
+    # class or resource naming it, a path the task hands into its module, a task of it the test
+    # task depends on, or a build script reaching across. Each check alone keeps its attempt.
+    ("a sibling's build file or resource is dropped though a class names it", SELECTION,
+     "            artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE) +\n"
+     "                artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) +\n"
+     "                candidates.filter { it in inResources || it.substringAfterLast('/') in inResources }",
+     "            emptySet<String>()",
+     functional_suite, "a sibling's file a test reads by path still selects that test"),
+    ("a path the task hands into a module reaches nothing", CLASSPATH_VIEW,
+     "                if (path.startsWith(dir) || (dir.startsWith(path) && path.startsWith(root) && path != root)) {",
+     "                if (false) {",
+     functional_suite, "a sibling's resource a test walks to from the directory its environment hands it forces the run"),
+    ("a task the test task depends on reaches nothing", CLASSPATH_VIEW,
+     "        val reached = closure.toMutableSet()",
+     "        val reached = mutableSetOf<String>()",
+     functional_suite, "a sibling's resource in a jar a task the test depends on copies outside the sibling forces the run"),
+    ("a sibling's script may call project(...) anywhere", BUILD_FILE_REACH,
+     "            if (!asDependency(text, call.range.first, call.range.last)) return",
+     "            if (false) return",
+     functional_suite, "a sibling's build script that starts configuring the tested project forces the run"),
+    ("a sibling's script may name rootProject and its kin", BUILD_FILE_REACH,
+     "        REACHING.forEach { (pattern, what) -> pattern.find(text)?.let { return",
+     "        emptyList<Pair<Regex, String?>>().forEach { (pattern, what) -> pattern.find(text)?.let { return",
+     functional_suite, "a sibling's build script that configures the root project's test task forces the run"),
+    ("a sibling's script may change the plugins it applies", BUILD_FILE_REACH,
+     "                    if (pluginsDiffer(then.text, current)) return",
+     "                    if (false) return",
+     functional_suite, "a sibling's build script that newly applies a plugin which configures every test task forces the run"),
+    ("no script the tested project reads is asked whether it names a sibling", BUILD_FILE_REACH,
+     "        return readerRefusal(module, dir, view, read, exists)",
+     "        return null",
+     functional_suite, "a sibling's version the tested project's script hands its test forces the run when it changes"),
     # A test reads a sibling's source by a path it holds, often relative to that module.
     ("a class source off the classpath is named by none of its trailing parts", TASK_ARTIFACTS,
      "            (2 until segments.size).flatMapTo(forms) { n ->",
@@ -4373,8 +4408,8 @@ MUTATIONS = [
      "            \"\",",
      functional_suite, "editing the same declared file twice runs the task both times"),
     ("yoriwakeExplain applies no pathIgnore", EXPLAIN_TASK,
-     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore)",
-     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), null)",
+     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, base)",
+     "        val scoped = scopedChange(if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), null, base)",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
     # A class a framework can only run or skip whole is left out only when it holds a test and
     # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.

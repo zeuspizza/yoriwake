@@ -776,6 +776,8 @@ internal data class ScopedChange(
     val notReadByTests: Int = 0,
     /** What `pathIgnore` took out of the change set, and what it matched and could not. */
     val ignore: PathIgnore.Applied = PathIgnore.Applied.none(emptyList()),
+    /** The dropped paths that are not class sources: build files and other `src` files, named on the console. */
+    val droppedFiles: List<String> = emptyList(),
 ) {
     /** Whether every path was dropped as off-classpath, as opposed to an empty change set. */
     val everythingWasOffClasspath: Boolean
@@ -806,6 +808,8 @@ internal fun scopedChange(
     facts: ClasspathView,
     notReadByTests: List<String> = emptyList(),
     ignore: PathIgnore.Declaration? = null,
+    /** The base the change set was taken against, for a build file's earlier text; null keeps every build file. */
+    against: String? = null,
 ): ScopedChange {
     // The same artifacts `establish` builds, so a path this task's classes name is kept. Lazy: most
     // change sets have no path to ask about.
@@ -818,16 +822,36 @@ internal fun scopedChange(
     val ideState = paths.count(NotRead::isIdeState)
     val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }
     val present = modulesOnClasspath(facts)
-    // `restrict` asks only about class sources.
-    val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present) { candidates ->
+    val rootDir = facts.rootDir
+    val others = ClasspathScope.Others(
+        buildFiles = facts.buildFiles,
+        reached = facts::reachedModules,
+        // By a class source's forms or its file name alone, in a class or in a resource of the
+        // build's own: a dependency knows no path of this repository.
+        named = { candidates ->
+            val inResources = artifacts.namedInOwnResources(candidates.flatMap { listOf(it, it.substringAfterLast('/')) })
+            artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE) +
+                artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) +
+                candidates.filter { it in inResources || it.substringAfterLast('/') in inResources }
+        },
+        refusal = { path, module, buildFile ->
+            BuildFileReach.refusal(
+                path, module, buildFile, facts, BuildFileReach.reader(rootDir), { File(rootDir, it).isFile },
+                BuildFileReach.base(rootDir, against),
+            )
+        },
+        ownBuild = { dir -> listOf("settings.gradle", "settings.gradle.kts").any { File(rootDir, "$dir/$it").exists() } },
+    )
+    val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present, { candidates ->
         artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE)
-    }
+    }, others)
     return ScopedChange(
         ChangeDetection.split(restriction.kept, facts.rootDir),
         restriction.dropped.size,
         ideState = ideState,
         notReadByTests = paths.size - read.size - ideState,
         ignore = applied,
+        droppedFiles = restriction.droppedFiles,
     )
 }
 
