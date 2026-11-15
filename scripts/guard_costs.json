@@ -8,6 +8,7 @@
   "functional/InJvmParallelismCharacterizationTest",
   "functional/KoverFunctionalTest",
   "functional/OffClasspathFilesFunctionalTest",
+  "maven/LicenceGoalFunctionalTest",
   "maven/ScopeFunctionalTest"
  ],
  "suites": {
@@ -117,6 +118,7 @@
   "maven/EnvironmentFingerprintFunctionalTest": {"baseline": 26, "guard": 32},
   "maven/FailsafeFunctionalTest": {"baseline": 70, "guard": 58},
   "maven/ForkingFunctionalTest": {"baseline": 9, "guard": 9},
+  "maven/LicenceGoalFunctionalTest": {"baseline": 15, "guard": 15},
   "maven/LineOnlyChangeFunctionalTest": {"baseline": 33, "guard": 34},
   "maven/MapProvenanceFunctionalTest": {"baseline": 56, "guard": 56},
   "maven/OptimisticModeFunctionalTest": {"baseline": 48, "guard": 46},

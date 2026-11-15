@@ -192,9 +192,11 @@ internal object EnvironmentFingerprint {
                     else -> true
                 }
             }
-            val first = (compared.keys + current.components.keys).sortedWith(ORDER)
-                .firstOrNull { compared[it] != current.components[it] } ?: continue
-            return Check(Verdict.Changed(first, describe(first, compared[first], current.components[first])), current.ignored)
+            val differing = (compared.keys + current.components.keys).sortedWith(ORDER)
+                .filter { compared[it] != current.components[it] }
+            val first = differing.firstOrNull() ?: continue
+            val others = if (ignorable(first)) differing.drop(1).filter(::ignorable) else emptyList()
+            return Check(Verdict.Changed(first, describe(first, compared[first], current.components[first], others)), current.ignored)
         }
         return Check(Verdict.Matches, current.ignored)
     }
@@ -282,15 +284,36 @@ internal object EnvironmentFingerprint {
         }
     }.thenBy { it }
 
-    private fun describe(component: String, recorded: String?, now: String?): String {
+    /**
+     * A system property `systemPropertyIgnore` can leave out. Not a marker for an argument file that
+     * could not be read (a name starting with `@`): ignoring one would hide a run that has to be full.
+     */
+    private fun ignorable(component: String) = component.startsWith(PROPERTY) && !component.startsWith("$PROPERTY@")
+
+    /**
+     * Why [component] differs; for a system property, also the [others] that differ and the setting
+     * that leaves them out, so one run names the properties to ignore rather than one per run.
+     */
+    private fun describe(component: String, recorded: String?, now: String?, others: List<String> = emptyList()): String {
         val what = when {
             recorded == null -> "$component is set now and was not when the map was recorded"
             now == null -> "$component was set when the map was recorded and is not now"
             component in PLAIN -> "$component was $recorded when the map was recorded and is $now now"
             else -> "$component has another value than when the map was recorded"
         }
-        return "the test JVM's environment differs from the one the map was recorded in: $what"
+        val remedy = if (!ignorable(component)) {
+            ""
+        } else {
+            val named = others.take(OTHERS_NAMED).joinToString(", ") +
+                if (others.size > OTHERS_NAMED) " and ${others.size - OTHERS_NAMED} more" else ""
+            val also = if (others.isEmpty()) "" else "${others.size} other system ${if (others.size == 1) "property differs" else "properties differ"} too: $named; "
+            " ($also$REMEDY)"
+        }
+        return "the test JVM's environment differs from the one the map was recorded in: $what$remedy"
     }
+
+    private const val OTHERS_NAMED = 5
+    private const val REMEDY = "systemPropertyIgnore leaves out a property that differs between builds or checkouts"
 
     private fun digest(salt: ByteArray, component: String, value: String?): String {
         val digest = MessageDigest.getInstance("SHA-256")

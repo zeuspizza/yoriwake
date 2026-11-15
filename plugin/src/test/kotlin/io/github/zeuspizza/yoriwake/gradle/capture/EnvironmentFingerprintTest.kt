@@ -84,6 +84,69 @@ class EnvironmentFingerprintTest {
     }
 
     @Test
+    fun `a differing system property names the setting that leaves it out, in each of its three forms`() {
+        recordedUnder(view(jvmArgs = listOf("-Da=1", "-Db=2")))
+        for (now in listOf(listOf("-Da=3", "-Db=2"), listOf("-Da=1", "-Db=2", "-Dc=3"), listOf("-Db=2"))) {
+            val reason = (EnvironmentFingerprint.check(mapDir, view(jvmArgs = now), rules()).verdict as Verdict.Changed).reason
+            assertTrue(
+                reason.endsWith(" (systemPropertyIgnore leaves out a property that differs between builds or checkouts)"),
+                reason,
+            )
+        }
+    }
+
+    @Test
+    fun `the other differing system properties are named, five of them, then how many more`() {
+        val names = (1..8).map { "p$it" }
+        recordedUnder(view(jvmArgs = names.map { "-D$it=1" }))
+        val reason = (EnvironmentFingerprint.check(mapDir, view(jvmArgs = names.map { "-D$it=2" }), rules()).verdict as Verdict.Changed).reason
+        assertContains(
+            reason,
+            "sys:p1 has another value than when the map was recorded (7 other system properties differ too: " +
+                "sys:p2, sys:p3, sys:p4, sys:p5, sys:p6 and 2 more; systemPropertyIgnore leaves out",
+        )
+        assertEquals(1, Regex("systemPropertyIgnore").findAll(reason).count(), reason)
+        assertFalse("sys:p7" in reason, reason)
+    }
+
+    @Test
+    fun `an ignored property is not among the others named`() {
+        recordedUnder(view(jvmArgs = listOf("-Da=1", "-Db=1", "-Dc=1")))
+        val reason = (EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-Da=2", "-Db=2", "-Dc=2")), rules(ignore = listOf("b"))).verdict as Verdict.Changed).reason
+        assertContains(reason, "(1 other system property differs too: sys:c; systemPropertyIgnore")
+    }
+
+    @Test
+    fun `a JDK or a variable that differs keeps its reason, with no setting named`() {
+        recordedUnder(view(jdk = "17.0.9+9", jvmArgs = listOf("-Da=1")), rules(include = listOf("DB_MODE")))
+        val jdk = EnvironmentFingerprint.check(mapDir, view(jdk = "21.0.2+13", jvmArgs = listOf("-Da=2")), rules(include = listOf("DB_MODE"))).verdict
+        assertEquals(
+            "the test JVM's environment differs from the one the map was recorded in: jdk.version was 17.0.9+9 when the map was recorded and is 21.0.2+13 now",
+            (jdk as Verdict.Changed).reason,
+        )
+        val variable = EnvironmentFingerprint.check(
+            mapDir, view(jdk = "17.0.9+9", jvmArgs = listOf("-Da=1"), environment = mapOf("LANG" to "en_US.UTF-8", "HOME" to "/home/ci", "DB_MODE" to "b")), rules(include = listOf("DB_MODE")),
+        ).verdict
+        assertEquals(
+            "the test JVM's environment differs from the one the map was recorded in: env:DB_MODE has another value than when the map was recorded",
+            (variable as Verdict.Changed).reason,
+        )
+    }
+
+    @Test
+    fun `an unreadable argument file's marker names no setting, and is not among the others named`() {
+        recordedUnder(view(jvmArgs = listOf("-D@args=1", "-Da=1")))
+        val first = EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-D@args=2", "-Da=2")), rules()).verdict
+        assertEquals(
+            "the test JVM's environment differs from the one the map was recorded in: sys:@args has another value than when the map was recorded",
+            (first as Verdict.Changed).reason,
+        )
+        // A name that sorts ahead of the marker's.
+        val behind = EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-D0=1", "-D@args=2", "-Da=2")), rules()).verdict
+        assertContains((behind as Verdict.Changed).reason, "sys:0 is set now and was not when the map was recorded (1 other system property differs too: sys:a; systemPropertyIgnore")
+    }
+
+    @Test
     fun `the plugin's own properties are not part of the environment`() {
         recordedUnder(view(jvmArgs = listOf("-Dyoriwake.select=false", "-Dyoriwake.map.dir=/a")))
         val verdict = EnvironmentFingerprint.check(

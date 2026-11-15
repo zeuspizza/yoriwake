@@ -391,8 +391,8 @@ this rule.
 A map says which tests a change reaches in the environment it was recorded in. On another JDK, or
 with other system properties or another locale, a test can take other paths, so each recording
 stores the test JVM's environment beside the map, and a selecting run whose environment differs
-runs every test (`environment-changed`), names the first thing that differs, and records the map
-again. A map with no fingerprint, as one recorded by 0.2.0, runs everything once
+runs every test (`environment-changed`), names the first thing that differs (for a system property,
+the others that differ too), and records the map again. A map with no fingerprint, as one recorded by 0.2.0, runs everything once
 (`environment-unrecorded`). A map recorded with a fresh test JVM per test class is left as it is,
 as on every other refusal: selecting runs run everything until a run without `-Pyoriwake.select`
 records it again. Both are read from the test task as it starts, before its own
@@ -442,8 +442,17 @@ What it does not compare:
   different zones compare equal. Set `TZ`, or `-Duser.timezone` on the task, to compare it.
 
 A property whose value changes on every build, such as a build number, makes every selecting run
-run everything. Leave it out with `systemPropertyIgnore`; the decision record lists what it left
-out as `fingerprint-ignored`:
+run everything. The run says so, naming up to five more properties that differ and the setting:
+
+```
+... sys:build.number has another value than when the map was recorded (1 other system property
+differs too: sys:git.commit; systemPropertyIgnore leaves out a property that differs between builds
+or checkouts)
+```
+
+Leave them out with `systemPropertyIgnore`, by name or by a glob: a build extension that puts the
+checkout's state into user properties, such as its commit or whether the tree is clean, needs one
+such as `nisse.jgit.*`. The decision record lists what it left out as `fingerprint-ignored`:
 
 ```kotlin
 yoriwake {
@@ -2008,6 +2017,10 @@ the Gradle plugin.
 - **Maps** live under `.yoriwake/yoriwake/` at the reactor root, one per execution, and survive
   `mvn clean`; yoriwake writes a `.gitignore` into `.yoriwake/`. Surefire and Failsafe executions
   of a module keep separate maps.
+- **A licence check that walks the root module's tree** sees `.yoriwake/` too, which `.gitignore`
+  does not hide from it: `com.mycila:license-maven-plugin` fails `check` on its files and adds
+  headers to some with `format`. Add `<exclude>.yoriwake/**</exclude>` to its `<excludes>`; until
+  then each build prints a warning naming the plugin.
 - **Develocity's workspace id** (`.mvn/.develocity/develocity-workspace-id`), untracked, is build
   state, as `.yoriwake/` is: it neither forces a selecting run nor keeps a complement run from
   narrowing. An untracked file of that name in a nested module's `.mvn/.develocity/` directory is
