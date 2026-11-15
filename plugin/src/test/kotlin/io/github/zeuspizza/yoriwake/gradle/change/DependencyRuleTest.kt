@@ -538,7 +538,15 @@ class DependencyRuleTest {
 
     @Test
     fun `the build's properties read in bulk, or a property looked up by a computed name, leave a value unaccepted`() {
-        for (more in listOf("processResources {\n    expand(project.properties)\n}", "def lib = \"math\"\nprintln(property(\"${d}{lib}Version\"))")) {
+        for (more in listOf(
+            "processResources {\n    expand(project.properties)\n}",
+            "def lib = \"math\"\nprintln(property(\"${d}{lib}Version\"))",
+            "println(findProperty(\"math\" + \"Version\"))",
+            "def k = \"mathVersion\"\nprintln(ext[k])",
+            "def k = \"mathVersion\"\nprintln(ext.get(k))",
+            "def k = \"mathVersion\"\nprintln(project.extensions.extraProperties.get(k))",
+            "def lib = \"math\"\nprintln(project.\"${d}{lib}Version\")",
+        )) {
             val text = groovyValue(more)
             val verdict = assertIs<Verdict.Unaccepted>(decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text))), more)
             assertContains(verdict.why, "`mathVersion`")
@@ -562,5 +570,20 @@ class DependencyRuleTest {
             mapOf("build.gradle" to bumpGroovy(text), "app/build.gradle" to module.replace("-Xmx1g", "-Xmx2g")),
         )
         assertEquals("app/build.gradle", assertIs<Verdict.Unaccepted>(verdict).path)
+    }
+
+    @Test
+    fun `a gradle properties file naming the value leaves it unaccepted`() {
+        val text = groovyValue()
+        val verdict = assertIs<Verdict.Unaccepted>(
+            decideValue(mapOf("build.gradle" to text, "gradle.properties" to "mathVersion=2.0\n"), mapOf("build.gradle" to bumpGroovy(text)))
+        )
+        assertContains(verdict.why, "gradle.properties")
+    }
+
+    @Test
+    fun `braces inside a multi-line string do not hide the block a reader is in`() {
+        val text = groovyValue("subprojects {\n    def banner = \"\"\"\n}\n\"\"\"\n    dependencies {\n        implementation \"dev.lib:lib-math:${d}mathVersion\"\n    }\n}")
+        assertIs<Verdict.Unaccepted>(decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text))))
     }
 }

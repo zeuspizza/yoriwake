@@ -288,7 +288,7 @@ internal object DependencyRule {
                     includedBuilds.any { path.startsWith("$it/") }
                 val lineStarts = listOf(0) + text.indices.filter { text[it] == '\n' }.map { it + 1 }
                 val lineOf = { offset: Int -> lineStarts.binarySearch(offset).let { if (it >= 0) it else -it - 2 } }
-                val blocks by lazy { CoordinateDiff.blocks(text.lines()) }
+                val blocks by lazy { CoordinateDiff.blocks(scan.masked.lines()) }
                 val occurrences = word.findAll(scan.masked).map { it.range.first } +
                     scan.strings.filter { it.plain && it.content(text) == name }.map { it.start }
                 for (offset in occurrences) {
@@ -338,12 +338,17 @@ internal object DependencyRule {
 
     /** A property looked up by anything but a whole literal name; string contents are blanked to [BLANK]. */
     private val DYNAMIC_LOOKUPS = listOf(
-        Regex("""(?<![A-Za-z0-9_])(?<!objects\.)(?:property|findProperty|getProperty|hasProperty|gradleProperty)\s*+(?:\(\s*+)?+(?!["']\u0001*+["'])"""),
-        Regex("""(?<![A-Za-z0-9_])(?:ext|extra)\s*+\[\s*+(?!["']\u0001*+["']\s*+])"""),
-        Regex("""(?<![A-Za-z0-9_])(?:ext|extra)\s*+\.\s*+(?:get|set|has)\s*+\(\s*+(?!["']\u0001*+["'])"""),
+        Regex("""(?<![A-Za-z0-9_])(?<!objects\.)(?:property|findProperty|getProperty|hasProperty|gradleProperty)\s*+(?:\(\s*+)?+(?!$WHOLE_NAME)"""),
+        Regex("""(?<![A-Za-z0-9_])(?:ext|extra|extraProperties|project|rootProject)\s*+\[\s*+(?!["']\u0001*+["']\s*+])"""),
+        Regex("""(?<![A-Za-z0-9_])(?:ext|extra|extraProperties)\s*+\.\s*+(?:get|set|has)\s*+\(\s*+(?!$WHOLE_NAME)"""),
+        // Groovy's dynamic member access by an interpolated name: `project."${'$'}{lib}Version"`.
+        Regex("""\.\s*+"\u0001*+\$"""),
     )
 
     private const val BLANK = '\u0001'
+
+    /** A whole literal name and nothing joined to it: the argument ends right after the string. */
+    private const val WHOLE_NAME = """["']\u0001*+["'][ \t]*+(?:[),;}\n]|$)"""
 
     private fun lineAt(text: String, offset: Int): String =
         text.substring(text.lastIndexOf('\n', offset - 1) + 1, text.indexOf('\n', offset).let { if (it < 0) text.length else it })
