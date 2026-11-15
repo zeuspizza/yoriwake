@@ -1,15 +1,21 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import org.gradle.testkit.runner.BuildResult
+import org.gradle.testkit.runner.GradleRunner
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /**
- * An annotation change forces a full run: a test that only reads a class's annotations, as a
- * framework's scan does, never executes it and holds no coverage edge to it.
+ * An annotation change selects like any other change to its class: a test that only reads a
+ * class's annotations, as a framework's scan does, never executes it, but it loads the class or
+ * opens its class file, and the map holds both. A class the map never saw can be found by listing
+ * a directory, which the map holds nowhere, so a new class that carries an annotation runs
+ * everything.
  */
 class AnnotationFunctionalTest : FunctionalTestSupport() {
 
@@ -55,7 +61,29 @@ class AnnotationFunctionalTest : FunctionalTestSupport() {
         }
     """.trimIndent()
 
+    private val other = "src/main/java/dev/sample/Other.java" to """
+        package dev.sample;
+        public class Other { public int one() { return 1; } }
+    """.trimIndent()
+
+    /** Never names Service, in a JVM of its own: the test a narrowed run leaves out. */
+    private val otherTest = "src/test/java/dev/sample/OtherTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class OtherTest {
+            @Test void one() { assertEquals(1, new Other().one()); }
+        }
+    """.trimIndent()
+
+    /** Each test class in its own JVM, so a class one test loads is not loaded for another. */
+    private val forkingBuild = minimalBuild.replace(
+        "tasks.test { useJUnitPlatform() }",
+        "tasks.test { useJUnitPlatform(); forkEvery = 1 }",
+    )
+
     private val both = setOf("dev.sample.ServiceTest", "dev.sample.ScanTest")
+    private val all = both + "dev.sample.OtherTest"
 
     /** Captures with [extra] sources, applies [edit] to [edited], and runs a selecting build. */
     private fun selectAfter(
@@ -64,75 +92,158 @@ class AnnotationFunctionalTest : FunctionalTestSupport() {
         afterEdit: () -> Unit = {},
         edited: String = service.first,
         extra: List<Pair<String, String>> = emptyList(),
-        edit: (String) -> String,
+        captured: Set<String> = all,
+        run: GradleRunner.() -> BuildResult = GradleRunner::build,
+        edit: (String) -> String?,
     ): String {
         build(
-            dir, "build.gradle.kts" to minimalBuild, profile, marker, service, serviceTest, scanTest,
-            *extra.toTypedArray(),
+            dir, "build.gradle.kts" to forkingBuild, profile, marker, service, serviceTest, scanTest,
+            other, otherTest, *extra.toTypedArray(),
         )
         committed(dir)
         runner(dir, "test").build()
-        assertEquals(both, ranTests(dir))
+        assertEquals(captured, ranTests(dir))
         beforeSelecting(mapDir(dir))
 
+        // A null edit deletes the file.
         val source = File(dir, edited)
-        source.writeText(edit(source.readText()))
+        val text = edit(source.readText())
+        if (text == null) source.delete() else source.writeText(text)
         afterEdit()
         File(dir, "build/test-results").deleteRecursively()
-        return runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+        // Called as a function: `runner(...).run()` would be GradleRunner's own run(), which
+        // expects no outcome.
+        return run(runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD")).output
     }
 
     private fun mapDir(dir: File) = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
 
+    private fun assertNarrowedTo(dir: File, expected: Set<String>, output: String) {
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+        assertEquals(expected, ranTests(dir), output)
+    }
+
     @Test
-    fun `changing an annotation value forces a full run`(@TempDir dir: File) {
+    fun `changing an annotation value runs the tests that loaded the class and leaves the rest out`(
+        @TempDir dir: File,
+    ) {
         var explained = ""
         val output = selectAfter(
             dir,
-            // Before the selecting run, whose full run recaptures the map. Compiled first: the
-            // explanation reads whatever bytes the build directory holds.
+            // Compiled first: the explanation reads whatever bytes the build directory holds.
             afterEdit = {
                 runner(dir, "classes", "yoriwakeExplainTest", "-Pyoriwake.base=HEAD").build()
                 explained = File(mapDir(dir), "explain.json").readText()
             },
         ) { it.replace("@Profile(\"a\")", "@Profile(\"b\")") }
 
-        assertContains(explained, "\"refusalKind\": \"annotations-changed\"")
-        assertEquals(both, ranTests(dir), output)
-        assertEquals("annotations-changed", decisionNotes(dir)["refusal-kind"], output)
+        assertFalse("annotations-changed" in explained, explained)
+        // ScanTest only reads Service's annotations, which loads it in ScanTest's JVM.
+        assertNarrowedTo(dir, both, output)
     }
 
     @Test
-    fun `adding a class-level annotation forces a full run`(@TempDir dir: File) {
+    fun `adding a class-level annotation runs the tests that loaded the class`(@TempDir dir: File) {
         val output = selectAfter(dir) { it.replace("@Profile(\"a\")", "@Profile(\"a\") @Marker") }
 
-        assertEquals(both, ranTests(dir), output)
+        assertNarrowedTo(dir, both, output)
     }
 
     @Test
-    fun `adding a method-level annotation forces a full run`(@TempDir dir: File) {
+    fun `adding a method-level annotation runs the tests that loaded the class`(@TempDir dir: File) {
         val output = selectAfter(dir) { it.replace("public int twice", "@Marker public int twice") }
 
-        assertEquals(both, ranTests(dir), output)
+        assertNarrowedTo(dir, both, output)
+    }
+
+    @Test
+    fun `a test that reads the class file without loading the class runs when its annotation changes`(
+        @TempDir dir: File,
+    ) {
+        // Stands in for a scan that parses class files, as Spring's and ClassGraph's do.
+        val bytesTest = "src/test/java/dev/sample/BytesTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class BytesTest {
+                @Test void reads() throws Exception {
+                    try (java.io.InputStream in =
+                            getClass().getClassLoader().getResourceAsStream("dev/sample/Service.class")) {
+                        assertTrue(in.readAllBytes().length > 0);
+                    }
+                }
+            }
+        """.trimIndent()
+        val output = selectAfter(dir, extra = listOf(bytesTest), captured = all + "dev.sample.BytesTest") {
+            it.replace("@Profile(\"a\")", "@Profile(\"b\")")
+        }
+
+        assertNarrowedTo(dir, both + "dev.sample.BytesTest", output)
+    }
+
+    @Test
+    fun `deleting an annotated class runs the test that read its annotations`(@TempDir dir: File) {
+        // Both tests find Extra by name, so the build still compiles once it is gone. ExecTest
+        // gives the map coverage of it; LookupTest only reads its annotations.
+        val extra = "src/main/java/dev/sample/Extra.java" to """
+            package dev.sample;
+            @Profile("a")
+            public class Extra { public int one() { return 1; } }
+        """.trimIndent()
+        val execTest = "src/test/java/dev/sample/ExecTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class ExecTest {
+                @Test void runs() throws Exception {
+                    Class<?> extra = Class.forName("dev.sample.Extra");
+                    assertEquals(1, extra.getMethod("one").invoke(extra.getDeclaredConstructor().newInstance()));
+                }
+            }
+        """.trimIndent()
+        val lookupTest = "src/test/java/dev/sample/LookupTest.java" to """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class LookupTest {
+                @Test void reads() throws Exception {
+                    assertTrue(Class.forName("dev.sample.Extra").getAnnotations().length >= 0);
+                }
+            }
+        """.trimIndent()
+        val readers = setOf("dev.sample.ExecTest", "dev.sample.LookupTest")
+        val output = selectAfter(
+            dir, edited = extra.first, extra = listOf(extra, execTest, lookupTest), captured = all + readers,
+            run = GradleRunner::buildAndFail,
+        ) { null }
+
+        assertNarrowedTo(dir, readers, output)
+    }
+
+    @Test
+    fun `a new annotated class runs every test`(@TempDir dir: File) {
+        // A scan finds a new class by listing its package's directory, and the map holds no record
+        // of a listing: nothing says which test would have picked the class up.
+        val output = selectAfter(dir) {
+            it.replace("public class Service {", "public class Service { @Profile(\"a\") public static class Added { }")
+        }
+
+        assertEquals(all, ranTests(dir), output)
+        assertEquals("annotations-unrecorded", decisionNotes(dir)["refusal-kind"], output)
     }
 
     @Test
     fun `a body-only change with identical annotations still narrows`(@TempDir dir: File) {
         val output = selectAfter(dir) { it.replace("n * 2", "n + n") }
 
-        // ScanTest runs too: it reads Service reflectively, so Service is loaded in its JVM by the
-        // time either test finishes, whichever runs first. The outcome is what tells this apart
-        // from the full run an annotation change forces.
-        assertEquals(both, ranTests(dir), output)
-        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
-        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+        // ScanTest runs too: it reads Service reflectively, which loads Service in its JVM.
+        assertNarrowedTo(dir, both, output)
     }
 
     @Test
     fun `a new test method in a test class this task runs still narrows`(@TempDir dir: File) {
         // The class's own tests are selected anyway, so its annotations cannot hide one of them.
-        // ScanTest runs too, through the setup record it shares with ServiceTest, so the outcome
-        // is what tells this apart from a full run.
         val output = selectAfter(dir, edited = serviceTest.first) {
             it.replace(
                 "@Test void doubles()",
@@ -147,8 +258,9 @@ class AnnotationFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `an annotation change on a test helper that runs no tests forces a full run`(@TempDir dir: File) {
-        // In the test output, but no test of its own: nothing selects it, and a scan may read it.
+    fun `an annotation change on a test helper nothing executes still runs every test`(@TempDir dir: File) {
+        // In the test output, but no test of its own and no test that executes it: the map has no
+        // coverage of it, which is what runs everything, not its annotations.
         val helper = "src/test/java/dev/sample/Fixtures.java" to """
             package dev.sample;
             @Profile("a")
@@ -158,8 +270,9 @@ class AnnotationFunctionalTest : FunctionalTestSupport() {
             it.replace("@Profile(\"a\")", "@Profile(\"b\")")
         }
 
-        assertEquals(both, ranTests(dir), output)
-        assertEquals("annotations-changed", decisionNotes(dir)["refusal-kind"], output)
+        assertEquals(all, ranTests(dir), output)
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+        assertEquals("no-coverage-for-changed", decisionNotes(dir)["full-run-kind"], output)
     }
 
     @Test
@@ -170,7 +283,7 @@ class AnnotationFunctionalTest : FunctionalTestSupport() {
             beforeSelecting = { File(it, CoverageDecoder.ANNOTATION_DIGESTS_FILE).delete() },
         ) { it.replace("n * 2", "n + n") }
 
-        assertEquals(both, ranTests(dir), output)
+        assertEquals(all, ranTests(dir), output)
         assertEquals("annotations-unrecorded", decisionNotes(dir)["refusal-kind"], output)
     }
 }

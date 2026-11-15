@@ -165,7 +165,7 @@ internal class AnnotationDigestVisitor : ClassVisitor(Opcodes.ASM9) {
         }
     }
 
-    private companion object {
+    companion object {
         const val KOTLIN_SMAP = "Lkotlin/jvm/internal/SourceDebugExtension;"
     }
 }

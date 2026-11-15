@@ -14,6 +14,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathScope
 import io.github.zeuspizza.yoriwake.gradle.change.DigestSilence
 import io.github.zeuspizza.yoriwake.gradle.change.DigestRule
+import io.github.zeuspizza.yoriwake.gradle.change.DigestWidening
 import io.github.zeuspizza.yoriwake.gradle.change.Established
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_SCAN_REFUSAL
 import io.github.zeuspizza.yoriwake.gradle.change.InlineWidening
@@ -524,7 +525,7 @@ class ChangeSelectionTest {
 
     @Test
     fun `explain names which refusal it was, so nobody has to match English for it`(@TempDir dir: File) {
-        // `constant-unrecorded` is fixed by recapturing and `constant-changed` never is, so the
+        // `constant-unrecorded` is fixed by recapturing and `constant-changed` is not, so the
         // refusals carry distinct tokens rather than prose.
         val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
         val unrecorded = constantHolderRefusal(setOf(name), emptyMap()) { p -> listOf(p to bytesOf(p)) }!!
@@ -1171,11 +1172,39 @@ class ChangeSelectionTest {
         // this forcing protects?
         val holder = javaClassBytes("com.acme.Holder", "LIMIT", 11)
         val facts = oneModule(dir, "com.acme.Holder" to holder)
-        // The map recorded a different value, so the constant rule forces.
         val recorded = mapOf(
             "com.acme.Holder" to Recordability.classDigest(
                 javaClassBytes("com.acme.Holder", "LIMIT", 10)
             ).value!!
+        )
+
+        // The map recorded no constant for the holder, which forces beside a comparison that ran.
+        val widening = widenForInlining(
+            listOf("com.acme.Holder"), facts,
+            recordedConstants = emptyMap(),
+            digestRule = DigestRule(recorded, bytesAreFresh = true),
+            recordedAnnotations = emptyMap(),
+        )
+
+        assertTrue(widening.forces, "a holder the map recorded no constant for must still force")
+        assertEquals(RefusalKind.CONSTANT_UNRECORDED, widening.refusalKind)
+        assertEquals(setOf("com.acme.Holder"), widening.digest!!.added,
+            "the forced run recorded nothing about what the digest rule could see")
+    }
+
+    @Test
+    fun `a constant that moved hands the classes compiled with it to the selector when the bytes were compared`(
+        @TempDir dir: File,
+    ) {
+        // The consumer's source did not change; it was recompiled with the new value.
+        val facts = oneModule(
+            dir,
+            "com.acme.Holder" to javaClassBytes("com.acme.Holder", "LIMIT", 11),
+            "com.acme.Consumer" to javaClassBytes("com.acme.Consumer", "COPY", 11),
+        )
+        val recorded = mapOf(
+            "com.acme.Holder" to Recordability.classDigest(javaClassBytes("com.acme.Holder", "LIMIT", 10)).value!!,
+            "com.acme.Consumer" to Recordability.classDigest(javaClassBytes("com.acme.Consumer", "COPY", 10)).value!!,
         )
 
         val widening = widenForInlining(
@@ -1185,10 +1214,51 @@ class ChangeSelectionTest {
             recordedAnnotations = emptyMap(),
         )
 
-        assertTrue(widening.forces, "the constant refusal must still fire")
+        assertFalse(widening.forces, "a compared build forced on a moved constant: ${widening.refusal}")
+        assertEquals(setOf("com.acme.Consumer"), widening.changedBytes)
+        assertEquals(listOf("com.acme.Holder"), widening.prefixes)
+    }
+
+    @Test
+    fun `a constant that moved forces when the map holds no digest table to compare the bytes with`(
+        @TempDir dir: File,
+    ) {
+        val facts = oneModule(dir, "com.acme.Holder" to javaClassBytes("com.acme.Holder", "LIMIT", 11))
+
+        val widening = widenForInlining(
+            listOf("com.acme.Holder"), facts,
+            recordedConstants = mapOf("com.acme.Holder" to "a-different-constant-digest"),
+            digestRule = DigestRule(recorded = null, bytesAreFresh = true),
+            recordedAnnotations = emptyMap(),
+        )
+
+        assertTrue(widening.forces, "a moved constant narrowed with nothing to name its consumers")
         assertEquals(RefusalKind.CONSTANT_CHANGED, widening.refusalKind)
-        assertEquals(setOf("com.acme.Holder"), widening.digest!!.added,
-            "the forced run recorded nothing about what the digest rule could see")
+        assertContains(widening.refusal!!, DigestSilence.TABLE_ABSENT.token)
+    }
+
+    @Test
+    fun `a constant that moved forces when the walk over the compiled classes stopped`() {
+        val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
+        for (silence in listOf(DigestSilence.WALK_UNREADABLE, DigestSilence.WALK_BUDGET_SPENT)) {
+            val refusal = constantHolderRefusal(
+                setOf(name), mapOf(name to "not-the-digest"), DigestWidening(silence = silence.token),
+            ) { prefix -> listOf(prefix to bytesOf(prefix)) }
+
+            assertEquals(RefusalKind.CONSTANT_CHANGED, refusal?.refusalKind, "after ${silence.token}")
+            assertContains(refusal!!.refusal!!, silence.token)
+        }
+    }
+
+    @Test
+    fun `a constant the map never recorded forces though the bytes were compared`() {
+        val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
+
+        val refusal = constantHolderRefusal(setOf(name), emptyMap(), DigestWidening()) { prefix ->
+            listOf(prefix to bytesOf(prefix))
+        }
+
+        assertEquals(RefusalKind.CONSTANT_UNRECORDED, refusal?.refusalKind)
     }
 
     @Test
@@ -1234,16 +1304,30 @@ class ChangeSelectionTest {
 
     private fun annotationsOf(bytes: ByteArray) = Recordability.annotationDigest(bytes).value!!
 
+    /** A class carrying only what kotlinc writes unasked: its metadata and a not-null parameter. */
+    private fun compilerAnnotated(name: String): ByteArray {
+        val writer = org.objectweb.asm.ClassWriter(0)
+        writer.visit(
+            org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC,
+            name.replace('.', '/'), null, "java/lang/Object", null,
+        )
+        writer.visitAnnotation("Lkotlin/Metadata;", true).visitEnd()
+        writer.visitMethod(org.objectweb.asm.Opcodes.ACC_ABSTRACT, "run", "(Ljava/lang/String;)V", null, null).apply {
+            visitParameterAnnotation(0, "Lorg/jetbrains/annotations/NotNull;", false).visitEnd()
+            visitEnd()
+        }
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
     @Test
-    fun `a changed annotation forces a full run and names it`() {
+    fun `a changed annotation on a class the map holds does not force`() {
+        // Whoever read the annotation loaded the class or opened its file, and the map holds that.
         val name = "com.acme.Service"
         val recorded = mapOf(name to annotationsOf(profiled(name, "a")))
 
-        val refusal = annotationRefusal(setOf(name), recorded) { listOf(name to profiled(name, "b")) }
-
-        assertNotNull(refusal, "an annotation change narrowed, and a test that only scans the class is skipped")
-        assertEquals(RefusalKind.ANNOTATIONS_CHANGED, refusal.refusalKind)
-        assertEquals(name, refusal.refusalDetail)
+        assertNull(annotationRefusal(setOf(name), recorded) { listOf(name to profiled(name, "b")) })
+        assertNull(annotationRefusal(setOf(name), recorded) { listOf(name to profiled(name, null)) })
     }
 
     @Test
@@ -1265,40 +1349,47 @@ class ChangeSelectionTest {
     }
 
     @Test
-    fun `a class the table does not hold forces only when it carries annotations`() {
-        // The table holds every own class, so a missing one is new since the capture: unannotated,
-        // no scan can have found it by its annotations.
+    fun `a class the table does not hold forces only when someone wrote an annotation on it`() {
+        // The table holds every own class, so a missing one is new since the capture. A scan can
+        // find it by listing a directory, and picks it by an annotation someone wrote.
         val name = "com.acme.Added"
 
         assertNull(annotationRefusal(setOf(name), emptyMap()) { listOf(name to profiled(name, null)) })
-        assertEquals(
-            RefusalKind.ANNOTATIONS_UNRECORDED,
-            annotationRefusal(setOf(name), emptyMap()) { listOf(name to profiled(name, "a")) }?.refusalKind,
+        assertNull(
+            annotationRefusal(setOf(name), emptyMap()) { listOf(name to compilerAnnotated(name)) },
+            "a class new from a Kotlin body edit forced on the annotations the compiler wrote",
+        )
+        val refusal = annotationRefusal(setOf(name), emptyMap()) { listOf(name to profiled(name, "a")) }
+        assertNotNull(refusal, "a new annotated class narrowed, and a test that finds it by listing is skipped")
+        assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, refusal.refusalKind)
+        assertEquals(name, refusal.refusalDetail)
+    }
+
+    @Test
+    fun `deleting an annotated class the map holds does not force`() {
+        val name = "com.acme.Gone"
+
+        assertNull(
+            annotationRefusal(setOf(name), mapOf(name to annotationsOf(profiled(name, "a")))) { emptyList() },
+            "every test that read the class touched it at capture, and the change selects those",
         )
     }
 
     @Test
-    fun `deleting an annotated class forces, deleting an unannotated one does not`() {
-        val name = "com.acme.Gone"
-
-        val annotated = annotationRefusal(setOf(name), mapOf(name to annotationsOf(profiled(name, "a")))) {
-            emptyList()
-        }
-        assertEquals(RefusalKind.ANNOTATIONS_CHANGED, annotated?.refusalKind)
-        assertNull(annotationRefusal(setOf(name), mapOf(name to Recordability.NO_ANNOTATIONS)) { emptyList() })
-    }
-
-    @Test
-    fun `a nested class belongs to the changed source it was compiled from`() {
+    fun `a new nested class is judged by its own annotations`() {
+        val outer = "com.acme.Service"
         val nested = "com.acme.Service\$Config"
-        val refusal = annotationRefusal(setOf("com.acme.Service"), mapOf(nested to annotationsOf(profiled(nested, "a")))) {
-            emptyList()
+        val recorded = mapOf(outer to annotationsOf(profiled(outer, "a")))
+
+        val refusal = annotationRefusal(setOf(outer), recorded) {
+            listOf(outer to profiled(outer, "b"), nested to profiled(nested, "a"))
         }
-        assertEquals(RefusalKind.ANNOTATIONS_CHANGED, refusal?.refusalKind)
-        // A same-prefixed sibling is another source file.
+
+        assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, refusal?.refusalKind)
+        assertEquals(nested, refusal?.refusalDetail)
         assertNull(
-            annotationRefusal(setOf("com.acme.Service"), mapOf("com.acme.ServiceTwo" to annotationsOf(profiled("com.acme.ServiceTwo", "a")))) {
-                emptyList()
+            annotationRefusal(setOf(outer), recorded) {
+                listOf(outer to profiled(outer, "b"), nested to compilerAnnotated(nested))
             }
         )
     }
@@ -1318,9 +1409,7 @@ class ChangeSelectionTest {
     @Test
     fun `the annotation refusal reaches explain json by its token`(@TempDir dir: File) {
         val name = "com.acme.Service"
-        val changed = annotationRefusal(setOf(name), mapOf(name to annotationsOf(profiled(name, "a")))) {
-            listOf(name to profiled(name, "b"))
-        }!!
+        val changed = annotationRefusal(setOf(name), emptyMap()) { listOf(name to profiled(name, "a")) }!!
         val decision = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(
             io.github.zeuspizza.yoriwake.agent.select.MapReader.read(File(dir, "absent")),
             ChangeSet.of(listOf(name), emptyList()),
@@ -1329,25 +1418,25 @@ class ChangeSelectionTest {
         writeExplanation(dir, ":core:test", "HEAD~1", scoped(prefixes = setOf(name)), established(),
             decision, changed)
 
-        assertContains(File(dir, YoriwakePlugin.EXPLANATION_FILE).readText(), """"refusalKind": "annotations-changed"""")
+        assertContains(File(dir, YoriwakePlugin.EXPLANATION_FILE).readText(), """"refusalKind": "annotations-unrecorded"""")
     }
 
     @Test
-    fun `widening forces on an annotation change through the one helper every site calls`(@TempDir dir: File) {
+    fun `widening forces on a new annotated class through the one helper every site calls`(@TempDir dir: File) {
         val name = "com.acme.Service"
         val facts = oneModule(dir, name to profiled(name, "b"))
 
+        val added = widenForInlining(
+            listOf(name), facts, inlinableSourceChanged = false,
+            recordedAnnotations = emptyMap(),
+        )
         val changed = widenForInlining(
             listOf(name), facts, inlinableSourceChanged = false,
             recordedAnnotations = mapOf(name to annotationsOf(profiled(name, "a"))),
         )
-        val unchanged = widenForInlining(
-            listOf(name), facts, inlinableSourceChanged = false,
-            recordedAnnotations = mapOf(name to annotationsOf(profiled(name, "b"))),
-        )
 
-        assertEquals(RefusalKind.ANNOTATIONS_CHANGED, changed.refusalKind)
-        assertFalse(unchanged.forces, "identical annotations forced: ${unchanged.refusal}")
+        assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, added.refusalKind)
+        assertFalse(changed.forces, "a changed annotation on a class the map holds forced: ${changed.refusal}")
     }
 
     /** A class declaring one JUnit Jupiter `@Test` method per name in [tests]. */
@@ -1392,48 +1481,46 @@ class ChangeSelectionTest {
     }
 
     @Test
-    fun `an annotation change on a test helper that declares no test still forces`() {
+    fun `a new annotated test helper that declares no test still forces`() {
         // In this task's test output, but nothing selects it: a scan may be what reads it.
         val name = "com.acme.TestConfig"
-        val recorded = mapOf(name to annotationsOf(profiled(name, "a")))
 
-        val refusal = annotationRefusal(setOf(name), recorded, ownTestClasses = setOf(name)) {
-            listOf(name to profiled(name, "b"))
+        val refusal = annotationRefusal(setOf(name), emptyMap(), ownTestClasses = setOf(name)) {
+            listOf(name to profiled(name, "a"))
         }
 
-        assertEquals(RefusalKind.ANNOTATIONS_CHANGED, refusal?.refusalKind)
-        assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, annotationRefusal(setOf(name), emptyMap(), ownTestClasses = setOf(name)) {
-            listOf(name to profiled(name, "a"))
-        }?.refusalKind)
+        assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, refusal?.refusalKind)
+        assertNull(
+            annotationRefusal(
+                setOf(name), mapOf(name to annotationsOf(profiled(name, "a"))), ownTestClasses = setOf(name),
+            ) { listOf(name to profiled(name, "b")) },
+            "a helper the map holds forced on a changed annotation",
+        )
     }
 
     @Test
-    fun `a test class this task does not run still forces on an annotation change`() {
+    fun `a new test class this task does not run forces on its annotations`() {
         // Another task's test class on this task's classpath: its tests are not this run's.
         val name = "com.acme.OtherTaskTest"
-        val recorded = mapOf(name to annotationsOf(testClass(name, "a")))
 
-        val refusal = annotationRefusal(setOf(name), recorded, ownTestClasses = emptySet()) {
-            listOf(name to testClass(name, "a", "b"))
+        val refusal = annotationRefusal(setOf(name), emptyMap(), ownTestClasses = emptySet()) {
+            listOf(name to testClass(name, "a"))
         }
 
-        assertEquals(RefusalKind.ANNOTATIONS_CHANGED, refusal?.refusalKind)
+        assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, refusal?.refusalKind)
     }
 
     @Test
-    fun `a nested class of a test class is judged on its own`() {
+    fun `a new nested class of a test class is judged on its own`() {
         val outer = "com.acme.ServiceTest"
         val nested = "com.acme.ServiceTest\$Config"
-        val recorded = mapOf(
-            outer to annotationsOf(testClass(outer, "a")),
-            nested to annotationsOf(profiled(nested, "a")),
-        )
+        val recorded = mapOf(outer to annotationsOf(testClass(outer, "a")))
 
         val refusal = annotationRefusal(setOf(outer), recorded, ownTestClasses = setOf(outer)) {
-            listOf(outer to testClass(outer, "a", "b"), nested to profiled(nested, "b"))
+            listOf(outer to testClass(outer, "a", "b"), nested to profiled(nested, "a"))
         }
 
-        assertEquals(RefusalKind.ANNOTATIONS_CHANGED, refusal?.refusalKind)
+        assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, refusal?.refusalKind)
         assertEquals(nested, refusal?.refusalDetail)
     }
 

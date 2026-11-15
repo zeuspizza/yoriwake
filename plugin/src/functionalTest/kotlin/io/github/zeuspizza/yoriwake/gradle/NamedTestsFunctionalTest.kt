@@ -95,23 +95,14 @@ class NamedTestsFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `named tests decline even when a change would force a full run`(@TempDir dir: File) {
-        val limits = "src/main/java/dev/sample/Limits.java" to """
-            package dev.sample;
-            public class Limits { public static final int MAX = 10; }
-        """.trimIndent()
-        val bakedIn = "src/test/java/dev/sample/BetaTest.java" to """
-            package dev.sample;
-            import org.junit.jupiter.api.Test;
-            import static org.junit.jupiter.api.Assertions.assertEquals;
-            class BetaTest {
-                @Test void passes() { assertEquals(10, Limits.MAX); }
-            }
-        """.trimIndent()
-        build(dir, "build.gradle.kts" to minimalBuild, oneClass, alphaTests, limits, bakedIn, classOrderByName)
+        // A new annotated class, which the map holds no record of, refuses selection.
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, alphaTests, classOrderByName)
         committed(dir)
         runner(dir, "test").build()
         File(dir, "build/test-results").deleteRecursively()
-        File(dir, limits.first).writeText(limits.second.replace("MAX = 10", "MAX = 11"))
+        File(dir, oneClass.first).writeText(
+            oneClass.second.replace("public class Alpha {", "public class Alpha { @Deprecated public static class Added { }")
+        )
 
         val output = runner(dir, "test", "--tests", "dev.sample.AlphaTest", "-Pyoriwake.select").build().output
 

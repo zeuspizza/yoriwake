@@ -355,8 +355,9 @@ internal class DecodeRun(
                         }
                     }
                 }.getOrNull(),
-                // Every class's annotations, so a later run forces when one changes: a test that
-                // only scans a class never executes it.
+                // Every own class with its annotations, so a later run can tell a class that is new
+                // since the capture: a scan finds a new annotated class by listing a directory,
+                // which no test records.
                 annotationDigests = runCatching {
                     when (val scan = artifacts?.classDigests(Recordability::annotationDigest)) {
                         null -> null

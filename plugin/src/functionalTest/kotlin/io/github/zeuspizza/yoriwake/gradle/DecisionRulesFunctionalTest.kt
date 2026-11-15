@@ -61,7 +61,8 @@ class DecisionRulesFunctionalTest : FunctionalTestSupport() {
     ) {
         // BetaTest baked the constant into its own bytecode, so no coverage edge reaches it. The
         // refusal runs it; beneath the refusal, coverage alone would not have, and only the window
-        // AlphaTest opened by loading Limits first would.
+        // AlphaTest opened by loading Limits first would. The map loses its class digests, so the
+        // compiled classes cannot be compared and the moved constant still refuses.
         val limits = "src/main/java/dev/sample/Limits.java" to """
             package dev.sample;
             public class Limits {
@@ -89,6 +90,10 @@ class DecisionRulesFunctionalTest : FunctionalTestSupport() {
         committed(dir)
         runner(dir, "test").build()
         File(dir, "build/test-results").deleteRecursively()
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        check(File(mapDir, io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder.CLASS_DIGESTS_FILE).delete()) {
+            "the capture recorded no class digests"
+        }
         File(dir, "src/main/java/dev/sample/Limits.java").writeText(
             limits.second.replace("MAX = 10", "MAX = 11"),
         )
