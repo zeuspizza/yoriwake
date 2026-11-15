@@ -1747,6 +1747,24 @@ class SelectorTest {
     }
 
     @Test
+    fun `an own test class whose bytes moved with no source change runs its known tests`(@TempDir dir: File) {
+        // A constant it copied changed: its source did not, its class file did, and no test
+        // recorded loading it. The JVM loaded it at discovery, which dates EarlierTest as sharing
+        // the JVM with it: a cost, where forcing was the whole suite.
+        val decision = decide(
+            earlierThenEdited(dir, "com.acme.Calc"),
+            bytes = listOf("com.acme.EditedTest"),
+            own = listOf("com.acme.EditedTest"),
+            accounted = true,
+        )
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("a")))
+        assertEquals(Selector.Decision.Reason.REACHES_CHANGE, decision.reasonFor(edited("b")))
+        assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.EarlierTest")))
+    }
+
+    @Test
     fun `an edited test class whose tests recorded it selects as through its coverage alone`(@TempDir dir: File) {
         val decision = decide(
             earlierThenEdited(dir, "com.acme.Calc,com.acme.EditedTest"),

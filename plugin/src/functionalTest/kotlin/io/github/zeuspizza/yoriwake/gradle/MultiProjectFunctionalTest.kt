@@ -6,6 +6,7 @@ import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** Builds with several projects: scope derivation and cross-module changes. */
 class MultiProjectFunctionalTest : FunctionalTestSupport() {
@@ -672,6 +673,91 @@ class MultiProjectFunctionalTest : FunctionalTestSupport() {
 
         assertContains(output, "1 changed classes")
         assertContains(output, "[yoriwake] of 1 tests discovered: reaches-change=1")
+    }
+
+    /**
+     * `:lib` holds a constant beside a method; `:app`'s Gate copies the constant, so its source
+     * names `:lib` and its bytecode does not. [limitsTest] adds a test in `:app` that executes
+     * Limits, so the map knows the class. Captured, then the constant moves.
+     */
+    private fun constantAcrossModules(dir: File, limitsTest: Boolean): String {
+        File(dir, "settings.gradle.kts").writeText("rootProject.name = \"multi\"\ninclude(\"lib\", \"app\")\n")
+        val common = """
+            plugins { java; jacoco; id("io.github.zeuspizza.yoriwake") }
+            repositories { mavenCentral() }
+            dependencies {
+                testImplementation(platform("org.junit:junit-bom:5.11.4"))
+                testImplementation("org.junit.jupiter:junit-jupiter")
+                testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+            }
+            tasks.test { useJUnitPlatform() }
+        """.trimIndent()
+        fun write(path: String, text: String) =
+            File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent())
+        write("lib/build.gradle.kts", common)
+        write("app/build.gradle.kts", common + System.lineSeparator() + "dependencies { implementation(project(\":lib\")) }")
+        val limits = """
+            package dev.lib;
+            public class Limits {
+                public static final int MAX = 10;
+                public int max() { return MAX; }
+            }
+        """
+        write("lib/src/main/java/dev/lib/Limits.java", limits)
+        write("app/src/main/java/dev/app/Gate.java", """
+            package dev.app;
+            public class Gate {
+                public String classify(int n) { return n == dev.lib.Limits.MAX ? "max" : "other"; }
+            }
+        """)
+        write("app/src/main/java/dev/app/Other.java", "package dev.app;\npublic class Other { public int one() { return 1; } }")
+        fun test(name: String, body: String) = write("app/src/test/java/dev/app/$name.java", """
+            package dev.app;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            class $name { @Test void passes() { $body } }
+        """)
+        // By name: the unrelated test runs before the JVM first loads Gate or Limits.
+        test("A0OtherTest", "assertTrue(new Other().one() > 0);")
+        test("A1GateTest", "assertTrue(new Gate().classify(3).length() > 0);")
+        if (limitsTest) test("A2LimitsTest", "assertTrue(new dev.lib.Limits().max() > 0);")
+        write("app/" + classOrderByName.first, classOrderByName.second)
+        committed(dir)
+        runner(dir, ":app:test").build()
+        val gate = File(dir, "app/build/classes/java/main/dev/app/Gate.class")
+        val before = gate.readBytes()
+        File(dir, "app/build/test-results").deleteRecursively()
+        write("lib/src/main/java/dev/lib/Limits.java", limits.replace("MAX = 10", "MAX = 11"))
+        commit(dir, "the constant moves")
+
+        val output = runner(dir, ":app:test", "-Pyoriwake.select").build().output
+
+        assertFalse(before.contentEquals(gate.readBytes()), "Gate was not recompiled with the new value")
+        assertFalse("declares a compile-time constant" in output, output)
+        return output
+    }
+
+    @Test
+    fun `a changed constant in one module selects the test of the class in another that copied it`(
+        @TempDir dir: File,
+    ) {
+        val output = constantAcrossModules(dir, limitsTest = true)
+
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals(setOf("dev.app.A1GateTest", "dev.app.A2LimitsTest"), ranTests(File(dir, "app")), output)
+    }
+
+    @Test
+    fun `a changed constant in a class no test recorded never forces on the constant`(
+        @TempDir dir: File,
+    ) {
+        val output = constantAcrossModules(dir, limitsTest = false)
+
+        // Whether a class no test recorded forces is another rule's to say; when it does, the
+        // record names that rule and not the constant.
+        val notes = decisionNotes(dir)
+        if (notes["outcome"] == "full-run") assertEquals("no-coverage-for-changed", notes["full-run-kind"], output)
+        assertTrue("dev.app.A1GateTest" in ranTests(File(dir, "app")), output)
     }
 
     private companion object {

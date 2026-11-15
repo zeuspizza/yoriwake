@@ -465,6 +465,113 @@ class SelectionFunctionalTest {
         FunctionalMaven.run(maven, project, "verify", "-pl", module, "-Dyoriwake.select", "-Dyoriwake.base=HEAD")
             .succeeded().output
 
+    @Test
+    fun `a changed constant in one module selects the test of the class in another that copied it`(@TempDir dir: File) {
+        val project = committed(dir)
+        val limits = File(project, "lib/src/main/java/dev/demo/lib/Limits.java")
+        limits.writeText(
+            """
+            package dev.demo.lib;
+            public class Limits {
+                public static final int MAX = 10;
+                public int max() { return MAX; }
+            }
+            """.trimIndent()
+        )
+        // javac copies MAX into Gate, which then names Limits nowhere.
+        File(project, "app/src/main/java/dev/demo/app/Gate.java").writeText(
+            """
+            package dev.demo.app;
+            public class Gate {
+                public String classify(int n) { return n == dev.demo.lib.Limits.MAX ? "max" : "other"; }
+            }
+            """.trimIndent()
+        )
+        fun appTest(name: String, body: String) = File(project, "app/src/test/java/dev/demo/app/$name.java").writeText(
+            """
+            package dev.demo.app;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            import org.junit.jupiter.api.Test;
+            class $name { @Test void passes() { $body } }
+            """.trimIndent()
+        )
+        appTest("GateTest", "assertTrue(new Gate().classify(3).length() > 0);")
+        appTest("LimitsTest", "assertTrue(new dev.demo.lib.Limits().max() > 0);")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "a constant and the class that copies it")
+        // By name AppTest runs first, before the shared test JVM loads Gate or Limits.
+        val byName = "-Dsurefire.runOrder=alphabetical"
+        FunctionalMaven.run(maven, project, "verify", byName).succeeded()
+        limits.edit { it.replace("MAX = 10", "MAX = 11") }
+        git(project, "commit", "-q", "-am", "the constant moves")
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib,app", byName, "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+        ).succeeded().output
+
+        assertFalse("declares a compile-time constant" in output, output)
+        assertTrue(
+            output.lines().any { "changed with no source change behind them" in it && "dev.demo.app.Gate" in it },
+            "Gate was not recompiled with the new value, or the comparison did not name it:\n$output",
+        )
+        assertContains(output, "Running dev.demo.app.GateTest")
+        assertContains(output, "Running dev.demo.app.LimitsTest")
+        assertFalse("Running dev.demo.app.AppTest" in output, output)
+    }
+
+    @Test
+    fun `a changed annotation selects the test that reads it and leaves an unrelated test out`(@TempDir dir: File) {
+        val project = committed(dir)
+        fun app(root: String, name: String, body: String) =
+            File(project, "app/src/$root/java/dev/demo/app/$name.java").also { it.writeText(body.trimIndent()) }
+        app(
+            "main", "Mode",
+            """
+            package dev.demo.app;
+            import java.lang.annotation.*;
+            @Retention(RetentionPolicy.RUNTIME)
+            public @interface Mode { String value(); }
+            """,
+        )
+        val gate = app(
+            "main", "Gate",
+            """
+            package dev.demo.app;
+            @Mode("a")
+            public class Gate { public int one() { return 1; } }
+            """,
+        )
+        fun appTest(name: String, body: String) = app(
+            "test", name,
+            """
+            package dev.demo.app;
+            import static org.junit.jupiter.api.Assertions.assertTrue;
+            import org.junit.jupiter.api.Test;
+            class $name { @Test void passes() { $body } }
+            """,
+        )
+        // Stands in for a framework's scan: it reads Gate's annotation and runs no line of it.
+        appTest("BScanTest", "assertTrue(Gate.class.getAnnotation(Mode.class).value().length() > 0);")
+        appTest("GateTest", "assertTrue(new Gate().one() > 0);")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "an annotated class and a test that reads the annotation")
+        // By name AppTest runs first, before the shared test JVM loads Gate, and BScanTest is the
+        // test that loads it.
+        val byName = "-Dsurefire.runOrder=alphabetical"
+        FunctionalMaven.run(maven, project, "verify", byName).succeeded()
+        gate.edit { it.replace("@Mode(\"a\")", "@Mode(\"b\")") }
+        git(project, "commit", "-q", "-am", "the annotation's value moves")
+
+        val output = FunctionalMaven.run(
+            maven, project, "verify", "-pl", "lib,app", byName, "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1",
+        ).succeeded().output
+
+        assertFalse("carries annotations" in output, output)
+        assertContains(output, "Running dev.demo.app.BScanTest")
+        assertContains(output, "Running dev.demo.app.GateTest")
+        assertFalse("Running dev.demo.app.AppTest" in output, output)
+    }
+
     /**
      * kotlin does not reach lib: a comment and a dependency version in lib's POM, then a resource of
      * lib, are no change for it. A README of lib is not under `src`, and keeps forcing.

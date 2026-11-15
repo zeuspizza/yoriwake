@@ -7,8 +7,9 @@ import java.io.File
 /**
  * Attempts on compile-time constants. javac copies a constant's value into every class that reads
  * it, so a test that baked in the old value names the declaring class nowhere and coverage records
- * no edge to it. The holder rule forces on a changed constant that can leave its class, and lets an
- * exempt one narrow to the tests that execute it.
+ * no edge to it. A changed constant that can leave its class narrows to the classes compiled with
+ * the new value when the compiled classes were compared with the map's, and forces when they were
+ * not or the map never recorded the constant; an exempt one narrows to the tests that execute it.
  */
 class CompileTimeConstantsAttempts : BreakAttempt() {
 
@@ -27,6 +28,9 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
     private val third = source("src/main/java/dev/sample/Third.java", "package dev.sample;\npublic class Third { public int three() { return 3; } }")
     private val thirdTest = testClass("A3ThirdTest", "@Test void three() { assertEquals(3, new Third().three()); }")
 
+    /** As [thirdTest], but first by name: it runs before any other test class loads a changed one. */
+    private val firstTest = testClass("A0ThirdTest", "@Test void three() { assertEquals(3, new Third().three()); }")
+
     /** Each test class in its own JVM, so a window one opens reaches no other. */
     private val forkingBuild = minimalBuild.replace(
         "tasks.test { useJUnitPlatform() }",
@@ -36,9 +40,10 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
     // Track: code reading. Boundary: a file of constants alone is no class prefix at all (it is an
     // unmappable path), so the holder rule only sees a constant whose file also declares code. An
     // interface constant beside a default method stands just inside the rule: the file maps, and
-    // the field is public by the language, so the constant can leave it.
+    // the field is public by the language, so the constant can leave it. The test that copied it
+    // was recompiled with the new value, and its own changed class file is what selects it.
     @Test
-    fun `a constant on an interface with a default method that a test baked in forces`(@TempDir dir: File) {
+    fun `a constant on an interface with a default method that a test baked in selects that test`(@TempDir dir: File) {
         val limits = source(
             "src/main/java/dev/sample/Limits.java",
             """
@@ -52,11 +57,54 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
         val baked = testClass("A1BakedTest", "@Test void max() { assertEquals(10, Limits.MAX); }")
         val executes = testClass("A2LimitsTest", "@Test void max() { assertEquals(10, new Limits() { }.max()); }")
         val result = attempt(
-            dir, "dev.sample.A1BakedTest", Aim.Forced("constant-changed"),
-            listOf(limits, baked, executes, third, thirdTest, classOrderByName),
+            dir, "dev.sample.A1BakedTest", Aim.Row("changed-bytes"),
+            listOf(limits, baked, executes, third, firstTest, classOrderByName),
         ) { File(it, limits.first).writeText(limits.second.replace("MAX = 10", "MAX = 11")) }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: the classes compared with the map's are every class the build
+    // itself compiles onto the test classpath, another module's among them. The constant lives in
+    // a sibling module; the class that copied it is this module's, its source untouched, and the
+    // target executes only that class.
+    @Test
+    fun `a constant in another module that a production class copied selects the test of that class`(@TempDir dir: File) {
+        val lib = source("lib/build.gradle.kts", "plugins { `java-library` }")
+        val limits = source(
+            "lib/src/main/java/dev/lib/Limits.java",
+            """
+            package dev.lib;
+            public class Limits {
+                public static final int MAX = 10;
+                public int max() { return MAX; }
+            }
+            """,
+        )
+        val gate = source(
+            "src/main/java/dev/sample/Gate.java",
+            """
+            package dev.sample;
+            public class Gate {
+                public String classify(int n) { return n == dev.lib.Limits.MAX ? "max" : "other"; }
+            }
+            """,
+        )
+        val target = testClass("A1GateTest", "@Test void atTheLimit() { assertEquals(\"max\", new Gate().classify(10)); }")
+        val executes = testClass("A2LimitsTest", "@Test void max() { assertTrue(new dev.lib.Limits().max() > 0); }")
+        val result = attempt(
+            dir, "dev.sample.A1GateTest", Aim.Row("changed-bytes"),
+            listOf(
+                "settings.gradle.kts" to "rootProject.name = \"sample\"\ninclude(\"lib\")\n",
+                lib, limits, gate, target, executes, third, firstTest, classOrderByName,
+            ),
+            buildScript = minimalBuild.replace(
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+                "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n    implementation(project(\":lib\"))",
+            ),
+        ) { File(it, limits.first).writeText(limits.second.replace("MAX = 10", "MAX = 11")) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: only an exact match against a recorded constant digest licenses

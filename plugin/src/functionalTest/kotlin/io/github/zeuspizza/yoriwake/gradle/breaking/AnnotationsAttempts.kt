@@ -6,9 +6,9 @@ import java.io.File
 
 /**
  * Attempts on annotations. A framework's scan, condition or qualifier reads a class's annotations
- * without executing it, so coverage holds no edge: a changed annotation forces, a body-only change
- * narrows, and a test class this task runs that declares a test is exempt because its own tests run
- * anyway.
+ * without executing it, so coverage holds no edge: a changed annotation selects the tests whose
+ * JVM loaded the class or read its class file, a new annotated class forces, and a new test class
+ * this task runs that declares a test is exempt because its own tests run anyway.
  */
 class AnnotationsAttempts : BreakAttempt() {
 
@@ -47,7 +47,8 @@ class AnnotationsAttempts : BreakAttempt() {
 
     // Track: code reading. Boundary: the classes judged for a changed file are the ones its name
     // compiles to. A `package-info.java` declares no type, yet compiles to `package-info.class`,
-    // and a framework reads a package's annotations without executing anything.
+    // and a framework reads a package's annotations without executing anything: no test can hold
+    // coverage of a class with no code, so the change forces as a class the map has no coverage of.
     @Test
     fun `a changed package annotation forces`(@TempDir dir: File) {
         val packageInfo = source("src/main/java/dev/sample/package-info.java", "@Level(3)\npackage dev.sample;")
@@ -56,7 +57,7 @@ class AnnotationsAttempts : BreakAttempt() {
             "@Test void level() { assertEquals(3, Alpha.class.getPackage().getAnnotation(Level.class).value()); }",
         )
         val result = attempt(
-            dir, "dev.sample.A1PackageTest", Aim.Forced("annotations-changed"),
+            dir, "dev.sample.A1PackageTest", Aim.Forced("no-coverage-for-changed"),
             listOf(level, packageInfo, oneClass, oneTest, target, third, thirdTest, classOrderByName),
         ) { File(it, packageInfo.first).writeText("@Level(4)\npackage dev.sample;") }
 
@@ -64,8 +65,8 @@ class AnnotationsAttempts : BreakAttempt() {
     }
 
     // Track: code reading. Boundary: a class the annotation table lacks is new, and forces only if
-    // it carries an annotation. The new class here carries one only as a type use on a field, the
-    // kind a nullness checker or a binding library reads.
+    // it carries an annotation someone wrote. The new class here carries one only as a type use on
+    // a field, the kind a nullness checker or a binding library reads.
     @Test
     fun `a new nested class whose only annotation is a type use forces`(@TempDir dir: File) {
         val nullable = source(

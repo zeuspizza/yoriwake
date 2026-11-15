@@ -171,11 +171,11 @@ class FrameworkCachesAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
-    // Track: code reading. Boundary: the annotation digest covers every annotation a class
-    // declares, members and annotation defaults included. A scan that reads an annotation left at
-    // its default sees the default, which lives in the annotation type, not where it is used.
+    // Track: code reading. Boundary: a changed annotation selects the tests whose JVM loaded its
+    // class. A scan that reads an annotation left at its default sees the default, which lives in
+    // the annotation type, not where it is used, and reading it loads the annotation type.
     @Test
-    fun `a changed annotation default forces a full run`(@TempDir dir: File) {
+    fun `a changed annotation default selects the test that reads it`(@TempDir dir: File) {
         val config = source(
             "src/main/java/dev/sample/Config.java",
             """
@@ -212,14 +212,14 @@ class FrameworkCachesAttempts : BreakAttempt() {
         )
 
         val result = attempt(
-            dir, "dev.sample.A1ScanTest", Aim.Forced("annotations-changed"),
+            dir, "dev.sample.A1ScanTest", Aim.Row("shares-jvm-changed-class"),
             listOf(other, config, service, first, scan, users, classOrderByName),
         ) {
             val file = File(it, config.first)
             file.writeText(file.readText().replace("default \"dev\"", "default \"prod\""))
         }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a test class that declares a test and that nothing else names
