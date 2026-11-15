@@ -59,6 +59,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A complement run reads a jar the test classpath holds under the project's `.gradle`: changed since the selecting run, every test runs. Map: left alone.
 - A run whose test task has an action inserted just before its tests runs every test (`late-task-action`). Map: left alone.
 - A sibling's source edits are kept when the test task depends on a task of it or hands its test JVM a path into it. Map: left alone.
+- A transformed jar of one of your own projects counts by its content. Map: kept; one full run where the classpath holds one.
 
 ## [0.5.0] - 2026-11-07
 

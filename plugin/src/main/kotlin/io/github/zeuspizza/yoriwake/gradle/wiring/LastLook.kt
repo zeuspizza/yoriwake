@@ -123,6 +123,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
         val homes: Map<String, File> = emptyMap(),
         /** The Gradle user home a walk took Gradle's module cache from; null for a table or none. */
         val gradleUserHome: File? = null,
+        /** [ClasspathFiles.table]'s project artifacts when the comparing action compared a table. */
+        val projectArtifacts: Set<File> = emptySet(),
     )
 
     companion object {
@@ -163,7 +165,9 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                 classpath, compared.buildDirs, compared.rootDir, classes = compared.classes,
                 gradleUserHome = compared.gradleUserHome,
             )
-            else ClasspathFiles.table(classpath, compared.buildDirs, compared.rootDir, compared.homes)
+            else ClasspathFiles.table(
+                classpath, compared.buildDirs, compared.rootDir, compared.homes, projectArtifacts = compared.projectArtifacts,
+            )
 
         /**
          * Why the run may no longer leave tests out, given what a comparing action handed over
@@ -240,7 +244,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
 
         /**
          * Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes], and
-         * the table's [homes] when it compared one, or the walk's [gradleUserHome].
+         * the table's [homes] and [projectArtifacts] when it compared one, or the walk's [gradleUserHome].
          */
         fun write(
             mapDir: File,
@@ -250,11 +254,13 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             digests: Map<String, String>,
             homes: Map<String, File> = emptyMap(),
             gradleUserHome: File? = null,
+            projectArtifacts: Set<File> = emptySet(),
         ) {
             val lines = listOf("root\t${Tsv.escape(rootDir.absolutePath)}", "classes\t$classes") +
                 buildDirs.map { "build\t${Tsv.escape(it)}" } +
                 homes.map { (name, home) -> "home\t${Tsv.escape(name)}\t${Tsv.escape(home.absolutePath)}" } +
                 listOfNotNull(gradleUserHome?.let { "gradle-user-home\t${Tsv.escape(it.absolutePath)}" }) +
+                projectArtifacts.map { "project\t${Tsv.escape(it.absolutePath)}" } +
                 digests.map { (path, digest) -> "file\t${Tsv.escape(path)}\t$digest" }
             writeAtomically(handOver(mapDir), lines.joinToString("\n", postfix = "\n$END\n"))
         }
@@ -269,6 +275,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             val digests = mutableMapOf<String, String>()
             val homes = mutableMapOf<String, File>()
             var gradleUserHome: File? = null
+            val projectArtifacts = mutableSetOf<File>()
             for (line in lines.dropLast(1)) {
                 val parts = line.split('\t')
                 when {
@@ -278,10 +285,11 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                     parts.size == 3 && parts[0] == "file" -> digests[Tsv.unescape(parts[1])] = parts[2]
                     parts.size == 3 && parts[0] == "home" -> homes[Tsv.unescape(parts[1])] = File(Tsv.unescape(parts[2]))
                     parts.size == 2 && parts[0] == "gradle-user-home" -> gradleUserHome = File(Tsv.unescape(parts[1]))
+                    parts.size == 2 && parts[0] == "project" -> projectArtifacts += File(Tsv.unescape(parts[1]))
                     else -> return null
                 }
             }
-            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes, gradleUserHome)
+            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes, gradleUserHome, projectArtifacts)
         }
 
         private const val END = "end"

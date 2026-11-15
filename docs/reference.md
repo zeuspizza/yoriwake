@@ -311,11 +311,15 @@ everything (`dependencies-changed`), naming it: one in Gradle's module cache by 
 names its content, one in Gradle's transform cache by its path, which names the transform's input,
 parameters and implementation, and every other one by its content. A transform's entry written
 again, as on a fresh machine or after Gradle's cache cleanup, may hold other bytes at the same
-path, and they run nothing. The limits: a transform
+path, and they run nothing. A transformed jar of one of the build's own projects counts by its
+content instead: a `normalization { runtimeClasspath { ignore(...) } }` rule keeps its path across
+a change in a file the rule ignores. While Gradle keeps the old output, the tests read it, as
+without the plugin; every test runs once Gradle writes it again. The limits: a transform
 that reads something it does not declare (an environment variable, an `@Internal` parameter's
 file) or whose declared input normalization leaves out something its output carries keeps its
-path across that change, as Gradle's own up-to-date check does; what a transformed jar's manifest
-`Class-Path` names is not compared; and a transform whose input path differs between machines,
+path across that change, as Gradle's own up-to-date check does; so does such a project jar put on
+the classpath as plain files (`files(view.files)`), for which Gradle reports no project; what a
+transformed jar's manifest `Class-Path` names is not compared; and a transform whose input path differs between machines,
 under Gradle's default absolute-path normalization, writes under another path there and runs
 everything once. A file a dependency read by its content names
 in its manifest `Class-Path`, such as a `lib/a.jar` beside a vendor jar, counts the same way, by its

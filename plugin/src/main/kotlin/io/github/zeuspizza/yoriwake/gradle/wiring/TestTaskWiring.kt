@@ -53,7 +53,9 @@ import io.github.zeuspizza.yoriwake.gradle.change.validated
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.dependencyHomes
 import io.github.zeuspizza.yoriwake.gradle.facts.moduleIdentities
+import io.github.zeuspizza.yoriwake.gradle.facts.projectArtifacts
 import io.github.zeuspizza.yoriwake.gradle.facts.projectFacts
+import io.github.zeuspizza.yoriwake.gradle.facts.runtimeArtifacts
 import io.github.zeuspizza.yoriwake.gradle.fullRunBranches
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.runPlan
@@ -65,6 +67,8 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.JacocoScoping.applyJacocoInclu
 import io.github.zeuspizza.yoriwake.gradle.wiring.JacocoScoping.deriveScope
 import java.io.File
 import org.gradle.api.Project
+import org.gradle.api.artifacts.ArtifactCollection
+import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.gradle.testing.jacoco.tasks.JacocoReportBase
@@ -541,6 +545,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val rootDir = project.rootDir
         val homes = dependencyHomes(project)
         val identities = moduleIdentities(project)
+        val artifacts = runtimeArtifacts(project)
+        val gradleUserHome = project.gradle.gradleUserHomeDir
         val modules = File(mapDir, ClasspathRecord.MODULES_FILE)
         test.systemProperty(AgentContract.JAR_MODULES_PROPERTY, modules.absolutePath)
         test.doFirst {
@@ -557,7 +563,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 ClasspathRecord.write(ClasspathRecord.pending(mapDir), ClasspathRecord.pendingDirs(mapDir), record)
                 ClasspathRecord.writeModules(modules, record)
             }.onFailure { test.logger.info("[yoriwake] ${test.path}: no resolved classpath recorded ($it)") }
-            val walk = runCatching { ClasspathFiles.table(classpath.files, buildDirs, rootDir, homes) }
+            val walk = runCatching {
+                val files = classpath.files
+                ClasspathFiles.table(files, buildDirs, rootDir, homes, projectArtifacts = projectArtifacts(artifacts, files, gradleUserHome))
+            }
                 .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
             when (walk) {
                 is ClasspathFiles.Walk.Found ->
@@ -1176,6 +1185,8 @@ internal class StampIdentity(
     private val gradleUserHome: File,
     /** The plugin's own `-javaagent` argument, left out of the configuration digest. */
     private val agentArgument: String?,
+    /** The runtime classpaths' artifacts, for which transformed jars are a project's. */
+    private val runtimeArtifacts: Provider<List<ArtifactCollection>>,
 ) : java.io.Serializable {
 
     fun observe(test: Test): SelectionRecord.Reading {
@@ -1190,13 +1201,16 @@ internal class StampIdentity(
             buildRoot = buildRoot ?: "?${rootDir.absolutePath}",
             buildPath = buildPath,
             configuration = configurationOf(test, agentArgument),
-        ) { SelectionRecord.classpathDigest(test.classpath.files, rootDir, gradleUserHome) }
+        ) {
+            val files = test.classpath.files
+            SelectionRecord.classpathDigest(files, rootDir, gradleUserHome, projectArtifacts = projectArtifacts(runtimeArtifacts, files, gradleUserHome))
+        }
     }
 
     companion object {
         fun of(project: Project, test: Test, agent: File?) = StampIdentity(
             project.rootDir, test.path, project.buildTreePath, project.gradle.gradleUserHomeDir,
-            agent?.let(AgentJar::argument),
+            agent?.let(AgentJar::argument), runtimeArtifacts(project),
         )
     }
 }

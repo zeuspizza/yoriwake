@@ -378,6 +378,21 @@ class SelectionRecordTest {
     }
 
     @Test
+    fun `the classpath digest reads a transformed jar of the build's own project by its entries`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val transformed = File(home, "caches/9.8.0/transforms/abc/transformed/lib.jar").apply { parentFile.mkdirs() }
+        val digest = { SelectionRecord.classpathDigest(listOf(transformed), here, home, projectArtifacts = setOf(transformed)) }
+        writeZip(transformed, 1_000_000_000_000L, "a")
+        val before = digest()
+
+        writeZip(transformed, 1_500_000_000_000L, "a")
+        assertEquals(before, digest(), "an entry's timestamp is not its content")
+        writeZip(transformed, 1_500_000_000_000L, "b")
+        assertNotEquals(before, digest())
+    }
+
+    @Test
     fun `the classpath digest names a transformed jar by its path in a Gradle user home inside the checkout`(@TempDir root: File) {
         val here = File(root, "here")
         val home = File(here, ".gradle")

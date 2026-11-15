@@ -29,6 +29,12 @@ internal interface ClasspathView {
     /** The test runtime classpath. */
     fun classpathFiles(): Set<File>
 
+    /**
+     * The files of [classpathFiles] in Gradle's transform cache that the build resolves to one of
+     * its own projects, which the classpath-files table reads by content; empty where there are none.
+     */
+    fun projectArtifacts(): Set<File> = emptySet()
+
     /** This task's own compiled test classes. */
     fun testOutputFiles(): Set<File>
 

@@ -252,7 +252,10 @@ internal fun TestTaskWiring.configureSelection(
                 // The task's own inputs, read only when a default entry left a path out.
                 taskInputs = { extraTaskInputs(rootDir, test.inputs.files.files, test.classpath.files + test.testClassesDirs.files) },
             ),
-            GradleSelectingHost(test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes),
+            GradleSelectingHost(
+                test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes,
+                classpathFacts::projectArtifacts,
+            ),
         )
     }
 
@@ -840,6 +843,7 @@ private class GradleSelectingHost(
     private val rootDir: File? = null,
     private val buildDirs: Collection<String> = emptyList(),
     private val homes: Map<String, File> = emptyMap(),
+    private val projectArtifacts: () -> Set<File> = { emptySet() },
 ) : SelectingStep.Host {
     override val name: String get() = test.path
 
@@ -855,7 +859,9 @@ private class GradleSelectingHost(
 
     // The build's own doFirst actions run after this one: the last look compares again.
     override fun handOver(compared: Map<String, String>): Boolean =
-        runCatching { LastLook.write(mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared, homes) }.isSuccess
+        runCatching {
+            LastLook.write(mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared, homes, projectArtifacts = projectArtifacts())
+        }.isSuccess
 
     override fun captureNothing() {
         test.systemProperty(RECORDS_DIR_PROPERTY, "")

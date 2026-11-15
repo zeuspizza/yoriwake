@@ -783,6 +783,51 @@ class ClasspathFilesTest {
     }
 
     @Test
+    fun `a transformed jar of the build's own project is read by its content, never its entry timestamps`(@TempDir base: File) {
+        val machine = Machine(base)
+        val output = jar(File(machine.gradleHome, transformed("abc")), 0L, "a.txt" to "one")
+        val key = "dependency:<gradle-user-home>/${transformed("abc")}"
+        fun table() = found(ClasspathFiles.table(listOf(output), listOf(), machine.root, machine.homes, projectArtifacts = setOf(output)))
+        val before = table()
+
+        assertNotEquals("named", before[key], before.toString())
+        jar(output, 1L, "a.txt" to "one")
+        assertTrue(ClasspathFiles.compare(before, table()).isEmpty)
+        jar(output, 1L, "a.txt" to "two")
+        assertEquals(mapOf(key to "changed"), ClasspathFiles.compare(before, table()).files)
+        assertEquals("named", found(machine.table(output))[key])
+    }
+
+    @Test
+    fun `what a transformed project jar's manifest names gets no row`(@TempDir base: File) {
+        val machine = Machine(base)
+        file(base, "vendor/b.jar", "b")
+        val output = File(machine.gradleHome, transformed("abc")).apply { parentFile.mkdirs() }
+        ZipOutputStream(output.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+            zip.write("Manifest-Version: 1.0\r\nClass-Path: ${File(base, "vendor/b.jar").toURI()}\r\n\r\n".toByteArray())
+            zip.closeEntry()
+        }
+
+        val rows = dependencies(ClasspathFiles.table(listOf(output), listOf(), machine.root, machine.homes, projectArtifacts = setOf(output)))
+
+        assertEquals(setOf("dependency:<gradle-user-home>/${transformed("abc")}", ClasspathFiles.DEPENDENCY_ORDER), rows.keys)
+    }
+
+    @Test
+    fun `a table that named a transformed project jar by its path differs in that row alone`(@TempDir base: File) {
+        val machine = Machine(base)
+        val output = jar(File(machine.gradleHome, transformed("abc")), 0L, "a.txt" to "one")
+        val recorded = found(machine.table(output))
+
+        val moved = ClasspathFiles.compare(
+            recorded, found(ClasspathFiles.table(listOf(output), listOf(), machine.root, machine.homes, projectArtifacts = setOf(output))),
+        )
+
+        assertEquals(mapOf("dependency:<gradle-user-home>/${transformed("abc")}" to "changed"), moved.files)
+    }
+
+    @Test
     fun `a jar elsewhere under the Gradle user home is still read whole`(@TempDir base: File) {
         val machine = Machine(base)
         val accessors = jar(File(machine.gradleHome, "caches/8.14/kotlin-dsl/accessors/abc/a.jar"), 0L, "a.txt" to "one")

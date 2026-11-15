@@ -5367,6 +5367,16 @@ MUTATIONS = [
      '            if (inHome != null && TRANSFORM_CACHE.containsMatchIn(inHome)) return@map "gradle:$inHome"\n',
      "",
      unit_suite, "the classpath digest names a transformed jar by its path, and reads one elsewhere under the Gradle home"),
+    # A build's runtime classpath normalization takes part in the hash of a transform of one of its
+    # projects' artifacts, so a change in a file it ignores leaves the path as it was.
+    ("a transformed jar of the build's own project is named by its path", CLASSPATH_FILES,
+     "                        if (entry in projects) contentDigest(entry) else NAMED_BY_PATH\n",
+     "                        NAMED_BY_PATH\n",
+     functional_suite, "a transformed jar of the build's own project Gradle writes again with other content runs every test"),
+    ("the complement's stamp names a transformed jar of the build's own project by its path", SELECTION_RECORD,
+     '                return@map "gradle:$inHome $digest"\n',
+     '                return@map "gradle:$inHome"\n',
+     unit_suite, "the classpath digest reads a transformed jar of the build's own project by its entries"),
     ("a SNAPSHOT in the Maven repository is named by its path", CLASSPATH_FILES,
      '                    home.key == USER_HOME -> contentDigest(entry)\n',
      '                    home.key == MAVEN_REPOSITORY -> NAMED_BY_PATH\n                    home.key == USER_HOME -> contentDigest(entry)\n',

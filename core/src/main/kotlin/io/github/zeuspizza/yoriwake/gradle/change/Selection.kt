@@ -256,7 +256,10 @@ internal fun classpathFilesRule(
         )
     }
     val walk = runCatching {
-        ClasspathFiles.table(facts.classpathFiles(), facts.buildDirs.values, facts.rootDir, facts.dependencyHomes, text = text)
+        ClasspathFiles.table(
+            facts.classpathFiles(), facts.buildDirs.values, facts.rootDir, facts.dependencyHomes, text = text,
+            projectArtifacts = facts.projectArtifacts(),
+        )
     }.getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }
     return when (walk) {
         is ClasspathFiles.Walk.Refused ->

@@ -1,7 +1,9 @@
 package io.github.zeuspizza.yoriwake.gradle.facts
 
 import org.gradle.api.Project
+import org.gradle.api.artifacts.ArtifactCollection
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.provider.Provider
 import java.io.File
 
@@ -27,6 +29,37 @@ internal fun moduleIdentities(project: Project): Provider<Map<File, String>> = p
         }
     identities
 }
+
+/**
+ * The artifacts of this project's runtime classpaths, held as Gradle's own collections: resolved
+ * when [projectArtifacts] reads them in a task action, so a transform's output is the one under the
+ * running Gradle user home, after the task that produces its input has run.
+ */
+internal fun runtimeArtifacts(project: Project): Provider<List<ArtifactCollection>> = project.provider {
+    project.configurations.filter { it.isCanBeResolved && it.name.endsWith("RuntimeClasspath", ignoreCase = true) }
+        .map { configuration -> configuration.incoming.artifactView { it.lenient(true) }.artifacts }
+}
+
+/**
+ * The files of [classpath] in Gradle's transform cache under [gradleUserHome] that [artifacts]
+ * resolves to a project, of this build or one it includes. Nothing is resolved when no file of
+ * [classpath] lies in that cache; a collection that fails to resolve gives none.
+ */
+internal fun projectArtifacts(artifacts: Provider<List<ArtifactCollection>>, classpath: Collection<File>, gradleUserHome: File): Set<File> {
+    val transformed = classpath.map(File::getAbsoluteFile).filter { file ->
+        file.relativeToOrNull(gradleUserHome.absoluteFile)?.invariantSeparatorsPath
+            ?.let { !it.startsWith("..") && TRANSFORM_CACHE.containsMatchIn(it) } == true
+    }.toSet()
+    if (transformed.isEmpty()) return emptySet()
+    val collections = runCatching { artifacts.get() }.getOrDefault(emptyList())
+    return collections.flatMapTo(mutableSetOf()) { collection ->
+        runCatching {
+            collection.artifacts.filter { it.id.componentIdentifier is ProjectComponentIdentifier }.map { it.file.absoluteFile }
+        }.getOrDefault(emptyList())
+    }.filterTo(mutableSetOf()) { it in transformed }
+}
+
+private val TRANSFORM_CACHE = Regex("^caches/[^/]+/transforms/")
 
 /** [group]:[module], with the classifier and extension [fileName] carries beyond `module-version`. */
 internal fun identityOf(group: String, module: String, version: String, fileName: String): String {
