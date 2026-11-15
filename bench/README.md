@@ -101,7 +101,8 @@ reading a stack trace needs the logs of the machine that ran the sweep.
   is a share of commits, not of seconds, and a decision, not a run: it says nothing about recall.
   Fields: [`docs/sweep-data-dictionary.md`](../docs/sweep-data-dictionary.md#real-commits-replayed-commit-replayjson).
 - `config_cost.py`: what applying the plugin costs a project before it runs a test.
-- `cost.py`: what a sweep will cost before it starts, and what it cost after.
+- `cost.py`: what a sweep will cost before it starts, and what it cost after; `--isolated` adds
+  what the paired isolated arm of `sweep.yml` would.
 - `corpus_state.py`: per project, whether its recall evidence is clean, and if not, what it is.
 - `readme_charts.py`: the benchmark charts, as SVG, from results files.
 

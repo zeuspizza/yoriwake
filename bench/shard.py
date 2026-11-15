@@ -1,5 +1,8 @@
 """Cuts a project's accepted target list into slices, each one CI job of both arms.
 
+With `--isolated` each slice also measures its rows a second time against an isolated map, so each
+row is priced with that arm's cost on top (`cost.isolated_arm`).
+
 Each slice holds at most 90 minutes of projected rows, plus its fixed cost: the job's setup, and
 the warm-up run only when the slice times a row (`run.slice_times_a_row`). A row longer than that
 gets a slice of its own; one that cannot fit a job's six-hour limit at all is refused.
@@ -47,15 +50,19 @@ def row_costs(unit, count, factor):
             for position in range(count)]
 
 
-def plan(costs, overhead, budget=BUDGET_SECONDS):
+def plan(costs, overhead, budget=BUDGET_SECONDS, required=None):
     """Contiguous `[start, end)` slices in list order, each holding rows within `budget` where a row
     allows it; `overhead` is the most a slice adds to its rows. A row too long for a job at all is
-    refused: no slicing can measure it."""
-    slices, start, spent = [], 0, 0.0
-    for position, seconds in enumerate(costs):
+    refused: no slicing can measure it.
+
+    `required` is the part of each row's cost the job cannot do without, where `costs` holds more:
+    a paired second pass stops itself when the job runs short, so only the first can refuse a row."""
+    for position, seconds in enumerate(costs if required is None else required):
         if overhead + seconds > JOB_LIMIT_SECONDS:
             raise SystemExit(f"row {position} is projected at {seconds / 3600:.1f} h, which with the "
                              f"job's setup does not fit the 6 h job limit")
+    slices, start, spent = [], 0, 0.0
+    for position, seconds in enumerate(costs):
         if position > start and spent + seconds > budget:
             slices.append([start, position])
             start, spent = position, 0.0
@@ -93,6 +100,8 @@ def main(argv=None):
     parser.add_argument("accepted")
     parser.add_argument("--factor", type=float, required=True,
                         help="runner seconds per local second, for the qualification table only")
+    parser.add_argument("--isolated", action="store_true",
+                        help="each slice also measures its rows against an isolated map")
     parser.add_argument("--priced-from",
                         help="this project's results file from the last published sweep")
     args = parser.parse_args(argv)
@@ -108,8 +117,11 @@ def main(argv=None):
                         ground_truth=accepted.get("ground_truth") or "full",
                         forced_share_without_rows=0.0)
     warmup = factor * (last.get("baseline_seconds") or 0)
-    costs = row_costs(unit, count, factor)
-    accepted["slices"] = plan(costs, SETUP_SECONDS + warmup) if count else []
+    shared = costs = row_costs(unit, count, factor)
+    if args.isolated:
+        paired = 60 * factor * cost.isolated_arm(last, count)["row_minutes"]
+        costs = [round(seconds + paired, 1) for seconds in shared]
+    accepted["slices"] = plan(costs, SETUP_SECONDS + warmup, required=shared) if count else []
     for number, ((start, end), fixed) in enumerate(
             zip(accepted["slices"], fixed_seconds(accepted["slices"], warmup, recall_only,
                                                   timing_cap)), 1):

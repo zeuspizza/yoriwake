@@ -298,6 +298,49 @@ def case_a_target_with_a_pipe_stays_in_its_cell():
     return problems
 
 
+def case_a_paired_isolated_arm_is_shown_beside_the_shared_one_or_its_reason_is():
+    arm = lambda narrowed, tests, seconds, recording: {  # noqa: E731
+        "rows": 3, "narrowed": narrowed, "tests_run": tests, "selected_seconds": seconds,
+        "recording_seconds": recording}
+    states = {"demo": {"status": "ran", "paired_rows": 3, "shared": arm(1, 24, 37.2, 61.2),
+                       "isolated": arm(3, 9, None, 140.0)},
+              "part": {"status": "ran", "paired_rows": 2, "slices_measured": 1, "slices": 2,
+                       "shared": arm(1, 8, 4.0, 61.2), "isolated": arm(2, 2, 3.0, 140.0)},
+              "okio": {"status": "did-not-finish", "reason": "1 of 2 slices measured their "
+                                                             "isolated arm"},
+              "demo-maven": {"status": "not run", "reason": "a Maven project, which has no "
+                                                            "isolated capture"}}
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        merged = _sweep(root, {name: _project(name, [_row("a")]) for name in states})
+        without = _page(root, merged)
+        path = os.path.join(merged, "sweep.json")
+        with open(path, encoding="utf-8") as handle:
+            sweep = json.load(handle)
+        for isolated in (states, {"demo": "odd", "okio": None}):
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({**sweep, "isolated": isolated}, handle)
+            text = _page(root, merged)
+            if isolated is states:
+                shown = text
+            elif "<summary>demo:" not in text:
+                failures += fail("an odd isolated entry cost the page its projects")
+    if "Isolated capture" in without:
+        failures += fail("a run without the arm has a section for it")
+    if "| demo | 3 | 1 → 3 | 24 → 9 | 37 →  | 61 → 140 |" not in shown:
+        failures += fail(f"both arms of demo: {shown.split('### Projects')[0]}")
+    if "| part | 2 (1 of 2 slices) | 1 → 2 |" not in shown:
+        failures += fail(f"a partly measured arm: {shown.split('### Projects')[0]}")
+    for line in ("- **okio**: isolated arm did-not-finish: 1 of 2 slices",
+                 "- **demo-maven**: isolated arm not run: a Maven project",
+                 "(2 of 4 projects)"):
+        if line not in shown:
+            failures += fail(f"the page lacks {line!r}")
+    if shown.index("Isolated capture") > shown.index("### Projects"):
+        failures += fail("the arms are compared after the projects' rows")
+    return failures
+
+
 def _replay_file(root, **over):
     """A merged real-commit figure, as `commit_replay.py --merge` writes it."""
     alpha = {"drawn": 8, "replayed": 6, "narrowed": 2, "selected_fewer": 1, "forced": 3,
@@ -414,6 +457,7 @@ CASES = (
     case_a_shape_set_folder_is_read_as_the_default_set_is,
     case_no_sweep_file_is_said_and_exits_0,
     case_a_target_with_a_pipe_stays_in_its_cell,
+    case_a_paired_isolated_arm_is_shown_beside_the_shared_one_or_its_reason_is,
 )
 
 

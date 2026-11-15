@@ -117,6 +117,8 @@ import family_order  # noqa: E402
 
 # `forcing/v1` likewise: see `forcing_mutations`.
 import forcing_mutations  # noqa: E402
+# The explain task: a decision without a test run (lazy on its side, so no cycle).
+import commit_replay  # noqa: E402
 from forcing_mutations import FORCING_SET  # noqa: E402
 SHAPE_SETS = SHAPE_SETS + (FORCING_SET,)
 
@@ -741,9 +743,9 @@ def apply_neutral(checkout, relative, kind):
 
 
 # THE KINDS WHOSE REASON IS ABOUT THE PROJECT, NOT THE CHANGE. `unmappable-paths` lists the paths
-# that forced; `map-unusable` is the map itself. Every other kind either is fixed text that still
-# depends on the change (`startup-coverage`: "the change touches startup coverage, which no test
-# owns"), or is the daemon's verdict on the change (`daemon-refused`), so three identical reasons
+# that forced; `map-unusable` is the map itself. Every other kind's reason either depends on the
+# change (`startup-coverage` names the startup class or says every test depends on it), or is the
+# daemon's verdict on the change (`daemon-refused`), so three identical reasons
 # of those kinds say nothing about the setup.
 SETUP_FORCED_KINDS = ("unmappable-paths", "map-unusable")
 SETUP_FORCED_STREAK = 3
@@ -4311,6 +4313,83 @@ def stamp_rows(findings, stamped, control=False):
                 row.setdefault("control", True)
 
 
+def sharded_arm_refusal(args):
+    """Why this invocation's sharding flags are refused, or None.
+
+    A sharded run records and measures the shared arm. The one isolated arm it takes is a slice's
+    paired one: `--isolated-capture --pair-with <the slice's own shared rows> --shard K/N`, which
+    borrows each row's ground truth from the slice that ran minutes before on the same machine.
+    An isolated slice with no pair would need a baseline and a full arm of its own, which the
+    recording job did not make for it.
+    """
+    if not (args.accepted_out or args.shard):
+        return None
+    if args.only_target or args.replay or args.control:
+        return "a sharded sweep is a mutation sweep, with no --only-target, --replay or --control"
+    if args.accepted_out and (args.isolated_capture or args.pair_with):
+        return "the recording job of a sharded sweep records the shared arm"
+    if bool(args.isolated_capture) != bool(args.pair_with):
+        return ("a slice's isolated arm is paired with the slice's own shared rows: pass "
+                "--isolated-capture and --pair-with together")
+    return None
+
+
+def paired_selected_seconds(paired_row):
+    """What a run of every test cost on the paired row's machine: its full arm, or its selected
+    arm where that ran everything and stood in for the full arm."""
+    seconds = paired_row.get("full_seconds")
+    if seconds is None and paired_row.get("full_arm_skipped"):
+        seconds = paired_row.get("selected_seconds")
+    return seconds
+
+
+def forced_before_running(explanation):
+    """`(full_run_kind, refusal_kind)` when the explain task says this change forces every test,
+    else None: it narrows, or it gave no answer and the selected arm must run to find out."""
+    if not isinstance(explanation, dict) or explanation.get("fullRun") is not True:
+        return None
+    return explanation.get("fullRunKind"), explanation.get("refusalKind")
+
+
+def paired_forced_row(paired_row, label, kind, index, forced, limit, gate_seconds):
+    """A paired arm's row for a change that forces every test, written WITHOUT RUNNING THEM.
+
+    A forced selected arm runs what the paired row's full arm ran minutes before, on the same
+    mutation and the same machine, so that arm is taken as this row's selected arm: its size, its
+    seconds and its failures. Nothing can be missed by a run of everything. `selected_arm_from`
+    says so, and a reader that wants only arms this job ran leaves these rows out. What only a
+    run of the arm produces is absent: its decision records, its map facts, its replay block.
+    """
+    full_run_kind, refusal_kind = forced
+    return {
+        "target": label, "kind": kind, "index": index, "sweep_limit": limit,
+        "narrowed_target": None,
+        "status": paired_row["status"],
+        "full_distinct": paired_row["full_distinct"],
+        "full_failures": len(paired_row["induced"]),
+        "already_failing": paired_row.get("already_failing"),
+        "selected_distinct": paired_row["full_distinct"],
+        "induced": list(paired_row["induced"]),
+        "full_arm_skipped": False, "timed": False, "control": False,
+        "ground_truth": paired_row.get("ground_truth"), "ground_truth_from": "paired",
+        "full_ci": paired_row.get("ci"),
+        "selected_arm": paired_row.get("full_arm"), "full_arm": paired_row.get("full_arm"),
+        "full_conditions": paired_row.get("full_conditions"), "remeasured": False,
+        "selected_arm_from": "paired",
+        "paired_decision": "forced",
+        "decision_outcome": "full-run", "decision_source": "explain",
+        "full_run_kind": full_run_kind, "refusal_kind": refusal_kind,
+        "missed": [], "order_dependent": [], "undetermined": [], "nondeterministic": [],
+        "container_failed": [], "fails_unmutated": [], "shared_key": [], "ran_but_passed": [],
+        "result_keys": paired_row.get("result_keys"),
+        "collapsed_induced": list(paired_row.get("collapsed_induced") or []),
+        "ci": ci_stamp(),
+        "selected_seconds": paired_selected_seconds(paired_row),
+        "full_seconds": paired_row.get("full_seconds"),
+        "gate_seconds": gate_seconds, "followup_seconds": 0.0,
+    }
+
+
 def parse_shard(text):
     """`K/N` as `(K, N)`, shard K of N counted from 1."""
     match = re.fullmatch(r"(\d+)/(\d+)", text or "")
@@ -4796,6 +4875,12 @@ def argument_parser():
     parser.add_argument("--pair-with", metavar="RESULTS",
                         help="with --isolated-capture: measure exactly this results file's rows, "
                              "reusing their full arm and baseline")
+    # THE ISOLATED MAP FOR A SHARDED RUN'S SLICES: recorded once, beside the shared recording, so
+    # each slice measures its paired rows against it. No baseline (the paired rows carry their own
+    # ground truth) and no warm-up (the shared recording before it left the machine warm).
+    parser.add_argument("--capture-only", action="store_true",
+                        help="with --isolated-capture: record the isolated map, write its header "
+                             "to results/<project>.isolated.json and measure no row")
     parser.add_argument("--keep-exec", action="store_true",
                         help="keep JaCoCo .exec blobs for every row's raw records, not only capture's")
     # ONLY FOR REPRODUCING A SETUP-FORCED PROJECT as the 0.1 sweep measured it: without the reset,
@@ -4840,9 +4925,13 @@ def main():
     if bool(args.accepted) != bool(args.shard):
         parser.error("--accepted and --shard go together")
     sharding = args.accepted_out or args.shard
-    if sharding and (args.only_target or args.pair_with or args.replay or args.control
-                     or args.isolated_capture):
-        parser.error("a sharded sweep is a shared-arm mutation sweep")
+    refusal = sharded_arm_refusal(args)
+    if refusal:
+        parser.error(refusal)
+    if args.capture_only and (not args.isolated_capture or args.pair_with or sharding
+                              or args.replay or args.only_target or args.control):
+        parser.error("--capture-only records the isolated map alone: pass --isolated-capture, "
+                     "and no rows to measure")
     # A SHARDED `pool/v1` RUN CANNOT TIME THE ROWS A SINGLE JOB WOULD. The timing cap times the first
     # rows by draw position, a shard counts that position on the recording job's whole list, and a
     # single job skips the targets of a family that already stopped, so the two would time
@@ -4905,7 +4994,10 @@ def main():
     # from, so an edit made while the sweep runs cannot restamp rows measured before it. Null for a
     # project that is not a fixture.
     RUN_STAMPS["fixture_digest"] = fixture_digest(project)
-    checkout = checkout_project(project, keep_state=bool(shard))
+    # A recording that measures no row follows the shared one in its job, and its slices measure
+    # in the shared recording's copy of a fixture: a second copy would be another commit, which
+    # the map could not be related to.
+    checkout = checkout_project(project, keep_state=bool(shard) or args.capture_only)
     # EVERY QUESTION ASKED OF A BUILD'S LOG OR ITS MAP DIRECTORY, answered for this project's build
     # tool; the row rules below are the same for both.
     seams = Seams(project, checkout)
@@ -5049,8 +5141,9 @@ def main():
     # medium project and a sweep that pays that on every resume is a sweep nobody resumes.
     previous = {}
     # A shard's capture and baseline are the recording job's, whose header is the results file.
+    # Each arm's own: the isolated map's recording wrote the isolated file's header.
     header_path = (results_location(results_root, os.path.join(HERE, "logs"), project["name"],
-                                    args.shapes)[0] if shard else out_path)
+                                    args.shapes, args.isolated_capture)[0] if shard else out_path)
     if os.path.isfile(header_path):
         with open(header_path, encoding="utf-8") as handle:
             previous = json.load(handle)
@@ -5243,13 +5336,15 @@ def main():
         # enough for this pair: --rerun-tasks recompiles in both arms anyway, so what the second arm
         # actually inherits is a warm daemon, which only running the task can produce.
         warmup_log = os.path.join(scratch, "warmup.log")
-        gradle(checkout, project,
-               [task_path, "--rerun-tasks"], warmup_log)
+        # `--capture-only` follows the shared recording in the same job, which is its warm-up.
+        if not args.capture_only:
+            gradle(checkout, project,
+                   [task_path, "--rerun-tasks"], warmup_log)
         # Checked, not assumed. A warm-up that never reached the tests leaves the daemon exactly as
         # cold as before, so capture pays the startup cost and baseline does not -- which is the
         # artefact this block exists to remove, silently reintroduced while the printout claims it
         # was handled. Refusing to measure beats publishing a number whose method is not what it says.
-        if not seams.ran(warmup_log):
+        if not args.capture_only and not seams.ran(warmup_log):
             print("the warm-up run never reached the tests, so the timing arms would not be "
                   "comparable; aborting", flush=True)
             return 1
@@ -5346,7 +5441,12 @@ def main():
                 "archive": os.path.relpath(archive, ROOT),
                 "bytes": sweep_data.archive_evidence(archive, [(capture_raw, "raw")])}
             shutil.rmtree(capture_raw, ignore_errors=True)
-        if paired_rows is not None:
+        if args.capture_only:
+            # The slices' paired rows bring the baseline and the ground truth with them.
+            RUN_STAMPS["baseline_arm"] = None
+            print(f"  isolated capture {capture_seconds}s; no baseline, the paired slices carry "
+                  f"their own", flush=True)
+        elif paired_rows is not None:
             # NO BASELINE OF ITS OWN. Every row reuses the paired row's ground truth, whose induced
             # set already has the paired baseline's already-failing tests taken out, and its
             # uninstrumented baseline is the one denominator both arms' recording cost is read
@@ -5423,6 +5523,12 @@ def main():
             write_untracked_snapshot(snapshot_path, wanted_stamp, prepared)
     snapshot = (None if args.no_untracked_reset
                 else read_untracked_snapshot(snapshot_path, wanted_stamp))
+    if args.capture_only:
+        # THE HEADER A SLICE'S ISOLATED ARM READS: the recording's seconds and facts, and no row.
+        write_results(out_path, project, module, capture_seconds, None, [], args.target_seed,
+                      map_dir=map_dir, daemon_uptime_at_start=daemon_uptime_at_start,
+                      shapes=args.shapes, grammar=grammar)
+        return 0
 
     # CACHED UNDER --recall-only, keyed on everything that decides which tests fail unmutated: the
     # pinned commit, the staged tree and the flags. A spot check otherwise pays a full suite run --
@@ -5726,8 +5832,10 @@ def main():
         # for cold daemons and caches: the same discarded run the capture is preceded by. Only a
         # timed row's times are published, so a slice of untimed rows skips it; recall cannot
         # depend on it, because the selected arm always runs before the full arm.
-        if slice_times_a_row(accepted, accepted + len(ordered), args.recall_only,
-                             args.timing_cap):
+        # Nor does a paired arm: none of its rows is timed, and the slice's shared rows ran
+        # on this machine just before it.
+        if paired_rows is None and slice_times_a_row(accepted, accepted + len(ordered),
+                                                     args.recall_only, args.timing_cap):
             warmup_log = os.path.join(scratch, f"warmup-shard-{shard[0]}.log")
             gradle(checkout, project, [task_path, "--rerun-tasks"], warmup_log)
             if not seams.ran(warmup_log):
@@ -5998,6 +6106,40 @@ def main():
                 recorded.append([rel_path, kind, index, label])
                 continue
             timed = not rerunning and is_timed(accepted, args.recall_only, args.timing_cap)
+
+            # A SLICE'S PAIRED ARM ASKS FIRST WHETHER THE CHANGE FORCES EVERY TEST. A forced
+            # selected arm is the suite again, which the paired row's full arm ran minutes ago on
+            # this machine; the explain task decides the same question in seconds, with no test
+            # run. Forced: the paired full arm is this row's selected arm. Narrowed, or no answer:
+            # the selected arm runs as on any row, and the row says which.
+            paired_decision = None
+            pair = keyed_lookup(paired_rows, label, kind, index) if paired_rows else None
+            if shard and pair is not None and map_dir:
+                asked = time.time()
+                gradle(checkout, project,
+                       [*INIT_SCRIPT_ARGS, commit_replay.explain_task(task_path),
+                        "-Pyoriwake.base=HEAD"] + select_flags + TIMING_ARM_FLAGS,
+                       os.path.join(scratch, f"explain-{stem}.log"))
+                explanation = commit_replay.read_explanation(
+                    os.path.join(map_dir, "explain.json"), asked)
+                forced = forced_before_running(explanation)
+                # The task wrote its answer into the map every row starts from.
+                restore_map(map_backup, map_dir)
+                if forced:
+                    findings.append(paired_forced_row(pair, label, kind, index, forced,
+                                                      args.limit, gate_seconds))
+                    print(f"    forces every test ({forced[1] or forced[0] or 'no kind'}); the "
+                          f"paired full arm ({pair['full_distinct']} tests) is its selected arm",
+                          flush=True)
+                    write_results(out_path, project, module, capture_seconds, baseline_seconds,
+                                  findings, args.target_seed, map_dir=map_dir,
+                                  daemon_uptime_at_start=daemon_uptime_at_start,
+                                  shapes=args.shapes, targets_available=targets_available,
+                                  baseline_repeats=repeats, baseline_answered=baseline_answered,
+                                  baseline_removed=baseline_removed, rejected_targets=rejected,
+                                  rejected_mutations=rejected_mutations, grammar=grammar)
+                    continue
+                paired_decision = "narrowed" if explanation is not None else "unanswered"
 
             replay_map = snapshot_for_replay(map_dir, scratch)
             selected_log = os.path.join(scratch, f"selected-{stem}.log")
@@ -6371,6 +6513,10 @@ def main():
                 "remeasured": rerunning,
                 # Where this row's ground truth came from: its own full arm, or the paired file's row.
                 "ground_truth_from": "paired" if paired_row is not None else "own",
+                # On a slice's paired arm: what the explain task said before this arm ran, and so
+                # why it ran. `narrowed`, or `unanswered` when the task wrote no answer.
+                **({"selected_arm_from": "own", "paired_decision": paired_decision}
+                   if paired_decision is not None else {}),
                 # The job the borrowed full arm ran in, which a time ratio must not cross.
                 **({"full_ci": paired_row.get("ci")} if paired_row is not None else {}),
                 "raw_bytes_kept": raw_kept,

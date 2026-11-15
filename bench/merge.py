@@ -27,11 +27,19 @@ to the one that reaches the target: the sample a single job would have drawn. `p
 family, so there each family's rows are kept up to the one that reaches that family's target. The
 rows past it are counted in `rows_past_target`.
 
+With `--isolated`, the sweep also ran a paired isolated arm: each slice measured its own rows a
+second time against a map recorded with a fresh test JVM per class, reusing their ground truth.
+Each project's `isolated-recording.json` and `isolated-shard-<k>-of-<n>.json` become
+`<project>.isolated.json`, holding the isolated row of every row the shared file kept, and
+`sweep.json` states per project whether that arm ran and both arms' figures over the rows both
+measured. An isolated arm that did not finish costs a project that file, never its shared rows.
+
     python3 bench/merge.py --arm full --planned demo okio --out bench/results DIR
     python3 bench/merge.py --arm full --planned demo okio --missing "okio=its record job failed" ...
     python3 bench/merge.py --arm full --planned okio --completes previous --out bench/results DIR
 
-`DIR/<project>/` holds `recording.json`, `accepted.json` and `shard-<k>-of-<n>.json`.
+`DIR/<project>/` holds `recording.json`, `accepted.json` and `shard-<k>-of-<n>.json`, and with a
+paired isolated arm `isolated-recording.json` and `isolated-shard-<k>-of-<n>.json`.
 """
 
 import argparse
@@ -150,6 +158,84 @@ def merge_directory(path):
     return merge_project(load("recording.json"), load("accepted.json"), shards)
 
 
+RAN, DID_NOT_FINISH, NOT_RUN = "ran", "did-not-finish", "not run"
+
+
+def arm_figures(data, keys):
+    """One arm's figures over the rows `keys` names: how many, how many narrowed, the tests and
+    seconds of their selected arms, and what recording the arm's map took."""
+    rows = [row for row in data.get("mutations") or [] if run.row_key(row) in keys]
+    seconds = [row.get("selected_seconds") for row in rows]
+    return {"rows": len(rows),
+            "narrowed": sum(1 for row in rows if row.get("decision_outcome") == "narrowed"),
+            "tests_run": sum(row.get("selected_distinct") or 0 for row in rows),
+            # None when a row has no time: a sum over the others would read as the arm's.
+            "selected_seconds": (round(sum(seconds), 1)
+                                 if all(isinstance(s, (int, float)) for s in seconds) else None),
+            "recording_seconds": data.get("capture_seconds")}
+
+
+def merge_isolated(merged, recording, shards):
+    """`(file, state)` of one project's paired isolated arm: `<project>.isolated.json`, or None
+    where the arm did not finish, and the project's entry of `sweep.json`.
+
+    The file holds the isolated row of each row the merged shared file kept, in that order: the
+    rows past the narrowed target go with their shared rows. A slice whose isolated arm left no
+    file takes its rows out of the comparison and nothing else: the state says how many slices
+    measured it, and both arms' figures are over the rows both have. A recording that did not
+    finish, no slice at all and a file under other stamps than the shared arm's are each
+    `did-not-finish` with the reason, and the shared file is what it was.
+    """
+    if merged.get("build_tool") == run.maven_build.MAVEN:
+        return None, {"status": NOT_RUN, "reason": "a Maven project, which has no isolated capture"}
+    if recording is None:
+        return None, {"status": DID_NOT_FINISH, "reason": "the isolated recording left no map"}
+    count = merged.get("shards")
+    for name, data in [("the isolated recording", recording)] + [
+            (f"isolated shard {s.get('shard')}", s) for s in shards]:
+        for stamp in STAMPS + ("target_shapes",):
+            if data.get(stamp) != merged.get(stamp):
+                return None, {"status": DID_NOT_FINISH,
+                              "reason": f"{name} has {stamp} {data.get(stamp)!r}, the shared arm "
+                                        f"{merged.get(stamp)!r}"}
+    have = {(s.get("shard") or [None])[0] for s in shards} & set(range(1, (count or 0) + 1))
+    if not have:
+        return None, {"status": DID_NOT_FINISH,
+                      "reason": f"0 of {count} slices measured their isolated arm"}
+    rows = {}
+    for shard in shards:
+        for row in shard.get("mutations") or []:
+            if "kind" in row and "index" in row:
+                rows[run.row_key(row)] = row
+    shared_keys = [run.row_key(row) for row in merged.get("mutations") or []]
+    kept = [rows[key] for key in shared_keys if key in rows]
+    data = {**{key: value for key, value in recording.items() if key != "shard"},
+            "baseline_seconds": merged.get("baseline_seconds"),
+            "paired_with": f"{merged.get('project')}.json",
+            "mutations": kept, "shards": count}
+    paired = {run.row_key(row) for row in kept
+              if row.get("status") in ("checked", "no-effect")}
+    return data, {"status": RAN, "slices_measured": len(have), "slices": count,
+                  "paired_rows": len(paired), "shared_rows": len(shared_keys),
+                  "shared": arm_figures(merged, paired), "isolated": arm_figures(data, paired)}
+
+
+def isolated_directory(path, merged):
+    """`merge_isolated` over a project's directory of downloaded artifacts."""
+    def load(name):
+        with open(os.path.join(path, name), encoding="utf-8") as handle:
+            return json.load(handle)
+    names = sorted(os.listdir(path)) if os.path.isdir(path) else []
+    # Whatever is wrong with these files, the shared files beside them are still written.
+    try:
+        recording = load("isolated-recording.json") if "isolated-recording.json" in names else None
+        shards = [load(name) for name in names if name.startswith("isolated-shard-")]
+        return merge_isolated(merged, recording, shards)
+    except Exception as error:
+        return None, {"status": DID_NOT_FINISH,
+                      "reason": f"an isolated file could not be read ({type(error).__name__})"}
+
+
 def check_sweep(planned, merged, arm, isolated, missing=None):
     """The sweep-level refusals over the merged files, and the summary that states what ran.
 
@@ -188,7 +274,7 @@ def check_sweep(planned, merged, arm, isolated, missing=None):
                       f"figure would be a statement about nothing")
     commits = sorted({data.get("plugin_commit") for data in merged.values()} - {None})
     return {"arm": arm, "projects": sorted(merged), "missing": dict(sorted(missing.items())),
-            "miss_possible_rows": possible, "isolated_arm": "ran" if isolated else "not run",
+            "miss_possible_rows": possible, "isolated_arm": RAN if isolated else NOT_RUN,
             "plugin_commits": commits}
 
 
@@ -245,10 +331,21 @@ def main(argv=None):
         merged = {name: merge_directory(os.path.join(args.artifacts, name))
                   for name in args.planned
                   if name not in missing and os.path.isdir(os.path.join(args.artifacts, name))}
-        planned = args.planned
+        planned, own = args.planned, sorted(merged)
         if args.completes:
             planned, merged, missing = complete(args.completes, args.arm, planned, merged, missing)
         summary = check_sweep(planned, merged, args.arm, args.isolated, missing)
+        isolated_files = {}
+        if args.isolated:
+            # Of this run's projects: an earlier run's isolated files are not carried over.
+            summary["isolated"] = {}
+            for name in own:
+                isolated_files[name], summary["isolated"][name] = isolated_directory(
+                    os.path.join(args.artifacts, name), merged[name])
+            # The sweep's own word for the arm is its best project's: ran with one file written.
+            states = {state["status"] for state in summary["isolated"].values()}
+            summary["isolated_arm"] = next((s for s in (RAN, DID_NOT_FINISH) if s in states),
+                                           NOT_RUN)
     except Refused as refused:
         print(f"REFUSED: {refused}", file=sys.stderr)
         return 1
@@ -260,6 +357,10 @@ def main(argv=None):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=1)
+        if isolated_files.get(name) is not None:
+            with open(run.results_location(args.out, "", name, shapes, isolated=True)[0], "w",
+                      encoding="utf-8") as handle:
+                json.dump(isolated_files[name], handle, indent=1)
     # Beside the files it summarises: a named set's sweep never replaces the default set's.
     shapes = {data.get("target_shapes") or run.DEFAULT_SHAPES for data in merged.values()}
     if len(shapes) > 1:

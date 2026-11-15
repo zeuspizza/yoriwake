@@ -913,4 +913,78 @@ class MavenAndSurefireAttempts : MavenBreakAttempt() {
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
+
+    // Track: code reading. Boundary: startup work is credited to the JVM that ran it, at its start,
+    // through the shared selector. With a fork per class, a post-discovery filter runs a changed
+    // class only where the plan holds the class that reads its result: that JVM's test runs, and the
+    // JVM that never loaded it is left out.
+    @Test
+    fun `a startup change with a fork per class runs only the tests of the JVM that ran it`(@TempDir dir: File) {
+        val codec = source(
+            "src/main/java/dev/sample/Codec.java",
+            "package dev.sample;\npublic class Codec { public String encode(String s) { return new StringBuilder(s).reverse().toString(); } }",
+        )
+        val other = source(
+            "src/main/java/dev/sample/Other.java",
+            "package dev.sample;\npublic class Other { public int one() { return 1; } }",
+        )
+        val filter = source(
+            "src/test/java/dev/sample/CodecFilter.java",
+            """
+            package dev.sample;
+            import org.junit.platform.engine.FilterResult;
+            import org.junit.platform.engine.TestDescriptor;
+            import org.junit.platform.launcher.PostDiscoveryFilter;
+            public class CodecFilter implements PostDiscoveryFilter {
+                @Override public FilterResult apply(TestDescriptor descriptor) {
+                    if (descriptor.getUniqueId().toString().contains("A1StartupTest")) {
+                        try {
+                            // By name, so a JVM whose plan lacks the class never loads Codec.
+                            Class<?> codec = Class.forName("dev.sample.Codec");
+                            Object encoded = codec.getMethod("encode", String.class)
+                                .invoke(codec.getDeclaredConstructor().newInstance(), "abc");
+                            System.setProperty("codec.abc", (String) encoded);
+                        } catch (ReflectiveOperationException e) {
+                            throw new IllegalStateException(e);
+                        }
+                    }
+                    return FilterResult.included("kept");
+                }
+            }
+            """,
+        )
+        val registration = "src/test/resources/META-INF/services/org.junit.platform.launcher.PostDiscoveryFilter" to
+            "dev.sample.CodecFilter\n"
+        val target = source(
+            "src/test/java/dev/sample/A1StartupTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1StartupTest { @Test void readsFilter() { assertEquals("cba", System.getProperty("codec.abc")); } }
+            """,
+        )
+        val otherTest = source(
+            "src/test/java/dev/sample/A0OtherTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A0OtherTest { @Test void usesOther() { assertEquals(1, new Other().one()); } }
+            """,
+        )
+        val pom = withDependency(
+            minimalPom,
+            "<dependency><groupId>org.junit.platform</groupId><artifactId>junit-platform-launcher</artifactId><scope>test</scope></dependency>",
+        )
+
+        val result = attempt(
+            dir, "dev.sample.A1StartupTest", Aim.Row("shares-jvm-changed-class"),
+            listOf(codec, other, otherTest, filter, registration, target), pom = pom,
+        ) { project ->
+            File(project, codec.first).edit { it.replace("reverse()", "reverse().append(\"!\")") }
+        }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
 }

@@ -33,6 +33,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A changed constant runs the tests of the classes compiled with it, instead of every test. Map: left alone.
 - A changed annotation selects like any other change to its class instead of running every test. Map: left alone.
 - Reference: a transform-cache entry written again after Gradle's cache cleanup also runs nothing. Map: left alone.
+- Code that ran before a JVM's first test runs only the tests of the JVMs that loaded it, not everything. Map: left alone.
 
 ### Fixed
 

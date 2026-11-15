@@ -40,7 +40,7 @@ internal fun narrowingLines(
     )
     add(
         "${d.startupClasses} classes are in startup coverage, which no test owns: touching " +
-            "one forces a full run."
+            "one runs every test of the JVMs that loaded it."
     )
     if (d.hubs.isNotEmpty()) {
         add("Most-reached classes:")
