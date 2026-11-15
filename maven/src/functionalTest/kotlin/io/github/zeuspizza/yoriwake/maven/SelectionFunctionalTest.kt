@@ -451,6 +451,20 @@ class SelectionFunctionalTest {
         assertContains(output, "Running dev.demo.app.AppTest")
     }
 
+    /** Writes [text] at [path] under [project], with the directories it needs. */
+    private fun write(project: File, path: String, text: String) =
+        File(project, path).apply { parentFile.mkdirs() }.writeText(text)
+
+    /** Puts [xml] into [module]'s POM, after its artifactId. */
+    private fun intoPom(project: File, module: String, xml: String) = File(project, "$module/pom.xml").edit {
+        it.replace("<artifactId>$module</artifactId>", "<artifactId>$module</artifactId>\n  $xml")
+    }
+
+    /** [module] alone, selecting against HEAD, so every edit in the working tree is the change. */
+    private fun selectingAgainstHead(project: File, module: String): String =
+        FunctionalMaven.run(maven, project, "verify", "-pl", module, "-Dyoriwake.select", "-Dyoriwake.base=HEAD")
+            .succeeded().output
+
     @Test
     fun `a changed constant in one module selects the test of the class in another that copied it`(@TempDir dir: File) {
         val project = committed(dir)
@@ -558,17 +572,117 @@ class SelectionFunctionalTest {
         assertFalse("Running dev.demo.app.AppTest" in output, output)
     }
 
+    /**
+     * kotlin does not reach lib: a comment and a dependency version in lib's POM, then a resource of
+     * lib, are no change for it. A README of lib is not under `src`, and keeps forcing.
+     */
     @Test
-    fun `a module's pom edit still forces executions off its classpath`(@TempDir dir: File) {
-        val project = captured(dir)
-        File(project, "lib/pom.xml").edit { it.replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <!-- touched -->") }
-        git(project, "commit", "-q", "-am", "an edit")
+    fun `a module's pom or resource edit selects nothing for executions off its classpath`(@TempDir dir: File) {
+        val project = committed(dir)
+        intoPom(
+            project, "lib",
+            "<dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-api</artifactId>" +
+                "<version>5.11.4</version><scope>test</scope></dependency></dependencies>",
+        )
+        git(project, "commit", "-q", "-am", "lib names its test API")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
 
-        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "kotlin", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+        File(project, "lib/pom.xml").edit {
+            it.replace("<version>5.11.4</version>", "<version>5.11.3</version>")
+                .replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <!-- touched -->")
+        }
+        val pom = selectingAgainstHead(project, "kotlin")
+
+        assertContains(selectingLine(pom, "kotlin"), "0 paths coverage cannot see, 1 in modules that are not on this task's classpath", message = pom)
+        assertContains(pom, "are no change: lib/pom.xml")
+        assertFalse("Running dev.demo.kt.AreaTest" in pom, pom)
+
+        val explained = FunctionalMaven.run(maven, project, "test-compile", "yoriwake:explain", "-pl", "kotlin", "-Dyoriwake.base=HEAD")
             .succeeded().output
+        val map = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().single { it.name.startsWith("dev.demo-kotlin-") }
+        assertContains(File(map, "explain.json").readText(), "\"offClasspath\": 1,", message = explained)
 
-        assertContains(selectingLine(output, "kotlin"), "1 paths coverage cannot see", message = output)
-        assertContains(output, "Running dev.demo.kt.AreaTest")
+        write(project, "lib/src/main/resources/x.json", "{}\n")
+        val resource = selectingAgainstHead(project, "kotlin")
+
+        assertContains(resource, "are no change: lib/pom.xml, lib/src/main/resources/x.json")
+        assertFalse("Running dev.demo.kt.AreaTest" in resource, resource)
+
+        write(project, "lib/README.md", "# lib\n")
+        val readme = selectingAgainstHead(project, "kotlin")
+
+        assertContains(selectingLine(readme, "kotlin"), "1 paths coverage cannot see", message = readme)
+        assertContains(readme, "Running dev.demo.kt.AreaTest")
+    }
+
+    /**
+     * lib's POM, edited in three ways that each keep it forcing for kotlin: a value naming the
+     * parent's directory, a plugin added, and a build extension declared.
+     */
+    @Test
+    fun `a sibling's pom that names its parent's directory, adds a plugin or declares an extension still forces`(@TempDir dir: File) {
+        val project = captured(dir)
+        listOf(
+            "<properties><shared>${'$'}{project.parent.basedir}/shared</shared></properties>",
+            "<build><plugins><plugin><artifactId>maven-help-plugin</artifactId></plugin></plugins></build>",
+            "<build><extensions><extension><groupId>org.jacoco</groupId><artifactId>jacoco-maven-plugin</artifactId>" +
+                "<version>0.8.12</version></extension></extensions></build>",
+        ).forEach { xml ->
+            intoPom(project, "lib", xml)
+            val output = selectingAgainstHead(project, "kotlin")
+
+            assertContains(selectingLine(output, "kotlin"), "1 paths coverage cannot see", message = "$xml\n$output")
+            assertContains(output, "Running dev.demo.kt.AreaTest", message = xml)
+            git(project, "checkout", "--", "lib/pom.xml")
+        }
+    }
+
+    /**
+     * modp, which does not depend on lib, filters its test resources with a file of lib's: a change
+     * to it keeps forcing modp, though no fork value and no class of modp names lib.
+     */
+    @Test
+    fun `a sibling's file the build reads as a resource filter still forces`(@TempDir dir: File) {
+        val project = committed(dir)
+        intoPom(
+            project, "modp",
+            "<build><filters><filter>../lib/src/main/filters/values.properties</filter></filters>" +
+                "<testResources><testResource><directory>src/test/resources</directory><filtering>true</filtering></testResource></testResources></build>",
+        )
+        write(project, "lib/src/main/filters/values.properties", "value=1\n")
+        write(project, "modp/src/test/resources/filtered.txt", "${'$'}{value}\n")
+        git(project, "add", ".")
+        git(project, "commit", "-q", "-m", "modp filters with lib's values")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+
+        write(project, "lib/src/main/filters/values.properties", "value=2\n")
+        val output = selectingAgainstHead(project, "modp")
+
+        assertContains(selectingLine(output, "modp"), "1 paths coverage cannot see", message = output)
+        assertContains(output, "Running dev.demo.modp.ModTest")
+    }
+
+    /**
+     * modp, which does not depend on lib, has a profile a file of lib's activates: adding that file
+     * keeps forcing modp, though the profile names lib in nothing the build hands the fork.
+     */
+    @Test
+    fun `a sibling's file that activates a profile still forces`(@TempDir dir: File) {
+        val project = committed(dir)
+        intoPom(
+            project, "modp",
+            "<profiles><profile><id>marked</id><activation><file><exists>${'$'}{basedir}/../lib/src/main/resources/marker</exists></file></activation>" +
+                "<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><environmentVariables>" +
+                "<MARKED>yes</MARKED></environmentVariables></configuration></plugin></plugins></build></profile></profiles>",
+        )
+        git(project, "commit", "-q", "-am", "a file of lib's marks modp")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+
+        write(project, "lib/src/main/resources/marker", "")
+        val output = selectingAgainstHead(project, "modp")
+
+        assertContains(selectingLine(output, "modp"), "1 paths coverage cannot see", message = output)
+        assertContains(output, "Running dev.demo.modp.ModTest")
     }
 
     /**
@@ -809,6 +923,12 @@ class SelectionFunctionalTest {
     fun `a sibling's path in a user property keeps its edits`(@TempDir dir: File) {
         val property = "-Dlib.dir=../lib/src/main/java"
         assertLibDirKeepsEdits(modpWith(dir, "", libDirReader, capture = listOf(property)), property)
+    }
+
+    @Test
+    fun `a sibling's path in the argLine keeps its edits`(@TempDir dir: File) {
+        val configuration = surefireConfigured("<argLine>@{argLine} -Dlib.dir=../lib/src/main/java</argLine>")
+        assertLibDirKeepsEdits(modpWith(dir, configuration, libDirReader))
     }
 
     @Test

@@ -966,6 +966,25 @@ class SelectorTest {
     }
 
     @Test
+    fun `a window a Spock specification shares selects its features and their iterations`(@TempDir dir: File) {
+        val alpha = "[engine:spock]/[spec:dev.AlphaSpec]"
+        val beta = "[engine:spock]/[spec:dev.BetaSpec]"
+        val m = map(
+            dir,
+            Triple("$alpha/[feature:a]", "SUCCESSFUL", "com.acme.A"),
+            Triple("$beta/[feature:b]/[iteration:0]", "SUCCESSFUL", "com.acme.B"),
+            Triple("[engine:spock]/[spec:dev.GammaSpec]/[feature:c]", "SUCCESSFUL", "com.acme.C"),
+            Triple("${AgentContract.CLASS_SCOPED_RECORD_PREFIX}$alpha|$beta", "NONE", "com.acme.Boundary"),
+        )
+
+        val decision = decide(m, changed = listOf("com.acme.Boundary"))
+
+        assertTrue(decision.includes("$alpha/[feature:a]"))
+        assertTrue(decision.includes("$beta/[feature:b]/[iteration:0]"))
+        assertFalse(decision.includes("[engine:spock]/[spec:dev.GammaSpec]/[feature:c]"))
+    }
+
+    @Test
     fun `class-scoped and unattributed records are not counted as tests`(@TempDir dir: File) {
         val m = map(
             dir,
@@ -1677,6 +1696,50 @@ class SelectorTest {
         assertFalse(decision.includes(placed("com.acme.EarlierTest")))
         assertFalse(decision.includes(placed("com.acme.ElsewhereTest")))
         assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.LaterTest")))
+    }
+
+    @Test
+    fun `an edited Spock specification runs its own features and those after it, not those before it`(@TempDir dir: File) {
+        val edited = "[engine:spock]/[spec:com.acme.EditedSpec]/[feature:f]"
+        val earlier = "[engine:spock]/[spec:com.acme.EarlierSpec]/[feature:f]"
+        val later = "[engine:spock]/[spec:com.acme.LaterSpec]/[feature:f]"
+        val decision = decide(
+            map(
+                dir,
+                Triple(earlier, "SUCCESSFUL", "com.acme.EarlierSpec"),
+                Triple(edited, "SUCCESSFUL", "com.acme.EditedSpec"),
+                Triple(later, "SUCCESSFUL", "com.acme.LaterSpec"),
+                positions = listOf("j\t2\t$earlier", "j\t3\t$edited", "j\t4\t$later"),
+                firstTouches = listOf("j\t1\tcom.acme.EditedSpec"),
+            ),
+            changed = listOf("com.acme.EditedSpec"),
+            exempt = listOf("com.acme.EditedSpec"),
+        )
+
+        assertFalse(decision.isFullRun)
+        assertTrue(decision.includes(edited))
+        assertFalse(decision.includes(earlier))
+        assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(later))
+    }
+
+    @Test
+    fun `a Kotest spec is not its tests' own class`(@TempDir dir: File) {
+        // Only Spock's spec segment names a class; a Kotest spec's load at discovery still dates it.
+        val edited = "[engine:kotest]/[spec:com.acme.EditedSpec]/[test:t]"
+        val earlier = "[engine:kotest]/[spec:com.acme.EarlierSpec]/[test:t]"
+        val decision = decide(
+            map(
+                dir,
+                Triple(earlier, "SUCCESSFUL", "com.acme.EarlierSpec"),
+                Triple(edited, "SUCCESSFUL", "com.acme.EditedSpec"),
+                positions = listOf("j\t2\t$earlier", "j\t3\t$edited"),
+                firstTouches = listOf("j\t1\tcom.acme.EditedSpec"),
+            ),
+            changed = listOf("com.acme.EditedSpec"),
+            exempt = listOf("com.acme.EditedSpec"),
+        )
+
+        assertTrue(decision.includes(earlier))
     }
 
     @Test

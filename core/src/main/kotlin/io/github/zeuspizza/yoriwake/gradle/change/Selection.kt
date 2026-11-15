@@ -829,6 +829,8 @@ internal data class ScopedChange(
     val notReadByTests: Int = 0,
     /** What `pathIgnore` took out of the change set, and what it matched and could not. */
     val ignore: PathIgnore.Applied = PathIgnore.Applied.none(emptyList()),
+    /** The dropped paths that are not class sources: build files and other `src` files, named on the console. */
+    val droppedFiles: List<String> = emptyList(),
 ) {
     /** Whether every path was dropped as off-classpath, as opposed to an empty change set. */
     val everythingWasOffClasspath: Boolean
@@ -862,6 +864,10 @@ internal fun scopedChange(
     notReadByTests: List<String> = emptyList(),
     ignore: PathIgnore.Declaration? = null,
     mapDir: File? = null,
+    /** The bases the change set was taken against, each an earlier text of a build file; none keeps every build file. */
+    bases: List<String> = emptyList(),
+    /** Changed paths whose earlier text no base holds: the working tree's drift since the capture. */
+    moved: Set<String> = emptySet(),
     /** The test task's input files under the root beyond its classpath and test classes, root-relative. */
     taskInputs: () -> List<String> = { emptyList() },
 ): ScopedChange {
@@ -880,16 +886,39 @@ internal fun scopedChange(
     val ideState = paths.count(NotRead::isIdeState)
     val read = paths.filterNot { NotRead.isIdeState(it) || declared(it) }
     val present = modulesOnClasspath(facts)
-    // `restrict` asks only about class sources.
-    val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present) { candidates ->
+    val rootDir = facts.rootDir
+    val others = ClasspathScope.Others(
+        buildFiles = facts.buildFiles,
+        reached = facts::reachedModules,
+        // By a class source's forms or its file name alone, in a class or in a resource of the
+        // build's own: a dependency knows no path of this repository.
+        named = { candidates ->
+            val forms = candidates.associateWith { path ->
+                (artifacts.needles(path, TaskArtifacts.Naming.CLASS_SOURCE) + path.substringAfterLast('/')).filter { it.isNotEmpty() }
+            }
+            val inResources = artifacts.namedInOwnResources(forms.values.flatten().distinct())
+            artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE) +
+                artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.FILE_NAME) +
+                candidates.filter { path -> forms.getValue(path).any { it in inResources } }
+        },
+        refusal = { path, module, buildFile ->
+            BuildFileReach.refusal(
+                path, module, buildFile, facts, BuildFileReach.reader(rootDir), { File(rootDir, it).isFile },
+                BuildFileReach.bases(rootDir, bases, moved),
+            )
+        },
+        ownBuild = { dir -> BuildFileReach.SETTINGS.any { File(rootDir, "$dir/$it").exists() } },
+    )
+    val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present, { candidates ->
         artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE)
-    }
+    }, others)
     return ScopedChange(
         ChangeDetection.split(restriction.kept, facts.rootDir),
         restriction.dropped.size,
         ideState = ideState,
         notReadByTests = paths.size - read.size - ideState,
         ignore = applied,
+        droppedFiles = restriction.droppedFiles,
     )
 }
 

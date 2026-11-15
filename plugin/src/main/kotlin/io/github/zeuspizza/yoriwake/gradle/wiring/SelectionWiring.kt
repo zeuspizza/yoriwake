@@ -165,7 +165,7 @@ internal fun TestTaskWiring.configureSelection(
             notReadByTests,
         )
     }
-    val (widened, stamp, paths) = when (settled) {
+    val selected = when (settled) {
         is SelectionSetup.Outcome.RunEverything -> {
             refuseAndRecord(
                 test, mapDir, observing, fromBuildScript, settled.kind, settled.reason, settled.cause, settled.clears,
@@ -182,8 +182,12 @@ internal fun TestTaskWiring.configureSelection(
             }
             return
         }
-        is SelectionSetup.Outcome.Select -> Triple(settled.widened, settled.stamp, settled.paths)
+        is SelectionSetup.Outcome.Select -> settled
     }
+    val widened = selected.widened
+    val stamp = selected.stamp
+    val paths = selected.paths
+    val moved = selected.moved
     val against = widened.ref
 
     // Resolved to plain values and providers here: a task action may not touch Project under
@@ -244,7 +248,7 @@ internal fun TestTaskWiring.configureSelection(
             SelectingStep.Inputs(
                 mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
                 notReadByTests, ignore, declared, observing, dependencies = dependencies,
-                narrowLineOnlyChanges = narrowLineOnlyChanges,
+                narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = stamp, moved = moved,
                 // The task's own inputs, read only when a default entry left a path out.
                 taskInputs = { extraTaskInputs(rootDir, test.inputs.files.files, test.classpath.files + test.testClassesDirs.files) },
             ),

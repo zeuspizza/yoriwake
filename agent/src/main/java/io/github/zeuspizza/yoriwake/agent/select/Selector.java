@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.agent.select;
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
+import io.github.zeuspizza.yoriwake.agent.contract.TestClassIds;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -1221,8 +1222,7 @@ public final class Selector {
      * class; null for an id with no class segment.
      */
     private static String testClassOf(String testId) {
-        String container = classContainerOf(testId);
-        return container == null ? null : classNameOf(container);
+        return TestClassIds.nameOf(TestClassIds.scopeOf(testId));
     }
 
     private static Set<String> notKnownToPass(List<MapReader.Entry> tests) {
@@ -1357,41 +1357,6 @@ public final class Selector {
             }
         }
         return false;
-    }
-
-    /**
-     * The id prefix every test in one class shares, or null for a shape this does not understand.
-     *
-     * <p>Tracks bracket depth because JUnit does not escape a {@code ']'} inside a segment value.
-     */
-    static String classContainerOf(String testId) {
-        int start = testId.indexOf("[class:");
-        if (start < 0) {
-            return null;
-        }
-        int depth = 0;
-        for (int i = start; i < testId.length(); i++) {
-            char c = testId.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-                if (depth == 0) {
-                    return testId.substring(0, i + 1);
-                }
-            }
-        }
-        return null;
-    }
-
-    /** The class name inside a container id, or null when it carries none. */
-    static String classNameOf(String containerId) {
-        int start = containerId.lastIndexOf("[class:");
-        if (start < 0 || !containerId.endsWith("]")) {
-            return null;
-        }
-        String name = containerId.substring(start + "[class:".length(), containerId.length() - 1);
-        return name.isEmpty() ? null : name;
     }
 
     private static boolean knownToMap(

@@ -7,6 +7,7 @@
   "functional/AnnotationFunctionalTest",
   "functional/InJvmParallelismCharacterizationTest",
   "functional/KoverFunctionalTest",
+  "functional/OffClasspathFilesFunctionalTest",
   "maven/ScopeFunctionalTest"
  ],
  "suites": {
@@ -95,6 +96,7 @@
   "functional/NamedTestsFunctionalTest": {"baseline": 25, "guard": 25},
   "functional/NestedLoaderFunctionalTest": {"baseline": 43, "guard": 37},
   "functional/ObservationFunctionalTest": {"baseline": 35, "guard": 38},
+  "functional/OffClasspathFilesFunctionalTest": {"baseline": 35, "guard": 30},
   "functional/OptimisticModeFunctionalTest": {"baseline": 16, "guard": 14},
   "functional/PathIgnoreFunctionalTest": {"baseline": 35, "guard": 35},
   "functional/PlainRunnerSelectionFunctionalTest": {"baseline": 46, "guard": 43},

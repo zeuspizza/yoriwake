@@ -35,9 +35,12 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A changed annotation selects like any other change to its class instead of running every test. Map: left alone.
 - Reference: a transform-cache entry written again after Gradle's cache cleanup also runs nothing. Map: left alone.
 - Code that ran before a JVM's first test runs only the tests of the JVMs that loaded it, not everything. Map: left alone.
+- A build script or resource of a module the tests neither load nor reach no longer runs every test. Map: left alone.
+- Maven: a POM or resource of a module the tests neither load nor reach no longer runs every test. Map: left alone.
 - Gradle: README, Markdown, `docs/` and `.github/` changes are ignored by default (`pathIgnoreDefaults`). Map: left alone.
 - Gradle: a changed class no test executed or loaded, and no resource names, selects nothing by default.
   Map: left alone; the next capture of the whole task records the classes its test JVMs loaded.
+- An edited Spock specification runs its own features and their neighbours, not everything. Map: left alone; narrows once re-recorded.
 
 ### Fixed
 
@@ -55,6 +58,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Maven: `yoriwake:explain` compares the environment as the selecting run does and names uncompared variables. Map: left alone.
 - A complement run reads a jar the test classpath holds under the project's `.gradle`: changed since the selecting run, every test runs. Map: left alone.
 - A run whose test task has an action inserted just before its tests runs every test (`late-task-action`). Map: left alone.
+- A sibling's source edits are kept when the test task depends on a task of it or hands its test JVM a path into it. Map: left alone.
 - A transformed jar of one of your own projects counts by its content. Map: kept; one full run where the classpath holds one.
 
 ## [0.5.0] - 2026-11-07

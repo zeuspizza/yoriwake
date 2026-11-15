@@ -1522,6 +1522,29 @@ class CoverageDecoderTest {
         execData("com.acme.BTest" to booleanArrayOf(true)))
 
     @Test
+    fun `a Spock specification owns its windows, so its own code there is no named touch`(@TempDir dir: File) {
+        val alpha = "[engine:spock]/[spec:com.acme.ASpec]"
+        val beta = "[engine:spock]/[spec:com.acme.BSpec]"
+        records(
+            dir, "1",
+            Triple("${AgentContract.CLASS_SCOPED_RECORD_PREFIX}$alpha", "NONE",
+                execData("com.acme.ASpec" to booleanArrayOf(true))),
+            Triple("$alpha/[feature:a]", "SUCCESSFUL", execData("com.acme.ASpec" to booleanArrayOf(true))),
+            Triple("${AgentContract.CLASS_SCOPED_RECORD_PREFIX}$alpha|$beta", "NONE",
+                execData("com.acme.BSpec" to booleanArrayOf(true), "com.acme.Helper" to booleanArrayOf(true))),
+            Triple("$beta/[feature:b]", "SUCCESSFUL", execData("com.acme.BSpec" to booleanArrayOf(true))),
+        )
+        touches(dir, "1", "0\t${AgentContract.TOUCH_PLAN_STARTED}\t", AgentContract.TOUCHES_COMPLETE)
+
+        CoverageDecoder.decode(dir, listOf("com.acme"))
+
+        val named = namedTouches(dir)
+        assertEquals(2, named["com.acme.ASpec"], "its own first feature, not its setup window at 1")
+        assertEquals(4, named["com.acme.BSpec"], "its own first feature, not the window it shares at 3")
+        assertEquals(3, named["com.acme.Helper"])
+    }
+
+    @Test
     fun `lookups and reads during discovery do not date a test class, and those after do`(@TempDir dir: File) {
         records(dir, "1", jupiterB, jupiterA)
         touches(
@@ -1749,12 +1772,22 @@ class CoverageDecoderTest {
 
     @Test
     fun `a JVM that ran a test naming no class is not labelled isolated`(@TempDir dir: File) {
-        records(dir, "1", Triple("[engine:spock]/[spec:com.acme.ASpec]/[feature:f]", "SUCCESSFUL",
+        records(dir, "1", Triple("[engine:kotest]/[spec:com.acme.ASpec]/[test:t]", "SUCCESSFUL",
             execData("com.acme.A" to booleanArrayOf(true))))
 
         CoverageDecoder.decode(dir, listOf("com.acme"), isolated = true)
 
         assertEquals(mapOf("worker-1" to AgentContract.MODE_SHARED), jvmModes(dir))
+    }
+
+    @Test
+    fun `a JVM that ran one Spock specification is labelled isolated`(@TempDir dir: File) {
+        records(dir, "1", Triple("[engine:spock]/[spec:com.acme.ASpec]/[feature:f]", "SUCCESSFUL",
+            execData("com.acme.A" to booleanArrayOf(true))))
+
+        CoverageDecoder.decode(dir, listOf("com.acme"), isolated = true)
+
+        assertEquals(mapOf("worker-1" to AgentContract.MODE_ISOLATED), jvmModes(dir))
     }
 
     @Test

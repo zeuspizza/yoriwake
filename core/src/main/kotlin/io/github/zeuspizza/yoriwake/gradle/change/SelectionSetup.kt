@@ -19,8 +19,17 @@ internal object SelectionSetup {
             val reason get() = "git could not report changes against $against, so there is no change set to select from"
         }
 
-        /** Selects from [paths], every changed path against [widened] and the map's [stamp]. */
-        class Select(val widened: ChangeDetection.Base, val stamp: String?, val paths: List<String>) : Outcome
+        /**
+         * Selects from [paths], every changed path against [widened] and the map's [stamp]; [moved] are
+         * those only the working tree's drift since the capture names, whose captured text git does
+         * not hold.
+         */
+        class Select(
+            val widened: ChangeDetection.Base,
+            val stamp: String?,
+            val paths: List<String>,
+            val moved: Set<String> = emptySet(),
+        ) : Outcome
     }
 
     /**
@@ -52,11 +61,11 @@ internal object SelectionSetup {
         // dirty edit, an ignored fixture). A tree git could not list is no change set at all.
         // The diff from the capture commit too: a map captured off this history (another branch, a
         // reset) recorded content the widened base may share with the tree.
-        val paths = listOfNotNull(against, stamp)
+        val tracked = listOfNotNull(against, stamp)
             .map { changedPaths(it) }
             .takeUnless { null in it }?.flatMap { it.orEmpty() }
-            ?.let { tracked -> moved?.let { (tracked + it).distinct() } }
             ?: return Outcome.NoChangeSet(against)
+        val paths = moved?.let { (tracked + it).distinct() } ?: return Outcome.NoChangeSet(against)
 
         // Before any analysis: a change this size would end in a full run, so analysing it only costs.
         // Counted against the base the run was asked about, which the map's age cannot grow.
@@ -69,6 +78,6 @@ internal object SelectionSetup {
                 )
             }
         }
-        return Outcome.Select(widened, stamp, paths)
+        return Outcome.Select(widened, stamp, paths, moved.orEmpty() - tracked.toSet())
     }
 }

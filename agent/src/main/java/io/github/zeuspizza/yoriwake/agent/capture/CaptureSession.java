@@ -7,6 +7,8 @@ import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.OUTCOME_UNKNOWN;
 import static io.github.zeuspizza.yoriwake.agent.contract.AgentContract.UNATTRIBUTED_RECORD_ID;
 
+import io.github.zeuspizza.yoriwake.agent.contract.TestClassIds;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -491,34 +493,11 @@ public final class CaptureSession implements TestEvents {
     }
 
     /**
-     * The class-level prefix of a test id, up to its {@code [class:...]} segment: a prefix, because
-     * the selector expands a class-scoped record to the test ids starting with it. Null when there
+     * The class-level prefix of a test id, as {@link TestClassIds#scopeOf} reads it. Null when there
      * is none, and the window is then treated as global.
      */
     static String classScopeOf(String id) {
-        if (id == null) {
-            return null;
-        }
-        // The outermost class: its @BeforeAll runs once before the first nested class, so scoping
-        // to the innermost class would skip every sibling that shares that setup.
-        int end = id.indexOf("[class:");
-        if (end < 0) {
-            return null;
-        }
-        // Tracks depth because JUnit does not escape ']' inside a segment value.
-        int depth = 0;
-        for (int i = end; i < id.length(); i++) {
-            char c = id.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-                if (depth == 0) {
-                    return id.substring(0, i + 1);
-                }
-            }
-        }
-        return null;
+        return TestClassIds.scopeOf(id);
     }
 
     private boolean insideEveryOpenTest(String id) {
