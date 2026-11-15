@@ -375,6 +375,37 @@ def case_a_tree_that_does_not_compile_names_the_compiler_errors():
     return failures
 
 
+def case_a_warm_up_that_fails_keeps_its_whole_output():
+    """A compiler crash prints its cause below the `e: ` line, which the refusal leaves out; a CI
+    shard uploads UNMUTATED_RESULTS. And the Kotlin daemon that compiles every tree in turn has
+    more than the 512 MB it would inherit, at which it crashed on CI."""
+    failures = 0
+    crash = ("e: org.jetbrains.kotlin.backend.common.BackendException: Backend Internal error\n"
+             "Caused by: java.lang.OutOfMemoryError: Java heap space\nBUILD FAILED in 1m 11s\n")
+    started = []
+
+    def run(argv, **kwargs):
+        started.append(argv)
+        return subprocess.CompletedProcess(argv, 1, "", crash)
+
+    saved = (pg.subprocess.run, pg.UNMUTATED_RESULTS)
+    with tempfile.TemporaryDirectory() as directory:
+        pg.subprocess.run = run
+        pg.UNMUTATED_RESULTS = os.path.join(directory, "kept")
+        try:
+            refusal = pg._warm_up([os.path.join(directory, "worker-1")], [":compile"])
+        finally:
+            pg.subprocess.run, pg.UNMUTATED_RESULTS = saved
+        kept = os.path.join(directory, "kept", "warm-up-worker-1.log")
+        if not os.path.isfile(kept) or "Caused by: java.lang.OutOfMemoryError" not in open(kept).read():
+            failures += fail(f"the failed warm-up's output was not kept in {kept}")
+        if not refusal or kept not in refusal or "BackendException" not in refusal:
+            failures += fail(f"the refusal does not name the compiler error and the kept output: {refusal!r}")
+    if not started or "-Pkotlin.daemon.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g" not in started[0]:
+        failures += fail(f"the warm-up's Kotlin daemon is not given 2 GB: {started}")
+    return failures
+
+
 def case_every_case_in_this_file_is_registered():
     import re
     source = open(__file__, encoding="utf-8").read()
@@ -1566,6 +1597,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_the_parallel_run_ci_uses_writes_outcomes_and_refusals,
          case_the_selection_list_is_what_a_changed_run_selects_and_runs_nothing,
          case_gradle_starts_through_the_wrapper_windows_can_run,
+         case_a_warm_up_that_fails_keeps_its_whole_output,
          case_a_mutated_source_is_restored_byte_for_byte_whatever_its_line_endings,
          case_the_restore_check_compares_bytes_not_decoded_text)
 
