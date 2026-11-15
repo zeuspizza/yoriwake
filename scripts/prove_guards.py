@@ -217,6 +217,8 @@ AGENT_LOOKUP = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/A
 JUNIT4_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/JUnit4Events.java"
 TESTNG_EVENTS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/engines/TestNgEvents.java"
 TOUCH_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/TouchRecorder.java"
+JAR_REACHES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JarReaches.java"
+RESOURCE_READS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ResourceReads.java"
 # Whether a class is the JDK's own, judged by the runtime image rather than by the loader alone.
 JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCode.java"
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
@@ -2330,19 +2332,19 @@ MUTATIONS = [
      agent_suite, "a call that can reach any class, such as the whole loaded set, counts as a lookup of every class"),
     # A class file read by anything but the JDK's own loaders is a read; calling every read a load
     # would drop the reader's touch.
-    ("every class-file read is taken for the JDK defining a class", TOUCH_RECORDER,
+    ("every class-file read is taken for the JDK defining a class", RESOURCE_READS,
      "    private static boolean definingAClass() {",
      "    private static boolean definingAClass() {\n        if (true) { return true; }",
      functional_suite, "a test that reads a class file is selected when the class it reads changes"),
     # Only the JDK's own frames may stand between a class-file read and the JDK's definition: a
     # loader override, a transformer or a URL handler running inside the definition is a reader.
-    ("project code running inside a class definition is taken for the JDK reading the class", TOUCH_RECORDER,
+    ("project code running inside a class definition is taken for the JDK reading the class", RESOURCE_READS,
      "                    if (!JdkCode.isJdk(frame.getDeclaringClass())) {",
      "                    if (false) {",
      agent_suite, "a class file read by project code running inside a class definition is a read"),
     # The agent's own leading frames are passed over; judging them as the project's would take every
     # JDK definition read for a reader's read.
-    ("the agent's own frames are taken for project code standing inside a class definition", TOUCH_RECORDER,
+    ("the agent's own frames are taken for project code standing inside a class definition", RESOURCE_READS,
      "                    if (!pastAgent && frame.getClassName().startsWith(AGENT_PACKAGE)) {",
      "                    if (false) {",
      agent_suite, "a class file read with only the JDK's frames between it and the definition is not a read"),
@@ -2479,11 +2481,11 @@ MUTATIONS = [
     # A scanner's own zip code reads entries no hook sees; an archive is known by its content, not
     # its name, and a jar nested in one counts too.
     # Re-anchored: the content test moved to a class the plugin shares.
-    ("an archive the test opens itself counts only when its name ends in .jar", TOUCH_RECORDER,
+    ("an archive the test opens itself counts only when its name ends in .jar", RESOURCE_READS,
      '            boolean archive = path.endsWith(".jar") || ZipContent.holdsAZip(file);',
      '            boolean archive = path.endsWith(".jar");',
      functional_suite, "a test that reads a class out of a zip with its own zip code is selected when the class changes"),
-    ("an archive a JDK zip entry holds is taken for a plain entry", TOUCH_RECORDER,
+    ("an archive a JDK zip entry holds is taken for a plain entry", RESOURCE_READS,
      "                    if (entryHoldsAZip(zip, entry)) {",
      "                    if (false) {",
      agent_suite, "an archive entry that is an archive itself counts as every class in the outer archive"),
@@ -2939,21 +2941,21 @@ MUTATIONS = [
      '            if (file.equals(path) || path.startsWith(file + "!/")) {',
      functional_suite, "a build time a test reads from the whole jar runs that test"),
     # Re-anchored: a jar entry read is recorded under every name its jar went by.
-    ("every manifest read is taken for the class loader's", TOUCH_RECORDER,
+    ("every manifest read is taken for the class loader's", RESOURCE_READS,
      "                        String kind = MANIFEST.equals(entry.getName()) && loaderReadingManifest()",
      "                        String kind = MANIFEST.equals(entry.getName())",
      functional_suite, "a revision stamped into a sibling jar's manifest runs the test that reads it"),
     # A read is kept under each name that can match the walked file: the resolved one carries the
     # case on disk and outlives a link the test removes.
-    ("a read is recorded under its given path alone", TOUCH_RECORDER,
+    ("a read is recorded under its given path alone", RESOURCE_READS,
      "                    : java.util.Arrays.asList(absolute, resolved);",
      "                    : java.util.Collections.singletonList(absolute);",
      agent_suite, "a file read through a link inside the root is kept under the file it reached, after the link is gone"),
-    ("a read under an alias of the root is dropped", TOUCH_RECORDER,
+    ("a read under an alias of the root is dropped", RESOURCE_READS,
      "                return root + dir.relativize(path);",
      "                return null;",
      agent_suite, "a file read through another name for the root is kept beneath the root"),
-    ("a read that cannot be placed is dropped", TOUCH_RECORDER,
+    ("a read that cannot be placed is dropped", RESOURCE_READS,
      "        } catch (IOException | RuntimeException e) {\n            return java.util.Collections.singletonList(absolute);",
      "        } catch (IOException | RuntimeException e) {\n            return java.util.Collections.emptyList();",
      agent_suite, "a read whose place cannot be told is kept as given, which counts as a read of every file"),
@@ -4568,7 +4570,7 @@ MUTATIONS = [
      "    runCatching { project.gradle.includedBuilds.map { it.projectDir } }.getOrDefault(emptyList())",
      "    emptyList<File>()",
      functional_suite, "a declared path in a build this one includes stays in the change set"),
-    ("a source file a test opens is not a read of its path", TOUCH_RECORDER,
+    ("a source file a test opens is not a read of its path", RESOURCE_READS,
      '                if (!path.endsWith(".class")) {',
      "                if (false) {",
      agent_suite, "a source file read beneath the root is kept by its path too"),
@@ -5546,11 +5548,11 @@ MUTATIONS = [
      "                identity != null -> Entry(MODULE,",
      "                identity != null && read != ClasspathFiles.Read.BUILT -> Entry(MODULE,",
      functional_suite, "a catalog bump runs the tests that reached the moved jar, and only with the flag"),
-    ("a resource miss is dropped, as an answered class miss is", TOUCH_RECORDER,
+    ("a resource miss is dropped, as an answered class miss is", JAR_REACHES,
      '                if (name.endsWith(".class") && answered.contains(name)) {',
      '                if (!name.endsWith(".class") || answered.contains(name)) {',
      agent_suite, "a resource two of three jars lack stands as a miss though the third holds it"),
-    ("a miss is deduplicated when it is looked up, not when it stands", TOUCH_RECORDER,
+    ("a miss is deduplicated when it is looked up, not when it stands", JAR_REACHES,
      "            if (missedDirectories.contains(directory)) {",
      "            if (!missedDirectories.add(directory)) {",
      agent_suite, "a probe of an absent class after a class of its package loaded from a later jar still stands"),

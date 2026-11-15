@@ -454,17 +454,8 @@ internal object DependencyRule {
     }
 
     private fun section(text: String, name: String): List<String> {
-        val lines = mutableListOf<String>()
-        var inside = false
-        for (line in text.lines()) {
-            val header = Regex("""^\s*\[\s*([A-Za-z0-9_.-]+)\s*]""").find(line)
-            if (header != null) {
-                inside = header.groupValues[1] == name
-                continue
-            }
-            if (inside) lines += line
-        }
-        return lines
+        val lines = text.lines()
+        return lines.zip(CoordinateDiff.sections(lines)).filter { it.second == name }.map { it.first }
     }
 
     private fun refersTo(line: String, key: String) =
@@ -479,9 +470,8 @@ internal object DependencyRule {
      */
     private fun pluginsUsing(catalog: String, key: String): Boolean {
         val quoted = Regex("""["']${Regex.escape(key)}["']""")
-        var section = ""
-        for (line in catalog.lines()) {
-            Regex("""^\s*\[\s*([^\]]+?)\s*]""").find(line)?.let { section = it.groupValues[1]; return@let }
+        val lines = catalog.lines()
+        for ((line, section) in lines.zip(CoordinateDiff.sections(lines))) {
             if (section == "versions" || !quoted.containsMatchIn(line)) continue
             if (section == "libraries" && refersTo(line, key)) continue
             return true
