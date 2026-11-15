@@ -677,6 +677,21 @@ def decoder_suite():
     return named
 
 
+def dependency_suite():
+    """The dependency-bump classifier and rule: which build-file lines are a version bump, and which
+    readers of a bumped value refuse."""
+    done = gradle([":plugin:test", "--tests", "*CoordinateDiffTest*", "--tests", "*DependencyRuleTest*", "--rerun"])
+    if done.returncode == 0:
+        return []
+    lines = (done.stdout + done.stderr).splitlines()
+    named = [l.strip() for l in lines if "Test > " in l and "FAILED" in l]
+    if not named:
+        compile_errors = [l.strip() for l in lines if l.startswith("e: ")]
+        return [f"NOT THE GUARD -- the mutation did not compile: {compile_errors[0]}"] \
+            if compile_errors else ["the dependency suite failed without naming a test"]
+    return named
+
+
 def line_only_suite():
     """The line digest, what a capture records for line-only changes, and which paths the rule
     takes out of the change set."""
@@ -814,6 +829,8 @@ SUITES = [
     # Pure Python over one fixture repository, with javac for the gate's stand-in.
     ("revert", revert_suite, 10.5),
     ("decoder", decoder_suite, 5),
+    # An estimate until a guard run measures it: two classes, one of them a few dozen `git init`s.
+    ("dependency", dependency_suite, 8),
     # An estimate until a guard run measures it: three classes, javac in-process for one.
     ("line only", line_only_suite, 8),
     # 5.7s for one run with a Settings.kt mutation applied, its Kotlin recompile included; a doc
@@ -5458,6 +5475,42 @@ MUTATIONS = [
      "                if (coordinate !in onClasspath) {",
      "                if (false) {",
      functional_suite, "a bump of a library only an agent configuration holds runs every test"),
+    ("a notation nested in any block but dependencies is accepted", COORDINATE_DIFF,
+     "        if (blocks !in NOTATION_BLOCKS) return null",
+     "        if (\"dependencies\" !in blocks.split('/')) return null",
+     dependency_suite, "a notation nested for other projects, a source set or a plugin is refused"),
+    ("a build file refused beside an accepted one leaves the change set accepted", DEPENDENCY_RULE,
+     '                is CoordinateDiff.Verdict.Refused -> return Verdict.Unaccepted(path, "${verdict.why}: `${verdict.hunk.trim()}`")',
+     "                is CoordinateDiff.Verdict.Refused -> continue",
+     dependency_suite, "a bump beside another build file's change leaves the whole change set unaccepted"),
+    ("a build script value read outside a notation is accepted", DEPENDENCY_RULE,
+     '                    } ?: return unaccepted("$path names the value `$name` outside a dependency notation\'s version: `${lineAt(text, offset).trim()}`")',
+     "                    } ?: continue",
+     dependency_suite, "a value also read as a system property, a tool's version or a plugin's classpath stays unaccepted"),
+    ("a build script value no script reads is accepted", DEPENDENCY_RULE,
+     "            if (found.isEmpty()) return unaccepted(",
+     "            if (false) return unaccepted(",
+     dependency_suite, "a value no script reads stays unaccepted"),
+    ("the build's properties read in bulk leave a value accepted", DEPENDENCY_RULE,
+     "            BULK_READ.find(scan.masked)?.let {",
+     '            BULK_READ.find("")?.let {',
+     dependency_suite, "the build's properties read in bulk, or a property looked up by a computed name"),
+    ("a property looked up by a computed name leaves a value accepted", DEPENDENCY_RULE,
+     "            DYNAMIC_LOOKUPS.firstNotNullOfOrNull { it.find(scan.masked) }?.let {",
+     '            DYNAMIC_LOOKUPS.firstNotNullOfOrNull { it.find("") }?.let {',
+     dependency_suite, "the build's properties read in bulk, or a property looked up by a computed name"),
+    ("a reader's block is read through braces inside strings", DEPENDENCY_RULE,
+     "                val blocks by lazy { CoordinateDiff.blocks(scan.masked.lines()) }",
+     "                val blocks by lazy { CoordinateDiff.blocks(text.lines()) }",
+     dependency_suite, "braces inside a multi-line string do not hide the block a reader is in"),
+    ("a build script value's notations are not located", DEPENDENCY_RULE,
+     "                bump.valueName != null -> valueReaders[bump.valueName].orEmpty()",
+     "                bump.valueName != null -> emptyList()",
+     dependency_suite, "a value read by a notation in a configuration no classpath extends forces as unlocated"),
+    ("a test that reads an accepted build file is left out", SELECTING_STEP,
+     "            .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }",
+     "            .let { it }",
+     functional_suite, "a notation bump in a build script runs the tests that reached the moved jar or read the script"),
     ("a bump narrows without narrowDependencies", SELECTION_WIRING,
      "    val dependencies = if (!narrowDependencies) null else {",
      "    val dependencies = if (false) null else {",
@@ -5587,6 +5640,7 @@ SUITE_TESTS = {
     "order": ("bench/test_family_order.py", "bench/test_replay_order.py"),
     "revert": ("bench/test_revert.py",),
     "decoder": ("plugin/src/test/",),
+    "dependency": ("plugin/src/test/",),
     "line only": ("plugin/src/test/",),
     "reference": ("plugin/src/test/", REFERENCE_DOC, CONTRACT_DOC),
     # The agent `test` task puts the boot fixture on the boot class path, so it proves agent guards.
@@ -5819,7 +5873,7 @@ def prepare_workers(count):
 # these first, one tree at a time, and the parallel phase only recompiles what a mutation touched.
 WARM_UP = {
     "unit": ":plugin:testClasses", "decoder": ":plugin:testClasses", "reference": ":plugin:testClasses",
-    "line only": ":plugin:testClasses",
+    "line only": ":plugin:testClasses", "dependency": ":plugin:testClasses",
     "agent": ":agent:testClasses", "jdk identity": ":agent:testClasses",
     "functional": ":plugin:functionalTestClasses",
     "configuration guards": ":plugin:functionalTestClasses",

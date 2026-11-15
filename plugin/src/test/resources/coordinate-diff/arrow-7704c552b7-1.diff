@@ -1,0 +1,7 @@
+diff --git a/arrow-libs/optics/arrow-optics-compose/build.gradle.kts b/arrow-libs/optics/arrow-optics-compose/build.gradle.kts
+index f83f56b43..8fb7e734b 100644
+--- a/arrow-libs/optics/arrow-optics-compose/build.gradle.kts
++++ b/arrow-libs/optics/arrow-optics-compose/build.gradle.kts
+@@ -13 +13 @@ kotlin {
+-        api("org.jetbrains.compose.runtime:runtime:1.11.1")
++        api("org.jetbrains.compose.runtime:runtime:1.12.0")

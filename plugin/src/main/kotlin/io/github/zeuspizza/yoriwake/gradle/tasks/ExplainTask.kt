@@ -481,6 +481,8 @@ internal abstract class ExplainTask : DefaultTask() {
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
         ) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
+            // As the run hands them over: a test that reads an accepted build file runs.
+            .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }
         reportDigest(widening) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
         io.github.zeuspizza.yoriwake.gradle.change.SelectingStep.reportLines(widening.lines)
             .forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }

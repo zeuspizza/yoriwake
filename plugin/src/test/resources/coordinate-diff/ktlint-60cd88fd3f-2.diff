@@ -1,0 +1,10 @@
+diff --git a/ktlint-ruleset-template/build.gradle.kts b/ktlint-ruleset-template/build.gradle.kts
+index 89aeb95a..5572c2fe 100644
+--- a/ktlint-ruleset-template/build.gradle.kts
++++ b/ktlint-ruleset-template/build.gradle.kts
+@@ -37 +37 @@ dependencies {
+-    testImplementation("org.junit.jupiter:junit-jupiter:6.1.0")
++    testImplementation("org.junit.jupiter:junit-jupiter:6.1.1")
+@@ -40 +40 @@ dependencies {
+-    testImplementation("org.junit.platform:junit-platform-launcher:6.1.0")
++    testImplementation("org.junit.platform:junit-platform-launcher:6.1.1")

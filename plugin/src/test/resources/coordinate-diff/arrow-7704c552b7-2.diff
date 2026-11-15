@@ -1,0 +1,17 @@
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 6d16a345f..078806584 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -4 +4 @@ coroutines = "1.11.0"
+-classgraph = "4.8.193"
++classgraph = "4.8.194"
+@@ -17,3 +17,3 @@ moshi = "1.15.2"
+-spotlessVersion = "8.10.0"
+-composePlugin = "1.11.1"
+-agp = "9.3.1"
++spotlessVersion = "8.10.1"
++composePlugin = "1.12.0"
++agp = "9.3.2"
+@@ -26 +26 @@ shadow = "9.6.1"
+-kotlinWrappers = "2026.8.3"
++kotlinWrappers = "2026.8.4"

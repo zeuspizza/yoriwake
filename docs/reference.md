@@ -1456,8 +1456,14 @@ it replaces but for one version literal:
 
 - a value in a version catalog's `[versions]` (`lib-json = "1.1"`), or a `[libraries]` entry's own
   `version`, or its `"group:name:version"` notation; any catalog in the root's `gradle/`;
-- a `"group:name:version"` notation, alone on its line, inside a `dependencies { }` block of a
-  module's own `build.gradle(.kts)`;
+- a `"group:name:version"` notation, alone on its line, inside a top-level `dependencies { }` block
+  of a module's own `build.gradle(.kts)`, the root's included, or a `constraints { }` block in it,
+  `platform(...)` and `enforcedPlatform(...)` wrappers included;
+- a version held in a named value of such a script (a top-level `val` or `def`, `ext.name`,
+  `extra["name"]`, an entry of a top-level `ext { }` block), when every place the build names the
+  value is the version of such a notation (`"group:name:$name"`, `"group:name:${rootProject.ext.name}"`,
+  `"group:name:${extra["name"]}"`), across every build script, applied script, settings file,
+  `buildSrc`, `build-logic` and `gradle.properties`;
 - on Maven (`-Dyoriwake.narrowDependencies` or `<narrowDependencies>`), the `<version>` of a
   dependency in a reactor POM's `<dependencies>` or `<dependencyManagement>`, or a `<properties>`
   value that only such versions read, when no parent POM lies outside the checkout and no POM
@@ -1474,8 +1480,15 @@ class, a scan for a service file. Each test so selected names the rule `shares-j
 Everything else still runs every test, saying why:
 
 - Any other change to a build file: a plugin, a `buildscript` or `settings` file, `buildSrc` or an
-  included build, a version held in a variable, a lockfile, verification metadata, a rich version
-  or range. The file stays a path coverage cannot see (`unmappable-paths`).
+  included build, `gradle.properties`, a notation nested in `subprojects`, `allprojects`,
+  `configure(...)`, `project(...)` or a Kotlin source set's block, a lockfile, verification metadata,
+  a rich version or range. The file stays a path coverage cannot see (`unmappable-paths`), and so do
+  the other build files the same change set changed.
+- A changed named value read anywhere else (a system property, a tool's version, a plugin's
+  `classpath`, `buildSrc`), read by nothing, or reachable unnamed: the build's properties read in
+  bulk (`project.properties`, `getProperties()`, `gradlePropertiesPrefixedBy`) or a property looked
+  up by a name the build computes (`property("${lib}Version")`, `ext[name]`). Same token, naming the
+  value.
 - A catalog version key a `[plugins]` entry also uses, a library alias named in build logic, a
   settings file or a `buildscript` block, or a version key a build script reads as a value
   (`libs.versions.<key>`, `findVersion("<key>")`). Same token, naming the file.
@@ -1492,6 +1505,10 @@ Everything else still runs every test, saying why:
 
 Own classes compiled against the new version that changed (an inlined constant, a Kotlin `inline`
 body) select their tests through the class digests, as any other bytecode change does.
+
+An accepted build file leaves the change set, and a test may still read it as a file: each test that
+ran at or after its JVM first read it runs too, as for a moved classpath file
+(`shares-jvm-moved-classpath-file`), and every test of a JVM whose reads were not recorded.
 
 A test that first reaches a library during discovery or startup selects its whole JVM, so a shared
 test JVM narrows little: record with [`-Pyoriwake.isolatedCapture`](#recording-each-test-class-in-its-own-jvm)

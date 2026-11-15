@@ -1,0 +1,12 @@
+diff --git a/framework-platform/framework-platform.gradle b/framework-platform/framework-platform.gradle
+index a561467b3a..8d0d159c7b 100644
+--- a/framework-platform/framework-platform.gradle
++++ b/framework-platform/framework-platform.gradle
+@@ -27,2 +27,2 @@ dependencies {
+-		api("com.fasterxml:aalto-xml:1.3.4")
+-		api("com.fasterxml.woodstox:woodstox-core:7.1.1")
++		api("com.fasterxml:aalto-xml:1.4.0")
++		api("com.fasterxml.woodstox:woodstox-core:7.2.1")
+@@ -33 +33 @@ dependencies {
+-		api("com.google.code.gson:gson:2.13.2")
++		api("com.google.code.gson:gson:2.14.0")

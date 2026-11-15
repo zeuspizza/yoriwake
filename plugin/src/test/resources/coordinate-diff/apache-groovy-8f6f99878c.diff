@@ -1,0 +1,7 @@
+diff --git a/subprojects/groovy-http-builder/build.gradle b/subprojects/groovy-http-builder/build.gradle
+index 0cdc218d03..9f98aeff0f 100644
+--- a/subprojects/groovy-http-builder/build.gradle
++++ b/subprojects/groovy-http-builder/build.gradle
+@@ -27 +27 @@ dependencies {
+-    testRuntimeOnly "org.jsoup:jsoup:1.23.1"
++    testRuntimeOnly "org.jsoup:jsoup:1.23.2"

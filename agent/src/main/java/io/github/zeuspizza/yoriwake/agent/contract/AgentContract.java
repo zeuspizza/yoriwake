@@ -109,8 +109,8 @@ public final class AgentContract {
     public static final String CHANGED_BYTES_PROPERTY = "yoriwake.change.bytes";
 
     /**
-     * Build-produced non-class files on the classpath whose content differs from the capture's,
-     * by their {@link #RESOURCE_TOUCH_FILE} path, comma-separated. Each selects the tests from its
+     * Build-produced non-class files on the classpath whose content differs from the capture's, and
+     * the build files a dependency bump accepted, by their {@link #RESOURCE_TOUCH_FILE} path, comma-separated. Each selects the tests from its
      * first read on in every JVM that read it; a JVM whose reads were not recorded runs whole.
      */
     public static final String MOVED_FILES_PROPERTY = "yoriwake.change.movedFiles";
