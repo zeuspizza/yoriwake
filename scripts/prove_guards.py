@@ -2104,6 +2104,25 @@ MUTATIONS = [
      "            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt, loosened)) {",
      "            for (String id : new HashSet<String>()) {",
      agent_suite, "a test that ran after its JVM first loaded a changed class is selected"),
+    # Startup work is a first touch of each JVM that ran it, so the windows above stand in for the
+    # force. They cannot where no JVM's touches date the startup class, where a mode drops them, or
+    # where they reach every test: a run of every test that records nothing.
+    ("startup coverage no JVM's touches date stops forcing", SELECTOR,
+     "            if (undated != null) {",
+     "            if (false) {",
+     agent_suite, "a change touching startup coverage that no JVM's first touches date forces a full run"),
+    ("a class no test owns first run after a test of its JVM is dated as startup work", SELECTOR,
+     "            if (firstTest != null && touch.sequence() > firstTest) {",
+     "            if (false) {",
+     agent_suite, "a change touching a class no test owns first run after a test of its JVM forces a full run"),
+    ("startup coverage under the optimistic mode stops forcing", SELECTOR,
+     "            if (!loosened.isEmpty()) {",
+     "            if (false) {",
+     agent_suite, "a change touching startup coverage under the optimistic mode forces a full run"),
+    ("startup coverage every test depends on narrows to every test without recording", SELECTOR,
+     "        if (startupTouched && selected.containsAll(knownTestIds)) {",
+     "        if (false) {",
+     agent_suite, "a change touching startup coverage forces a full run when it reaches every test"),
     # At, not after: a test that loads a class in its own window and executes none of it (a
     # reflective check) is dated at its own record.
     ("a test whose own window first touched the class is no longer at or after it", SELECTOR,

@@ -7,8 +7,9 @@ import java.io.File
 /**
  * Attempts on state a test JVM builds once and every later test shares. Coverage credits such
  * work to whichever test or window triggered it, so a changed class selects every test that ran at
- * or after it first arrived in the JVM; startup work no test owns forces a full run, and a map that
- * cannot be read runs everything.
+ * or after it first arrived in the JVM. Startup work no test owns arrives before every test of its
+ * JVM, so it runs that JVM's tests, and forces a full run when that is every test. A map that cannot
+ * be read runs everything.
  */
 class OncePerJvmStateAttempts : BreakAttempt() {
 
@@ -206,7 +207,8 @@ class OncePerJvmStateAttempts : BreakAttempt() {
 
     // Track: code reading. Boundary: the startup window ends at the Platform's plan start, and
     // everything before it belongs to no test. A launcher session listener runs before discovery,
-    // so state it builds from a class is startup coverage, which no test owns.
+    // so state it builds from a class is startup coverage, which no test owns. In the one JVM every
+    // test shares, that startup work comes before every test, so the run is a full one.
     @Test
     fun `state a launcher session listener built from a changed class forces a full run`(@TempDir dir: File) {
         val sessionBuild = minimalBuild.replace(
@@ -245,5 +247,70 @@ class OncePerJvmStateAttempts : BreakAttempt() {
         ) { changeCodec(it) }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
+    }
+
+    // Track: code reading. Boundary: startup work is credited to the JVM that ran it, at its start.
+    // In a JVM per class, a post-discovery filter runs a changed class only where the plan holds
+    // the class that reads its result: that JVM's tests run, and the JVM that never loaded it is
+    // left out.
+    @Test
+    fun `a startup change in one JVM per class runs only the tests of the JVM that ran it`(@TempDir dir: File) {
+        val forkedBuild = minimalBuild.replace(
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+            "testImplementation(\"org.junit.platform:junit-platform-launcher\")",
+        ).replace("tasks.test { useJUnitPlatform() }", "tasks.test { useJUnitPlatform(); forkEvery = 1 }")
+        val filter = source(
+            "src/test/java/dev/sample/CodecFilter.java",
+            """
+            package dev.sample;
+            import org.junit.platform.engine.FilterResult;
+            import org.junit.platform.engine.TestDescriptor;
+            import org.junit.platform.launcher.PostDiscoveryFilter;
+            public class CodecFilter implements PostDiscoveryFilter {
+                @Override public FilterResult apply(TestDescriptor descriptor) {
+                    if (descriptor.getUniqueId().toString().contains("A1StartupTest")) {
+                        try {
+                            // By name, so a JVM whose plan lacks the class never loads Codec.
+                            Class<?> codec = Class.forName("dev.sample.Codec");
+                            Object encoded = codec.getMethod("encode", String.class)
+                                .invoke(codec.getDeclaredConstructor().newInstance(), "abc");
+                            System.setProperty("codec.abc", (String) encoded);
+                        } catch (ReflectiveOperationException e) {
+                            throw new IllegalStateException(e);
+                        }
+                    }
+                    return FilterResult.included("kept");
+                }
+            }
+            """,
+        )
+        val registration = "src/test/resources/META-INF/services/org.junit.platform.launcher.PostDiscoveryFilter" to
+            "dev.sample.CodecFilter\n"
+        val target = source(
+            "src/test/java/dev/sample/A1StartupTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A1StartupTest { @Test void readsFilter() { assertEquals("cba", System.getProperty("codec.abc")); } }
+            """,
+        )
+        val otherTest = source(
+            "src/test/java/dev/sample/A0OtherTest.java",
+            """
+            package dev.sample;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class A0OtherTest { @Test void usesOther() { assertEquals(1, new Other().one()); } }
+            """,
+        )
+
+        val result = attempt(
+            dir, "dev.sample.A1StartupTest", Aim.Row("shares-jvm-changed-class"),
+            listOf(codec, other, otherTest, filter, registration, target),
+            buildScript = forkedBuild,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }
