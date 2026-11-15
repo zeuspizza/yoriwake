@@ -153,15 +153,16 @@ class MapProvenanceFunctionalTest : FunctionalTestSupport() {
 
     @Test
     fun `the capture after an untrusted map keeps none of its records`(@TempDir dir: File) {
-        // A selecting run keeps the loaded-class union it finds, so only removing the map drops it.
+        // A selecting run keeps the startup coverage it finds, even one that runs everything, so
+        // only removing the map drops it.
         recorded(dir)
-        val loaded = File(mapDir(dir), AgentContract.LOADED_FILE)
-        loaded.writeText("dev.sample.Ghost\n")
+        val coverage = File(mapDir(dir), AgentContract.COVERAGE_FILE)
+        coverage.appendText("NONE\t0\tdev.sample.Ghost\t${AgentContract.UNATTRIBUTED_RECORD_ID}\n")
         changeBeta(dir)
 
         select(dir, listing(dir, null))
 
-        assertFalse(loaded.isFile && "Ghost" in loaded.readText(), "the untrusted map's union survived")
+        assertFalse("dev.sample.Ghost" in coverage.readText(), "the untrusted map's startup coverage survived")
         // And what the run recorded is listed by the digest it wrote.
         assertEquals(MapProvenance.digest(mapDir(dir)), writtenDigest(dir))
     }

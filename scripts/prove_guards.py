@@ -2718,6 +2718,10 @@ MUTATIONS = [
      "    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: true",
      "    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: false",
      functional_suite, "a class nothing executes, loads or names stops forcing a full run"),
+    ("a class the capture did not hold is absent for a reason", SELECTION,
+     "    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)\n",
+     "    val unheld = emptyMap<String, AbsenceEvidence.Verdict>()\n",
+     functional_suite, "a class newer than it forces until the next capture"),
     ("the decoder labels a JVM isolated without the run having asked", COVERAGE_DECODER,
      "        val mode = if (isolated && testClasses.size <= 1 && null !in testClasses) MODE_ISOLATED else MODE_SHARED",
      "        val mode = if (testClasses.size <= 1 && null !in testClasses) MODE_ISOLATED else MODE_SHARED",
@@ -4263,10 +4267,6 @@ MUTATIONS = [
     # full-run check an attempt whose change cannot fail its target reads as a gap; without the
     # left-out check one that narrowed nothing reads as held; without the declared-verdict check one
     # that held by another rule reads as reaching the boundary it aimed at.
-    ("a class the capture did not hold is absent for a reason", SELECTION,
-     "    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)\n",
-     "    val unheld = emptyMap<String, AbsenceEvidence.Verdict>()\n",
-     break_suite, "a class added after the capture that a directory listing would find"),
     ("the break helper stops asking whether the change fails the target under a full run", BREAK_FILE,
      "    if (!observed.targetFailsUnderFullRun) {",
      "    if (false && !observed.targetFailsUnderFullRun) {",
