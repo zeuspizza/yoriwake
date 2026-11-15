@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * What selection decides for each shape of change the benchmark's mutation families draw, pinned
@@ -120,6 +122,48 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
         }, run = GradleRunner::buildAndFail)
 
         assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a Kotlin function given a new suspend lambda runs its caller's test`(@TempDir dir: File) {
+        // The lambda compiles to a class the map never saw, which carries only the annotations
+        // the compiler writes on every such class. Alpha is as above, for the inline scan.
+        val alpha = "src/main/kotlin/dev/sample/Alpha.kt" to """
+            package dev.sample
+            inline fun doubled(n: Int): Int = n * 2
+            class Alpha { fun twice(n: Int): Int = doubled(n) }
+        """.trimIndent()
+        val beta = "src/main/kotlin/dev/sample/Beta.kt" to """
+            package dev.sample
+            import kotlin.coroutines.*
+            class Beta {
+                fun thrice(n: Int): Int {
+                    var result = 0
+                    val block: suspend () -> Int = { n * 3 }
+                    block.startCoroutine(Continuation(EmptyCoroutineContext) { result = it.getOrThrow() })
+                    return result
+                }
+            }
+        """.trimIndent()
+        val alphaTest = "src/test/kotlin/dev/sample/AlphaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class AlphaTest { @Test fun twice() { assertEquals(2, Alpha().twice(1)) } }
+        """.trimIndent()
+        val betaTest = "src/test/kotlin/dev/sample/BetaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class BetaTest { @Test fun thrice() { assertEquals(3, Beta().thrice(1)) } }
+        """.trimIndent()
+
+        val output = selectAfter(dir, kotlinBuild, alpha, beta, alphaTest, betaTest, edit = {
+            edit(dir, beta.first, "{ n * 3 }", "{\n            val inner: suspend () -> Int = { n * 4 }\n            inner()\n        }")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
     }
 
     @Test
@@ -323,9 +367,10 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a Groovy constant a Java test copied runs everything`(@TempDir dir: File) {
+    fun `a Groovy constant a Java test copied runs that test`(@TempDir dir: File) {
         // groovyc writes a ConstantValue for a static final primitive or String, so javac copies the
-        // value into the test and the test never loads Beta.
+        // value into the test and the test never loads Beta. The test's own class file, compiled
+        // with the new value, is what names it; the moved constant alone refuses nothing.
         val beta = groovyBeta(
             """
             package dev.sample
@@ -343,8 +388,8 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
             edit(dir, beta.first, "FACTOR = 3", "FACTOR = 4")
         }, run = GradleRunner::buildAndFail)
 
-        assertFullRun(dir, "daemon-refused", both, output)
-        assertEquals("constant-changed", decisionNotes(dir)["refusal-kind"], output)
+        assertTrue("dev.sample.BetaTest" in ranTests(dir), output)
+        assertNotEquals("constant-changed", decisionNotes(dir)["refusal-kind"], output)
     }
 
     @Test

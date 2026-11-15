@@ -158,14 +158,18 @@ class MultiplatformFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a changed const val in commonMain runs everything`(@TempDir dir: File) {
+    fun `a changed const val in commonMain nothing executes runs everything`(@TempDir dir: File) {
         multiplatform(dir)
 
+        // B4LimitTest copied the value into its own class file and would run for it. Nothing loads
+        // Limits itself, and a multiplatform build has no proof that nothing does, so the holder
+        // forces as a changed class without coverage; the constant is no longer what forces.
         val output = selectAfter(dir, edit = {
             edit(dir, "src/commonMain/kotlin/dev/common/Limits.kt", "LIMIT = 5", "LIMIT = 6")
         }, run = GradleRunner::buildAndFail)
 
-        assertFullRun(dir, "daemon-refused", output)
+        assertFullRun(dir, "no-coverage-for-changed", output)
+        assertFalse("declares a compile-time constant" in output, output)
     }
 
     @Test

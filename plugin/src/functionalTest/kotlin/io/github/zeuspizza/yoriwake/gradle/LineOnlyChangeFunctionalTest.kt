@@ -12,9 +12,9 @@ import kotlin.test.assertFalse
  * `narrowLineOnlyChanges`.
  *
  * Without the flag a comment edit is a changed source file, so it selects like any other change to
- * the classes compiled from it; in Kotlin the same edit can force a full run through line
- * information the compiler stores outside the line-number table. With it, such a file selects only
- * the tests whose JVM could have seen a line number or read the file from then on.
+ * the classes compiled from it, in Kotlin too, where the compiler also stores line information
+ * outside the line-number table. With it, such a file selects only the tests whose JVM could have
+ * seen a line number or read the file from then on.
  */
 class LineOnlyChangeFunctionalTest : FunctionalTestSupport() {
 
@@ -240,30 +240,34 @@ class LineOnlyChangeFunctionalTest : FunctionalTestSupport() {
     private val coroutineTests = setOf("dev.demokt.StepsTest", "dev.demokt.AlphaTest")
 
     @Test
-    fun `a comment above a suspend function forces a full run through its line metadata`(@TempDir dir: File) {
+    fun `a comment above a suspend function narrows though it moves the continuation's line metadata`(
+        @TempDir dir: File,
+    ) {
         // The continuation's runtime-visible DebugMetadata annotation carries the suspension
-        // points' line numbers, so the comment changes an annotation's digest.
+        // points' line numbers, so the comment changes an annotation. Without the flag the comment
+        // is a change like any other, and the test that ran the function runs.
         val (explained, output) = selectAfter(
             dir, kotlinBuild, listOf(steps, stepsTest, alpha, alphaTest), coroutineTests,
             edited = steps.first,
         ) { it.replace("suspend fun twoSteps", "// Two steps in a row.\nsuspend fun twoSteps") }
 
-        assertContains(explained, "\"refusalKind\": \"annotations-changed\"")
-        assertEquals(coroutineTests, ranTests(dir), output)
-        assertEquals("annotations-changed", decisionNotes(dir)["refusal-kind"], output)
+        assertContains(explained, "\"refusalKind\": null")
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+        assertContains(ranTests(dir), "dev.demokt.StepsTest", output)
     }
 
     @Test
-    fun `a body change to a suspend function forces the same full run`(@TempDir dir: File) {
-        // The refusal is not an artefact of comment edits: a real edit moves the same metadata.
+    fun `a body change to a suspend function narrows the same way`(@TempDir dir: File) {
         val (explained, output) = selectAfter(
             dir, kotlinBuild, listOf(steps, stepsTest, alpha, alphaTest), coroutineTests,
             edited = steps.first,
         ) { it.replace("return step(a)", "val b = step(a)\n    return b") }
 
-        assertContains(explained, "\"refusalKind\": \"annotations-changed\"")
-        assertEquals(coroutineTests, ranTests(dir), output)
-        assertEquals("annotations-changed", decisionNotes(dir)["refusal-kind"], output)
+        assertContains(explained, "\"refusalKind\": null")
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+        assertContains(ranTests(dir), "dev.demokt.StepsTest", output)
     }
 
     private val inlined = "src/main/kotlin/dev/demokt/Inlined.kt" to """

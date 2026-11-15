@@ -133,13 +133,16 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   [Properties and tasks](#properties-and-tasks);
 - a changed class the map has never recorded, because uncovered and unrecordable look the same. A
   test class this task runs is the exception: discovery runs it whatever the map knows;
-- a changed class whose annotations, on the class or any member and with their values, differ from
-  the ones the map recorded (`annotations-changed`), or an annotated changed class the map recorded
-  no annotations for (`annotations-unrecorded`). A test class this task runs that declares a test
-  is exempt, because its own tests run anyway;
+- a changed source that compiles to a class the map never saw, when that class carries an
+  annotation, on itself or any member, other than the ones the Kotlin compiler writes on its own
+  (`annotations-unrecorded`); a map that recorded no annotations at all forces the same way. A new
+  test class this task runs that declares a test is exempt, because its own tests run anyway. A
+  changed annotation on a class the map holds does not force: it selects like any other change to
+  the class, and `annotations-changed` is no longer produced;
 - compiled bytes that changed with no source change, in a class no test executed
   (`no-coverage-for-changed-bytes`), or a map holding no digest of the compiled classes to compare
-  against (`bytes-unrecorded`);
+  against (`bytes-unrecorded`). A test class whose bytes changed this way (it copied a constant
+  that moved) runs its own tests instead, as an edited test class does;
 - a non-class file the build produced on the test runtime classpath that appeared or is gone
   since the capture, or changed where the map cannot say which tests read it
   (`classpath-files-changed`), or a map that records no such digests (`classpath-files-unrecorded`,
@@ -167,7 +170,10 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   first, so a file such an action writes into the source tree is not compared. Untracked files
   under build output and Gradle's own state are never a change, by design;
 - a changed class declaring a compile-time constant another class could reference, when the value
-  differs from the map's;
+  differs from the map's and the compiled classes could not be compared with the map's digests
+  (`constant-changed`), or when the map never recorded the constant (`constant-unrecorded`). When
+  they were compared, the classes compiled with the new value are the ones whose bytes changed,
+  and their tests run as for any other changed bytes;
 - a changed Kotlin source in a build that emits no `SourceDebugExtension` (see [Kotlin](#kotlin));
 - Develocity Test Distribution or Predictive Test Selection is enabled on the task
   (`develocity-test-distribution`, `develocity-test-selection`, `develocity-undetermined`): a
@@ -429,9 +435,11 @@ Coverage records what each test executed. Some tests depend on a class without e
 these are the rules that keep them selected:
 
 - **Annotations.** A framework's scan, condition, profile or qualifier, or an `@Aspect`'s pointcut,
-  acts on a class through its annotations. An annotation change forces a full run, except in a
-  test class this task runs that declares a test (see [above](#when-it-refuses-to-select)). A change
-  confined to method bodies narrows as usual.
+  acts on a class through its annotations, and to read them it loads the class or opens its class
+  file. The map holds both for every test, so a changed annotation runs the tests that executed,
+  loaded or read the class, as any other change to it does. A scan can also find a class by
+  listing a directory, which the map does not hold: a new class that carries an annotation runs
+  everything (see [above](#when-it-refuses-to-select)).
 - **Rewritten bytes.** A weaver, a generator or a post-processor can change a class without
   touching its source. Such a class selects every test that executed it; one no test executed
   forces a full run.
@@ -1016,8 +1024,6 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   - an edit that adds a closure or a class: groovyc marks the methods it generates with an
     annotation, so the new class carries annotations the map never recorded
     (`annotations-unrecorded`);
-  - a `static final` primitive or `String` changed: groovyc writes it as a compile-time constant,
-    which javac copies into Java callers (`constant-changed`);
   - a file named after none of the classes it declares: its path names a class no test recorded
     (`no-coverage-for-changed`);
   - a global AST transform edited in another module: it runs in the compiler, never in a test
@@ -1521,9 +1527,8 @@ holds what the flag needs the first time it is set.
 ## Line-only changes
 
 A comment edit is a changed source file, so every test that covers its classes runs. In Kotlin the
-same edit costs more: above a `suspend` function it moves the line numbers in the coroutine's
-`DebugMetadata` annotation and runs every test (`annotations-changed`), and in a file declaring an
-`inline` function it changes the SMAP of every class that inlined it. With
+same edit costs more in a file declaring an `inline` function: it changes the SMAP of every class
+that inlined it, and their tests run too. With
 `narrowLineOnlyChanges = true` in the extension (or `-Pyoriwake.narrowLineOnlyChanges` for one
 invocation; on Maven `-Dyoriwake.narrowLineOnlyChanges` or `<narrowLineOnlyChanges>`), a changed
 source whose compiled classes moved in line information only leaves the change set. Off by default.
@@ -1840,7 +1845,9 @@ windows exist for, and with them dropped such a test fails only on the full run.
 In Groovy, a method an extension module or a category adds that shadows another (a GDK method or
 one of your own) changes what a test's call does without the test executing the class that adds
 it: Groovy's metaclass registry only loads that class. Such a test reaches the change through the
-shared-JVM window alone, so optimistic mode leaves it out.
+shared-JVM window alone, so optimistic mode leaves it out. So does a test that only reads a
+changed constant or annotation (a scan, a condition, a reflective lookup), which the safe rule
+selects through the same windows.
 
 What it misses, measured: replayed offline from the per-test rules the 0.1.0 benchmark recorded
 (plugin `30be0e8`, 161 narrowed changes in 22 projects, all generated edits; no real commit was
