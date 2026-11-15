@@ -6,6 +6,7 @@ import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Attempts on a changed class that selects nothing because no test executed it, loaded it or names
@@ -55,6 +56,10 @@ class AbsenceAttempts : BreakAttempt() {
         """.trimIndent() + "\n" + extra.trimIndent().prependIndent("    ") + "\n}",
     )
 
+    /** The map's union after the run, which a full selecting run records anew. */
+    private fun union(dir: File): List<String> =
+        File(File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory), "loaded.txt").readLines()
+
     private fun changeOrphan(dir: File) {
         val file = File(dir, orphan.first)
         file.writeText(file.readText().replace("return 1;", "return 2;"))
@@ -97,6 +102,7 @@ class AbsenceAttempts : BreakAttempt() {
         ) { changeOrphan(it) }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertFalse("dev.sample.Orphan" in union(dir), "the test JVM loaded Orphan itself")
     }
 
     // Track: code reading. Boundary: the list is taken from the classes the JVM still holds when
@@ -139,6 +145,7 @@ class AbsenceAttempts : BreakAttempt() {
         ) { addStrict(it) }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertFalse("dev.sample.Orphan" in union(dir), "the collected loader's class was still listed")
     }
 
     // Track: code reading. Boundary: a class a resource names can be loaded with no bytecode edge
@@ -175,6 +182,7 @@ class AbsenceAttempts : BreakAttempt() {
         ) { addStrict(it) }
 
         assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertTrue(File(File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory), "loaded.txt").isFile, "no union")
     }
 
     // Track: code reading. Boundary: the list says what the capture's JVMs loaded in the capture's
@@ -256,13 +264,15 @@ class AbsenceAttempts : BreakAttempt() {
         val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").run().output
 
         assertEquals(false, passedIn(File(dir, "build/test-results/test/TEST-dev.sample.A1ConditionalTest.xml")), output)
+        assertFalse("dev.sample.A0UnrelatedTest" in ranTests(dir), "the run did not narrow; output: $output")
     }
 
     // Track: code reading. Boundary: a test JVM that dies wrote no list of what it loaded. A run
-    // with such a JVM does not date the map and takes no list from the JVMs that did finish, so a
-    // class the dead one loaded is not missing from a list that claims to be whole.
+    // with such a JVM does not date the map and takes no list from the JVMs that did finish, so
+    // the union stays the one the whole capture wrote, and a class the dead one loaded is not
+    // missing from a list that claims to be whole.
     @Test
-    fun `a capture one of whose test JVMs died writes no list, and the class it loaded runs its test`(@TempDir dir: File) {
+    fun `a capture one of whose test JVMs died keeps the union it had, and the class it loaded runs its test`(@TempDir dir: File) {
         val dying = source(
             "src/test/java/dev/sample/A1DyingTest.java",
             """
@@ -299,21 +309,22 @@ class AbsenceAttempts : BreakAttempt() {
         ignoreBuildOutputs(dir)
         git(dir, "init")
         commit(dir, "base")
-        File(dir, "build").mkdirs()
-        File(dir, "build/die").writeText("once")
+        runner(dir, "test").build()
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val whole = File(mapDir, "loaded.txt").readText()
+        assertTrue("dev.sample.Orphan" in whole.lines(), "the whole capture did not list Orphan")
 
-        val crashed = runner(dir, "test").buildAndFail().output
+        File(dir, "build/die").writeText("once")
+        val crashed = runner(dir, "test", "--rerun").buildAndFail().output
 
         assertFalse(File(dir, "build/die").exists(), "the test JVM did not reach the point where it dies; output: $crashed")
-        val mapDirs = File(dir, ".gradle/yoriwake").listFiles().orEmpty().filter(File::isDirectory)
-        assertFalse(mapDirs.any { File(it, "loaded.txt").exists() }, "a run with a dead test JVM wrote a list; output: $crashed")
+        assertEquals(whole, File(mapDir, "loaded.txt").readText(), "a run with a dead test JVM replaced the union; output: $crashed")
 
         addStrict(dir)
         File(dir, "build/test-results").deleteRecursively()
         val output = runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").run().output
 
         assertEquals(false, passedIn(File(dir, "build/test-results/test/TEST-dev.sample.A1DyingTest.xml")), output)
-        assertContains(ranTests(dir), "dev.sample.A0UnrelatedTest", "with no list, the change did not run every test")
     }
 
     // Track: code reading. Boundary: the list and the touches speak for classes the capture held.

@@ -81,6 +81,10 @@ internal fun establish(
         own?.firstOrNull { (name, _) -> name == prefix }?.let { (_, bytes) -> Recordability.declaresTestMethod(bytes) } == true &&
             !artifacts.namedOutsideItself(prefix)
     }
+    // A test class discovery runs is judged by its own tests, so a new one is no absence at all;
+    // any other class the capture did not hold forces, as before there was a union.
+    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)
+    val gated = verdicts + unheld
     // The same gates with the Kotlin refusal waived, which only the inlining classes can answer for.
     val inlineOnly = change.inlineOnly.intersect(change.classPrefixes)
     val inlinedAway = if (inlineOnly.isEmpty() || artifacts.runsCodeInUnobservedJvms()) {
@@ -91,6 +95,7 @@ internal fun establish(
             artifacts::classesFor,
         ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
             .filterValues { it.provable }.keys
+            .let { it - unheldAtCapture(mapDir, it, artifacts).keys }
         if (candidates.isEmpty()) emptySet() else runCatching {
             val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
             candidates.filterTo(sortedSetOf()) { prefix ->
@@ -99,11 +104,11 @@ internal fun establish(
         }.getOrDefault(emptySet())
     }
     return Established(
-        provable = verdicts.filterValues { it.provable }.keys,
+        provable = gated.filterValues { it.provable }.keys,
         testClasses = testClasses,
         exemptTestClasses = exemptTestClasses,
         inlinedAway = inlinedAway,
-        refusals = verdicts
+        refusals = gated
             .filterValues { !it.provable }
             .mapValues { (_, verdict) -> verdict.reason.orEmpty() },
     )
@@ -689,6 +694,32 @@ internal fun absenceVerdicts(
     val scopes = EffectiveScope.parseAll(recorded)
     return AbsenceEvidence
         .assess(prefixes, scopes, artifacts::classesFor, artifacts::namedInResources, inlinesAccountedFor)
+}
+
+/**
+ * Of [prefixes], those with a class the map's digest table does not hold, each with its refusal.
+ *
+ * The union and the touches speak for the classes the capture held. One added since is absent from
+ * both whatever depends on it: a test that lists the classes' directory would see it without having
+ * read a file that existed then. Without the table, nothing is known to have been held.
+ */
+private fun unheldAtCapture(
+    mapDir: File,
+    prefixes: Set<String>,
+    artifacts: TaskArtifacts,
+): Map<String, AbsenceEvidence.Verdict> {
+    if (prefixes.isEmpty()) {
+        return emptyMap()
+    }
+    val held = CoverageDecoder.readClassDigests(mapDir)
+        ?: return prefixes.associateWith {
+            AbsenceEvidence.Verdict(false, "the map records no class digests, so the capture's classes are unknown")
+        }
+    return prefixes.mapNotNull { prefix ->
+        artifacts.classesFor(prefix)?.firstOrNull { (name, _) -> name !in held }?.let { (name, _) ->
+            prefix to AbsenceEvidence.Verdict(false, "the capture did not hold $name")
+        }
+    }.toMap()
 }
 
 /**

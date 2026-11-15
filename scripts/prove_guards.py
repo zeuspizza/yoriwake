@@ -2705,6 +2705,15 @@ MUTATIONS = [
      "    val isolatedCapture: Boolean = parseFlag(ISOLATED_CAPTURE, lookup(ISOLATED_CAPTURE))",
      "    val isolatedCapture: Boolean = lookup(ISOLATED_CAPTURE) != null",
      functional_suite, "an isolatedCapture value that is not a boolean fails the build and names the flag"),
+    ("a narrowed selecting run's lists replace the union", COVERAGE_DECODER,
+     "            (!selecting || datesTheMap) &&\n",
+     "",
+     functional_suite, "a narrowed selecting run keeps the union, and one that runs everything records it anew"),
+    ("the agent is attached to the test task at configuration time", TEST_TASK_WIRING,
+     "        if (recording) {\n            test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)\n",
+     "        if (recording) {\n            agent?.let { test.jvmArgs(AgentJar.argument(it)) }\n"
+     "            test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)\n",
+     functional_suite, "the agent's path is not among the test task's configured JVM arguments"),
     ("a capture lists no loaded classes unless asked to", SETTINGS,
      "    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: true",
      "    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: false",
@@ -4254,6 +4263,10 @@ MUTATIONS = [
     # full-run check an attempt whose change cannot fail its target reads as a gap; without the
     # left-out check one that narrowed nothing reads as held; without the declared-verdict check one
     # that held by another rule reads as reaching the boundary it aimed at.
+    ("a class the capture did not hold is absent for a reason", SELECTION,
+     "    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)\n",
+     "    val unheld = emptyMap<String, AbsenceEvidence.Verdict>()\n",
+     break_suite, "a class added after the capture that a directory listing would find"),
     ("the break helper stops asking whether the change fails the target under a full run", BREAK_FILE,
      "    if (!observed.targetFailsUnderFullRun) {",
      "    if (false && !observed.targetFailsUnderFullRun) {",

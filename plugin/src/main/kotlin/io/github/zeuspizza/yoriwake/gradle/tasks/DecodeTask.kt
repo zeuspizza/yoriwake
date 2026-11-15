@@ -162,11 +162,12 @@ internal abstract class DecodeTask : DefaultTask() {
     )
 
     internal companion object {
-        /** The causes left now that every whole capture lists its loaded classes. */
+        /** Why a run that dates the map dropped its union, and until when; printed after the task's path. */
         const val UNION_DISCARDED = "could not take the classes its test JVMs loaded as the whole task's (the run " +
-            "left tests out by tag, engine, category or group, a test JVM listed none, or it ran with " +
-            "-P${Settings.LOADED}=false), so the loaded-class union was discarded. Changes to code no test " +
-            "executes will force a full run until the next capture of the whole task."
+            "left tests out by tag, engine, category or group or by a name pattern of the build script, a test " +
+            "JVM listed none, or it ran with -P${Settings.LOADED}=false), so the loaded-class union was " +
+            "discarded. Changes to code no test executes will force a full run until the next capture of the " +
+            "whole task."
 
         fun nameFor(testName: String) = "yoriwakeDecode${testName.replaceFirstChar(Char::uppercase)}"
 

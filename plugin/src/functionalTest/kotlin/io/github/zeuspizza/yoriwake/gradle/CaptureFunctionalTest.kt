@@ -317,15 +317,13 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `capturing with the recorder writes a union, and a class newer than it is judged on the rest`(
+    fun `capturing with the recorder writes a union, and a class newer than it forces until the next capture`(
         @TempDir dir: File,
     ) {
-        // A class added since capture is absent from the union by construction. A constant holder
-        // is refused by the recordability check, and a class reached through a service file or a
-        // resource by the resource scan.
-        // What is left is a new class nothing references, which may be skipped: anything that used
-        // it would itself be in the change set, with a referrer the map either covers or refuses to
-        // vouch for.
+        // A class added since the capture is absent from the union by construction, and so is it
+        // from every touch: a test that lists the classes' directory depends on it without having
+        // read a file that existed then. Once a capture holds it, the union speaks for it, and a
+        // change nothing executes, loads or names is skipped.
         build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, secondClass, secondTest)
         ignoreBuildOutputs(dir)
         git(dir, "init")
@@ -355,6 +353,21 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
             """.trimIndent()
         )
 
+        val added = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertEquals("no-coverage-for-changed", decisionNotes(dir)["full-run-kind"], added)
+
+        // Held by the next capture, the same class narrows when its body changes.
+        git(dir, "add", ".")
+        git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "unrelated")
+        runner(dir, "test").build()
+        File(dir, "src/main/java/dev/sample/Unrelated.java").writeText(
+            """
+            package dev.sample;
+            public class Unrelated { public int n() { return 2; } }
+            """.trimIndent()
+        )
+
         val narrowed = runner(dir, "test", "-Pyoriwake.select").build().output
 
         assertContains(narrowed, "skipped=2")
@@ -367,7 +380,7 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
             import org.junit.jupiter.api.Test;
             import static org.junit.jupiter.api.Assertions.assertEquals;
             class UnrelatedTest {
-                @Test void n() { assertEquals(1, new Unrelated().n()); }
+                @Test void n() { assertEquals(2, new Unrelated().n()); }
             }
             """.trimIndent()
         )
@@ -413,8 +426,9 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a selecting run's test JVMs list no loaded classes, and the union stays as captured`(@TempDir dir: File) {
-        // The decode takes no union from a selecting run, so its JVMs are not asked for the lists.
+    fun `a narrowed selecting run keeps the union, and one that runs everything records it anew`(@TempDir dir: File) {
+        // Every run's test JVMs write the lists. The decode takes them as the union only from a run
+        // that dates the map, which a selecting run does when it ran everything.
         val probed = minimalBuild.replace(
             "tasks.test { useJUnitPlatform() }",
             """
@@ -435,7 +449,9 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
                 }
             }
         """.trimIndent()
-        build(dir, "build.gradle.kts" to probed, oneClass, oneTest, probe)
+        val orphan = "src/main/java/dev/sample/Orphan.java" to
+            "package dev.sample;\npublic class Orphan { public int once() { return 1; } }"
+        build(dir, "build.gradle.kts" to probed, oneClass, oneTest, probe, orphan)
         ignoreBuildOutputs(dir)
         git(dir, "init")
         commit(dir, "sample")
@@ -444,9 +460,12 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
 
         val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
         val probeFile = File(dir, "build/probe.txt")
-        assertEquals(File(mapDir, "loaded").canonicalFile, File(probeFile.readText().removePrefix("loaded=")).canonicalFile)
+        val listsDir = File(mapDir, "loaded")
+        assertEquals(listsDir.canonicalFile, File(probeFile.readText().removePrefix("loaded=")).canonicalFile)
+        assertFalse(listsDir.exists(), "the lists outlived the decode that read them")
         val union = File(mapDir, "loaded.txt").readText()
         assertContains(union, "dev.sample.Alpha")
+        assertFalse("dev.sample.Orphan" in union.lines())
 
         File(dir, "src/main/java/dev/sample/Alpha.java").writeText(
             """
@@ -457,10 +476,21 @@ class CaptureFunctionalTest : FunctionalTestSupport() {
         probeFile.delete()
         runner(dir, "test", "-Pyoriwake.select").build()
 
-        assertEquals("loaded=null", probeFile.readText())
-        assertEquals(union, File(mapDir, "loaded.txt").readText())
-    }
+        assertEquals(listsDir.canonicalFile, File(probeFile.readText().removePrefix("loaded=")).canonicalFile)
+        assertEquals(union, File(mapDir, "loaded.txt").readText(), "a narrowed run replaced the union")
 
+        // Without a union, the orphan's change forces a full run: a selecting run that runs
+        // everything, dates the map and takes its JVMs' lists as the union.
+        listOf("loaded.txt", "loaded-scope", "loaded-provenance").forEach { File(mapDir, it).delete() }
+        File(dir, "src/main/java/dev/sample/Orphan.java").writeText(
+            "package dev.sample;\npublic class Orphan { public int once() { return 2; } }"
+        )
+        val output = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertEquals("no-coverage-for-changed", decisionNotes(dir)["full-run-kind"], output)
+        assertEquals(union, File(mapDir, "loaded.txt").readText(), "the full selecting run did not record the union")
+        assertEquals("full", File(mapDir, "loaded-provenance").readText().trim())
+    }
     @Test
     fun `a Test task reconfigured late keeps the host's own jacoco scope`(@TempDir dir: File) {
         // Set in the host's own afterEvaluate, after the plugin was applied: the wiring must still

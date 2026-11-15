@@ -351,13 +351,14 @@ internal class TestTaskWiring(internal val settings: Settings) {
         afterTest.attachTo(test)
 
         // Where the test JVMs list the classes they loaded. Cleared every run, so old files never
-        // pass for this run's output.
+        // pass for this run's output. On a selecting run too: one that runs everything dates the
+        // map, and the union must describe that commit.
         val loadedDir = CoverageDecoder.loadedDir(mapDir)
-        test.doFirst { loadedDir.deleteRecursively() }
-
-        // Not on a selecting run: the decode never takes a union from one, even when it ran
-        // every test, so its JVMs are not asked to write the lists.
-        if (recording && !selecting) {
+        test.doFirst {
+            if (declinedUnderDevelocity(test)) return@doFirst
+            loadedDir.deleteRecursively()
+        }
+        if (recording) {
             test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)
         }
         configureNonPlatformRunner(test, agent, selecting, runPlan.observing, narrowPlainRunners)

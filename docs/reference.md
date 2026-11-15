@@ -134,12 +134,18 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - a changed class the map has never recorded (`no-coverage-for-changed`), because uncovered and
   unrecordable look the same. A test class this task runs is the exception: discovery runs it
   whatever the map knows. On Gradle a second exception selects nothing for the class: a capture of
-  the whole task lists the classes its test JVMs loaded, and a class that is absent from that list,
-  that no recording test JVM defined, and that JaCoCo was instrumenting is one no test depended on.
-  It still forces when it is a Kotlin class, declares a constant, carries a class annotation, or is
-  named in a resource the task can read; when the capture left tests out by tag, engine, category or
-  group, or one of its test JVMs listed nothing; and after `-Pyoriwake.internal.loaded=false`,
-  which records no list. On Maven the list is recorded only under `-Dyoriwake.internal.loaded`;
+  the whole task lists the classes its test JVMs loaded, and a class the capture held that is
+  absent from that list, that no capturing test JVM loaded or read as a class or source file, and
+  that JaCoCo was instrumenting under the scope in force now is one no test depended on. It still
+  forces when the class did not exist at the capture, has no line a probe could fire on (a plain
+  interface), is outside the packages the build's sources declare, declares a constant, carries a
+  class annotation, is named in a resource the task can read, or is a Kotlin class (except a file
+  of nothing but `inline` functions, read through the classes that inlined it); when the capture
+  left tests out by tag, engine, category or group or by a name pattern of the build script, or one
+  of its test JVMs listed nothing; and after `-Pyoriwake.internal.loaded=false`, which records no
+  list and drops the one the map had. A selecting run that runs everything records the list as a
+  capture does; a narrowed one keeps the list it found. On Maven the list is recorded only under
+  `-Dyoriwake.internal.loaded`;
 - a changed class whose annotations, on the class or any member and with their values, differ from
   the ones the map recorded (`annotations-changed`), or an annotated changed class the map recorded
   no annotations for (`annotations-unrecorded`). A test class this task runs that declares a test
@@ -800,7 +806,7 @@ Three things differ:
   case it can see begin, so every later test in that JVM runs after any change. A changed class
   that no test JVM loaded selects nothing ([When it refuses to select](#when-it-refuses-to-select)),
   so a class only such an outside process loads, from the build's output rather than through a
-  test JVM, is not protected by a full run any more; pin the tests that drive it with `alwaysRun`.
+  test JVM, is not protected by a full run; pin the tests that drive it with `alwaysRun`.
 - **What the agent cannot observe.** The rules in [what coverage does not
   record](#what-coverage-does-not-record) rest on what the agent sees in the test JVM: every class
   a class loader defines and every hidden class your code defines, every file open, copy or link

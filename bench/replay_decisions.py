@@ -108,10 +108,13 @@ def load_record(decisions_path, root=ROOT):
 
 def without_union(map_dir, view):
     """A directory at `view` holding links to everything in `map_dir` but its loaded-class union."""
+    if not os.path.isdir(map_dir):
+        return map_dir  # the selector refuses it as it refuses the kept map
     os.makedirs(view)
     for name in os.listdir(map_dir):
         if name not in UNION_FILES:
-            os.symlink(os.path.join(map_dir, name), os.path.join(view, name))
+            # Absolute: a relative target would resolve against the view directory.
+            os.symlink(os.path.abspath(os.path.join(map_dir, name)), os.path.join(view, name))
     return view
 
 
@@ -186,6 +189,14 @@ def replay(rows, jar=AGENT_JAR, root=ROOT):
             for project, row, ids, replayed, refusal in decide(rows, jar, root)]
 
 
+def trusted_union(map_dir):
+    """Whether the kept map holds a union the selector would read: all three files, provenance `full`."""
+    if not all(os.path.isfile(os.path.join(map_dir, name)) for name in UNION_FILES):
+        return False
+    with open(os.path.join(map_dir, "loaded-provenance"), encoding="utf-8") as f:
+        return f.read().strip() == "full"
+
+
 def union_effect(rows, jar=AGENT_JAR, root=ROOT):
     """Per row, the tests left out against its map as kept and run against it without its union."""
     results = []
@@ -194,7 +205,7 @@ def union_effect(rows, jar=AGENT_JAR, root=ROOT):
         entry = {"project": project, "target": row["target"]}
         if refusal is not None or bare_refusal is not None:
             entry.update(verdict="not-replayed", reason=refusal or bare_refusal)
-        elif not os.path.isfile(os.path.join(root, row["replay"]["map"], UNION_FILES[0])):
+        elif not trusted_union(os.path.join(root, row["replay"]["map"])):
             entry.update(verdict="no-union")
         elif (row["replay"].get("digest") == run.selector_digest()
               and any(as_kept.get(test) != old for test, old in ids)):

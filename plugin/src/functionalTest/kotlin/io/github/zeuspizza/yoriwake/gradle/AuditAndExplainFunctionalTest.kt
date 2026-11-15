@@ -309,11 +309,7 @@ class AuditAndExplainFunctionalTest : FunctionalTestSupport() {
             "--allow-empty", "-m", "base")
         git(dir, "add", ".")
         git(dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "sample")
-        // `-Pyoriwake.internal.loaded` so the capture records the loaded-class union: without it a
-        // class the map has never seen forces a full run, and the "selecting" run below would
-        // execute everything -- which dates the map legitimately and proves nothing about the
-        // guard.
-        runner(dir, "test", "-Pyoriwake.internal.loaded").build()
+        runner(dir, "test").build()
         val facts = dir.walkTopDown().first { it.name == Audit.TaskFacts.FILE }
         // A capture that ran wider than the selecting run below ever will.
         facts.writeText(
@@ -324,16 +320,16 @@ class AuditAndExplainFunctionalTest : FunctionalTestSupport() {
         // A change that reaches one of the two tests, so the selecting run executes a strict
         // subset. Running everything would legitimately restamp the count, and the guard would pass
         // for an unrelated reason.
-        File(dir, "src/main/java/dev/sample/Unrelated.java").writeText(
+        File(dir, "src/main/java/dev/sample/Beta.java").writeText(
             """
             package dev.sample;
-            public class Unrelated { public int n() { return 1; } }
+            public class Beta { public int thrice(int n) { return n + n + n; } }
             """.trimIndent()
         )
 
         val narrowed = runner(dir, "test", "-Pyoriwake.select").build().output
 
-        assertTrue("skipped=" in narrowed, "the selecting run executed everything")
+        assertTrue("skipped=" in narrowed, "the selecting run executed everything; output: $narrowed")
         assertFalse(
             narrowed.contains("map updated"),
             "a narrowing run captured, so a partial map could restate the worker count",
