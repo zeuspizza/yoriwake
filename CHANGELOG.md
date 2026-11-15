@@ -38,6 +38,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Gradle: README, Markdown, `docs/` and `.github/` changes are ignored by default (`pathIgnoreDefaults`). Map: left alone.
 - Gradle: a changed class no test executed or loaded, and no resource names, selects nothing by default.
   Map: left alone; the next capture of the whole task records the classes its test JVMs loaded.
+- An edited Spock specification runs its own features and their neighbours, not everything. Map: left alone; narrows once re-recorded.
 
 ### Fixed
 

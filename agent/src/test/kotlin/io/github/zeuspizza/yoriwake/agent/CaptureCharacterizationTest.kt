@@ -140,13 +140,13 @@ class CaptureCharacterizationTest {
             """
             worker-7 plan-complete
               NONE [yoriwake:unattributed] <- nothing
-              NONE [yoriwake:unattributed] <- nothing
-              NONE [yoriwake:unattributed] <- where-block
+              NONE [yoriwake:class][engine:spock]/[spec:com.acme.HandlerSpec] <- nothing
+              NONE [yoriwake:class][engine:spock]/[spec:com.acme.HandlerSpec] <- where-block
               SUCCESSFUL [engine:spock]/[spec:com.acme.HandlerSpec]/[feature:${'$'}spock_feature_0_0]/[iteration:0] <- it0
-              NONE [yoriwake:unattributed] <- between-iterations
+              NONE [yoriwake:class][engine:spock]/[spec:com.acme.HandlerSpec] <- between-iterations
               SUCCESSFUL [engine:spock]/[spec:com.acme.HandlerSpec]/[feature:${'$'}spock_feature_0_0]/[iteration:1] <- it1
               SUCCESSFUL [engine:spock]/[spec:com.acme.HandlerSpec]/[feature:${'$'}spock_feature_0_0] <- feature-cleanup
-              NONE [yoriwake:class][engine:junit-jupiter]/[class:com.acme.DTest] <- nothing
+              NONE [yoriwake:class][engine:spock]/[spec:com.acme.HandlerSpec]|[engine:junit-jupiter]/[class:com.acme.DTest] <- nothing
               NONE [yoriwake:class][engine:junit-jupiter]/[class:com.acme.DTest] <- d1-setup
               SUCCESSFUL [engine:junit-jupiter]/[class:com.acme.DTest]/[method:d1()]/[dynamic-test:#1] <- d1-1
               SUCCESSFUL [engine:junit-jupiter]/[class:com.acme.DTest]/[method:d1()] <- d1-cleanup

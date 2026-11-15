@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.agent.platform;
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract;
+import io.github.zeuspizza.yoriwake.agent.contract.TestClassIds;
 import io.github.zeuspizza.yoriwake.agent.engines.PlatformEvents;
 import io.github.zeuspizza.yoriwake.agent.host.AttachedLoader;
 import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun;
@@ -317,7 +318,7 @@ public class SelectionFilter implements PostDiscoveryFilter {
         for (TestDescriptor at = descriptor.getParent().orElse(null);
                 at != null;
                 at = at.getParent().orElse(null)) {
-            if (at.getUniqueId().toString().contains("[class:")) {
+            if (TestClassIds.scopeOf(at.getUniqueId().toString()) != null) {
                 found = at;
             }
         }

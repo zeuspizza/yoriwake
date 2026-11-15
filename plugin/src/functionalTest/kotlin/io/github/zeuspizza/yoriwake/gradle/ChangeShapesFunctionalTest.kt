@@ -451,39 +451,79 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
         assertFullRun(dir, "no-coverage-for-changed", both, output)
     }
 
-    @Test
-    fun `a line added above a Spock feature runs everything, as the specification's code ran at startup`(
-        @TempDir dir: File,
-    ) {
-        // Spock records each feature's line in an annotation on its method, which a test class this
-        // task runs is exempt from. Spock also runs the specification's own code before any of its
-        // features, where no test owns the coverage.
-        val spockBuild = groovyBuild.replace(
-            "dependencies {",
-            "dependencies {\n    testImplementation(\"org.spockframework:spock-core:2.3-groovy-4.0\")",
-        )
-        val spec = { name: String, subject: String, expected: Int ->
-            "src/test/groovy/dev/sample/${name}Spec.groovy" to """
-                package dev.sample
+    private val spockBuild = groovyBuild.replace(
+        "dependencies {",
+        "dependencies {\n    testImplementation(\"org.spockframework:spock-core:2.3-groovy-4.0\")",
+    )
 
-                import spock.lang.Specification
+    private fun spockSpec(name: String, subject: String, expected: Int) =
+        "src/test/groovy/dev/sample/${name}Spec.groovy" to """
+            package dev.sample
 
-                class ${name}Spec extends Specification {
-                    def "computes"() {
-                        expect:
-                        $subject == $expected
-                    }
+            import spock.lang.Specification
+
+            class ${name}Spec extends Specification {
+                def "computes"() {
+                    expect:
+                    $subject == $expected
                 }
-            """.trimIndent()
-        }
-        val alphaSpec = spec("Alpha", "new Alpha().twice(1)", 2)
-        val betaSpec = spec("Beta", "new Beta().thrice(1)", 3)
+            }
+        """.trimIndent()
 
-        val output = selectAfter(dir, spockBuild, oneClass, secondClass, alphaSpec, betaSpec, edit = {
-            edit(dir, betaSpec.first, "    def \"computes\"()", "    // moved down a line\n    def \"computes\"()")
-        })
+    private val gammaClass = "src/main/java/dev/sample/Gamma.java" to """
+        package dev.sample;
+        public class Gamma { public int four(int n) { return n * 4; } }
+    """.trimIndent()
 
-        assertFullRun(dir, "startup-coverage", setOf("dev.sample.AlphaSpec", "dev.sample.BetaSpec"), output)
+    private val gammaSpec = spockSpec("Gamma", "new Gamma().four(1)", 4)
+
+    /** Three specifications in one JVM, in name order; the edit is to the last one. */
+    private fun selectAfterGammaSpecEdit(dir: File, from: String, to: String): String =
+        selectAfter(
+            dir, spockBuild, oneClass, secondClass, gammaClass,
+            spockSpec("Alpha", "new Alpha().twice(1)", 2), spockSpec("Beta", "new Beta().thrice(1)", 3), gammaSpec,
+            edit = { edit(dir, gammaSpec.first, from, to) },
+        )
+
+    @Test
+    fun `a line added above a Spock feature runs that specification and the one before it`(@TempDir dir: File) {
+        // Spock records each feature's line in an annotation on its method, which a test class this
+        // task runs is exempt from. The specification's own code runs between features, in the
+        // window it shares with the specification that ended there; the first one never ran it.
+        val output = selectAfterGammaSpecEdit(dir, "    def \"computes\"()", "    // moved down a line\n    def \"computes\"()")
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaSpec", "dev.sample.GammaSpec"), output)
+    }
+
+    @Test
+    fun `a line added in a Spock feature body runs that specification and the one before it`(@TempDir dir: File) {
+        val output = selectAfterGammaSpecEdit(dir, "expect:", "expect:\n        1 == 1")
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaSpec", "dev.sample.GammaSpec"), output)
+    }
+
+    @Test
+    fun `a change to code a Spock global extension ran at discovery runs everything`(@TempDir dir: File) {
+        // A global extension starts before the test plan, where no specification owns the coverage.
+        val extension = "src/test/groovy/dev/sample/AlphaExtension.groovy" to """
+            package dev.sample
+
+            import org.spockframework.runtime.extension.IGlobalExtension
+
+            class AlphaExtension implements IGlobalExtension {
+                @Override
+                void start() { new Alpha().twice(1) }
+            }
+        """.trimIndent()
+        val registration = "src/test/resources/META-INF/services/org.spockframework.runtime.extension.IGlobalExtension" to
+            "dev.sample.AlphaExtension\n"
+        val output = selectAfter(
+            dir, spockBuild, oneClass, secondClass, extension, registration,
+            spockSpec("Beta", "new Beta().thrice(1)", 3), spockSpec("Gamma", "new Beta().thrice(2)", 6),
+            edit = { edit(dir, oneClass.first, "return n * 2;", "return n + n;") },
+        )
+
+        assertFullRun(dir, "startup-coverage", setOf("dev.sample.BetaSpec", "dev.sample.GammaSpec"), output)
     }
 
     @Test

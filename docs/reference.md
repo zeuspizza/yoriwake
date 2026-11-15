@@ -1032,10 +1032,13 @@ applies the same change: `./gradlew -I scripts/junit-vintage.init.gradle.kts tes
   tests that executed it. Closures, trait helpers and inner classes compile to classes named after
   the class that declares them, so the same path covers them. A script names the class it compiles
   to after its file.
-- Spock 2 specifications capture, and a change to the code they test narrows. An edited
-  specification runs every test of the JVMs that ran it: Spock runs part of a specification's own
-  code before its features, where no test owns the coverage. In a JVM every specification shares,
-  that is everything (`startup-coverage`).
+- Spock 2 specifications capture, and a change to the code they test narrows. A specification is
+  read as the class its features belong to: an edited specification runs its own features, those
+  of the specification that ended just before it, whose teardown shares its setup's window
+  (`class-setup`), and the tests after it in its JVM. Code that ran before the test plan started,
+  such as a Spock global extension's `start`, still runs every test of the JVMs that ran it
+  (`startup-coverage`). A map recorded before 0.6 keeps that reading for a specification until
+  a run that records afresh.
 - Groovy shapes that run everything:
   - an edit that adds a closure or a class: groovyc marks the methods it generates with an
     annotation, so the new class carries annotations the map never recorded
