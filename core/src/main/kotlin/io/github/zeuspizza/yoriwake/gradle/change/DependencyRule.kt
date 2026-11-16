@@ -88,7 +88,10 @@ internal object DependencyRule {
 
     fun decide(inputs: Inputs): Verdict {
         val maven = inputs.context.maven != null
-        val includedBuilds = if (maven) emptyList() else includedBuilds(inputs.git)
+        val listed = if (maven) emptyList() else includedBuilds(inputs.git)
+        // Unlisted, every build script counts as this build's: an included build's then stays a
+        // candidate, and is refused below rather than dropped.
+        val includedBuilds = listed.orEmpty()
         val candidates = inputs.paths.filter { path ->
             when (CoordinateDiff.shapeOf(path, includedBuilds, maven)) {
                 null -> false
@@ -97,6 +100,7 @@ internal object DependencyRule {
             }
         }
         if (candidates.isEmpty()) return Verdict.NotApplicable
+        if (listed == null) return Verdict.Unaccepted(candidates.first(), LS_FILES_FAILED)
         val bumps = mutableListOf<CoordinateDiff.Bump>()
         val catalogs = mutableMapOf<String, String>()
         for (path in candidates) {
@@ -139,10 +143,10 @@ internal object DependencyRule {
         return compare(inputs, candidates, recorded, current)
     }
 
-    /** Directories of builds this one includes: each holds a settings file of its own. */
-    private fun includedBuilds(git: ChangeDetection.Runner): List<String> =
+    /** Directories of builds this one includes: each holds a settings file of its own. Null when git fails. */
+    private fun includedBuilds(git: ChangeDetection.Runner): List<String>? =
         git.run(listOf("ls-files", "--cached", "--others", "--exclude-standard", "--", "*settings.gradle", "*settings.gradle.kts"))
-            .orEmpty().map { it.substringBeforeLast('/', "") }.filter(String::isNotEmpty).distinct()
+            ?.map { it.substringBeforeLast('/', "") }?.filter(String::isNotEmpty)?.distinct()
 
     /**
      * The refusals for a version the build reads where no classpath shows it: a version key a
@@ -172,7 +176,7 @@ internal object DependencyRule {
                 "ls-files", "--cached", "--others", "--exclude-standard", "--",
                 "*.gradle", "*.gradle.kts", "buildSrc/*", "build-logic/*",
             ) + includedBuilds.map { "$it/*" }
-        ).orEmpty().filter { path -> SOURCE_SUFFIXES.any(path::endsWith) }.distinct()
+        )?.filter { path -> SOURCE_SUFFIXES.any(path::endsWith) }?.distinct() ?: return unaccepted(LS_FILES_FAILED)
         for (path in sources) {
             val text = runCatching { File(inputs.rootDir, path).readText() }.getOrNull() ?: continue
             for (key in keys) {
@@ -234,6 +238,9 @@ internal object DependencyRule {
         return null
     }
 
+    /** A failed listing is no evidence that nothing reads the version: the bump is refused. */
+    private const val LS_FILES_FAILED = "git could not list the build's scripts"
+
     private val SOURCE_SUFFIXES = listOf(".gradle", ".gradle.kts", ".kt", ".kts", ".java", ".groovy")
 
     /**
@@ -260,7 +267,8 @@ internal object DependencyRule {
                 "ls-files", "--cached", "--others", "--exclude-standard", "--",
                 "*.gradle", "*.gradle.kts", "buildSrc/*", "build-logic/*", "gradle.properties", "*/gradle.properties",
             ) + includedBuilds.map { "$it/*" }
-        ).orEmpty().filter { path -> path.substringAfterLast('/') == "gradle.properties" || SOURCE_SUFFIXES.any(path::endsWith) }.distinct()
+        )?.filter { path -> path.substringAfterLast('/') == "gradle.properties" || SOURCE_SUFFIXES.any(path::endsWith) }?.distinct()
+            ?: return unaccepted(LS_FILES_FAILED)
         val texts = sources.mapNotNull { path -> runCatching { File(inputs.rootDir, path).readText() }.getOrNull()?.let { path to it } }
         val scanned = texts.associate { (path, text) -> path to if (path.endsWith("gradle.properties")) null else scan(text) }
         for ((path, scan) in scanned) {

@@ -315,6 +315,58 @@ class SelectionRecordTest {
     }
 
     @Test
+    fun `a classpath directory from outside the build over the file budget digests to a value no run matches`(@TempDir root: File) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val classes = File(root, "elsewhere/classes")
+        listOf("a.txt", "deep/b.txt", "deep/c.txt").forEach { File(classes, it).apply { parentFile.mkdirs(); writeText(it) } }
+        val digest = { maxFiles: Int, files: List<File> -> SelectionRecord.classpathDigest(files, here, home, maxFiles = maxFiles) }
+        val over = digest(2, listOf(classes))
+        val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", over, "d")
+
+        assertNotEquals(over, digest(2, listOf(classes)))
+        assertContains(
+            SelectionRecord.mismatch(recorded, recorded.copy(classpath = "c")).orEmpty(),
+            "the classpath directories from outside the build exceed the 2-file budget",
+        )
+        // Under the budget the digest is the one an unbounded read gives.
+        assertEquals(SelectionRecord.classpathDigest(listOf(classes), here, home), digest(3, listOf(classes)))
+
+        // One budget for the directories from outside and the build's own files.
+        val resources = File(here, "build/resources/test")
+        repeat(2) { File(resources, "r$it.txt").apply { parentFile.mkdirs(); writeText("$it") } }
+        val shared = digest(4, listOf(classes, resources))
+        assertNotEquals(shared, digest(4, listOf(classes, resources)), "the build-produced files spend what is left")
+        assertEquals(digest(5, listOf(classes, resources)), digest(5, listOf(classes, resources)))
+    }
+
+    @Test
+    fun `a directory that cannot be listed under a classpath directory from outside the build digests to a value no run matches`(
+        @TempDir root: File,
+    ) {
+        val home = File(root, "home/.gradle")
+        val here = File(root, "here")
+        val classes = File(root, "elsewhere/classes")
+        File(classes, "a.txt").apply { parentFile.mkdirs(); writeText("a") }
+        val hidden = File(classes, "deep").apply { mkdirs() }
+        File(hidden, "b.txt").writeText("b")
+        makeUnreadable(hidden)
+        try {
+            assumeTrue(hidden.listFiles() == null, "this user can list a directory denied to it (root?)")
+            val digest = { SelectionRecord.classpathDigest(listOf(classes), here, home) }
+            val recorded = SelectionRecord.Stamp("a".repeat(40), true, ":test", "", ":", digest(), "d")
+
+            assertNotEquals(digest(), digest(), "what it holds may change unseen")
+            assertContains(
+                SelectionRecord.mismatch(recorded, recorded.copy(classpath = "c")).orEmpty(),
+                "${classes.invariantSeparatorsPath} could not be read",
+            )
+        } finally {
+            makeReadable(hidden)
+        }
+    }
+
+    @Test
     fun `the classpath digest follows a jar a dependency's manifest names with brackets`(@TempDir root: File) {
         val home = File(root, "home/.gradle")
         val here = File(root, "here")

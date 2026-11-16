@@ -356,7 +356,8 @@ internal object ClasspathFiles {
     fun namedBudgetSpent(maxFiles: Int = MAX_FILES) =
         Walk.Refused("the files a manifest Class-Path names exceed the $maxFiles-file budget")
 
-    private fun outsideBudgetSpent(maxFiles: Int) =
+    /** Why a table refuses, and the complement digest matches nothing, past the budget for directories from outside the build. */
+    fun outsideBudgetSpent(maxFiles: Int = MAX_FILES) =
         Walk.Refused("the classpath directories from outside the build exceed the $maxFiles-file budget")
 
     /** How [table] reads a dependency entry for its row; [BUILT] marks build output, which has none. */
@@ -686,11 +687,12 @@ internal object ClasspathFiles {
 
     /**
      * A directory's files by relative path and bytes. Null once [overBudget] says so; it is asked
-     * per file while the tree is listed, before anything is read.
+     * per file while the tree is listed, before anything is read. Throws when a directory in it
+     * cannot be listed or a file cannot be read: either may hold anything.
      */
     private fun directoryDigest(directory: File, overBudget: () -> Boolean): String? {
         val found = mutableListOf<Pair<String, File>>()
-        for (file in directory.walkTopDown().filter { it.isFile }) {
+        for (file in directory.walkTopDown().onFail { _, failure -> throw failure }.filter { it.isFile }) {
             if (overBudget()) return null
             found += file.relativeTo(directory).invariantSeparatorsPath to file
         }
@@ -771,7 +773,7 @@ internal object ClasspathFiles {
 
     private const val NAMED = 5
 
-    private const val MAX_FILES = 200_000
+    const val MAX_FILES = 200_000
 
     /** The largest file read whole to look for line endings to normalise. */
     private const val TEXT_CAP = 8 * 1024 * 1024

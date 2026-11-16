@@ -1311,6 +1311,29 @@ class ClasspathFilesTest {
     }
 
     @Test
+    fun `a directory that cannot be listed under a classpath directory from outside the build never compares equal`(@TempDir base: File) {
+        val machine = Machine(base)
+        val classes = File(base, "elsewhere/classes")
+        file(classes, "a.txt", "a")
+        val hidden = File(classes, "deep")
+        file(hidden, "b.txt", "b")
+        assertNotEquals(ClasspathFiles.UNREADABLE, found(machine.table(classes))["dependency:<outside>/classes"])
+        makeUnreadable(hidden)
+        try {
+            assumeTrue(hidden.listFiles() == null, "this user can list a directory denied to it (root?)")
+            val table = found(machine.table(classes))
+
+            assertEquals(ClasspathFiles.UNREADABLE, table["dependency:<outside>/classes"])
+            assertEquals(
+                mapOf("dependency:<outside>/classes" to "unreadable"),
+                ClasspathFiles.compare(table, found(machine.table(classes))).files,
+            )
+        } finally {
+            makeReadable(hidden)
+        }
+    }
+
+    @Test
     fun `a named directory reads each jar in it by its entries`(@TempDir base: File) {
         val machine = Machine(base)
         val vendor = jar(File(base, "vendor/vendor.jar"), 0L, manifest("."))

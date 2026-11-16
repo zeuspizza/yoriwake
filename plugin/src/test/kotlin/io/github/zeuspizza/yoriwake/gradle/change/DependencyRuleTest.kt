@@ -95,11 +95,12 @@ class DependencyRuleTest {
         jvmArguments: List<String>? = emptyList(),
         configurations: Set<String>? = setOf("implementation", "runtimeClasspath", "testRuntimeClasspath"),
         ownBuildFile: (String) -> Boolean = { it == "app/build.gradle.kts" },
+        git: ChangeDetection.Runner = ChangeDetection.directRunner(root),
     ) = DependencyRule.decide(
         DependencyRule.Inputs(
             root, paths, "HEAD", mapDir,
             DependencyRule.Context(
-                git = ChangeDetection.directRunner(root),
+                git = git,
                 raw = { ChangeDetection.rawGit(root, it) },
                 current = { current },
                 jvmArguments = { jvmArguments ?: error("unreadable") },
@@ -440,7 +441,12 @@ class DependencyRuleTest {
     private val mathNew get() = jar("repo/lib-math-1.1.jar", "lib/math/Add.class")
 
     /** Commits [files] as the base, applies [bumped], and decides the change set of the changed ones. */
-    private fun decideValue(files: Map<String, String>, bumped: Map<String, String>, configurations: Set<String> = setOf("implementation")): Verdict {
+    private fun decideValue(
+        files: Map<String, String>,
+        bumped: Map<String, String>,
+        configurations: Set<String> = setOf("implementation"),
+        git: ChangeDetection.Runner = ChangeDetection.directRunner(root),
+    ): Verdict {
         files.forEach { (path, text) -> write(path, text) }
         git("add", "-A")
         git("commit", "-q", "-m", "values")
@@ -450,6 +456,7 @@ class DependencyRuleTest {
         return decide(
             bumped.keys.toList(), record(own, jsonOld, newMath, identities = identities + (newMath to "dev.lib:lib-math")),
             configurations = configurations,
+            git = git,
             ownBuildFile = { it == "build.gradle" || it == "build.gradle.kts" || it.endsWith("/build.gradle") || it == "app/build.gradle.kts" },
         )
     }
@@ -492,6 +499,29 @@ class DependencyRuleTest {
             assertContains(verdict.why, "`mathVersion`")
             git("reset", "-q", "--hard")
         }
+    }
+
+    @Test
+    fun `a git that cannot list the build's scripts leaves a bump unaccepted, never read as nothing reading it`() {
+        // Each listing failing alone: the included builds', build logic's and the values' readers'.
+        val direct = ChangeDetection.directRunner(root)
+        fun failing(pattern: String) = ChangeDetection.Runner { arguments ->
+            if (arguments.first() == "ls-files" && pattern in arguments) null else direct.run(arguments)
+        }
+        for (pattern in listOf("*settings.gradle", "buildSrc/*")) {
+            recordInMap(record(own, jsonOld, math))
+            bumpJson()
+            val verdict = assertIs<Verdict.Unaccepted>(
+                decide(listOf("gradle/libs.versions.toml"), record(own, jsonNew, math), git = failing(pattern)), pattern,
+            )
+            assertEquals("gradle/libs.versions.toml", verdict.path)
+            assertContains(verdict.why, "could not list")
+        }
+        val text = groovyValue()
+        val verdict = assertIs<Verdict.Unaccepted>(
+            decideValue(mapOf("build.gradle" to text), mapOf("build.gradle" to bumpGroovy(text)), git = failing("gradle.properties"))
+        )
+        assertContains(verdict.why, "could not list")
     }
 
     @Test
