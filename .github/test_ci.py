@@ -3087,11 +3087,12 @@ def case_every_measuring_step_samples_the_machine_until_it_ends():
     problems = 0
     with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
         text = handle.read()
-    for opener in ("\n      - name: record and cut into slices", "\n      - name: measure this slice"):
+    for opener in ("\n      - name: record and cut into slices",
+                   "\n      - name: replay the last real commits", "\n      - name: measure this slice"):
         script = _sweep_step(text, opener)
         start = script.find("bench/machine_sampler.sh & sampler=$!")
         if start < 0 or "trap 'kill \"$sampler\" 2>/dev/null || true' EXIT" not in script \
-                or start > script.find("python3 bench/run.py"):
+                or start > script.find("python3 bench/"):
             problems += fail(f"sweep-project.yml:{opener.split('name: ')[1]} does not sample the machine from "
                              f"before the build until the step ends")
     return problems
@@ -3147,20 +3148,34 @@ def case_no_guest_build_writes_to_the_run_page():
     return problems
 
 
-def case_real_commits_are_replayed_after_the_record_is_uploaded_and_cost_no_rows():
-    """The replay reverts commits in the checkout the slices start from: it runs once that state is
-    uploaded, its failure or timeout fails no job and loses no row, and a run that only replays
-    measures no slice and is red when it replayed nothing."""
+def case_real_commits_are_replayed_in_a_job_of_their_own_that_no_slice_waits_for():
+    """The replay reverts commits in the checkout the record job uploaded, on a runner of its own:
+    a fault, its timeout or a lost runner there costs that project's replay figure, never its
+    slices, which wait for the record job only. A run that only replays measures no slice and is
+    red when it replayed nothing."""
     problems = 0
     with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
         project = handle.read()
-    record = _job_block(project, "record")
-    step = record[record.index("      - name: replay the last real commits"):]
+    record, shard = _job(project, "record"), _job(project, "shard")
+    if "commit_replay" in record or "name: replay" in record:
+        problems += fail("the record job still replays commits, or uploads a replay")
+    if "  replay:\n" not in project:
+        problems += fail("no job replays the real commits")
+        return problems
+    replay = _job(project, "replay")
+    for needed in ("    needs: record\n", "    if: inputs.commits != '0'\n", "    continue-on-error: true\n",
+                   "    timeout-minutes: 90\n", "name: record-${{ fromJSON(inputs.project).project }}",
+                   "path: ${{ runner.temp }}/record\n",
+                   'tar -xzf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench',
+                   "name: replay-${{ fromJSON(inputs.project).project }}",
+                   "path: ${{ runner.temp }}/replay/\n"):
+        if needed not in replay:
+            problems += fail(f"the replay job lacks {needed!r}")
+    if "needs: record\n" not in shard or "replay" in shard.split("steps:")[0].replace("replay_only", ""):
+        problems += fail("a slice waits for the replay")
+    step = replay[replay.index("      - name: replay the last real commits"):]
     step = step[:step.index("\n      - ", 1)]
-    if not record.index("state.tar.gz") < record.index("name: record-${{") \
-            < record.index("name: replay the last real commits") < record.index("name: replay-${{"):
-        problems += fail("the replay does not run after the record is uploaded, or uploads nothing")
-    for needed in ("if: inputs.commits != '0'", "continue-on-error: true", "timeout-minutes: ",
+    for needed in ("continue-on-error: true", "timeout-minutes: 80", "--publish",
                    '--out "$RUNNER_TEMP/replay/$NAME/commit-replay.json"', '--commits "${COMMITS:-8}"'):
         if needed not in step:
             problems += fail(f"the replay step lacks {needed!r}")
@@ -3221,9 +3236,8 @@ def case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_r
         step = job[job.index(f"      - name: {name}\n"):]
         return step[:step.index("\n      - ", 1)]
     recording = step_of(record, "record the isolated map")
-    if not record.index("name: replay-${{") < record.index("name: record the isolated map"):
-        problems += fail("the isolated recording runs before the shared state and the replay are "
-                         "uploaded")
+    if not record.index("name: record-${{") < record.index("name: record the isolated map"):
+        problems += fail("the isolated recording runs before the shared state is uploaded")
     for needed in ("if: inputs.isolated == 'paired' && !inputs.replay_only && "
                    "steps.record.outputs.shards != '[]'", "continue-on-error: true",
                    'timeout --kill-after=60 "$left" python3 bench/run.py',
@@ -3442,8 +3456,8 @@ def case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_
             or "needs.plan.outputs.projects != '[]'" not in merge:
         problems += fail("the merge does not follow every project, failed ones included, and only "
                          "a plan that has projects")
-    if re.findall(r"^  ([\w-]+):$", project.split("\njobs:\n", 1)[1], re.M) != ["record", "shard"]:
-        problems += fail("sweep-project.yml is not one record job and its slices")
+    if re.findall(r"^  ([\w-]+):$", project.split("\njobs:\n", 1)[1], re.M) != ["record", "shard", "replay"]:
+        problems += fail("sweep-project.yml is not one record job, its slices and its replay")
     if "    needs: record\n" not in _job(project, "shard"):
         problems += fail("a project's slices do not follow its own record job")
     return problems
@@ -4507,7 +4521,7 @@ CASES = (
     case_the_machine_sampler_logs_memory_disk_and_the_largest_processes,
     case_every_measuring_step_samples_the_machine_until_it_ends,
     case_no_guest_build_writes_to_the_run_page,
-    case_real_commits_are_replayed_after_the_record_is_uploaded_and_cost_no_rows,
+    case_real_commits_are_replayed_in_a_job_of_their_own_that_no_slice_waits_for,
     case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_row_to_it,
     case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged,
     case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure,

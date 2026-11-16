@@ -37,9 +37,10 @@ decision, not a run, so it says nothing about recall.
     python3 bench/commit_replay.py bench/projects/okio.toml --commits 8 --out FILE
     python3 bench/commit_replay.py --merge DIR --planned okio moshi --out commit-replay.json
 
-The first form runs after `run.py` has captured the project's map, in the same checkout. The
-second sums the files of a sweep's record jobs, found as `DIR/replay-<project>/**/<project>/
-commit-replay.json`, into one figure.
+The first form runs after `run.py` has captured the project's map, in the same checkout, or on
+the checkout a record job archived, with `--publish` on a runner that has not published the plugin
+under test. The second sums the files of a sweep's replay jobs, found as
+`DIR/replay-<project>/**/<project>/commit-replay.json`, into one figure.
 """
 
 import argparse
@@ -359,8 +360,9 @@ def explain_task(task_path):
         f"yoriwakeExplain{name[:1].upper()}{name[1:]}"
 
 
-def replay_project(project, checkout, commits, budget_minutes, scratch=None):
-    """The project's file: its rows and distribution, or why it was not replayed."""
+def replay_project(project, checkout, commits, budget_minutes, scratch=None, publish=False):
+    """The project's file: its rows and distribution, or why it was not replayed. With `publish`,
+    the plugin under test is published first, for a run that did not record the map."""
     import run  # noqa: PLC0415  (Gradle, the restore and the map's place are the sweep's own)
     import sweep_data  # noqa: PLC0415
 
@@ -379,6 +381,8 @@ def replay_project(project, checkout, commits, budget_minutes, scratch=None):
         return not_replayed(project, "the map carries no capture stamp")
     if stamp.get("project_commit") != project["commit"]:
         return not_replayed(project, "the map was captured at another commit")
+    if publish:
+        run.publish_plugin_under_test()
     if scratch is None:
         scratch = run.results_location(run.RESULTS, os.path.join(HERE, "logs"), project["name"],
                                        run.DEFAULT_SHAPES, stamp.get("arm") == "isolated")[1]
@@ -437,7 +441,7 @@ def replay_project(project, checkout, commits, budget_minutes, scratch=None):
 
 
 def _find(directory, name):
-    """A record job's file for `name` under `directory/replay-<name>`, or None."""
+    """A replay job's file for `name` under `directory/replay-<name>`, or None."""
     for root, _, names in os.walk(os.path.join(directory, f"replay-{name}")):
         if FILE in names and os.path.basename(root) == name:
             return os.path.join(root, FILE)
@@ -504,7 +508,9 @@ def main(argv=None):
     parser.add_argument("--scratch", help="the project's log directory (default: run.py's)")
     parser.add_argument("--commits", type=int, default=DEFAULT_COMMITS)
     parser.add_argument("--budget-minutes", type=float, default=DEFAULT_BUDGET_MINUTES)
-    parser.add_argument("--merge", metavar="DIR", help="sum the record jobs' files under DIR")
+    parser.add_argument("--publish", action="store_true",
+                        help="publish the plugin under test first: the map was recorded on another runner")
+    parser.add_argument("--merge", metavar="DIR", help="sum the replay jobs' files under DIR")
     parser.add_argument("--planned", nargs="*", default=[], help="with --merge: the projects")
     parser.add_argument("--completes", metavar="FILE",
                         help="with --merge: the merged file of the run this one completes")
@@ -531,7 +537,8 @@ def main(argv=None):
     # Absolute: a build is launched from inside the checkout, by its wrapper's path.
     checkout = os.path.abspath(args.checkout) if args.checkout else run.checkout_dir(project)
     scratch = os.path.abspath(args.scratch) if args.scratch else None
-    result = replay_project(project, checkout, args.commits, args.budget_minutes, scratch)
+    result = replay_project(project, checkout, args.commits, args.budget_minutes, scratch,
+                            publish=args.publish)
     _write(args.out, result)
     if not result["replayed"]:
         print(f"{project['name']}: not replayed ({result['reason']})")

@@ -1,9 +1,10 @@
 name: sweep-project
 
 # One project of a sweep (sweep.yml calls it once per project): its record job, then one job per
-# slice of its accepted target list. A project's slices wait for its own record job only, so a slow
-# project's record does not hold back the others' slices. The merge, in sweep.yml, reads what these
-# jobs upload.
+# slice of its accepted target list and, beside them, the replay of its last real commits. A
+# project's slices wait for its own record job only, so a slow project's record does not hold back
+# the others' slices, and a replay that fails or loses its runner costs that figure alone. The
+# merge, in sweep.yml, reads what these jobs upload.
 #
 # With `isolated` at `paired` the record job also records the project's map a second time, with a
 # fresh test JVM per class, and each slice measures its rows against that map once their shared arms
@@ -125,47 +126,19 @@ jobs:
           cp "bench/logs/$NAME/accepted.json" "$RUNNER_TEMP/record/$NAME/"
           tar -czf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench "logs/$NAME" "results/$NAME.json" \
             "$CHECKOUT" logs/evidence
-      # Each shard and the merge read it. Three days cover a weekend re-run of a sweep's failed
-      # jobs; the merge must finish before the first record expires.
+      # Each shard, the replay and the merge read it. Three days cover a weekend re-run of a
+      # sweep's failed jobs; the merge must finish before the first record expires.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: record-${{ fromJSON(inputs.project).project }}
           retention-days: 3
           path: ${{ runner.temp }}/record/
-      # What the selector would do on the project's last real commits, each reverted on the pinned
-      # tree and asked without running a test (bench/commit_replay.py). After the record is
-      # uploaded, so no slice starts from a tree or a map this step touched, and a fault or a
-      # timeout here costs the project its line of that figure, never its rows. The slices start
-      # when this job ends, so they wait for it: the budget below, and the build it is in.
-      - name: replay the last real commits
-        if: inputs.commits != '0'
-        continue-on-error: true
-        timeout-minutes: 90
-        env:
-          NAME: ${{ fromJSON(inputs.project).project }}
-          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
-          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
-          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
-          COMMITS: ${{ inputs.commits }}
-        run: |
-          set -eu
-          unset GITHUB_STEP_SUMMARY
-          python3 bench/commit_replay.py "$(jq -r '.[0]' <<< "$ARGS")" --checkout "bench/$CHECKOUT" \
-            --commits "${COMMITS:-8}" --out "$RUNNER_TEMP/replay/$NAME/commit-replay.json"
-      # Its own artifact, under the project's name as the record is. Not named record-*.
-      - if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: replay-${{ fromJSON(inputs.project).project }}
-          retention-days: 3
-          path: ${{ runner.temp }}/replay/
-          if-no-files-found: ignore
       # The same map again with a fresh test JVM per class, for the slices' second pass: on this
-      # runner, so both recordings' seconds are one machine's. Last, so the shared state, the replay
-      # and the slices' list are what they are without it. It gets what the job has left and no
-      # more: a job that hit its own limit would fail, and its slices would not start. The slices
-      # wait for it, and a runner lost during it takes them with it, as one lost during the replay
-      # above does: the step's own faults and its time are bounded here, a runner's are not.
+      # runner, so both recordings' seconds are one machine's. Last, so the shared state and the
+      # slices' list are what they are without it. It gets what the job has left and no more: a
+      # job that hit its own limit would fail, and its slices would not start. The slices wait for
+      # it, and a runner lost during it takes them with it: the step's own faults and its time are
+      # bounded here, a runner's are not.
       - name: record the isolated map
         id: isolated
         if: inputs.isolated == 'paired' && !inputs.replay_only && steps.record.outputs.shards != '[]'
@@ -350,3 +323,68 @@ jobs:
           name: isolated-shard-${{ fromJSON(inputs.project).project }}-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}
           retention-days: 3
           path: ${{ runner.temp }}/isolated-slice/
+
+  # What the selector would do on the project's last real commits, each reverted on the recorded
+  # tree and asked without running a test (bench/commit_replay.py). A job of its own, beside the
+  # slices: a fault, its timeout or a lost runner here costs the project its line of that figure,
+  # never its rows. The merge reads its file where there is one and names the project where not.
+  replay:
+    needs: record
+    if: inputs.commits != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: |
+            11
+            17
+            25
+            26
+            21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          add-job-summary: never
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: record-${{ fromJSON(inputs.project).project }}
+          # Outside the checkout: an untracked file in it makes run.py refuse the tree as dirty.
+          path: ${{ runner.temp }}/record
+      # Its own bound inside the job's, so its own faults end here and the upload below still runs.
+      - name: replay the last real commits
+        continue-on-error: true
+        timeout-minutes: 80
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
+          COMMITS: ${{ inputs.commits }}
+        run: |
+          set -eu
+          unset GITHUB_STEP_SUMMARY
+          # A runner that runs out of memory or disk is shut down whole, and this step's log is all
+          # it leaves: the machine's use, every 30 seconds, beside the builds'.
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          tar -xzf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench
+          # This runner did not record the map, so it publishes the plugin under test itself.
+          python3 bench/commit_replay.py "$(jq -r '.[0]' <<< "$ARGS")" --checkout "bench/$CHECKOUT" \
+            --commits "${COMMITS:-8}" --publish --out "$RUNNER_TEMP/replay/$NAME/commit-replay.json"
+      # Under the project's name, as the record is. Not named record-*.
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: replay-${{ fromJSON(inputs.project).project }}
+          retention-days: 3
+          path: ${{ runner.temp }}/replay/
+          if-no-files-found: ignore

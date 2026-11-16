@@ -377,20 +377,20 @@ def case_the_command_line_hands_the_build_an_absolute_checkout_and_reports_a_tre
     got = []
     here = os.getcwd()
     try:
-        def replay_project(project, checkout, commits, budget_minutes, scratch=None):
-            got.append((checkout, scratch))
+        def replay_project(project, checkout, commits, budget_minutes, scratch=None, publish=False):
+            got.append((checkout, scratch, publish))
             return {"replayed": True, "tree_restored": False,
                     "distribution": commit_replay.distribution([])}
 
         monkey(commit_replay, "replay_project", replay_project)
         os.chdir(os.path.dirname(repo.root))
         code = commit_replay.main([form, "--checkout", "repo", "--scratch", "scratch",
-                                   "--commits", "1", "--out", out])
+                                   "--commits", "1", "--publish", "--out", out])
     finally:
         os.chdir(here)
         undo()
-    if not got or not all(os.path.isabs(path) for path in got[0]) \
-            or os.path.realpath(got[0][0]) != os.path.realpath(repo.root):
+    if not got or not all(os.path.isabs(path) for path in got[0][:2]) \
+            or os.path.realpath(got[0][0]) != os.path.realpath(repo.root) or got[0][2] is not True:
         failures += fail(f"the replay was handed {got}")
     if code != 1:
         failures += fail("a tree not put back to the pin exited zero")
@@ -418,6 +418,46 @@ def case_a_project_without_history_or_without_this_runs_map_is_marked_not_replay
                           ("no stamp", unstamped), ("no map", mapless)):
         if result["replayed"] or result["rows"] or not result.get("reason"):
             failures += fail(f"{label}: came back {result}")
+    return failures
+
+
+def case_a_replay_asked_to_publish_publishes_the_plugin_once_before_its_first_build():
+    """A replay on a runner that did not record the map publishes the plugin under test itself, once
+    the project is known to be replayable; one that is not replayed builds nothing."""
+    failures = 0
+    for replayable in (True, False):
+        repo = history()
+        monkey, undo = patched()
+        events = []
+        try:
+            scratch, map_dir = prepared(repo, monkey)
+            monkey(run, "publish_plugin_under_test", lambda maven=False: events.append("publish"))
+
+            def gradle(checkout, project, task_args, log_path):
+                events.append("build")
+                if any("yoriwakeExplain" in arg for arg in task_args):
+                    with open(os.path.join(map_dir, "explain.json"), "w", encoding="utf-8") as out:
+                        json.dump(NARROW, out)
+                return 0, 1.0
+
+            monkey(run, "gradle", gradle)
+            if not replayable:
+                os.remove(os.path.join(map_dir, sweep_data.CAPTURE_STAMP_FILE))
+            result = commit_replay.replay_project(project_file(repo), repo.root, 2, 30, scratch,
+                                                  publish=True)
+            unasked = []
+            monkey(run, "publish_plugin_under_test", lambda maven=False: unasked.append("publish"))
+            if replayable:
+                commit_replay.replay_project(project_file(repo), repo.root, 1, 30, scratch)
+        finally:
+            undo()
+        if replayable and (events[:1] != ["publish"] or events.count("publish") != 1
+                           or not result["replayed"]):
+            failures += fail(f"a replayable project: {events}, replayed {result['replayed']}")
+        if not replayable and events:
+            failures += fail(f"a project not replayed still did {events}")
+        if unasked:
+            failures += fail("a replay not asked to publish published")
     return failures
 
 
