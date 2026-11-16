@@ -54,6 +54,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Maven: a parallel switch in Surefire's `systemProperties` or `systemPropertiesFile` declines in-JVM parallelism. Map: left alone.
 - Maven: a complement run under another `-D` value of a property `systemPropertyVariables` also sets runs every test. Map: left alone.
 - `narrowDependencies`: a bump git cannot list the build's scripts for runs every test instead of narrowing. Map: left alone.
+- A complement run budgets outside classpath directories; one holding an unlistable directory runs every test, in any run. Map: left alone.
 - A class with a primitive-array annotation value (`@ValueSource(booleans = ...)`) no longer counts as changed on every run.
   Map: left alone; the fix shows from its next recording.
 - Maven: a JaCoCo agent in `JDK_JAVA_OPTIONS` captures, as in `JAVA_TOOL_OPTIONS`; either may name it by a property. Map: left alone.

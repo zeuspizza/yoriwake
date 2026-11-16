@@ -175,7 +175,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   since the capture, or changed where the map cannot say which tests read it
   (`classpath-files-changed`), or a map that records no such digests (`classpath-files-unrecorded`,
   once: the forced run records them, unless the classpath holds over 200,000 such files, those of
-  its directories from outside the build counted with them, which are then never recorded). One whose readers the map records runs only them. The run names up to five
+  its directories from outside the build counted with them, which are then never recorded; a
+  complement run's classpath digest counts them alike, and past them runs every test as
+  `complement-record-mismatch`). One whose readers the map records runs only them. The run names up to five
   files; see [Generated files on the test classpath](#generated-files-on-the-test-classpath);
 - a jar or directory the test runtime classpath takes from outside the build (a dependency) that
   differs from the capture's: another version, one added, removed or reordered, or other content at

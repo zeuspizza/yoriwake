@@ -273,8 +273,12 @@ internal object SelectionRecord {
         text: TrackedText = TrackedText(rootDir),
         /** The files Gradle resolves to one of the build's own projects; see [ClasspathFiles.table]. */
         projectArtifacts: Set<File> = emptySet(),
+        /** The file budget, shared as [ClasspathFiles.table] shares it. */
+        maxFiles: Int = ClasspathFiles.MAX_FILES,
     ): String {
         val projects = projectArtifacts.mapTo(hashSetOf(), File::getAbsoluteFile)
+        // The files read in directories from outside the build: any directory may be put there.
+        var outside = 0
         val built = mutableListOf<File>()
         // Each entry digested by its content, with its name, for what its manifest's `Class-Path` names.
         val read = mutableListOf<Pair<String, File>>()
@@ -303,7 +307,9 @@ internal object SelectionRecord {
                     // A Gradle user home kept there: as with the home outside the root.
                     !inHome.startsWith("caches/modules-2/") -> {
                         read += "root:$it" to file
-                        return@map "root:$it ${contentDigest(file)}"
+                        val digest = runCatching { contentDigest(file) { false } }.getOrNull()
+                            ?: return unmatched("root:$it could not be read")
+                        return@map "root:$it $digest"
                     }
                 }
                 built += file
@@ -312,11 +318,17 @@ internal object SelectionRecord {
             if (inHome != null && inHome.startsWith("caches/modules-2/")) return@map "gradle:$inHome"
             val name = inHome?.let { "gradle:$it" } ?: file.invariantSeparatorsPath
             read += name to file
-            "$name ${contentDigest(file)}"
+            val digest = runCatching { contentDigest(file) { inHome == null && ++outside > maxFiles } }
+                .getOrElse { return unmatched("$name could not be read") }
+                ?: return unmatched(ClasspathFiles.outsideBudgetSpent(maxFiles).reason)
+            "$name $digest"
         }
-        val followed = ClasspathFiles.classPathRows(read, files.toList(), gradleUserHome)?.rows
-            ?: return unmatched(ClasspathFiles.namedBudgetSpent().reason)
-        val content = when (val walk = runCatching { ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome) }
+        val following = ClasspathFiles.classPathRows(read, files.toList(), gradleUserHome, maxFiles, outside)
+            ?: return unmatched(ClasspathFiles.namedBudgetSpent(maxFiles).reason)
+        val followed = following.rows
+        val content = when (val walk = runCatching {
+            ClasspathFiles.walk(built, emptyList(), rootDir, classes = true, text = text, gradleUserHome = gradleUserHome, maxFiles = maxFiles, spent = following.files)
+        }
             .getOrElse { ClasspathFiles.Walk.Refused(it.toString()) }) {
             is ClasspathFiles.Walk.Refused -> return unmatched(walk.reason)
             is ClasspathFiles.Walk.Found -> walk.digests
@@ -337,8 +349,12 @@ internal object SelectionRecord {
     /** Gradle's immutable transform workspaces under its user home. */
     private val TRANSFORM_CACHE = Regex("^caches/[^/]+/transforms/")
 
-    /** A file's bytes, or a directory's files by relative path and bytes; `absent` when neither. */
-    private fun contentDigest(file: File): String {
+    /**
+     * A file's bytes, or a directory's files by relative path and bytes; `absent` when neither.
+     * Null once [overBudget] says so, asked per file of a directory before anything is read.
+     * Throws when a directory in it cannot be listed or a file cannot be read.
+     */
+    private fun contentDigest(file: File, overBudget: () -> Boolean): String? {
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(64 * 1024)
         fun add(each: File) = each.inputStream().use { input ->
@@ -350,9 +366,15 @@ internal object SelectionRecord {
         }
         when {
             file.isFile -> add(file)
-            file.isDirectory -> file.walkTopDown().filter(File::isFile)
-                .map { it.relativeTo(file).invariantSeparatorsPath to it }.sortedBy { it.first }
-                .forEach { (path, each) -> digest.update(path.toByteArray(Charsets.UTF_8)); digest.update(0); add(each) }
+            file.isDirectory -> {
+                val found = mutableListOf<Pair<String, File>>()
+                for (each in file.walkTopDown().onFail { _, failure -> throw failure }.filter(File::isFile)) {
+                    if (overBudget()) return null
+                    found += each.relativeTo(file).invariantSeparatorsPath to each
+                }
+                found.sortedBy { it.first }
+                    .forEach { (path, each) -> digest.update(path.toByteArray(Charsets.UTF_8)); digest.update(0); add(each) }
+            }
             else -> return "absent"
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
