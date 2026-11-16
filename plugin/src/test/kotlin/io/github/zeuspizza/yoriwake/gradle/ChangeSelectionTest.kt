@@ -1517,7 +1517,15 @@ class ChangeSelectionTest {
     @Test
     fun `a task that runs code in JVMs the agent cannot see has no test class standing for itself`(@TempDir dir: File) {
         val facts = oneModule(dir, "com.acme.LimitsTest" to testClass("com.acme.LimitsTest", "reads"))
-        val runner = File(dir, "libs/gradle-testkit-8.14.jar").apply { parentFile.mkdirs(); writeBytes(ByteArray(0)) }
+        // A readable jar that names nothing, so only the runner rule can leave the class out.
+        val runner = File(dir, "libs/gradle-testkit-8.14.jar").apply {
+            parentFile.mkdirs()
+            java.util.zip.ZipOutputStream(outputStream()).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("META-INF/MANIFEST.MF"))
+                zip.write("Manifest-Version: 1.0\n".toByteArray())
+                zip.closeEntry()
+            }
+        }
         val withRunner = ClasspathFacts(
             rootDir = facts.rootDir, moduleDirs = facts.moduleDirs, buildDirs = facts.buildDirs, declared = facts.declared,
             compileTime = facts.compileTime, ownPath = facts.ownPath, testOutputs = facts.testOutputs,
