@@ -5,9 +5,9 @@
 <h1 align="center">yoriwake</h1>
 
 <p align="center">
-  <a href="https://plugins.gradle.org/plugin/io.github.zeuspizza.yoriwake"><img alt="Gradle Plugin Portal" src="https://img.shields.io/badge/gradle%20plugin-v0.5.0-orange"></a>
-  <a href="https://central.sonatype.com/artifact/io.github.zeuspizza/yoriwake-maven-plugin"><img alt="Maven Central" src="https://img.shields.io/badge/maven%20plugin-v0.5.0-orange"></a>
-  <a href="https://github.com/zeuspizza/yoriwake-action"><img alt="GitHub Action" src="https://img.shields.io/badge/action-v0.5.0-orange"></a>
+  <a href="https://plugins.gradle.org/plugin/io.github.zeuspizza.yoriwake"><img alt="Gradle Plugin Portal" src="https://img.shields.io/badge/gradle%20plugin-v0.6.0-orange"></a>
+  <a href="https://central.sonatype.com/artifact/io.github.zeuspizza/yoriwake-maven-plugin"><img alt="Maven Central" src="https://img.shields.io/badge/maven%20plugin-v0.6.0-orange"></a>
+  <a href="https://github.com/zeuspizza/yoriwake-action"><img alt="GitHub Action" src="https://img.shields.io/badge/action-v0.6.0-orange"></a>
   <a href="docs/reference.md#supported-matrix"><img alt="Gradle 8.14+, Maven 3.9+" src="https://img.shields.io/badge/builds-gradle%208.14%2B%20%C2%B7%20maven%203.9%2B-informational"></a>
   <a href="docs/reference.md#supported-matrix"><img alt="JDK 21+ for the build, 11+ for tests" src="https://img.shields.io/badge/jdk-21%2B%20build%20%C2%B7%2011%2B%20tests-informational"></a>
   <a href="LICENSE"><img alt="Licence: Apache-2.0" src="https://img.shields.io/badge/licence-Apache--2.0-blue"></a>
@@ -68,7 +68,7 @@ Apply the plugin next to `jacoco`, which it requires and scopes:
 plugins {
     java
     jacoco
-    id("io.github.zeuspizza.yoriwake") version "0.5.0"
+    id("io.github.zeuspizza.yoriwake") version "0.6.0"
 }
 ```
 
@@ -89,7 +89,7 @@ On Maven (from 0.4.0, on Maven Central), it is a build extension in the root POM
 <plugin>
   <groupId>io.github.zeuspizza</groupId>
   <artifactId>yoriwake-maven-plugin</artifactId>
-  <version>0.5.0</version>
+  <version>0.6.0</version>
   <extensions>true</extensions>
 </plugin>
 ```

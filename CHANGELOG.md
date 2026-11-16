@@ -15,6 +15,19 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-16
+
+**Your map:** repaired on the next build where a manifest `Class-Path` names a file `java.net.URI` rejects; otherwise left alone. A trusted-map list names no 0.6.0 map until the default branch's next run writes one.
+
+### Known limitations
+
+Each can leave out a test that should run; each is fixed in the next release ([What is not supported](https://github.com/zeuspizza/yoriwake/blob/v0.6.0/docs/reference.md#what-is-not-supported)).
+
+- A complement run misses a change to a jar of your own under the project's `.gradle` named `yoriwake-agent.jar`.
+- A JUnit 4 class's `@AfterClass`, when a JUnit Jupiter class runs next in its JVM, is credited to that class: a change only the teardown reaches misses the JUnit 4 class.
+- Maven: a test that loads another module's classes from a path in Surefire's `configurationParameters` misses that module's edits.
+- Another module's file named only by a UTF-16 (or other non-ASCII-compatible) resource of the tested module is not kept.
+
 ### Added
 
 - `narrowDependencies` lets a commit that only bumps library versions run the tests that reached the moved jars. Map: left alone.

@@ -827,6 +827,22 @@ Three things differ:
 
 ## What is not supported
 
+- **Known in 0.6.0, fixed in the next release.** Each can leave out a test that should run. Until
+  then, pin the tests concerned with `alwaysRun`.
+  - A complement run compares a jar under the project's `.gradle` by its content, except one named
+    `yoriwake-agent.jar`, which it takes for its own wherever it lies: a jar of your build's own by
+    that name, replaced between the selecting run and the complement, leaves out the tests that ran
+    against the old one.
+  - A JUnit 4 class run through the Vintage engine, followed in the same test JVM by a JUnit Jupiter
+    class: what its `@AfterClass` runs is recorded as the Jupiter class's setup, so a change only
+    that teardown reaches selects the Jupiter class and not the JUnit 4 class.
+  - Maven: a test that loads another module's classes from a path given in Surefire's or
+    Failsafe's `<properties><configurationParameters>`. That channel is not read for paths, so an
+    edit to the module's sources is dropped when the module is neither on the test classpath nor
+    named elsewhere.
+  - A file of another module that only a resource of the tested module names, when that resource is
+    written in UTF-16 or another encoding that does not keep ASCII bytes as they are: the name is
+    not found, and an edit to the file is dropped when nothing else keeps it.
 - **Large multi-project builds with many untracked or ignored files, at execution.** While
   configuring, a selecting run lists the working tree once per build. Every `Test` task that a
   selecting or recording run then executes lists it again with git, ignored files included, so it
@@ -1103,7 +1119,7 @@ release named after the plugin's (`v0.3.0` for `0.3.0`), in place of the step th
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '21' }
-      - uses: zeuspizza/yoriwake-action@v0.5.0
+      - uses: zeuspizza/yoriwake-action@v0.6.0
 ```
 
 In one step it caches the map, fetches the history selection needs, records on the default branch,
@@ -1142,7 +1158,7 @@ allprojects {
 
 ```yaml
 env:
-  YORIWAKE_VERSION: 0.5.0       # the version your build applies
+  YORIWAKE_VERSION: 0.6.0       # the version your build applies
 
 jobs:
   test:
@@ -1316,17 +1332,17 @@ selecting builds run your tests exactly as they did.
   concurrently in an invocation without it. Gradle also caps test JVMs at `--max-workers`, which
   defaults to the machine's processors; Maven has no such cap, so under `-T` each module building
   at the same time starts its own. Measured on GitHub's 4-core `ubuntu-24.04`
-  runners at `6d15f47` (the plugin of 0.4.0), three recordings per arm of each project's test task:
-
-  | Project | Shared JVM | Isolated, 1 fork | Isolated, 4 forks |
-  |---|---|---|---|
-  | opentelemetry-java | 25-26 s | 130-136 s | 91-93 s |
-  | micronaut-core | 14-16 s | 190-194 s | 154 s |
-  | moshi | 4-6 s | 158-159 s | 121-122 s |
-
-  Four forks took 20 to 31% off the isolated recording, which stayed 3.5 to 34 times the shared
-  one. The cost follows the number of test classes, each paying a JVM start, not the suite's own
-  length: the fastest shared suite here grew the most.
+  runners at `6d15f47` (the plugin of 0.4.0), three recordings per arm, four forks took 20 to 31%
+  off the isolated recording of opentelemetry-java, micronaut-core and moshi, which stayed 3.5 to
+  34 times the shared one. The cost follows the number of test classes, each paying a JVM start.
+- **What it buys, measured at 0.6.0** (`941d581`) on 42 open-source Gradle projects, 460 generated
+  single-file changes each selected against both maps, on GitHub's shared runners. On the 38
+  whose isolated arm finished, the isolated map ran fewer tests on 28 (809,275 against 987,979 over
+  all rows) but narrowed fewer changes (242 against 260), and its recording took a median of 8.7
+  times the shared one (1.1 to 83 times). Weighing the extra recording against the selecting time
+  it saves, the median project needs about 88 selecting runs per recording to pay it back; 13 of the
+  42 never do, the four that did not finish among them. That is why it stays a choice and not the
+  default. These are rows of one sample, not rates.
 - **Only a recording run updates it.** A selecting run that falls back to a full run still runs
   every test, with your fork settings, but leaves a map holding any JVM recorded in isolation
   exactly as it is, and says so. Recording that run would replace the isolated records with
