@@ -15,7 +15,7 @@ tokens not listed here are internal and can change in any release.
 
 All set by the plugin on the test task and read by the agent in the test JVM. Under Maven the test
 JVM gets only `yoriwake.host` and `yoriwake.run.file` as system properties, and every other one
-below from `RUN_FILE`. List values are comma-separated. The nine list-valued `yoriwake.change.*`
+below from `RUN_FILE`. List values are comma-separated. The twelve list-valued `yoriwake.change.*`
 properties below and `yoriwake.change.baseFlag` are not passed as system properties: a change set
 can name more paths than a command line carries, so the plugin writes them to `CHANGE_SET_FILE` and
 sets `yoriwake.change.file`. The agent reads them from there, and a file it cannot read whole

@@ -232,9 +232,10 @@ public final class ChangeSet {
     }
 
     /**
-     * Changed classes whose compiled form moved in line information only, as class prefixes. They
-     * force nothing: each runs the tests from their JVM's first debug touch of it on, and in a JVM
-     * whose stack traces were not recorded, the tests a changed class would run there.
+     * Changed classes whose compiled form moved in line information only, as class prefixes. While
+     * the map records debug touches they force nothing: each runs the tests from their JVM's first
+     * debug touch of it on, and in a JVM whose stack traces were not recorded, the tests a changed
+     * class would run there. A map without debug touches judges them as changed classes.
      */
     public ChangeSet withLinesOnly(Collection<String> linesOnly) {
         return new ChangeSet(changedClasses, unmappablePaths, accountedFor, absenceProvable,

@@ -927,7 +927,8 @@ def warm_up_cost(mode):
 
 
 # The fast set: what runs on every pull request, so it must stay well inside a runner's patience.
-# The next suite added to it should come with a measurement, not an estimate. `python`,
+# The next suite added to it should come with a measurement, not an estimate (`line only` joined on
+# one, until a guard run measures it). `python`,
 # `functional` and `agent` are what full mode is for: they are most of the harness's time, and a
 # change to the agent or plugin sources runs full mode anyway. Treat the summary line the script
 # PRINTS as the authority on what a mode covers.

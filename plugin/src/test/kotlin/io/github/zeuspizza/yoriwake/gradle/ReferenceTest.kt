@@ -297,8 +297,8 @@ class ReferenceTest {
     }
 
     @Test
-    fun `the upgrading section covers the move to 0_5_0`() {
+    fun `the upgrading section covers the move to 0_6_0`() {
         val section = reference.substringAfter("## Upgrading and your map").substringBefore("\n## ")
-        assertTrue("### From 0.4.0 to 0.5.0" in section, "no upgrade note from 0.4.0 to 0.5.0")
+        assertTrue("### From 0.5.0 to 0.6.0" in section, "no upgrade note from 0.5.0 to 0.6.0")
     }
 }

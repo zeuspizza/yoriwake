@@ -16,7 +16,8 @@ import java.util.function.Predicate;
 
 /**
  * Decides which tests a change can reach. Every rule that forces a full run is evaluated before
- * any rule that narrows. Plain Java with no dependencies, because it runs in the host's test JVM.
+ * any rule that narrows, except startup coverage: it forces only once the narrowing rules have
+ * selected every known test. Plain Java with no dependencies, because it runs in the host's test JVM.
  */
 public final class Selector {
 
@@ -182,8 +183,9 @@ public final class Selector {
             REACHES_CHANGE("reaches-change"),
             /**
              * The test ran at or after its JVM first loaded a changed class or read its file, a moved
-             * classpath file or an ignored path, so it may depend on what that JVM did with it once
-             * without recording anything.
+             * classpath file or an ignored path, reached a bumped module's jar (or missed a name in
+             * it), or first saw the lines of a class that changed in line information only, so it
+             * may depend on what that JVM did with it once without recording anything.
              */
             SHARES_JVM_WITH_CHANGE("shares-jvm-with-change"),
             /** The map does not record this test as having passed. */

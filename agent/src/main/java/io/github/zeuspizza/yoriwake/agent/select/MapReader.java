@@ -153,8 +153,10 @@ public final class MapReader {
 
     /**
      * What each JVM reached of the library module jars, from {@link AgentContract#JAR_TOUCH_FILE} or
-     * {@link AgentContract#MISS_TOUCH_FILE}: the first sequence at or before which each module (or
-     * each directory, for a lookup of an absent name) was touched, and which JVMs recorded them.
+     * {@link AgentContract#MISS_TOUCH_FILE}, or of the line-only classes, from {@link
+     * AgentContract#DEBUG_TOUCH_FILE}: the first sequence at or before which each module (or each
+     * directory, for a lookup of an absent name, or each class) was touched, and which JVMs
+     * recorded them.
      */
     public static final class JarTouches {
         private final Set<String> recorded;
@@ -496,8 +498,9 @@ public final class MapReader {
     }
 
     /**
-     * {@link AgentContract#JAR_TOUCH_FILE} or {@link AgentContract#MISS_TOUCH_FILE}. Null when the
-     * file is missing or malformed, so no JVM's touches are known.
+     * {@link AgentContract#JAR_TOUCH_FILE}, {@link AgentContract#MISS_TOUCH_FILE} or {@link
+     * AgentContract#DEBUG_TOUCH_FILE}. Null when the file is missing or malformed, so no JVM's
+     * touches are known.
      */
     private static JarTouches readJarTouches(File file) {
         if (!file.isFile()) {
