@@ -118,10 +118,12 @@ jobs:
           [ "$shards" != "[]" ] || echo "::warning::$NAME was cut into no slices"
           # A tar, not the artifact's own zip, which drops the checkout's executable bits. Under the
           # project's name, because one artifact downloads without its own directory and several
-          # with: readers find `<project>/accepted.json` either way.
-          mkdir -p "record/$NAME"
-          cp "bench/logs/$NAME/accepted.json" "record/$NAME/"
-          tar -czf "record/$NAME/state.tar.gz" -C bench "logs/$NAME" "results/$NAME.json" \
+          # with: readers find `<project>/accepted.json` either way. Outside the checkout, as every
+          # upload of this job: an untracked file in it makes the isolated recording's run.py
+          # refuse the tree as dirty.
+          mkdir -p "$RUNNER_TEMP/record/$NAME"
+          cp "bench/logs/$NAME/accepted.json" "$RUNNER_TEMP/record/$NAME/"
+          tar -czf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench "logs/$NAME" "results/$NAME.json" \
             "$CHECKOUT" logs/evidence
       # Each shard and the merge read it. Three days cover a weekend re-run of a sweep's failed
       # jobs; the merge must finish before the first record expires.
@@ -129,7 +131,7 @@ jobs:
         with:
           name: record-${{ fromJSON(inputs.project).project }}
           retention-days: 3
-          path: record/
+          path: ${{ runner.temp }}/record/
       # What the selector would do on the project's last real commits, each reverted on the pinned
       # tree and asked without running a test (bench/commit_replay.py). After the record is
       # uploaded, so no slice starts from a tree or a map this step touched, and a fault or a
@@ -149,14 +151,15 @@ jobs:
           set -eu
           unset GITHUB_STEP_SUMMARY
           python3 bench/commit_replay.py "$(jq -r '.[0]' <<< "$ARGS")" --checkout "bench/$CHECKOUT" \
-            --commits "${COMMITS:-8}" --out "replay/$NAME/commit-replay.json"
+            --commits "${COMMITS:-8}" --out "$RUNNER_TEMP/replay/$NAME/commit-replay.json"
       # Its own artifact, under the project's name as the record is. Not named record-*.
-      - if: ${{ !cancelled() && hashFiles('replay/**') != '' }}
+      - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: replay-${{ fromJSON(inputs.project).project }}
           retention-days: 3
-          path: replay/
+          path: ${{ runner.temp }}/replay/
+          if-no-files-found: ignore
       # The same map again with a fresh test JVM per class, for the slices' second pass: on this
       # runner, so both recordings' seconds are one machine's. Last, so the shared state, the replay
       # and the slices' list are what they are without it. It gets what the job has left and no
@@ -190,14 +193,21 @@ jobs:
           bench/machine_sampler.sh & sampler=$!
           trap 'kill "$sampler" 2>/dev/null || true' EXIT
           mapfile -t shapes < <(jq -r 'index("--shapes") as $at | if $at then .[$at], .[$at + 1] else empty end' <<< "$ARGS")
+          code=0
           timeout --kill-after=60 "$left" python3 bench/run.py "$toml" "${shapes[@]+"${shapes[@]}"}" \
-            --isolated-capture --recapture --capture-only || {
+            --isolated-capture --recapture --capture-only || code=$?
+          # 124 and 137 are timeout's own: the time ran out. Anything else is run.py's refusal or
+          # fault, which its last lines above name.
+          if [ "$code" = 124 ] || [ "$code" = 137 ]; then
             echo "::warning::$NAME: the isolated recording did not finish in $((left / 60)) minutes; its slices measure the shared arm only"
             exit 0
-          }
-          mkdir -p "isolated/$NAME"
-          cp "bench/results/$NAME.isolated.json" "isolated/$NAME/recording.json"
-          tar -czf "isolated/$NAME/state.tar.gz" -C bench "logs/$NAME.isolated" \
+          elif [ "$code" != 0 ]; then
+            echo "::warning::$NAME: the isolated recording failed (exit $code); its slices measure the shared arm only"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/isolated/$NAME"
+          cp "bench/results/$NAME.isolated.json" "$RUNNER_TEMP/isolated/$NAME/recording.json"
+          tar -czf "$RUNNER_TEMP/isolated/$NAME/state.tar.gz" -C bench "logs/$NAME.isolated" \
             "results/$NAME.isolated.json" "$CHECKOUT/.gradle/yoriwake"
           echo "recorded=true" >> "$GITHUB_OUTPUT"
       # Its own artifact: a project without one has no isolated arm, which the merge reads from
@@ -210,7 +220,7 @@ jobs:
         with:
           name: isolated-${{ fromJSON(inputs.project).project }}
           retention-days: 3
-          path: isolated/
+          path: ${{ runner.temp }}/isolated/
       # A record job that fails says why in its logs, not in the job's own output: the warm-up's
       # build error, the stalled capture's last lines. Not named record-*, which the merge reads.
       # A person reads it to see why the record job failed.

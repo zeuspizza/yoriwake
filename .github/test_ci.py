@@ -3161,7 +3161,7 @@ def case_real_commits_are_replayed_after_the_record_is_uploaded_and_cost_no_rows
             < record.index("name: replay the last real commits") < record.index("name: replay-${{"):
         problems += fail("the replay does not run after the record is uploaded, or uploads nothing")
     for needed in ("if: inputs.commits != '0'", "continue-on-error: true", "timeout-minutes: ",
-                   '--out "replay/$NAME/commit-replay.json"', '--commits "${COMMITS:-8}"'):
+                   '--out "$RUNNER_TEMP/replay/$NAME/commit-replay.json"', '--commits "${COMMITS:-8}"'):
         if needed not in step:
             problems += fail(f"the replay step lacks {needed!r}")
     if "if: needs.record.outputs.shards != '[]' && !inputs.replay_only" not in project:
@@ -3310,12 +3310,15 @@ def _isolated_step(text, opener, started_minutes_ago, **env):
         bin_dir, temp = os.path.join(root, "bin"), os.path.join(root, "temp")
         os.makedirs(bin_dir)
         os.makedirs(os.path.join(root, "bench"))
-        os.makedirs(os.path.join(temp, "isolated", "okio"))
+        os.makedirs(temp)
         _stub(bin_dir, "timeout", STUB_TIMEOUT)
         _stub(bin_dir, "python3", STUB_BUILD)
         _stub(os.path.join(root, "bench"), "machine_sampler.sh", "")
-        with tarfile.open(os.path.join(temp, "isolated", "okio", "state.tar.gz"), "w:gz"):
-            pass
+        # The second pass's download of the recorded map; the recording writes its own.
+        if "against the isolated map" in opener:
+            os.makedirs(os.path.join(temp, "isolated", "okio"))
+            with tarfile.open(os.path.join(temp, "isolated", "okio", "state.tar.gz"), "w:gz"):
+                pass
         for stamp in ("record-start", "slice-start"):
             with open(os.path.join(temp, stamp), "w", encoding="utf-8") as handle:
                 handle.write(f"{int(time.time()) - 60 * started_minutes_ago}\n")
@@ -3335,7 +3338,10 @@ def _isolated_step(text, opener, started_minutes_ago, **env):
             with open(output, encoding="utf-8") as handle:
                 wrote = handle.read()
         files = sorted(os.path.relpath(os.path.join(at, name), root)
-                       for top in ("isolated", os.path.join("temp", "isolated-slice"))
+                       for top in (os.path.join("temp", "isolated-slice"),
+                                   # What the recording hands on; the second pass's is its input.
+                                   *(() if "against the isolated map" in opener
+                                     else ("isolated", os.path.join("temp", "isolated"))))
                        for at, _, names in os.walk(os.path.join(root, top)) for name in names)
     return done.returncode, asked, wrote, files
 
@@ -3346,11 +3352,12 @@ def _isolated_steps_keep_inside_their_job(project):
     problems = 0
     recording, second = ("\n      - name: record the isolated map",
                          "\n      - name: measure this slice against the isolated map")
-    whole = ["isolated/okio/recording.json", "isolated/okio/state.tar.gz"]
+    whole = ["temp/isolated/okio/recording.json", "temp/isolated/okio/state.tar.gz"]
     for opener, ago, env, exits, seconds, output, files in (
             (recording, 100, {}, 0, 240 * 60, "recorded=true\n", whole),
             (recording, 335, {}, 0, None, "", []),
             (recording, 0, {"STUB_EXIT": "124"}, 0, 340 * 60, "", []),
+            (recording, 0, {"STUB_EXIT": "1"}, 1, 340 * 60, "", []),
             (recording, 0, {"STUB_BUILD": "maven"}, 0, None, "", []),
             (second, 100, {}, 0, 240 * 60, "", ["temp/isolated-slice/shard-1-of-2.json"]),
             (second, 337, {}, 0, None, "", []),
@@ -3969,8 +3976,74 @@ def case_a_record_job_prices_its_slices_from_the_last_published_sweep_when_it_ha
                                  f"was asked {asked}")
             if outputs.get("shards") != "[1,2,3]" or outputs.get("of") != "3":
                 problems += fail(f"the record job hands its slices on as {outputs}")
-            if not os.path.exists(os.path.join(root, "record", "demo", "state.tar.gz")):
-                problems += fail("the record job archived no state")
+            if not os.path.exists(os.path.join(root, "temp", "record", "demo", "state.tar.gz")):
+                problems += fail("the record job archived no state under the runner's temp")
+    return problems
+
+
+def case_a_record_job_leaves_no_untracked_file_in_the_checkout_its_isolated_recording_builds():
+    """The isolated recording's run.py refuses a checkout with an untracked file in it: every file
+    the record job writes for an upload lies outside the checkout, so the tree stays as clean as the
+    checkout left it. 0.6's dry run lost every project's isolated arm to `record/` and `replay/`."""
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        done, _, _, _ = _record_step(root, False)
+        if done.returncode:
+            problems += fail(f"the record step failed: {done.stdout} {done.stderr}")
+        written = sorted(set(os.listdir(root)) - {"bench", "bin", "temp", "output", "shard-args"})
+        if written:
+            problems += fail(f"the record step wrote {written} into the checkout")
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    for job in ("record", "replay"):
+        for path in re.findall(r"^          path: (.*)$", _job(text, job) if f"\n  {job}:\n" in text else "",
+                               re.M):
+            if not path.startswith(("${{ runner.temp }}/", "bench/logs/")):
+                problems += fail(f"the {job} job uploads {path}, inside the checkout")
+    return problems
+
+
+def _isolated_recording_exiting(root, code):
+    """sweep-project.yml's isolated recording for demo, its run.py printing a line and exiting
+    with `code`; the step's exit and output."""
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        script = _sweep_step(handle.read(), "\n      - name: record the isolated map")
+    bin_dir, bench = os.path.join(root, "bin"), os.path.join(root, "bench", "projects")
+    os.makedirs(bin_dir)
+    os.makedirs(bench)
+    open(os.path.join(bench, "demo.toml"), "w").close()
+    with open(os.path.join(root, "bench", "machine_sampler.sh"), "w", encoding="utf-8") as handle:
+        handle.write("#!/bin/sh\nexit 0\n")
+    os.chmod(os.path.join(root, "bench", "machine_sampler.sh"), 0o755)
+    real = shutil.which("python3")
+    for name, body in (("python3", f'case $1 in\n  bench/run.py) echo "REFUSING: stand-in"; exit {code} ;;\n'
+                                   f'  *) exec {real} "$@" ;;\nesac\n'),
+                       ("timeout", 'shift 2\nexec "$@"\n')):
+        with open(os.path.join(bin_dir, name), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n" + body)
+        os.chmod(os.path.join(bin_dir, name), 0o755)
+    temp = os.path.join(root, "temp")
+    os.makedirs(temp)
+    with open(os.path.join(temp, "record-start"), "w", encoding="utf-8") as handle:
+        handle.write(str(int(time.time())))
+    env = {**os.environ, "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""), "NAME": "demo",
+           "ARGS": '["bench/projects/demo.toml"]', "CHECKOUT": "checkouts/demo", "RUNNER_TEMP": temp,
+           "GITHUB_OUTPUT": os.path.join(root, "output")}
+    return subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+
+
+def case_an_isolated_recording_that_fails_is_not_reported_as_one_out_of_time():
+    """A refusal or a crash of the isolated recording says that it failed, red on the run page; only
+    `timeout`'s own exits are reported as the time running out. Neither fails the job."""
+    problems = 0
+    for code, said, red in ((1, "the isolated recording failed (exit 1)", True),
+                            (124, "the isolated recording did not finish in", False),
+                            (137, "the isolated recording did not finish in", False)):
+        with tempfile.TemporaryDirectory() as root:
+            done = _isolated_recording_exiting(root, code)
+            if said not in done.stdout or (done.returncode != 0) != red:
+                problems += fail(f"an isolated recording exiting {code}: step exit {done.returncode}, "
+                                 f"{done.stdout!r}")
     return problems
 
 
@@ -4421,6 +4494,8 @@ CASES = (
     case_a_failed_project_is_declared_missing_and_the_rest_still_merge,
     case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_all,
     case_a_record_job_prices_its_slices_from_the_last_published_sweep_when_it_has_rows,
+    case_a_record_job_leaves_no_untracked_file_in_the_checkout_its_isolated_recording_builds,
+    case_an_isolated_recording_that_fails_is_not_reported_as_one_out_of_time,
     case_the_last_published_sweep_s_rows_reach_the_record_jobs_and_no_sweep_is_no_rows,
     case_a_completion_that_cannot_complete_is_refused_before_it_measures,
     case_a_change_to_the_maven_plugin_alone_sweeps_the_maven_projects,
