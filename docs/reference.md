@@ -171,7 +171,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - compiled bytes that changed with no source change, in a class no test executed
   (`no-coverage-for-changed-bytes`), or a map holding no digest of the compiled classes to compare
   against (`bytes-unrecorded`). A test class whose bytes changed this way (it copied a constant
-  that moved) runs its own tests instead, as an edited test class does;
+  that moved) runs its own tests instead, as an edited test class does, when it is a top-level
+  class of this task's tests that declares a test and that no other class names, in a task that
+  starts no JVM the agent cannot see;
 - a non-class file the build produced on the test runtime classpath that appeared or is gone
   since the capture, or changed where the map cannot say which tests read it
   (`classpath-files-changed`), or a map that records no such digests (`classpath-files-unrecorded`,

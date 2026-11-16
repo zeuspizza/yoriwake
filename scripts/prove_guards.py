@@ -843,7 +843,7 @@ SUITES = [
     ("decoder", decoder_suite, 5),
     # An estimate until a guard run measures it: two classes, one of them a few dozen `git init`s.
     ("dependency", dependency_suite, 8),
-    # An estimate until a guard run measures it: three classes, javac in-process for one.
+    # Three classes, javac in-process for one; guard_costs.json carries its measured cost.
     ("line only", line_only_suite, 8),
     # 5.7s for one run with a Settings.kt mutation applied, its Kotlin recompile included; a doc
     # mutation recompiles nothing.
@@ -927,8 +927,7 @@ def warm_up_cost(mode):
 
 
 # The fast set: what runs on every pull request, so it must stay well inside a runner's patience.
-# The next suite added to it should come with a measurement, not an estimate (`line only` joined on
-# one, until a guard run measures it). `python`,
+# The next suite added to it should come with a measurement, not an estimate. `python`,
 # `functional` and `agent` are what full mode is for: they are most of the harness's time, and a
 # change to the agent or plugin sources runs full mode anyway. Treat the summary line the script
 # PRINTS as the authority on what a mode covers.

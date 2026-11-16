@@ -262,8 +262,9 @@ internal object SelectionRecord {
      * jar entry by entry: a tool the build fetches there can be replaced in place. The plugin's own
      * agent jar there is named only, and a Gradle user home kept there is read as one elsewhere.
      * When that walk cannot vouch for every file, a manifest names a file that cannot be told or
-     * directories of more files than a walk may read, or the root itself is on the classpath, the
-     * digest is one no other run produces, carrying why.
+     * directories of more files than a walk may read, a file or directory from outside the build
+     * cannot be read or listed, or the root itself is on the classpath, the digest is one no other
+     * run produces, carrying why.
      */
     fun classpathDigest(
         files: Iterable<File>,

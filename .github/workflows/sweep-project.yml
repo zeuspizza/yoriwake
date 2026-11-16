@@ -169,8 +169,9 @@ jobs:
           code=0
           timeout --kill-after=60 "$left" python3 bench/run.py "$toml" "${shapes[@]+"${shapes[@]}"}" \
             --isolated-capture --recapture --capture-only || code=$?
-          # 124 and 137 are timeout's own: the time ran out. Anything else is run.py's refusal or
-          # fault, which its last lines above name.
+          # 124 and 137 are timeout's own: the time ran out (an out-of-memory kill of run.py also
+          # exits 137 and reads as this). Anything else is run.py's refusal or fault, which its
+          # last lines above name.
           if [ "$code" = 124 ] || [ "$code" = 137 ]; then
             echo "::warning::$NAME: the isolated recording did not finish in $((left / 60)) minutes; its slices measure the shared arm only"
             exit 0

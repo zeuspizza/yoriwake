@@ -16,8 +16,9 @@ import java.util.function.Predicate;
 
 /**
  * Decides which tests a change can reach. Every rule that forces a full run is evaluated before
- * any rule that narrows, except startup coverage: it forces only once the narrowing rules have
- * selected every known test. Plain Java with no dependencies, because it runs in the host's test JVM.
+ * any rule that narrows, except one case of startup coverage: a change to startup coverage the
+ * touches date forces only once the narrowing rules have selected every known test. Plain Java
+ * with no dependencies, because it runs in the host's test JVM.
  */
 public final class Selector {
 
