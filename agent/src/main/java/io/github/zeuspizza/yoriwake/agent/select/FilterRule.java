@@ -146,6 +146,15 @@ public final class FilterRule {
 
     /** The decision a test JVM makes from these properties and this map. */
     public static Selector.Decision decisionFrom(UnaryOperator<String> property, File mapDir) {
+        return decisionFrom(property, mapDir, System.getProperty("java.specification.version"));
+    }
+
+    /**
+     * The same decision, judging {@code testJvmSpecification} as the test JVM's Java version; null
+     * judges none, for a caller that is not the test JVM and cannot know it.
+     */
+    public static Selector.Decision decisionFrom(
+            UnaryOperator<String> property, File mapDir, String testJvmSpecification) {
         ChangeSet change = ChangeSet.of(
                         splitProperty(property, AgentContract.CHANGED_CLASSES_PROPERTY),
                         splitProperty(property, AgentContract.UNMAPPABLE_PATHS_PROPERTY))
@@ -164,7 +173,7 @@ public final class FilterRule {
                 // narrowed by a later rule.
                 .withDaemonRefusal(refusalFrom(property))
                 .withTestJvmUnsupported(ClassFileSupport.testJvmUnsupported(
-                        System.getProperty("java.specification.version"),
+                        testJvmSpecification,
                         property.apply(AgentContract.AGENT_ASM_CEILING_PROPERTY)));
         MapReader.Result map = MapReader.read(mapDir);
         Strictness strictness = Strictness.of(property.apply(AgentContract.MODE_PROPERTY));

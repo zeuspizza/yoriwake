@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.agent.select.FilterRule
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
@@ -12,33 +13,25 @@ import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
-import io.github.zeuspizza.yoriwake.gradle.capture.decideCapture
 import io.github.zeuspizza.yoriwake.gradle.capture.readCaptureStamp
 import io.github.zeuspizza.yoriwake.gradle.capture.widenToMapAge
 import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
-import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFilesVerdict
+import io.github.zeuspizza.yoriwake.gradle.change.Declarations
+import io.github.zeuspizza.yoriwake.gradle.change.SelectingStep
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.INLINE_REFUSAL_KEY
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
 import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
-import io.github.zeuspizza.yoriwake.gradle.change.changeSet
 import io.github.zeuspizza.yoriwake.gradle.change.changedPaths
-import io.github.zeuspizza.yoriwake.gradle.change.classpathFilesRule
 import io.github.zeuspizza.yoriwake.gradle.change.defaultBase
-import io.github.zeuspizza.yoriwake.gradle.change.digestRule
-import io.github.zeuspizza.yoriwake.gradle.change.establish
 import io.github.zeuspizza.yoriwake.gradle.change.outsideRoot
-import io.github.zeuspizza.yoriwake.gradle.change.reportDigest
-import io.github.zeuspizza.yoriwake.gradle.change.scopedChange
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.change.DependencyRule
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathConfigurations
 import io.github.zeuspizza.yoriwake.gradle.facts.moduleIdentities
 import io.github.zeuspizza.yoriwake.gradle.facts.moduleScript
-import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
-import io.github.zeuspizza.yoriwake.gradle.change.withClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
@@ -59,6 +52,8 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.extraTaskInputs
 import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
 import java.io.File
+import java.nio.file.Files
+import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.Project
 import org.gradle.api.file.RegularFileProperty
@@ -217,6 +212,10 @@ internal abstract class ExplainTask : DefaultTask() {
         val configurations: org.gradle.api.provider.Provider<Set<String>>,
         val jvmArguments: org.gradle.api.provider.Provider<List<String>>,
     )
+
+    /** Each glob the build declares every test of this task depends on: resolved, and as written. */
+    @get:Internal("matched against the change set in the action; the task is untracked")
+    var declared: List<Pair<String, String>> = emptyList()
 
     /** Set when the plugin declined the `Test` task, which leaves nothing to explain. */
     @get:Internal("the decline's sentence, printed as is")
@@ -424,172 +423,131 @@ internal abstract class ExplainTask : DefaultTask() {
             val outside = listOfNotNull(base, age.stamp).map { ChangeDetection.outsideRoot(git, rootDir, it) }
             if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet()
         }
-        // As the run decides it, before anything else reads the change set.
-        val bump = dependencies?.let { held ->
-            val verdict = DependencyRule.decide(
-                DependencyRule.Inputs(
-                    rootDir, paths, base, mapDir,
-                    DependencyRule.Context(
-                        git = git,
-                        raw = { ChangeDetection.rawGit(rootDir, it) },
-                        current = {
-                            ClasspathRecord.of(facts.classpath.files, held.identities.get(), facts.buildDirs.values, rootDir, facts.dependencyHomes)
-                        },
-                        jvmArguments = { held.jvmArguments.get() },
-                        configurations = { held.configurations.get() },
-                        ownBuildFile = moduleScript(facts.moduleDirs.keys),
-                    ),
-                )
-            )
-            when (verdict) {
-                is DependencyRule.Verdict.Unaccepted ->
-                    logger.lifecycle("[yoriwake] $taskPath: ${verdict.path} is not a dependency version bump narrowDependencies accepts (${verdict.why})")
-                is DependencyRule.Verdict.Forced -> {
-                    logger.lifecycle("[yoriwake] $taskPath would run everything: ${verdict.reason}")
-                    writeUnanswered(
-                        mapDir, taskPath, base,
-                        io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
-                        verdict.reason, refusalKind = verdict.kind.token, branch = branch,
-                    )
-                    return
-                }
-                else -> Unit
-            }
-            verdict as? DependencyRule.Verdict.Accepted
-        }
-        val scoped = scopedChange(
-            if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, mapDir,
-            bases = listOfNotNull(base, age.stamp), moved = driftOnly,
-        ) { extraTaskInputs(rootDir, testInputs?.files.orEmpty(), testOwned?.files.orEmpty()) }
-        PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
-        val found = establish(
-            { message -> logger.lifecycle("[yoriwake] $taskPath: $message") },
-            mapDir, scoped.change, facts,
-        )
-        // As the run compares it: this task depends on what builds the classpath.
-        val classpathFiles = classpathFilesRule(mapDir, facts, discount = bump?.discount ?: { false })
-        // Through the same helper as the run itself, or this would report a narrower
-        // selection for any change to an inline function.
-        val widening = widenForInlining(
-            scoped.change.classPrefixes, facts, CoverageDecoder.readConstants(mapDir),
-            scoped.change.inlinableSourceChanged,
-            // Fresh: this task depends on the compile tasks the test task does.
-            digestRule(mapDir, bytesAreFresh = true),
-            recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
-            ownTestClasses = found.testClasses,
-            inlinedAway = found.inlinedAway,
-            lineOnly = if (!narrowLineOnlyChanges.get()) null
-            else io.github.zeuspizza.yoriwake.gradle.change.LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
-        ).withClasspathFiles(
-            classpathFiles,
-            forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
-        ) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
-            // As the run hands them over: a test that reads an accepted build file runs.
-            .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }
-        reportDigest(widening) { message -> logger.lifecycle("[yoriwake] $taskPath: $message") }
-        io.github.zeuspizza.yoriwake.gradle.change.SelectingStep.reportLines(widening.lines)
-            .forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
-        // Named in the refusals so it prints and serialises beside every other reason.
-        val established = if (widening.forces) {
-            found.copy(refusals = found.refusals + (INLINE_REFUSAL_KEY to widening.refusal.orEmpty()))
-        } else {
-            found
-        }
-        val provable = established.provable + established.testClasses
         val strictness = Strictness.of(this.mode.orNull)
-        val change = changeSet(
-            widening.prefixes.ifEmpty { (scoped.change.classPrefixes - widening.lines?.prefixes.orEmpty()).sorted() },
-            paths, scoped, established, widening.changedBytes, widening.movedFiles, widening.lines,
-        ).withChangedJars(bump?.modules.orEmpty(), bump?.directories.orEmpty())
-            .withDaemonRefusal(widening.refusal)
-        val decision = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(map, change, emptyList(), strictness)
-        val loosened = if (strictness == Strictness.SAFE) emptyList() else loosenedTests(
-            map, io.github.zeuspizza.yoriwake.agent.select.Selector.decide(map, change, emptyList(), Strictness.SAFE),
-            decision, io.github.zeuspizza.yoriwake.agent.select.Selector.rules(map, change, true),
-        )
-        bump?.let {
-            logger.lifecycle(
-                "[yoriwake] $taskPath: ${it.paths.joinToString()} change dependency versions only: " +
-                    if (it.modules.isEmpty()) "no module on this task's classpath moved"
-                    else "${it.modules.joinToString()} moved"
+        // The selecting run's own step, on a copy: it writes the change set and the capture markers
+        // beside the map it reads, and this task must leave the map as it was.
+        val copy = Files.createTempDirectory("yoriwake-explain").toFile()
+        try {
+            mapDir.copyRecursively(copy, overwrite = true)
+            val properties = Properties().apply {
+                setProperty(AgentContract.CHANGE_SET_FILE_PROPERTY, File(copy, AgentContract.CHANGE_SET_FILE).absolutePath)
+                setProperty(AgentContract.MODE_PROPERTY, strictness.token())
+            }
+            val dependencyContext = dependencies?.let { held ->
+                DependencyRule.Context(
+                    git = git,
+                    raw = { ChangeDetection.rawGit(rootDir, it) },
+                    current = {
+                        ClasspathRecord.of(facts.classpath.files, held.identities.get(), facts.buildDirs.values, rootDir, facts.dependencyHomes)
+                    },
+                    jvmArguments = { held.jvmArguments.get() },
+                    configurations = { held.configurations.get() },
+                    ownBuildFile = moduleScript(facts.moduleDirs.keys),
+                )
+            }
+            val step = SelectingStep.run(
+                SelectingStep.Inputs(
+                    copy, rootDir, paths, base, baseOrigin, sourceDirs, facts,
+                    notReadByTests.getOrElse(emptyList()), ignore, declared, observing = false,
+                    dependencies = dependencyContext,
+                    narrowLineOnlyChanges = narrowLineOnlyChanges.get(),
+                    taskInputs = { extraTaskInputs(rootDir, testInputs?.files.orEmpty(), testOwned?.files.orEmpty()) },
+                    stamp = age.stamp,
+                    moved = driftOnly.toSet(),
+                ),
+                ExplainingHost(taskPath, properties) { logger.lifecycle(it) },
             )
-        }
-        logger.lifecycle(
-            "[yoriwake] $taskPath vs $base: ${scoped.change.classPrefixes.size} changed classes, " +
-                "${scoped.change.unmappablePaths.size} paths coverage cannot see, " +
-                "${scoped.dropped} off this task's classpath, " +
-                "${scoped.ideState} an IDE's state, ${scoped.notReadByTests} notReadByTests lists, " +
-                "${provable.size} the daemon could vouch for as untested " +
-                "(${established.testClasses.size} of them this task's own test classes, " +
-                "from ${facts.testOutputs.files.count { it.isDirectory }} test output dirs)"
-        )
-        val forcing = ForcingPaths.classify(
-            rootDir, mapDir, scoped.change.unmappablePaths, sourceDirs, base,
-        )
-        // Written before anything is logged, through the same function the run uses, so
-        // the file never disagrees with the log or the run.
-        val decided = decideCapture(
-            mapDir,
-            mapUsable = map.isUsable,
-            fullRun = decision.isFullRun,
-            learnable = scoped.change.classPrefixes,
-            ageKnown = classpathFiles == ClasspathFilesVerdict.Unchanged,
-        )
-        // As the run applies it: optimistic mode never captures.
-        val capture = if (strictness == Strictness.SAFE) decided else decided.copy(
-            capture = false,
-            reason = "optimistic mode never captures, so nothing is instrumented and the map is left exactly as it was.",
-        )
-        // The last run's, since only a test JVM can see it: the next recording run meets it again.
-        val unconfirmed = Audit.TaskFacts.read(mapDir).parallelismUnconfirmed?.also {
-            logger.lifecycle("[yoriwake] $taskPath: the last run captured nothing: its test JVM found that $it")
-        }
-        writeExplanation(
-            mapDir, taskPath, base, scoped, established, decision, widening, capture, forcing, branch,
-            PathIgnoreReport.evidence(scoped.ignore, mapDir),
-            unconfirmed,
-            mode = strictness.token(),
-            loosened = loosened,
-        )
-        ForcingPaths.lines(taskPath, forcing).forEach { logger.lifecycle("[yoriwake] $taskPath: $it") }
-        if (decision.isFullRun) {
+            val scoped = step.scoped
+            val widening = step.widening
+            // A refusal of the inline widening keeps the full explanation, with what the scan found;
+            // any other refusal of the run is its reason and kind alone.
+            val refused = properties.getProperty(AgentContract.REFUSED_PROPERTY)
+            if (refused != null && !widening.forces) {
+                logger.lifecycle("[yoriwake] $taskPath would run everything: $refused")
+                writeUnanswered(
+                    mapDir, taskPath, base,
+                    io.github.zeuspizza.yoriwake.agent.select.Selector.Decision.FullRunKind.DAEMON_REFUSED,
+                    refused, refusalKind = properties.getProperty(AgentContract.REFUSED_KIND_PROPERTY), branch = branch,
+                )
+                return
+            }
+            // Named in the refusals so it prints and serialises beside every other reason.
+            val established = if (widening.forces) {
+                step.established.copy(refusals = step.established.refusals + (INLINE_REFUSAL_KEY to widening.refusal.orEmpty()))
+            } else {
+                step.established
+            }
+            val provable = established.provable + established.testClasses
+            // The test JVM's own decision, from what the step handed it. Not its Java version: this
+            // JVM is the build's, not the test task's.
+            val decision = FilterRule.decisionFrom(FilterRule.resolveInputs { properties.getProperty(it) }, copy, null)
+            val safe = decision.safe()
+            val loosened = if (safe == null) emptyList() else loosenedTests(map, safe, decision, decision.rules())
             logger.lifecycle(
-                "[yoriwake] $taskPath would run everything: ${decision.fullRunReason()}"
+                "[yoriwake] $taskPath vs $base: ${scoped.change.classPrefixes.size} changed classes, " +
+                    "${scoped.change.unmappablePaths.size} paths coverage cannot see, " +
+                    "${scoped.dropped} off this task's classpath, " +
+                    "${scoped.ideState} an IDE's state, ${scoped.notReadByTests} notReadByTests lists, " +
+                    "${provable.size} the daemon could vouch for as untested " +
+                    "(${established.testClasses.size} of them this task's own test classes, " +
+                    "from ${facts.testOutputs.files.count { it.isDirectory }} test output dirs)"
             )
-            // Naming why each class could not be vouched for is the point of this task.
-            established.refusals.entries.sortedBy { it.key }.take(REPORTED_REFUSALS)
-                .forEach { (prefix, reason) ->
-                    logger.lifecycle("[yoriwake]     $prefix: $reason")
+            // As the run applies it: optimistic mode never captures.
+            val capture = if (strictness == Strictness.SAFE) step.capture else step.capture.copy(
+                capture = false,
+                reason = "optimistic mode never captures, so nothing is instrumented and the map is left exactly as it was.",
+            )
+            // The last run's, since only a test JVM can see it: the next recording run meets it again.
+            val unconfirmed = Audit.TaskFacts.read(mapDir).parallelismUnconfirmed?.also {
+                logger.lifecycle("[yoriwake] $taskPath: the last run captured nothing: its test JVM found that $it")
+            }
+            writeExplanation(
+                mapDir, taskPath, base, scoped, established, decision, widening, capture, step.forcing, branch,
+                PathIgnoreReport.evidence(scoped.ignore, mapDir),
+                unconfirmed,
+                mode = strictness.token(),
+                loosened = loosened,
+            )
+            if (decision.isFullRun) {
+                logger.lifecycle(
+                    "[yoriwake] $taskPath would run everything: ${decision.fullRunReason()}"
+                )
+                // Naming why each class could not be vouched for is the point of this task.
+                established.refusals.entries.sortedBy { it.key }.take(REPORTED_REFUSALS)
+                    .forEach { (prefix, reason) ->
+                        logger.lifecycle("[yoriwake]     $prefix: $reason")
+                    }
+            } else {
+                val known = decision.knownTests()
+                val selected = decision.selectedCount()
+                logger.lifecycle(
+                    "[yoriwake] $taskPath would run $selected of $known known tests " +
+                        selectionShare(selected, known)
+                )
+                if (strictness != Strictness.SAFE) {
+                    logger.lifecycle(
+                        "[yoriwake] $taskPath in optimistic mode leaves out ${loosened.size} tests the safe rule runs " +
+                            "(pins, declared dependencies and whole-class runners are judged when the tests run)" +
+                            loosened.take(REPORTED_REFUSALS).joinToString("") { (test, rules) -> "\n[yoriwake]     $test ($rules)" } +
+                            (if (loosened.size > REPORTED_REFUSALS) "\n[yoriwake]     and ${loosened.size - REPORTED_REFUSALS} more" else "")
+                    )
                 }
-        } else {
-            val known = decision.knownTests()
-            val selected = decision.selectedCount()
-            logger.lifecycle(
-                "[yoriwake] $taskPath would run $selected of $known known tests " +
-                    selectionShare(selected, known)
-            )
-            if (strictness != Strictness.SAFE) {
-                logger.lifecycle(
-                    "[yoriwake] $taskPath in optimistic mode leaves out ${loosened.size} tests the safe rule runs " +
-                        "(pins, declared dependencies and whole-class runners are judged when the tests run)" +
-                        loosened.take(REPORTED_REFUSALS).joinToString("") { (test, rules) -> "\n[yoriwake]     $test ($rules)" } +
-                        (if (loosened.size > REPORTED_REFUSALS) "\n[yoriwake]     and ${loosened.size - REPORTED_REFUSALS} more" else "")
-                )
+                if (narrowsPlainJUnit4.getOrElse(false)) {
+                    val (leftOut, classes) = plainClassesLeftOut(map, decision)
+                    val named = leftOut.sorted()
+                    logger.lifecycle(
+                        "[yoriwake] $taskPath runs plain JUnit 4, which leaves out whole classes: " +
+                            "${leftOut.size} of $classes known classes" +
+                            named.take(REPORTED_REFUSALS).joinToString("") { "\n[yoriwake]     $it" } +
+                            (if (named.size > REPORTED_REFUSALS) "\n[yoriwake]     and ${named.size - REPORTED_REFUSALS} more" else "") +
+                            "\n[yoriwake]   Every test of a class kept runs, so the run runs more than the count above; " +
+                            "runners, new tests and pins are judged when the tests run, so it may keep more classes too."
+                    )
+                }
             }
-            if (narrowsPlainJUnit4.getOrElse(false)) {
-                val (leftOut, classes) = plainClassesLeftOut(map, decision)
-                val named = leftOut.sorted()
-                logger.lifecycle(
-                    "[yoriwake] $taskPath runs plain JUnit 4, which leaves out whole classes: " +
-                        "${leftOut.size} of $classes known classes" +
-                        named.take(REPORTED_REFUSALS).joinToString("") { "\n[yoriwake]     $it" } +
-                        (if (named.size > REPORTED_REFUSALS) "\n[yoriwake]     and ${named.size - REPORTED_REFUSALS} more" else "") +
-                        "\n[yoriwake]   Every test of a class kept runs, so the run runs more than the count above; " +
-                        "runners, new tests and pins are judged when the tests run, so it may keep more classes too."
-                )
-            }
+        } finally {
+            copy.deleteRecursively()
         }
-        logger.lifecycle("[yoriwake] $taskPath: ${capture.reason}")
     }
 
     /**
@@ -624,6 +582,7 @@ internal abstract class ExplainTask : DefaultTask() {
             narrowPlainRunners: Boolean,
             narrowDependencies: Boolean,
             narrowLineOnlyChanges: Boolean,
+            declarations: List<Declarations.Declaration>,
             outcome: (Test) -> Triple<File, ScopeOutcome, TestPatterns?>,
         ) {
             project.tasks.register(nameFor(testName), ExplainTask::class.java) { task ->
@@ -652,6 +611,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.notReadByTests.set(notReadByTests)
                 task.pathIgnore.set(pathIgnore)
                 task.pathIgnoreDefaults.set(pathIgnoreDefaults)
+                task.declared = declarations.filter { it.task == testName }.map { it.resolved to it.glob }
                 task.testInputs = test.inputs.files
                 task.testOwned = test.classpath + test.testClassesDirs
                 task.buildLogicDirs = buildLogicDirs(project)
@@ -695,6 +655,45 @@ internal abstract class ExplainTask : DefaultTask() {
             }
         }
     }
+}
+
+/**
+ * The selecting step's answers for an explanation: kept in [properties] for the decision the test JVM
+ * would make from them, and its console lines on the task's own.
+ */
+private class ExplainingHost(
+    override val name: String,
+    private val properties: Properties,
+    private val log: (String) -> Unit,
+) : SelectingStep.Host {
+    override fun lifecycle(line: String) = log(line)
+
+    override fun warn(line: String) = log(line)
+
+    // As Gradle's own refusal does: the last one stands.
+    override fun refuse(kind: RefusalKind, reason: String) {
+        properties.setProperty(AgentContract.SELECT_PROPERTY, "false")
+        properties.setProperty(AgentContract.REFUSED_PROPERTY, reason)
+        properties.setProperty(AgentContract.REFUSED_KIND_PROPERTY, kind.token)
+    }
+
+    override fun property(name: String, value: String) {
+        properties.setProperty(name, value)
+    }
+
+    // No action of the build's runs after an explanation, so there is nothing to look at last.
+    override fun handOver(compared: Map<String, String>): Boolean = true
+
+    override fun captureNothing() {
+        properties.setProperty(AgentContract.RECORDS_DIR_PROPERTY, "")
+    }
+
+    override fun flag(name: String) = "-P$name"
+
+    override val explain: String get() = ForcingPaths.explainTask(name)
+
+    override val optimistic: Boolean
+        get() = properties.getProperty(AgentContract.MODE_PROPERTY) == Strictness.OPTIMISTIC.token()
 }
 
 /** Whether a map is there to have recorded the variables its tests read. */
