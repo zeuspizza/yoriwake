@@ -51,8 +51,9 @@ internal fun classpathView(
  * `<build>` (its directories, filters, resource roots, and each plugin's configuration, text and
  * attributes, in the build and its management) and `<properties>`, which Maven has interpolated with
  * the parent chain and the active profiles merged in, and the files that activate a profile of its
- * POM or of a parent's in the checkout. Relative to the module's directory. Null when one of them
- * holds an expression that cannot be resolved here, so a path it names is unknown.
+ * POM or of a parent's in the checkout. A relative path is taken against the module's directory.
+ * Null when one of them holds an expression that cannot be resolved here, so a path it names is
+ * unknown.
  */
 internal fun modelPaths(session: MavenSession, root: File, project: MavenProject): Set<File>? = runCatching {
     val values = modelValues(project).toMutableList()

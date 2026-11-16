@@ -8,7 +8,7 @@ identical to a perfect score. anki-android does exactly that, and a fix to how t
 makes the all-forced case likely rather than a corner. So the verdict is computed, and the two
 zero-evidence outcomes have their own names and have to carry a reason.
 
-FIVE VERDICTS, plus one refusal:
+EIGHT VERDICTS, plus one refusal:
 
   clean             a results file exists at the current selector stamp, `assert_recall` passes on
                     it, at least one row was one where a miss was POSSIBLE, and the depth it was

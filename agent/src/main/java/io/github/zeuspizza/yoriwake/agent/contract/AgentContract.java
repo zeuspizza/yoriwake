@@ -133,7 +133,8 @@ public final class AgentContract {
      * Changed classes whose compiled form differs from the capture's in line information only,
      * comma-separated: class prefixes, matched as {@link #CHANGED_CLASSES_PROPERTY}'s are. Each
      * selects the tests from their JVM's first debug touch of it on ({@link #DEBUG_TOUCH_FILE}),
-     * and forces nothing. Set only when {@code narrowLineOnlyChanges} is on, empty when nothing
+     * and forces nothing while the map records debug touches; without them each is judged as a
+     * changed class. Set only when {@code narrowLineOnlyChanges} is on, empty when nothing
      * was line-only.
      */
     public static final String LINES_ONLY_PROPERTY = "yoriwake.change.linesOnly";
@@ -406,9 +407,9 @@ public final class AgentContract {
 
     /**
      * {@code jvm \t sequence \t module}: the first record sequence at or before which each JVM reached
-     * each library module's jar (a class defined from it, an entry found in it, an entry read, the
-     * file opened by other zip code), by the module's identity; {@link #FIRST_TOUCH_ANY} as the module
-     * stands for every one. Every JVM whose touches were recorded has a {@link #JARS_RECORDED} row at
+     * each library module's jar (a class defined from it, an entry found in it, an entry read, its
+     * entries listed, the file opened by other zip code), by the module's identity;
+     * {@link #FIRST_TOUCH_ANY} as the module stands for every one. Every JVM whose touches were recorded has a {@link #JARS_RECORDED} row at
      * sequence 0; one without reached every jar from its first record.
      */
     public static final String JAR_TOUCH_FILE = "jar-touch.tsv";
@@ -551,7 +552,7 @@ public final class AgentContract {
 
     /**
      * A touch kind: a library module jar ({@link #JAR_MODULES_PROPERTY}) was reached, by a class
-     * defined from it, an entry found in it or read from it; its absolute path.
+     * defined from it, an entry found in it or read from it, or its entries listed; its absolute path.
      */
     public static final String TOUCH_JAR_REACHED = "jar-reached";
 

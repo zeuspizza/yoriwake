@@ -367,9 +367,11 @@ internal class Recording(
             facts = view(project, execution, classpath, execution.configuration),
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
-            unionDiscarded = "ran without -D$INTERNAL_LOADED, so the loaded-class union it could not vouch for was " +
-                "discarded. Changes to code no test executes will force a full run until the next capture with " +
-                "-D$INTERNAL_LOADED.",
+            unionDiscarded = "could not take the classes its test JVMs loaded as the whole execution's (it ran " +
+                "without -D$INTERNAL_LOADED, under Failsafe, with tests left out by groups, tags, engines or suite " +
+                "files, without dating the map, or a test JVM listed none or did not finish), so the loaded-class union it could not " +
+                "vouch for was discarded. Changes to code no test executes will force a full run until the next " +
+                "capture of the whole execution with -D$INTERNAL_LOADED.",
             buildState = { isBuildState(it) },
             logger = object : DecodeRun.Log {
                 override fun lifecycle(message: String) = log.info(message)

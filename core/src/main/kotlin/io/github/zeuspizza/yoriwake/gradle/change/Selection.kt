@@ -777,7 +777,8 @@ private fun unheldAtCapture(
 
 /**
  * Whether the change set emptied because every changed path was accounted for (a class source off
- * this task's classpath, an IDE's state, a path notReadByTests lists, or one pathIgnore took out),
+ * this task's classpath, an IDE's state, a path notReadByTests lists, one pathIgnore took out, or a
+ * class narrowLineOnlyChanges found changed in line information only),
  * rather than git reporting nothing, which forces. [paths] is the change set before any of them.
  */
 internal fun accountedFor(
@@ -886,8 +887,8 @@ private fun moduleBuildDirs(facts: ClasspathView): Map<String, String> {
  * The change set with what [ignore] declares, an IDE's state, what [notReadByTests] declares, and
  * other modules' sources removed, computed at execution time. The classpath part keeps every path
  * whenever the classpath or its classes cannot be established. A path a default entry matches
- * also stays unless the map at [mapDir] shows it unread and [taskInputs] answers none
- * ([PathIgnore.gated]).
+ * also stays unless the map at [mapDir] recorded every test JVM's reads and [taskInputs] answers
+ * none ([PathIgnore.gated]).
  */
 internal fun scopedChange(
     changed: List<String>,

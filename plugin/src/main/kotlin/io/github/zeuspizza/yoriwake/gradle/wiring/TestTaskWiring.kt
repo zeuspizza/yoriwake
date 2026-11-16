@@ -747,16 +747,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
     }
 
-    /**
-     * With `-Pyoriwake.isolatedCapture`, gives each test class a JVM of its own on a run that records
-     * the map, so its coverage and first touches are its own work. The host's `maxParallelForks`
-     * stands unless `-Pyoriwake.isolatedCaptureForks` raises it. A selecting run never gets either,
-     * even one that ends up capturing, and neither does a run whose capture is off, so both run the
-     * host's tests as the host configured them.
-     *
-     * At execution time because the in-JVM parallelism refusal, which switches capture off, is only
-     * decided then; registered before [refuseInJvmParallelism] so it runs after it.
-     */
     /** Why `-Pyoriwake.mode=optimistic` changes nothing on a run of [runPlan]'s kind. */
     private fun modeIgnored(runPlan: RunPlan): String {
         val flag = "-P${Settings.MODE}=${Strictness.OPTIMISTIC.token()}"
@@ -769,6 +759,16 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
     }
 
+    /**
+     * With `-Pyoriwake.isolatedCapture`, gives each test class a JVM of its own on a run that records
+     * the map, so its coverage and first touches are its own work. The host's `maxParallelForks`
+     * stands unless `-Pyoriwake.isolatedCaptureForks` raises it. A selecting run never gets either,
+     * even one that ends up capturing, and neither does a run whose capture is off, so both run the
+     * host's tests as the host configured them.
+     *
+     * At execution time because the in-JVM parallelism refusal, which switches capture off, is only
+     * decided then; registered before [refuseInJvmParallelism] so it runs after it.
+     */
     private fun isolateWhileCapturing(test: Test, runPlan: RunPlan) {
         if (!settings.isolatedCapture || runPlan.selecting) {
             return

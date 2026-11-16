@@ -214,8 +214,10 @@ internal class TaskArtifacts(
         /**
          * For a Java or Kotlin source: the path, an ancestor directory, a part from its module's
          * name on, a trailing part ending in its file name, its module's `build` or `target`, or
-         * that module's build directory wherever it lies, each of two or more segments. A single name such as `java`, a package
-         * root or `Thing.java` is in almost every class, and a class's own name holds no `.java`.
+         * that module's build directory wherever it lies, each of two or more segments except a build
+         * directory one level below the root, which is named alone ([buildDirForms]). A single name
+         * such as `java`, a package root or `Thing.java` is in almost every class, and a class's own
+         * name holds no `.java`.
          */
         CLASS_SOURCE,
     }

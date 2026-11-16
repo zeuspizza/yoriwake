@@ -744,7 +744,8 @@ def apply_neutral(checkout, relative, kind):
 
 # THE KINDS WHOSE REASON IS ABOUT THE PROJECT, NOT THE CHANGE. `unmappable-paths` lists the paths
 # that forced; `map-unusable` is the map itself. Every other kind's reason either depends on the
-# change (`startup-coverage` names the startup class or says every test depends on it), or is the
+# change (`startup-coverage` names the startup class, says every test depends on it, or names the
+# mode that dropped its windows), or is the
 # daemon's verdict on the change (`daemon-refused`), so three identical reasons
 # of those kinds say nothing about the setup.
 SETUP_FORCED_KINDS = ("unmappable-paths", "map-unusable")

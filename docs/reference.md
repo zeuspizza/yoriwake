@@ -91,7 +91,7 @@ Reasons, one per test:
 | Reason | Meaning |
 |---|---|
 | `reaches-change` | its recorded coverage touches a changed class, or its own test class changed |
-| `shares-jvm-with-change` | it ran at or after the point its test JVM first loaded or executed a changed class, or read its class or source file, or read a build-produced classpath file that changed; see [what coverage does not record](#what-coverage-does-not-record) and [generated files on the test classpath](#generated-files-on-the-test-classpath) |
+| `shares-jvm-with-change` | it ran at or after the point its test JVM first loaded or executed a changed class, or read its class or source file, or read a build-produced classpath file that changed, or reached a jar a dependency bump moved, could see a line-only change's line numbers, read a path `pathIgnore` left out, or stopped being fully observed; see [what coverage does not record](#what-coverage-does-not-record) and [generated files on the test classpath](#generated-files-on-the-test-classpath) |
 | `not-known-to-pass` | the map does not record it as having passed, so it runs whatever changed; this includes a test recorded `FLAKY`, see [retrying failed tests](#retrying-failed-tests) |
 | `not-in-map` | the map has never seen it, so no change could be shown not to reach it |
 | `engine-runs-everything` | its engine runs every test it discovered or none, so it is never left out; see [Kotlin](#kotlin) |
@@ -160,7 +160,8 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   of its test JVMs listed nothing; and after `-Pyoriwake.internal.loaded=false`, which records no
   list and drops the one the map had. A selecting run that runs everything records the list as a
   capture does; a narrowed one keeps the list it found. On Maven the list is recorded only under
-  `-Dyoriwake.internal.loaded`;
+  `-Dyoriwake.internal.loaded`, and never for a Failsafe execution or one that leaves tests out by
+  groups, tags, engines or suite files;
 - a changed source that compiles to a class the map never saw, when that class carries an
   annotation, on itself or any member, other than the ones the Kotlin compiler writes on its own
   (`annotations-unrecorded`); a map that recorded no annotations at all forces the same way. A new
@@ -1529,8 +1530,8 @@ it replaces but for one version literal:
   `buildSrc`, `build-logic` and `gradle.properties`;
 - on Maven (`-Dyoriwake.narrowDependencies` or `<narrowDependencies>`), the `<version>` of a
   dependency in a reactor POM's `<dependencies>` or `<dependencyManagement>`, or a `<properties>`
-  value that only such versions read, when no parent POM lies outside the checkout and no POM
-  imports a BOM.
+  value that only such versions read; a bumped property counts only when no parent POM lies outside
+  the checkout and no POM imports a BOM.
 
 The resolved test runtime classpath, compared with the one the map recorded, then says which
 libraries moved, transitive ones and BOM-managed ones included. Each moved or removed library runs
@@ -1974,7 +1975,8 @@ the Gradle plugin.
   `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.mode` (command
   line only; see [Optimistic mode](#optimistic-mode)), `-Dyoriwake.trustedMaps`,
   `-Dyoriwake.isolatedCapture`, `-Dyoriwake.isolatedCaptureForks=<N>` (or `cores`, with
-  `isolatedCapture` only), `-Dyoriwake.recordSequentially`, the audit's
+  `isolatedCapture` only), `-Dyoriwake.recordSequentially`, `-Dyoriwake.narrowDependencies`,
+  `-Dyoriwake.narrowLineOnlyChanges`, the audit's
   `-Dyoriwake.audit.measureToll` with its two timings, and `-Dyoriwake.alwaysRun=<glob>[,<glob>…]`
   for one run. The off switch is `-Dyoriwake.enabled=false`; Gradle's `yoriwake.disabled` is not
   read here.
@@ -1984,8 +1986,9 @@ the Gradle plugin.
   `<pattern>` each) is read per module, beside `-Dyoriwake.alwaysRun`; a pattern that pins every
   test fails the build, as on Gradle. `<environmentInclude>` and `<systemPropertyIgnore>` (one name
   per child element, `<variable>DB_MODE</variable>`, `<property>build.*</property>`) and
-  `<recordSequentially>` are read per module too, a module that inherits no plugin entry taking the
-  root's; `-Dyoriwake.recordSequentially` overrides `<recordSequentially>`.
+  `<recordSequentially>`, `<narrowDependencies>` and `<narrowLineOnlyChanges>` are read per module
+  too, a module with no plugin entry of its own taking the root's; the `-D` of the same name
+  overrides each of the last three.
 
   ```xml
   <configuration>
@@ -2294,11 +2297,22 @@ format versioning.
 
 ### From 0.5.0 to 0.6.0
 
-- **Your map is left alone.**
+- **Your map is left alone.** The format stays at 7. A task's first selecting run on 0.6.0 runs
+  every test once where its classpath holds a transformed jar of one of the build's own projects, or
+  a dependency jar behind a symlink whose manifest `Class-Path` names a file; one whose manifest
+  names a file such as `lib/a[1].jar` is repaired on the next build. On Gradle, a changed class no
+  test loaded selects nothing once the whole task has been captured on 0.6.0; an edited Spock
+  specification narrows once re-recorded.
+- **A trusted-map list names no 0.6.0 map:** the files the digest covers changed (the touch tables,
+  the line digests and the classpath records were added), so each pull request runs everything as
+  `map-untrusted` until the default branch's first run on 0.6.0 has written a new list.
+- **A hand-written CI recipe:** set `YORIWAKE_VERSION` to `0.6.0`, one ordinary cache miss.
 - **What runs changes without a new flag (Gradle):** a change to README or Markdown files, `docs/`
   or `.github/` alone runs nothing extra where the map records every test JVM's reads, instead of
   every test as `unmappable-paths`; see [The defaults](#the-defaults). `pathIgnoreDefaults = false`
-  restores the old behaviour.
+  restores the old behaviour. A changed class no test executed or loaded, and no resource names,
+  selects nothing. A test task with an action inserted just before its tests runs every test
+  (`late-task-action`).
 
 ## Prior art
 

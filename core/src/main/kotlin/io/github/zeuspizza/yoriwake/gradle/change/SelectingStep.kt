@@ -220,8 +220,8 @@ internal object SelectingStep {
         }
 
         // Says the empty change set was arrived at (every path a class source off the classpath,
-        // an IDE's state, or one notReadByTests lists) rather than reported by git, which would
-        // force a full run.
+        // an IDE's state, one notReadByTests or pathIgnore took out, or one changed in line
+        // information only) rather than reported by git, which would force a full run.
         host.property(
             ACCOUNTED_PROPERTY,
             accountedFor(paths, scoped, lines?.prefixes.orEmpty()).toString(),
