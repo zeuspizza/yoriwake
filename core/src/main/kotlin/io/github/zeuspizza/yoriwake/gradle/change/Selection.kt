@@ -115,6 +115,37 @@ internal fun establish(
 }
 
 /**
+ * Of [changedBytes], the test classes whose own known tests are all that could see them: a constant
+ * copied into a test class moves its bytes with no source change, and discovery, which loads it, is
+ * recorded by no test. Each is a top-level class of this task's own test output that declares a test
+ * and that nothing else names, as for an exempt test class; a nested class's tests carry its outer
+ * class's id, and a base class's run under its subclass's. Empty when the artifacts cannot be read.
+ * A class some test recorded is left out: its recorders already run, and asking whether anything
+ * names it walks every class file on the classpath.
+ */
+internal fun ownTestClassesByBytes(facts: ClasspathView, changedBytes: Set<String>, mapDir: File): Set<String> {
+    if (changedBytes.isEmpty()) return emptySet()
+    val recorded = runCatching {
+        io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir).entries().flatMapTo(HashSet()) { it.coveredClasses() }
+    }.getOrDefault(emptySet())
+    val unrecorded = changedBytes - recorded
+    if (unrecorded.isEmpty()) return emptySet()
+    val artifacts = runCatching {
+        TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
+    }.getOrNull() ?: return emptySet()
+    if (artifacts.runsCodeInUnobservedJvms()) return emptySet()
+    return unrecorded.filterTo(sortedSetOf()) { name ->
+        '$' !in name && runCatching {
+            val own = artifacts.classesFor(name)
+            artifacts.onlyInTestOutput(own) &&
+                own?.firstOrNull { (compiled, _) -> compiled == name }
+                    ?.let { (_, bytes) -> Recordability.declaresTestMethod(bytes) } == true &&
+                !artifacts.namedOutsideItself(name)
+        }.getOrDefault(false)
+    }
+}
+
+/**
  * The change set widened by every class that inlined it, or a refusal to narrow this run at all.
  *
  * One helper for every call site, so selection and `yoriwakeExplain` never answer different

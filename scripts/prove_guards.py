@@ -2081,6 +2081,35 @@ MUTATIONS = [
      "            if (!recordedByAny(map.entries(), name) && !ownTestClasses.contains(name)) {",
      "            if (!recordedByAny(map.entries(), name)) {",
      agent_suite, "an own test class whose bytes moved with no source change runs its known tests"),
+    # The selector's rule reaches only the names the daemon hands it as own test classes. A test
+    # class whose bytes moved with no source change is handed over only through this union; without
+    # it, a constant copied into a test class no test recorded runs every test again.
+    ("a test class whose bytes moved is not handed to the test JVM as its own", SELECTING_STEP,
+     "                OWN_TEST_CLASSES_PROPERTY to ownTestClasses,",
+     "                OWN_TEST_CLASSES_PROPERTY to established.testClasses,",
+     functional_suite, "a test class JaCoCo could not instrument that copied a changed constant runs its known tests"),
+    # The step's own outlook decides capture: one that still counts the test class as unrecorded
+    # instruments and captures a run the test JVM narrows.
+    ("the step's outlook of the run leaves out a test class whose bytes moved", SELECTING_STEP,
+     "        val outlook = wouldRunEverything(mapDir, changed, scoped, established.copy(testClasses = ownTestClasses), widening, paths, bump)",
+     "        val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths, bump)",
+     functional_suite, "a test class JaCoCo could not instrument that copied a changed constant runs its known tests"),
+    # The boundary: a class of the test output with no test of its own is discovered by nothing, so
+    # standing for itself would select none of what reads it.
+    ("a test-output class whose bytes moved stands for itself without a test", SELECTION,
+     "                    ?.let { (_, bytes) -> Recordability.declaresTestMethod(bytes) } == true &&",
+     "                    ?.let { true } == true &&",
+     unit_suite, "a test fixture whose bytes moved does not stand for itself"),
+    # A test class a child JVM may load (a TestKit build, an invoker) is seen by no agent there.
+    ("a test class whose bytes moved stands for itself in a task that runs unobserved JVMs", SELECTION,
+     "    if (artifacts.runsCodeInUnobservedJvms()) return emptySet()\n    return unrecorded",
+     "    return unrecorded",
+     unit_suite, "a task that runs code in JVMs the agent cannot see has no test class standing for itself"),
+    # A base class's tests run under its subclass's id, so its own known tests are not what runs them.
+    ("a test class another test extends stands for itself", SELECTION,
+     "                !artifacts.namedOutsideItself(name)\n",
+     "                true\n",
+     unit_suite, "a test class another test extends does not stand for itself"),
     ("an own test class whose bytes moved no longer selects its own tests", SELECTOR,
      "                    || ofChangedOwnClass(test.testId(), ownTestClasses, changedBytes)) {",
      "                    || false) {",

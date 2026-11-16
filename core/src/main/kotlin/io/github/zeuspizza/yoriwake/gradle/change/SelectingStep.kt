@@ -180,6 +180,10 @@ internal object SelectingStep {
         reportDigest(widening) { message -> host.lifecycle("[yoriwake] ${host.name}: $message") }
         reportLines(widening.lines).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
         val lines = widening.lines
+        // A test class whose bytes moved with no source change, whose own known tests run instead:
+        // the test JVM's rule and this step's own outlook of the run both count it.
+        val ownTestClasses = established.testClasses +
+            if (widening.forces) emptySet() else ownTestClassesByBytes(classpathFacts, widening.changedBytes, mapDir)
 
         // The build declared that every test of this run depends on such a path, which coverage cannot see.
         val declaredHit = paths.firstOrNull { path -> inputs.declared.any { PathGlob.matches(it.first, path) } }
@@ -243,7 +247,7 @@ internal object SelectingStep {
                 ABSENCE_PROVABLE_PROPERTY to established.provable,
                 // Separate property: a test class that has ever run is in the loaded-class union by
                 // definition, so the absence rule would never fire for it.
-                OWN_TEST_CLASSES_PROPERTY to established.testClasses,
+                OWN_TEST_CLASSES_PROPERTY to ownTestClasses,
                 EXEMPT_TEST_CLASSES_PROPERTY to established.exemptTestClasses,
             ) + (
                 // Only when a bump was accepted, so a run without `narrowDependencies` hands over what it did.
@@ -285,7 +289,7 @@ internal object SelectingStep {
         )
         ForcingPaths.lines(host.name, forcing, host.explain, pathIgnore = host.flag(SettingNames.BASE) == "-P${SettingNames.BASE}").forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
 
-        val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths, bump)
+        val outlook = wouldRunEverything(mapDir, changed, scoped, established.copy(testClasses = ownTestClasses), widening, paths, bump)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map
         // nothing, and widening would re-capture the suite on every inline change.
         val capture = decideCapture(
@@ -299,7 +303,7 @@ internal object SelectingStep {
             flag = host::flag,
         )
         applyCapture(host, mapDir, inputs.observing, capture)
-        return Worked(scoped, established, widening, forcing, capture)
+        return Worked(scoped, established.copy(testClasses = ownTestClasses), widening, forcing, capture)
     }
 
     /** What `narrowLineOnlyChanges` made of the change set, for the console; nothing with the flag off. */

@@ -25,6 +25,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.annotationRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.compareDigests
 import io.github.zeuspizza.yoriwake.gradle.change.constantHolderRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
+import io.github.zeuspizza.yoriwake.gradle.change.ownTestClassesByBytes
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -1439,6 +1440,99 @@ class ChangeSelectionTest {
 
         assertEquals(RefusalKind.ANNOTATIONS_UNRECORDED, added.refusalKind)
         assertFalse(changed.forces, "a changed annotation on a class the map holds forced: ${changed.refusal}")
+    }
+
+    // A test class whose bytes moved with no source change runs its own known tests, when its own
+    // tests are all that could see it.
+
+    @Test
+    fun `a test class whose bytes moved stands for itself when it declares a test`(@TempDir dir: File) {
+        val facts = oneModule(dir, "com.acme.LimitsTest" to testClass("com.acme.LimitsTest", "reads"))
+
+        assertEquals(setOf("com.acme.LimitsTest"), ownTestClassesByBytes(facts, mapDir = File(dir, "map"), changedBytes = setOf("com.acme.LimitsTest")))
+    }
+
+    @Test
+    fun `a test fixture whose bytes moved does not stand for itself`(@TempDir dir: File) {
+        val facts = oneModule(dir, "com.acme.Fixture" to javaClassBytes("com.acme.Fixture", "N", 2))
+
+        assertEquals(emptySet(), ownTestClassesByBytes(facts, mapDir = File(dir, "map"), changedBytes = setOf("com.acme.Fixture")))
+    }
+
+    @Test
+    fun `a nested test class whose bytes moved does not stand for itself`(@TempDir dir: File) {
+        // Its tests carry the outer class's id, so its own known tests would select none of them.
+        val name = "com.acme.LimitsTest\$Inner"
+        val facts = oneModule(dir, name to testClass(name, "reads"))
+
+        assertEquals(emptySet(), ownTestClassesByBytes(facts, mapDir = File(dir, "map"), changedBytes = setOf(name)))
+    }
+
+    @Test
+    fun `a test class another test extends does not stand for itself`(@TempDir dir: File) {
+        // The subclass's tests run the base's methods under the subclass's id.
+        val base = "com.acme.BaseTest"
+        val facts = oneModule(
+            dir, base to testClass(base, "reads"),
+            "com.acme.ConcreteTest" to subclassOf("com.acme.ConcreteTest", base),
+        )
+
+        assertEquals(emptySet(), ownTestClassesByBytes(facts, mapDir = File(dir, "map"), changedBytes = setOf(base)))
+    }
+
+    @Test
+    fun `a class outside the test output or in no output does not stand for itself`(@TempDir dir: File) {
+        val project = ProjectBuilder.builder().withProjectDir(dir).build()
+        val main = File(dir, "core/build/classes/main").also { it.mkdirs() }
+        val test = File(dir, "core/build/classes/test").also { it.mkdirs() }
+        File(main, "com/acme/MainTest.class").apply { parentFile.mkdirs() }
+            .writeBytes(testClass("com.acme.MainTest", "reads"))
+        val facts = ClasspathFacts(
+            rootDir = dir,
+            moduleDirs = mapOf("core" to ":core"),
+            buildDirs = mapOf(":core" to File(dir, "core/build").absolutePath),
+            declared = project.provider { setOf(":core") },
+            compileTime = project.files(),
+            ownPath = ":core",
+            testOutputs = project.files(test),
+            classpath = project.files(main, test),
+        )
+
+        assertEquals(emptySet(), ownTestClassesByBytes(facts, mapDir = File(dir, "map"), changedBytes = setOf("com.acme.MainTest", "com.acme.Gone")))
+    }
+
+    @Test
+    fun `a test class some test recorded is left to its recorders`(@TempDir dir: File) {
+        val facts = oneModule(dir, "com.acme.LimitsTest" to testClass("com.acme.LimitsTest", "reads"))
+        val map = File(dir, "map").also { it.mkdirs() }
+        File(map, AgentContract.COVERAGE_FILE).writeText("SUCCESSFUL\t1\tcom.acme.LimitsTest\tt\n")
+        listOf(AgentContract.POSITIONS_FILE, AgentContract.FIRST_TOUCH_FILE, AgentContract.NAMED_TOUCH_FILE)
+            .forEach { File(map, it).writeText("") }
+        File(map, AgentContract.MAP_SCHEMA_VERSION_FILE).writeText("${AgentContract.MAP_SCHEMA_VERSION}")
+        assertTrue(io.github.zeuspizza.yoriwake.agent.select.MapReader.read(map).isUsable)
+
+        assertEquals(emptySet(), ownTestClassesByBytes(facts, mapDir = map, changedBytes = setOf("com.acme.LimitsTest")))
+    }
+
+    @Test
+    fun `a task that runs code in JVMs the agent cannot see has no test class standing for itself`(@TempDir dir: File) {
+        val facts = oneModule(dir, "com.acme.LimitsTest" to testClass("com.acme.LimitsTest", "reads"))
+        val runner = File(dir, "libs/gradle-testkit-8.14.jar").apply { parentFile.mkdirs(); writeBytes(ByteArray(0)) }
+        val withRunner = ClasspathFacts(
+            rootDir = facts.rootDir, moduleDirs = facts.moduleDirs, buildDirs = facts.buildDirs, declared = facts.declared,
+            compileTime = facts.compileTime, ownPath = facts.ownPath, testOutputs = facts.testOutputs,
+            classpath = facts.classpath + ProjectBuilder.builder().withProjectDir(dir).build().files(runner),
+        )
+
+        assertEquals(emptySet(), ownTestClassesByBytes(withRunner, mapDir = File(dir, "map"), changedBytes = setOf("com.acme.LimitsTest")))
+    }
+
+    /** A class extending [base] and declaring nothing of its own. */
+    private fun subclassOf(name: String, base: String): ByteArray {
+        val writer = org.objectweb.asm.ClassWriter(0)
+        writer.visit(org.objectweb.asm.Opcodes.V1_8, 0, name.replace('.', '/'), null, base.replace('.', '/'), null)
+        writer.visitEnd()
+        return writer.toByteArray()
     }
 
     /** A class declaring one JUnit Jupiter `@Test` method per name in [tests]. */

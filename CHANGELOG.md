@@ -46,6 +46,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Fixed
 
+- A test class JaCoCo could not instrument that copied a changed constant runs its own tests instead of every test. Map: left alone.
 - `yoriwakeExplain` gives the reason the selecting run gives, including a path `dependsOn` declares for the whole task. Map: left alone.
 - A complement run compares a jar only a dependency's manifest `Class-Path` names too. Map: left alone.
 - A manifest `Class-Path` name `java.net.URI` rejects, such as `lib/a[1].jar`, is compared, and a named directory

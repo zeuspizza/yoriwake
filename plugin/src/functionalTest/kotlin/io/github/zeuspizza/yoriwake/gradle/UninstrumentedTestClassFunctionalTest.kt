@@ -146,4 +146,73 @@ class UninstrumentedTestClassFunctionalTest : FunctionalTestSupport() {
         val byCoverage = "included REACHES_CHANGE" to "reaches-change,own-class-changed,class-setup,shares-jvm-changed-class"
         assertEquals(mapOf("testA" to byCoverage, "testB" to byCoverage), zTestDecisions(dir))
     }
+
+    private val limits = "src/main/java/dev/sample/Limits.java" to """
+        package dev.sample;
+        public class Limits {
+            public static final int MAX = 10;
+            public int max() { return MAX; }
+        }
+    """.trimIndent()
+
+    // Executes Limits, so the map records it.
+    private val limitsTest = "src/test/java/dev/sample/LimitsTest.java" to """
+        package dev.sample;
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.assertEquals;
+        class LimitsTest {
+            @Test void passes() { assertEquals(10, new Limits().max()); }
+        }
+    """.trimIndent()
+
+    /**
+     * Captures in a JVM per test class, then moves `Limits.MAX`: every class compiled with it moves
+     * its bytes, and git reports only `Limits.java`. Returns the capture's output and the selecting
+     * run's.
+     */
+    private fun constantMovedAfterCapture(dir: File, vararg sources: Pair<String, String>): Pair<String, String> {
+        build(
+            dir, "build.gradle.kts" to loggedBuild.replace("useJUnitPlatform();", "useJUnitPlatform(); forkEvery = 1;"),
+            calc, other, aTest, limits, limitsTest, *sources, classOrderByName,
+        )
+        committed(dir)
+        val capture = runner(dir, "test").build().output
+        File(dir, "build/test-results").deleteRecursively()
+        File(dir, "src/main/java/dev/sample/Limits.java").writeText(limits.second.replace("MAX = 10", "MAX = 11"))
+        commit(dir, "the constant moves")
+        return capture to runner(dir, "test", "-Pyoriwake.select").run().output
+    }
+
+    @Test
+    fun `a test class JaCoCo could not instrument that copied a changed constant runs its known tests`(@TempDir dir: File) {
+        // ZTest copied Limits.MAX into its own bytes and executes nothing of Limits; uninstrumented,
+        // it is recorded by no test, so only its own known tests could see the new value.
+        val (capture, output) = constantMovedAfterCapture(
+            dir, zTest("    @Test void copies() { assertEquals(10, Limits.MAX); }\n" + tooLargeToInstrument),
+        )
+        assertContains(capture, "Error while instrumenting dev/sample/ZTest")
+
+        // The new value reached ZTest's bytes with no source change behind them.
+        assertContains(File(mapDir(dir), AgentContract.CHANGE_SET_FILE).readText(), "dev.sample.ZTest")
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        // ATest touches neither class, in a JVM of its own.
+        assertEquals(setOf("dev.sample.LimitsTest", "dev.sample.ZTest"), ranMethods(dir).keys.map { it.substringBefore('#') }.toSet(), output)
+        // A narrowed run captures nothing.
+        assertContains(output, ":test: narrowing")
+        assertTrue(ranMethods(dir).getValue("dev.sample.ZTest#copies"), "ZTest's copy of the old value did not fail")
+    }
+
+    @Test
+    fun `a test fixture JaCoCo could not instrument that copied a changed constant still runs every test`(@TempDir dir: File) {
+        // Holder declares no test and no test executes it: nothing discovers it, so no known test
+        // of its own stands for it.
+        val holder = "src/test/java/dev/sample/Holder.java" to """
+            package dev.sample;
+            class Holder { static int copied() { return Limits.MAX; } }
+        """.trimIndent()
+
+        val (_, output) = constantMovedAfterCapture(dir, holder)
+
+        assertEquals("no-coverage-for-changed-bytes", decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+    }
 }

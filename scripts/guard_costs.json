@@ -8,6 +8,7 @@
   "functional/InJvmParallelismCharacterizationTest",
   "functional/KoverFunctionalTest",
   "functional/OffClasspathFilesFunctionalTest",
+  "functional/UninstrumentedTestClassFunctionalTest",
   "maven/LicenceGoalFunctionalTest",
   "maven/ScopeFunctionalTest"
  ],
@@ -110,6 +111,7 @@
   "functional/TestLauncherFunctionalTest": {"baseline": 40, "guard": 16},
   "functional/TestRetryFunctionalTest": {"baseline": 30, "guard": 25},
   "functional/TestWrittenFilesFunctionalTest": {"baseline": 41, "guard": 42},
+  "functional/UninstrumentedTestClassFunctionalTest": {"baseline": 45, "guard": 35},
   "maven/AuditAndExplainFunctionalTest": {"baseline": 27, "guard": 30},
   "maven/BuildCacheFunctionalTest": {"baseline": 64, "guard": 66},
   "maven/CaptureFunctionalTest": {"baseline": 14, "guard": 13},
