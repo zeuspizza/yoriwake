@@ -263,4 +263,20 @@ class DependencyBumpFunctionalTest : FunctionalTestSupport() {
         assertEquals(all, ranTests(dir), output)
         assertContains(output, "names the value `mathVersion` outside a dependency notation's version")
     }
+
+    @Test
+    fun `yoriwakeExplain names the declared path the run refuses on, not the bump it would have forced on`(@TempDir dir: File) {
+        captured(dir, """yoriwake { dependsOn("test", "/gradle/libs.versions.toml") }""")
+        bump(dir, catalog(json = "1.3"))
+
+        File(dir, "build/test-results").deleteRecursively()
+        runner(dir, "yoriwakeExplainTest", "-Pyoriwake.base=HEAD", "-Pyoriwake.narrowDependencies").build()
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        val explained = File(mapDir, "explain.json").readText()
+        val output = select(dir, "-Pyoriwake.narrowDependencies")
+
+        // The bump alone forces as dependency-added; the declaration covering the whole task wins.
+        assertEquals("declared-path-changed", decisionNotes(dir)[AgentContract.REFUSAL_KIND_NOTE], output)
+        assertContains(explained, """"refusalKind": "declared-path-changed"""")
+    }
 }

@@ -4525,9 +4525,15 @@ MUTATIONS = [
      "            \"\",",
      functional_suite, "editing the same declared file twice runs the task both times"),
     ("yoriwakeExplain applies no pathIgnore", EXPLAIN_TASK,
-     "            if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), ignore, mapDir,",
-     "            if (bump == null) paths else paths - bump.paths.toSet(), facts, notReadByTests.getOrElse(emptyList()), null, mapDir,",
+     "                    notReadByTests.getOrElse(emptyList()), ignore, declared, observing = false,",
+     "                    notReadByTests.getOrElse(emptyList()), null, declared, observing = false,",
      functional_suite, "a change to declared paths only runs nothing extra and names each path"),
+    # The selecting run refuses when a path the build declares for the whole task changed; an
+    # explanation handed no declaration predicts a narrowing the run never makes.
+    ("yoriwakeExplain is handed no path the build declares for the task", EXPLAIN_TASK,
+     "                    notReadByTests.getOrElse(emptyList()), ignore, declared, observing = false,",
+     "                    notReadByTests.getOrElse(emptyList()), ignore, emptyList(), observing = false,",
+     functional_suite, "yoriwakeExplain names a path the build declares for a task, as the run does"),
     # The defaults: documentation and CI configuration leave the change set with nothing set,
     # after the build's own entries, and only on the map's word and with no task input of the
     # test task's own under the root.

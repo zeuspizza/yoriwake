@@ -201,7 +201,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 configureCost = project.provider { BuildMemo.of(project)?.configureCost() },
             )
             if (wired) {
-                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, pathIgnoreDefaults, environment, largeChange, narrowPlainRunners, narrowDependencies, narrowLineOnlyChanges) { t ->
+                ExplainTask.register(project, name, settings, fullRunBranches, schedule, notReadByTests, pathIgnore, pathIgnoreDefaults, environment, largeChange, narrowPlainRunners, narrowDependencies, narrowLineOnlyChanges, declarations) { t ->
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }

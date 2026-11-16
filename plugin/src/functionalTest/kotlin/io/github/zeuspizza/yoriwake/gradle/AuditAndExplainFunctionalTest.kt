@@ -71,13 +71,20 @@ class AuditAndExplainFunctionalTest : FunctionalTestSupport() {
             """.trimIndent()
         )
 
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        // The selecting step writes the change set and capture markers beside the map it reads;
+        // an explanation runs it on a copy and leaves the map as it was.
+        fun mapFiles() = mapDir.walkTopDown().filter(File::isFile).filter { it.name != "explain.json" }
+            .associate { it.relativeTo(mapDir).path to it.readText() }
+        val before = mapFiles()
+
         val first = runner(dir, "yoriwakeExplainTest").build().output
         assertContains(first, "[yoriwake] :test vs")
         assertContains(first, "would run")
+        assertEquals(before, mapFiles())
 
         // And as something other than prose: the console line is for a person, this file is the
         // contract an agent or a script reads.
-        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
         val explanation = File(mapDir, CoverageDecoder.let { "explain.json" })
         assertTrue(explanation.isFile, "yoriwakeExplain wrote no machine-readable decision")
         val json = explanation.readText()

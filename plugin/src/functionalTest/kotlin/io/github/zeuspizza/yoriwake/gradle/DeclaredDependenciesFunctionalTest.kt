@@ -103,6 +103,18 @@ class DeclaredDependenciesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `yoriwakeExplain names a path the build declares for a task, as the run does`(@TempDir dir: File) {
+        val declaring = minimalBuild + System.lineSeparator() + """yoriwake { dependsOn("test", "/docker/**") }"""
+        fixtureChangedAfterCapture(dir, declaring, secondTest)
+
+        val output = runner(dir, ":app:yoriwakeExplainTest").build().output
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+
+        assertContains(output, ":app:test would run everything: docker/fixture.json changed, which dependsOn declares")
+        assertContains(File(mapDir, "explain.json").readText(), """"refusalKind": "declared-path-changed"""")
+    }
+
+    @Test
     fun `a declaration that matches every path fails the build naming it`(@TempDir dir: File) {
         val everything = minimalBuild + System.lineSeparator() + """yoriwake { dependsOn("test", "**") }"""
         build(dir, "build.gradle.kts" to everything, oneClass, oneTest)
