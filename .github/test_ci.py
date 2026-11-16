@@ -3163,8 +3163,14 @@ def case_real_commits_are_replayed_in_a_job_of_their_own_that_no_slice_waits_for
         problems += fail("no job replays the real commits")
         return problems
     replay = _job(project, "replay")
+    # The job's own keys, read above its steps: the replay step's deeper-indented
+    # `continue-on-error: true` would otherwise stand in for a deleted job-level one.
+    header = replay.split("\n    steps:\n")[0] + "\n"
     for needed in ("    needs: record\n", "    if: inputs.commits != '0'\n", "    continue-on-error: true\n",
-                   "    timeout-minutes: 90\n", "name: record-${{ fromJSON(inputs.project).project }}",
+                   "    timeout-minutes: 90\n"):
+        if needed not in header:
+            problems += fail(f"the replay job lacks {needed!r}")
+    for needed in ("name: record-${{ fromJSON(inputs.project).project }}",
                    "path: ${{ runner.temp }}/record\n",
                    'tar -xzf "$RUNNER_TEMP/record/$NAME/state.tar.gz" -C bench',
                    "name: replay-${{ fromJSON(inputs.project).project }}",
