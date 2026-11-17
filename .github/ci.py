@@ -13,6 +13,8 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py discard samples/demo --map
     python .github/ci.py needs-checks <base-sha> <head-sha>
     python .github/ci.py touches-product <base-sha> <head-sha>
+    python .github/ci.py scope <base-sha> <head-sha>
+    python .github/ci.py narrows-guards <base-sha> <head-sha>
     python .github/ci.py reuse-shards <earlier-artifacts> <out-dir> --run ID --head SHA --event E --workflow PATH --shards 3,6 --count 8
     python .github/ci.py changelog <base-sha> <head-sha>
     python .github/ci.py rerun-on-download-failure -- ./gradlew build --console=plain
@@ -191,6 +193,20 @@ def scope(paths):
         else:
             return {"unit": True, "maven": True, "gradle": True}
     return answer
+
+# What runs and judges the guards: no guard mutates it, so a change to it keeps fast mode.
+GUARD_MACHINERY = {"scripts/prove_guards.py", "scripts/guard_costs.py", "scripts/guard_costs.json",
+                   ".github/guard_shards.py", ".github/workflows/guards.yml"}
+
+
+def narrows_guards(paths):
+    """Whether a pull request's guards job may run only the guards its change selects, without fast
+    mode: a change that is not docs only, reaches no suite verify.yml runs, and leaves the guard
+    machinery alone. No paths runs fast mode."""
+    paths = [path for path in paths if path.strip()]
+    return (bool(paths) and needs_checks(paths) and not any(scope(paths).values())
+            and not any(path in GUARD_MACHINERY for path in paths))
+
 
 def changed_paths(base, head, cwd=None):
     """The paths a pull request changes, or None when git cannot say."""
@@ -541,6 +557,11 @@ def main(argv=None):
     scoped.add_argument("base")
     scoped.add_argument("head")
 
+    narrow = sub.add_parser("narrows-guards",
+                            help="print true when a pull request's guards job runs only the change's own")
+    narrow.add_argument("base")
+    narrow.add_argument("head")
+
     product = sub.add_parser("touches-product",
                              help="print true unless a pull request leaves the shipped sources alone")
     product.add_argument("base")
@@ -601,6 +622,11 @@ def main(argv=None):
         answer = scope(paths if paths is not None else [])
         for name in ("unit", "maven", "gradle"):
             print(f"{name}={'true' if answer[name] else 'false'}")
+        return 0
+
+    if args.command == "narrows-guards":
+        paths = changed_paths(args.base, args.head)
+        print("true" if paths is not None and narrows_guards(paths) else "false")
         return 0
 
     if args.command == "touches-product":

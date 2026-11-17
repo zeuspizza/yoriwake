@@ -1625,24 +1625,10 @@ def case_every_guard_job_runs_all_its_shards_under_its_required_name():
         if job is None or check is None:
             problems += fail(f"guards.yml has no {shard_job} job and {check_name} check")
             continue
-        listed = re.search(r"shard: \[([\d, ]+)\]", job)
-        # A dispatch may run some every-guard shards alone; by default the list is every one.
-        if not listed and "shard: ${{ fromJSON(needs.changes.outputs.shards) }}" in job:
-            changes = next((j for j in jobs if j.startswith("changes:\n")), "")
-            listed = re.search(r"shards: \$\{\{ steps\.reuse\.outputs\.shards \|\| '\[([\d, ]+)\]' \}\}", changes)
-        counts = set(re.findall(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", job))
-        if not listed or len(counts) != 1:
-            problems += fail(f"{shard_job}: no shard list, or not one shard count: {sorted(counts)}")
-            continue
-        n = int(counts.pop())
-        if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
-            problems += fail(f"{shard_job}: shards {listed.group(1)} are not 1..{n}")
-        checks = re.findall(r"guard_shards\.py check \S+ shards --count (\d+) --file (\S+)", check)
-        results = re.findall(r"--results results/(\S+)", job)
-        if not checks or any(int(count) != n for count, _file in checks):
-            problems += fail(f"{check_name}: its checks do not each expect {n} shards: {checks}")
-        if sorted(f for _count, f in checks) != sorted(results):
-            problems += fail(f"{check_name}: checks {checks} are not one per results file {results}")
+        if shard_job == "fast-shard":
+            problems += fast_shard_count_problems(jobs, job, check)
+        else:
+            problems += every_guard_shard_count_problems(jobs, check_name, shard_job, job, check)
         # Without these a failed shard skips its check, and GitHub counts a skipped required check
         # as passing.
         if f"    needs: [changes, {shard_job}]\n" not in check:
@@ -1651,15 +1637,66 @@ def case_every_guard_job_runs_all_its_shards_under_its_required_name():
             problems += fail(f"{check_name}: it does not run when a shard fails (if: always())")
         if f"if: needs.{shard_job}.result != 'success'" not in check or "exit 1" not in check:
             problems += fail(f"{check_name}: it does not fail when a shard did not succeed")
-        upload = re.search(r"name: (guards-\w+-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
-        if not upload or upload.group(2) != str(n):
-            problems += fail(f"{shard_job}: its artifact name does not carry its shard count")
-        elif f"pattern: {upload.group(1)}*\n" not in check:
-            problems += fail(f"{check_name}: it does not download its own shards ({upload.group(1)}*)")
     for name in ("guards, fast and the change's own", "guards, every one"):
         holders = [j.split(":", 1)[0] for j in jobs if f"    name: {name}\n" in j]
         if len(holders) != 1 or holders[0] not in ("fast", "full"):
             problems += fail(f"the required check `{name}` is on {holders}, not on one check job")
+    return problems
+
+
+def fast_shard_count_problems(jobs, job, check):
+    """A pull request's shards come from the changes job: 1..8 with fast mode, or as many as its own
+    guards need when narrowed. Fast mode always splits by 8; the change's own guards, the check
+    and the artifact names by the same count."""
+    problems = 0
+    changes = next((j for j in jobs if j.startswith("changes:\n")), "")
+    if "shard: ${{ fromJSON(needs.changes.outputs.fast_shards) }}" not in job:
+        problems += fail("fast-shard: its shards are not the changes job's list")
+    if "fast_shards: ${{ steps.narrow.outputs.shards || '[1, 2, 3, 4, 5, 6, 7, 8]' }}" not in changes \
+            or "fast_count: ${{ steps.narrow.outputs.count || '8' }}" not in changes:
+        problems += fail("guards.yml's changes job does not default to every one of 8 shards")
+    if "python3 scripts/guard_costs.py shards changed.json" not in changes:
+        problems += fail("guards.yml's changes job does not size a narrowed run's shards from their cost")
+    if "--mode fast --shard ${{ matrix.shard }}/8 " not in job:
+        problems += fail("fast-shard: fast mode is not split by 8")
+    if "COUNT: ${{ needs.changes.outputs.fast_count }}" not in job or '--shard ${{ matrix.shard }}/"$COUNT"' not in job:
+        problems += fail("fast-shard: the change's own guards are not split by the changes job's count")
+    if "check fast.json shards --count 8 --file fast.json" not in check \
+            or 'check changed.json shards --count "$COUNT" --file changed.json' not in check \
+            or "COUNT: ${{ needs.changes.outputs.fast_count }}" not in check:
+        problems += fail("fast: its checks do not expect the shards each results file was split by")
+    if "name: guards-pr-${{ matrix.shard }}-of-${{ needs.changes.outputs.fast_count }}" not in job:
+        problems += fail("fast-shard: its artifact name does not carry its shard count")
+    if "pattern: guards-pr-*\n" not in check:
+        problems += fail("fast: it does not download its own shards (guards-pr-*)")
+    return problems
+
+
+def every_guard_shard_count_problems(jobs, check_name, shard_job, job, check):
+    """The every-guard shards are 1..N, by default, and the check expects N of each results file."""
+    problems = 0
+    listed = re.search(r"shard: \[([\d, ]+)\]", job)
+    # A dispatch may run some every-guard shards alone; by default the list is every one.
+    if not listed and "shard: ${{ fromJSON(needs.changes.outputs.shards) }}" in job:
+        changes = next((j for j in jobs if j.startswith("changes:\n")), "")
+        listed = re.search(r"shards: \$\{\{ steps\.reuse\.outputs\.shards \|\| '\[([\d, ]+)\]' \}\}", changes)
+    counts = set(re.findall(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", job))
+    if not listed or len(counts) != 1:
+        return problems + fail(f"{shard_job}: no shard list, or not one shard count: {sorted(counts)}")
+    n = int(counts.pop())
+    if [int(x) for x in listed.group(1).split(",")] != list(range(1, n + 1)):
+        problems += fail(f"{shard_job}: shards {listed.group(1)} are not 1..{n}")
+    checks = re.findall(r"guard_shards\.py check \S+ shards --count (\d+) --file (\S+)", check)
+    results = re.findall(r"--results results/(\S+)", job)
+    if not checks or any(int(count) != n for count, _file in checks):
+        problems += fail(f"{check_name}: its checks do not each expect {n} shards: {checks}")
+    if sorted(f for _count, f in checks) != sorted(results):
+        problems += fail(f"{check_name}: checks {checks} are not one per results file {results}")
+    upload = re.search(r"name: (guards-\w+-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
+    if not upload or upload.group(2) != str(n):
+        problems += fail(f"{shard_job}: its artifact name does not carry its shard count")
+    elif f"pattern: {upload.group(1)}*\n" not in check:
+        problems += fail(f"{check_name}: it does not download its own shards ({upload.group(1)}*)")
     return problems
 
 
@@ -1888,9 +1925,9 @@ def case_a_change_runs_the_verify_jobs_its_paths_can_affect():
                          if n.endswith((".py", ".sh")) and os.path.exists(os.path.join(root, n))):
         with open(os.path.join(root, script), encoding="utf-8") as handle:
             named |= set(re.findall(r"\.github/[\w./-]*\w", handle.read()))
-    # ci.py names the guard workflow and the workflows directory only for guards.yml's own
-    # dispatches (reuse-shards), which no verify job runs.
-    named -= {".github/test_ci.py", ".github/workflows", ".github/workflows/guards.yml"}
+    # ci.py names the workflows directory and the guard machinery only for guards.yml's own
+    # questions (reuse-shards, narrows-guards), which no verify job asks.
+    named -= {".github/test_ci.py", ".github/workflows"} | ci.GUARD_MACHINERY
     for path in sorted(named):
         if ci.no_suite_reads(path):
             problems += fail(f"{path} is read by verify.yml's jobs or the build, yet listed as read by no suite")
@@ -2042,6 +2079,57 @@ def case_a_sweep_names_the_pull_requests_it_makes_wait():
             problems += fail(f"the fixture edit for {expected!r} no longer applies to sweep.yml")
         elif not any(expected in problem for problem in sweep_queue_problems(edited)):
             problems += fail(f"an edited sweep.yml was not reported for {expected!r}")
+    return problems
+
+
+def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
+    """Fast mode mutates what such a change did not touch; the guard machinery keeps it, since no
+    guard mutates the machinery itself, and anything else keeps today's run."""
+    problems = 0
+    cases = {
+        ("bench/run.py",): True,
+        ("bench/run.py", "docs/plans/x.md"): True,
+        (".github/workflows/sweep.yml",): True,
+        ("scripts/test_prove_guards.py",): True,
+        ("bench/run.py", "scripts/prove_guards.py"): False,
+        (".github/workflows/guards.yml",): False,
+        ("scripts/guard_costs.json",): False,
+        (".github/guard_shards.py",): False,
+        ("README.md",): False,
+        ("maven/src/main/kotlin/A.kt",): False,
+        ("plugin/src/test/kotlin/A.kt", "bench/run.py"): False,
+        (): False,
+        ("",): False,
+    }
+    for paths, expected in cases.items():
+        if ci.narrows_guards(list(paths)) != expected:
+            problems += fail(f"narrows_guards({list(paths)}) should be {expected}")
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        ci.main(["narrows-guards", "no-such-base", "no-such-head"])
+    if printed.getvalue().strip() != "false":
+        problems += fail("narrows-guards on refs git cannot read did not keep fast mode")
+    with open(os.path.join(WORKFLOWS, "guards.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    changes, shard, check = (_job_block(text, job) or "" for job in ("changes", "fast-shard", "fast"))
+    narrow = re.search(r"      - id: narrow\n((?:        .*\n|\n)*)", changes)
+    if not narrow or "continue-on-error: true" not in narrow.group(1):
+        problems += fail("guards.yml: a failed narrowing step does not fall back to fast mode on 8 shards")
+    elif "ci.py narrows-guards" not in narrow.group(1):
+        problems += fail("guards.yml: the narrowing step does not ask ci.py narrows-guards")
+    if not re.search(r"      - if: needs\.changes\.outputs\.narrow != 'true'\n        run: python3 scripts/prove_guards\.py --mode fast",
+                     shard):
+        problems += fail("guards.yml: fast mode is not skipped on a narrowed pull request, or skipped on any other")
+    if "needs.changes.outputs.fast_shards != '[]'" not in shard.split("\n    steps:", 1)[0]:
+        problems += fail("guards.yml: a narrowed pull request whose change selects no guard still starts a shard")
+    if "!(needs.changes.outputs.narrow == 'true' && needs.changes.outputs.fast_shards == '[]')" not in check:
+        problems += fail("guards.yml: the check fails on the skipped shards of a change that selects no guard")
+    bench = re.search(r"      - name: the benchmark's tests pass\n((?:        .*\n)*)", check)
+    if not bench or "if: always() && needs.changes.outputs.narrow == 'true'" not in bench.group(1) \
+            or "for test in bench/test_*.py" not in bench.group(1):
+        problems += fail("guards.yml: a narrowed pull request does not run the benchmark's tests")
+    elif check.index("the benchmark's tests pass") > check.index("download-artifact@"):
+        problems += fail("guards.yml: the benchmark's tests run after the check wrote into the checkout")
     return problems
 
 
@@ -4815,6 +4903,7 @@ CASES = (
     case_verify_runs_each_job_on_the_answer_its_suites_need,
     case_every_verify_job_has_a_time_limit,
     case_a_sweep_names_the_pull_requests_it_makes_wait,
+    case_a_change_no_suite_reads_narrows_the_pull_requests_guards,
     case_the_guard_workflows_are_read_only_and_cover_every_pull_request,
     case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,
