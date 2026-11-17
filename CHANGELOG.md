@@ -18,7 +18,9 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Changed
 
 - Contributors: benchmark jobs reuse each project's downloaded dependencies; a rate-limited build reruns after five minutes. Map: left alone.
-- A capture under the build script's own test filter, or with a default-package source, keeps its loaded-class union; one that keeps none says why. Map: left alone; a union appears at the next full capture.
+- Contributors: CI runs the jobs a change's paths can reach, cancels superseded runs and stops a hung job at 35 minutes. Map: left alone.
+- Reference: names the projects where recording in isolation paid back within ten selecting runs. Map: left alone.
+- A capture under a test filter the build sets (Gradle build script; Maven groups, tags, engines, suite files), with a default-package source, or under Failsafe keeps its loaded-class union; one that keeps none says why. Map: left alone; a union appears at the next full capture.
 
 ## [0.6.0] - 2026-11-16
 

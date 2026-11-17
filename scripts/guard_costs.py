@@ -7,6 +7,7 @@ results of one run:
 
     python3 scripts/guard_costs.py derive <shards-dir> [--file F ...] [--out FILE] [--run ID] [--commit SHA]
     python3 scripts/guard_costs.py report <shards-dir> [--file F ...] [--job fast-shard|full-shard]
+    python3 scripts/guard_costs.py shards <selection.json>
 
 `derive` writes the table that run measured: for each class it timed, the median of its guards'
 seconds and of its baselines'; the same for each other suite in each mode it ran; and the warm-up of the first step of
@@ -14,6 +15,11 @@ each shard, by that step's mode. What it did not time keeps its figures, and a c
 `estimated`. It writes the checked-in table unless `--out` names another file. `report` prints each
 shard's job as the table projects it and as the shard measured it, the spread between the shards,
 and the worst shard's margin to the job's `timeout-minutes`.
+
+`shards` reads a `prove_guards.py --list-selection` file and prints, as a JSON list, the shards a
+pull request's guards job runs it on when the selection is its only step: the fewest, at most 8,
+whose projected job, warm-up included, fits in half the job's `timeout-minutes`; none for an empty
+selection.
 
 `<shards-dir>` holds one directory per shard, named `...-<index>-of-<count>`, each with that shard's
 results in a file called `full.json`. `--file`, repeated in the order the job ran its steps, names
@@ -252,9 +258,30 @@ def report(results, job=None):
     return lines
 
 
+# The most shards a pull request's guards job runs on, and the job whose limit sizes them. Half the
+# limit leaves room for the largest shortfall a projection has shown against a measured shard.
+MOST_SHARDS = 8
+SIZED_JOB = "fast-shard"
+
+
+def shard_count(selection, target_seconds, most=MOST_SHARDS):
+    """The fewest shards, at most `most`, whose projected jobs all fit in `target_seconds`, each
+    running `selection`'s share as its first and only step; 0 when nothing is selected."""
+    if not selection:
+        return 0
+    for count in range(1, most + 1):
+        shards, _loads = prove_guards.partition(selection, count)
+        if all(prove_guards.job_projection([prove_guards.step_projection(shard, "full", first=True)]) <= target_seconds
+               for shard in shards if shard):
+            return count
+    return most
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
+    sized = sub.add_parser("shards")
+    sized.add_argument("selection", help="a prove_guards.py --list-selection file")
     for command in ("derive", "report"):
         run = sub.add_parser(command)
         run.add_argument("shards_dir")
@@ -271,6 +298,15 @@ def main(argv=None):
             run.add_argument("--run", help="the CI run the results came from")
             run.add_argument("--commit", help="the commit that run measured")
     args = parser.parse_args(argv)
+    if args.command == "shards":
+        labels = {guard["label"] for guard in _read(args.selection)["guards"]}
+        selection = [m for m in prove_guards.MUTATIONS if m[0] in labels]
+        limit = prove_guards.job_limit(SIZED_JOB)
+        if limit is None:
+            print(f"REFUSING: no timeout-minutes for {SIZED_JOB} in {prove_guards.GUARDS_WORKFLOW}", file=sys.stderr)
+            return 1
+        print(json.dumps(list(range(1, shard_count(selection, limit * 60 / 2) + 1))))
+        return 0
     names = args.file or ["full.json"]
     results = shard_results(args.shards_dir, names)
     if not results:

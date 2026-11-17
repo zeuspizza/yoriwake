@@ -2,7 +2,9 @@ name: guards
 
 # Breaks each safety rule in turn and checks that a test catches it (scripts/prove_guards.py).
 # Every pull request runs fast mode and the guards its change can affect, in any suite; one that
-# changes the shipped sources runs every guard instead. Every guard also runs on dispatch in each
+# changes the shipped sources runs every guard instead, and one that reaches no suite verify.yml
+# runs and leaves the guard machinery alone (.github/ci.py narrows-guards) runs only the guards its
+# change can affect, on as few shards as their projected cost needs, and the benchmark's tests. Every guard also runs on dispatch in each
 # release check, never on a schedule. A guard that does not fire fails the job and names it.
 #
 # Each guard job runs in 8 shards of the selected guards, balanced by the costs CI measured
@@ -60,6 +62,10 @@ jobs:
       code: ${{ steps.decide.outputs.code }}
       product: ${{ steps.decide.outputs.product }}
       base: ${{ steps.decide.outputs.base }}
+      # The pull request's guard shards: every one of 8 with fast mode, unless narrowed.
+      narrow: ${{ steps.narrow.outputs.narrow }}
+      fast_shards: ${{ steps.narrow.outputs.shards || '[1, 2, 3, 4, 5, 6, 7, 8]' }}
+      fast_count: ${{ steps.narrow.outputs.count || '8' }}
       shards: ${{ steps.reuse.outputs.shards || '[1, 2, 3, 4, 5, 6, 7, 8]' }}
       reused: ${{ steps.reuse.outputs.reused }}
     steps:
@@ -82,6 +88,30 @@ jobs:
           else
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "product=true" >> "$GITHUB_OUTPUT"
+          fi
+      # Whether the pull request's guards narrow to its own, and on how many shards. Any failure
+      # here leaves the outputs unset, and fast mode runs on every shard.
+      - id: narrow
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          MERGE_BASE: ${{ steps.decide.outputs.base }}
+        run: |
+          set -eu
+          narrow=$(python3 .github/ci.py narrows-guards "$BASE" "$HEAD")
+          if [ "$narrow" = true ]; then
+            python3 scripts/prove_guards.py --mode full --changed "${MERGE_BASE:?no merge base}" --list-selection changed.json
+            shards=$(python3 scripts/guard_costs.py shards changed.json)
+            count=$(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])))' "$shards")
+            {
+              echo "narrow=true"
+              echo "shards=$shards"
+              echo "count=$count"
+            } >> "$GITHUB_OUTPUT"
+            echo "narrowed to the change's own guards on $count shard(s): $shards" >> "$GITHUB_STEP_SUMMARY"
           fi
       # Which every-guard shards a dispatch runs: those it names, when the earlier run's others
       # stand; else every one, and the summary says why. Inputs reach the script through the
@@ -124,9 +154,9 @@ jobs:
           retention-days: 7
 
   fast-shard:
-    name: guards, fast and the change's own (shard ${{ matrix.shard }}/8)
+    name: guards, fast and the change's own (shard ${{ matrix.shard }}/${{ needs.changes.outputs.fast_count }})
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true' && needs.changes.outputs.fast_shards != '[]' }}
     runs-on: ubuntu-24.04
     # `--changed` selects every guard when a change edits all of them, and a change to the
     # functional tests selects every functional and Maven guard. The limit sits above the worst
@@ -137,7 +167,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ fromJSON(needs.changes.outputs.fast_shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -156,15 +186,17 @@ jobs:
           path: ~/.gradle/yoriwake-maven-distributions
           key: maven-distributions-${{ hashFiles('maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt') }}
           restore-keys: maven-distributions-
-      - run: |
-          mkdir -p results
-          python3 scripts/prove_guards.py --mode fast --shard ${{ matrix.shard }}/8 --results results/fast.json
+      - run: mkdir -p results
+      # Not on a narrowed pull request: no guard of fast mode mutates what its change touched.
+      - if: needs.changes.outputs.narrow != 'true'
+        run: python3 scripts/prove_guards.py --mode fast --shard ${{ matrix.shard }}/8 --results results/fast.json
       # Every suite, narrowed to the guards whose target, tests or build files the change touched,
       # or whose entry it edits: a change to a suite fast mode leaves out is proved here.
       - name: the guards the change can affect
         env:
           BASE: ${{ needs.changes.outputs.base }}
-        run: python3 scripts/prove_guards.py --mode full --changed "${BASE:?no merge base}" --shard ${{ matrix.shard }}/8 --results results/changed.json
+          COUNT: ${{ needs.changes.outputs.fast_count }}
+        run: python3 scripts/prove_guards.py --mode full --changed "${BASE:?no merge base}" --shard ${{ matrix.shard }}/"$COUNT" --results results/changed.json
       # Always, and an error when empty: the check reads every shard's results.
       # Kept a day: a re-run after a day needs "Re-run all jobs".
       # A GitHub error on this upload would lose the shard's hours of work and keep the check
@@ -174,7 +206,7 @@ jobs:
         if: always()
         continue-on-error: true
         with:
-          name: guards-pr-${{ matrix.shard }}-of-8
+          name: guards-pr-${{ matrix.shard }}-of-${{ needs.changes.outputs.fast_count }}
           path: results/
           if-no-files-found: error
           retention-days: 1
@@ -183,7 +215,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload.outcome == 'failure'
         with:
-          name: guards-pr-${{ matrix.shard }}-of-8
+          name: guards-pr-${{ matrix.shard }}-of-${{ needs.changes.outputs.fast_count }}
           path: results/
           if-no-files-found: error
           retention-days: 1
@@ -196,7 +228,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: unmutated-pr-${{ matrix.shard }}-of-8-attempt-${{ github.run_attempt }}
+          name: unmutated-pr-${{ matrix.shard }}-of-${{ needs.changes.outputs.fast_count }}-attempt-${{ github.run_attempt }}
           path: sandbox/prove-guards/unmutated/
           if-no-files-found: ignore
           retention-days: 3
@@ -213,9 +245,12 @@ jobs:
     needs: [changes, fast-shard]
     if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true'
     runs-on: ubuntu-24.04
+    # The benchmark's tests take a few minutes when narrowed; the checks a minute.
+    timeout-minutes: 20
     steps:
+      # A narrowed pull request whose change selects no guard runs no shard.
       - name: every shard succeeded
-        if: needs.fast-shard.result != 'success'
+        if: needs.fast-shard.result != 'success' && !(needs.changes.outputs.narrow == 'true' && needs.changes.outputs.fast_shards == '[]')
         run: |
           echo "a shard of the pull request's guards did not succeed: ${{ needs.fast-shard.result }}"
           exit 1
@@ -224,28 +259,62 @@ jobs:
         if: always()
         with:
           fetch-depth: 0
+      # Fast mode runs the benchmark's tests unmutated, as its suites' baselines, and no other
+      # workflow runs them: a narrowed pull request runs them here, since a change to one bench
+      # module can break the tests of another that imports it. Before anything is written into the
+      # checkout: some of them refuse a tree with untracked files. The replay's tests need the agent
+      # jar their own suite builds, which the change's guards run when it touches the replay.
+      # Some compile and run Java, as on the shards: the JDK the shards set up.
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        if: always() && needs.changes.outputs.narrow == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: the benchmark's tests pass
+        if: always() && needs.changes.outputs.narrow == 'true'
+        run: |
+          set -u
+          status=0
+          for test in bench/test_*.py; do
+            [ "$test" = bench/test_replay_decisions.py ] && continue
+            echo "::group::$test"
+            python3 "$test" || { echo "::error::$test failed"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
       - id: shards
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: always()
+        if: always() && needs.changes.outputs.fast_shards != '[]'
         with:
           pattern: guards-pr-*
           path: shards
       - name: every selected guard fired in exactly one shard
         env:
           BASE: ${{ needs.changes.outputs.base }}
+          NARROW: ${{ needs.changes.outputs.narrow }}
+          COUNT: ${{ needs.changes.outputs.fast_count }}
         run: |
           set -u
-          python3 scripts/prove_guards.py --mode fast --list-selection fast.json
           python3 scripts/prove_guards.py --mode full --changed "${BASE:?no merge base}" --list-selection changed.json
           status=0
-          python3 .github/guard_shards.py check fast.json shards --count 8 --file fast.json || status=1
-          python3 .github/guard_shards.py check changed.json shards --count 8 --file changed.json || status=1
+          if [ "$NARROW" != true ]; then
+            python3 scripts/prove_guards.py --mode fast --list-selection fast.json
+            python3 .github/guard_shards.py check fast.json shards --count 8 --file fast.json || status=1
+          fi
+          python3 .github/guard_shards.py check changed.json shards --count "$COUNT" --file changed.json || status=1
           exit $status
       # Reporting only: a failure here must not decide the required check.
       - name: the shards' projected and measured job, and its margin to the limit
         if: always() && steps.shards.outcome == 'success'
         continue-on-error: true
-        run: python3 scripts/guard_costs.py report shards --file fast.json --file changed.json
+        env:
+          NARROW: ${{ needs.changes.outputs.narrow }}
+        run: |
+          if [ "$NARROW" = true ]; then
+            python3 scripts/guard_costs.py report shards --file changed.json
+          else
+            python3 scripts/guard_costs.py report shards --file fast.json --file changed.json
+          fi
 
   full-shard:
     name: guards, every one (shard ${{ matrix.shard }}/8)

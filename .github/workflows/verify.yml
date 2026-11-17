@@ -7,7 +7,10 @@ name: verify
 # tests check its constants against it, the plugin's its published tokens), docs/reference.md (the
 # plugin's tests check the names, flags and printed lines it quotes against the code, test_ci.py its
 # supported matrix against matrix.yml) and SECURITY.md (test_ci.py checks its key fingerprint
-# against RELEASE-KEY.asc) count as code. A push to main keeps the path filter.
+# against RELEASE-KEY.asc) count as code. A push to main keeps the path filter. A pull request
+# that changes only paths no suite reads (the benchmark, the guard harness, the workflows and scripts
+# this one does not run) runs test_ci.py alone; one that changes only maven/ or only plugin/ besides
+# those skips the other's suites (.github/ci.py scope).
 on:
   push:
     branches: [main]
@@ -38,15 +41,22 @@ env:
 # shards: together they run everything `./gradlew build` runs, and the slowest shard sets the time.
 # A check job per suite, named as the suite, proves every test class ran in exactly one shard.
 jobs:
-  # Whether this run needs the build at all. A pull request that changes only docs skips every job
-  # below, and a skipped job satisfies a required check, where a path filter on the trigger would
-  # leave the required checks waiting forever. The jobs run unless this says `false`, so a detector
-  # that failed or said nothing runs everything: a wrong "docs only" would skip every check.
+  # Whether this run needs the build at all, and which job groups its paths can affect
+  # (.github/ci.py scope): `unit` the Gradle build, `maven` the Maven shards, `gradle` the Gradle
+  # functional suites, the map jobs and the coverage gate. A pull request that changes only docs
+  # skips every job below, and a skipped job satisfies a required check, where a path filter on the
+  # trigger would leave the required checks waiting forever. The jobs run unless this says `false`,
+  # so a detector that failed or said nothing runs everything: a wrong "not needed" would skip a
+  # check. A push to main runs everything.
   changes:
     name: what changed
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       code: ${{ steps.decide.outputs.code }}
+      unit: ${{ steps.decide.outputs.unit }}
+      maven: ${{ steps.decide.outputs.maven }}
+      gradle: ${{ steps.decide.outputs.gradle }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,44 +69,55 @@ jobs:
         run: |
           set -eu
           if [ "$EVENT" = pull_request ]; then
-            echo "code=$(python3 .github/ci.py needs-checks "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
+            {
+              echo "code=$(python3 .github/ci.py needs-checks "$BASE" "$HEAD")"
+              python3 .github/ci.py scope "$BASE" "$HEAD"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "code=true" >> "$GITHUB_OUTPUT"
+            printf 'code=true\nunit=true\nmaven=true\ngradle=true\n' >> "$GITHUB_OUTPUT"
           fi
 
   # The unit and agent suites and the release's checks; the Maven suite runs in shards below, and
-  # the check named as this job was gates on both.
+  # the check named as this job was gates on both. A change no suite reads runs test_ci.py alone.
   build:
     name: unit and agent suites (build)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        if: needs.changes.outputs.unit != 'false'
         with:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        if: needs.changes.outputs.unit != 'false'
         with:
           # The release signing check's refusals fail builds by design; its steps tell what failed.
           add-job-summary: never
       # The plugin's coverage gate needs the functional suites, which run in the shards below; the
       # coverage job gates on this job's unit-test data and theirs.
       - run: ./gradlew build :agent:jacocoTestReport -x :plugin:functionalTest -x :plugin:functionalTestGradle9 -Pyoriwake.functional.coverage=false --console=plain
+        if: needs.changes.outputs.unit != 'false'
       - run: python3 .github/test_ci.py
       - run: python3 scripts/test_central_bundle.py
+        if: needs.changes.outputs.unit != 'false'
       # The bundle the release would upload: a POM or jar Central refuses shows here, not first at a
       # tag. At a release-shaped version, since a snapshot's files are named by their timestamp.
       - name: the Maven Central bundle is complete
+        if: needs.changes.outputs.unit != 'false'
         run: |
           ./gradlew :maven:publishMavenPluginPublicationToBuildLocalRepository -PreleaseVersion=0.0.0-check --console=plain
           python3 scripts/central_bundle.py maven/build/local-repository io.github.zeuspizza yoriwake-maven-plugin \
             0.0.0-check "$RUNNER_TEMP/central-bundle.zip"
       - name: the release's signing and upload refusal work
+        if: needs.changes.outputs.unit != 'false'
         run: .github/check_release_signing.sh
       # The coverage job reads it; kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.unit != 'false'
         with:
           name: coverage-linux-unit
           path: plugin/build/jacoco/test.exec
@@ -105,7 +126,7 @@ jobs:
       # The agent's measured coverage, so a ratchet is set from this run without another.
       # A person reads it: setting a ratchet from a green pull request's run, or reading a red gate.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.unit != 'false' }}
         with:
           name: coverage-report-agent
           path: agent/build/reports/jacoco/test/jacocoTestReport.xml
@@ -113,7 +134,7 @@ jobs:
           retention-days: 7
       # The run summary and a person read it when the Linux unit build failed.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: failure()
+        if: failure() && needs.changes.outputs.unit != 'false'
         with:
           name: test-results-linux-unit
           path: |
@@ -123,14 +144,17 @@ jobs:
       # Last: with build capture off, setup-gradle no longer stops the daemons before saving the
       # cache, and a live daemon's files can lock a Windows save.
       - name: stop the Gradle daemons before the cache is saved
-        if: always()
+        if: always() && needs.changes.outputs.unit != 'false'
         run: ./gradlew --stop
 
   maven-shard:
     name: functional on Maven (shard ${{ matrix.shard }}/3)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.maven != 'false' }}
     runs-on: ubuntu-24.04
+    # About 1.5 times the slowest shard measured on CI (p95 20-22 min): a hung shard fails here,
+    # not at six hours.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -176,9 +200,10 @@ jobs:
     needs: [changes, maven-shard, build]
     if: always() && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: every shard succeeded
-        if: needs.maven-shard.result != 'success'
+        if: needs.changes.outputs.maven != 'false' && needs.maven-shard.result != 'success'
         run: |
           echo "a shard of functional on Maven did not succeed: ${{ needs.maven-shard.result }}"
           exit 1
@@ -187,19 +212,26 @@ jobs:
         run: |
           echo "unit and agent suites (build) did not succeed: ${{ needs.build.result }}"
           exit 1
+      # The Maven shards' own checks, when a change needed them.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.maven != 'false'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.changes.outputs.maven != 'false'
         with:
           pattern: functional-maven-functionalTest-*
           path: shards
       - name: every test class ran in exactly one shard
+        if: needs.changes.outputs.maven != 'false'
         run: python3 .github/functional_shards.py check shards --count 3 --module maven
 
   functional-shard:
     name: functional on Gradle 8.14 (shard ${{ matrix.shard }}/3)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: ubuntu-24.04
+    # About 1.5 times the slowest shard measured on CI (p95 20-22 min): a hung shard fails here,
+    # not at six hours.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -264,8 +296,9 @@ jobs:
   functional:
     name: functional on Gradle 8.14
     needs: [changes, functional-shard]
-    if: always() && needs.changes.outputs.code != 'false'
+    if: always() && needs.changes.outputs.gradle != 'false'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: every shard succeeded
         if: needs.functional-shard.result != 'success'
@@ -283,8 +316,11 @@ jobs:
   functional-gradle9-shard:
     name: functional on Gradle 9 (shard ${{ matrix.shard }}/3)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: ubuntu-24.04
+    # About 1.5 times the slowest shard measured on CI (p95 20-22 min): a hung shard fails here,
+    # not at six hours.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -349,8 +385,9 @@ jobs:
   functional-gradle9:
     name: functional on Gradle 9
     needs: [changes, functional-gradle9-shard]
-    if: always() && needs.changes.outputs.code != 'false'
+    if: always() && needs.changes.outputs.gradle != 'false'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: every shard succeeded
         if: needs.functional-gradle9-shard.result != 'success'
@@ -371,8 +408,9 @@ jobs:
   coverage:
     name: coverage gate
     needs: [changes, build, functional-shard, functional-gradle9-shard]
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -426,8 +464,9 @@ jobs:
   capture:
     name: build a map
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     # The JDK the map was captured on, for the job that selects against it on the same OS.
     outputs:
       jdk: ${{ steps.java.outputs.version }}
@@ -477,8 +516,9 @@ jobs:
   select:
     name: select on another machine
     needs: [changes, capture]
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       # A fresh checkout on a different runner, with no build outputs and no map of its own. This is
       # the CI shape: restore the map, change something, run only what the change can reach.
@@ -544,8 +584,9 @@ jobs:
   select-on-windows:
     name: select on windows, against a map captured on linux
     needs: [changes, capture]
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       # Before the checkout: a clone that already dropped long-path files looks complete and cannot
       # be repaired afterwards, and a checkout's line endings are fixed when it is made. LF, as on
@@ -601,8 +642,9 @@ jobs:
   capture-on-windows:
     name: build a map on windows
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: windows-latest
+    timeout-minutes: 15
     # The JDK the map was captured on, for the job that selects against it on the same OS.
     outputs:
       jdk: ${{ steps.jdk.outputs.version }}
@@ -670,8 +712,9 @@ jobs:
   select-on-windows-from-windows:
     name: select on windows, against a map captured on windows
     needs: [changes, capture-on-windows]
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - name: allow long paths, and check out with the repository's LF line endings
         run: |
@@ -735,8 +778,9 @@ jobs:
   select-on-linux:
     name: select on linux, against a map captured on windows
     needs: [changes, capture-on-windows]
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -778,8 +822,9 @@ jobs:
   build-windows:
     name: unit and agent suites on windows
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.unit != 'false' }}
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - name: allow long paths
         run: git config --global core.longpaths true
@@ -812,8 +857,11 @@ jobs:
   functional-windows-shard:
     name: functional on Gradle 8.14 on windows (shard ${{ matrix.shard }}/6)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: windows-latest
+    # About 1.5 times the slowest shard measured on CI (p95 20-22 min): a hung shard fails here,
+    # not at six hours.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -872,8 +920,9 @@ jobs:
   functional-windows:
     name: functional on Gradle 8.14 on windows
     needs: [changes, functional-windows-shard]
-    if: always() && needs.changes.outputs.code != 'false'
+    if: always() && needs.changes.outputs.gradle != 'false'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: every shard succeeded
         if: needs.functional-windows-shard.result != 'success'
@@ -891,8 +940,11 @@ jobs:
   functional-gradle9-windows-shard:
     name: functional on Gradle 9 on windows (shard ${{ matrix.shard }}/6)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.gradle != 'false' }}
     runs-on: windows-latest
+    # About 1.5 times the slowest shard measured on CI (p95 20-22 min): a hung shard fails here,
+    # not at six hours.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -951,8 +1003,9 @@ jobs:
   functional-gradle9-windows:
     name: functional on Gradle 9 on windows
     needs: [changes, functional-gradle9-windows-shard]
-    if: always() && needs.changes.outputs.code != 'false'
+    if: always() && needs.changes.outputs.gradle != 'false'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: every shard succeeded
         if: needs.functional-gradle9-windows-shard.result != 'success'
@@ -977,6 +1030,7 @@ jobs:
             functional-windows, functional-gradle9-windows-shard, functional-gradle9-windows]
     if: always() && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
