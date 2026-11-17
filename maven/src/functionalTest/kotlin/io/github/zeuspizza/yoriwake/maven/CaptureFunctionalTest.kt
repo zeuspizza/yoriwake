@@ -188,7 +188,7 @@ class CaptureFunctionalTest {
         val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded().output
 
         assertNull(union(project))
-        assertContains(output, "so the loaded-class union it could not vouch for was discarded")
+        assertContains(output, "keeps no loaded-class union: its tests were filtered by groups or tags.")
     }
 
     @Test
@@ -268,6 +268,6 @@ class CaptureFunctionalTest {
 
         assertContains(output, "Tests run: 1, Failures: 0")
         assertNull(union(project))
-        assertContains(output, "so the loaded-class union it could not vouch for was discarded")
+        assertContains(output, "keeps no loaded-class union: its tests were filtered by TestNG suite files.")
     }
 }

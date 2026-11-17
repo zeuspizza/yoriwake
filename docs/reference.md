@@ -77,6 +77,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test selecting against <sha> (<origin>): N changed classes, M paths coverage cannot see` | selection is active, and against which base |
 | `of N tests discovered: reaches-change=… skipped=…` | how many tests each rule decided |
 | `:test map updated: N records captured, M known` | a capture completed |
+| `:test keeps no loaded-class union: <why>. …` | a capture kept no list of the classes its test JVMs loaded: filtered for this run, a test JVM that listed nothing or did not finish, or `-Pyoriwake.internal.loaded=false`. Until a capture keeps one, a change to code no test executes runs everything. A filter the build script sets on every run keeps one, trusted only by runs under the same filter |
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |

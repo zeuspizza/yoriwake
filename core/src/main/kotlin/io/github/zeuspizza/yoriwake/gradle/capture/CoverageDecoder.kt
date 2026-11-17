@@ -65,6 +65,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.PARALLEL_UNCONF
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WORKER_DIR_PREFIX
 import io.github.zeuspizza.yoriwake.agent.contract.TestClassIds
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
+import io.github.zeuspizza.yoriwake.agent.select.MapReader
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
@@ -92,8 +93,11 @@ internal object CoverageDecoder {
     data class Outcome(
         val captured: Int,
         val total: Int,
-        /** This run discarded an unvouched loaded-class union, a loss otherwise invisible. */
-        val unionDiscarded: Boolean = false,
+        /**
+         * Why this run, which would have replaced the loaded-class union, keeps none; null when it
+         * kept one or left the map's as it was. A loss otherwise invisible.
+         */
+        val unionDropped: String? = null,
         /** Records rewritten to UNKNOWN for want of an in-scope class; they run on every build. */
         val unattributable: Int = 0,
         /** Classless test records in the merged map, which may be a restored cache. */
@@ -258,6 +262,14 @@ internal object CoverageDecoder {
          * capture that dates the map; null removes the map's.
          */
         classpathRecord: ClasspathRecord.Record? = null,
+        /** Why the run was not the whole task, when [wholeTask] is false; said when the union is dropped. */
+        notWholeTask: String = "it did not run the whole task",
+        /**
+         * The digest of the build-script filter the run ran under, or null when it was unfiltered.
+         * A union is kept with it, and trusted only by a run under the same filter; see
+         * [MapReader.read].
+         */
+        unionFilter: String? = null,
     ): Outcome? {
         val workers = recordsDir(mapDir)
             .listFiles { f: File -> f.isDirectory && f.name.startsWith(WORKER_DIR_PREFIX) }
@@ -323,7 +335,9 @@ internal object CoverageDecoder {
             carriesOlderRecords = retained.isNotEmpty(),
             fullCapture = datesTheMap,
         )
-        val unionDiscarded = writeLoaded(mapDir, selecting, datesTheMap, wholeTask, jvmCount(workers), loadedScope)
+        val unionDropped = writeLoaded(
+            mapDir, selecting, datesTheMap, wholeTask, jvmCount(workers), loadedScope, notWholeTask, unionFilter,
+        )
         writeCaptureCommit(mapDir, captureCommit, datesTheMap)
         // After the capture commit, which both stamps name.
         writeDebugTouches(mapDir, positions, debugTouches)
@@ -372,7 +386,7 @@ internal object CoverageDecoder {
         return Outcome(
             captured.size,
             merged.size,
-            unionDiscarded = unionDiscarded,
+            unionDropped = unionDropped,
             unattributable = unattributable,
             mapUnattributable = mapTestRecords.count { line ->
                 val parts = line.split('	')
@@ -664,10 +678,12 @@ internal object CoverageDecoder {
         wholeTask: Boolean,
         workers: Int,
         loadedScope: List<String>,
-    ): Boolean {
+        notWholeTask: String,
+        unionFilter: String?,
+    ): String? {
         val directory = loadedDir(mapDir)
         try {
-            return takeUnion(mapDir, directory, selecting, datesTheMap, wholeTask, workers, loadedScope)
+            return takeUnion(mapDir, directory, selecting, datesTheMap, wholeTask, workers, loadedScope, notWholeTask, unionFilter)
         } finally {
             // Run scratch, one unfiltered list per test JVM; the union is what the map keeps.
             directory.deleteRecursively()
@@ -682,7 +698,9 @@ internal object CoverageDecoder {
         wholeTask: Boolean,
         workers: Int,
         loadedScope: List<String>,
-    ): Boolean {
+        notWholeTask: String,
+        unionFilter: String?,
+    ): String? {
         val perWorker = directory
             .listFiles { f: File -> f.isFile && f.name.startsWith(LOADED_WORKER_PREFIX) && f.name.endsWith(LOADED_WORKER_SUFFIX) }
             .orEmpty()
@@ -700,9 +718,15 @@ internal object CoverageDecoder {
         if (!trustworthy) {
             if (selecting && !datesTheMap) {
                 // The union still describes the full run it came from.
-                return false
+                return null
             }
-            return discardUnion(mapDir)
+            discardUnion(mapDir)
+            return when {
+                !wholeTask -> notWholeTask
+                loadedScope.isEmpty() -> "no package of the build's own sources was found to scope it to"
+                perWorker.size != workers -> "${perWorker.size} of its $workers test JVMs listed the classes they loaded"
+                else -> "${completed.size} of its $workers test JVMs finished"
+            }
         }
 
         // Filtered here, not at capture, so the complete set speaks for the stored scope.
@@ -712,7 +736,8 @@ internal object CoverageDecoder {
             .filter { name -> name.isNotEmpty() && loadedScope.any { inPackage(name, it) } }
             .toSortedSet()
         if (names.isEmpty()) {
-            return discardUnion(mapDir)
+            discardUnion(mapDir)
+            return "its test JVMs loaded no class of the build's own packages"
         }
 
         // Provenance last, and removed first: a reader that finds no provenance refuses the union,
@@ -720,23 +745,18 @@ internal object CoverageDecoder {
         File(mapDir, LOADED_PROVENANCE_FILE).delete()
         writeAtomically(File(mapDir, LOADED_FILE), names.joinToString("\n", postfix = "\n"))
         writeAtomically(File(mapDir, LOADED_SCOPE_FILE), loadedScope.joinToString("\n", postfix = "\n"))
-        writeAtomically(File(mapDir, LOADED_PROVENANCE_FILE), "full\n")
-        return false
+        writeAtomically(File(mapDir, LOADED_PROVENANCE_FILE), MapReader.loadedProvenance(unionFilter) + "\n")
+        return null
     }
 
     private fun inPackage(className: String, prefix: String) =
         className == prefix || className.startsWith("$prefix.")
 
-    /**
-     * Drops the union and reports whether there was one, so the caller can say so: a full run
-     * that cannot speak for the whole task otherwise silently ends narrowing of unexercised code.
-     */
-    private fun discardUnion(mapDir: File): Boolean {
-        val had = File(mapDir, LOADED_FILE).isFile
+    /** Drops the union: one the run cannot vouch for would make a selecting run skip too much. */
+    private fun discardUnion(mapDir: File) {
         File(mapDir, LOADED_PROVENANCE_FILE).delete()
         File(mapDir, LOADED_FILE).delete()
         File(mapDir, LOADED_SCOPE_FILE).delete()
-        return had
     }
 
     /** The map as it stands, or nothing when another schema version wrote it. */

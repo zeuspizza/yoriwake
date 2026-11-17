@@ -76,8 +76,11 @@ internal class Recording(
         val kind: RunPlan.Kind,
         /** The JaCoCo agent's scope as the fork is handed it, serialized; null when unreadable. */
         val effectiveScope: String?,
-        /** Whether this run's loaded-class lists may stand for the whole execution; see [wholeTaskOf]. */
-        val wholeTask: Boolean,
+        /**
+         * Why this run's loaded-class lists may not stand for the whole execution, or null when they
+         * may; see [notWholeTaskOf].
+         */
+        val notWholeTask: String?,
     )
 
     private val selection = Selection(session, root, log).also { it.validate() }
@@ -299,7 +302,7 @@ internal class Recording(
             hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()) +
                 arguments(resolved(project, launcherOptionsOf(configuration)).orEmpty())
         )
-        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize(), wholeTaskOf(project, execution, configuration, undated))
+        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize(), notWholeTaskOf(project, execution, configuration, undated))
     }
 
     /** Every model file read this session that lies in the checkout: each module's POM, and its parents'. */
@@ -355,7 +358,7 @@ internal class Recording(
             observing = run.kind == RunPlan.Kind.OBSERVE,
             asksSelection = selection.asksSelection,
             complementing = run.kind == RunPlan.Kind.COMPLEMENT,
-            wholeTask = run.wholeTask,
+            wholeTask = run.notWholeTask == null,
             loadedScope = reactorPackages,
             datesTheMap = run.undatedReason == null,
             undatedReason = run.undatedReason.orEmpty(),
@@ -367,11 +370,8 @@ internal class Recording(
             facts = view(project, execution, classpath, execution.configuration),
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
-            unionDiscarded = "could not take the classes its test JVMs loaded as the whole execution's (it ran " +
-                "without -D$INTERNAL_LOADED, under Failsafe, with tests left out by groups, tags, engines or suite " +
-                "files, without dating the map, or a test JVM listed none or did not finish), so the loaded-class union it could not " +
-                "vouch for was discarded. Changes to code no test executes will force a full run until the next " +
-                "capture of the whole execution with -D$INTERNAL_LOADED.",
+            unionDiscarded = "Changes to code no test executes will force a full run until a capture of the " +
+                "whole execution with -D$INTERNAL_LOADED keeps one.",
             buildState = { isBuildState(it) },
             logger = object : DecodeRun.Log {
                 override fun lifecycle(message: String) = log.info(message)
@@ -380,6 +380,7 @@ internal class Recording(
             },
             optimistic = run.kind == RunPlan.Kind.SELECT && selection.optimistic,
             fullRunPolicy = selection.fullRunPolicy,
+            notWholeTask = run.notWholeTask.orEmpty(),
         ).run()
     }
 
@@ -517,14 +518,17 @@ internal class Recording(
         Declines.property(project, session, INTERNAL_LOADED)?.let { it.isEmpty() || it.equals("true", ignoreCase = true) } == true
 
     /**
-     * Whether this run's loaded-class union may speak for the whole execution, as Gradle's
-     * unfiltered task: flagged, dating the map, and not narrowed by groups, tags, JUnit 5 engines or
-     * TestNG suite files. POM `includes` and `excludes` say which classes are tests, as a Gradle
-     * task's own do, and filter nothing. Failsafe never: its tests commonly drive an application
-     * another JVM runs, whose loaded classes no union sees.
+     * Why this run's loaded-class union may not speak for the whole execution, or null when it may,
+     * as Gradle's unfiltered task: flagged, dating the map, and not narrowed by groups, tags, JUnit 5
+     * engines or TestNG suite files. POM `includes` and `excludes` say which classes are tests, as a
+     * Gradle task's own do, and filter nothing. Failsafe never: its tests commonly drive an
+     * application another JVM runs, whose loaded classes no union sees. Empty, which says nothing,
+     * when the lists were not asked for.
      */
-    private fun wholeTaskOf(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom, undated: String?): Boolean {
-        if (!recordsLoaded(project) || undated != null || execution.artifactId == FAILSAFE) return false
+    private fun notWholeTaskOf(project: MavenProject, execution: MojoExecution, configuration: Xpp3Dom, undated: String?): String? {
+        if (!recordsLoaded(project)) return ""
+        if (undated != null) return "the run could not date the map ($undated)"
+        if (execution.artifactId == FAILSAFE) return "Failsafe's tests may drive code in another JVM, which no union sees"
         // A value given through an expression counts unless it resolves to nothing.
         fun given(value: String?) = resolved(project, value?.trim()) != null
         fun listed(name: String) = configuration.getChild(name).let { list -> given(list?.value) || list?.children.orEmpty().any { given(it.value) } }
@@ -535,7 +539,12 @@ internal class Recording(
             listOf("includeTags", "excludeTags").any { given(properties[it]) }
         val byEngines = listOf("includeJUnit5Engines", "excludeJUnit5Engines").any { listed(it) || given(Declines.property(project, session, "surefire.$it")) }
         val bySuites = listed("suiteXmlFiles") || given(Declines.property(project, session, "surefire.suiteXmlFiles"))
-        return !byGroups && !byEngines && !bySuites
+        return when {
+            byGroups -> "its tests were filtered by groups or tags"
+            byEngines -> "its tests were filtered by JUnit 5 engines"
+            bySuites -> "its tests were filtered by TestNG suite files"
+            else -> null
+        }
     }
 
     /** The previous run's records, decisions and observation go before this one writes any. */

@@ -1,6 +1,5 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
-import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.DecodeRun
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -56,6 +55,14 @@ internal abstract class DecodeTask : DefaultTask() {
 
     @get:Input
     abstract val loadedScope: ListProperty<String>
+
+    /** Why the run is not the whole task, said when it keeps no union; empty when it is. */
+    @get:Input
+    abstract val notWholeTask: Property<String>
+
+    /** The digest of the build-script filter the run runs under; empty when it runs unfiltered. */
+    @get:Input
+    abstract val unionFilter: Property<String>
 
     @get:Input
     abstract val datesTheMap: Property<Boolean>
@@ -130,6 +137,8 @@ internal abstract class DecodeTask : DefaultTask() {
             },
             optimistic = optimistic.getOrElse(false),
             fullRunPolicy = fullRunPolicy.getOrElse(false),
+            notWholeTask = notWholeTask.getOrElse(""),
+            unionFilter = unionFilter.getOrElse("").takeIf(String::isNotEmpty),
         ).run()
     }
 
@@ -159,15 +168,16 @@ internal abstract class DecodeTask : DefaultTask() {
         val optimistic: Boolean = false,
         /** Whether the build lists a full-run branch or sets a scheduled full run. */
         val fullRunPolicy: Boolean = false,
+        /** Why the run is not the whole task, when it is not. */
+        val notWholeTask: Provider<String>? = null,
+        /** The digest of the build-script filter the run runs under; empty when unfiltered. */
+        val unionFilter: Provider<String>? = null,
     )
 
     internal companion object {
-        /** Why a run that dates the map dropped its union, and until when; printed after the task's path. */
-        const val UNION_DISCARDED = "could not take the classes its test JVMs loaded as the whole task's (the run " +
-            "left tests out by tag, engine, category or group or by a name pattern of the build script, a test " +
-            "JVM listed none, or it ran with -P${Settings.LOADED}=false), so the loaded-class union was " +
-            "discarded. Changes to code no test executes will force a full run until the next capture of the " +
-            "whole task."
+        /** What a capture that keeps no loaded-class union costs, and until when; printed after why. */
+        const val UNION_DISCARDED = "Changes to code no test executes will force a full run until a capture " +
+            "of the whole task keeps one."
 
         fun nameFor(testName: String) = "yoriwakeDecode${testName.replaceFirstChar(Char::uppercase)}"
 
@@ -199,6 +209,8 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.complementing.set(wired.complementing)
                 task.wholeTask.set(wired.wholeTask)
                 task.loadedScope.set(wired.loadedScope)
+                wired.notWholeTask?.let(task.notWholeTask::set) ?: task.notWholeTask.set("")
+                wired.unionFilter?.let(task.unionFilter::set) ?: task.unionFilter.set("")
                 task.datesTheMap.set(wired.datesTheMap)
                 task.undatedReason.set(wired.undatedReason)
                 task.effectiveScope.set(wired.effectiveScope)

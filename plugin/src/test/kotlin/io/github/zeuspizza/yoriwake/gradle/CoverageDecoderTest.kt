@@ -2,6 +2,7 @@ package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
+import io.github.zeuspizza.yoriwake.agent.select.MapReader
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.bytecode.Recordability
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
@@ -17,6 +18,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -525,6 +527,107 @@ class CoverageDecoderTest {
 
         assertTrue(!File(dir, AgentContract.LOADED_FILE).exists(), "a union nobody can vouch for")
         assertTrue(!File(dir, AgentContract.LOADED_PROVENANCE_FILE).exists())
+    }
+
+    @Test
+    fun `a full capture with no package to scope the union to says so, with no union before`(@TempDir dir: File) {
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A")
+
+        val outcome = CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = emptyList())
+
+        assertContains(assertNotNull(outcome?.unionDropped), "no package of the build's own sources")
+        assertFalse(File(dir, AgentContract.LOADED_FILE).exists())
+    }
+
+    @Test
+    fun `a full capture one of whose test JVMs did not finish says so`(@TempDir dir: File) {
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A")
+        File(CoverageDecoder.loadedDir(dir), "loaded-1.complete").delete()
+
+        val outcome = CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = listOf("com.acme"))
+
+        assertEquals("0 of its 1 test JVMs finished", outcome?.unionDropped)
+    }
+
+    @Test
+    fun `a full capture filtered from the command line says by what`(@TempDir dir: File) {
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A")
+
+        val outcome = CoverageDecoder.decode(
+            dir, listOf("com.acme"), wholeTask = false, loadedScope = listOf("com.acme"),
+            notWholeTask = "its tests were filtered by --tests [*AlphaTest]",
+        )
+
+        assertEquals("its tests were filtered by --tests [*AlphaTest]", outcome?.unionDropped)
+    }
+
+    @Test
+    fun `a selecting run that does not date the map says nothing of the union it keeps`(@TempDir dir: File) {
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A")
+        CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = listOf("com.acme"))
+        CoverageDecoder.recordsDir(dir).deleteRecursively()
+
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        val outcome = CoverageDecoder.decode(dir, listOf("com.acme"), selecting = true, wholeTask = false, datesTheMap = false)
+
+        assertNull(outcome?.unionDropped)
+        assertTrue(File(dir, AgentContract.LOADED_FILE).isFile)
+    }
+
+    @Test
+    fun `a full capture that keeps a union says nothing`(@TempDir dir: File) {
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A")
+
+        val outcome = CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = listOf("com.acme"))
+
+        assertNull(outcome?.unionDropped)
+    }
+
+    @Test
+    fun `a union recorded under a build-script filter carries the filter's digest`(@TempDir dir: File) {
+        records(dir, "1", Triple("t", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+        loaded(dir, "1", "com.acme.A")
+
+        CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = listOf("com.acme"), unionFilter = "d1")
+
+        assertEquals(
+            MapReader.loadedProvenance("d1"),
+            File(dir, AgentContract.LOADED_PROVENANCE_FILE).readText().trim(),
+        )
+        assertNull(MapReader.read(dir).loadedClasses(), "an unfiltered reader trusted a filtered union")
+        assertEquals(setOf("com.acme.A"), MapReader.read(dir, "d1").loadedClasses())
+    }
+
+    @Test
+    fun `a capture recording one test at a time keeps its union when every test JVM listed and finished`(
+        @TempDir dir: File,
+    ) {
+        (1..3).forEach { worker ->
+            records(dir, "$worker", Triple("t$worker", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+            loaded(dir, "$worker", "com.acme.A", "com.acme.Only$worker")
+        }
+
+        val kept = CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = listOf("com.acme"))
+
+        assertNull(kept?.unionDropped)
+        assertEquals(4, File(dir, AgentContract.LOADED_FILE).readLines().count(String::isNotBlank))
+
+        CoverageDecoder.recordsDir(dir).deleteRecursively()
+        (1..3).forEach { worker ->
+            records(dir, "$worker", Triple("t$worker", "SUCCESSFUL", execData("com.acme.A" to booleanArrayOf(true))))
+            loaded(dir, "$worker", "com.acme.A")
+        }
+        File(CoverageDecoder.loadedDir(dir), "loaded-2.complete").delete()
+
+        val dropped = CoverageDecoder.decode(dir, listOf("com.acme"), wholeTask = true, loadedScope = listOf("com.acme"))
+
+        assertEquals("2 of its 3 test JVMs finished", dropped?.unionDropped)
+        assertFalse(File(dir, AgentContract.LOADED_FILE).exists())
     }
 
     @Test
