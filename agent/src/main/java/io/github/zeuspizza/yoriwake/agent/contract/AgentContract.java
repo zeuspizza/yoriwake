@@ -159,6 +159,12 @@ public final class AgentContract {
     public static final String BASE_FLAG_PROPERTY = "yoriwake.change.baseFlag";
 
     /**
+     * The digest of the build-script filter this run runs under; unset for an unfiltered run. The
+     * loaded-class union is trusted only when it was recorded under the same filter.
+     */
+    public static final String UNION_FILTER_PROPERTY = "yoriwake.change.unionFilter";
+
+    /**
      * The file holding every list-valued change-set property, {@link #CHANGE_SET_FILE} in the map
      * directory. A change set can name tens of thousands of paths, more than one command line
      * carries, so those properties are never passed to the test JVM directly. Set means the file
@@ -292,7 +298,10 @@ public final class AgentContract {
     /** Classes the test JVMs loaded, unioned across workers, one per line. */
     public static final String LOADED_FILE = "loaded.txt";
 
-    /** How {@link #LOADED_FILE} was produced: {@code full}, or {@code selecting} for a partial run. */
+    /**
+     * How {@link #LOADED_FILE} was produced: {@code full}, followed by the digest of the build-script
+     * filter the run ran under when it had one; anything else is not trusted.
+     */
     public static final String LOADED_PROVENANCE_FILE = "loaded-provenance";
 
     /** The filter the loaded union was recorded under. Absent means the union speaks for nothing. */

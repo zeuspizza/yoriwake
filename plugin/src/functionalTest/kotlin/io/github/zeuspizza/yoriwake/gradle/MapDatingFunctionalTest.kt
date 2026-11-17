@@ -935,14 +935,17 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
         val output = runner(dir, "test", "-Pquick").build().output
 
         // Dated, because it drops the records of what it left out, which then run as not in the
-        // map; never the whole task, because a union of part of the suite would skip more.
+        // map; its union is the task's under this filter, keyed to it so no run under another
+        // filter, or none, takes it for the whole suite's.
         assertContains(output, "unfiltered=no")
         assertEquals(head(dir), captureStamp(dir), "a run under this filter did not date the map")
         assertEquals(emptyList(), mapIds(dir).filter { "AlphaTest" in it }, "what it left out kept its records")
-        assertFalse(unionWritten(dir), "a filtered run wrote a loaded-class union")
-        // The union the whole capture wrote is gone, and the run says which kinds of run do that.
-        assertContains(output, "the run left tests out by tag, engine, category or group")
-        assertContains(output, "so the loaded-class union was discarded")
+        assertTrue(unionWritten(dir), "a run under the build's own filter kept no loaded-class union")
+        assertTrue(
+            File(mapDirOf(dir), AgentContract.LOADED_PROVENANCE_FILE).readText().startsWith("full filtered "),
+            "the union is not keyed to the filter it was recorded under",
+        )
+        assertFalse(output.contains("keeps no loaded-class union"), output)
         return output
     }
 
@@ -983,7 +986,7 @@ class MapDatingFunctionalTest : FunctionalTestSupport() {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("frameworkFilters")
-    fun `every framework filter dates the map but never speaks for the whole task`(
+    fun `every framework filter dates the map and keys its union to the filter`(
         filter: String,
         buildScript: String,
         alphaTest: String,

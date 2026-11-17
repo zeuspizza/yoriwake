@@ -190,11 +190,13 @@ def replay(rows, jar=AGENT_JAR, root=ROOT):
 
 
 def trusted_union(map_dir):
-    """Whether the kept map holds a union the selector would read: all three files, provenance `full`."""
+    """Whether the kept map holds a union the selector would read: all three files, provenance `full`
+    (keyed to a build-script filter or not)."""
     if not all(os.path.isfile(os.path.join(map_dir, name)) for name in UNION_FILES):
         return False
     with open(os.path.join(map_dir, "loaded-provenance"), encoding="utf-8") as f:
-        return f.read().strip() == "full"
+        how = f.read().strip()
+    return how == "full" or how.startswith("full filtered ")
 
 
 def union_effect(rows, jar=AGENT_JAR, root=ROOT):

@@ -106,6 +106,8 @@ internal object SelectingStep {
         val stamp: String? = null,
         /** Changed paths only the working tree's drift since the capture names: no base text stands for them. */
         val moved: Set<String> = emptySet(),
+        /** The digest of the build-script filter this run runs under; null when unfiltered. */
+        val unionFilter: String? = null,
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -144,7 +146,7 @@ internal object SelectingStep {
         }
         val established = establish(
             { message -> host.lifecycle("[yoriwake] ${host.name}: $message") },
-            mapDir, scoped.change, classpathFacts,
+            mapDir, scoped.change, classpathFacts, inputs.unionFilter,
         )
 
         // A file the build generated onto the classpath from something git does not track moves
@@ -222,6 +224,9 @@ internal object SelectingStep {
         // Says the empty change set was arrived at (every path a class source off the classpath,
         // an IDE's state, one notReadByTests or pathIgnore took out, or one changed in line
         // information only) rather than reported by git, which would force a full run.
+        // The test JVM reads the map as this daemon did, so both trust the same union.
+        // Set only under a filter: a run without one sets nothing, as before there were filtered unions.
+        inputs.unionFilter?.let { host.property(AgentContract.UNION_FILTER_PROPERTY, it) }
         host.property(
             ACCOUNTED_PROPERTY,
             accountedFor(paths, scoped, lines?.prefixes.orEmpty()).toString(),
@@ -289,7 +294,7 @@ internal object SelectingStep {
         )
         ForcingPaths.lines(host.name, forcing, host.explain, pathIgnore = host.flag(SettingNames.BASE) == "-P${SettingNames.BASE}").forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
 
-        val outlook = wouldRunEverything(mapDir, changed, scoped, established.copy(testClasses = ownTestClasses), widening, paths, bump)
+        val outlook = wouldRunEverything(mapDir, changed, scoped, established.copy(testClasses = ownTestClasses), widening, paths, bump, inputs.unionFilter)
         // The un-widened change set on purpose: an unchanged inline consumer teaches the map
         // nothing, and widening would re-capture the suite on every inline change.
         val capture = decideCapture(

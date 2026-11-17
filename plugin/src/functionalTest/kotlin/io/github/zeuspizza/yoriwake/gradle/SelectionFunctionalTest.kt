@@ -461,6 +461,69 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         assertContains(forced, "[yoriwake] of 1 tests discovered: full-run=1")
     }
 
+    private fun changeOrphan(dir: File, value: Int) = File(dir, "src/main/java/dev/sample/Orphan.java").writeText(
+        """
+        package dev.sample;
+        public class Orphan { public int once() { return $value; } }
+        """.trimIndent()
+    )
+
+    /**
+     * A tag the build script excludes on every run defines the task: the capture keeps its union
+     * keyed to that filter, so a run under the same one narrows, and a run under another forces.
+     */
+    @Test
+    fun `a class nothing loads narrows under the build's own tag filter, and forces under another`(@TempDir dir: File) {
+        val tagged = minimalBuild.replace(
+            "tasks.test { useJUnitPlatform() }",
+            "tasks.test { useJUnitPlatform { excludeTags(providers.gradleProperty(\"skipTag\").getOrElse(\"slow\")) } }",
+        )
+        build(dir, "build.gradle.kts" to tagged, oneClass, oneTest, orphanClass)
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        commit(dir, "sample")
+
+        val captured = runner(dir, "test").build().output
+
+        assertContains(captured, "unfiltered=no: excludeTags=[slow]")
+        assertFalse(captured.contains("keeps no loaded-class union"), captured)
+        changeOrphan(dir, 2)
+
+        val narrowed = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertContains(narrowed, "[yoriwake] of 1 tests discovered: skipped=1")
+        // The daemon reads the map as the test JVM did, under the same filter.
+        val explained = runner(dir, "classes", "yoriwakeExplainTest", "-Pyoriwake.base=HEAD").build().output
+        assertFalse(explained.contains("would run everything"), explained)
+
+        val forced = runner(dir, "test", "-Pyoriwake.select", "-PskipTag=other").build().output
+
+        assertContains(forced, "[yoriwake] of 1 tests discovered: full-run=1")
+        assertEquals("no-coverage-for-changed", decisionNotes(dir)["full-run-kind"], forced)
+    }
+
+    /** A default-package source widens JaCoCo to `*`; the union still speaks for the declared packages. */
+    @Test
+    fun `a class nothing loads narrows when a default-package source widens the scope`(@TempDir dir: File) {
+        val loose = "src/main/java/Loose.java" to "public class Loose { public int one() { return 1; } }"
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest, orphanClass, loose)
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        commit(dir, "sample")
+
+        val captured = runner(dir, "test").build().output
+
+        assertContains(captured, "scope=derived(*)")
+        assertFalse(captured.contains("keeps no loaded-class union"), captured)
+        val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
+        assertEquals(listOf("dev.sample"), File(mapDir, "loaded-scope").readLines().filter(String::isNotBlank))
+        changeOrphan(dir, 2)
+
+        val narrowed = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertContains(narrowed, "[yoriwake] of 1 tests discovered: skipped=1")
+    }
+
     /** The switch that turns the lists off: with no union, the same edit is back to forcing. */
     @Test
     fun `a capture with the loaded-class lists switched off keeps a class nothing executes forcing`(@TempDir dir: File) {
@@ -484,6 +547,18 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
 
         assertContains(forced, "[yoriwake] of 1 tests discovered: full-run=1")
         assertEquals("no-coverage-for-changed", decisionNotes(dir)["full-run-kind"], forced)
+    }
+
+    @Test
+    fun `a capture that keeps no union says why`(@TempDir dir: File) {
+        build(dir, "build.gradle.kts" to minimalBuild, oneClass, oneTest)
+        ignoreBuildOutputs(dir)
+        git(dir, "init")
+        commit(dir, "sample")
+
+        val output = runner(dir, "test", "-Pyoriwake.internal.loaded=false").build().output
+
+        assertContains(output, "keeps no loaded-class union: it ran with -Pyoriwake.internal.loaded=false.")
     }
 
     /**

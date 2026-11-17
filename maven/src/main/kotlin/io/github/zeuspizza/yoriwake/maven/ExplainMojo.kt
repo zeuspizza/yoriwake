@@ -88,6 +88,12 @@ class ExplainMojo : AbstractMojo() {
                     Settings.environmentOf(project, session),
                 )
             }.getOrNull()
+            val fork = Recording.ForkEnvironment(session, root)
+            // An explanation runs outside the build's lifecycle, so it cannot see what ran before a
+            // Failsafe execution: it trusts no Failsafe union, at the cost of a wider answer.
+            val unionFilter = if (each.plugin.artifactId == Recording.FAILSAFE) UnionTrust.UNVETTED else Recording.unionFilterOf(
+                each.execution.configuration as? Xpp3Dom, { fork.resolved(project, it) }, { Declines.property(project, session, it) },
+            )
             selection.apply(
                 name, copy, project.basedir.relativeTo(root).invariantSeparatorsPath,
                 classpathView(
@@ -102,6 +108,7 @@ class ExplainMojo : AbstractMojo() {
                 listedName = mapDir.name,
                 worked = { done, base -> worked = done to base },
                 narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),
+                unionFilter = unionFilter,
             )
             val refused = properties.getProperty(AgentContract.REFUSED_PROPERTY)
             val done = worked
@@ -122,7 +129,7 @@ class ExplainMojo : AbstractMojo() {
             val decision = FilterRule.decisionFrom(FilterRule.resolveInputs { properties.getProperty(it) }, copy)
             val strictness = Strictness.of(properties.getProperty(AgentContract.MODE_PROPERTY))
             val safe = decision.safe()
-            val loosened = if (safe == null) emptyList() else loosenedTests(MapReader.read(copy), safe, decision, decision.rules())
+            val loosened = if (safe == null) emptyList() else loosenedTests(MapReader.read(copy, unionFilter), safe, decision, decision.rules())
             writeExplanation(
                 mapDir, name, base, step.scoped, step.established, decision, step.widening, step.capture, step.forcing,
                 ignoredEvidence = PathIgnoreReport.evidence(step.scoped.ignore, mapDir),

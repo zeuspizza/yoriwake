@@ -374,7 +374,6 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
 
         val filterVerdict = project.provider { readFilterVerdict(test, fromBuildScript) }
-        val unfiltered = project.provider { filterVerdict.get().unfiltered }
 
         // Registered in this order because `doFirst` prepends: the recorder must run before the
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
@@ -419,9 +418,15 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         // Last, so its action runs first; every other action returns on it. See declinedUnderDevelocity.
         declineUnderDevelocity(project, test, mapDir)
-        // Decided at execution time, since Gradle applies --tests after afterEvaluate. `wholeTask`
-        // also requires recording: a run with the lists switched off produces no union.
-        val wholeTask = project.provider { unfiltered.get() && recording }
+        // Decided at execution time, since Gradle applies --tests after afterEvaluate. A filter of
+        // the build script's own, the tests it leaves out on every run, still makes the whole task:
+        // the union is kept with its digest. `wholeTask` also requires recording: a run with the
+        // lists switched off produces no union.
+        val wholeTask = project.provider { filterVerdict.get().definesTheTask && recording }
+        val notWholeTask = project.provider {
+            if (!recording) "it ran with -P${Settings.LOADED}=false" else "its tests were filtered by ${filterVerdict.get().detail}"
+        }
+        val unionFilter = project.provider { unionFilterOf(test).orEmpty() }
         // Only a run that executed the whole suite may date the map, since unobserved records keep
         // their age; a fail-fast run may not. For selecting runs that is known only at execution
         // time and carried in a marker file. See FilterVerdict.datesTheMap for the filters that
@@ -448,6 +453,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 scheduleSet = schedule.set,
                 optimistic = selecting && settings.mode == Strictness.OPTIMISTIC,
                 fullRunPolicy = fullRunBranches.isNotEmpty() || schedule.set,
+                notWholeTask = notWholeTask,
+                unionFilter = unionFilter,
             ),
             fromBuildScript,
         )
@@ -1233,6 +1240,24 @@ internal fun configurationOf(test: Test, agentArgument: String?): String = Selec
     frameworkFilter(test),
 )
 
+/**
+ * The digest of [test]'s own filter as it stands when called: its patterns and the framework's
+ * filters, as resolved; null when neither is set. Read live, not as configured: a union keeps the
+ * filter its run actually ran under, and is trusted only by a run under the same one. A filter that
+ * named tests for one run never keeps a union, and a selecting run under one declines.
+ */
+// Top level, so the provider reading it captures no wiring instance.
+internal fun unionFilterOf(test: Test): String? {
+    val live = TestPatterns.of(test.filter)
+    val lines = live.includes.sorted().map { "filter.include $it" } +
+        live.excludes.sorted().map { "filter.exclude $it" } +
+        listOfNotNull(frameworkFilter(test)?.let { "framework $it" })
+    if (lines.isEmpty()) return null
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    lines.forEach { digest.update("$it\n".toByteArray(Charsets.UTF_8)) }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
 /** The test framework's own filters that are set, as `name=[values]`, or null when none is. */
 // Top level, so the provider reading it captures no wiring instance.
 private fun frameworkFilter(test: Test): String? {
@@ -1339,6 +1364,12 @@ internal data class FilterVerdict(
     }
 
     fun datesTheMap(failFast: Boolean): Boolean = undatedBy(failFast) == null
+
+    /**
+     * Whether the tests this filter leaves to run are the task as its build defines it: unfiltered,
+     * or filtered only by the build script's own patterns or the framework's filters.
+     */
+    val definesTheTask: Boolean get() = unfiltered || byFramework || byBuildScript
 
     /**
      * The decline a selecting run takes for this filter, as its kind and reason: tests named with

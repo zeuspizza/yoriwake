@@ -82,7 +82,7 @@ internal class YoriwakeLifecycle @Inject constructor(
             }
         }
         if (wired.values.any { it !is ScopeOutcome.NotApplied }) {
-            val packages = facts.scope.orEmpty().map { it.removeSuffix("*").removeSuffix(".") }.filter(String::isNotEmpty)
+            val packages = facts.packages
             session.request.executionListener = ChainedListener(session.request.executionListener, Recording(session, wired, packages))
         }
     }

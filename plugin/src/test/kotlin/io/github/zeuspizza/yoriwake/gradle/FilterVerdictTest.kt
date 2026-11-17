@@ -4,12 +4,16 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.FilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestPatterns
 import io.github.zeuspizza.yoriwake.gradle.wiring.decideFilterVerdict
 import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
+import io.github.zeuspizza.yoriwake.gradle.wiring.unionFilterOf
 import org.gradle.api.tasks.testing.Test as TestTask
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -155,5 +159,38 @@ class FilterVerdictTest {
     @Test
     fun `a JUnit Platform task with a build-script filter dates the map`() {
         assertTrue(readAsConfigured(scriptFilteredTask { useJUnitPlatform() }).datesTheMap(failFast = false))
+    }
+
+    @Test
+    fun `only the build's own filters define the task a union may speak for`() {
+        assertTrue(verdict().definesTheTask)
+        assertTrue(verdict(framework = "excludeTags=[docker]").definesTheTask)
+        assertTrue(verdict(fromBuildScript = scriptExcludesAlpha).definesTheTask)
+        assertFalse(verdict(commandLine = setOf("*AlphaTest")).definesTheTask)
+        assertFalse(verdict(live = TestPatterns(setOf("*BetaTest"), emptySet())).definesTheTask)
+        assertFalse(verdict(unreadable = "SomeFilter").definesTheTask)
+        assertFalse(verdict(fromBuildScript = scriptExcludesAlpha, onPlatform = false).definesTheTask)
+    }
+
+    private fun platformTask(configure: TestTask.() -> Unit = {}): TestTask {
+        val project = ProjectBuilder.builder().build()
+        project.plugins.apply("java")
+        return project.tasks.named("test", TestTask::class.java).get().apply { useJUnitPlatform(); configure() }
+    }
+
+    private fun filterOf(test: TestTask) = unionFilterOf(test)
+
+    @Test
+    fun `an unfiltered task has no union filter`() {
+        assertNull(filterOf(platformTask()))
+    }
+
+    @Test
+    fun `the same build-script filter gives the same union filter, and another a different one`() {
+        val docker = assertNotNull(filterOf(platformTask { useJUnitPlatform { it.excludeTags("docker") } }))
+
+        assertEquals(docker, filterOf(platformTask { useJUnitPlatform { it.excludeTags("docker") } }))
+        assertNotEquals(docker, filterOf(platformTask { useJUnitPlatform { it.excludeTags("flaky") } }))
+        assertNotEquals(docker, filterOf(platformTask { useJUnitPlatform { it.excludeTags("docker") }; filter.excludeTestsMatching("*IT") }))
     }
 }

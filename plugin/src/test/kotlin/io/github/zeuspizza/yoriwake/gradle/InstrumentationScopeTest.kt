@@ -48,7 +48,7 @@ class InstrumentationScopeTest {
         source(src, "main/kotlin/com/acme/Thing.kt", "com.acme")
         symbolicLink(File(src, "main/kotlin/com/acme/Ghost.kt"), File(dir, "does-not-exist.kt"))
 
-        assertEquals(setOf(InstrumentationScope.DEFAULT_PACKAGE), InstrumentationScope.derive(listOf(src)))
+        assertEquals(listOf("*"), InstrumentationScope.toIncludePatterns(InstrumentationScope.derive(listOf(src))))
     }
 
     @Test
@@ -108,8 +108,20 @@ class InstrumentationScopeTest {
         source(src, "Thing.kt", declaredPackage = null)
         source(src, "a/A.kt", "com.acme")
 
-        assertEquals(setOf(InstrumentationScope.DEFAULT_PACKAGE), InstrumentationScope.derive(listOf(src)))
-        assertEquals(listOf("*"), InstrumentationScope.toIncludePatterns(setOf(InstrumentationScope.DEFAULT_PACKAGE)))
+        assertEquals(setOf(InstrumentationScope.DEFAULT_PACKAGE, "com.acme"), InstrumentationScope.derive(listOf(src)))
+        assertEquals(listOf("*"), InstrumentationScope.toIncludePatterns(InstrumentationScope.derive(listOf(src))))
+    }
+
+    @Test
+    fun `a default-package source leaves the declared packages to the loaded-class union`(@TempDir dir: File) {
+        // JaCoCo watches everything, yet the union speaks only for the packages the build declares:
+        // not the JDK's or a library's, and not the default package, which no prefix can name.
+        val src = File(dir, "src").apply { mkdirs() }
+        source(src, "Thing.kt", declaredPackage = null)
+        source(src, "a/A.kt", "dev.sample")
+        source(src, "b/B.kt", "dev.other.deep")
+
+        assertEquals(listOf("dev.other.deep", "dev.sample"), InstrumentationScope.ownedPackages(InstrumentationScope.derive(listOf(src))))
     }
 
     @Test
@@ -130,7 +142,7 @@ class InstrumentationScopeTest {
         source(src, "Thing.kt", declaredPackage = null)
         source(src, "a/A.kt", "com.acme")
 
-        assertEquals(setOf(InstrumentationScope.DEFAULT_PACKAGE), InstrumentationScope.derive(listOf(src)))
+        assertEquals(listOf("*"), InstrumentationScope.toIncludePatterns(InstrumentationScope.derive(listOf(src))))
     }
 
     @Test

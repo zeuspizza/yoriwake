@@ -50,6 +50,7 @@ refuses the run as `change-set-unreadable`.
 | `JAR_MODULES_PROPERTY` | `yoriwake.jars.modules` | plugin → agent | A file of the library module jars on the test JVM's classpath, `path \t identity` per row, written before a capturing run's test JVM starts. The agent records which it reaches and the absent names looked up in them |
 | `IGNORED_PATHS_PROPERTY` | `yoriwake.change.ignored` | plugin → agent | Changed paths `pathIgnore` took out of the change set, comma-separated, each as `<path>` tab `<entry>` with `%` and `,` written `%25` and `%2C`; a default entry is written `default:<entry>`. Each runs the tests from its first read on in every JVM whose reads the map recorded; the agent copies the count into `decisions.tsv` as the `paths-ignored` note |
 | `BASE_FLAG_PROPERTY` | `yoriwake.change.baseFlag` | plugin → agent | The base flag as the build's command line spells it (`-Dyoriwake.base` on Maven), in the change-set file, for the advice an empty change set gives. Unset, it is `-Pyoriwake.base` |
+| `UNION_FILTER_PROPERTY` | `yoriwake.change.unionFilter` | plugin → agent | The digest of the build script's own test filter on a selecting run under one; unset otherwise. The loaded-class union is trusted only when `loaded-provenance` names the same filter |
 | `CHANGE_SET_FILE_PROPERTY` | `yoriwake.change.file` | plugin → agent | The file holding the list-valued change-set properties. Set means that file alone answers for them |
 | `HOST_PROPERTY` | `yoriwake.host` | plugin → agent | Which build forked the test JVM: `maven`, or Gradle when absent. Read once when the agent starts |
 | `HOST_MAVEN` | `maven` | plugin → agent | The value of `yoriwake.host` under Maven |
@@ -90,7 +91,7 @@ UTF-8, one entry per line unless stated.
 | `SCOPE_FILE` | `scope` | plugin | agent | One package prefix per line |
 | `EFFECTIVE_SCOPE_FILE` | `effective-scope` | plugin | agent | The scope JaCoCo instrumented under, compared as opaque text |
 | `LOADED_FILE` | `loaded.txt` | plugin | agent | One loaded class name per line |
-| `LOADED_PROVENANCE_FILE` | `loaded-provenance` | plugin | agent | `full` or `selecting` |
+| `LOADED_PROVENANCE_FILE` | `loaded-provenance` | plugin | agent | `full`, or `full filtered <digest>` for a union recorded under the build script's own test filter; anything else is not trusted |
 | `LOADED_SCOPE_FILE` | `loaded-scope` | plugin | agent | The filter `loaded.txt` was recorded under |
 | `POSITIONS_FILE` | `positions.tsv` | plugin | agent | `jvm \t sequence \t test-id`: where each test record ran. A test can appear more than once |
 | `FIRST_TOUCH_FILE` | `first-touch.tsv` | plugin | agent | `jvm \t sequence \t class`: the first record at or before which that JVM loaded the class, executed it, or read its class or source file |

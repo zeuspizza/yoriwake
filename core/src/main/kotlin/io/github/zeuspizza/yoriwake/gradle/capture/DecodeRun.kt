@@ -62,7 +62,7 @@ internal class DecodeRun(
     private val taskArtifacts: () -> TaskArtifacts,
     /** The host's JUnit XML for the run, read for failures a stopped test JVM never recorded. */
     private val junitXml: File?,
-    /** What the host prints after the task's path when a full run drops the loaded-class union: why, and until when. */
+    /** What the host prints after why a capture keeps no loaded-class union: what that costs, and until when. */
     private val unionDiscarded: String,
     private val logger: Log,
     /** Untracked paths the host's tools write, which leave the tree clean for the selection record. */
@@ -71,6 +71,13 @@ internal class DecodeRun(
     private val optimistic: Boolean = false,
     /** Whether the build lists a full-run branch or sets a scheduled full run. */
     private val fullRunPolicy: Boolean = false,
+    /**
+     * Why the run was not the whole task, when [wholeTask] is false; empty says nothing, for a host
+     * whose union is off by default.
+     */
+    private val notWholeTask: String = "",
+    /** The digest of the build-script filter the run ran under; null when it ran unfiltered. */
+    private val unionFilter: String? = null,
 ) {
 
     /** The host's console, at its three levels. */
@@ -406,6 +413,8 @@ internal class DecodeRun(
                 rootDir = rootDir,
                 jarModules = jarModules,
                 classpathRecord = classpathRecord,
+                notWholeTask = undatedAtExecution?.let { "the run could not date the map ($it)" } ?: notWholeTask,
+                unionFilter = unionFilter,
             )
         }
         // A map we cannot write leaves the previous one alone; it never fails someone
@@ -474,10 +483,10 @@ internal class DecodeRun(
                             "common one) is the usual cause."
                     )
                 }
-                // A full run that cannot speak for the whole task drops the loaded-class union
-                // until one that can. Said out loud: a capability disappears.
-                if (decoded.unionDiscarded) {
-                    logger.lifecycle("[yoriwake] $taskPath $unionDiscarded")
+                // Said out loud, whether or not the map had a union: without one, no absence proof
+                // holds, and nothing else would say so.
+                decoded.unionDropped?.takeIf(String::isNotEmpty)?.let { reason ->
+                    logger.lifecycle("[yoriwake] $taskPath keeps no loaded-class union: $reason. $unionDiscarded")
                 }
             }
         }

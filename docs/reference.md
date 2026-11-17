@@ -77,6 +77,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test selecting against <sha> (<origin>): N changed classes, M paths coverage cannot see` | selection is active, and against which base |
 | `of N tests discovered: reaches-change=… skipped=…` | how many tests each rule decided |
 | `:test map updated: N records captured, M known` | a capture completed |
+| `:test keeps no loaded-class union: <why>. …` | a capture kept no list of the classes its test JVMs loaded: filtered for this run, a test JVM that listed nothing or did not finish, or `-Pyoriwake.internal.loaded=false`. Until a capture keeps one, a change to code no test executes runs everything. A filter the build script sets on every run keeps one, trusted only by runs under the same filter |
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
@@ -156,12 +157,15 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   interface), is outside the packages the build's sources declare, declares a constant, carries a
   class annotation, is named in a resource the task can read, or is a Kotlin class (except a file
   of nothing but `inline` functions, read through the classes that inlined it); when the capture
-  left tests out by tag, engine, category or group or by a name pattern of the build script, or one
-  of its test JVMs listed nothing; and after `-Pyoriwake.internal.loaded=false`, which records no
-  list and drops the one the map had. A selecting run that runs everything records the list as a
-  capture does; a narrowed one keeps the list it found. On Maven the list is recorded only under
-  `-Dyoriwake.internal.loaded`, and never for a Failsafe execution or one that leaves tests out by
-  groups, tags, engines or suite files;
+  left tests out for that run only (`--tests`, an IDE), or one of its test JVMs listed nothing or
+  did not finish; and after `-Pyoriwake.internal.loaded=false`, which records no list and drops the
+  one the map had. A capture that leaves tests out by a filter the build sets (a tag, engine,
+  category or group, or a name pattern of the build script) keeps its list for runs under the same
+  filter only. A selecting run that runs everything records the list as a capture does; a narrowed
+  one keeps the list it found. On Maven the list is recorded only under
+  `-Dyoriwake.internal.loaded`, keyed the same way to `groups`, tags, engines or suite files; a
+  Failsafe execution keeps none when a mojo of its project ran in `pre-integration-test` before it,
+  where a build starts the application its integration tests drive;
 - a changed source that compiles to a class the map never saw, when that class carries an
   annotation, on itself or any member, other than the ones the Kotlin compiler writes on its own
   (`annotations-unrecorded`); a map that recorded no annotations at all forces the same way. A new
