@@ -18,30 +18,27 @@ internal object JacocoScoping {
 
     /**
      * Every package declared anywhere in the build: the filter on the loaded-class union at decode,
-     * which the host's JaCoCo includes cannot override.
+     * which the host's JaCoCo includes cannot override. A default-package source widens JaCoCo to
+     * `*` but not this: the union still speaks for the declared packages.
      */
     internal fun allProjectPackages(project: Project): List<String> =
-        deriveScope(project, BuildMemo.of(project)).orEmpty()
-            .map { it.removeSuffix("*").removeSuffix(".") }
-            .filter(String::isNotEmpty)
-            .distinct()
-            .sorted()
+        InstrumentationScope.ownedPackages(derivePackageRoots(project, BuildMemo.of(project)))
 
-    /** The packages this build's sources declare, derived once per build and keyed by root. */
-    internal fun deriveScope(project: Project, buildMemo: BuildMemo?): List<String>? {
+    /** The JaCoCo includes for the packages this build's sources declare; null when they declare none. */
+    internal fun deriveScope(project: Project, buildMemo: BuildMemo?): List<String>? =
+        InstrumentationScope.toIncludePatterns(derivePackageRoots(project, buildMemo))
+
+    /** The package roots this build's sources declare, derived once per build and keyed by root. */
+    private fun derivePackageRoots(project: Project, buildMemo: BuildMemo?): Set<String> {
         // Resolved before the memo below, never inside it: both are `computeIfAbsent` on the same
         // map, and a reentrant mapping function throws `Recursive update`.
         val sourceDirs = projectFacts(project, buildMemo).sourceDirs
         val derive = {
-            InstrumentationScope.toIncludePatterns(
-                InstrumentationScope.derive(sourceDirs) { opened ->
-                    buildMemo?.count(SOURCE_FILES_OPENED_COUNTER, opened.toLong())
-                }
-            )
+            InstrumentationScope.derive(sourceDirs) { opened ->
+                buildMemo?.count(SOURCE_FILES_OPENED_COUNTER, opened.toLong())
+            }
         }
         val compute = { buildMemo?.time(DERIVE_SCOPE_COUNTER, derive) ?: derive() }
-        // Not `?: compute()`: the derivation may legitimately answer null, and an elvis would
-        // re-walk the source tree per `Test` task in that case.
         return if (buildMemo == null) compute() else buildMemo.value(SCOPE_KEY + project.rootDir.path, compute)
     }
 

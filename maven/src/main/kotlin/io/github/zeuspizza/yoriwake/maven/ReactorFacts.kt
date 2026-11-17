@@ -19,11 +19,19 @@ internal class ReactorFacts(session: MavenSession) {
      * declare none. Kotlin's directory is named as well: its compiler adds it to the project only
      * when it runs, after this is read.
      */
-    val scope: List<String>? by lazy {
+    val scope: List<String>? by lazy { InstrumentationScope.toIncludePatterns(packageRoots) }
+
+    /**
+     * The packages the loaded-class union may speak for: those the reactor's main sources declare,
+     * even where a default-package source widens [scope] to everything.
+     */
+    val packages: List<String> by lazy { InstrumentationScope.ownedPackages(packageRoots) }
+
+    private val packageRoots: Set<String> by lazy {
         val roots = modules.flatMap { module ->
             module.compileSourceRoots.map(::File) + CONVENTIONAL_ROOTS.map { File(module.basedir, it) }
         }.map(File::getAbsoluteFile).distinct().filter(File::isDirectory)
-        InstrumentationScope.toIncludePatterns(InstrumentationScope.derive(roots))
+        InstrumentationScope.derive(roots)
     }
 
     private companion object {

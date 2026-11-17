@@ -34,7 +34,8 @@ internal object InstrumentationScope {
     private val WHITESPACE = Regex("""\s+""")
 
     /**
-     * Reads the distinct package roots declared beneath these source directories.
+     * Reads the distinct package roots declared beneath these source directories, with
+     * [DEFAULT_PACKAGE] beside them when any code lives in the default package.
      *
      * A package is dropped only when another declared package is its ancestor. Siblings are not
      * merged into a common parent, which would widen the scope to packages the build never declared.
@@ -130,18 +131,27 @@ internal object InstrumentationScope {
         return if (sawCode) PackageScan.DefaultPackage else PackageScan.DeclaresNothing
     }
 
-    /** Reduces a package set to the shortest prefixes covering it. */
+    /**
+     * Reduces a package set to the shortest prefixes covering it. The default package is kept beside
+     * them: it widens JaCoCo's scope to `*`, while the declared packages still say which loaded
+     * classes are the build's own.
+     */
     private fun collapseToRoots(packages: Set<String>): Set<String> {
-        if (DEFAULT_PACKAGE in packages) return setOf(DEFAULT_PACKAGE)
-        val sorted = packages.sorted()
+        val sorted = (packages - DEFAULT_PACKAGE).sorted()
         val roots = mutableListOf<String>()
         sorted.forEach { candidate ->
             if (roots.none { candidate == it || candidate.startsWith("$it.") }) {
                 roots += candidate
             }
         }
-        return roots.toSet()
+        return if (DEFAULT_PACKAGE in packages) roots.toSet() + DEFAULT_PACKAGE else roots.toSet()
     }
+
+    /**
+     * The package prefixes the loaded-class union may speak for: the declared roots, without the
+     * default package, which no prefix can name without naming every class.
+     */
+    fun ownedPackages(packageRoots: Set<String>): List<String> = (packageRoots - DEFAULT_PACKAGE).sorted()
 
     /**
      * Turns package roots into JaCoCo include patterns.
