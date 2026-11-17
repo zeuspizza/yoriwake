@@ -1828,6 +1828,80 @@ def case_every_pull_request_workflow_cancels_its_superseded_run():
     return problems
 
 
+def case_a_change_runs_the_verify_jobs_its_paths_can_affect():
+    """A wrong "not needed" skips a suite, which GitHub counts as a passing required check: each
+    list is tested, and anything no list names runs everything."""
+    problems = 0
+    every, none = (True, True, True), (False, False, False)
+    verdict = "plugin/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/gradle/breaking/verdict/Verdict.kt"
+    cases = {
+        ("bench/run.py",): none,
+        ("bench/run.py", "README.md"): none,
+        ("scripts/prove_guards.py",): none,
+        (".github/workflows/guards.yml",): none,
+        (".github/test_ci.py",): none,
+        (".github/workflows/verify.yml",): every,
+        (".github/ci.py",): every,
+        (".github/functional-shards.json",): every,
+        ("scripts/yoriwake.init.gradle.kts",): every,
+        ("maven/src/main/kotlin/A.kt",): (True, True, False),
+        ("plugin/src/test/kotlin/A.kt", "bench/run.py"): (True, False, True),
+        ("maven/src/main/kotlin/A.kt", "plugin/src/main/kotlin/B.kt"): every,
+        ("core/src/main/kotlin/A.kt",): every,
+        ("agent/src/main/java/A.java", "bench/run.py"): every,
+        ("samples/demo/build.gradle.kts",): every,
+        ("plugin/build.gradle.kts",): (True, False, True),
+        ("docs/plans/x.md",): none,
+        ("docs/reference.md",): every,
+        ("docs/reference.md", "bench/run.py"): every,
+        (verdict,): every,
+        (): every,
+        ("",): every,
+    }
+    for paths, expected in cases.items():
+        answer = ci.scope(list(paths))
+        got = (answer["unit"], answer["maven"], answer["gradle"])
+        if got != expected:
+            problems += fail(f"scope({list(paths)}) is {got}, should be {expected}")
+    # A git that cannot list the change is no answer, and runs everything.
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        ci.main(["scope", "no-such-base", "no-such-head"])
+    if printed.getvalue().split() != ["unit=true", "maven=true", "gradle=true"]:
+        problems += fail(f"scope on refs git cannot read printed {printed.getvalue().split()}")
+    # The lists follow what reads them: a .github/ file verify.yml, a script it runs or a build file
+    # names is no "no suite reads it", and a plugin/ path the Maven build compiles is not the
+    # plugin's alone.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    readers = [os.path.join(WORKFLOWS, "verify.yml")]
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in {".git", "build", ".gradle", "node_modules", "sandbox"}]
+        readers += [os.path.join(dirpath, f) for f in filenames if f.endswith(".gradle.kts")]
+    named = set()
+    for reader in readers:
+        with open(reader, encoding="utf-8") as handle:
+            named |= set(re.findall(r"\.github/[\w./-]*\w", handle.read()))
+    # test_ci.py reads every workflow, and runs on every change that is not docs only.
+    for script in sorted(n for n in named - {".github/test_ci.py"}
+                         if n.endswith((".py", ".sh")) and os.path.exists(os.path.join(root, n))):
+        with open(os.path.join(root, script), encoding="utf-8") as handle:
+            named |= set(re.findall(r"\.github/[\w./-]*\w", handle.read()))
+    # ci.py names the guard workflow and the workflows directory only for guards.yml's own
+    # dispatches (reuse-shards), which no verify job runs.
+    named -= {".github/test_ci.py", ".github/workflows", ".github/workflows/guards.yml"}
+    for path in sorted(named):
+        if ci.no_suite_reads(path):
+            problems += fail(f"{path} is read by verify.yml's jobs or the build, yet listed as read by no suite")
+    with open(os.path.join(root, "maven", "build.gradle.kts"), encoding="utf-8") as handle:
+        compiled = re.findall(r"\"(plugin/[^\"]+)\"", handle.read())
+    if not compiled:
+        problems += fail("maven/build.gradle.kts names no plugin/ path: the check below reads nothing")
+    for path in compiled:
+        if not (path.rstrip("/") + "/").startswith(ci.PLUGIN_SHARED_WITH_MAVEN):
+            problems += fail(f"maven/build.gradle.kts compiles {path}, which a plugin-only change would skip")
+    return problems
+
+
 def case_a_change_to_product_sources_runs_every_guard():
     """Full mode is the gate for the plugin's and agent's sources, so an unknown change is one."""
     problems = 0
@@ -4593,6 +4667,7 @@ CASES = (
     case_only_a_docs_change_skips_the_checks,
     case_a_change_to_product_sources_runs_every_guard,
     case_every_pull_request_workflow_cancels_its_superseded_run,
+    case_a_change_runs_the_verify_jobs_its_paths_can_affect,
     case_the_guard_workflows_are_read_only_and_cover_every_pull_request,
     case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,

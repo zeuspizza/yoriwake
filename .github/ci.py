@@ -146,6 +146,52 @@ def touches_product(paths):
     return not paths or any(path.startswith(PRODUCT_SOURCES) for path in paths)
 
 
+# What verify.yml's jobs need, by the paths a pull request changes. An allowlist: a path no list
+# names runs everything, so a file added later is checked until someone lists it.
+#
+# No product suite reads these: the benchmark, the guard harness, and the workflows and scripts
+# verify.yml does not run. test_ci.py is the exception among those it runs, since the one step that
+# runs it runs on every change that is not docs only.
+NO_SUITE_READS_PREFIXES = ("bench/",)
+NO_SUITE_READS_FILES = {"scripts/prove_guards.py", "scripts/test_prove_guards.py", "scripts/guard_costs.py",
+                        "scripts/guard_costs.json", "scripts/test_guard_costs.py", ".github/test_ci.py"}
+VERIFY_READS = {".github/workflows/verify.yml", ".github/ci.py", ".github/assert_selection.py",
+                ".github/functional_shards.py", ".github/functional-shards.json", ".github/run_summary.py",
+                ".github/check_release_signing.sh"}
+# The Maven suite compiles the Gradle plugin's break-suite verdicts (maven/build.gradle.kts), so a
+# change to them is not the plugin's alone.
+PLUGIN_SHARED_WITH_MAVEN = ("plugin/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/gradle/breaking/verdict/",)
+
+
+def no_suite_reads(path):
+    return (path.startswith(NO_SUITE_READS_PREFIXES) or path in NO_SUITE_READS_FILES
+            or (path.startswith(".github/") and path not in VERIFY_READS))
+
+
+def scope(paths):
+    """Which of verify.yml's job groups a change to `paths` needs: `unit` (the Gradle build),
+    `maven` (the Maven suite's shards) and `gradle` (the Gradle functional suites, the map jobs and
+    the coverage gate). Docs only needs none; a change only to paths no suite reads needs none; one
+    to `maven/` or `plugin/` besides those needs its own; anything else, or no paths, needs all."""
+    paths = [path for path in paths if path.strip()]
+    if not paths:
+        return {"unit": True, "maven": True, "gradle": True}
+    if not needs_checks(paths):
+        return {"unit": False, "maven": False, "gradle": False}
+    answer = {"unit": False, "maven": False, "gradle": False}
+    for path in paths:
+        if path in CHECKED_DOCS:
+            return {"unit": True, "maven": True, "gradle": True}
+        if path.endswith(".md") or path.startswith("docs/") or no_suite_reads(path):
+            continue
+        if path.startswith("maven/"):
+            answer.update(unit=True, maven=True)
+        elif path.startswith("plugin/") and not path.startswith(PLUGIN_SHARED_WITH_MAVEN):
+            answer.update(unit=True, gradle=True)
+        else:
+            return {"unit": True, "maven": True, "gradle": True}
+    return answer
+
 def changed_paths(base, head, cwd=None):
     """The paths a pull request changes, or None when git cannot say."""
     try:
@@ -491,6 +537,10 @@ def main(argv=None):
     checks.add_argument("base")
     checks.add_argument("head")
 
+    scoped = sub.add_parser("scope", help="print unit=, maven= and gradle=: the job groups a pull request needs")
+    scoped.add_argument("base")
+    scoped.add_argument("head")
+
     product = sub.add_parser("touches-product",
                              help="print true unless a pull request leaves the shipped sources alone")
     product.add_argument("base")
@@ -544,6 +594,13 @@ def main(argv=None):
         print(json.dumps(shards))
         print(f"every shard runs: {why}" if why else
               f"shards {', '.join(map(str, shards))} run; the others are run {args.run}'s", file=sys.stderr)
+        return 0
+
+    if args.command == "scope":
+        paths = changed_paths(args.base, args.head)
+        answer = scope(paths if paths is not None else [])
+        for name in ("unit", "maven", "gradle"):
+            print(f"{name}={'true' if answer[name] else 'false'}")
         return 0
 
     if args.command == "touches-product":

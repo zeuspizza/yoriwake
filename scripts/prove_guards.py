@@ -4906,6 +4906,10 @@ MUTATIONS = [
      "    released = {match.group(1) for match in map(VERSION_HEADING.match, before.split(\"\\n\")) if match}",
      "    released = {match.group(1) for match in map(VERSION_HEADING.match, after.split(\"\\n\")) if match}",
      ci_suite, "a release entry was refused"),
+    # The paths verify.yml's jobs are scoped by: a path no list names must run everything.
+    ("an unlisted path narrows verify's jobs", ".github/ci.py",
+     '        else:\n            return {"unit": True, "maven": True, "gradle": True}',
+     "        else:\n            continue", ci_suite, "should be (True, True, True)"),
     ("the changelog workflow stops running the check", ".github/workflows/changelog.yml",
      '        run: python3 .github/ci.py changelog "$BASE" "$HEAD"', "        run: true", ci_suite,
      "no step runs the changelog check"),
