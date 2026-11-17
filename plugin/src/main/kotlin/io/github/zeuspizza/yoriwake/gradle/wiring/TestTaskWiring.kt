@@ -426,7 +426,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         val notWholeTask = project.provider {
             if (!recording) "it ran with -P${Settings.LOADED}=false" else "its tests were filtered by ${filterVerdict.get().detail}"
         }
-        val unionFilter = project.provider { unionFilterOf(test, fromBuildScript).orEmpty() }
+        val unionFilter = project.provider { unionFilterOf(test).orEmpty() }
         // Only a run that executed the whole suite may date the map, since unobserved records keep
         // their age; a fail-fast run may not. For selecting runs that is known only at execution
         // time and carried in a marker file. See FilterVerdict.datesTheMap for the filters that
@@ -1241,14 +1241,16 @@ internal fun configurationOf(test: Test, agentArgument: String?): String = Selec
 )
 
 /**
- * The digest of [test]'s own filter as the build script set it: [fromBuildScript]'s patterns and the
- * framework's filters, as resolved; null when neither is set. A loaded-class union recorded under a
- * filter is trusted only by a run under the same one.
+ * The digest of [test]'s own filter as it stands when called: its patterns and the framework's
+ * filters, as resolved; null when neither is set. Read live, not as configured: a union keeps the
+ * filter its run actually ran under, and is trusted only by a run under the same one. A filter that
+ * named tests for one run never keeps a union, and a selecting run under one declines.
  */
 // Top level, so the provider reading it captures no wiring instance.
-internal fun unionFilterOf(test: Test, fromBuildScript: TestPatterns): String? {
-    val lines = fromBuildScript.includes.sorted().map { "filter.include $it" } +
-        fromBuildScript.excludes.sorted().map { "filter.exclude $it" } +
+internal fun unionFilterOf(test: Test): String? {
+    val live = TestPatterns.of(test.filter)
+    val lines = live.includes.sorted().map { "filter.include $it" } +
+        live.excludes.sorted().map { "filter.exclude $it" } +
         listOfNotNull(frameworkFilter(test)?.let { "framework $it" })
     if (lines.isEmpty()) return null
     val digest = java.security.MessageDigest.getInstance("SHA-256")

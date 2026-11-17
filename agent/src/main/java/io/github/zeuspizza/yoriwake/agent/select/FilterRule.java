@@ -55,6 +55,7 @@ public final class FilterRule {
             AgentContract.ALWAYS_RUN_PROPERTY,
             AgentContract.NARROW_PLAIN_RUNNERS_PROPERTY,
             AgentContract.MODE_PROPERTY,
+            AgentContract.UNION_FILTER_PROPERTY,
     };
 
     /**

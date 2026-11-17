@@ -178,8 +178,7 @@ class FilterVerdictTest {
         return project.tasks.named("test", TestTask::class.java).get().apply { useJUnitPlatform(); configure() }
     }
 
-    private fun filterOf(test: TestTask) =
-        unionFilterOf(test, TestPatterns(test.filter.includePatterns.toSet(), test.filter.excludePatterns.toSet()))
+    private fun filterOf(test: TestTask) = unionFilterOf(test)
 
     @Test
     fun `an unfiltered task has no union filter`() {

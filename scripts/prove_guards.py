@@ -2802,7 +2802,7 @@ MUTATIONS = [
     ("a capture short of a completion marker keeps its union", COVERAGE_DECODER,
      "            completed.size == workers\n",
      "            true\n",
-     decoder_suite, "a capture recording one test at a time keeps its union when every test JVM listed and finished"),
+     decoder_suite, "a capture keeps its union only when each of its test JVMs listed and finished"),
     # A capture that keeps no union says why, whether or not the map had one: without a union no
     # absence proof holds, and nothing else on the console would say so.
     ("a full capture that keeps no union says nothing", DECODE_RUN,

@@ -492,6 +492,9 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         val narrowed = runner(dir, "test", "-Pyoriwake.select").build().output
 
         assertContains(narrowed, "[yoriwake] of 1 tests discovered: skipped=1")
+        // The daemon reads the map as the test JVM did, under the same filter.
+        val explained = runner(dir, "classes", "yoriwakeExplainTest", "-Pyoriwake.base=HEAD").build().output
+        assertFalse(explained.contains("would run everything"), explained)
 
         val forced = runner(dir, "test", "-Pyoriwake.select", "-PskipTag=other").build().output
 
@@ -720,7 +723,7 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         )
 
         // No compile step first: the edit is still only in the source.
-        val explained = runner(dir, "yoriwakeExplainTest").build().output
+        val explained = runner(dir, "classes", "yoriwakeExplainTest", "-Pyoriwake.base=HEAD").build().output
         val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
         val record = File(mapDir, "explain.json").readText()
         File(dir, "build/test-results").deleteRecursively()

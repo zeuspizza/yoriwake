@@ -604,7 +604,7 @@ class CoverageDecoderTest {
     }
 
     @Test
-    fun `a capture recording one test at a time keeps its union when every test JVM listed and finished`(
+    fun `a capture keeps its union only when each of its test JVMs listed and finished`(
         @TempDir dir: File,
     ) {
         (1..3).forEach { worker ->

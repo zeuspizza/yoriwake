@@ -249,7 +249,7 @@ internal fun TestTaskWiring.configureSelection(
                 mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
                 notReadByTests, ignore, declared, observing, dependencies = dependencies,
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = stamp, moved = moved,
-                unionFilter = unionFilterOf(test, fromBuildScript),
+                unionFilter = unionFilterOf(test),
                 // The task's own inputs, read only when a default entry left a path out.
                 taskInputs = { extraTaskInputs(rootDir, test.inputs.files.files, test.classpath.files + test.testClassesDirs.files) },
             ),

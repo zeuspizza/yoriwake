@@ -635,7 +635,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     readFilterVerdict(test, buildScriptPatterns).namedTestsDecline()
                 }
                 task.namedTestsKind.set(namedTestsDecline.map { it.first.token })
-                task.unionFilter.set(project.provider<String> { unionFilterOf(test, buildScriptPatterns) })
+                task.unionFilter.set(project.provider<String> { unionFilterOf(test) })
                 task.namedTestsReason.set(namedTestsDecline.map { it.second })
                 val trusted = trustedDigest(project, settings, mapDir)
                 task.checksProvenance.set(trusted != null)
