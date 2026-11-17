@@ -1345,9 +1345,10 @@ selecting builds run your tests exactly as they did.
   default. These are rows of one sample, not rates.
 - **Where it paid back within ten selecting runs:** okhttp, okio, resilience4j, opentelemetry-java,
   and Kafka's `clients` and `core` modules. On their changes the isolated map ran 46 to 84% of the
-  tests the shared one ran. Other suites held as much by `shares-jvm-with-change` did not pay it back, so
-  compare both maps on a few of your own changes, with the recording time, before switching. The
-  plugin does not choose this per project: you set it on the job that records the map.
+  tests the shared one ran. Other suites held as much by `shares-jvm-with-change` did not pay it
+  back, so compare both maps on a few of your own changes, with the recording time, before
+  switching. The plugin does not choose this per project: you set it on the job that records the
+  map.
 - **Only a recording run updates it.** A selecting run that falls back to a full run still runs
   every test, with your fork settings, but leaves a map holding any JVM recorded in isolation
   exactly as it is, and says so. Recording that run would replace the isolated records with
