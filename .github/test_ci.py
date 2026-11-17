@@ -1959,8 +1959,7 @@ VERIFY_JOB_ANSWERS = {
     "functional-shard": "gradle", "functional": "gradle", "functional-gradle9-shard": "gradle",
     "functional-gradle9": "gradle", "coverage": "gradle", "capture": "gradle", "select": "gradle",
     "select-on-windows": "gradle", "capture-on-windows": "gradle", "select-on-windows-from-windows": "gradle",
-    "select-on-linux": "gradle", "functional-windows-shard": "gradle", "functional-windows": "gradle",
-    "functional-gradle9-windows-shard": "gradle", "functional-gradle9-windows": "gradle",
+    "select-on-linux": "gradle",
 }
 
 
@@ -2706,8 +2705,7 @@ def case_every_corpus_job_starts_from_the_dependency_pack():
     return problems
 
 
-FUNCTIONAL_SHARD_JOBS = ("functional-shard", "functional-gradle9-shard", "functional-windows-shard",
-                         "functional-gradle9-windows-shard")
+FUNCTIONAL_SHARD_JOBS = ("functional-shard", "functional-gradle9-shard")
 
 
 def _job_block(text, job):
@@ -2751,25 +2749,80 @@ def case_a_shard_that_drops_its_evidence_is_reported():
     with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
         text = handle.read()
     problems = 0
-    block = _job_block(text, "functional-gradle9-windows-shard") or ""
+    block = _job_block(text, "functional-gradle9-shard") or ""
     for edited, expected in (
         (text.replace(block, block.replace("include-hidden-files: true", "include-hidden-files: false")),
          "skips the hidden"),
         (text.replace(block, block.replace(".gradle-test-kit-", ".gradle-elsewhere-")),
          "leaves nothing to diagnose"),
-        (text.replace(block, block.replace("        if: failure()\n        shell: bash\n        run: python .github/ci.py list",
-                                           "        shell: bash\n        run: python .github/ci.py list", 1)),
+        (text.replace(block, block.replace("        if: failure()\n        shell: bash\n        run: python3 .github/ci.py list",
+                                           "        shell: bash\n        run: python3 .github/ci.py list", 1)),
          "when it fails"),
         (text.replace(block, block.replace("            plugin/build/test-kit-homes.txt\n", "", 1)),
          "leaves out the listing"),
         (text.replace(block, block.replace("            plugin/build/test-kit-diagnostics/\n", "", 1)),
          "failed script compilation"),
     ):
-        found = [p for p in functional_evidence_problems(edited) if p.startswith("functional-gradle9-windows-shard")]
+        found = [p for p in functional_evidence_problems(edited) if p.startswith("functional-gradle9-shard")]
         if edited == text:
             problems += fail(f"the fixture edit for {expected!r} no longer applies to verify.yml")
         elif not any(expected in problem for problem in found):
             problems += fail(f"an edited verify.yml was not reported for {expected!r}: {found}")
+    return problems
+
+
+FUNCTIONAL_TASKS = ("functionalTest", "functionalTestGradle9")
+
+
+def windows_functional_problems(verify, matrix):
+    """Why a pull request would wait for the functional suites on Windows, or a release would ship
+    without them: they run in matrix.yml's Windows cells and in no verify.yml job."""
+    problems = []
+    for job in re.findall(r"^  ([\w-]+):\s*$", verify.split("\njobs:\n", 1)[-1], re.M):
+        block = _job_block(verify, job) or ""
+        if "runs-on: windows" not in block:
+            continue
+        # A command continued over lines is one command; `gradlew.bat` is the same launcher.
+        for line in re.findall(r"gradlew(?:\.bat)?( [^\n]*)", re.sub(r"\\\n\s*", " ", block)):
+            words, tasks, excluded = line.split(), set(), set()
+            for before, word in zip([None] + words, words):
+                if before == "-x":
+                    excluded.add(word.rsplit(":", 1)[-1])
+                elif not word.startswith("-") and before != "-p":
+                    tasks.add(word.rsplit(":", 1)[-1])
+            ran = tasks & set(FUNCTIONAL_TASKS)
+            if tasks & {"build", "check"}:
+                ran |= set(FUNCTIONAL_TASKS) - excluded
+            if ran:
+                problems.append(f"verify.yml: {job} runs {', '.join(sorted(ran))} on Windows, "
+                                "which only the release check runs")
+    cells = re.findall(r"- \{ os: windows,[^}]*task: (\w+)", matrix)
+    for task in FUNCTIONAL_TASKS:
+        if task not in cells:
+            problems.append(f"matrix.yml: no Windows cell runs {task}, and no pull request does either")
+    return problems
+
+
+def case_the_windows_functional_suites_run_in_the_release_check_only():
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        verify = handle.read()
+    with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
+        matrix = handle.read()
+    problems = sum(fail(problem) for problem in windows_functional_problems(verify, matrix))
+    unit = "./gradlew build -x functionalTest -x functionalTestGradle9 "
+    for what, edited_verify, edited_matrix, expected in (
+        ("a Windows build that keeps a functional suite", verify.replace(unit, "./gradlew build -x functionalTest "),
+         matrix, "build-windows runs functionalTestGradle9"),
+        ("a Windows job running a functional suite", verify.replace(unit, "./gradlew :plugin:functionalTest "),
+         matrix, "build-windows runs functionalTest "),
+        ("a matrix without a Windows Gradle 9 cell", verify,
+         re.sub(r" *- \{ os: windows,[^}]*functionalTestGradle9[^}]*\}\n", "", matrix),
+         "no Windows cell runs functionalTestGradle9"),
+    ):
+        if (edited_verify, edited_matrix) == (verify, matrix):
+            problems += fail(f"the fixture edit for {what} no longer applies")
+        elif not any(expected in problem for problem in windows_functional_problems(edited_verify, edited_matrix)):
+            problems += fail(f"{what} passed")
     return problems
 
 
@@ -4820,7 +4873,7 @@ def case_skipped_and_cancelled_jobs_and_no_results_are_said_as_such():
 # What branch protection requires on main; the run summary must never be one of them.
 REQUIRED_CHECKS = (
     "unit and agent suites", "unit and agent suites on windows", "functional on Gradle 8.14",
-    "functional on Gradle 9", "functional on Gradle 8.14 on windows", "functional on Gradle 9 on windows",
+    "functional on Gradle 9",
     "select on another machine", "select on windows, against a map captured on linux",
     "select on windows, against a map captured on windows", "select on linux, against a map captured on windows",
     "coverage gate", "guards, fast and the change's own", "guards, every one", "no private references",
@@ -4892,6 +4945,7 @@ def case_a_run_summary_that_misses_a_job_or_gates_is_reported():
 CASES = (
     case_every_functional_shard_keeps_its_evidence_when_it_fails,
     case_a_shard_that_drops_its_evidence_is_reported,
+    case_the_windows_functional_suites_run_in_the_release_check_only,
     case_the_test_kit_listing_names_each_cached_file_and_its_size,
     case_no_test_kit_home_is_said_rather_than_silent,
     case_a_dropped_or_rate_limited_download_is_a_download_failure,
