@@ -729,6 +729,35 @@ class SelectorTest {
     }
 
     @Test
+    fun `a union recorded under a build-script filter narrows only a run under the same filter`(@TempDir dir: File) {
+        // Recorded with tests left out, it lacks what they load: a run that runs them, under another
+        // filter or none, would skip them for a class only they load.
+        map(dir, test("A", "com.acme.A"), loaded = listOf("com.acme.A"), loadedBy = MapReader.loadedProvenance("tags"))
+        fun fullRunUnder(filter: String?) = decide(
+            MapReader.read(dir, filter),
+            changed = listOf("com.acme.NeverLoaded"),
+            provable = listOf("com.acme.NeverLoaded"),
+        ).isFullRun
+
+        assertFalse(fullRunUnder("tags"), "the run under the same filter did not trust its union")
+        assertTrue(fullRunUnder("other tags"), "a run under another filter trusted the union")
+        assertTrue(fullRunUnder(null), "an unfiltered run trusted a filtered union")
+    }
+
+    @Test
+    fun `an unfiltered union narrows only an unfiltered run`(@TempDir dir: File) {
+        map(dir, test("A", "com.acme.A"), loaded = listOf("com.acme.A"))
+
+        assertTrue(
+            decide(
+                MapReader.read(dir, "tags"),
+                changed = listOf("com.acme.NeverLoaded"),
+                provable = listOf("com.acme.NeverLoaded"),
+            ).isFullRun
+        )
+    }
+
+    @Test
     fun `a union from a selecting run cannot license the narrowing either`(@TempDir dir: File) {
         val m = map(
             dir,

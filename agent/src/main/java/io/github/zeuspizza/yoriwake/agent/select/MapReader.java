@@ -362,6 +362,17 @@ public final class MapReader {
      * another format is reported as such rather than as a parse error.
      */
     public static Result read(File mapDir) {
+        return read(mapDir, null);
+    }
+
+    /**
+     * Reads the map at this directory for a run under the build-script filter whose digest is
+     * {@code unionFilter}, or null for an unfiltered run. The loaded-class union is trusted only
+     * when it was recorded under the same filter: a union recorded with tests left out does not
+     * speak for the classes those tests load, and a run that ran them would merge their records
+     * into a map whose union lacks those classes.
+     */
+    public static Result read(File mapDir, String unionFilter) {
         if (mapDir == null) {
             return Result.unusable(Result.Reason.NO_MAP, "no map directory was configured");
         }
@@ -375,7 +386,7 @@ public final class MapReader {
             return versionProblem;
         }
         List<String> scope = readScope(new File(mapDir, SCOPE_FILE));
-        Set<String> loaded = readLoaded(mapDir);
+        Set<String> loaded = readLoaded(mapDir, unionFilter);
         List<String> loadedScope = loaded == null
                 ? Collections.<String>emptyList()
                 : readScope(new File(mapDir, LOADED_SCOPE_FILE));
@@ -571,10 +582,19 @@ public final class MapReader {
     }
 
     /**
+     * What {@link AgentContract#LOADED_PROVENANCE_FILE} says of a union a full run recorded under
+     * the build-script filter whose digest is {@code unionFilter}, or with no filter when null. A
+     * reader before filters were recorded trusts only {@code full}, so it refuses a filtered union.
+     */
+    public static String loadedProvenance(String unionFilter) {
+        return unionFilter == null || unionFilter.isEmpty() ? "full" : "full filtered " + unionFilter;
+    }
+
+    /**
      * The loaded union, or null when it cannot be trusted. A selecting run's set, or a partially
      * read one, is smaller than the truth, and a smaller set here means more skipping.
      */
-    private static Set<String> readLoaded(File mapDir) {
+    private static Set<String> readLoaded(File mapDir, String unionFilter) {
         File provenance = new File(mapDir, LOADED_PROVENANCE_FILE);
         File loaded = new File(mapDir, LOADED_FILE);
         if (!provenance.isFile() || !loaded.isFile()) {
@@ -582,7 +602,7 @@ public final class MapReader {
         }
         try {
             String how = new String(Files.readAllBytes(provenance.toPath()), StandardCharsets.UTF_8).trim();
-            if (!"full".equals(how)) {
+            if (!loadedProvenance(unionFilter).equals(how)) {
                 return null;
             }
             Set<String> names = new LinkedHashSet<>();

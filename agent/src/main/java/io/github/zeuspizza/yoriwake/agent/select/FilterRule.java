@@ -175,7 +175,7 @@ public final class FilterRule {
                 .withTestJvmUnsupported(ClassFileSupport.testJvmUnsupported(
                         testJvmSpecification,
                         property.apply(AgentContract.AGENT_ASM_CEILING_PROPERTY)));
-        MapReader.Result map = MapReader.read(mapDir);
+        MapReader.Result map = MapReader.read(mapDir, property.apply(AgentContract.UNION_FILTER_PROPERTY));
         Strictness strictness = Strictness.of(property.apply(AgentContract.MODE_PROPERTY));
         Selector.Decision decision = Selector.decide(map, change, Collections.<String>emptyList(), strictness);
         if (strictness != Strictness.SAFE && !decision.isFullRun()) {

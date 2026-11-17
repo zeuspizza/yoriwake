@@ -44,6 +44,8 @@ internal fun establish(
     mapDir: File,
     change: ChangeDetection.Change,
     facts: ClasspathView,
+    /** The selecting run's build-script filter digest, or null when it runs unfiltered. */
+    unionFilter: String? = null,
 ): Established {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -97,7 +99,7 @@ internal fun establish(
             .filterValues { it.provable }.keys
             .let { it - unheldAtCapture(mapDir, it, artifacts).keys }
         if (candidates.isEmpty()) emptySet() else runCatching {
-            val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
+            val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir, unionFilter)
             candidates.filterTo(sortedSetOf()) { prefix ->
                 io.github.zeuspizza.yoriwake.agent.select.Selector.leftNoTrace(map, prefix, change.classPrefixes)
             }
@@ -836,8 +838,9 @@ internal fun wouldRunEverything(
     widening: InlineWidening,
     paths: List<String>,
     bump: DependencyRule.Verdict.Accepted? = null,
+    unionFilter: String? = null,
 ): FullRunOutlook = runCatching {
-    val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
+    val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir, unionFilter)
     if (!map.isUsable) return FullRunOutlook(fullRun = true, mapUsable = false)
     FullRunOutlook(
         fullRun = io.github.zeuspizza.yoriwake.agent.select.Selector.decide(

@@ -50,6 +50,7 @@ import io.github.zeuspizza.yoriwake.gradle.wiring.environmentRefusal
 import io.github.zeuspizza.yoriwake.gradle.wiring.environmentView
 import io.github.zeuspizza.yoriwake.gradle.wiring.extraTaskInputs
 import io.github.zeuspizza.yoriwake.gradle.wiring.readFilterVerdict
+import io.github.zeuspizza.yoriwake.gradle.wiring.unionFilterOf
 import io.github.zeuspizza.yoriwake.gradle.wiring.trustedDigest
 import java.io.File
 import java.nio.file.Files
@@ -100,6 +101,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val namedTestsReason: Property<String>
+
+    /** The digest of the build-script filter the run runs under; unset when it runs unfiltered. */
+    @get:Input
+    @get:Optional
+    abstract val unionFilter: Property<String>
 
     /** Whether `-Pyoriwake.fullRun` was passed, which declines selection. */
     @get:Input
@@ -400,7 +406,7 @@ internal abstract class ExplainTask : DefaultTask() {
             )
             return
         }
-        val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir)
+        val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir, unionFilter.orNull)
         if (!map.isUsable) {
             logger.lifecycle("[yoriwake] $taskPath would run everything: ${map.unusableReason()}")
             writeUnanswered(
@@ -454,6 +460,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     taskInputs = { extraTaskInputs(rootDir, testInputs?.files.orEmpty(), testOwned?.files.orEmpty()) },
                     stamp = age.stamp,
                     moved = driftOnly.toSet(),
+                    unionFilter = unionFilter.orNull,
                 ),
                 ExplainingHost(taskPath, properties) { logger.lifecycle(it) },
             )
@@ -628,6 +635,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     readFilterVerdict(test, buildScriptPatterns).namedTestsDecline()
                 }
                 task.namedTestsKind.set(namedTestsDecline.map { it.first.token })
+                task.unionFilter.set(project.provider<String> { unionFilterOf(test, buildScriptPatterns) })
                 task.namedTestsReason.set(namedTestsDecline.map { it.second })
                 val trusted = trustedDigest(project, settings, mapDir)
                 task.checksProvenance.set(trusted != null)
