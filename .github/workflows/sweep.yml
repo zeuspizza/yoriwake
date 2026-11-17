@@ -95,10 +95,11 @@ env:
 jobs:
   plan:
     runs-on: ubuntu-24.04
-    # Reads the head commit of the run a completion names.
+    # Reads the head commit of the run a completion names, and the open pull requests.
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     outputs:
       tier: ${{ steps.plan.outputs.tier }}
       projects: ${{ steps.plan.outputs.projects }}
@@ -107,6 +108,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # A sweep takes most of the runners for hours, so it is dispatched while no pull request is
+      # open; this names any that is, and never stops the sweep: the rule is the dispatcher's.
+      - name: no pull request waits behind the sweep
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -u
+          for repo in "$OWNER/yoriwake" "$OWNER/yoriwake-action"; do
+            if open=$(gh pr list --repo "$repo" --state open --json number,title --jq '.[] | "#\(.number) \(.title)"'); then
+              while IFS= read -r line; do
+                [ -n "$line" ] && echo "::warning::$repo $line is open: its checks wait behind this sweep"
+              done <<< "$open"
+            else
+              echo "::warning::could not list the open pull requests of $repo"
+            fi
+          done
       - id: plan
         env:
           TIER: ${{ inputs.tier }}

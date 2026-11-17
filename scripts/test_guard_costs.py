@@ -267,6 +267,57 @@ def case_the_checked_in_table_is_written_as_derive_writes_it():
     return 0
 
 
+def _projected(selection, count):
+    shards, _ = pg.partition(selection, count)
+    return max(pg.job_projection([pg.step_projection(shard, "full", first=True)]) for shard in shards if shard)
+
+
+def case_shards_are_the_fewest_whose_projected_jobs_fit_the_target():
+    """A narrowed pull request runs a handful of guard jobs, never more than the eight of today."""
+    problems = 0
+    functional = [m for m in pg.MUTATIONS if pg.SUITE_NAMES[m[4]] == "functional"]
+    if gc.shard_count([], 3600) != 0:
+        problems += fail("an empty selection was given shards")
+    one = functional[:1]
+    if gc.shard_count(one, _projected(one, 1)) != 1:
+        problems += fail("a selection that fits one job was split")
+    # A target between the projections of two and three shards needs three.
+    target = (_projected(functional, 2) + _projected(functional, 3)) / 2
+    if _projected(functional, 3) <= target < _projected(functional, 2):
+        if gc.shard_count(functional, target) != 3:
+            problems += fail(f"a selection projected past two jobs' target got {gc.shard_count(functional, target)}")
+    else:
+        problems += fail("the functional guards' projections no longer shrink from two shards to three")
+    if gc.shard_count(list(pg.MUTATIONS), 1) != 8:
+        problems += fail("a selection no shard count fits was not left at eight shards")
+    # The warm-up counts: without it the same target would fit one shard.
+    step = pg.step_projection(one, "full", first=True)
+    if step["warm_up"] <= 0:
+        problems += fail("the first step's projection carries no warm-up")
+    elif gc.shard_count(one, pg.JOB_SETUP + step["total"] - step["warm_up"]) == 1:
+        problems += fail("the shard count left the warm-up out of the job")
+    # A class missing from the cost table is costed at its suite's median, not nothing.
+    if min(pg.class_cost("functional", "NoSuchFunctionalTest")) <= 0:
+        problems += fail("a class missing from the cost table was costed at nothing")
+    return problems
+
+
+def case_shards_prints_the_list_a_guards_job_runs():
+    """The guards workflow builds its matrix from what this prints."""
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        path = os.path.join(root, "changed.json")
+        for guards, expected in (([], []), (pg.MUTATIONS[:1], [1])):
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"guards": [{"label": m[0], "suite": pg.SUITE_NAMES[m[4]]} for m in guards]}, handle)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = gc.main(["shards", path])
+            if code != 0 or json.loads(out.getvalue()) != expected:
+                problems += fail(f"shards over {len(guards)} guard(s) printed {out.getvalue().strip()!r}, not {expected}")
+    return problems
+
+
 CASES = (case_derive_takes_each_timed_classs_medians_and_keeps_the_rest,
          case_derive_refuses_results_without_timings_and_writes_nothing,
          case_derive_writes_a_table_the_partition_reads,
@@ -275,7 +326,9 @@ CASES = (case_derive_takes_each_timed_classs_medians_and_keeps_the_rest,
          case_report_takes_a_pull_requests_two_steps_as_one_job,
          case_a_shard_that_left_nothing_keeps_the_others_projections,
          case_a_shard_that_lost_its_first_file_adds_no_warm_up,
-         case_the_checked_in_table_is_written_as_derive_writes_it)
+         case_the_checked_in_table_is_written_as_derive_writes_it,
+         case_shards_are_the_fewest_whose_projected_jobs_fit_the_target,
+         case_shards_prints_the_list_a_guards_job_runs)
 
 
 def test_guard_costs():
