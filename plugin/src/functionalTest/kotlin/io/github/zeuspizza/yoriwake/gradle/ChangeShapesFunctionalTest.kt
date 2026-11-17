@@ -386,9 +386,9 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a Groovy file named after none of its classes runs everything`(@TempDir dir: File) {
-        // Its path names a class nothing compiles to unless the file also holds a script, which
-        // the declarations alone cannot rule out, and no test ever recorded that name.
+    fun `a Groovy file named after none of its classes runs the test of the class it declares`(@TempDir dir: File) {
+        // Its path names a class only a script in the file would compile to; the compiled classes
+        // show there is none, so the file is the class it declares.
         val shapes = "src/main/groovy/dev/sample/Shapes.groovy" to """
             package dev.sample
             class Beta { int thrice(int n) { n * 3 } }
@@ -398,7 +398,7 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
             edit(dir, shapes.first, "n * 3", "n * 4")
         }, run = GradleRunner::buildAndFail)
 
-        assertFullRun(dir, "no-coverage-for-changed", both, output)
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
     }
 
     @Test
