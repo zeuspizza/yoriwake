@@ -2172,6 +2172,10 @@ def case_a_build_that_failed_on_a_download_runs_once_more():
                          f"got exit {code}, {runs} runs, pauses {pauses}")
     if "Remote host terminated the handshake" not in out or "Could not GET" not in out:
         problems += fail("the first run's output, or the line naming why it reran, is missing")
+    code, runs, pauses, _ = _retried([[_fixture("download-failure-429.txt"), 1], ["BUILD SUCCESSFUL\n", 0]])
+    if (code, runs, pauses) != (0, 2, [300]):
+        problems += fail(f"a 429 then a pass should exit 0 after 2 runs and one 300s pause, got exit "
+                         f"{code}, {runs} runs, pauses {pauses}")
     code, runs, _, _ = _retried([[handshake, 1], [handshake, 1]])
     if code == 0 or runs != 2:
         problems += fail(f"two download failures should fail after 2 runs, got exit {code}, {runs} runs")
@@ -2223,6 +2227,115 @@ def case_the_matrix_cell_builds_through_the_download_rerun():
     if not re.search(r"\.github/ci\.py rerun-on-download-failure -- \./gradlew build", text):
         return fail("matrix.yml: the cell's build does not run through the download rerun")
     return 0
+
+
+def bare_gradle_calls(job):
+    """The lines of a job's text that call `./gradlew` other than through the download rerun."""
+    return [line.strip() for line in job.splitlines()
+            if "./gradlew" in line and not line.lstrip().startswith("#")
+            and "ci.py rerun-on-download-failure -- ./gradlew" not in line]
+
+
+def case_the_matrix_capture_and_select_build_through_the_download_rerun():
+    with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
+        jobs = release_jobs(handle.read())
+    problems = 0
+    for name in ("capture", "select"):
+        if "./gradlew" not in jobs.get(name, ""):
+            problems += fail(f"matrix.yml: the {name} job runs no Gradle build this case can read")
+        for line in bare_gradle_calls(jobs.get(name, "")):
+            problems += fail(f"matrix.yml: {name} builds outside the download rerun: {line}")
+    if not bare_gradle_calls("        run: ./gradlew -p samples/demo test\n"):
+        problems += fail("a bare ./gradlew step passed")
+    return problems
+
+
+def _workflow_jobs(name):
+    with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+        return release_jobs(handle.read())
+
+
+def _steps(job):
+    """A job's steps, each without its comment lines."""
+    return ["\n".join(line for line in step.splitlines() if not line.lstrip().startswith("#"))
+            for step in re.split(r"\n(?=      - )", job)[1:]]
+
+
+# Each corpus job: it builds a guest, so it restores the project's dependency pack first.
+CORPUS_JOBS = {"sweep-project.yml": ("record", "shard", "replay"), "recording-cost.yml": ("arms", "rows")}
+# A grant of `actions: read` lets a job read another run's artifacts: only the jobs that look up an
+# earlier run's pack, and the caller that must grant it to the record job.
+ACTIONS_READ = {"sweep.yml": ("plan", "project"), "sweep-project.yml": ("record",),
+                "recording-cost.yml": ("arms", "rows")}
+
+
+def dependency_pack_problems(workflows):
+    """What a sweep's or recording-cost run's jobs miss of the dependency pack, over {file: jobs}."""
+    problems = []
+    for name, wanted in CORPUS_JOBS.items():
+        for job_name in wanted:
+            steps = _steps(workflows[name].get(job_name, ""))
+            builds = [i for i, step in enumerate(steps) if re.search(r"bench/(run|commit_replay)\.py", step)]
+            restores = [i for i, step in enumerate(steps) if "bench/deps_pack.py restore" in step]
+            if not builds or not restores or restores[0] > builds[0]:
+                problems.append(f"{name} {job_name}: no pack restored before its first build")
+            for step in steps:
+                restoring = "bench/deps_pack.py restore" in step or (
+                    "actions/download-artifact@" in step and "deps" in step)
+                if restoring and "continue-on-error: true" not in step:
+                    problems.append(f"{name} {job_name}: a pack restore can fail the job")
+            if not any("bench/deps_pack.py report" in step and "if: ${{ !cancelled() }}" in step
+                       for step in steps):
+                problems.append(f"{name} {job_name}: no line says what it downloaded, failed or not")
+            if job_name in ("shard", "replay") and not any(
+                    "actions/download-artifact@" in step and "name: ${{ needs.record.outputs.deps }}" in step
+                    for step in steps):
+                problems.append(f"{name} {job_name}: does not restore its own record job's pack")
+            uploads = [i for i, step in enumerate(steps)
+                       if "actions/upload-artifact@" in step and "steps.deps.outputs.name" in step]
+            if job_name != "record":
+                if uploads:
+                    problems.append(f"{name} {job_name}: uploads a pack; only the record job does")
+                continue
+            isolated = [i for i, step in enumerate(steps) if "name: record the isolated map" in step]
+            stop = [i for i, step in enumerate(steps) if "--stop" in step and "deps_pack.py pack" in step]
+            if not uploads or not isolated or uploads[0] > isolated[0]:
+                problems.append(f"{name} record: no pack uploaded before the isolated recording")
+            if not stop or not uploads or stop[0] > uploads[0]:
+                problems.append(f"{name} record: the pack is not taken after the Gradle daemons stop")
+            for i in uploads + stop:
+                if "continue-on-error: true" not in steps[i] or "timeout-minutes:" not in steps[i]:
+                    problems.append(f"{name} record: a pack step can fail the job or outlast its bound")
+    for name, jobs in workflows.items():
+        for job_name, job in jobs.items():
+            reads_actions = "actions: read" in job
+            if reads_actions != (job_name in ACTIONS_READ.get(name, ())):
+                problems.append(f"{name} {job_name}: {'grants' if reads_actions else 'lacks'} actions: read")
+            for grant in re.findall(r"^\s+([a-z-]+): write$", job, re.M):
+                if (name, job_name, grant) != ("sweep.yml", "merge", "contents"):
+                    problems.append(f"{name} {job_name}: grants {grant}: write")
+    return problems
+
+
+def case_every_corpus_job_starts_from_the_dependency_pack():
+    workflows = {name: _workflow_jobs(name) for name in ("sweep.yml", "sweep-project.yml", "recording-cost.yml")}
+    problems = sum(fail(problem) for problem in dependency_pack_problems(workflows))
+    for what, edit in (
+            ("a shard without its restore", lambda w: w["sweep-project.yml"].update(
+                shard=w["sweep-project.yml"]["shard"].replace("bench/deps_pack.py restore", "true"))),
+            ("a replay restoring another pack", lambda w: w["sweep-project.yml"].update(
+                replay=w["sweep-project.yml"]["replay"].replace("needs.record.outputs.deps }}", "steps.x.outputs.y }}"))),
+            ("a record job silent when its build failed", lambda w: w["sweep-project.yml"].update(
+                record=w["sweep-project.yml"]["record"].replace("if: ${{ !cancelled() }}\n        continue-on-error: true\n        run: python3 bench/deps_pack.py report", "continue-on-error: true\n        run: python3 bench/deps_pack.py report"))),
+            ("a replay granted actions: read", lambda w: w["sweep-project.yml"].update(
+                replay=w["sweep-project.yml"]["replay"].replace("permissions:\n", "permissions:\n      actions: read\n", 1))),
+            ("a pack taken with the daemons running", lambda w: w["sweep-project.yml"].update(
+                record=w["sweep-project.yml"]["record"].replace("--stop", "--status")))):
+        edited = {name: dict(jobs) for name, jobs in workflows.items()}
+        edit(edited)
+        if not dependency_pack_problems(edited):
+            problems += fail(f"{what} passed")
+    return problems
 
 
 FUNCTIONAL_SHARD_JOBS = ("functional-shard", "functional-gradle9-shard", "functional-windows-shard",
@@ -3430,7 +3543,10 @@ def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
         project = handle.read()
     for job in ("record", "shard"):
         block = _job_block(project, job)
-        if block.count("retention-days: 3") != block.count("actions/upload-artifact@"):
+        # The dependency pack is for the next sweep too, and keeps longer.
+        packs = block.count("retention-days: 90\n")
+        if block.count("retention-days: 3\n") != block.count("actions/upload-artifact@") - packs \
+                or packs != (job == "record"):
             problems += fail(f"a {job} upload no longer keeps three days")
     return problems
 
@@ -4411,6 +4527,8 @@ CASES = (
     case_the_test_kit_listing_names_each_cached_file_and_its_size,
     case_no_test_kit_home_is_said_rather_than_silent,
     case_a_dropped_or_rate_limited_download_is_a_download_failure,
+    case_the_matrix_capture_and_select_build_through_the_download_rerun,
+    case_every_corpus_job_starts_from_the_dependency_pack,
     case_a_failure_that_is_not_a_download_is_not_rerun,
     case_a_build_that_failed_on_a_download_runs_once_more,
     case_on_windows_the_wrapper_script_runs_as_its_batch_file,

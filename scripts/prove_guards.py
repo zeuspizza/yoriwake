@@ -402,9 +402,10 @@ def controls_suite():
 
 
 def sharding_suite():
-    """The CI sweep without a build: the merge's refusals and truncation, the slicing, and the
-    tier a change asks for."""
-    return [line for script in ("bench/test_merge.py", "bench/test_shard.py", "bench/test_tier.py")
+    """The CI sweep without a build: the merge's refusals and truncation, the slicing, the tier a
+    change asks for, and the dependency pack its jobs share."""
+    return [line for script in ("bench/test_merge.py", "bench/test_shard.py", "bench/test_tier.py",
+                                "bench/test_deps_pack.py")
             for line in _python_checks(script)]
 
 
@@ -4824,6 +4825,9 @@ MUTATIONS = [
      "        if False:", sharding_suite, "not the prefix ending at the row that reached the target"),
     ("the merge publishes an arm that asked no recall question", "bench/merge.py",
      "    if not possible:", "    if False:", sharding_suite, "an arm that asked nothing"),
+    ("the dependency pack keeps the plugin under test", "bench/deps_pack.py",
+     "        return tuple(parts[:3]) != PLUGIN_GROUP", "        return True", sharding_suite,
+     "the pack holds"),
     ("a slice is planned around a row no job can finish", "bench/shard.py",
      "        if overhead + seconds > JOB_LIMIT_SECONDS:", "        if False:", sharding_suite,
      "a row longer than a job's limit was planned"),
@@ -5845,7 +5849,8 @@ SUITE_TESTS = {
     "sweep": ("bench/test_sweep_corpus.py",),
     "scan": ("bench/test_scan_private.py",),
     "ci": (".github/test_ci.py",),
-    "sharding": ("bench/test_merge.py", "bench/test_shard.py", "bench/test_tier.py"),
+    "sharding": ("bench/test_merge.py", "bench/test_shard.py", "bench/test_tier.py",
+                 "bench/test_deps_pack.py"),
     "controls": ("bench/test_controls.py", "bench/test_cost.py"),
     "maven harness": ("bench/test_maven_build.py",),
     "preflight": ("bench/test_sweep_preflight.py",),

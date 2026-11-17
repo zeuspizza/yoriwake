@@ -4051,12 +4051,12 @@ def _rerun(outcomes):
     with tempfile.TemporaryDirectory() as directory:
         log = os.path.join(directory, "build.log")
         fake, seen = _scripted_builds(outcomes)
-        original = run.run, run.test_progress_paths, run.NETWORK_RETRY_PAUSE
-        run.run, run.test_progress_paths, run.NETWORK_RETRY_PAUSE = fake, (lambda checkout, project: []), 0
+        original = run.run, run.test_progress_paths, time.sleep
+        run.run, run.test_progress_paths, time.sleep = fake, (lambda checkout, project: []), PAUSES.append
         try:
             result = run.gradle(run.ROOT, {}, [":m:test"], log)
         finally:
-            run.run, run.test_progress_paths, run.NETWORK_RETRY_PAUSE = original
+            run.run, run.test_progress_paths, time.sleep = original
         files = {}
         for name in sorted(os.listdir(directory)):
             with open(os.path.join(directory, name), encoding="utf-8") as handle:
@@ -4064,12 +4064,19 @@ def _rerun(outcomes):
         return result, len(seen), run.arm_stats(log), files
 
 
+# The pauses the harness took while `time.sleep` was replaced, in seconds.
+PAUSES = []
+
+
 def case_a_guest_build_that_failed_on_a_download_runs_once_more():
     failures = 0
     rate_limited = _fixture("download-failure-429.txt")
+    PAUSES.clear()
     result, builds, record, files = _rerun([(rate_limited, 1), ("BUILD SUCCESSFUL\n", 0)])
     if result[0] != 0 or builds != 2:
         failures += fail(f"a download failure then a pass should succeed after 2 builds, got {result}, {builds}")
+    if PAUSES != [300]:
+        failures += fail(f"a 429 should pause 300s before its one rerun, paused {PAUSES}")
     if "status code 429" not in files.get("build.network-1.log", ""):
         failures += fail(f"the first attempt's log was not kept as build.network-1.log: {sorted(files)}")
     if (record or {}).get("network_retries") != 1:
@@ -4093,10 +4100,105 @@ def case_a_guest_build_that_failed_for_another_reason_runs_once():
     if (record or {}).get("network_retries") != 0:
         failures += fail(f"a build that was not rerun should record network_retries 0: {record}")
     handshake = _fixture("download-failure-handshake.txt")
+    PAUSES.clear()
     result, builds, record, _ = _rerun([(handshake, 1), (handshake, 1)])
     if result[0] != 1 or builds != 2:
         failures += fail(f"two download failures should return the second failure after 2 builds, "
                          f"got {result}, {builds}")
+    if PAUSES != [60]:
+        failures += fail(f"a dropped handshake should pause 60s before its one rerun, paused {PAUSES}")
+    return failures
+
+
+def _maven_rerun(outcomes):
+    """(builds run, pauses) of one Maven arm over `outcomes`, one (log text, exit code) per build."""
+    seen = []
+
+    def once(checkout, project, task_args, log_path):
+        text, code = outcomes[len(seen)]
+        seen.append(log_path)
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return (code, 0.0), {}
+
+    with tempfile.TemporaryDirectory() as directory:
+        original = run._maven_once, time.sleep
+        run._maven_once, time.sleep = once, PAUSES.append
+        PAUSES.clear()
+        try:
+            run._maven_build(directory, {}, [":m:test"], os.path.join(directory, "build.log"))
+        finally:
+            run._maven_once, time.sleep = original
+    return len(seen), list(PAUSES)
+
+
+def case_a_maven_guest_pauses_longer_after_a_rate_limit():
+    failures = 0
+    coordinates = ":".join(["org.example.with.a.long.group.id.that.pushes.the.status.far"] * 3)
+    rate_limited = ("[INFO] BUILD FAILURE\n[ERROR] Failed to execute goal on project app: Could not "
+                    f"resolve dependencies for project {coordinates}:jar:1: Could not transfer artifact "
+                    f"{coordinates}:pom:1 from/to central (https://repo.maven.apache.org/maven2): "
+                    "status code: 429, reason phrase: Too Many Requests (429) -> [Help 1]\n")
+    reset = ("[INFO] BUILD FAILURE\n[ERROR] Failed to execute goal on project app: Could not "
+             "transfer artifact a:b:jar:1 from/to central (https://repo.maven.apache.org/maven2): "
+             "Connection reset\n")
+    for what, text, expected in (("a 429", rate_limited, (2, [300])),
+                                 ("a reset connection", reset, (2, [60]))):
+        got = _maven_rerun([(text, 1), ("[INFO] BUILD SUCCESS\n", 0)])
+        if got != expected:
+            failures += fail(f"{what} should rerun once after {expected[1]}s, got {got[0]} builds, "
+                             f"pauses {got[1]}")
+    return failures
+
+
+def _publish(outcomes):
+    """(the SystemExit message or None, builds run, pauses, files in logs/) of one publish of the
+    plugin under test, its builds scripted by `outcomes`, one (log text, exit code) per build."""
+    seen = []
+
+    def fake(argv, cwd, log_path, **kwargs):
+        text, code = outcomes[len(seen)]
+        seen.append(argv)
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return code, 0.0
+
+    with tempfile.TemporaryDirectory() as directory:
+        os.mkdir(os.path.join(directory, "logs"))
+        original = (run.run, run.HERE, time.sleep, run.selector_digest, run.yoriwake_checkout.commit,
+                    run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT)
+        run.run, run.HERE, time.sleep = fake, directory, PAUSES.append
+        run.selector_digest, run.yoriwake_checkout.commit = (lambda: "digest"), (lambda short=False: "abc")
+        PAUSES.clear()
+        refused = None
+        try:
+            run.publish_plugin_under_test()
+        except SystemExit as error:
+            refused = str(error)
+        finally:
+            (run.run, run.HERE, time.sleep, run.selector_digest, run.yoriwake_checkout.commit,
+             run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT) = original
+        return refused, len(seen), list(PAUSES), sorted(os.listdir(os.path.join(directory, "logs")))
+
+
+def case_the_publish_of_the_plugin_under_test_reruns_once_on_a_download_failure():
+    failures = 0
+    rate_limited = _fixture("download-failure-429.txt")
+    refused, builds, pauses, logs = _publish([(rate_limited, 1), ("", 0)])
+    if refused or builds != 2 or pauses != [300]:
+        failures += fail(f"a 429 then a pass should publish after 2 builds and a 300s pause, got "
+                         f"{refused!r}, {builds} builds, pauses {pauses}")
+    if "publish.network-1.log" not in logs:
+        failures += fail(f"the first attempt's log was not kept: {logs}")
+    refused, builds, pauses, _ = _publish([(rate_limited, 1), (rate_limited, 1)])
+    if not refused or builds != 2:
+        failures += fail(f"two download failures should refuse to measure after 2 builds, got "
+                         f"{refused!r}, {builds} builds")
+    compile_error = "FAILURE: Build failed.\n\n* What went wrong:\nCompilation failed.\n\n* Try:\n"
+    refused, builds, pauses, _ = _publish([(compile_error, 1)])
+    if not refused or builds != 1 or pauses:
+        failures += fail(f"a compile error should refuse after one build and no pause, got "
+                         f"{refused!r}, {builds} builds, pauses {pauses}")
     return failures
 
 
@@ -5739,6 +5841,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_guest_build_that_failed_on_a_download_runs_once_more,
          case_a_guest_build_that_failed_for_another_reason_runs_once,
          case_the_harness_reads_a_download_failure_as_the_ci_script_does,
+         case_a_maven_guest_pauses_longer_after_a_rate_limit,
+         case_the_publish_of_the_plugin_under_test_reruns_once_on_a_download_failure,
          case_staging_and_flags_treat_a_stored_null_oppositely,
          case_a_row_records_the_tree_and_the_flags_it_was_measured_under,
          case_only_the_selector_source_moves_the_digest,

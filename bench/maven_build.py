@@ -399,7 +399,8 @@ def download_failure(log_path):
     if not transfers or any(NOT_TRANSIENT_MAVEN.search(line) for line in errors) \
             or OTHER_FAILURE.search(log):
         return None
-    return transfers[-1].removeprefix("[ERROR]").strip()[:300]
+    # The end of the line, where the resolver names the status a rerun's pause depends on.
+    return transfers[-1].removeprefix("[ERROR]").strip()[-300:]
 
 
 def plugin_version(source_root):

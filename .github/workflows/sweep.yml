@@ -311,11 +311,13 @@ jobs:
   project:
     needs: plan
     if: needs.plan.outputs.projects != '[]'
-    # A guest may resolve dependencies from GitHub Packages (bitwarden-android's SDK); a called
-    # workflow can only narrow what this grants.
+    # A guest may resolve dependencies from GitHub Packages (bitwarden-android's SDK), and a record
+    # job reads an earlier sweep's dependency pack; a called workflow can only narrow what this
+    # grants.
     permissions:
       contents: read
       packages: read
+      actions: read
     strategy:
       # The merge refuses a reduced arm short of a member, so one failed member stops the others'
       # slices; on the full arm one failed project must not cost the others their rows.

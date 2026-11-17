@@ -166,13 +166,14 @@ jobs:
           cache-read-only: true
           add-job-summary: on-failure
 
+      # A dependency download that fails in transit costs a rerun, not the job, in each build here.
       - name: publish the plugin locally
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: python3 .github/ci.py rerun-on-download-failure -- ./gradlew :plugin:publishToMavenLocal --console=plain
 
       # Isolated, one test JVM per test class, as in verify.yml: so the selection shows that
       # unrelated tests are skipped.
       - name: run the sample suite, capturing coverage
-        run: ./gradlew -p samples/demo test -Pyoriwake.isolatedCapture --console=plain
+        run: python3 .github/ci.py rerun-on-download-failure -- ./gradlew -p samples/demo test -Pyoriwake.isolatedCapture --console=plain
 
       - name: check a map was actually written
         shell: bash
@@ -232,8 +233,9 @@ jobs:
           name: coverage-map-${{ matrix.from }}
           path: samples/demo/.gradle/yoriwake
 
+      # A dependency download that fails in transit costs a rerun, not the job, in each build here.
       - name: publish the plugin locally
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: python3 .github/ci.py rerun-on-download-failure -- ./gradlew :plugin:publishToMavenLocal --console=plain
 
       - name: break Alpha so its tests fail
         shell: bash
@@ -241,7 +243,7 @@ jobs:
 
       # The mutation makes tests fail, so a non-zero exit is expected; the assertion decides the job.
       - name: run only the tests the change can reach
-        run: ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
+        run: python3 .github/ci.py rerun-on-download-failure -- ./gradlew -p samples/demo test -Pyoriwake.select --console=plain || true
 
       # A map is per operating system: from another, the run must refuse it and run everything.
       - name: the change's own tests ran and failed, the unrelated ones did not

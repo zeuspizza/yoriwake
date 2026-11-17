@@ -1215,9 +1215,9 @@ def gradle(checkout, project, task_args, log_path):
             for suffix in ("", ".tasks.tsv", ".counters.tsv", ".outcomes.tsv"):
                 if os.path.exists(log_path + suffix):
                     os.replace(log_path + suffix, kept + suffix)
-            print(f"    rerunning in {NETWORK_RETRY_PAUSE}s, once: a dependency download failed: {why}",
-                  flush=True)
-            time.sleep(NETWORK_RETRY_PAUSE)
+            pause = network_retry_pause(why)
+            print(f"    rerunning in {pause}s, once: a dependency download failed: {why}", flush=True)
+            time.sleep(pause)
             result, record = _build_once(checkout, project, task_args, log_path)
             retries = 1
     if result[0] == STALLED:
@@ -1257,13 +1257,22 @@ def stop_daemons(checkout):
 # in all. Internal properties: a Gradle that drops them falls back to its defaults.
 REPOSITORY_RETRY_FLAGS = ["-Dorg.gradle.internal.repository.max.tentatives=5",
                           "-Dorg.gradle.internal.repository.initial.backoff=2000"]
-# Seconds before a build that failed on a dependency download runs once more.
+# Seconds before a build that failed on a dependency download runs once more; longer after a rate
+# limit, which a rerun a minute later hit again: a repository counts an address's requests over time.
 NETWORK_RETRY_PAUSE = 60
+RATE_LIMIT_PAUSE = 300
+# A 429 in Gradle's words (`status code 429`) and in Maven's resolver's (`status code: 429`).
+RATE_LIMITED = re.compile(r"status code:? 429\b")
 # A download that failed in transit, in Gradle's words; reworded, nothing matches and the build fails
 # as it did before. `.github/ci.py` holds the same rule for the matrix.
 DOWNLOAD_FAILED = ("Could not GET '", "Could not HEAD '", "Could not download")
 NOT_TRANSIENT = re.compile(r"status code (?:401|403|404)\b|Could not find ")
 FAILURE_BLOCK = re.compile(r"^\* What went wrong:\n(.*?)(?=^\* What went wrong:|^\* Try:|\Z)", re.M | re.S)
+
+
+def network_retry_pause(why):
+    """Seconds to wait before rerunning a build whose download failure `why` names."""
+    return RATE_LIMIT_PAUSE if RATE_LIMITED.search(why) else NETWORK_RETRY_PAUSE
 
 
 def download_failure(log_path):
@@ -1343,9 +1352,9 @@ def _maven_build(checkout, project, task_args, log_path):
         if why is not None:
             root, ext = os.path.splitext(log_path)
             os.replace(log_path, f"{root}.network-1{ext}")
-            print(f"    rerunning in {NETWORK_RETRY_PAUSE}s, once: a dependency download failed: {why}",
-                  flush=True)
-            time.sleep(NETWORK_RETRY_PAUSE)
+            pause = network_retry_pause(why)
+            print(f"    rerunning in {pause}s, once: a dependency download failed: {why}", flush=True)
+            time.sleep(pause)
             result, record = _maven_once(checkout, project, task_args, log_path)
             retries = 1
     ARM_STATS[log_path] = {**record, "network_retries": retries}
@@ -4659,11 +4668,18 @@ def publish_plugin_under_test(maven=False):
     before = selector_digest()
     maven_before = maven_build.digest(SOURCE) if maven else None
     tasks = publish_tasks(maven)
-    code, seconds = run(
-        # A control's planted defect may leave the compiler something to warn about.
-        [wrapper(SOURCE), "--quiet", *tasks, "-Pyoriwake.kotlinWarningsAsErrors=false"], SOURCE,
-        os.path.join(HERE, "logs", "publish.log"),
-    )
+    # A control's planted defect may leave the compiler something to warn about.
+    argv = [wrapper(SOURCE), "--quiet", *tasks, "-Pyoriwake.kotlinWarningsAsErrors=false"]
+    log = os.path.join(HERE, "logs", "publish.log")
+    code, seconds = run(argv, SOURCE, log)
+    why = download_failure(log) if code != 0 else None
+    if why is not None:
+        os.replace(log, os.path.join(HERE, "logs", "publish.network-1.log"))
+        pause = network_retry_pause(why)
+        print(f"  rerunning the publish in {pause}s, once: a dependency download failed: {why}",
+              flush=True)
+        time.sleep(pause)
+        code, seconds = run(argv, SOURCE, log)
     if code != 0:
         raise SystemExit(
             f"could not publish the plugin under test (exit {code}); see bench/logs/publish.log. "
