@@ -58,6 +58,37 @@ class SelectionFunctionalTest {
     }
 
     @Test
+    fun `a change inside a local class runs the tests that ran it, named by its binary name`(@TempDir dir: File) {
+        val project = committed(dir)
+        val greeter = File(project, "lib/src/main/java/dev/demo/lib/Greeter.java")
+        greeter.writeText(
+            """
+            package dev.demo.lib;
+
+            public class Greeter {
+                public String greet(String name) {
+                    class Salutation {
+                        String of(String who) { return "Hello, " + who; }
+                    }
+                    return new Salutation().of(name);
+                }
+            }
+            """.trimIndent() + "\n",
+        )
+        git(project, "commit", "-q", "-am", "a local class")
+        FunctionalMaven.run(maven, project, "verify").succeeded()
+        greeter.edit { it.replace("\"Hello, \" + who", "\"Hello,\" + \" \" + who") }
+        git(project, "commit", "-q", "-am", "an edit")
+
+        val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.select", "-Dyoriwake.base=HEAD~1")
+            .succeeded().output
+
+        val selecting = output.substringAfter("[yoriwake] lib surefire:test (default-test) selecting against ", "")
+        assertContains(selecting, "in dev.demo.lib.GreeterTest")
+        assertFalse("in dev.demo.lib.CounterTest" in selecting, output)
+    }
+
+    @Test
     fun `an observing run runs every test and reports what selection would have done`(@TempDir dir: File) {
         val project = captured(dir)
         File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello, \"", "\"Hello,\" + \" \"") }

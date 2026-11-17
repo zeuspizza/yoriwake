@@ -479,9 +479,11 @@ internal fun widenForInlining(
     inlinedAway: Set<String> = emptySet(),
     /** `narrowLineOnlyChanges`'s inputs; null with the flag off. */
     lineOnly: LineOnlyRule? = null,
+    /** [ChangeDetection.Change.inlineSources]: source names the inline scan asks about besides the prefixes. */
+    inlineSources: Set<String> = emptySet(),
 ): InlineWidening = widen(
     prefixes, facts, recordedConstants, inlinableSourceChanged, digestRule, recordedAnnotations, ownTestClasses,
-    inlinedAway, lineOnly,
+    inlinedAway, lineOnly, inlineSources,
 ).let { widening -> if (lineOnly == null) widening else widening.withLines(widening.lines ?: LineOnly.NONE) }
 
 private fun widen(
@@ -494,6 +496,7 @@ private fun widen(
     ownTestClasses: Set<String>,
     inlinedAway: Set<String>,
     lineOnly: LineOnlyRule?,
+    inlineSources: Set<String>,
 ): InlineWidening {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -535,7 +538,7 @@ private fun widen(
 
     // The throwable is kept as the only account of why the scan failed.
     var threw: Throwable? = null
-    val scan = runCatching { artifacts.classesInlining(prefixes, inlinableSourceChanged) }
+    val scan = runCatching { artifacts.classesInlining(prefixes + inlineSources, inlinableSourceChanged) }
         .getOrElse { problem ->
             threw = problem
             InlineScan.Refused(
@@ -884,6 +887,17 @@ private fun moduleBuildDirs(facts: ClasspathView): Map<String, String> {
 }
 
 /**
+ * The build directory of the module whose directory holds [path] (the longest match; the root
+ * module only for a path under its own `src`), or null when none does.
+ */
+private fun compiledOutputOf(path: String, facts: ClasspathView): String? {
+    val module = ClasspathScope.ownerOf(path, facts.moduleDirs)?.second
+        ?: facts.moduleDirs[""]?.takeIf { path.startsWith("src/") }
+        ?: return null
+    return facts.buildDirs[module]
+}
+
+/**
  * The change set with what [ignore] declares, an IDE's state, what [notReadByTests] declares, and
  * other modules' sources removed, computed at execution time. The classpath part keeps every path
  * whenever the classpath or its classes cannot be established. A path a default entry matches
@@ -902,6 +916,8 @@ internal fun scopedChange(
     moved: Set<String> = emptySet(),
     /** The test task's input files under the root beyond its classpath and test classes, root-relative. */
     taskInputs: () -> List<String> = { emptyList() },
+    /** Where the step's log goes. */
+    report: (String) -> Unit = {},
 ): ScopedChange {
     // The same artifacts `establish` builds, so a path this task's classes name is kept. Lazy: most
     // change sets have no path to ask about.
@@ -944,8 +960,21 @@ internal fun scopedChange(
     val restriction = ClasspathScope.restrict(read, facts.moduleDirs, present, { candidates ->
         artifacts.pathsNamedInClasses(candidates, TaskArtifacts.Naming.CLASS_SOURCE)
     }, others)
-    return ScopedChange(
+    val resolved = CompiledNames.resolve(
         ChangeDetection.split(restriction.kept, facts.rootDir),
+        rootDir,
+    ) { path, packageName, fileName ->
+        compiledOutputOf(path, facts)?.let { buildDir -> artifacts.classesCompiledFrom(buildDir, packageName, fileName) }
+    }
+    if (resolved.replaced > 0) {
+        report(
+            "named ${resolved.replaced} changed file(s) by the classes compiled from them " +
+                "(${resolved.dropped} name(s) no class carries dropped): " +
+                resolved.change.classPrefixes.sorted().joinToString()
+        )
+    }
+    return ScopedChange(
+        resolved.change,
         restriction.dropped.size,
         ideState = ideState,
         notReadByTests = paths.size - read.size - ideState,

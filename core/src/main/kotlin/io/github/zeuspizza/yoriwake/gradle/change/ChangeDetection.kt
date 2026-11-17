@@ -34,6 +34,11 @@ internal object ChangeDetection {
          * leaves the change set as line-only only when every path behind it is.
          */
         val prefixesByPath: Map<String, Set<String>> = emptyMap(),
+        /**
+         * Kotlin path names [CompiledNames] dropped from [classPrefixes] because no compiled class
+         * carries them, which an inliner's SMAP still names its source by.
+         */
+        val inlineSources: Set<String> = emptySet(),
     )
 
     // Only Kotlin `inline` bodies are copied into callers and erase the edge; Groovy has no
@@ -69,6 +74,24 @@ internal object ChangeDetection {
             }
         }
         return Change(prefixes, unmappable, inlinable, inlineOnly, byPath)
+    }
+
+    private fun pathName(match: MatchResult): String {
+        val fqn = match.groups["fqn"]!!.value
+        return if (match.value.endsWith(".kt")) InlinedSources.kotlinSourcePrefix(fqn) else fqn.replace('/', '.')
+    }
+
+    /** The prefix a class source's path alone gives it, as [split] names it; null for a path that is not one. */
+    fun pathName(path: String): String? = SOURCE_ROOT.matchEntire(path)?.let(::pathName)
+
+    /** The `package` a source file declares, "" for none; null when it cannot be read. */
+    fun packageOf(projectDir: File?, path: String): String? {
+        val file = projectDir?.resolve(path)?.takeIf(File::isFile) ?: return null
+        val text = runCatching { file.readText() }.getOrNull() ?: return null
+        val rawStrings = rawStringRanges(path, text)
+        return PACKAGE.findAll(text)
+            .firstOrNull { match -> rawStrings.none { match.range.first in it } }
+            ?.groups?.get("name")?.value?.trim().orEmpty()
     }
 
     /**
@@ -183,9 +206,7 @@ internal object ChangeDetection {
         val text = runCatching { file.readText() }.getOrNull() ?: return emptySet()
 
         val rawStrings = rawStringRanges(path, text)
-        val packageName = PACKAGE.findAll(text)
-            .firstOrNull { match -> rawStrings.none { match.range.first in it } }
-            ?.groups?.get("name")?.value?.trim()
+        val packageName = packageOf(projectDir, path)
         val prefix = if (packageName.isNullOrEmpty()) "" else "$packageName."
         return TYPE_DECLARATION.findAll(text)
             .filterNot { match -> rawStrings.any { match.range.first in it } }

@@ -181,6 +181,7 @@ LOADED_CLASS_RECORDER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/
 SELECTOR = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Selector.java"
 CHANGE_DETECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ChangeDetection.kt"
 INLINED_SOURCES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InlinedSources.kt"
+COMPILED_NAMES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/CompiledNames.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
 FILTER_RULE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/FilterRule.java"
 RULES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Rules.java"
@@ -546,6 +547,9 @@ def unit_suite():
          # The regex that decides whether a changed path yields a class name at all -- the first
          # decision in the whole pipeline.
          "--tests", "*ChangeDetectionTest*",
+         # What names a changed source by the classes compiled from it, which every rule after the
+         # change set judges.
+         "--tests", "*CompiledNamesTest*",
          # The reader that decides whether a class inlined a changed source, the mechanism the
          # misses seen in real projects are shaped like.
          "--tests", "*InlinedSourcesTest*",
@@ -1705,6 +1709,30 @@ MUTATIONS = [
      "                val prefix = if (path.endsWith(\".kt\")) InlinedSources.kotlinSourcePrefix(fqn) else fqn.replace('/', '.')",
      "                val prefix = fqn.replace('/', '.')",
      unit_suite, "a dotted Kotlin file name maps to the class Kotlin names it"),
+    # A changed source is named by the classes compiled from it only when they can be listed; a
+    # listing that found nothing would otherwise drop every name the file's text gives.
+    ("a file whose classes cannot be listed loses every name", COMPILED_NAMES,
+     "            return listed(path, packageName, path.substringAfterLast('/'))?.takeIf { it.isNotEmpty() }",
+     "            return listed(path, packageName, path.substringAfterLast('/')) ?: emptyList()",
+     unit_suite, "a file whose classes cannot be listed keeps the names its text gives"),
+    ("a declared name no compiled class carries is kept", COMPILED_NAMES,
+     "            result += classes.filter { carries(it, simple) }",
+     "            result += classes.filter { carries(it, simple) }.ifEmpty { listOf(name) }",
+     unit_suite, "a typealias no class carries is dropped and the class stays"),
+    ("only the first class carrying a declared name is named", COMPILED_NAMES,
+     "            result += classes.filter { carries(it, simple) }",
+     "            result += classes.filter { carries(it, simple) }.take(1)",
+     unit_suite, "a nested name two types share names both"),
+    ("a compiled class no name covers goes unnamed", COMPILED_NAMES,
+     "            if (result.none { covers(cls, it) }) {",
+     "            if (false && result.none { covers(cls, it) }) {",
+     unit_suite, "a facade JvmName renames is named"),
+    # Another module's same-named file in the same package compiles to classes with the same
+    # `SourceFile`; they must not answer for this one.
+    ("a file's classes are listed from every module's output", TASK_ARTIFACTS,
+     "        val roots = (directories + testOutputs).filter { it.isDirectory && below(it) }.distinct()",
+     "        val roots = (directories + testOutputs).filter { it.isDirectory }.distinct()",
+     unit_suite, "a changed file is named by its own module's classes"),
     ("the SMAP reader names a dotted source file by its raw path again", INLINED_SOURCES,
      "                byId[id] = if (path.endsWith(\".kt\")) kotlinSourcePrefix(path) else path.replace('/', '.')",
      "                byId[id] = path.removeSuffix(\".kt\").replace('/', '.')",
