@@ -2172,6 +2172,10 @@ def case_a_build_that_failed_on_a_download_runs_once_more():
                          f"got exit {code}, {runs} runs, pauses {pauses}")
     if "Remote host terminated the handshake" not in out or "Could not GET" not in out:
         problems += fail("the first run's output, or the line naming why it reran, is missing")
+    code, runs, pauses, _ = _retried([[_fixture("download-failure-429.txt"), 1], ["BUILD SUCCESSFUL\n", 0]])
+    if (code, runs, pauses) != (0, 2, [300]):
+        problems += fail(f"a 429 then a pass should exit 0 after 2 runs and one 300s pause, got exit "
+                         f"{code}, {runs} runs, pauses {pauses}")
     code, runs, _, _ = _retried([[handshake, 1], [handshake, 1]])
     if code == 0 or runs != 2:
         problems += fail(f"two download failures should fail after 2 runs, got exit {code}, {runs} runs")
@@ -2223,6 +2227,27 @@ def case_the_matrix_cell_builds_through_the_download_rerun():
     if not re.search(r"\.github/ci\.py rerun-on-download-failure -- \./gradlew build", text):
         return fail("matrix.yml: the cell's build does not run through the download rerun")
     return 0
+
+
+def bare_gradle_calls(job):
+    """The lines of a job's text that call `./gradlew` other than through the download rerun."""
+    return [line.strip() for line in job.splitlines()
+            if "./gradlew" in line and not line.lstrip().startswith("#")
+            and "ci.py rerun-on-download-failure -- ./gradlew" not in line]
+
+
+def case_the_matrix_capture_and_select_build_through_the_download_rerun():
+    with open(os.path.join(WORKFLOWS, "matrix.yml"), encoding="utf-8") as handle:
+        jobs = release_jobs(handle.read())
+    problems = 0
+    for name in ("capture", "select"):
+        if "./gradlew" not in jobs.get(name, ""):
+            problems += fail(f"matrix.yml: the {name} job runs no Gradle build this case can read")
+        for line in bare_gradle_calls(jobs.get(name, "")):
+            problems += fail(f"matrix.yml: {name} builds outside the download rerun: {line}")
+    if not bare_gradle_calls("        run: ./gradlew -p samples/demo test\n"):
+        problems += fail("a bare ./gradlew step passed")
+    return problems
 
 
 FUNCTIONAL_SHARD_JOBS = ("functional-shard", "functional-gradle9-shard", "functional-windows-shard",
@@ -4411,6 +4436,7 @@ CASES = (
     case_the_test_kit_listing_names_each_cached_file_and_its_size,
     case_no_test_kit_home_is_said_rather_than_silent,
     case_a_dropped_or_rate_limited_download_is_a_download_failure,
+    case_the_matrix_capture_and_select_build_through_the_download_rerun,
     case_a_failure_that_is_not_a_download_is_not_rerun,
     case_a_build_that_failed_on_a_download_runs_once_more,
     case_on_windows_the_wrapper_script_runs_as_its_batch_file,

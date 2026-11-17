@@ -411,13 +411,23 @@ def run_teed(command):
     return process.wait(), b"".join(output).decode("utf-8", errors="replace")
 
 
+# Seconds before the rerun after a rate limit, whatever `--pause` says: a rerun a minute after a 429
+# hit it again, as a repository counts an address's requests over time.
+RATE_LIMIT_PAUSE = 300
+# A 429 in Gradle's words (`status code 429`) and in Maven's resolver's (`status code: 429`).
+RATE_LIMITED = re.compile(r"status code:? 429\b")
+
+
 def rerun_on_download_failure(command, pause=60, sleep=time.sleep):
-    """Runs `command`, and once more after `pause` seconds when it failed on a dependency download
-    alone; the exit code of the last run. The second run reuses what the first built."""
+    """Runs `command`, and once more after `pause` seconds (`RATE_LIMIT_PAUSE` after a 429) when it
+    failed on a dependency download alone; the exit code of the last run. The second run reuses
+    what the first built."""
     code, output = run_teed(command)
     why = download_failure(output) if code != 0 else None
     if why is None:
         return code
+    if RATE_LIMITED.search(why):
+        pause = RATE_LIMIT_PAUSE
     print(f"rerunning in {pause}s, once: the build failed on a dependency download: {why}", flush=True)
     sleep(pause)
     return run_teed(command)[0]
