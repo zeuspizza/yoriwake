@@ -163,6 +163,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         dependencies: DependencyRule.Context? = null,
         /** Whether `narrowLineOnlyChanges` is on for this module. */
         narrowLineOnlyChanges: Boolean = false,
+        /** The digest of the execution's own test filter, or null; see [Recording.unionFilterOf]. */
+        unionFilter: String? = null,
     ): RunPlan.Kind {
         val host = Host(name, properties)
         // Whatever the run kind, as on Gradle: an observing or complement run reports the pin too.
@@ -301,6 +303,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing, text = text,
                 dependencies = dependencies,
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = selected.stamp, moved = selected.moved,
+                unionFilter = unionFilter,
             ),
             host,
         )

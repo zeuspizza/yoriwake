@@ -243,6 +243,7 @@ MAVEN_HOST = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/MavenH
 MAVEN_DECLINES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Declines.kt"
 MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ChainedListener.kt"
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
+MAVEN_UNION_TRUST = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/UnionTrust.kt"
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
 MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
 MAVEN_CLASSPATH_VIEWS = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ClasspathViews.kt"
@@ -5347,31 +5348,35 @@ MUTATIONS = [
      "        if (outcome is ScopeOutcome.NotApplied || !isTestGoal(execution)) return\n",
      "        if (outcome is ScopeOutcome.NotApplied) return\n",
      maven_suite, "integration tests are captured into their own map"),
-    # A loaded-class union speaks for every test of the execution: a capture narrowed by groups or
-    # engines must discard it, as Gradle's filtered task does, or a class only the left-out tests
-    # load would read as untested and be skipped.
-    ("a Maven capture filtered by groups keeps a union", MAVEN_RECORDING,
-     '            byGroups -> "its tests were filtered by groups or tags"\n',
-     "",
-     maven_suite, "a capture filtered by groups discards the union"),
-    ("a Maven capture filtered by engines keeps a union", MAVEN_RECORDING,
-     '            byEngines -> "its tests were filtered by JUnit 5 engines"\n',
-     "",
-     maven_suite, "an engine excluded in the POM discards the union"),
-    ("a Maven capture run through TestNG suite files keeps a union", MAVEN_RECORDING,
-     '            bySuites -> "its tests were filtered by TestNG suite files"\n',
-     "",
-     maven_suite, "a capture run through a TestNG suite file discards the union"),
-    ("a Maven capture filtered by tags in its properties keeps a union", MAVEN_RECORDING,
-     '            listOf("includeTags", "excludeTags").any { given(properties[it]) }\n',
-     '            false\n',
-     maven_suite, "tags Surefire hands the JUnit Platform discard the union"),
-    # Failsafe's tests commonly drive an application another JVM runs: a union from its fork alone
-    # would turn a class only that JVM loads into a skip.
-    ("a Failsafe capture records a union", MAVEN_RECORDING,
-     '        if (execution.artifactId == FAILSAFE) return "Failsafe\'s tests may drive code in another JVM, which no union sees"\n',
-     "",
-     maven_suite, "a Failsafe execution records no union"),
+    # A loaded-class union recorded with tests left out by groups, tags, engines or suite files speaks
+    # only for runs under the same filter: each one keys it, or a run under another filter takes a
+    # union that lacks what the left-out tests load.
+    ("a Maven union is keyed to no groups", MAVEN_UNION_TRUST,
+     '        val lines = listOf("groups", "excludedGroups").mapNotNull { name -> (value(name) ?: property(name))?.let { "$name $it" } } +\n',
+     '        val lines = emptyList<String>() +\n',
+     maven_suite, "a capture filtered by groups keys the union to them"),
+    ("a Maven union is keyed to no engines", MAVEN_UNION_TRUST,
+     '            listOf("includeJUnit5Engines", "excludeJUnit5Engines").mapNotNull { name ->\n',
+     '            emptyList<String>().mapNotNull { name ->\n',
+     maven_suite, "an engine excluded in the POM keys the union to it"),
+    ("a Maven union is keyed to no tags in its properties", MAVEN_UNION_TRUST,
+     '            listOf("includeTags", "excludeTags").mapNotNull { name -> platformProperty(name)?.let { "$name $it" } } +\n',
+     '',
+     maven_suite, "tags Surefire hands the JUnit Platform key the union to them"),
+    ("a Maven union is keyed to no TestNG suite files", MAVEN_UNION_TRUST,
+     '            listOfNotNull(listed("suiteXmlFiles", "surefire.suiteXmlFiles").takeIf(List<String>::isNotEmpty)?.let { "suiteXmlFiles $it" })\n',
+     '            emptyList<String>()\n',
+     maven_suite, "a capture run through a TestNG suite file keys the union to it"),
+    # Code the integration tests reach may run in a JVM a mojo before them started, which no union
+    # lists: only a run after mojos known to start nothing trusts a Failsafe union.
+    ("an unlisted mojo before Failsafe no longer drops its union", MAVEN_UNION_TRUST,
+     '        unvettedMojo?.let { return "$it ran before it and may run code in another JVM, which no union sees" }\n',
+     '',
+     maven_suite, "a Failsafe execution after a mojo that may start a process records no union"),
+    ("a Failsafe selecting run trusts a union after an unlisted mojo", MAVEN_RECORDING,
+     '            unionFilter = failsafeDoubt(execution, classpath)?.let { UnionTrust.UNVETTED } ?: unionFilter,\n',
+     '            unionFilter = unionFilter,\n',
+     maven_suite, "a class nothing loads narrows the integration tests, unless a mojo that may start a process ran first"),
     # A test that runs a Maven build through maven-verifier runs code in JVMs the agent never sees.
     ("a task that forks a Maven build narrows on absence", TASK_ARTIFACTS,
      '"gradle-testkit", "maven-verifier", ',

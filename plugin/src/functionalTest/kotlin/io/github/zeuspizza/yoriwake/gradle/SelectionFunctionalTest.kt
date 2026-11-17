@@ -723,7 +723,7 @@ class SelectionFunctionalTest : FunctionalTestSupport() {
         )
 
         // No compile step first: the edit is still only in the source.
-        val explained = runner(dir, "classes", "yoriwakeExplainTest", "-Pyoriwake.base=HEAD").build().output
+        val explained = runner(dir, "yoriwakeExplainTest").build().output
         val mapDir = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
         val record = File(mapDir, "explain.json").readText()
         File(dir, "build/test-results").deleteRecursively()

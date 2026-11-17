@@ -166,6 +166,10 @@ class CaptureFunctionalTest {
     /** lib's loaded-class union, or null when its map holds none. */
     private fun union(project: File): String? = libMap(project)?.let { File(it, "loaded.txt") }?.takeIf(File::isFile)?.readText()
 
+    /** Whether lib's union is keyed to a test filter. */
+    private fun keyed(project: File): Boolean =
+        libMap(project)?.let { File(it, "loaded-provenance") }?.takeIf(File::isFile)?.readText()?.startsWith("full filtered ") == true
+
     /** lib's Surefire given [xml] as its configuration; committed. */
     private fun surefire(project: File, xml: String) {
         File(project, "lib/pom.xml").edit {
@@ -179,28 +183,27 @@ class CaptureFunctionalTest {
     }
 
     @Test
-    fun `a capture filtered by groups discards the union`(@TempDir dir: File) {
+    fun `a capture filtered by groups keys the union to them`(@TempDir dir: File) {
         val project = committed(dir)
         FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
-        assertNotNull(union(project))
+        assertFalse(keyed(project))
         surefire(project, "<groups>fast</groups>")
 
         val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded().output
 
-        assertNull(union(project))
-        assertContains(output, "keeps no loaded-class union: its tests were filtered by groups or tags.")
+        assertNotNull(union(project))
+        assertTrue(keyed(project), "the union is not keyed to the groups it was recorded under")
+        assertFalse("keeps no loaded-class union" in output, output)
     }
 
     @Test
-    fun `tags Surefire hands the JUnit Platform discard the union`(@TempDir dir: File) {
+    fun `tags Surefire hands the JUnit Platform key the union to them`(@TempDir dir: File) {
         val project = committed(dir)
-        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
-        assertNotNull(union(project))
         surefire(project, "<properties><includeTags>fast</includeTags></properties>")
 
         FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
 
-        assertNull(union(project))
+        assertTrue(keyed(project), "the union is not keyed to the tags it was recorded under")
     }
 
     @Test
@@ -226,19 +229,17 @@ class CaptureFunctionalTest {
     }
 
     @Test
-    fun `an engine excluded in the POM discards the union`(@TempDir dir: File) {
+    fun `an engine excluded in the POM keys the union to it`(@TempDir dir: File) {
         val project = committed(dir)
-        FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
-        assertNotNull(union(project))
         surefire(project, "<excludeJUnit5Engines><excludeJUnit5Engine>junit-vintage</excludeJUnit5Engine></excludeJUnit5Engines>")
 
         FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded()
 
-        assertNull(union(project))
+        assertTrue(keyed(project), "the union is not keyed to the engines it was recorded under")
     }
 
     @Test
-    fun `a capture run through a TestNG suite file discards the union`(@TempDir dir: File) {
+    fun `a capture run through a TestNG suite file keys the union to it`(@TempDir dir: File) {
         val project = committed(dir)
         File(project, "pom.xml").edit {
             it.replace(
@@ -267,7 +268,6 @@ class CaptureFunctionalTest {
         val output = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", loaded).succeeded().output
 
         assertContains(output, "Tests run: 1, Failures: 0")
-        assertNull(union(project))
-        assertContains(output, "keeps no loaded-class union: its tests were filtered by TestNG suite files.")
+        assertTrue(keyed(project), "the union is not keyed to the suite file it was recorded under")
     }
 }
