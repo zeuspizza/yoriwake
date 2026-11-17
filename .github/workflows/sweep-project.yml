@@ -90,11 +90,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
+          # What the isolated recording below may still spend is counted from here, before the
+          # pack's restore, so that restore comes out of its time and not the job's last minutes.
+          date +%s > "$RUNNER_TEMP/record-start"
           name=$(python3 bench/deps_pack.py name "$(jq -r '.[0]' <<< "$ARGS")")
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "run=$(python3 bench/deps_pack.py find "$name" --repo "$GITHUB_REPOSITORY" --branch "$BRANCH")" >> "$GITHUB_OUTPUT"
       - if: steps.deps.outputs.run != ''
         continue-on-error: true
+        timeout-minutes: 15
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ steps.deps.outputs.name }}
@@ -103,13 +107,8 @@ jobs:
           path: ${{ runner.temp }}/deps-in
       - name: restore the dependency pack
         continue-on-error: true
-        run: |
-          set -eu
-          if [ -f "$RUNNER_TEMP/deps-in/deps.tar" ]; then
-            python3 bench/deps_pack.py unpack "$RUNNER_TEMP/deps-in/deps.tar" || echo "::warning::the dependency pack did not restore"
-            rm -rf "$RUNNER_TEMP/deps-in"
-          fi
-          python3 bench/deps_pack.py snapshot "$RUNNER_TEMP/deps-before.json"
+        timeout-minutes: 15
+        run: python3 bench/deps_pack.py restore "$RUNNER_TEMP/deps-in" "$RUNNER_TEMP/deps-before.json"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: published-rows
@@ -127,8 +126,8 @@ jobs:
           ISOLATED: ${{ inputs.isolated }}
         run: |
           set -eu
-          # What the isolated recording below may still spend is counted from here.
-          date +%s > "$RUNNER_TEMP/record-start"
+          # Where the step above could not start the clock.
+          [ -f "$RUNNER_TEMP/record-start" ] || date +%s > "$RUNNER_TEMP/record-start"
           # A guest's own test report on the run page is unlabelled and repeated for every build it
           # runs (anki-android's build writes one per test task); the merge job writes the page.
           unset GITHUB_STEP_SUMMARY
@@ -184,7 +183,6 @@ jobs:
           for gradle in "${GRADLE_USER_HOME:-$HOME/.gradle}"/wrapper/dists/*/*/*/bin/gradle; do
             [ -x "$gradle" ] && { "$gradle" --stop --quiet || true; }
           done
-          python3 bench/deps_pack.py report "$RUNNER_TEMP/deps-before.json"
           mkdir -p "$RUNNER_TEMP/deps"
           python3 bench/deps_pack.py pack "$RUNNER_TEMP/deps/deps.tar"
       # Under one name per project and pin, found by the next sweep's record job while it lasts.
@@ -275,6 +273,10 @@ jobs:
           name: failed-record-${{ fromJSON(inputs.project).project }}
           retention-days: 3
           path: bench/logs/${{ fromJSON(inputs.project).project }}/*.log
+      - name: say what this job downloaded
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 bench/deps_pack.py report "$RUNNER_TEMP/deps-before.json"
 
   shard:
     needs: record
@@ -316,19 +318,15 @@ jobs:
       # resolves as it always did.
       - if: needs.record.outputs.deps != ''
         continue-on-error: true
+        timeout-minutes: 15
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.record.outputs.deps }}
           path: ${{ runner.temp }}/deps-in
       - name: restore the dependency pack
         continue-on-error: true
-        run: |
-          set -eu
-          if [ -f "$RUNNER_TEMP/deps-in/deps.tar" ]; then
-            python3 bench/deps_pack.py unpack "$RUNNER_TEMP/deps-in/deps.tar" || echo "::warning::the dependency pack did not restore"
-            rm -rf "$RUNNER_TEMP/deps-in"
-          fi
-          python3 bench/deps_pack.py snapshot "$RUNNER_TEMP/deps-before.json"
+        timeout-minutes: 15
+        run: python3 bench/deps_pack.py restore "$RUNNER_TEMP/deps-in" "$RUNNER_TEMP/deps-before.json"
       - if: needs.record.outputs.isolated == 'true'
         id: isolated
         continue-on-error: true
@@ -456,19 +454,15 @@ jobs:
       # resolves as it always did.
       - if: needs.record.outputs.deps != ''
         continue-on-error: true
+        timeout-minutes: 15
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.record.outputs.deps }}
           path: ${{ runner.temp }}/deps-in
       - name: restore the dependency pack
         continue-on-error: true
-        run: |
-          set -eu
-          if [ -f "$RUNNER_TEMP/deps-in/deps.tar" ]; then
-            python3 bench/deps_pack.py unpack "$RUNNER_TEMP/deps-in/deps.tar" || echo "::warning::the dependency pack did not restore"
-            rm -rf "$RUNNER_TEMP/deps-in"
-          fi
-          python3 bench/deps_pack.py snapshot "$RUNNER_TEMP/deps-before.json"
+        timeout-minutes: 15
+        run: python3 bench/deps_pack.py restore "$RUNNER_TEMP/deps-in" "$RUNNER_TEMP/deps-before.json"
       # Its own bound inside the job's, so its own faults end here and the upload below still runs.
       - name: replay the last real commits
         continue-on-error: true

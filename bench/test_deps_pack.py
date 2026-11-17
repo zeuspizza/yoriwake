@@ -84,6 +84,40 @@ def case_a_pack_that_holds_the_plugin_under_test_does_not_restore_it():
     return failures
 
 
+def case_a_member_that_climbs_out_of_its_tree_is_left_out():
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        out = os.path.join(root, "climbing.tar")
+        _write(root, "plugin.jar")
+        with tarfile.open(out, "w") as tar:
+            tar.add(os.path.join(root, "plugin.jar"),
+                    arcname="modules-2/files-2.1/x/../io.github.zeuspizza/yoriwake/plugin.jar")
+            tar.add(os.path.join(root, "plugin.jar"), arcname="repository/../../outside.jar")
+            tar.add(os.path.join(root, "plugin.jar"), arcname=f"repository/{JAR}")
+        trees = _trees(root)
+        line = deps_pack.unpack(trees, out)
+        if line != "deps: restored 1 files":
+            failures += fail(f"members climbing out of their tree were restored: {line}")
+    return failures
+
+
+def case_restore_survives_a_missing_or_broken_pack_and_snapshots_anyway():
+    failures = 0
+    with tempfile.TemporaryDirectory() as root:
+        trees = _trees(root)
+        _write(trees["repository"], JAR)
+        before = os.path.join(root, "before.json")
+        deps_pack.restore(trees, os.path.join(root, "absent"), before)
+        if deps_pack.report(trees, before) != "deps: downloaded 0 files, 0.0 MB":
+            failures += fail("without a pack, the snapshot did not hold what was there")
+        downloaded = os.path.join(root, "deps-in")
+        _write(downloaded, "deps.tar", "not a tar")
+        deps_pack.restore(trees, downloaded, before)
+        if os.path.exists(downloaded) or not os.path.isfile(before):
+            failures += fail("a broken pack was kept, or no snapshot was taken after it")
+    return failures
+
+
 def case_the_report_counts_only_what_came_after_the_snapshot():
     failures = 0
     with tempfile.TemporaryDirectory() as root:

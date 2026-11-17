@@ -99,6 +99,7 @@ jobs:
           echo "run=$(python3 bench/deps_pack.py find "$name" --repo "$GITHUB_REPOSITORY" --branch "$BRANCH")" >> "$GITHUB_OUTPUT"
       - if: steps.deps.outputs.run != ''
         continue-on-error: true
+        timeout-minutes: 15
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ steps.deps.outputs.name }}
@@ -107,13 +108,8 @@ jobs:
           path: ${{ runner.temp }}/deps-in
       - name: restore the dependency pack
         continue-on-error: true
-        run: |
-          set -eu
-          if [ -f "$RUNNER_TEMP/deps-in/deps.tar" ]; then
-            python3 bench/deps_pack.py unpack "$RUNNER_TEMP/deps-in/deps.tar" || echo "::warning::the dependency pack did not restore"
-            rm -rf "$RUNNER_TEMP/deps-in"
-          fi
-          python3 bench/deps_pack.py snapshot "$RUNNER_TEMP/deps-before.json"
+        timeout-minutes: 15
+        run: python3 bench/deps_pack.py restore "$RUNNER_TEMP/deps-in" "$RUNNER_TEMP/deps-before.json"
       - name: time each arm
         env:
           PROJECT: ${{ matrix.project }}
@@ -198,6 +194,7 @@ jobs:
           echo "run=$(python3 bench/deps_pack.py find "$name" --repo "$GITHUB_REPOSITORY" --branch "$BRANCH")" >> "$GITHUB_OUTPUT"
       - if: steps.deps.outputs.run != ''
         continue-on-error: true
+        timeout-minutes: 15
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ steps.deps.outputs.name }}
@@ -206,13 +203,8 @@ jobs:
           path: ${{ runner.temp }}/deps-in
       - name: restore the dependency pack
         continue-on-error: true
-        run: |
-          set -eu
-          if [ -f "$RUNNER_TEMP/deps-in/deps.tar" ]; then
-            python3 bench/deps_pack.py unpack "$RUNNER_TEMP/deps-in/deps.tar" || echo "::warning::the dependency pack did not restore"
-            rm -rf "$RUNNER_TEMP/deps-in"
-          fi
-          python3 bench/deps_pack.py snapshot "$RUNNER_TEMP/deps-before.json"
+        timeout-minutes: 15
+        run: python3 bench/deps_pack.py restore "$RUNNER_TEMP/deps-in" "$RUNNER_TEMP/deps-before.json"
       - name: record isolated and measure rows
         env:
           PROJECT: ${{ inputs.rows }}

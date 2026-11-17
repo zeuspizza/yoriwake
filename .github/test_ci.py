@@ -2276,16 +2276,21 @@ def dependency_pack_problems(workflows):
         for job_name in wanted:
             steps = _steps(workflows[name].get(job_name, ""))
             builds = [i for i, step in enumerate(steps) if re.search(r"bench/(run|commit_replay)\.py", step)]
-            restores = [i for i, step in enumerate(steps) if "bench/deps_pack.py unpack" in step]
+            restores = [i for i, step in enumerate(steps) if "bench/deps_pack.py restore" in step]
             if not builds or not restores or restores[0] > builds[0]:
                 problems.append(f"{name} {job_name}: no pack restored before its first build")
             for step in steps:
-                restoring = "bench/deps_pack.py unpack" in step or (
+                restoring = "bench/deps_pack.py restore" in step or (
                     "actions/download-artifact@" in step and "deps" in step)
                 if restoring and "continue-on-error: true" not in step:
                     problems.append(f"{name} {job_name}: a pack restore can fail the job")
-            if not any("bench/deps_pack.py report" in step for step in steps):
-                problems.append(f"{name} {job_name}: no line says what it downloaded")
+            if not any("bench/deps_pack.py report" in step and "if: ${{ !cancelled() }}" in step
+                       for step in steps):
+                problems.append(f"{name} {job_name}: no line says what it downloaded, failed or not")
+            if job_name in ("shard", "replay") and not any(
+                    "actions/download-artifact@" in step and "name: ${{ needs.record.outputs.deps }}" in step
+                    for step in steps):
+                problems.append(f"{name} {job_name}: does not restore its own record job's pack")
             uploads = [i for i, step in enumerate(steps)
                        if "actions/upload-artifact@" in step and "steps.deps.outputs.name" in step]
             if job_name != "record":
@@ -2317,7 +2322,11 @@ def case_every_corpus_job_starts_from_the_dependency_pack():
     problems = sum(fail(problem) for problem in dependency_pack_problems(workflows))
     for what, edit in (
             ("a shard without its restore", lambda w: w["sweep-project.yml"].update(
-                shard=w["sweep-project.yml"]["shard"].replace("bench/deps_pack.py unpack", "true"))),
+                shard=w["sweep-project.yml"]["shard"].replace("bench/deps_pack.py restore", "true"))),
+            ("a replay restoring another pack", lambda w: w["sweep-project.yml"].update(
+                replay=w["sweep-project.yml"]["replay"].replace("needs.record.outputs.deps }}", "steps.x.outputs.y }}"))),
+            ("a record job silent when its build failed", lambda w: w["sweep-project.yml"].update(
+                record=w["sweep-project.yml"]["record"].replace("if: ${{ !cancelled() }}\n        continue-on-error: true\n        run: python3 bench/deps_pack.py report", "continue-on-error: true\n        run: python3 bench/deps_pack.py report"))),
             ("a replay granted actions: read", lambda w: w["sweep-project.yml"].update(
                 replay=w["sweep-project.yml"]["replay"].replace("permissions:\n", "permissions:\n      actions: read\n", 1))),
             ("a pack taken with the daemons running", lambda w: w["sweep-project.yml"].update(

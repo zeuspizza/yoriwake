@@ -9,8 +9,7 @@ plugin under test (each job publishes and checks its own), lock files or Maven's
 
     python3 bench/deps_pack.py name bench/projects/kafka.toml
     python3 bench/deps_pack.py find deps-kafka-0123456789ab --repo owner/name --branch main
-    python3 bench/deps_pack.py unpack deps.tar
-    python3 bench/deps_pack.py snapshot before.json
+    python3 bench/deps_pack.py restore "$RUNNER_TEMP/deps-in" before.json
     python3 bench/deps_pack.py report before.json
     python3 bench/deps_pack.py pack deps.tar
 
@@ -23,6 +22,7 @@ files, M MB`: the files present now that the snapshot did not hold.
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -115,12 +115,29 @@ def unpack(trees, pack_path):
     with tarfile.open(pack_path) as tar:
         for member in tar:
             name, _, relative = member.name.partition("/")
-            if name not in trees or not member.isfile() or not kept(name, relative):
+            if name not in trees or not member.isfile() or ".." in relative.split("/") \
+                    or not kept(name, relative):
                 continue
             member.name = relative
-            tar.extract(member, trees[name], filter="data")
+            try:
+                tar.extract(member, trees[name], filter="data")
+            except tarfile.FilterError:
+                continue
             count += 1
     return f"deps: restored {count} files"
+
+
+def restore(trees, directory, snapshot_path):
+    """Unpacks `<directory>/deps.tar` when a download left one there, then removes it, and takes
+    the snapshot `report` compares with. A pack that cannot be read costs the warm start alone."""
+    pack_path = os.path.join(directory, "deps.tar")
+    if os.path.isfile(pack_path):
+        try:
+            print(unpack(trees, pack_path))
+        except (OSError, tarfile.TarError) as error:
+            print(f"::warning::the dependency pack did not restore: {error}")
+        shutil.rmtree(directory, ignore_errors=True)
+    snapshot(trees, snapshot_path)
 
 
 def pack_name(project_toml):
@@ -169,8 +186,11 @@ def main(argv=None):
     looked.add_argument("name")
     looked.add_argument("--repo", required=True)
     looked.add_argument("--branch", required=True)
-    for command in ("snapshot", "report", "pack", "unpack"):
+    for command in ("report", "pack"):
         sub.add_parser(command).add_argument("path")
+    restored = sub.add_parser("restore", help="unpack a downloaded pack, then snapshot")
+    restored.add_argument("directory")
+    restored.add_argument("snapshot")
     args = parser.parse_args(argv)
     trees = roots()
     if args.command == "name":
@@ -179,14 +199,12 @@ def main(argv=None):
         found = find(args.name, args.repo, args.branch)
         if found is not None:
             print(found)
-    elif args.command == "snapshot":
-        snapshot(trees, args.path)
+    elif args.command == "restore":
+        restore(trees, args.directory, args.snapshot)
     elif args.command == "report":
         print(report(trees, args.path))
-    elif args.command == "pack":
-        print(pack(trees, args.path))
     else:
-        print(unpack(trees, args.path))
+        print(pack(trees, args.path))
     return 0
 
 
