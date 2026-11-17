@@ -17,12 +17,15 @@ internal object CompiledNames {
     /**
      * [change] with each listed path's names replaced by its compiled classes' ([namesFor]). [listed]
      * answers a path's classes, or null when they cannot be listed, which keeps the path as
-     * [ChangeDetection.split] left it: its names, or unmappable for a code-less file.
+     * [ChangeDetection.split] left it: its names, or unmappable for a code-less file. A path name
+     * no class carries stays when [readAsSource] answers that a test JVM read the file by that name:
+     * such a read is a touch the selector matches by the path name alone.
      */
     fun resolve(
         change: ChangeDetection.Change,
         projectDir: File,
         listed: (path: String, packageName: String, fileName: String) -> List<String>?,
+        readAsSource: (pathNames: Collection<String>) -> Set<String>,
     ): Resolved {
         fun classesOf(path: String): List<String>? {
             val packageName = ChangeDetection.packageOf(projectDir, path) ?: return null
@@ -31,12 +34,18 @@ internal object CompiledNames {
         var replaced = 0
         var dropped = 0
         val inlineSources = change.inlineSources.toMutableSet()
+        val droppedPathNames = linkedMapOf<String, String>()
+        fun keepTrack(path: String, resolved: Set<String>) {
+            val pathName = ChangeDetection.pathName(path)?.takeIf { it !in resolved } ?: return
+            droppedPathNames[path] = pathName
+            if (path.endsWith(".kt")) inlineSources += pathName
+        }
         val byPath = change.prefixesByPath.mapValuesTo(linkedMapOf()) { (path, names) ->
             val classes = classesOf(path) ?: return@mapValuesTo names
             val resolved = namesFor(path, names, classes)
             if (resolved != names) replaced++
             dropped += (names - resolved).size
-            ChangeDetection.pathName(path)?.takeIf { path.endsWith(".kt") && it !in resolved }?.let(inlineSources::add)
+            keepTrack(path, resolved)
             resolved
         }
         val unmappable = change.unmappablePaths.toMutableList()
@@ -48,8 +57,14 @@ internal object CompiledNames {
             unmappable.remove(path)
             byPath[path] = resolved
             inlinable = inlinable || ChangeDetection.inlinable(path)
-            ChangeDetection.pathName(path)?.takeIf { path.endsWith(".kt") && it !in resolved }?.let(inlineSources::add)
+            keepTrack(path, resolved)
             routed++
+        }
+        if (droppedPathNames.isNotEmpty()) {
+            val read = readAsSource(droppedPathNames.values)
+            for ((path, pathName) in droppedPathNames) {
+                if (pathName in read) byPath[path] = byPath.getValue(path) + pathName
+            }
         }
         // An inline-only file stays one only under a name a class carries; otherwise its class is judged.
         val prefixes = byPath.values.flatten().toSet()

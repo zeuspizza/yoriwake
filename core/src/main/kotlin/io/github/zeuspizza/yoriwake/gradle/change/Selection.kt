@@ -898,6 +898,30 @@ private fun compiledOutputOf(path: String, facts: ClasspathView): String? {
 }
 
 /**
+ * Of [pathNames], those a capturing test JVM may have read as a source file: a JVM that read
+ * `pkg/utils.kt` touched `pkg.utils`, which no compiled class carries. All of them when the map
+ * cannot say: no map, no touches recorded, or a JVM whose touches are incomplete.
+ */
+private fun readAsSource(mapDir: File?, pathNames: Collection<String>): Set<String> = runCatching {
+    val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir ?: return pathNames.toSet())
+    val touches = map.firstTouches() + map.namedTouches()
+    if (!map.isUsable || touches.isEmpty() ||
+        touches.any { it.className() == io.github.zeuspizza.yoriwake.agent.contract.AgentContract.FIRST_TOUCH_ANY }
+    ) {
+        return pathNames.toSet()
+    }
+    val touched = touches.mapTo(HashSet()) { it.className() }
+    pathNames.filterTo(mutableSetOf()) { name ->
+        // A dotted Kotlin file name: `Platform.jvm.kt` is read as `pkg.Platform.jvm`, named `pkg.Platform_jvm`.
+        val fileStart = name.lastIndexOf('.') + 1
+        name in touched || touched.any { touch ->
+            touch.length == name.length && touch.regionMatches(0, name, 0, fileStart) &&
+                touch.substring(fileStart).replace('.', '_') == name.substring(fileStart)
+        }
+    }
+}.getOrDefault(pathNames.toSet())
+
+/**
  * The change set with what [ignore] declares, an IDE's state, what [notReadByTests] declares, and
  * other modules' sources removed, computed at execution time. The classpath part keeps every path
  * whenever the classpath or its classes cannot be established. A path a default entry matches
@@ -963,9 +987,11 @@ internal fun scopedChange(
     val resolved = CompiledNames.resolve(
         ChangeDetection.split(restriction.kept, facts.rootDir),
         rootDir,
-    ) { path, packageName, fileName ->
-        compiledOutputOf(path, facts)?.let { buildDir -> artifacts.classesCompiledFrom(buildDir, packageName, fileName) }
-    }
+        { path, packageName, fileName ->
+            compiledOutputOf(path, facts)?.let { buildDir -> artifacts.classesCompiledFrom(buildDir, packageName, fileName) }
+        },
+        { pathNames -> readAsSource(mapDir, pathNames) },
+    )
     if (resolved.replaced + resolved.routed > 0) {
         report(
             "named ${resolved.replaced + resolved.routed} changed file(s) by the classes compiled from them " +

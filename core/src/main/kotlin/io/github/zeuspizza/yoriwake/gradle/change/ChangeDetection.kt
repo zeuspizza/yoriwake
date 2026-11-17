@@ -100,11 +100,13 @@ internal object ChangeDetection {
     fun packageOf(projectDir: File?, path: String): String? {
         val file = projectDir?.resolve(path)?.takeIf(File::isFile) ?: return null
         val text = runCatching { file.readText() }.getOrNull() ?: return null
-        val rawStrings = rawStringRanges(path, text)
-        return PACKAGE.findAll(text)
+        return packageIn(text, rawStringRanges(path, text))
+    }
+
+    private fun packageIn(text: String, rawStrings: List<IntRange>): String =
+        PACKAGE.findAll(text)
             .firstOrNull { match -> rawStrings.none { match.range.first in it } }
             ?.groups?.get("name")?.value?.trim().orEmpty()
-    }
 
     /**
      * Whether a Kotlin file holds only a package, imports, file annotations and `inline fun`
@@ -218,8 +220,8 @@ internal object ChangeDetection {
         val text = runCatching { file.readText() }.getOrNull() ?: return emptySet()
 
         val rawStrings = rawStringRanges(path, text)
-        val packageName = packageOf(projectDir, path)
-        val prefix = if (packageName.isNullOrEmpty()) "" else "$packageName."
+        val packageName = packageIn(text, rawStrings)
+        val prefix = if (packageName.isEmpty()) "" else "$packageName."
         return TYPE_DECLARATION.findAll(text)
             .filterNot { match -> rawStrings.any { match.range.first in it } }
             .mapNotNull { it.groups["name"]?.value }

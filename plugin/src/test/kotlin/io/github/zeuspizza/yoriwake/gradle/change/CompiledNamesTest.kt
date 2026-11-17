@@ -45,11 +45,18 @@ class CompiledNamesTest {
         return module
     }
 
-    private fun resolve(module: Module, classpath: List<File> = listOf(module.classes)): CompiledNames.Resolved {
+    /** [readAsSource]: the path names a test JVM read as a source file; none by default. */
+    private fun resolve(
+        module: Module,
+        classpath: List<File> = listOf(module.classes),
+        readAsSource: Set<String> = emptySet(),
+    ): CompiledNames.Resolved {
         val artifacts = TaskArtifacts(classpath, listOf(module.build.absolutePath))
-        return CompiledNames.resolve(ChangeDetection.split(listOf(module.path), module.dir), module.dir) { _, packageName, fileName ->
-            artifacts.classesCompiledFrom(module.build.absolutePath, packageName, fileName)
-        }
+        return CompiledNames.resolve(
+            ChangeDetection.split(listOf(module.path), module.dir), module.dir,
+            { _, packageName, fileName -> artifacts.classesCompiledFrom(module.build.absolutePath, packageName, fileName) },
+            { names -> names.filterTo(mutableSetOf()) { it in readAsSource } },
+        )
     }
 
     @Test
@@ -163,6 +170,31 @@ class CompiledNamesTest {
 
         assertEquals(setOf("pkg.Foo"), change.classPrefixes)
         assertEquals(setOf("pkg.FooMoved"), change.inlineSources)
+    }
+
+    @Test
+    fun `a path name a test JVM read the source file by stays, though no class carries it`(@TempDir dir: File) {
+        val module = module(dir, "src/main/kotlin/pkg/utils.kt", "package pkg\n\nfun help() = 1", "pkg.UtilsKt")
+
+        assertEquals(setOf("pkg.UtilsKt", "pkg.utils"), resolve(module, readAsSource = setOf("pkg.utils")).change.classPrefixes)
+    }
+
+    @Test
+    fun `a module packaged as a jar has its classes listed from the jar`(@TempDir dir: File) {
+        val module = module(
+            dir, "src/main/java/pkg/Outer.java",
+            "package pkg;\npublic class Outer {\n    interface Listener { }\n}",
+        )
+        val jar = File(module.build, "libs/module.jar").apply { parentFile.mkdirs() }
+        java.util.zip.ZipOutputStream(jar.outputStream()).use { zip ->
+            for (name in listOf("pkg.Outer", "pkg.Outer\$Listener", "other.Outer")) {
+                zip.putNextEntry(java.util.zip.ZipEntry(name.replace('.', '/') + ".class"))
+                zip.write(classBytes(name, "Outer.java"))
+                zip.closeEntry()
+            }
+        }
+
+        assertEquals(setOf("pkg.Outer", "pkg.Outer\$Listener"), resolve(module, classpath = listOf(jar)).change.classPrefixes)
     }
 
     @Test
@@ -348,6 +380,7 @@ class CompiledNamesTest {
 
         assertEquals(emptyList(), change.unmappablePaths)
         assertEquals(setOf("pkg.UtilsKt"), change.classPrefixes)
+        assertEquals(setOf("pkg.utils"), change.inlineSources)
         assertTrue(change.inlinableSourceChanged)
     }
 }

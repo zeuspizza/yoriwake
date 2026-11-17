@@ -1727,6 +1727,17 @@ MUTATIONS = [
      "            if (result.none { covers(cls, it) }) {",
      "            if (false && result.none { covers(cls, it) }) {",
      unit_suite, "a facade JvmName renames is named"),
+    # A Kotlin file whose path name no class carries is still named by that path in its inliners'
+    # SMAP; without it the classes that inlined the file are never found.
+    ("the inline scan stops asking for dropped path names", SELECTION,
+     "    val scan = runCatching { artifacts.classesInlining(prefixes + inlineSources, inlinableSourceChanged) }",
+     "    val scan = runCatching { artifacts.classesInlining(prefixes, inlinableSourceChanged) }",
+     unit_suite, "a class that inlined a file named by a path no class carries is still found"),
+    # A test JVM that read a changed source file touched it by its path name alone.
+    ("a path name a test JVM read the source by is dropped", COMPILED_NAMES,
+     "                if (pathName in read) byPath[path] = byPath.getValue(path) + pathName",
+     "                if (false && pathName in read) byPath[path] = byPath.getValue(path) + pathName",
+     unit_suite, "a path name a test JVM read the source file by stays"),
     # Another module's same-named file in the same package compiles to classes with the same
     # `SourceFile`; they must not answer for this one.
     ("a file's classes are listed from every module's output", TASK_ARTIFACTS,
