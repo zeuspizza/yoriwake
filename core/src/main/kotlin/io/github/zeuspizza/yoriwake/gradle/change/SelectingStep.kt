@@ -225,7 +225,8 @@ internal object SelectingStep {
         // an IDE's state, one notReadByTests or pathIgnore took out, or one changed in line
         // information only) rather than reported by git, which would force a full run.
         // The test JVM reads the map as this daemon did, so both trust the same union.
-        host.property(AgentContract.UNION_FILTER_PROPERTY, inputs.unionFilter.orEmpty())
+        // Set only under a filter: a run without one sets nothing, as before there were filtered unions.
+        inputs.unionFilter?.let { host.property(AgentContract.UNION_FILTER_PROPERTY, it) }
         host.property(
             ACCOUNTED_PROPERTY,
             accountedFor(paths, scoped, lines?.prefixes.orEmpty()).toString(),
