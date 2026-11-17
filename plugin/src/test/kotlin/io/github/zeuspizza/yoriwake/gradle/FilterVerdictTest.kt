@@ -187,10 +187,10 @@ class FilterVerdictTest {
 
     @Test
     fun `the same build-script filter gives the same union filter, and another a different one`() {
-        val docker = assertNotNull(filterOf(platformTask { useJUnitPlatform { excludeTags("docker") } }))
+        val docker = assertNotNull(filterOf(platformTask { useJUnitPlatform { it.excludeTags("docker") } }))
 
-        assertEquals(docker, filterOf(platformTask { useJUnitPlatform { excludeTags("docker") } }))
-        assertNotEquals(docker, filterOf(platformTask { useJUnitPlatform { excludeTags("flaky") } }))
-        assertNotEquals(docker, filterOf(platformTask { useJUnitPlatform { excludeTags("docker") }; filter.excludeTestsMatching("*IT") }))
+        assertEquals(docker, filterOf(platformTask { useJUnitPlatform { it.excludeTags("docker") } }))
+        assertNotEquals(docker, filterOf(platformTask { useJUnitPlatform { it.excludeTags("flaky") } }))
+        assertNotEquals(docker, filterOf(platformTask { useJUnitPlatform { it.excludeTags("docker") }; filter.excludeTestsMatching("*IT") }))
     }
 }
