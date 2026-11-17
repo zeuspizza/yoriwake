@@ -1227,7 +1227,9 @@ def case_every_sharded_suite_runs_all_its_shards():
         # as passing.
         if not re.search(r"\n    if: always\(\)( &&[^\n]*)?\n", check):
             problems += fail(f"{name}: its check job does not run when a shard fails (if: always())")
-        if f"if: needs.{name}.result != 'success'" not in check or "exit 1" not in check:
+        # The Maven check also runs when a change needed no Maven shard, and then skips this step.
+        if not re.search(rf"if: (needs\.changes\.outputs\.maven != 'false' && )?needs\.{name}\.result != 'success'",
+                         check) or "exit 1" not in check:
             problems += fail(f"{name}: its check job does not fail when a shard did not succeed")
         # One suite's check must read that suite's results, not another's.
         upload = re.search(r"name: (functional-\w+-(\w+)-)\$\{\{ matrix\.shard \}\}-of-(\d+)", job)
@@ -1902,6 +1904,106 @@ def case_a_change_runs_the_verify_jobs_its_paths_can_affect():
     return problems
 
 
+# Which of the `changes` job's answers each verify.yml job runs on.
+VERIFY_JOB_ANSWERS = {
+    "build": "code", "maven": "code", "run-summary": "code", "build-windows": "unit", "maven-shard": "maven",
+    "functional-shard": "gradle", "functional": "gradle", "functional-gradle9-shard": "gradle",
+    "functional-gradle9": "gradle", "coverage": "gradle", "capture": "gradle", "select": "gradle",
+    "select-on-windows": "gradle", "capture-on-windows": "gradle", "select-on-windows-from-windows": "gradle",
+    "select-on-linux": "gradle", "functional-windows-shard": "gradle", "functional-windows": "gradle",
+    "functional-gradle9-windows-shard": "gradle", "functional-gradle9-windows": "gradle",
+}
+
+
+def verify_scope_problems(text):
+    """Why verify.yml would run a job its change cannot affect, or skip one it can."""
+    problems = []
+    jobs = re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[-1], re.M)
+    for job in jobs:
+        if job == "changes":
+            continue
+        block = _job_block(text, job) or ""
+        condition = re.search(r"^    if: (.*)$", block, re.M)
+        answer = VERIFY_JOB_ANSWERS.get(job)
+        if answer is None:
+            problems.append(f"job {job} has no answer it runs on in VERIFY_JOB_ANSWERS")
+        elif not condition or f"needs.changes.outputs.{answer} != 'false'" not in condition.group(1):
+            problems.append(f"job {job} does not run on the {answer} answer")
+        # A failed `changes` job answers nothing, and `== 'true'` would then skip the job.
+        if re.search(r"needs\.changes\.outputs\.\w+ == 'true'", block):
+            problems.append(f"job {job} runs only when an answer is true, so a failed detector skips it")
+    build = _job_block(text, "build") or ""
+    for step in re.split(r"\n(?=      - )", build.split("    steps:\n", 1)[-1]):
+        if not step.strip().startswith("- ") or "actions/checkout@" in step or "python3 .github/test_ci.py" in step:
+            continue
+        if "needs.changes.outputs.unit != 'false'" not in step:
+            problems.append(f"a build step runs when no Gradle suite is needed: {step.strip().splitlines()[0]}")
+    if "python3 .github/test_ci.py" not in build:
+        problems.append("the build job no longer runs test_ci.py")
+    maven = _job_block(text, "maven") or ""
+    if not re.search(r"if: needs\.changes\.outputs\.maven != 'false' && needs\.maven-shard\.result != 'success'",
+                     maven):
+        problems.append("the maven check fails on skipped shards, or passes on failed ones")
+    if "scope \"$BASE\" \"$HEAD\"" not in (_job_block(text, "changes") or ""):
+        problems.append("the changes job does not ask ci.py scope")
+    return problems
+
+
+def case_verify_runs_each_job_on_the_answer_its_suites_need():
+    """A job that reads the wrong answer runs for nothing, or skips a suite a change can break."""
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = sum(fail(f"verify.yml: {problem}") for problem in verify_scope_problems(text))
+    block = _job_block(text, "maven-shard")
+    for edited, expected in (
+        (text.replace(block, block.replace("outputs.maven != 'false'", "outputs.gradle != 'false'"), 1),
+         "maven-shard does not run on the maven answer"),
+        (text.replace(block, block.replace("outputs.maven != 'false'", "outputs.maven == 'true'"), 1),
+         "only when an answer is true"),
+        (text.replace("        if: needs.changes.outputs.unit != 'false'\n        with:\n          distribution", "        with:\n          distribution", 1),
+         "a build step runs"),
+        (text.replace("needs.changes.outputs.maven != 'false' && needs.maven-shard.result", "needs.maven-shard.result", 1),
+         "the maven check"),
+        (text.replace("\n  run-summary:\n", "\n  extra:\n    if: always()\n\n  run-summary:\n", 1), "extra has no answer"),
+    ):
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to verify.yml")
+        elif not any(expected in problem for problem in verify_scope_problems(edited)):
+            problems += fail(f"an edited verify.yml was not reported for {expected!r}")
+    return problems
+
+
+def time_limit_problems(text):
+    """Why a verify.yml job could hold a runner for GitHub's six hours."""
+    problems = []
+    for job in re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[-1], re.M):
+        limit = re.search(r"^    timeout-minutes: (\d+)$", _job_block(text, job) or "", re.M)
+        if not limit:
+            problems.append(f"job {job} has no time limit")
+        elif job.endswith("-shard") and int(limit.group(1)) < 30:
+            problems.append(f"job {job}'s limit of {limit.group(1)} min would cut a slow but healthy shard")
+    return problems
+
+
+def case_every_verify_job_has_a_time_limit():
+    """Functional shards hung for two hours and more, each holding one of the twenty runners."""
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = sum(fail(f"verify.yml: {problem}") for problem in time_limit_problems(text))
+    block = _job_block(text, "coverage")
+    for edited, expected in (
+        (text.replace(block, re.sub(r"    timeout-minutes: \d+\n", "", block), 1), "coverage has no time limit"),
+        (text.replace(_job_block(text, "maven-shard"),
+                      re.sub(r"timeout-minutes: \d+", "timeout-minutes: 20", _job_block(text, "maven-shard")), 1),
+         "cut a slow but healthy shard"),
+    ):
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to verify.yml")
+        elif not any(expected in problem for problem in time_limit_problems(edited)):
+            problems += fail(f"an edited verify.yml was not reported for {expected!r}")
+    return problems
+
+
 def case_a_change_to_product_sources_runs_every_guard():
     """Full mode is the gate for the plugin's and agent's sources, so an unknown change is one."""
     problems = 0
@@ -1986,7 +2088,8 @@ def case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to():
         condition = re.search(r"\n    if: ([^\n]+)", job)
         if not needs or "changes" not in needs.group(1):
             problems += fail(f"{name}: does not wait for the changes job")
-        if not condition or "needs.changes.outputs.code != 'false'" not in condition.group(1):
+        if not condition or not re.search(r"needs\.changes\.outputs\.(code|unit|maven|gradle) != 'false'",
+                                          condition.group(1)):
             problems += fail(f"{name}: does not run unless the changes job said false")
     return problems
 
@@ -4668,6 +4771,8 @@ CASES = (
     case_a_change_to_product_sources_runs_every_guard,
     case_every_pull_request_workflow_cancels_its_superseded_run,
     case_a_change_runs_the_verify_jobs_its_paths_can_affect,
+    case_verify_runs_each_job_on_the_answer_its_suites_need,
+    case_every_verify_job_has_a_time_limit,
     case_the_guard_workflows_are_read_only_and_cover_every_pull_request,
     case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,
