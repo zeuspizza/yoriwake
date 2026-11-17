@@ -2004,6 +2004,47 @@ def case_every_verify_job_has_a_time_limit():
     return problems
 
 
+def sweep_queue_problems(text):
+    """Why a sweep would start without naming the pull requests it makes wait, or stop on it."""
+    problems = []
+    plan = _job_block(text, "plan") or ""
+    step = re.search(r"      - name: no pull request waits behind the sweep\n((?:        .*\n)*)", plan)
+    if not step:
+        return ["the plan job does not list the open pull requests"]
+    if "continue-on-error: true" not in step.group(1):
+        problems.append("a failed listing can stop the sweep")
+    if "pull-requests: read" not in plan:
+        problems.append("the plan job cannot read pull requests")
+    for repo in ("yoriwake", "yoriwake-action"):
+        if f'/{repo}"' not in step.group(1):
+            problems.append(f"the open pull requests of {repo} are not listed")
+    if "::warning::" not in step.group(1):
+        problems.append("an open pull request is not warned about")
+    if "max-parallel" in text:
+        problems.append("the sweep caps its jobs, which the dispatch rule replaces")
+    return problems
+
+
+def case_a_sweep_names_the_pull_requests_it_makes_wait():
+    """A sweep is dispatched while no pull request is open; one that is is named, never blocked."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    problems = sum(fail(f"sweep.yml: {problem}") for problem in sweep_queue_problems(text))
+    for edited, expected in (
+        (text.replace("        continue-on-error: true\n        timeout-minutes: 5\n", "        timeout-minutes: 5\n", 1),
+         "can stop the sweep"),
+        (text.replace("      pull-requests: read\n", "", 1), "cannot read pull requests"),
+        (text.replace('"$OWNER/yoriwake-action"', "", 1), "yoriwake-action are not listed"),
+        (text.replace("      - name: no pull request waits behind the sweep\n", "      - name: something else\n", 1),
+         "does not list"),
+    ):
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to sweep.yml")
+        elif not any(expected in problem for problem in sweep_queue_problems(edited)):
+            problems += fail(f"an edited sweep.yml was not reported for {expected!r}")
+    return problems
+
+
 def case_a_change_to_product_sources_runs_every_guard():
     """Full mode is the gate for the plugin's and agent's sources, so an unknown change is one."""
     problems = 0
@@ -4773,6 +4814,7 @@ CASES = (
     case_a_change_runs_the_verify_jobs_its_paths_can_affect,
     case_verify_runs_each_job_on_the_answer_its_suites_need,
     case_every_verify_job_has_a_time_limit,
+    case_a_sweep_names_the_pull_requests_it_makes_wait,
     case_the_guard_workflows_are_read_only_and_cover_every_pull_request,
     case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,
