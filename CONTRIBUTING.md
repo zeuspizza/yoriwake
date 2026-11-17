@@ -48,7 +48,10 @@ request text, except from a fork, whose label for an AI-assisted change may name
 fork, run it as `python3 bench/scan_private.py --fork --push`.
 
 `./gradlew build` and `./gradlew :maven:functionalTest` are the gate a pull request must pass. The
-build includes the coverage gates; a change that lowers coverage below them fails it.
+build includes the coverage gates; a change that lowers coverage below them fails it. CI runs the
+part of it a change's paths can reach (`.github/ci.py scope`): a change only to `maven/` skips the
+Gradle plugin's functional suites, one only to `plugin/` the Maven suite, and one that no suite
+reads runs neither; a push to `main` runs all of it.
 
 ### Coverage
 
@@ -133,7 +136,10 @@ guards run in four worktrees under `sandbox/prove-guards/` and never write your 
 
 On a pull request, CI runs fast mode and the guards the change can affect; a change to
 `plugin/src/main`, `core/src/main`, `agent/src/main` or `maven/src/main` runs every guard instead,
-and every guard runs on dispatch in each release check. Each of these runs in 8 shards of its
+and every guard runs on dispatch in each release check. A change that reaches no suite the
+`verify` workflow runs (`bench/`, the guard harness's tests, workflows other than `verify` and
+`guards`) and leaves the guard harness alone runs only the guards it can affect, on as few shards as
+their projected cost needs, and the benchmark's tests. Otherwise each of these runs in 8 shards of its
 selected guards, balanced by the costs CI measured (`--shard I/8`, with the same `--mode` and `--changed` as the job, reproduces one), and a
 check job under the job's name fails unless every guard the run selects fired in exactly one shard.
 The costs are `scripts/guard_costs.json`. Every run's `--results` records each guard's seconds, and
