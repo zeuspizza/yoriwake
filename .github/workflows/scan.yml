@@ -10,6 +10,11 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, edited]
 
+# A newer push to a pull request, or an edit of its title or body, cancels its older run.
+concurrency:
+  group: scan-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

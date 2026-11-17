@@ -1790,6 +1790,44 @@ def case_only_a_docs_change_skips_the_checks():
     return problems
 
 
+def superseded_run_problems(text):
+    """Why a workflow `pull_request` triggers would keep an outdated push's run holding runners."""
+    if not re.search(r"^  pull_request:", text, re.M):
+        return []
+    found = re.search(r"^concurrency:\n  group: (.*)\n  cancel-in-progress: true\n", text, re.M)
+    if not found:
+        return ["a newer push does not cancel its older run"]
+    if "github.ref" not in found.group(1) or "github.run_id" not in found.group(1):
+        return ["its group is not the pull request's ref, and its own run otherwise"]
+    return []
+
+
+def case_every_pull_request_workflow_cancels_its_superseded_run():
+    """A push queues every pull-request workflow again; the older push's runs only hold runners."""
+    problems = 0
+    names = sorted(name for name in os.listdir(WORKFLOWS) if name.endswith(".yml"))
+    for name in names:
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            text = handle.read()
+        problems += sum(fail(f"{name}: {problem}") for problem in superseded_run_problems(text))
+    with open(os.path.join(WORKFLOWS, "scan.yml"), encoding="utf-8") as handle:
+        scan = handle.read()
+    group = re.search(r"^  group: .*\n", scan, re.M).group(0)
+    for edited, expected in (
+        (scan.replace("concurrency:\n", "", 1).replace(group, "", 1).replace("  cancel-in-progress: true\n", "", 1),
+         "does not cancel"),
+        (scan.replace(group, "  group: scan\n", 1), "its group"),
+        (scan.replace(group, "  group: scan-${{ github.ref }}\n", 1), "its group"),
+    ):
+        if edited == scan:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to scan.yml")
+        elif not any(expected in problem for problem in superseded_run_problems(edited)):
+            problems += fail(f"an edited scan.yml was not reported for {expected!r}")
+    if superseded_run_problems("on:\n  push:\n    branches: [main]\n"):
+        problems += fail("a workflow pull requests do not trigger was asked for a group")
+    return problems
+
+
 def case_a_change_to_product_sources_runs_every_guard():
     """Full mode is the gate for the plugin's and agent's sources, so an unknown change is one."""
     problems = 0
@@ -4554,6 +4592,7 @@ CASES = (
     case_a_changelog_workflow_that_skips_or_stops_checking_is_reported,
     case_only_a_docs_change_skips_the_checks,
     case_a_change_to_product_sources_runs_every_guard,
+    case_every_pull_request_workflow_cancels_its_superseded_run,
     case_the_guard_workflows_are_read_only_and_cover_every_pull_request,
     case_every_verify_job_waits_for_the_change_and_runs_unless_told_not_to,
     case_the_source_scan_finds_the_test_classes_and_only_them,
