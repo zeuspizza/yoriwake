@@ -13,9 +13,8 @@ them: the functional suite runs a test JVM on each. `-Pyoriwake.functional.testJ
 others for a local run. `-Pyoriwake.functional.forks=<n>` runs each functional suite in `<n>` test
 JVMs at once, each with a TestKit home of its own; without it a suite runs in one. CI runs each
 functional suite in shards by test class;
-`-Pyoriwake.functional.shard=3/6 -Pyoriwake.functional.shardTable=windows` runs the same classes
-as a Windows job's shard 3 of 6 (`=linux` with a Linux job's count), to reproduce one; without the
-table property every class hashes.
+`-Pyoriwake.functional.shard=2/3 -Pyoriwake.functional.shardTable=linux` runs the same classes
+as a CI job's shard 2 of 3, to reproduce one; without the table property every class hashes.
 `-Pyoriwake.functional.gradleVersion=<v>` runs `functionalTestGradle9` on another Gradle, and
 `-Pyoriwake.functional.junitVersion=<v>` runs the newest-JUnit cases of `EngineSupportTest` on
 another JUnit, either a pre-release, to try it before it is out.
