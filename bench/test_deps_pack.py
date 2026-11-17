@@ -118,6 +118,15 @@ def case_missing_trees_pack_and_report_as_empty():
     return failures
 
 
+def case_a_pack_is_named_for_its_project_and_pinned_commit():
+    with tempfile.TemporaryDirectory() as root:
+        toml = os.path.join(root, "kafka.toml")
+        with open(toml, "w", encoding="utf-8") as handle:
+            handle.write('name = "kafka"\ncommit = "54a57d7c70ee7f1811da282fc2adc594f3b55372"\n')
+        name = deps_pack.pack_name(toml)
+    return 0 if name == "deps-kafka-54a57d7c70ee" else fail(f"the pack is named {name}")
+
+
 def _artifact(run, created, repository=1, head=1, branch="main", expired=False, name="deps-a-0123"):
     return {"name": name, "expired": expired, "created_at": created,
             "workflow_run": {"id": run, "repository_id": repository, "head_repository_id": head,

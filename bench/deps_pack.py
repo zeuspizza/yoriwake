@@ -7,13 +7,15 @@ pinned commit, and uploads one holding everything its builds resolved; its slice
 restore that. A pack holds Gradle's `caches/modules-2` and the Maven local repository, never the
 plugin under test (each job publishes and checks its own), lock files or Maven's failure markers.
 
+    python3 bench/deps_pack.py name bench/projects/kafka.toml
     python3 bench/deps_pack.py find deps-kafka-0123456789ab --repo owner/name --branch main
     python3 bench/deps_pack.py unpack deps.tar
     python3 bench/deps_pack.py snapshot before.json
     python3 bench/deps_pack.py report before.json
     python3 bench/deps_pack.py pack deps.tar
 
-`find` prints the run id holding the newest unexpired pack of that name from a dispatched sweep of
+`name` prints the pack's artifact name, `deps-<project>-<first 12 of its pinned commit>`. `find`
+prints the run id holding the newest unexpired pack of that name from a dispatched sweep of
 the default branch, or nothing; it never fails. `report` prints one line, `deps: downloaded N
 files, M MB`: the files present now that the snapshot did not hold.
 """
@@ -24,6 +26,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import tomllib
 
 # The plugin under test, under its group in each layout: Maven's path, Gradle's `files-2.1` and
 # `metadata-*/descriptors` directory. Packed, a later job could measure a jar it did not build.
@@ -120,6 +123,13 @@ def unpack(trees, pack_path):
     return f"deps: restored {count} files"
 
 
+def pack_name(project_toml):
+    """The artifact name of a project's pack: one per project and pinned commit."""
+    with open(project_toml, "rb") as handle:
+        project = tomllib.load(handle)
+    return f"deps-{project['name']}-{project['commit'][:12]}"
+
+
 def gh_api(path):
     """The parsed answer of `gh api <path>`, or None when it failed."""
     try:
@@ -154,6 +164,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("name", help="print a project's pack name").add_argument("project_toml")
     looked = sub.add_parser("find", help="print the run holding the newest trusted pack of a name")
     looked.add_argument("name")
     looked.add_argument("--repo", required=True)
@@ -162,7 +173,9 @@ def main(argv=None):
         sub.add_parser(command).add_argument("path")
     args = parser.parse_args(argv)
     trees = roots()
-    if args.command == "find":
+    if args.command == "name":
+        print(pack_name(args.project_toml))
+    elif args.command == "find":
         found = find(args.name, args.repo, args.branch)
         if found is not None:
             print(found)

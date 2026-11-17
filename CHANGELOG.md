@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Changed
+
+- Contributors: benchmark jobs reuse each project's downloaded dependencies; a rate-limited build reruns after five minutes. Map: left alone.
+
 ## [0.6.0] - 2026-11-16
 
 **Your map:** repaired on the next build where a manifest `Class-Path` names a file `java.net.URI` rejects; otherwise left alone. A trusted-map list names no 0.6.0 map until the default branch's next run writes one.
