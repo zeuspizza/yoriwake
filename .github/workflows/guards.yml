@@ -245,6 +245,8 @@ jobs:
     needs: [changes, fast-shard]
     if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true'
     runs-on: ubuntu-24.04
+    # The benchmark's tests take a few minutes when narrowed; the checks a minute.
+    timeout-minutes: 20
     steps:
       # A narrowed pull request whose change selects no guard runs no shard.
       - name: every shard succeeded
@@ -262,6 +264,12 @@ jobs:
       # module can break the tests of another that imports it. Before anything is written into the
       # checkout: some of them refuse a tree with untracked files. The replay's tests need the agent
       # jar their own suite builds, which the change's guards run when it touches the replay.
+      # Some compile and run Java, as on the shards: the JDK the shards set up.
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        if: always() && needs.changes.outputs.narrow == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
       - name: the benchmark's tests pass
         if: always() && needs.changes.outputs.narrow == 'true'
         run: |

@@ -194,9 +194,10 @@ def scope(paths):
             return {"unit": True, "maven": True, "gradle": True}
     return answer
 
-# What runs and judges the guards: no guard mutates it, so a change to it keeps fast mode.
+# What runs and judges the guards, the modules they import included: no guard mutates it, so a
+# change to it keeps fast mode.
 GUARD_MACHINERY = {"scripts/prove_guards.py", "scripts/guard_costs.py", "scripts/guard_costs.json",
-                   ".github/guard_shards.py", ".github/workflows/guards.yml"}
+                   ".github/guard_shards.py", ".github/workflows/guards.yml", "bench/checkout.py"}
 
 
 def narrows_guards(paths):

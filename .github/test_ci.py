@@ -1362,6 +1362,15 @@ def case_guard_shards_that_partition_the_selection_and_fire_pass():
         found = _guard_check(root, selection)
         if found:
             problems += fail(f"an empty selection that every shard ran was rejected: {found}")
+    # A narrowed pull request whose change selects no guard runs no shard and downloads nothing.
+    with tempfile.TemporaryDirectory() as root:
+        found = _guard_check(root, _guard_selection(root, []), count=0)
+        if found:
+            problems += fail(f"an empty selection with no shard at all was rejected: {found}")
+        # The same zero count with a selection is no pass: the guards ran nowhere.
+        found = _guard_check(root, _guard_selection(root, ["a"]), count=0)
+        if not any("a ran in no shard" in problem for problem in found):
+            problems += fail(f"a selection with no shard passed: {found}")
     return problems
 
 
@@ -1902,6 +1911,9 @@ def case_a_change_runs_the_verify_jobs_its_paths_can_affect():
         got = (answer["unit"], answer["maven"], answer["gradle"])
         if got != expected:
             problems += fail(f"scope({list(paths)}) is {got}, should be {expected}")
+        # The coverage gate runs on `gradle` and reads the unit build's coverage data.
+        if (answer["gradle"] or answer["maven"]) and not answer["unit"]:
+            problems += fail(f"scope({list(paths)}) needs a suite but not the build that feeds it")
     # A git that cannot list the change is no answer, and runs everything.
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
@@ -2095,6 +2107,7 @@ def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
         (".github/workflows/guards.yml",): False,
         ("scripts/guard_costs.json",): False,
         (".github/guard_shards.py",): False,
+        ("bench/checkout.py",): False,
         ("README.md",): False,
         ("maven/src/main/kotlin/A.kt",): False,
         ("plugin/src/test/kotlin/A.kt", "bench/run.py"): False,
@@ -2104,6 +2117,17 @@ def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
     for paths, expected in cases.items():
         if ci.narrows_guards(list(paths)) != expected:
             problems += fail(f"narrows_guards({list(paths)}) should be {expected}")
+    # A module the harness imports from the repository is machinery too, or a change to it would
+    # narrow its own proof to nothing.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for script in ("scripts/prove_guards.py", "scripts/guard_costs.py", ".github/guard_shards.py"):
+        with open(os.path.join(root, script), encoding="utf-8") as handle:
+            imported = re.findall(r"^(?:import|from) (\w+)", handle.read(), re.M)
+        for module in imported:
+            for directory in ("bench", "scripts", ".github"):
+                path = f"{directory}/{module}.py"
+                if os.path.exists(os.path.join(root, path)) and path not in ci.GUARD_MACHINERY:
+                    problems += fail(f"{script} imports {path}, which GUARD_MACHINERY leaves out")
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
         ci.main(["narrows-guards", "no-such-base", "no-such-head"])
