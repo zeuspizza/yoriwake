@@ -812,10 +812,11 @@ every run is a full run, and `yoriwakeAudit<Task>` reports one of these as a blo
 
 ### Windows
 
-The functional suite runs on Windows in every cell of the matrix above, and on every pull request
-from a checkout with Windows line endings. A map is per operating system: one recorded on Linux or
-macOS makes a selecting run on Windows run every test as `environment-changed`, and the reverse, so
-a CI job that tests on several keeps one map per operating system, with the OS in its cache key.
+The functional suite runs on Windows in every cell of the matrix above, for each release, and the
+unit suites on every pull request, from a checkout with Windows line endings. A map is per
+operating system: one recorded on Linux or macOS makes a selecting run on Windows run every test
+as `environment-changed`, and the reverse, so a CI job that tests on several keeps one map per
+operating system, with the OS in its cache key.
 Three things differ:
 
 - **Paths longer than 260 characters.** Git for Windows lists them only with long paths enabled

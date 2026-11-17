@@ -21,6 +21,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - A changed interface or annotation of constants is judged by the class it compiled to instead of running every test. Map: left alone.
 - Contributors: benchmark jobs reuse each project's downloaded dependencies; a rate-limited build reruns after five minutes. Map: left alone.
 - Contributors: CI runs the jobs a change's paths can reach, cancels superseded runs and stops a hung job at 35 minutes. Map: left alone.
+- Contributors: pull requests no longer run the functional suites on Windows; each release's matrix does. Map: left alone.
 - Reference: names the projects where recording in isolation paid back within ten selecting runs. Map: left alone.
 
 ## [0.6.0] - 2026-11-16
