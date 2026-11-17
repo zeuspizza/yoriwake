@@ -37,11 +37,9 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
         "tasks.test { useJUnitPlatform(); forkEvery = 1 }",
     )
 
-    // Track: code reading. Boundary: a file of constants alone is no class prefix at all (it is an
-    // unmappable path), so the holder rule only sees a constant whose file also declares code. An
-    // interface constant beside a default method stands just inside the rule: the file maps, and
-    // the field is public by the language, so the constant can leave it. The test that copied it
-    // was recompiled with the new value, and its own changed class file is what selects it.
+    // Track: code reading. Boundary: an interface constant beside a default method: the file maps,
+    // and the field is public by the language, so the constant can leave it. The test that copied
+    // it was recompiled with the new value, and its own changed class file is what selects it.
     @Test
     fun `a constant on an interface with a default method that a test baked in selects that test`(@TempDir dir: File) {
         val limits = source(
@@ -62,6 +60,53 @@ class CompileTimeConstantsAttempts : BreakAttempt() {
         ) { File(it, limits.first).writeText(limits.second.replace("MAX = 10", "MAX = 11")) }
 
         assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: a file that declares no method is judged by the class it
+    // compiled to, as any changed class is. Its one static initialiser ran under a test, so the
+    // holder is covered; the test that copied the constant was recompiled with the new value.
+    @Test
+    fun `a constant on an interface of constants alone that a test baked in selects that test`(@TempDir dir: File) {
+        val limits = source(
+            "src/main/java/dev/sample/Limits.java",
+            """
+            package dev.sample;
+            public interface Limits {
+                int MAX = 10;
+                String LABEL = String.valueOf(System.nanoTime());
+            }
+            """,
+        )
+        val baked = testClass("A1BakedTest", "@Test void max() { assertEquals(10, Limits.MAX); }")
+        val initialises = testClass("A2LimitsTest", "@Test void label() { assertNotNull(Limits.LABEL); }")
+        val result = attempt(
+            dir, "dev.sample.A1BakedTest", Aim.Row("changed-bytes"),
+            listOf(limits, baked, initialises, third, firstTest, classOrderByName),
+        ) { File(it, limits.first).writeText(limits.second.replace("MAX = 10", "MAX = 11")) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: as above, but nothing initialises the holder, so no test covers
+    // it: a changed class the map holds no coverage of runs everything.
+    @Test
+    fun `a constant on an interface of constants alone that no test covers forces`(@TempDir dir: File) {
+        val limits = source(
+            "src/main/java/dev/sample/Limits.java",
+            """
+            package dev.sample;
+            public interface Limits {
+                int MAX = 10;
+            }
+            """,
+        )
+        val baked = testClass("A1BakedTest", "@Test void max() { assertEquals(10, Limits.MAX); }")
+        val result = attempt(
+            dir, "dev.sample.A1BakedTest", Aim.Forced("no-coverage-for-changed"),
+            listOf(limits, baked, third, thirdTest, classOrderByName),
+        ) { File(it, limits.first).writeText(limits.second.replace("MAX = 10", "MAX = 11")) }
+
+        assertOutcome(Outcome.HELD_BY_FORCE, result)
     }
 
     // Track: code reading. Boundary: the classes compared with the map's are every class the build

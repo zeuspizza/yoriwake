@@ -29,6 +29,15 @@ guess.
   revision in a manifest) runs everything when it changed; see [Generated files on the test
   classpath](#generated-files-on-the-test-classpath). A build-directory file off the classpath,
   put there by hand or by a build step, is never seen as a change.
+- **Changed classes.** A changed Java, Kotlin or Groovy source stands for the classes the build
+  compiled from it: those of its package in its own module's output whose `SourceFile` is that
+  file. A nested or local type is named as compiled (`Outer$Inner`, `Outer$1Local`), a typealias or
+  a word in a comment names no class, and a `@file:JvmName` or multifile facade is named. A
+  source whose classes cannot be listed (no `SourceFile` attribute, its module's output not on the
+  classpath) is named from its text: its path and the types it declares.
+  A source that declares no executable code (an interface or annotation type of constants) is
+  judged as the class it compiled to, and runs everything (`unmappable-paths`) when that class
+  cannot be listed.
 - **Other modules.** A changed Java or Kotlin source under `src/` of a module the test task does
   not reach is left out of its change set, unless one of the task's compiled classes holds a path
   to it of two or more segments: `../beta/src/main/java/dev/beta/Thing.java`,

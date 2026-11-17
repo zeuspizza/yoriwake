@@ -1019,6 +1019,39 @@ class ChangeSelectionTest {
     }
 
     @Test
+    fun `a class that inlined a file named by a path no class carries is still found`(@TempDir dir: File) {
+        // `utils.kt` compiles to `UtilsKt`, its path name `com.acme.utils` is dropped from the
+        // prefixes, and the caller's SMAP names the file by that path alone.
+        fun klass(name: String, source: String, smap: String?): ByteArray {
+            val writer = org.objectweb.asm.ClassWriter(0)
+            writer.visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, name.replace('.', '/'), null, "java/lang/Object", null)
+            writer.visitSource(source, smap)
+            writer.visitEnd()
+            return writer.toByteArray()
+        }
+        val smap = listOf(
+            "SMAP", "Caller.kt", "Kotlin", "*S Kotlin", "*F",
+            "+ 1 Caller.kt", "com/acme/Caller.kt",
+            "+ 2 utils.kt", "com/acme/utils.kt",
+            "*L", "*E",
+        ).joinToString("\n")
+        val facts = oneModule(
+            dir,
+            "com.acme.UtilsKt" to klass("com.acme.UtilsKt", "utils.kt", null),
+            "com.acme.Caller" to klass("com.acme.Caller", "Caller.kt", smap),
+        )
+
+        val widening = widenForInlining(
+            listOf("com.acme.UtilsKt"), facts,
+            recordedAnnotations = mapOf("com.acme.UtilsKt" to "", "com.acme.Caller" to ""),
+            inlineSources = setOf("com.acme.utils"),
+        )
+
+        assertFalse(widening.forces, widening.refusal)
+        assertEquals(setOf("com.acme.Caller"), widening.inliners)
+    }
+
+    @Test
     fun `a class whose bytecode is exactly what the map recorded is not added`(@TempDir dir: File) {
         // If everything were added, the rule would just run every test.
         val bytes = javaClassBytes("com.acme.Consumer", "N", 1)

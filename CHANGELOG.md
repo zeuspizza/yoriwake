@@ -17,6 +17,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A change to a file with nested or local classes, typealiases or a moved path no longer runs every test for names no class carries. Map: left alone.
+- A changed interface or annotation of constants is judged by the class it compiled to instead of running every test. Map: left alone.
 - Contributors: benchmark jobs reuse each project's downloaded dependencies; a rate-limited build reruns after five minutes. Map: left alone.
 - Contributors: CI runs the jobs a change's paths can reach, cancels superseded runs and stops a hung job at 35 minutes. Map: left alone.
 - Contributors: pull requests no longer run the functional suites on Windows; each release's matrix does. Map: left alone.

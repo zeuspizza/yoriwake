@@ -125,6 +125,66 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a change inside a local class runs the test that ran it, not every test`(@TempDir dir: File) {
+        // javac names the class `Beta$1Closed`; read from the text, it would be `dev.sample.Closed`,
+        // a class nothing covers.
+        val beta = "src/main/java/dev/sample/Beta.java" to """
+            package dev.sample;
+            public class Beta {
+                public int thrice(int n) {
+                    class Closed { int of(int m) { return m * 3; } }
+                    return new Closed().of(n);
+                }
+            }
+        """.trimIndent()
+
+        val output = selectAfter(dir, minimalBuild, oneClass, oneTest, beta, secondTest, edit = {
+            edit(dir, beta.first, "return m * 3;", "if (true) { throw new IllegalStateException(\"entry\"); } return m * 3;")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
+    fun `a change in a Kotlin file that declares a typealias runs its class's test`(@TempDir dir: File) {
+        // No class carries the typealias's name; read from the text, it would be a class nothing
+        // covers. Alpha inlines a function of the project's own, for the inline scan.
+        val alpha = "src/main/kotlin/dev/sample/Alpha.kt" to """
+            package dev.sample
+            inline fun doubled(n: Int): Int = n * 2
+            class Alpha { fun twice(n: Int): Int = doubled(n) }
+        """.trimIndent()
+        val beta = "src/main/kotlin/dev/sample/Beta.kt" to """
+            package dev.sample
+            typealias Scale = (Int) -> Int
+            class Beta {
+                private val scale: Scale = { it * 3 }
+                fun thrice(n: Int): Int {
+                    return scale(n)
+                }
+            }
+        """.trimIndent()
+        val alphaTest = "src/test/kotlin/dev/sample/AlphaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class AlphaTest { @Test fun twice() { assertEquals(2, Alpha().twice(1)) } }
+        """.trimIndent()
+        val betaTest = "src/test/kotlin/dev/sample/BetaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class BetaTest { @Test fun thrice() { assertEquals(3, Beta().thrice(1)) } }
+        """.trimIndent()
+
+        val output = selectAfter(dir, kotlinBuild, alpha, beta, alphaTest, betaTest, edit = {
+            edit(dir, beta.first, "return scale(n)", "if (true) { throw IllegalStateException(\"entry\") }\n        return scale(n)")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+    }
+
+    @Test
     fun `a Kotlin function given a new suspend lambda runs its caller's test`(@TempDir dir: File) {
         // The lambda compiles to a class the map never saw, which carries only the annotations
         // the compiler writes on every such class. Alpha is as above, for the inline scan.
@@ -326,9 +386,9 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `a Groovy file named after none of its classes runs everything`(@TempDir dir: File) {
-        // Its path names a class nothing compiles to unless the file also holds a script, which
-        // the declarations alone cannot rule out, and no test ever recorded that name.
+    fun `a Groovy file named after none of its classes runs the test of the class it declares`(@TempDir dir: File) {
+        // Its path names a class only a script in the file would compile to; the compiled classes
+        // show there is none, so the file is the class it declares.
         val shapes = "src/main/groovy/dev/sample/Shapes.groovy" to """
             package dev.sample
             class Beta { int thrice(int n) { n * 3 } }
@@ -338,7 +398,7 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
             edit(dir, shapes.first, "n * 3", "n * 4")
         }, run = GradleRunner::buildAndFail)
 
-        assertFullRun(dir, "no-coverage-for-changed", both, output)
+        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
     }
 
     @Test

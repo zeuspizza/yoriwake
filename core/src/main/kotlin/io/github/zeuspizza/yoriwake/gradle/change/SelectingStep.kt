@@ -135,6 +135,8 @@ internal object SelectingStep {
             if (bump == null) paths else paths - bump.paths.toSet(),
             classpathFacts, inputs.notReadByTests, inputs.ignore, mapDir,
             bases = listOfNotNull(against, inputs.stamp), moved = inputs.moved, taskInputs = inputs.taskInputs,
+            // No colon after the task, as on the "selecting against" line: a `<task>: ` line is a reason.
+            report = { message -> host.lifecycle("[yoriwake] ${host.name} $message") },
         )
         PathIgnoreReport.lines(scoped.ignore, mapDir).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
         if (scoped.droppedFiles.isNotEmpty()) {
@@ -172,6 +174,7 @@ internal object SelectingStep {
             ownTestClasses = established.testClasses,
             inlinedAway = established.inlinedAway,
             lineOnly = if (!inputs.narrowLineOnlyChanges) null else LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
+            inlineSources = scoped.change.inlineSources,
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),

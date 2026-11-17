@@ -1,5 +1,8 @@
 package io.github.zeuspizza.yoriwake.gradle.bytecode
 
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.Opcodes
 import java.io.File
 import java.util.Optional
 import java.util.zip.ZipFile
@@ -185,6 +188,54 @@ internal class TaskArtifacts(
         return found
     }
 
+
+    /**
+     * The binary names of the classes one source file compiled to: those in [packageName]'s
+     * directory of the outputs under [buildDir], class directories and own jars alike, whose
+     * `SourceFile` is [fileName]. Null when no output under [buildDir] is on the classpath or a
+     * class there could not be read: a refusal, not "none".
+     */
+    fun classesCompiledFrom(buildDir: String, packageName: String, fileName: String): List<String>? = runCatching {
+        val below = { file: File -> file.absolutePath.startsWith(buildDir.trimEnd(File.separatorChar) + File.separator) }
+        val roots = (directories + testOutputs).filter { it.isDirectory && below(it) }.distinct()
+        val jars = ownJars.filter(below)
+        if (roots.isEmpty() && jars.isEmpty()) return null
+        val packageDir = packageName.replace('.', '/')
+        val prefix = if (packageName.isEmpty()) "" else "$packageName."
+        val found = sortedSetOf<String>()
+        for (root in roots) {
+            val dir = if (packageDir.isEmpty()) root else File(root, packageDir)
+            for (candidate in dir.listFiles().orEmpty()) {
+                if (!candidate.isFile || !candidate.name.endsWith(".class")) continue
+                val source = sourceFileOf(candidate.readBytes()) ?: return null
+                if (source == fileName) found += prefix + candidate.name.removeSuffix(".class")
+            }
+        }
+        for (jar in jars) {
+            ZipFile(jar).use { zip ->
+                for (entry in zip.entries()) {
+                    if (entry.isDirectory || !entry.name.endsWith(".class") ||
+                        entry.name.substringBeforeLast('/', "") != packageDir
+                    ) continue
+                    val source = sourceFileOf(zip.getInputStream(entry).use { it.readBytes() }) ?: return null
+                    if (source == fileName) found += entry.name.removeSuffix(".class").replace('/', '.')
+                }
+            }
+        }
+        found.toList()
+    }.getOrNull()
+
+    /** A class's `SourceFile` attribute; "" when it has none, null when the bytes cannot be read. */
+    private fun sourceFileOf(bytes: ByteArray): String? = runCatching {
+        var source = ""
+        ClassReader(bytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitSource(file: String?, debug: String?) { source = file.orEmpty() }
+            },
+            ClassReader.SKIP_CODE or ClassReader.SKIP_FRAMES,
+        )
+        source
+    }.getOrNull()
 
     private fun classesInJar(jar: File, packageDir: String, simpleName: String): List<Pair<String, ByteArray>> =
         runCatching {
