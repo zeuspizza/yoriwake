@@ -6,7 +6,7 @@ import java.io.File
 internal object UnionTrust {
     /**
      * Plugins whose goals start no process that outlives them: Maven's packaging, test and
-     * deployment plugins, JaCoCo's agent setup, and the checks and helpers beside them. Any
+     * deployment plugins, JaCoCo's agent setup, OSGi manifests, and the checks and helpers beside them. Any
      * other mojo before a Failsafe execution keeps its union from being trusted.
      */
     val STARTS_NO_PROCESS = setOf(
@@ -20,6 +20,7 @@ internal object UnionTrust {
         "org.apache.maven.plugins:maven-install-plugin", "org.apache.maven.plugins:maven-deploy-plugin",
         "org.jacoco:jacoco-maven-plugin", "org.codehaus.mojo:build-helper-maven-plugin",
         "org.codehaus.mojo:flatten-maven-plugin", "org.codehaus.mojo:animal-sniffer-maven-plugin",
+        "org.apache.felix:maven-bundle-plugin", "com.github.siom79.japicmp:japicmp-maven-plugin",
         Settings.PLUGIN_KEY,
     )
 
