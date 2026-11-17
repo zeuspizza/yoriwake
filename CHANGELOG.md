@@ -18,6 +18,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Changed
 
 - Contributors: benchmark jobs reuse each project's downloaded dependencies; a rate-limited build reruns after five minutes. Map: left alone.
+- A capture under the build script's own test filter, or with a default-package source, keeps its loaded-class union; one that keeps none says why. Map: left alone; a union appears at the next full capture.
 
 ## [0.6.0] - 2026-11-16
 

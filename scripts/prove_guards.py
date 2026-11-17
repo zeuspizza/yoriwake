@@ -183,6 +183,7 @@ CHANGE_DETECTION = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/cha
 INLINED_SOURCES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/InlinedSources.kt"
 DECISION_RECORD = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/platform/DecisionRecord.java"
 FILTER_RULE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/FilterRule.java"
+MAP_READER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/MapReader.java"
 RULES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/select/Rules.java"
 REPLAY_SRC = "bench/replay_decisions.py"
 BUILD_MEMO = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/facts/BuildMemo.kt"
@@ -2092,8 +2093,8 @@ MUTATIONS = [
     # The step's own outlook decides capture: one that still counts the test class as unrecorded
     # instruments and captures a run the test JVM narrows.
     ("the step's outlook of the run leaves out a test class whose bytes moved", SELECTING_STEP,
-     "        val outlook = wouldRunEverything(mapDir, changed, scoped, established.copy(testClasses = ownTestClasses), widening, paths, bump)",
-     "        val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths, bump)",
+     "        val outlook = wouldRunEverything(mapDir, changed, scoped, established.copy(testClasses = ownTestClasses), widening, paths, bump, inputs.unionFilter)",
+     "        val outlook = wouldRunEverything(mapDir, changed, scoped, established, widening, paths, bump, inputs.unionFilter)",
      functional_suite, "a test class JaCoCo could not instrument that copied a changed constant runs its known tests"),
     # The boundary: a class of the test output with no test of its own is discovered by nothing, so
     # standing for itself would select none of what reads it.
@@ -2796,6 +2797,30 @@ MUTATIONS = [
      "            (!selecting || datesTheMap) &&\n",
      "",
      decoder_suite, "a selecting decode that does not date the map keeps the union"),
+    # A union is kept only when every test JVM the run started finished: one that stopped early
+    # listed less than it would have loaded.
+    ("a capture short of a completion marker keeps its union", COVERAGE_DECODER,
+     "            completed.size == workers\n",
+     "            true\n",
+     decoder_suite, "a capture recording one test at a time keeps its union when every test JVM listed and finished"),
+    # A capture that keeps no union says why, whether or not the map had one: without a union no
+    # absence proof holds, and nothing else on the console would say so.
+    ("a full capture that keeps no union says nothing", DECODE_RUN,
+     '                    logger.lifecycle("[yoriwake] $taskPath keeps no loaded-class union: $reason. $unionDiscarded")',
+     '                    logger.info("[yoriwake] $taskPath keeps no loaded-class union: $reason. $unionDiscarded")',
+     functional_suite, "a capture that keeps no union says why"),
+    # A union recorded with tests left out by the build's own filter lacks what they load, so only a
+    # run under the same filter may take it for everything the task loads.
+    ("a union keyed to one build-script filter is trusted under another", MAP_READER,
+     "            if (!loadedProvenance(unionFilter).equals(how)) {",
+     '            if (!how.startsWith("full")) {',
+     agent_suite, "a union recorded under a build-script filter narrows only a run under the same filter"),
+    # The declared packages are kept beside the default package for the union; JaCoCo must still
+    # watch everything, or a default-package class goes unrecorded.
+    ("a default-package source stops widening the scope", SCOPE,
+     "        return if (DEFAULT_PACKAGE in packages) roots.toSet() + DEFAULT_PACKAGE else roots.toSet()",
+     "        return roots.toSet()",
+     unit_suite, "a file in the default package widens the scope to everything"),
     ("the agent is attached to the test task at configuration time", TEST_TASK_WIRING,
      "        if (recording) {\n            test.systemProperty(LOADED_DIR_PROPERTY, loadedDir.absolutePath)\n",
      "        if (recording) {\n            agent?.let { test.jvmArgs(AgentJar.argument(it)) }\n"
@@ -3972,12 +3997,13 @@ MUTATIONS = [
      "            beneath.add(container);\n", "",
      agent_suite, "a test template that fails before any invocation records itself as failed"),
     # A run that leaves tests out by tag, engine, category or group loaded only part of the suite;
-    # a loaded-class union from it would read as the whole task's and skip more.
+    # a loaded-class union from it must be keyed to that filter, or it would read as the whole
+    # task's and skip more under any other.
     ("a recording run filtered by the framework speaks for the whole task", TEST_TASK_WIRING,
      "        framework != null -> FilterVerdict(false, framework, byFramework = true)\n"
      "        else -> FilterVerdict(true, unfilteredDetail)",
      "        else -> FilterVerdict(true, unfilteredDetail)",
-     functional_suite, "every framework filter dates the map but never speaks for the whole task"),
+     functional_suite, "every framework filter dates the map and keys its union to the filter"),
     # Undated, a build whose test task always filters by tag refuses selection forever; dating is
     # safe because the capture drops the records of what the filter left out.
     ("a recording run filtered by the framework no longer dates the map", TEST_TASK_WIRING,
@@ -5325,16 +5351,16 @@ MUTATIONS = [
     # engines must discard it, as Gradle's filtered task does, or a class only the left-out tests
     # load would read as untested and be skipped.
     ("a Maven capture filtered by groups keeps a union", MAVEN_RECORDING,
-     "        return !byGroups && !byEngines && !bySuites\n",
-     "        return !byEngines && !bySuites\n",
+     '            byGroups -> "its tests were filtered by groups or tags"\n',
+     "",
      maven_suite, "a capture filtered by groups discards the union"),
     ("a Maven capture filtered by engines keeps a union", MAVEN_RECORDING,
-     "        return !byGroups && !byEngines && !bySuites\n",
-     "        return !byGroups && !bySuites\n",
+     '            byEngines -> "its tests were filtered by JUnit 5 engines"\n',
+     "",
      maven_suite, "an engine excluded in the POM discards the union"),
     ("a Maven capture run through TestNG suite files keeps a union", MAVEN_RECORDING,
-     "        return !byGroups && !byEngines && !bySuites\n",
-     "        return !byGroups && !byEngines\n",
+     '            bySuites -> "its tests were filtered by TestNG suite files"\n',
+     "",
      maven_suite, "a capture run through a TestNG suite file discards the union"),
     ("a Maven capture filtered by tags in its properties keeps a union", MAVEN_RECORDING,
      '            listOf("includeTags", "excludeTags").any { given(properties[it]) }\n',
@@ -5343,8 +5369,8 @@ MUTATIONS = [
     # Failsafe's tests commonly drive an application another JVM runs: a union from its fork alone
     # would turn a class only that JVM loads into a skip.
     ("a Failsafe capture records a union", MAVEN_RECORDING,
-     "        if (!recordsLoaded(project) || undated != null || execution.artifactId == FAILSAFE) return false\n",
-     "        if (!recordsLoaded(project) || undated != null) return false\n",
+     '        if (execution.artifactId == FAILSAFE) return "Failsafe\'s tests may drive code in another JVM, which no union sees"\n',
+     "",
      maven_suite, "a Failsafe execution records no union"),
     # A test that runs a Maven build through maven-verifier runs code in JVMs the agent never sees.
     ("a task that forks a Maven build narrows on absence", TASK_ARTIFACTS,
