@@ -966,10 +966,10 @@ internal fun scopedChange(
     ) { path, packageName, fileName ->
         compiledOutputOf(path, facts)?.let { buildDir -> artifacts.classesCompiledFrom(buildDir, packageName, fileName) }
     }
-    if (resolved.replaced > 0) {
+    if (resolved.replaced + resolved.routed > 0) {
         report(
-            "named ${resolved.replaced} changed file(s) by the classes compiled from them " +
-                "(${resolved.dropped} name(s) no class carries dropped): " +
+            "named ${resolved.replaced + resolved.routed} changed file(s) by the classes compiled from them " +
+                "(${resolved.dropped} name(s) no class carries dropped, ${resolved.routed} file(s) of no code routed): " +
                 resolved.change.classPrefixes.sorted().joinToString()
         )
     }

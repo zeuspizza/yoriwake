@@ -279,4 +279,75 @@ class CompiledNamesTest {
         File(unreadable.classes, "pkg/Broken.class").writeBytes(byteArrayOf(1, 2, 3))
         assertEquals(text, resolve(unreadable).change.classPrefixes)
     }
+
+    @Test
+    fun `a file of constants alone is kept aside with the names it would have`(@TempDir dir: File) {
+        val module = module(dir, "src/main/java/pkg/Limits.java", "package pkg;\npublic interface Limits {\n    int MAX = 7;\n}")
+
+        val change = ChangeDetection.split(listOf(module.path), dir)
+
+        assertEquals(listOf(module.path), change.unmappablePaths)
+        assertEquals(mapOf(module.path to setOf("pkg.Limits")), change.codeLess)
+    }
+
+    @Test
+    fun `a file of constants alone whose class is listed is judged as that class`(@TempDir dir: File) {
+        val module = module(dir, "src/main/java/pkg/Limits.java", "package pkg;\npublic interface Limits {\n    int MAX = 7;\n}", "pkg.Limits")
+
+        val change = resolve(module).change
+
+        assertEquals(emptyList(), change.unmappablePaths)
+        assertEquals(setOf("pkg.Limits"), change.classPrefixes)
+        assertEquals(mapOf(module.path to setOf("pkg.Limits")), change.prefixesByPath)
+        assertEquals(false, change.inlinableSourceChanged)
+    }
+
+    @Test
+    fun `a file of constants alone whose class is not listed stays unmappable`(@TempDir dir: File) {
+        val module = module(dir, "src/main/java/pkg/Limits.java", "package pkg;\npublic interface Limits {\n    int MAX = 7;\n}")
+
+        val change = resolve(module).change
+
+        assertEquals(listOf(module.path), change.unmappablePaths)
+        assertTrue(change.classPrefixes.isEmpty(), "got ${change.classPrefixes}")
+    }
+
+    @Test
+    fun `an annotation type is judged as its class`(@TempDir dir: File) {
+        val module = module(
+            dir, "src/main/java/pkg/Marker.java",
+            "package pkg;\npublic @interface Marker {\n    String value() default \"\";\n}",
+            "pkg.Marker",
+        )
+
+        val change = resolve(module).change
+
+        assertEquals(emptyList(), change.unmappablePaths)
+        assertEquals(setOf("pkg.Marker"), change.classPrefixes)
+    }
+
+    @Test
+    fun `a Kotlin file the scan reads as code-less is routed as its file class, still inlinable`(@TempDir dir: File) {
+        val module = module(
+            dir, "src/main/kotlin/pkg/utils.kt",
+            """
+            package pkg
+
+            typealias Predicate<T> = (T) -> Boolean
+
+            const val NAME: String = "x"
+
+            fun <P1, T> constant(t: T): (P1) -> T = { _: P1 -> t }
+            """,
+            "pkg.UtilsKt",
+        )
+        val split = ChangeDetection.split(listOf(module.path), dir)
+        check(split.unmappablePaths == listOf(module.path)) { "the scan reads this file as code: ${split.classPrefixes}" }
+
+        val change = resolve(module).change
+
+        assertEquals(emptyList(), change.unmappablePaths)
+        assertEquals(setOf("pkg.UtilsKt"), change.classPrefixes)
+        assertTrue(change.inlinableSourceChanged)
+    }
 }

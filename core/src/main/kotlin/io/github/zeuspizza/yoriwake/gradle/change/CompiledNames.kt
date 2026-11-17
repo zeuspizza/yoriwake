@@ -12,12 +12,12 @@ import java.io.File
 internal object CompiledNames {
 
     /** What [resolve] changed, for the step's log. */
-    data class Resolved(val change: ChangeDetection.Change, val replaced: Int, val dropped: Int)
+    data class Resolved(val change: ChangeDetection.Change, val replaced: Int, val dropped: Int, val routed: Int)
 
     /**
      * [change] with each listed path's names replaced by its compiled classes' ([namesFor]). [listed]
      * answers a path's classes, or null when they cannot be listed, which keeps the path as
-     * [ChangeDetection.split] left it.
+     * [ChangeDetection.split] left it: its names, or unmappable for a code-less file.
      */
     fun resolve(
         change: ChangeDetection.Change,
@@ -39,16 +39,31 @@ internal object CompiledNames {
             ChangeDetection.pathName(path)?.takeIf { path.endsWith(".kt") && it !in resolved }?.let(inlineSources::add)
             resolved
         }
+        val unmappable = change.unmappablePaths.toMutableList()
+        var inlinable = change.inlinableSourceChanged
+        var routed = 0
+        for ((path, names) in change.codeLess) {
+            val classes = classesOf(path) ?: continue
+            val resolved = namesFor(path, names, classes)
+            unmappable.remove(path)
+            byPath[path] = resolved
+            inlinable = inlinable || ChangeDetection.inlinable(path)
+            ChangeDetection.pathName(path)?.takeIf { path.endsWith(".kt") && it !in resolved }?.let(inlineSources::add)
+            routed++
+        }
         // An inline-only file stays one only under a name a class carries; otherwise its class is judged.
         val prefixes = byPath.values.flatten().toSet()
         return Resolved(
             change.copy(
                 classPrefixes = prefixes,
+                unmappablePaths = unmappable,
+                inlinableSourceChanged = inlinable,
                 inlineOnly = change.inlineOnly.intersect(prefixes),
                 prefixesByPath = byPath,
+                codeLess = change.codeLess.filterKeys { it in unmappable },
                 inlineSources = inlineSources,
             ),
-            replaced, dropped,
+            replaced, dropped, routed,
         )
     }
 

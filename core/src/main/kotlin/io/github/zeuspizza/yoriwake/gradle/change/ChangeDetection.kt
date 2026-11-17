@@ -35,6 +35,12 @@ internal object ChangeDetection {
          */
         val prefixesByPath: Map<String, Set<String>> = emptyMap(),
         /**
+         * Of [unmappablePaths], the source files kept aside only because they declare no executable
+         * code, each with the prefixes it would have contributed: at execution time the classes the
+         * build compiled from one decide it instead ([CompiledNames]).
+         */
+        val codeLess: Map<String, Set<String>> = emptyMap(),
+        /**
          * Kotlin path names [CompiledNames] dropped from [classPrefixes] because no compiled class
          * carries them, which an inliner's SMAP still names its source by.
          */
@@ -53,14 +59,17 @@ internal object ChangeDetection {
         var inlinable = false
         val inlineOnly = mutableSetOf<String>()
         val byPath = linkedMapOf<String, Set<String>>()
+        val codeLess = linkedMapOf<String, Set<String>>()
         paths.map { it.replace('\\', '/') }.filter(String::isNotBlank).forEach { path ->
             val match = SOURCE_ROOT.matchEntire(path)
             if (match == null) {
                 unmappable += path
             } else if (declaresNoExecutableCode(projectDir, path)) {
-                // Constants are inlined into dependents that are not in the change set, and the
-                // holder may never be loaded, so no rule downstream can see the effect.
+                // Its constants are inlined into dependents and the holder may never be loaded, so
+                // without its compiled classes no rule downstream can see the effect. With them, the
+                // constant-holder refusal and the bytes comparison judge it as any changed class.
                 unmappable += path
+                codeLess[path] = setOf(pathName(match)) + declaredTypes(projectDir, path)
             } else {
                 val fqn = match.groups["fqn"]!!.value
                 val prefix = if (path.endsWith(".kt")) InlinedSources.kotlinSourcePrefix(fqn) else fqn.replace('/', '.')
@@ -73,7 +82,7 @@ internal object ChangeDetection {
                 }
             }
         }
-        return Change(prefixes, unmappable, inlinable, inlineOnly, byPath)
+        return Change(prefixes, unmappable, inlinable, inlineOnly, byPath, codeLess)
     }
 
     private fun pathName(match: MatchResult): String {
@@ -83,6 +92,9 @@ internal object ChangeDetection {
 
     /** The prefix a class source's path alone gives it, as [split] names it; null for a path that is not one. */
     fun pathName(path: String): String? = SOURCE_ROOT.matchEntire(path)?.let(::pathName)
+
+    /** Whether a changed source at [path] could have been inlined into a caller. */
+    fun inlinable(path: String): Boolean = INLINABLE_SOURCE.matches(path)
 
     /** The `package` a source file declares, "" for none; null when it cannot be read. */
     fun packageOf(projectDir: File?, path: String): String? {

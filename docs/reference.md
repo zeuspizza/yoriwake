@@ -35,6 +35,9 @@ guess.
   a word in a comment names no class, and a `@file:JvmName` or multifile facade is named. A
   source whose classes cannot be listed (no `SourceFile` attribute, its module's output not on the
   classpath) is named from its text: its path and the types it declares.
+  A source that declares no executable code (an interface or annotation type of constants) is
+  judged as the class it compiled to, and runs everything (`unmappable-paths`) when that class
+  cannot be listed.
 - **Other modules.** A changed Java or Kotlin source under `src/` of a module the test task does
   not reach is left out of its change set, unless one of the task's compiled classes holds a path
   to it of two or more segments: `../beta/src/main/java/dev/beta/Thing.java`,
