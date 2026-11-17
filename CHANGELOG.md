@@ -18,6 +18,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Changed
 
 - Contributors: benchmark jobs reuse each project's downloaded dependencies; a rate-limited build reruns after five minutes. Map: left alone.
+- Reference: names the projects where recording in isolation paid back within ten selecting runs. Map: left alone.
 
 ## [0.6.0] - 2026-11-16
 

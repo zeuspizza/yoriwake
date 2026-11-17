@@ -1343,6 +1343,11 @@ selecting builds run your tests exactly as they did.
   it saves, the median project needs about 88 selecting runs per recording to pay it back; 13 of the
   42 never do, the four that did not finish among them. That is why it stays a choice and not the
   default. These are rows of one sample, not rates.
+- **Where it paid back within ten selecting runs:** okhttp, okio, resilience4j, opentelemetry-java,
+  and Kafka's `clients` and `core` modules. On their changes the isolated map ran 46 to 84% of the
+  tests the shared one ran. A suite whose selected tests run mostly by `shares-jvm-with-change` is
+  where recording in isolation is worth trying. The plugin does not choose this per project: you
+  set it on the job that records the map.
 - **Only a recording run updates it.** A selecting run that falls back to a full run still runs
   every test, with your fork settings, but leaves a map holding any JVM recorded in isolation
   exactly as it is, and says so. Recording that run would replace the isolated records with
