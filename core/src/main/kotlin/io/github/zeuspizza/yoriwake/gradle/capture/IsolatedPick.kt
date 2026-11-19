@@ -45,6 +45,14 @@ internal object IsolatedPick {
         return listOf("$path.class", "$path\$*.class")
     }
 
+    /**
+     * [arguments] as the hand-off file holds them, one escaped per line, without a debugger agent:
+     * the isolated JVMs run in parallel and would all listen on its one port.
+     */
+    fun handOff(arguments: List<String>): String =
+        arguments.filterNot { it.startsWith("-agentlib:jdwp") || it.startsWith("-Xrunjdwp") }
+            .joinToString("") { Tsv.escape(it) + "\n" }
+
     /** The test class [testId] belongs to, outermost, or null when it names none. */
     fun classOf(testId: String): String? {
         val name = TestClassIds.nameOf(TestClassIds.scopeOf(testId))
@@ -207,8 +215,9 @@ internal object IsolatedPick {
     }
 
     /**
-     * [stamp] with the JVM start cost its isolated run measured: [wallSeconds] over [forks] JVMs,
-     * less the picked classes' own seconds, per class; never below 0.
+     * [stamp] with the JVM start cost its isolated run measured: [wallSeconds] over the [forks] JVMs
+     * it ran at once (no more than it had classes), less the picked classes' own seconds, per class;
+     * never below 0.
      */
     fun measured(stamp: Stamp, wallSeconds: Double, forks: Int): Stamp {
         if (stamp.classes.isEmpty()) return stamp

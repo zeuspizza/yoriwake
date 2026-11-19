@@ -18,7 +18,6 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
-import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
@@ -818,23 +817,30 @@ internal class TestTaskWiring(internal val settings: Settings) {
      */
     private fun isolateWithinBudget(test: Test, runPlan: RunPlan, mapDir: File, fromBuildScript: TestPatterns) {
         val budget = settings.isolatedCaptureBudget ?: return
-        if (runPlan.selecting) return
+        val pending = File(mapDir, IsolatedPick.PENDING_FILE)
+        val handOff = isolatedHandOff(mapDir)
+        // Whatever this run does, a pick an earlier run left must never run after it.
+        val discard = { pending.delete(); handOff.delete() }
+        if (runPlan.selecting) {
+            test.doFirst { discard() }
+            return
+        }
         val flag = "-P${Settings.ISOLATED_CAPTURE_BUDGET}=${IsolatedPick.describe(budget)}"
         if (settings.isolatedCapture) {
             test.doFirst {
+                discard()
                 test.logger.lifecycle(
                     "[yoriwake] ${test.path}: $flag is ignored: -P${Settings.ISOLATED_CAPTURE} records every test class in its own JVM"
                 )
             }
             return
         }
-        val pending = File(mapDir, IsolatedPick.PENDING_FILE)
-        val handOff = isolatedHandOff(mapDir)
+        // What it leaves out is decided as it executes, so a cached result would not be this run's.
+        test.outputs.doNotCacheIf("a budgeted recording picks the classes it leaves out as it executes") { true }
         val forks = settings.isolatedCaptureForks
         val companion = IsolatedCompanion.nameFor(test.name)
         test.doFirst {
-            pending.delete()
-            handOff.delete()
+            discard()
             if (test.systemProperties[RECORDS_DIR_PROPERTY]?.toString().isNullOrEmpty()) return@doFirst
             if (!readFilterVerdict(test, fromBuildScript).definesTheTask) return@doFirst
             val ranking = IsolatedPick.rank(mapDir)
@@ -845,11 +851,14 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 )
                 return@doFirst
             }
-            val dirs = test.testClassesDirs.files
+            // The classes the task would run, after the build's own include and exclude patterns.
+            val candidates = HashSet<String>()
+            test.candidateClassFiles.visit { if (!it.isDirectory) candidates.add(it.relativePath.pathString) }
+            val parallel = minOf(forks?.resolve() ?: IsolatedPick.DEFAULT_FORKS, Runtime.getRuntime().availableProcessors())
             val pick = IsolatedPick.pick(
                 ranking, IsolatedPick.Stamp.read(File(mapDir, IsolatedPick.STAMP_FILE)), budget,
-                test.maxParallelForks, forks?.resolve() ?: IsolatedPick.DEFAULT_FORKS, Runtime.getRuntime().availableProcessors(),
-            ) { name -> dirs.any { File(it, IsolatedPick.scanPatterns(name).first()).isFile } }
+                test.maxParallelForks, parallel, Runtime.getRuntime().availableProcessors(),
+            ) { name -> IsolatedPick.scanPatterns(name).first() in candidates }
             if (pick.classes.isEmpty()) {
                 test.logger.lifecycle(
                     "[yoriwake] ${test.path}: $flag picked no test class: none ranks above 0 or fits the budget, so " +
@@ -857,15 +866,26 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 )
                 return@doFirst
             }
+            val write = { writeAtomically(handOff, IsolatedPick.handOff(test.allJvmArgs)) }
+            // Both written before anything is left out: without either, the companion cannot run them.
+            val written = runCatching {
+                writeAtomically(pending, pick.encode())
+                write()
+            }
+            if (written.isFailure) {
+                discard()
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag could not hand its pick over (${written.exceptionOrNull()}), so this " +
+                        "run records every class in shared JVMs"
+                )
+                return@doFirst
+            }
             // Scan patterns, not the filter: a filtered run would not date the map.
             pick.classes.keys.forEach { test.exclude(IsolatedPick.scanPatterns(it)) }
-            runCatching { writeAtomically(pending, pick.encode()) }.onFailure { return@doFirst }
-            val write = { runCatching { writeAtomically(handOff, test.allJvmArgs.joinToString("") { Tsv.escape(it) + "\n" }) } }
-            write()
             // Again once every action has run, so the arguments are those the JVMs start with.
             test.addTestListener(object : TestListener {
                 override fun beforeSuite(suite: TestDescriptor) {
-                    if (suite.parent == null) write()
+                    if (suite.parent == null) runCatching { write() }
                 }
                 override fun afterSuite(suite: TestDescriptor, result: TestResult) {}
                 override fun beforeTest(testDescriptor: TestDescriptor) {}

@@ -51,6 +51,10 @@ internal object IsolatedCompanion {
             task.filter.setIncludePatterns(*source.filter.includePatterns.toTypedArray())
             task.filter.setExcludePatterns(*source.filter.excludePatterns.toTypedArray())
             task.filter.isFailOnNoMatchingTests = false
+            task.setExcludes(source.excludes)
+            task.ignoreFailures = source.ignoreFailures
+            task.failFast = source.failFast
+            task.timeout.set(source.timeout)
             task.workingDir = source.workingDir
             task.environment = source.environment
             task.javaLauncher.set(source.javaLauncher)
@@ -71,10 +75,11 @@ internal object IsolatedCompanion {
             task.doFirst {
                 val pick = IsolatedPick.Stamp.read(pending) ?: throw IllegalStateException("$pending cannot be read")
                 pick.classes.keys.forEach { task.include(IsolatedPick.scanPatterns(it)) }
-                // The test task's arguments as its JVMs started: its system properties, the agent and JaCoCo's.
+                // The test task's arguments as its JVMs started: its system properties, the agent and
+                // JaCoCo's; a debugger agent was left out of them.
                 task.jvmArgs(handOff.readLines().filter(String::isNotEmpty).map(Tsv::unescape))
                 handOff.delete()
-                task.maxParallelForks = forks?.resolve() ?: IsolatedPick.DEFAULT_FORKS
+                task.maxParallelForks = minOf(forks?.resolve() ?: IsolatedPick.DEFAULT_FORKS, Runtime.getRuntime().availableProcessors())
                 val parallel = task.maxParallelForks
                 task.addTestListener(object : TestListener {
                     override fun beforeSuite(suite: TestDescriptor) {}

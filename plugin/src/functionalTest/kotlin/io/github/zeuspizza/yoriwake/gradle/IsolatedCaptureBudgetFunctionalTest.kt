@@ -149,6 +149,32 @@ class IsolatedCaptureBudgetFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a picked class whose task did not run is left out of the map and runs on the next selecting build`(
+        @TempDir dir: File,
+    ) {
+        recordedWithinBudget(dir, "-x", "testYoriwakeIsolated")
+        assertTrue(rows(dir, AgentContract.COVERAGE_FILE).none { "[class:dev.sample.E2LaterTest]" in it[3] })
+        File(dir, "src/main/java/dev/sample/Adder.java").writeText(
+            "package dev.sample;\npublic class Adder { public int add(int a, int b) { return b + a; } }",
+        )
+
+        assertEquals(names("E1AdderTest", "E2LaterTest"), selecting(dir))
+    }
+
+    @Test
+    fun `a picked class the build script now excludes is not run alone`(@TempDir dir: File) {
+        sample(dir)
+        runner(dir, "test").build()
+        File(dir, "build.gradle.kts").appendText("\ntasks.test { exclude(\"dev/sample/E2LaterTest*\") }\n")
+        File(dir, "build/test-results").deleteRecursively()
+
+        runner(dir, "test", *budget.toTypedArray()).build()
+
+        assertFalse(File(dir, "build/test-results/testYoriwakeIsolated/TEST-dev.sample.E2LaterTest.xml").exists())
+        assertFalse("dev.sample.E2LaterTest" in ranTests(dir))
+    }
+
+    @Test
     fun `a budgeted recording with no map records shared`(@TempDir dir: File) {
         sample(dir)
 

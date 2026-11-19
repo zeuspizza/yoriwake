@@ -1402,12 +1402,15 @@ records shared, with one line saying the budget is Gradle-only for now.
   and reports, and your task's extensions (test retry, a JaCoCo report reading your task's data) do
   not see them. If that task does not run, their tests are missing from the map and run on every
   selecting build until the next recording.
-- **Measured on one machine** (rows of one sample, not rates), against the map recorded shared, on
-  generated single-class changes: grpc-java recorded in 1.72 times the shared recording in one
-  invocation, with 17 of 81 classes alone, and its 9 changes selected 7,506 tests instead of 14,263;
-  mockito, at 1.91 times, 11,850 instead of 23,046 over 12 changes; okio, where every class fits
-  the budget, at 1.07 times, 5,091 instead of 15,921 over 4 changes. No failing test was missed
-  because of it.
+- **Measured on one machine**, with the plugin's development line before 0.7.0, on generated
+  single-file changes; rows of one sample, not rates. Recording time is against a shared recording
+  of the same task on the same machine; tests selected are against the same changes selected from
+  a map recorded shared. grpc-java recorded in 1.72 times the shared recording, both tasks in one
+  invocation, with 17 of 81 classes alone, and its 9 changes selected 7,506 tests instead of
+  14,263. mockito recorded in 1.91 times and okio, where every class fits the budget, in 1.07
+  times, each as two separate invocations without the companion task; their changes selected
+  11,850 tests instead of 23,046 (12 changes) and 5,091 instead of 15,921 (4 changes). No failing
+  test was missed because of it.
 - **Not used:** a class-data-sharing archive to start the isolated JVMs faster. Gradle puts class
   directories first on the test classpath, and a dynamic archive refuses them.
 - It does not catch order dependence, as above.

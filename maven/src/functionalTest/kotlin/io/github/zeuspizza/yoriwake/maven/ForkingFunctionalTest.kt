@@ -282,6 +282,27 @@ class ForkingFunctionalTest {
     }
 
     @Test
+    fun `a recording budget is Gradle-only and the run records shared`(@TempDir dir: File) {
+        val project = committed(dir)
+
+        val output = recorded(project, "-Dyoriwake.isolatedCaptureBudget=2x")
+
+        assertContains(output, "-Dyoriwake.isolatedCaptureBudget is Gradle-only for now, so this run records every test class in shared JVMs")
+        val modes = File(libMap(project), "jvm-mode.tsv").readLines().filter(String::isNotBlank)
+        assertTrue(modes.isNotEmpty() && modes.all { "shared" in it }, modes.joinToString("\n"))
+    }
+
+    @Test
+    fun `a budget value that is not a multiple fails the build and names the setting`(@TempDir dir: File) {
+        val project = committed(dir)
+
+        val result = FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.isolatedCaptureBudget=twice")
+
+        assertTrue(result.exitCode != 0, result.output)
+        assertContains(result.output, "-Dyoriwake.isolatedCaptureBudget=twice")
+    }
+
+    @Test
     fun `a selecting run that falls back over an isolated map leaves it alone and names Maven's flags`(@TempDir dir: File) {
         val project = committed(dir)
         recorded(project, "-Dyoriwake.isolatedCapture")

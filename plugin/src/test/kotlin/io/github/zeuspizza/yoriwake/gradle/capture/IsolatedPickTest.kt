@@ -101,6 +101,39 @@ class IsolatedPickTest {
     }
 
     @Test
+    fun `a class the test task no longer runs is not picked`(@TempDir dir: File) {
+        val ranking = IsolatedPick.rank(map(dir))!!
+
+        val pick = IsolatedPick.pick(ranking, null, 1.8, hostForks = 1, isolatedForks = 1, processors = 8) { it != "dev.sample.CTest" }
+
+        assertEquals(listOf("dev.sample.BTest"), pick.classes.keys.toList())
+    }
+
+    @Test
+    fun `a test id names its outermost class, a JUnit 4 runner's included`() {
+        assertEquals("dev.sample.ATest", IsolatedPick.classOf("[engine:junit-vintage]/[runner:dev.sample.ATest]/[test:a(dev.sample.ATest)]"))
+        assertEquals("dev.sample.ATest", IsolatedPick.classOf("[engine:junit-jupiter]/[class:dev.sample.ATest]/[nested-class:Inner]/[method:a()]"))
+        assertEquals("dev.sample.ATest", IsolatedPick.classOf("[engine:junit-vintage]/[runner:dev.sample.ATest\$Inner]/[test:a]"))
+        assertNull(IsolatedPick.classOf("[yoriwake:unattributed]"))
+    }
+
+    @Test
+    fun `the measured start cost counts no more JVMs than there were classes`() {
+        val stamp = IsolatedPick.Stamp(2.0, 1.0, pickedSeconds = 4.0, classes = mapOf("dev.sample.A" to 3L, "dev.sample.B" to 1L))
+
+        // Two classes on 16 forks ran on two JVMs: 5 s each, less their 4 s, over two classes.
+        assertEquals(3.0, IsolatedPick.measured(stamp, wallSeconds = 5.0, forks = 16).measuredStartSeconds)
+    }
+
+    @Test
+    fun `the hand-off leaves out a debugger agent`() {
+        assertEquals(
+            "-Xmx1g\n-javaagent:a.jar\n",
+            IsolatedPick.handOff(listOf("-Xmx1g", "-agentlib:jdwp=transport=dt_socket,server=y,address=5005", "-Xrunjdwp:x", "-javaagent:a.jar")),
+        )
+    }
+
+    @Test
     fun `a budget of 1x picks nothing`(@TempDir dir: File) {
         assertEquals(emptyMap(), pick(IsolatedPick.rank(map(dir))!!, 1.0).classes)
     }
