@@ -265,6 +265,8 @@ COORDINATE_DIFF = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/chan
 DEPENDENCY_RULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/DependencyRule.kt"
 CLASSPATH_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathRecord.kt"
 SCHEDULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/Schedule.kt"
+ISOLATED_PICK = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/IsolatedPick.kt"
+ISOLATED_COMPANION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/IsolatedCompanion.kt"
 # The audit's computation, split from its types (Audit.kt) and its rendering. The anchors moved
 # with it, four columns left: the functions were members of `object Audit` and are now top level.
 AUDIT_COMPUTE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/report/AuditCompute.kt"
@@ -576,6 +578,8 @@ def unit_suite():
          "--tests", "*ClasspathFilesTest*",
          # pathIgnore's grammar, checked against Gradle's own, and what it may never leave out.
          "--tests", "*PathIgnoreTest*",
+         # Which test classes a budgeted recording runs alone, and how many the budget allows.
+         "--tests", "*IsolatedPickTest*",
          "--rerun"])
     if done.returncode == 0:
         return []
@@ -2846,6 +2850,26 @@ MUTATIONS = [
      "    val isolatedCapture: Boolean = parseFlag(ISOLATED_CAPTURE, lookup(ISOLATED_CAPTURE))",
      "    val isolatedCapture: Boolean = lookup(ISOLATED_CAPTURE) != null",
      functional_suite, "an isolatedCapture value that is not a boolean fails the build and names the flag"),
+    # isolated capture within a budget. `-Pyoriwake.isolatedCaptureBudget` moves the test classes
+    # the previous map ranks widest out of the test task into a companion task, one JVM each, into
+    # the same records; the decode labels those JVMs isolated. A picked class that never runs leaves
+    # its tests out of the map, which is safe but undoes the narrowing.
+    ("the budget is ignored", SETTINGS,
+     "    }?.takeIf { it > 1.0 }",
+     "    }?.takeIf { false }",
+     functional_suite, "a budgeted recording runs the picked class in its own JVM"),
+    ("picked classes are recorded as shared", DECODE_TASK,
+     "                task.isolated.set(wired.isolated || wired.isolatedWithinBudget)",
+     "                task.isolated.set(wired.isolated)",
+     functional_suite, "a budgeted recording labels the picked class's JVM isolated and the rest shared"),
+    ("picked classes are excluded and never run", ISOLATED_COMPANION,
+     "        project.tasks.named(testName).configure { it.finalizedBy(name) }",
+     "",
+     functional_suite, "a budgeted recording keeps the picked class's tests in the map"),
+    ("the pick ignores the budget", ISOLATED_PICK,
+     "            if ((spent + startSeconds + own) / parallel > allowance) break",
+     "",
+     unit_suite, "the pick stops at the budget"),
     ("a narrowed selecting run's lists replace the union", COVERAGE_DECODER,
      "            (!selecting || datesTheMap) &&\n",
      "",

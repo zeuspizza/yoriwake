@@ -111,6 +111,24 @@ class SettingsTest {
     }
 
     @Test
+    fun `isolatedCaptureBudget is a multiple of 1 or more and 1x is off`() {
+        assertNull(settings().isolatedCaptureBudget)
+        assertNull(settings(Settings.ISOLATED_CAPTURE_BUDGET to "1x").isolatedCaptureBudget)
+        assertEquals(2.0, settings(Settings.ISOLATED_CAPTURE_BUDGET to "2x").isolatedCaptureBudget)
+        assertEquals(1.5, settings(Settings.ISOLATED_CAPTURE_BUDGET to "1.5").isolatedCaptureBudget)
+        listOf("0.5x", "two", "", "x").forEach { value ->
+            val failure = assertFailsWith<InvalidUserDataException>(value) { settings(Settings.ISOLATED_CAPTURE_BUDGET to value) }
+            assertContains(failure.message.orEmpty(), "-Pyoriwake.isolatedCaptureBudget=$value")
+        }
+    }
+
+    @Test
+    fun `isolatedCapture wins over a budget`() {
+        assertEquals(2.0, settings(Settings.ISOLATED_CAPTURE_BUDGET to "2x").isolatedWithinBudget)
+        assertNull(settings(Settings.ISOLATED_CAPTURE_BUDGET to "2x", Settings.ISOLATED_CAPTURE to "").isolatedWithinBudget)
+    }
+
+    @Test
     fun `alwaysRun is split on commas and blanks are dropped`() {
         assertEquals(listOf("a.B", "c.*"), settings(Settings.ALWAYS_RUN to " a.B, ,c.* ").alwaysRun)
     }

@@ -18,6 +18,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_KIND_PR
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.REFUSED_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.RUN_TOKEN_PROPERTY
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.SELECT_PROPERTY
+import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
@@ -28,6 +29,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.TEST_TASKS_C
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
+import io.github.zeuspizza.yoriwake.gradle.capture.IsolatedPick
 import io.github.zeuspizza.yoriwake.gradle.capture.JvmArgFiles
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
@@ -70,6 +72,9 @@ import org.gradle.api.Project
 import org.gradle.api.artifacts.ArtifactCollection
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestListener
+import org.gradle.api.tasks.testing.TestResult
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.gradle.testing.jacoco.tasks.JacocoReportBase
 
@@ -205,6 +210,11 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
+                if (settings.isolatedWithinBudget != null) {
+                    IsolatedCompanion.register(project, name, settings.isolatedCaptureForks) { t ->
+                        configured.getValue(t.name).decode?.mapDir
+                    }
+                }
                 // A failed run restores the host's JaCoCo file in the decode; a report reads it after.
                 project.tasks.withType(JacocoReportBase::class.java).configureEach {
                     it.mustRunAfter(DecodeTask.nameFor(name))
@@ -379,6 +389,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
         // that check, which may switch capture off.
         isolateWhileCapturing(test, runPlan)
+        isolateWithinBudget(test, runPlan, mapDir, fromBuildScript)
         refuseInJvmParallelism(
             test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing,
             recordSequentially, recording = runPlan.asked == RunPlan.Kind.RECORD,
@@ -449,6 +460,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 effectiveScope,
                 // What this run asked for; the decoder still checks that each JVM ran one class.
                 isolated = settings.isolatedCapture && !selecting,
+                isolatedWithinBudget = settings.isolatedWithinBudget != null && !selecting,
                 afterTest = afterTest,
                 scheduleSet = schedule.set,
                 optimistic = selecting && settings.mode == Strictness.OPTIMISTIC,
@@ -792,6 +804,76 @@ internal class TestTaskWiring(internal val settings: Settings) {
             test.logger.lifecycle(
                 "[yoriwake] ${test.path}: recording with a fresh test JVM per test class " +
                     "(-P${Settings.ISOLATED_CAPTURE}), up to ${test.maxParallelForks} at a time"
+            )
+        }
+    }
+
+    /**
+     * With `-Pyoriwake.isolatedCaptureBudget`, on a run that records the whole task, moves the test
+     * classes the previous map ranks highest, as many as the budget allows, out of this task and
+     * into [IsolatedCompanion], which runs each in a JVM of its own into the same records. Hands it
+     * the JVM arguments this task's JVMs start with. A run with nothing to rank records shared.
+     *
+     * Registered beside [isolateWhileCapturing], so it runs after the refusals that switch capture off.
+     */
+    private fun isolateWithinBudget(test: Test, runPlan: RunPlan, mapDir: File, fromBuildScript: TestPatterns) {
+        val budget = settings.isolatedCaptureBudget ?: return
+        if (runPlan.selecting) return
+        val flag = "-P${Settings.ISOLATED_CAPTURE_BUDGET}=${IsolatedPick.describe(budget)}"
+        if (settings.isolatedCapture) {
+            test.doFirst {
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag is ignored: -P${Settings.ISOLATED_CAPTURE} records every test class in its own JVM"
+                )
+            }
+            return
+        }
+        val pending = File(mapDir, IsolatedPick.PENDING_FILE)
+        val handOff = isolatedHandOff(mapDir)
+        val forks = settings.isolatedCaptureForks
+        val companion = IsolatedCompanion.nameFor(test.name)
+        test.doFirst {
+            pending.delete()
+            handOff.delete()
+            if (test.systemProperties[RECORDS_DIR_PROPERTY]?.toString().isNullOrEmpty()) return@doFirst
+            if (!readFilterVerdict(test, fromBuildScript).definesTheTask) return@doFirst
+            val ranking = IsolatedPick.rank(mapDir)
+            if (ranking == null) {
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag has no map to rank test classes from yet, so this run records " +
+                        "every class in shared JVMs; the next one picks from its map"
+                )
+                return@doFirst
+            }
+            val dirs = test.testClassesDirs.files
+            val pick = IsolatedPick.pick(
+                ranking, IsolatedPick.Stamp.read(File(mapDir, IsolatedPick.STAMP_FILE)), budget,
+                test.maxParallelForks, forks?.resolve() ?: IsolatedPick.DEFAULT_FORKS, Runtime.getRuntime().availableProcessors(),
+            ) { name -> dirs.any { File(it, IsolatedPick.scanPatterns(name).first()).isFile } }
+            if (pick.classes.isEmpty()) {
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag picked no test class: none ranks above 0 or fits the budget, so " +
+                        "this run records every class in shared JVMs"
+                )
+                return@doFirst
+            }
+            // Scan patterns, not the filter: a filtered run would not date the map.
+            pick.classes.keys.forEach { test.exclude(IsolatedPick.scanPatterns(it)) }
+            runCatching { writeAtomically(pending, pick.encode()) }.onFailure { return@doFirst }
+            val write = { runCatching { writeAtomically(handOff, test.allJvmArgs.joinToString("") { Tsv.escape(it) + "\n" }) } }
+            write()
+            // Again once every action has run, so the arguments are those the JVMs start with.
+            test.addTestListener(object : TestListener {
+                override fun beforeSuite(suite: TestDescriptor) {
+                    if (suite.parent == null) write()
+                }
+                override fun afterSuite(suite: TestDescriptor, result: TestResult) {}
+                override fun beforeTest(testDescriptor: TestDescriptor) {}
+                override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {}
+            })
+            test.logger.lifecycle(
+                "[yoriwake] ${test.path}: recording ${pick.classes.size} test classes in their own JVM ($flag) in " +
+                    "$companion, the rest in shared JVMs"
             )
         }
     }

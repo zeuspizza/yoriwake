@@ -33,6 +33,8 @@ class MapFilesReadTest {
         "COUNT_FILE" to "the scheduled full run's count, rewritten by every decode; a changed one can only postpone " +
             "a full run, which selects as a build without the schedule does",
         "TIME_FILE" to "the scheduled full run's time, as COUNT_FILE",
+        "STAMP_FILE" to "the classes a budgeted recording picked, read only by the next recording's pick and the " +
+            "explain output; a selecting run never reads it",
         "MODULES_FILE" to "the library jars a capturing run's test JVMs are told of, machine paths, deleted by the decode",
     )
 

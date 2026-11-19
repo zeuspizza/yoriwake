@@ -203,7 +203,7 @@ map.
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `MODE_ISOLATED` | `isolated` | Recorded with `-Pyoriwake.isolatedCapture`, and the JVM ran tests of one class only |
+| `MODE_ISOLATED` | `isolated` | Recorded with `-Pyoriwake.isolatedCapture` or `-Pyoriwake.isolatedCaptureBudget`, and the JVM ran tests of one class only |
 | `MODE_SHARED` | `shared` | Any other JVM. A JVM with no row, or a map with no file, counts as this |
 
 ### The loaded-class directory

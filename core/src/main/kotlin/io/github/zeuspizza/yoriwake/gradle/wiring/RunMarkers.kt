@@ -59,3 +59,10 @@ internal fun fullRunMarker(recordsDir: File) = File(recordsDir.parentFile, "full
  * reason. Read by the decode finalizer over its own inputs, which may predate the filter.
  */
 internal fun undatedRunMarker(recordsDir: File) = File(recordsDir.parentFile, "undated-run.marker")
+
+/**
+ * The JVM arguments a budgeted recording's test task started its JVMs with, one escaped per line,
+ * for the task that runs the picked classes alone to start its own with. Machine paths: its reader
+ * and the decode remove it.
+ */
+internal fun isolatedHandOff(mapDir: File) = File(mapDir, "isolated-pick.jvm-args")

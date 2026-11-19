@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.maven
 import io.github.zeuspizza.yoriwake.agent.select.AlwaysRun
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.IsolatedCaptureForks
+import io.github.zeuspizza.yoriwake.gradle.capture.IsolatedPick
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
@@ -151,6 +152,17 @@ internal class Settings(
                 IsolatedCaptureForks.parse(it.trim())
                     ?: throw MavenExecutionException(IsolatedCaptureForks.malformed("-D", it), null as Throwable?)
             }
+
+        /**
+         * `-Dyoriwake.isolatedCaptureBudget` as [project]'s executions read it: null when unset or
+         * `1x`; a value that is not a budget fails the build. Recording within a budget is
+         * Gradle's alone so far.
+         */
+        fun isolatedCaptureBudgetOf(project: MavenProject, session: MavenSession): Double? =
+            Declines.property(project, session, SettingNames.ISOLATED_CAPTURE_BUDGET)?.let {
+                IsolatedPick.parseBudget(it)
+                    ?: throw MavenExecutionException(IsolatedPick.malformed("-D", it), null as Throwable?)
+            }?.takeIf { it > 1.0 }
 
         /** The module's own plugin entry, else the reactor root's, never a sibling's that `-pl` happened to put first. */
         private fun moduleConfiguration(project: MavenProject, session: MavenSession): Xpp3Dom? {
