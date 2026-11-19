@@ -17,7 +17,7 @@ class IsolatedPickTest {
      * of its own first; CTest's second test covers nothing in scope. A second JVM, isolated, runs
      * DTest alone. ATest and BTest take a second each, CTest two, DTest one.
      */
-    private fun map(dir: File, cTestAlone: Boolean = false): File {
+    private fun map(dir: File, cTestAlone: Boolean = false, cJvmLabel: String = "isolated", cNanos: Long = 1000000000): File {
         val shared = "run/worker-1"
         val alone = "run/worker-2"
         val cJvm = if (cTestAlone) "run/worker-3" else shared
@@ -27,8 +27,8 @@ class IsolatedPickTest {
             listOf(
                 "SUCCESSFUL\t1000000000\tdev.sample.Alpha\t${id("ATest", "a")}",
                 "SUCCESSFUL\t1000000000\tdev.sample.Beta\t${id("BTest", "b")}",
-                "SUCCESSFUL\t1000000000\tdev.sample.Other\t${id("CTest", "c1")}",
-                "SUCCESSFUL\t1000000000\t\t${id("CTest", "c2")}",
+                "SUCCESSFUL\t$cNanos\tdev.sample.Other\t${id("CTest", "c1")}",
+                "SUCCESSFUL\t$cNanos\t\t${id("CTest", "c2")}",
                 "SUCCESSFUL\t1000000000\tdev.sample.Delta\t${id("DTest", "d")}",
             ).joinToString("\n", postfix = "\n"),
         )
@@ -51,7 +51,7 @@ class IsolatedPickTest {
             ).joinToString("\n", postfix = "\n"),
         )
         File(dir, AgentContract.JVM_MODE_FILE).writeText(
-            listOfNotNull("$shared\tshared", "$alone\tisolated", "$cJvm\tisolated".takeIf { cTestAlone })
+            listOfNotNull("$shared\tshared", "$alone\tisolated", "$cJvm\t$cJvmLabel".takeIf { cTestAlone })
                 .joinToString("\n", postfix = "\n"),
         )
         return dir
@@ -149,7 +149,33 @@ class IsolatedPickTest {
         val second = pick(ranking, 1.8, previous = again)
 
         assertEquals(mapOf("dev.sample.CTest" to 5L), second.classes)
-        assertEquals(1.5, second.startSeconds)
+        // The measured start cost is kept for the record, not fed back into the next pick.
+        assertEquals(IsolatedPick.DEFAULT_START_SECONDS, second.startSeconds)
+    }
+
+    @Test
+    fun `a class that ran alone in a JVM labelled shared keeps the score it was picked with`(@TempDir dir: File) {
+        val first = pick(IsolatedPick.rank(map(dir))!!, 1.8)
+
+        // A parameterized class's test ids name no class, so the decoder labels its own JVM shared.
+        val ranking = IsolatedPick.rank(map(File(dir, "next").apply { mkdirs() }, cTestAlone = true, cJvmLabel = "shared"))!!
+        val second = pick(ranking, 1.8, previous = first)
+
+        assertEquals(mapOf("dev.sample.CTest" to 5L), second.classes)
+    }
+
+    @Test
+    fun `a class recorded alone, slower than it ran shared, costs what it did when picked`(@TempDir dir: File) {
+        val first = pick(IsolatedPick.rank(map(dir))!!, 1.8)
+        val stamped = IsolatedPick.Stamp.read(File(dir, "stamp").apply { writeText(first.encode()) })!!
+
+        // Alone and cold, CTest's tests took three times as long.
+        val ranking = IsolatedPick.rank(map(File(dir, "next").apply { mkdirs() }, cTestAlone = true, cNanos = 3000000000))!!
+        val second = pick(ranking, 1.8, previous = stamped)
+
+        assertEquals(first.classes, second.classes)
+        assertEquals(first.sharedSeconds, second.sharedSeconds)
+        assertEquals(first.classSeconds, second.classSeconds)
     }
 
     @Test

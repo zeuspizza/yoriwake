@@ -1391,8 +1391,8 @@ records shared, with one line saying the budget is Gradle-only for now.
   time, spread over the JVMs the isolated part runs at once: 4, or
   `-Pyoriwake.isolatedCaptureForks`, and never more than the machine's processors. Classes are
   taken by score while that cost stays within (n - 1) times the shared recording, its tests'
-  recorded time over the task's `maxParallelForks`. A JVM start counts 1 second until a budgeted
-  recording has measured it; each one measures it again. Your task always keeps at least one class.
+  recorded time over the task's `maxParallelForks`. A JVM start counts 1 second. Your task always
+  keeps at least one class.
 - **The pick is stable.** A class recorded alone has no shared JVM left to score it, so it keeps
   the score it was picked with, stamped beside the map in `isolated-pick` with the budget.
 - **The picked classes run in `<task>YoriwakeIsolated`**, a test task the plugin registers beside

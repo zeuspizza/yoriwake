@@ -111,10 +111,16 @@ internal object IsolatedPick {
         val scores = HashMap<String, Long>()
         val shared = HashSet<String>()
         val alone = HashSet<String>()
-        rows(AgentContract.POSITIONS_FILE).filter { it.size >= 3 }.forEach { row ->
+        val positions = rows(AgentContract.POSITIONS_FILE).filter { it.size >= 3 }
+        // A JVM that ran one class keeps no other class's windows, whatever its label: the decoder
+        // labels a JVM shared when a test id names no class, as a parameterized one's does.
+        val classesByJvm = HashMap<String, MutableSet<String?>>()
+        positions.forEach { classesByJvm.getOrPut(it[0]) { HashSet() }.add(classOf(it[2])) }
+        val oneClass = classesByJvm.filterValues { it.size == 1 && null !in it }.keys
+        positions.forEach { row ->
             val owner = classOf(row[2]) ?: return@forEach
             val sequence = row[1].toLongOrNull() ?: return@forEach
-            if (row[0] in isolatedJvms) {
+            if (row[0] in isolatedJvms || row[0] in oneClass) {
                 alone.add(owner)
                 return@forEach
             }
@@ -148,13 +154,21 @@ internal object IsolatedPick {
         val pickedSeconds: Double,
         val classes: Map<String, Long>,
         val measuredStartSeconds: Double? = null,
+        /** The shared recording the budget was a multiple of, kept while classes stay picked. */
+        val sharedSeconds: Double? = null,
+        /** Each picked class's recorded seconds when it was picked, from its shared JVM. */
+        val classSeconds: Map<String, Double> = emptyMap(),
     ) {
         fun encode(): String = buildString {
             append(Tsv.join("budget", budget.toString())).append('\n')
             append(Tsv.join("start-seconds", startSeconds.toString())).append('\n')
             append(Tsv.join("picked-seconds", pickedSeconds.toString())).append('\n')
             measuredStartSeconds?.let { append(Tsv.join("measured-start-seconds", it.toString())).append('\n') }
-            classes.forEach { (name, score) -> append(Tsv.join("class", score.toString(), name)).append('\n') }
+            sharedSeconds?.let { append(Tsv.join("shared-seconds", it.toString())).append('\n') }
+            classes.forEach { (name, score) ->
+                val seconds = classSeconds[name]
+                append(if (seconds == null) Tsv.join("class", score.toString(), name) else Tsv.join("class", score.toString(), name, seconds.toString())).append('\n')
+            }
         }
 
         companion object {
@@ -167,8 +181,10 @@ internal object IsolatedPick {
                     budget = value("budget") ?: return null,
                     startSeconds = value("start-seconds") ?: return null,
                     pickedSeconds = value("picked-seconds") ?: return null,
-                    classes = rows.filter { it[0] == "class" && it.size == 3 }.associate { it[2] to it[1].toLong() },
+                    classes = rows.filter { it[0] == "class" && it.size >= 3 }.associate { it[2] to it[1].toLong() },
                     measuredStartSeconds = value("measured-start-seconds"),
+                    sharedSeconds = value("shared-seconds"),
+                    classSeconds = rows.filter { it[0] == "class" && it.size >= 4 }.associate { it[2] to it[3].toDouble() },
                 )
             }.getOrNull()
         }
@@ -192,10 +208,17 @@ internal object IsolatedPick {
         processors: Int,
         runnable: (String) -> Boolean,
     ): Stamp {
-        val startSeconds = previous?.measuredStartSeconds ?: previous?.startSeconds ?: DEFAULT_START_SECONDS
+        // Not the start cost the previous run measured: that includes the isolated task's own start,
+        // which a small pick cannot spread, so feeding it back shrank the pick on every recording.
+        val startSeconds = DEFAULT_START_SECONDS
         val scores = HashMap(ranking.scores)
-        previous?.classes?.forEach { (name, score) -> if (name in ranking.isolated) scores[name] = score }
-        val shared = ranking.seconds.values.sum() / maxOf(1, hostForks)
+        val carried = previous?.classes?.keys.orEmpty().filter { it in ranking.isolated }.toSet()
+        carried.forEach { scores[it] = previous!!.classes.getValue(it) }
+        // A class recorded alone runs cold and slower than it did shared; costing it, and the shared
+        // recording, from that run would grow the pick on every recording. Both stay as first picked.
+        val seconds = { name: String -> previous?.classSeconds?.get(name)?.takeIf { name in carried } ?: ranking.seconds[name] ?: 0.0 }
+        val shared = previous?.sharedSeconds?.takeIf { carried.isNotEmpty() }
+            ?: (ranking.seconds.values.sum() / maxOf(1, hostForks))
         val allowance = (budget - 1.0) * shared
         val parallel = maxOf(1, minOf(isolatedForks, processors))
         val left = (ranking.scores.keys + ranking.isolated).count(runnable)
@@ -205,13 +228,14 @@ internal object IsolatedPick {
         for ((name, score) in scores.entries.sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })) {
             if (score <= 0 || !runnable(name)) continue
             if (picked.size + 1 >= left) break
-            val own = ranking.seconds[name] ?: 0.0
+            val own = seconds(name)
             if ((spent + startSeconds + own) / parallel > allowance) break
             spent += startSeconds + own
             pickedSeconds += own
             picked[name] = score
         }
-        return Stamp(budget, startSeconds, pickedSeconds, picked)
+        return Stamp(budget, startSeconds, pickedSeconds, picked, sharedSeconds = shared,
+            classSeconds = picked.keys.associateWith(seconds))
     }
 
     /**
