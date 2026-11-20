@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class IsolatedPickTest {
 
@@ -85,12 +86,52 @@ class IsolatedPickTest {
     fun `the pick stops at the budget`(@TempDir dir: File) {
         val ranking = IsolatedPick.rank(map(dir))!!
 
-        // Shared: 5 s on one JVM, so 1.8x allows 4 s more. CTest costs a JVM start and its 2 s; BTest
+        // Shared: 5 s on one JVM, so 2.2x allows 6 s more. CTest costs a JVM start and twice its 2 s; BTest
         // 2 s more, which fits only spread over four JVMs.
-        assertEquals(listOf("dev.sample.CTest"), pick(ranking, 1.8).classes.keys.toList())
-        assertEquals(listOf("dev.sample.CTest", "dev.sample.BTest"), pick(ranking, 1.8, forks = 4).classes.keys.toList())
+        assertEquals(listOf("dev.sample.CTest"), pick(ranking, 2.2).classes.keys.toList())
+        assertEquals(listOf("dev.sample.CTest", "dev.sample.BTest"), pick(ranking, 2.2, forks = 4).classes.keys.toList())
         // A class that ranks 0 gains nothing alone, however much the budget allows.
         assertEquals(listOf("dev.sample.CTest", "dev.sample.BTest"), pick(ranking, 10.0).classes.keys.toList())
+    }
+
+    /** [map] with its JVMs measured: the shared one took [sharedJvm] s, and CTest's own, when alone, [cJvm] s. */
+    private fun measuredMap(dir: File, sharedJvm: Double, cJvm: Double? = null): File {
+        map(dir, cTestAlone = cJvm != null)
+        File(dir, CoverageDecoder.JVM_SECONDS_FILE).writeText(
+            listOfNotNull("run/worker-1\t$sharedJvm", "run/worker-2\t3.0", cJvm?.let { "run/worker-3\t$it" })
+                .joinToString("\n", postfix = "\n"),
+        )
+        return dir
+    }
+
+    @Test
+    fun `a class costs a shared JVM's measured start and twice its tests, within the budget`(@TempDir dir: File) {
+        // The shared JVM took 20 s for 4 s of tests: a 16 s start overhead; the baseline is 20 s.
+        val ranking = IsolatedPick.rank(measuredMap(dir, sharedJvm = 20.0))!!
+        assertEquals(16.0, ranking.startOverhead)
+        assertEquals(20.0, ranking.sharedJvmSeconds)
+        assertEquals(mapOf("dev.sample.DTest" to 3.0), ranking.isolatedSeconds)
+
+        for (budget in listOf(1.5, 2.0, 3.0, 5.0)) {
+            for (forks in listOf(1, 4)) {
+                val pick = pick(ranking, budget, forks)
+                val spent = pick.classSeconds.values.sum()
+                assertTrue(spent / forks <= (budget - 1) * 20.0, "$budget x, $forks forks: $spent s")
+            }
+        }
+        // CTest costs 16 + 2 x 2 s: over 1.5x's 10 s, within 2x's 20 s.
+        assertEquals(emptyMap(), pick(ranking, 1.5).classes)
+        assertEquals(mapOf("dev.sample.CTest" to 20.0), pick(ranking, 2.0).classSeconds)
+    }
+
+    @Test
+    fun `a class the map measured alone costs what its own JVM took`(@TempDir dir: File) {
+        val first = pick(IsolatedPick.rank(measuredMap(dir, sharedJvm = 20.0))!!, 2.0)
+        val next = IsolatedPick.rank(measuredMap(File(dir, "next").apply { mkdirs() }, sharedJvm = 12.0, cJvm = 30.0))!!
+
+        // Alone it took 30 s, more than the 20 s the budget allows over the 20 s it was picked against.
+        assertEquals(emptyMap(), pick(next, 2.0, previous = first).classes)
+        assertEquals(mapOf("dev.sample.CTest" to 5L), pick(next, 2.6, previous = first).classes)
     }
 
     @Test
@@ -104,7 +145,7 @@ class IsolatedPickTest {
     fun `a class the test task no longer runs is not picked`(@TempDir dir: File) {
         val ranking = IsolatedPick.rank(map(dir))!!
 
-        val pick = IsolatedPick.pick(ranking, null, 1.8, hostForks = 1, isolatedForks = 1, processors = 8) { it != "dev.sample.CTest" }
+        val pick = IsolatedPick.pick(ranking, null, 2.2, hostForks = 1, isolatedForks = 1, processors = 8) { it != "dev.sample.CTest" }
 
         assertEquals(listOf("dev.sample.BTest"), pick.classes.keys.toList())
     }
@@ -140,13 +181,13 @@ class IsolatedPickTest {
 
     @Test
     fun `a class the previous map recorded alone keeps the score it was picked with`(@TempDir dir: File) {
-        val first = pick(IsolatedPick.rank(map(dir))!!, 1.8)
+        val first = pick(IsolatedPick.rank(map(dir))!!, 2.2)
         val stamped = File(dir, "stamp").apply { writeText(IsolatedPick.measured(first, wallSeconds = 3.5, forks = 4).encode()) }
         val again = IsolatedPick.Stamp.read(stamped)!!
         assertEquals(1.5, again.measuredStartSeconds)
 
         val ranking = IsolatedPick.rank(map(File(dir, "next").apply { mkdirs() }, cTestAlone = true))!!
-        val second = pick(ranking, 1.8, previous = again)
+        val second = pick(ranking, 2.2, previous = again)
 
         assertEquals(mapOf("dev.sample.CTest" to 5L), second.classes)
         // The measured start cost is kept for the record, not fed back into the next pick.
@@ -155,23 +196,23 @@ class IsolatedPickTest {
 
     @Test
     fun `a class that ran alone in a JVM labelled shared keeps the score it was picked with`(@TempDir dir: File) {
-        val first = pick(IsolatedPick.rank(map(dir))!!, 1.8)
+        val first = pick(IsolatedPick.rank(map(dir))!!, 2.2)
 
         // A parameterized class's test ids name no class, so the decoder labels its own JVM shared.
         val ranking = IsolatedPick.rank(map(File(dir, "next").apply { mkdirs() }, cTestAlone = true, cJvmLabel = "shared"))!!
-        val second = pick(ranking, 1.8, previous = first)
+        val second = pick(ranking, 2.2, previous = first)
 
         assertEquals(mapOf("dev.sample.CTest" to 5L), second.classes)
     }
 
     @Test
     fun `a class recorded alone, slower than it ran shared, costs what it did when picked`(@TempDir dir: File) {
-        val first = pick(IsolatedPick.rank(map(dir))!!, 1.8)
+        val first = pick(IsolatedPick.rank(map(dir))!!, 2.2)
         val stamped = IsolatedPick.Stamp.read(File(dir, "stamp").apply { writeText(first.encode()) })!!
 
         // Alone and cold, CTest's tests took three times as long.
         val ranking = IsolatedPick.rank(map(File(dir, "next").apply { mkdirs() }, cTestAlone = true, cNanos = 3000000000))!!
-        val second = pick(ranking, 1.8, previous = stamped)
+        val second = pick(ranking, 2.2, previous = stamped)
 
         assertEquals(first.classes, second.classes)
         assertEquals(first.sharedSeconds, second.sharedSeconds)

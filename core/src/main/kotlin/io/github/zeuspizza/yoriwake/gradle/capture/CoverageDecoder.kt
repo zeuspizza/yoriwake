@@ -328,6 +328,7 @@ internal object CoverageDecoder {
         val retainedJvms = positions.map { Tsv.split(it).first() }.filterNot { it in decodedJvms }.distinct()
         EnvironmentFingerprint.write(mapDir, retainedJvms, decodedJvms, environment)
         writeEnvironmentReads(mapDir, workers)
+        writeJvmSeconds(mapDir, workers.map { "$run/${it.name}" to it }, retainedJvms.toSet())
         writeScope(mapDir, includePackages)
         writeEffectiveScope(
             mapDir,
@@ -620,6 +621,29 @@ internal object CoverageDecoder {
             }
             .toMap()
     }.getOrElse { emptyMap() }
+
+    /**
+     * `jvm<TAB>seconds`: how long each JVM of the map ran, its start included, as its agent read it
+     * at the end ([AgentContract.OVERHEAD_FILE]'s `jvmMs=`). A JVM whose agent wrote none has no row.
+     * Plugin-private: only a budgeted recording's pick reads it, to cost a class recorded alone.
+     */
+    const val JVM_SECONDS_FILE = "jvm-seconds.tsv"
+
+    private fun writeJvmSeconds(mapDir: File, decoded: List<Pair<String, File>>, retainedJvms: Set<String>) {
+        val file = File(mapDir, JVM_SECONDS_FILE)
+        val retained = file.takeIf(File::isFile)?.readLines().orEmpty()
+            .filter { it.isNotBlank() && Tsv.split(it).first() in retainedJvms }
+        val measured = decoded.mapNotNull { (jvm, worker) ->
+            val line = File(worker, AgentContract.OVERHEAD_FILE).takeIf(File::isFile)
+                ?.let { runCatching { it.readText() }.getOrNull() } ?: return@mapNotNull null
+            val millis = JVM_MILLIS.find(line)?.groupValues?.get(1)?.toLongOrNull() ?: return@mapNotNull null
+            Tsv.join(jvm, (millis / 1000.0).toString())
+        }
+        runCatching { writeAtomically(file, (retained + measured).sorted().joinToString("") { "$it\n" }) }
+            .onFailure { file.delete() }
+    }
+
+    private val JVM_MILLIS = Regex("""(?:^|\s)jvmMs=(\d+)""")
 
     /** Unscoped writes no file: empty must keep meaning "we do not know". */
     private fun writeScope(mapDir: File, includePackages: List<String>) {

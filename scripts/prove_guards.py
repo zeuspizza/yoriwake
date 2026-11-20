@@ -2867,7 +2867,7 @@ MUTATIONS = [
      "",
      functional_suite, "a budgeted recording keeps the picked class's tests in the map"),
     ("the pick ignores the budget", ISOLATED_PICK,
-     "            if ((spent + startSeconds + own) / parallel > allowance) break",
+     "            if ((spent + own) / parallel > allowance) break",
      "",
      unit_suite, "the pick stops at the budget"),
     ("a narrowed selecting run's lists replace the union", COVERAGE_DECODER,

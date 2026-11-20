@@ -16,7 +16,8 @@ import kotlin.test.assertTrue
  * One shared JVM runs, by class name: E0UnrelatedTest, which loads Other and Setup; E1AdderTest,
  * which loads Adder; E2LaterTest, whose three tests use only Other. E2LaterTest ranks first: its
  * tests ran after every class was loaded and cover one. Each class takes about half a second, so a
- * budget of 2.2x on one isolated JVM at a time fits one class and its JVM start, not two.
+ * budget of 2.2x on one isolated JVM at a time fits one class, costed at a JVM start and twice its
+ * tests, not two.
  */
 class IsolatedCaptureBudgetFunctionalTest : FunctionalTestSupport() {
 
@@ -87,7 +88,7 @@ class IsolatedCaptureBudgetFunctionalTest : FunctionalTestSupport() {
     }
 
     private fun picked(dir: File) =
-        File(mapDir(dir), "isolated-pick").readLines().filter { it.startsWith("class\t") }.map { it.substringAfterLast('\t') }
+        File(mapDir(dir), "isolated-pick").readLines().filter { it.startsWith("class\t") }.map { it.split('\t')[2] }
 
     private fun selecting(dir: File): Set<String> {
         File(dir, "build/test-results").deleteRecursively()
@@ -105,6 +106,8 @@ class IsolatedCaptureBudgetFunctionalTest : FunctionalTestSupport() {
         assertContains(output, "recording 1 test classes in their own JVM")
         assertTrue(File(dir, "build/test-results/testYoriwakeIsolated/TEST-dev.sample.E2LaterTest.xml").isFile, output)
         assertEquals(names("E0UnrelatedTest", "E1AdderTest"), ranTests(dir))
+        // Each JVM's own time, its start included, which the next pick costs classes by.
+        assertEquals(2, rows(dir, "jvm-seconds.tsv").count { it[1].toDouble() > 0.0 })
         val explained = runner(dir, "yoriwakeExplainTest", "-Pyoriwake.base=HEAD").build().output
         assertContains(explained, "1 test classes recorded in their own JVM, picked under budget 2.2x")
     }

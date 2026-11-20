@@ -430,7 +430,19 @@ public final class CaptureSession implements TestEvents {
 
     /** What capture cost this worker, as one line. */
     public synchronized String overhead() {
-        return meter.render(writer.recordCount(), windows, failures);
+        return meter.render(writer.recordCount(), windows, failures) + jvmUptime();
+    }
+
+    /**
+     * How long this JVM has run, its start included, as {@code jvmMs=}; empty when it cannot be
+     * read. A budgeted recording costs a test class recorded alone by it.
+     */
+    private static String jvmUptime() {
+        try {
+            return " jvmMs=" + java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime();
+        } catch (Throwable t) {
+            return "";
+        }
     }
 
     public synchronized int recordCount() {

@@ -1387,14 +1387,17 @@ records shared, with one line saying the budget is Gradle-only for now.
   JVMs: the classes of your project that JVM had first loaded at or before a test, less those the
   test covers itself. That counts the changes that would select the test only because of its JVM.
   The first recording of a task has no map, records shared and says so; the next one picks.
-- **The budget is wall clock.** A class recorded alone costs a JVM start and its tests' recorded
-  time, spread over the JVMs the isolated part runs at once: 4, or
-  `-Pyoriwake.isolatedCaptureForks`, and never more than the machine's processors. Classes are
-  taken by score while that cost stays within (n - 1) times the shared recording, its tests'
-  recorded time over the task's `maxParallelForks`. A JVM start counts 1 second. Your task always
-  keeps at least one class.
+- **The budget is wall clock.** Each test JVM records how long it ran, its start included. A class
+  recorded alone costs what its own JVM took last time; one not yet recorded alone costs a shared
+  JVM's start overhead (its time less its tests') plus twice its tests' recorded time, as a fresh
+  JVM runs them cold (1 second plus twice, on a map recorded before JVM times were). Costs are
+  spread over the JVMs the isolated part runs at once: 4, or `-Pyoriwake.isolatedCaptureForks`, and
+  never more than the machine's processors. Classes are taken by score while that cost stays within
+  (n - 1) times the shared recording: its JVMs' time over the task's `maxParallelForks`. Your task
+  always keeps at least one class.
 - **The pick is stable.** A class recorded alone has no shared JVM left to score it, so it keeps
-  the score it was picked with, stamped beside the map in `isolated-pick` with the budget.
+  the score it was picked with, stamped beside the map in `isolated-pick` with the budget, its cost
+  until its own JVM is measured, and the shared recording it was picked against.
 - **The picked classes run in `<task>YoriwakeIsolated`**, a test task the plugin registers beside
   yours and runs after it, one JVM per class, with your task's classpath, framework, JVM arguments,
   system properties and environment. Your task leaves them out through its scan patterns, so the

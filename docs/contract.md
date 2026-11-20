@@ -134,7 +134,7 @@ is written as it is.
 | `INDEX_FILE` | `index.tsv` | `sequence \t durationNanos \t byteCount \t outcome \t record-id` |
 | `EXEC_FILE_FORMAT` | `%06d.exec` | One JaCoCo execution-data blob per record, named by its sequence |
 | `TOUCHES_FILE` | `touches.tsv` | `sequence \t kind \t value`: what the JVM loaded or read for the first time before the record with that sequence was taken. Ends with `#complete` when observation ended normally |
-| `OVERHEAD_FILE` | `overhead.txt` | One line: what capture cost this JVM |
+| `OVERHEAD_FILE` | `overhead.txt` | One line: what capture cost this JVM, and as `jvmMs=` how long the JVM had run, its start included |
 | `ENV_READS_FILE` | `env-reads.tsv` | The environment variables the JVM read, one name per line, escaped as a field; never a value. Written when every read was observed. The decode writes the union of a capture's workers beside the map under the same name, only when every worker wrote one; `yoriwakeExplain<Task>` reads it and nothing selects by it |
 | `RAW_SCHEMA_VERSION_FILE` | `raw-schema-version` | The raw version, one integer. Written before the first record |
 | `PARALLEL_UNCONFIRMED_FILE` | `parallel-unconfirmed` | Why the worker captured nothing: its tests may run concurrently. Any one leaves the map as it was |

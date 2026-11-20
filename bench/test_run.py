@@ -4413,6 +4413,10 @@ def case_neither_arm_selects_against_the_other_arms_map():
             if answer != fits or (not answer and not why):
                 failures += fail(f"{directory} for the {'isolated' if isolated_arm else 'shared'} "
                                  f"arm: fits={answer}, why={why!r}")
+        for directory, fits in ((mixed, True), (isolated, False), (shared, True)):
+            answer, _why = sweep_data.map_fits_arm(directory, False, reuse_mixed=True)
+            if answer != fits:
+                failures += fail(f"{directory} for the shared arm reusing a budgeted map: fits={answer}")
     if sweep_data.checkout_schema_version(run.SOURCE) is None:
         failures += fail("the checkout's map schema could not be read from AgentContract")
     return failures

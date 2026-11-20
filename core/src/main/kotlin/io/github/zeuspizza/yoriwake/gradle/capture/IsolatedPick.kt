@@ -65,12 +65,17 @@ internal object IsolatedPick {
 
     /**
      * What a pick needs from a map: each test class's score from the JVMs it shared, the classes
-     * that ran only in JVMs of their own, and each class's recorded seconds.
+     * that ran only in JVMs of their own, and each class's recorded test seconds. Where the map
+     * measured its JVMs ([CoverageDecoder.JVM_SECONDS_FILE]): what each class's own JVMs took, the
+     * mean start overhead of a shared JVM (its time less its tests'), and the shared JVMs' time.
      */
     class Ranking(
         val scores: Map<String, Long>,
         val isolated: Set<String>,
         val seconds: Map<String, Double>,
+        val isolatedSeconds: Map<String, Double> = emptyMap(),
+        val startOverhead: Double? = null,
+        val sharedJvmSeconds: Double? = null,
     )
 
     /**
@@ -129,8 +134,41 @@ internal object IsolatedPick {
             val own = covered[row[2]]?.size ?: 0
             scores[owner] = (scores[owner] ?: 0L) + maxOf(before - own, 0)
         }
-        return Ranking(scores, alone - shared, seconds)
+        // Measured JVM time, a JVM's later test plans folded into the JVM that ran them.
+        val testNanos = HashMap<String, Long>()
+        rows(AgentContract.COVERAGE_FILE).filter { it.size >= 4 }.forEach { testNanos.merge(it[3], it[1].toLongOrNull() ?: 0L, Long::plus) }
+        val jvmOf = { id: String -> id.replace(LATER_PLAN, "") }
+        val uptime = HashMap<String, Double>()
+        rows(CoverageDecoder.JVM_SECONDS_FILE).filter { it.size >= 2 }.forEach { row ->
+            row[1].toDoubleOrNull()?.let { uptime.merge(jvmOf(row[0]), it, ::maxOf) }
+        }
+        val testsByJvm = HashMap<String, MutableSet<String>>()
+        val classesOf = HashMap<String, MutableSet<String?>>()
+        positions.forEach {
+            testsByJvm.getOrPut(jvmOf(it[0])) { HashSet() }.add(it[2])
+            classesOf.getOrPut(jvmOf(it[0])) { HashSet() }.add(classOf(it[2]))
+        }
+        val isolatedSeconds = HashMap<String, Double>()
+        val overheads = ArrayList<Double>()
+        var sharedJvmSeconds = 0.0
+        uptime.forEach { (jvm, took) ->
+            val classes = classesOf[jvm] ?: return@forEach
+            val only = classes.singleOrNull()
+            if (only != null) {
+                isolatedSeconds.merge(only, took, Double::plus)
+            } else {
+                sharedJvmSeconds += took
+                overheads += maxOf(0.0, took - testsByJvm.getValue(jvm).sumOf { testNanos[it] ?: 0L } / 1e9)
+            }
+        }
+        return Ranking(
+            scores, alone - shared, seconds, isolatedSeconds,
+            overheads.takeIf { it.isNotEmpty() }?.average(), sharedJvmSeconds.takeIf { overheads.isNotEmpty() },
+        )
     }
+
+    /** Ends the id of a JVM's second and later test plans; see [AgentContract.PLAN_DIR_SUFFIX]. */
+    private val LATER_PLAN = Regex("${Regex.escape(AgentContract.PLAN_DIR_SUFFIX)}\\d+$")
 
     /** How many of the sorted [sequences] are at or before [sequence]. */
     private fun atOrBefore(sequences: List<Long>, sequence: Long): Int {
@@ -156,7 +194,7 @@ internal object IsolatedPick {
         val measuredStartSeconds: Double? = null,
         /** The shared recording the budget was a multiple of, kept while classes stay picked. */
         val sharedSeconds: Double? = null,
-        /** Each picked class's recorded seconds when it was picked, from its shared JVM. */
+        /** What each picked class was costed at when it was picked, its JVM's start included. */
         val classSeconds: Map<String, Double> = emptyMap(),
     ) {
         fun encode(): String = buildString {
@@ -191,13 +229,17 @@ internal object IsolatedPick {
     }
 
     /**
-     * The classes to record alone: by score, highest first, while their extra cost fits the budget.
-     * Recording a class alone costs a JVM start plus its tests' seconds, spread over
-     * min([isolatedForks], [processors]) JVMs; the budget allows (budget - 1) times the shared
-     * recording, its classes' seconds over [hostForks]. A class [previous] picked that the map
-     * recorded alone keeps the score it was picked with. Only classes [runnable] says the test task
-     * still has, and whose score is above 0, are picked, and never all of those: the test task keeps
-     * tests to run.
+     * The classes to record alone: by score, highest first, while their cost fits the budget. A
+     * class costs what its own JVM took when the map measured it alone; else a shared JVM's measured
+     * start overhead plus twice its recorded test time, cold as a fresh JVM runs (1 second plus twice,
+     * where nothing was measured). Costs are spread over min([isolatedForks], [processors]) JVMs; the
+     * budget allows (budget - 1) times the shared recording: its JVMs' measured time, else its tests'
+     * recorded time, over [hostForks].
+     *
+     * Stable across recordings: a class [previous] picked that ran alone keeps the score it was
+     * picked with, and, unless the map measured its JVM, the cost; the shared recording stays the one
+     * it was picked against. Only classes [runnable] says the test task still has, and whose score
+     * is above 0, are picked, and never all of those: the test task keeps tests to run.
      */
     fun pick(
         ranking: Ranking,
@@ -208,35 +250,38 @@ internal object IsolatedPick {
         processors: Int,
         runnable: (String) -> Boolean,
     ): Stamp {
-        // Not the start cost the previous run measured: that includes the isolated task's own start,
-        // which a small pick cannot spread, so feeding it back shrank the pick on every recording.
-        val startSeconds = DEFAULT_START_SECONDS
+        val startSeconds = ranking.startOverhead ?: DEFAULT_START_SECONDS
         val scores = HashMap(ranking.scores)
         val carried = previous?.classes?.keys.orEmpty().filter { it in ranking.isolated }.toSet()
         carried.forEach { scores[it] = previous!!.classes.getValue(it) }
-        // A class recorded alone runs cold and slower than it did shared; costing it, and the shared
-        // recording, from that run would grow the pick on every recording. Both stay as first picked.
-        val seconds = { name: String -> previous?.classSeconds?.get(name)?.takeIf { name in carried } ?: ranking.seconds[name] ?: 0.0 }
+        val cost = { name: String ->
+            ranking.isolatedSeconds[name]
+                ?: previous?.classSeconds?.get(name)?.takeIf { name in carried }
+                ?: (startSeconds + COLD * (ranking.seconds[name] ?: 0.0))
+        }
         val shared = previous?.sharedSeconds?.takeIf { carried.isNotEmpty() }
-            ?: (ranking.seconds.values.sum() / maxOf(1, hostForks))
+            ?: ((ranking.sharedJvmSeconds ?: ranking.seconds.values.sum()) / maxOf(1, hostForks))
         val allowance = (budget - 1.0) * shared
         val parallel = maxOf(1, minOf(isolatedForks, processors))
         val left = (ranking.scores.keys + ranking.isolated).count(runnable)
         val picked = LinkedHashMap<String, Long>()
+        val costs = LinkedHashMap<String, Double>()
         var spent = 0.0
-        var pickedSeconds = 0.0
         for ((name, score) in scores.entries.sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })) {
             if (score <= 0 || !runnable(name)) continue
             if (picked.size + 1 >= left) break
-            val own = seconds(name)
-            if ((spent + startSeconds + own) / parallel > allowance) break
-            spent += startSeconds + own
-            pickedSeconds += own
+            val own = cost(name)
+            if ((spent + own) / parallel > allowance) break
+            spent += own
             picked[name] = score
+            costs[name] = own
         }
-        return Stamp(budget, startSeconds, pickedSeconds, picked, sharedSeconds = shared,
-            classSeconds = picked.keys.associateWith(seconds))
+        return Stamp(budget, startSeconds, picked.keys.sumOf { ranking.seconds[it] ?: 0.0 }, picked, sharedSeconds = shared,
+            classSeconds = costs)
     }
+
+    /** How much slower a class's tests are taken to run in a fresh JVM than in a warm shared one. */
+    private const val COLD = 2.0
 
     /**
      * [stamp] with the JVM start cost its isolated run measured: [wallSeconds] over the [forks] JVMs
