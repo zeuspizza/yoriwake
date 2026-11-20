@@ -636,6 +636,112 @@ def case_a_maven_suite_job_without_the_distribution_cache_is_reported():
     return problems
 
 
+def maven_seed_problems(text):
+    """Each job that runs the Maven functional suite, on its own or under the guards, without first
+    restoring a seed of what earlier runs downloaded and handing it to the suite.
+
+    Central once answered 404 for an artifact that exists and turned a pull request's guards red;
+    a build that reads the seed asks Central only for what it lacks."""
+    problems = []
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("jobs:")), len(lines))
+    heads = [(i, m.group(1)) for i, line in enumerate(lines)
+             if i > start and (m := re.match(r"^  ([\w-]+):\s*$", line))]
+    for n, (head, name) in enumerate(heads):
+        job = lines[head:heads[n + 1][0] if n + 1 < len(heads) else len(lines)]
+        runs = [k for k, line in enumerate(job) if re.search(r":maven:(functionalTest|breakAttempts)\b", line)
+                or ("scripts/prove_guards.py" in line
+                    and not any(flag in line for flag in ("--list-selection", "--against")))]
+        if not runs:
+            continue
+        before = job[:runs[0] + 1]
+        # Unconditional: a restore under an `if:` leaves the runs it skips asking Central again.
+        restored = any("actions/cache/restore@" in line and k + 2 < len(before)
+                       and any("path: ~/.m2/yoriwake-seed-" in later for later in before[k + 1:k + 4])
+                       and not any(later.strip().startswith("if:") for later in before[k + 1:k + 4])
+                       for k, line in enumerate(before))
+        if not restored:
+            problems.append(f"job {name} runs the Maven functional suite without first restoring a "
+                            f"seed under ~/.m2/yoriwake-seed-")
+        elif not any("YORIWAKE_MAVEN_REPO_TAIL=" in line for line in before):
+            problems.append(f"job {name} restores a Maven seed but does not set YORIWAKE_MAVEN_REPO_TAIL")
+    return problems
+
+
+def case_every_job_running_the_maven_suite_reads_a_seed():
+    """The release builds from fresh downloads, so it is left out, as for the distributions."""
+    problems = 0
+    for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
+        if name == "release.yml":
+            continue
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            for problem in maven_seed_problems(handle.read()):
+                problems += fail(f"{name}: {problem}")
+    return problems
+
+
+def case_a_maven_suite_job_without_a_seed_is_reported():
+    problems = 0
+    restore = ("      - uses: actions/cache/restore@0123456789012345678901234567890123456789 # v6.1.0\n"
+               "        with:\n          path: ~/.m2/yoriwake-seed-1\n          key: maven-repo-1-1\n")
+    tail = "      - run: echo \"YORIWAKE_MAVEN_REPO_TAIL=$HOME/.m2/yoriwake-seed-1\" >> \"$GITHUB_ENV\"\n"
+    suite = "      - run: ./gradlew :maven:functionalTest\n"
+    guards = "      - run: python3 scripts/prove_guards.py --mode fast\n"
+    job = "jobs:\n  build:\n    steps:\n"
+    for body in (restore + tail + suite, restore + tail + guards,
+                 restore + "      - run: YORIWAKE_MAVEN_REPO_TAIL=x ./gradlew :maven:functionalTest\n"):
+        if maven_seed_problems(job + body):
+            problems += fail(f"a seeded job was reported: {maven_seed_problems(job + body)}")
+    for body, what in ((suite, "a job without the seed"), (guards, "a guard job without the seed"),
+                       (suite + restore + tail, "a seed restored after the suite"),
+                       (restore + suite, "a seed never handed to the suite"),
+                       (restore.replace("        with:", "        if: github.event_name == 'push'\n        with:")
+                        + tail + suite, "a seed restored only on some runs")):
+        if not maven_seed_problems(job + body):
+            problems += fail(f"{what} passed")
+    for body in ("      - run: python3 scripts/prove_guards.py --list-selection a.json\n",
+                 "      - run: python3 scripts/prove_guards.py --against base\n", "      - run: ./gradlew build\n"):
+        if maven_seed_problems(job + body):
+            problems += fail(f"{body.strip()} was required to read a seed")
+    return problems
+
+
+def case_a_seed_takes_what_a_build_downloaded_but_not_the_plugin_or_failures():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        source, seed = os.path.join(root, "m2"), os.path.join(root, "seed")
+        files = {"org/junit/junit-bom/5.11.4/junit-bom-5.11.4.pom": "pom",
+                 "org/a/b/1/b-1.jar": "jar",
+                 "org/a/b/1/_remote.repositories": "central",
+                 "org/a/c/1/c-1.jar.lastUpdated": "failed",
+                 "org/a/c/resolver-status.properties": "failed",
+                 "org/a/d/1/d-1.jar.3f2a.tmp": "half",
+                 ".locks/artifact~org.a~b~1.lock": "lock",
+                 "io/github/zeuspizza/yoriwake-maven-plugin/0.1.0-SNAPSHOT/p.jar": "plugin",
+                 "io/github/zeuspizza/other/1/o.jar": "installed",
+                 "dev/demo/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOT.jar": "fixture"}
+        for path, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(source, path)), exist_ok=True)
+            with open(os.path.join(source, path), "w", encoding="utf-8") as handle:
+                handle.write(text)
+        os.makedirs(os.path.join(seed, "org/a/b/1"))
+        with open(os.path.join(seed, "org/a/b/1/b-1.jar"), "w", encoding="utf-8") as handle:
+            handle.write("seeded")
+        added = ci.seed_maven_repo(source, seed)
+        taken = sorted(os.path.relpath(os.path.join(d, n), seed).replace(os.sep, "/")
+                       for d, _, names in os.walk(seed) for n in names)
+        expected = ["org/a/b/1/_remote.repositories", "org/a/b/1/b-1.jar",
+                    "org/junit/junit-bom/5.11.4/junit-bom-5.11.4.pom"]
+        if added != 2 or taken != expected:
+            problems += fail(f"the seed took {added} files and holds {taken}, not 2 and {expected}")
+        with open(os.path.join(seed, "org/a/b/1/b-1.jar"), encoding="utf-8") as handle:
+            if handle.read() != "seeded":
+                problems += fail("a file the seed held was overwritten")
+        if ci.seed_maven_repo(source, seed) != 0:
+            problems += fail("a second seeding added files")
+    return problems
+
+
 def case_a_tag_pin_is_reported():
     problems = 0
     if not unpinned_uses("    steps:\n      - uses: actions/checkout@v7\n"):
@@ -5026,6 +5132,9 @@ CASES = (
     case_every_workflow_keeps_the_gradle_notice_off_and_saves_no_cache_under_a_daemon,
     case_a_workflow_without_the_switch_or_a_writing_job_without_the_stop_is_reported,
     case_every_job_running_the_maven_suite_restores_its_distributions,
+    case_every_job_running_the_maven_suite_reads_a_seed,
+    case_a_maven_suite_job_without_a_seed_is_reported,
+    case_a_seed_takes_what_a_build_downloaded_but_not_the_plugin_or_failures,
     case_a_maven_suite_job_without_the_distribution_cache_is_reported,
     case_the_reference_table_and_the_matrix_cells_agree,
     case_a_table_that_drifts_from_the_cells_is_reported,

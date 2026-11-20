@@ -186,6 +186,24 @@ jobs:
           path: ~/.gradle/yoriwake-maven-distributions
           key: maven-distributions-${{ hashFiles('maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt') }}
           restore-keys: maven-distributions-
+      # The Maven shards' seeds, as verify saves them on main: read behind each build's own local
+      # repository, so a guard's suite asks Central only for what they lack.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/yoriwake-seed-1
+          key: maven-repo-v1-1-${{ github.run_id }}
+          restore-keys: maven-repo-v1-1-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/yoriwake-seed-2
+          key: maven-repo-v1-2-${{ github.run_id }}
+          restore-keys: maven-repo-v1-2-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/yoriwake-seed-3
+          key: maven-repo-v1-3-${{ github.run_id }}
+          restore-keys: maven-repo-v1-3-
+      - run: echo "YORIWAKE_MAVEN_REPO_TAIL=$HOME/.m2/yoriwake-seed-1,$HOME/.m2/yoriwake-seed-2,$HOME/.m2/yoriwake-seed-3" >> "$GITHUB_ENV"
       - run: mkdir -p results
       # Not on a narrowed pull request: no guard of fast mode mutates what its change touched.
       - if: needs.changes.outputs.narrow != 'true'
@@ -348,6 +366,24 @@ jobs:
           path: ~/.gradle/yoriwake-maven-distributions
           key: maven-distributions-${{ hashFiles('maven/src/functionalTest/kotlin/io/github/zeuspizza/yoriwake/maven/FunctionalMaven.kt') }}
           restore-keys: maven-distributions-
+      # The Maven shards' seeds, as verify saves them on main: read behind each build's own local
+      # repository, so a guard's suite asks Central only for what they lack.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/yoriwake-seed-1
+          key: maven-repo-v1-1-${{ github.run_id }}
+          restore-keys: maven-repo-v1-1-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/yoriwake-seed-2
+          key: maven-repo-v1-2-${{ github.run_id }}
+          restore-keys: maven-repo-v1-2-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/yoriwake-seed-3
+          key: maven-repo-v1-3-${{ github.run_id }}
+          restore-keys: maven-repo-v1-3-
+      - run: echo "YORIWAKE_MAVEN_REPO_TAIL=$HOME/.m2/yoriwake-seed-1,$HOME/.m2/yoriwake-seed-2,$HOME/.m2/yoriwake-seed-3" >> "$GITHUB_ENV"
       # With the run and commit its guards ran at, for a later dispatch that takes this shard.
       - env:
           RUN: ${{ github.run_id }}

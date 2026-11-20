@@ -40,8 +40,18 @@ object FunctionalMaven {
     private val functionalRepo = File(property("yoriwake.functionalRepo"))
     /** The local repository every build shares; a test that installs into it removes what it installed. */
     val localRepo = File(property("yoriwake.localRepo"))
+    /** Read-only local repositories Maven reads after [localRepo], comma-separated; empty for none. */
+    private val localRepoTail = System.getProperty("yoriwake.localRepoTail").orEmpty()
     val pluginVersion = property("yoriwake.pluginVersion")
     val demo = File(property("yoriwake.demo"))
+
+    /**
+     * The file at [path] in the local repository, or in the first read-only one behind it that holds
+     * it: an artifact a build read from those is not copied into [localRepo].
+     */
+    fun resolved(path: String): File =
+        (listOf(localRepo) + localRepoTail.split(',').filter { it.isNotEmpty() }.map(::File))
+            .map { File(it, path) }.firstOrNull { it.exists() } ?: File(localRepo, path)
 
     class Result(val exitCode: Int, val output: String) {
         fun succeeded(): Result = apply { if (exitCode != 0) fail("Maven failed ($exitCode):\n$output") }
@@ -66,6 +76,7 @@ object FunctionalMaven {
         val mvn = File(distribution(version), if (windows) "bin/mvn.cmd" else "bin/mvn")
         val command = listOf(
             mvn.path, "-B", "-s", settings.path, "-Dmaven.repo.local=${localRepo.path}",
+            *(if (localRepoTail.isEmpty()) emptyArray() else arrayOf("-Dmaven.repo.local.tail=$localRepoTail")),
             "-Dyoriwake.version=$pluginVersion", *arguments,
         )
         val process = ProcessBuilder(command).directory(project).redirectErrorStream(true).apply {

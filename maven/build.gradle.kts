@@ -272,6 +272,8 @@ fun Test.overRealMaven() {
     inputs.dir(rootProject.layout.projectDirectory.dir("samples/demo-maven")).withPropertyName("demo")
     systemProperty("yoriwake.functionalRepo", repo.get().asFile.absolutePath)
     systemProperty("yoriwake.localRepo", layout.buildDirectory.dir("functional-m2").get().asFile.absolutePath)
+    // Read-only repositories behind it, as CI restores them: what they hold is not downloaded again.
+    systemProperty("yoriwake.localRepoTail", providers.environmentVariable("YORIWAKE_MAVEN_REPO_TAIL").orElse("").get())
     systemProperty("yoriwake.pluginVersion", version.toString())
     systemProperty("yoriwake.mavenDistributions", dists.absolutePath)
     systemProperty("yoriwake.demo", rootProject.file("samples/demo-maven").absolutePath)

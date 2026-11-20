@@ -6210,13 +6210,28 @@ def compile_errors(output, limit=10):
     return errors[:limit]
 
 
+# A dependency file the build could not fetch, its metadata resolved: Central serving a 404 or a
+# dropped transfer for an artifact that exists. A dependency that does not exist fails on its
+# metadata instead (`Could not find group:name:version.`), and is not retried.
+FETCH_FAILED = re.compile(r"Could not (?:download|find) \S+\.(?:jar|pom|module) \(|Could not (?:GET|HEAD) '")
+# Seconds before the one rerun of a warm-up that failed on a fetch.
+WARM_UP_RETRY_PAUSE = 60
+
+
 def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
     error lines below it, or None. A failed build's whole output is kept in UNMUTATED_RESULTS: the
-    error lines alone left a compiler crash without its cause."""
+    error lines alone left a compiler crash without its cause. A build that failed fetching a
+    dependency file runs once more after a pause: Central's hiccup is not the tree failing to compile."""
     for tree in trees:
-        done = subprocess.run([wrapper(tree), "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, cwd=tree)
+        command = [wrapper(tree), "-q", *GRADLE_ARGS, *tasks]
+        done = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tree)
+        fetch = FETCH_FAILED.search((done.stderr or "") + (done.stdout or "")) if done.returncode != 0 else None
+        if fetch:
+            print(f"{tree}: the warm-up failed fetching a dependency ({fetch.group(0)}...); "
+                  f"compiling again in {WARM_UP_RETRY_PAUSE}s, once", flush=True)
+            time.sleep(WARM_UP_RETRY_PAUSE)
+            done = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tree)
         if done.returncode != 0:
             output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
@@ -6273,6 +6288,24 @@ def _timed_run(suite, test_class, expect=None):
 # and of the end of Gradle's output. The kept results hold the rest.
 MESSAGE_LINES = 40
 OUTPUT_LINES = 60
+
+
+# Maven's resolver, naming an artifact Central did not serve: a 404 the CDN gave for one that exists,
+# a dropped transfer, a 5xx. Not the change under test, though nothing is proved either.
+INFRASTRUCTURE = "infrastructure"
+# The second form is the same failure, cached by an earlier build of the same local repository.
+CENTRAL_FAILED = re.compile(r"Could not (?:find|transfer) artifact (\S+) (?:in|from/to) central\b"
+                            r"|(\S+) was not found in https://repo\.maven\.apache\.org/maven2 during a previous attempt")
+
+
+def central_failure(lines):
+    """The artifact Maven Central did not serve, as `group:artifact:type:version`, when a line of
+    a failed build's log names one; otherwise None."""
+    for line in lines:
+        found = CENTRAL_FAILED.search(line)
+        if found:
+            return found.group(1) or found.group(2)
+    return None
 
 
 def why_unmutated_fails():
@@ -6340,10 +6373,14 @@ def _prove_in_worker(index):
         _WORKER["baselined"][key], timing["baseline_seconds"] = _run_suite(suite, test_class, expect)
         # Said once, by the guard that paid the baseline; the guards that share it repeat its line.
         why = why_unmutated_fails() if _WORKER["baselined"][key] else []
+        _WORKER.setdefault("central", {})[key] = central_failure(why)
     standing = _WORKER["baselined"][key]
     if standing:
         scope = f" ({test_class})" if test_class else ""
-        return index, None, "\n".join([f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
+        central = _WORKER.get("central", {}).get(key)
+        head = (f"{INFRASTRUCTURE}: Maven Central did not serve {central} (run again; if it repeats, check "
+                f"that it exists); " if central else "")
+        return index, None, "\n".join([f"{head}the {name} suite{scope} fails unmutated in {os.getcwd()}: "
                                        f"{standing[0]}"] + why), timing
     target = source(path)
     original = read_bytes(target)
@@ -6526,7 +6563,9 @@ def _report(index, fired, refusal, timing=None):
         _RUN["timings"][label] = timing
     if refusal:
         # Whole in the log; `--results` keeps its first line, as for a refusal that stops the run.
-        print(f"{label:62} -> NOT PROVED: {refusal}", flush=True)
+        # Still not proved there: the readers of `--results` know no other verdict.
+        verdict = "INFRASTRUCTURE" if refusal.startswith(INFRASTRUCTURE + ":") else "NOT PROVED"
+        print(f"{label:62} -> {verdict}: {refusal}", flush=True)
         outcomes[label] = ("not proved", refusal.splitlines()[0])
         return 1
     # A CRASH IS NOT A GUARD FIRING, with or without an `expect`. Only the expect check used to see
