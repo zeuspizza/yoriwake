@@ -133,12 +133,15 @@ test` and `NOT PROVED` (the suite broke, or failed before any mutation) fail the
 guards run in four worktrees under `sandbox/prove-guards/` and never write your tree; with
 `--jobs 1` they mutate your tree in place, so do not edit while one runs.
 
-On a pull request, CI runs fast mode and the guards the change can affect; a change to
-`plugin/src/main`, `core/src/main`, `agent/src/main` or `maven/src/main` runs every guard instead,
-and every guard runs on dispatch in each release check. A change that reaches no suite the
-`verify` workflow runs (`bench/`, the guard harness's tests, workflows other than `verify` and
-`guards`) and leaves the guard harness alone runs only the guards it can affect, on as few shards as
-their projected cost needs, and the benchmark's tests. Otherwise each of these runs in 8 shards of its
+On a pull request, CI runs fast mode and the guards the change can affect. A change that leaves
+the guard harness alone (an edit only to the guards' entries in `scripts/prove_guards.py` or to
+`scripts/guard_costs.json` does) and either changes `plugin/src/main`, `core/src/main`, `agent/src/main` or
+`maven/src/main`, or reaches no suite the `verify` workflow runs (`bench/`, the guard harness's
+tests, workflows other than `verify` and `guards`), runs only the guards it can affect, on as few
+shards as their projected cost needs, and the benchmark's tests; one to those sources and the guard
+harness runs every guard. Every guard also runs each day on `main` when it moved since the last
+green run of every guard (a red one names the commits since), and on dispatch in each release check.
+Otherwise each of these runs in 8 shards of its
 selected guards, balanced by the costs CI measured (`--shard I/8`, with the same `--mode` and `--changed` as the job, reproduces one), and a
 check job under the job's name fails unless every guard the run selects fired in exactly one shard.
 The costs are `scripts/guard_costs.json`. Every run's `--results` records each guard's seconds, and

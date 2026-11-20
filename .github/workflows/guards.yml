@@ -1,11 +1,14 @@
 name: guards
 
 # Breaks each safety rule in turn and checks that a test catches it (scripts/prove_guards.py).
-# Every pull request runs fast mode and the guards its change can affect, in any suite; one that
-# changes the shipped sources runs every guard instead, and one that reaches no suite verify.yml
-# runs and leaves the guard machinery alone (.github/ci.py narrows-guards) runs only the guards its
-# change can affect, on as few shards as their projected cost needs, and the benchmark's tests. Every guard also runs on dispatch in each
-# release check, never on a schedule. A guard that does not fire fails the job and names it.
+# Every pull request runs fast mode and the guards its change can affect, in any suite. One that
+# leaves the guard machinery alone (an edit to the guards' catalog or their costs alone is data) and either changes the shipped sources or reaches no suite
+# verify.yml runs (.github/ci.py narrows-guards) runs only the guards its change can affect, on as
+# few shards as their projected cost needs, and the benchmark's tests; one that changes the shipped
+# sources and the machinery runs every guard. Every guard also runs each day on main, when main
+# moved since the last green run of every guard, so a guard a change broke without selecting it is
+# found among a day's merges; and on dispatch in each release check. A guard that does not fire
+# fails the job and names it.
 #
 # Each guard job runs in 8 shards of the selected guards, balanced by the costs CI measured
 # (scripts/guard_costs.json) with a functional or Maven class's guards together (`--shard I/N`),
@@ -21,6 +24,10 @@ name: guards
 on:
   pull_request:
     branches: [main]
+  # Every guard, daily on main; skipped when nothing a guard job runs for changed since the last
+  # green run of every guard (the changes job).
+  schedule:
+    - cron: '23 3 * * *'
   workflow_dispatch:
     inputs:
       shards:
@@ -62,6 +69,8 @@ jobs:
       code: ${{ steps.decide.outputs.code }}
       product: ${{ steps.decide.outputs.product }}
       base: ${{ steps.decide.outputs.base }}
+      # On a schedule: the commit of the last green run of every guard on main.
+      since: ${{ steps.last-green.outputs.since }}
       # The pull request's guard shards: every one of 8 with fast mode, unless narrowed.
       narrow: ${{ steps.narrow.outputs.narrow }}
       fast_shards: ${{ steps.narrow.outputs.shards || '[1, 2, 3, 4, 5, 6, 7, 8]' }}
@@ -72,9 +81,45 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # A scheduled run stands down when the last green scheduled or dispatched run on main (a
+      # dispatch that kept shards included) is at this commit, or when only docs no guard reads
+      # changed since. It names the commits
+      # since, which a red run then points to. A failure or a hung call here leaves `skip` unset,
+      # and every guard runs.
+      - id: last-green
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          since=$(gh api "repos/$REPO/actions/workflows/guards.yml/runs?branch=main&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select(.event == "schedule" or .event == "workflow_dispatch")][0] | .head_sha // ""')
+          if [ -z "$since" ] || ! git merge-base --is-ancestor "$since" "$SHA"; then
+            echo "no green run of every guard on main to compare with: every guard runs" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          # README.md is docs to needs-checks, but the ci suite's guards read it.
+          if [ "$since" = "$SHA" ] || { [ "$(python3 .github/ci.py needs-checks "$since" "$SHA")" = false ] \
+              && git diff --quiet "$since" "$SHA" -- README.md; }; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "nothing a guard reads changed since the last green run of every guard, at $since" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "every guard runs; the commits on main since the last green run of every guard, at $since:"
+            echo '```'
+            git log --first-parent --oneline "$since..$SHA"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - id: decide
         env:
           EVENT: ${{ github.event_name }}
+          SKIP: ${{ steps.last-green.outputs.skip }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -85,6 +130,8 @@ jobs:
               echo "product=$(python3 .github/ci.py touches-product "$BASE" "$HEAD")"
               echo "base=$(git merge-base "$BASE" HEAD)"
             } >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = schedule ] && [ "$SKIP" = true ]; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
           else
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "product=true" >> "$GITHUB_OUTPUT"
@@ -101,7 +148,9 @@ jobs:
           MERGE_BASE: ${{ steps.decide.outputs.base }}
         run: |
           set -eu
-          narrow=$(python3 .github/ci.py narrows-guards "$BASE" "$HEAD")
+          # The base's rule, not the pull request's: a change to ci.py must not narrow itself.
+          git show "$BASE:.github/ci.py" > "$RUNNER_TEMP/base_ci.py"
+          narrow=$(python3 "$RUNNER_TEMP/base_ci.py" narrows-guards "$BASE" "$HEAD")
           if [ "$narrow" = true ]; then
             python3 scripts/prove_guards.py --mode full --changed "${MERGE_BASE:?no merge base}" --list-selection changed.json
             shards=$(python3 scripts/guard_costs.py shards changed.json)
@@ -156,7 +205,7 @@ jobs:
   fast-shard:
     name: guards, fast and the change's own (shard ${{ matrix.shard }}/${{ needs.changes.outputs.fast_count }})
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true' && needs.changes.outputs.fast_shards != '[]' }}
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && (needs.changes.outputs.product != 'true' || needs.changes.outputs.narrow == 'true') && needs.changes.outputs.fast_shards != '[]' }}
     runs-on: ubuntu-24.04
     # `--changed` selects every guard when a change edits all of them, and a change to the
     # functional tests selects every functional and Maven guard. The limit sits above the worst
@@ -261,7 +310,7 @@ jobs:
   fast:
     name: guards, fast and the change's own
     needs: [changes, fast-shard]
-    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && needs.changes.outputs.product != 'true'
+    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' && (needs.changes.outputs.product != 'true' || needs.changes.outputs.narrow == 'true')
     runs-on: ubuntu-24.04
     # The benchmark's tests take a few minutes when narrowed; the checks a minute.
     timeout-minutes: 20
@@ -337,7 +386,7 @@ jobs:
   full-shard:
     name: guards, every one (shard ${{ matrix.shard }}/8)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false') }}
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || (needs.changes.outputs.product != 'false' && needs.changes.outputs.narrow != 'true')) }}
     runs-on: ubuntu-24.04
     # The limit leaves room above the worst shard's projection and above how far a measured shard
     # has run over its own: `python3 scripts/guard_costs.py report <shards-dir> --job full-shard`
@@ -436,7 +485,7 @@ jobs:
   full:
     name: guards, every one
     needs: [changes, full-shard]
-    if: always() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || needs.changes.outputs.product != 'false')
+    if: always() && needs.changes.outputs.code != 'false' && (github.event_name != 'pull_request' || (needs.changes.outputs.product != 'false' && needs.changes.outputs.narrow != 'true'))
     runs-on: ubuntu-24.04
     steps:
       - name: every shard succeeded
@@ -463,6 +512,14 @@ jobs:
         run: |
           python3 scripts/prove_guards.py --mode full --list-selection full.json
           python3 .github/guard_shards.py check full.json shards --count 8 --file full.json
+      # A red daily run: a merge since the last green one broke a guard no pull request selected.
+      - name: the merges since the last green run of every guard
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SINCE: ${{ needs.changes.outputs.since }}
+          SHA: ${{ github.sha }}
+        run: |
+          echo "::error title=every guard, daily::red at $SHA; the merges since the last green run (${SINCE:-none found}) are listed in the summary of the job 'what changed'"
       # Reporting only: a failure here or in the upload must not decide the required check.
       - name: the shards' projected and measured job, and the costs they measured
         if: always() && steps.shards.outcome == 'success'
@@ -473,8 +530,8 @@ jobs:
         run: |
           python3 scripts/guard_costs.py report shards
           python3 scripts/guard_costs.py derive shards --out guard-costs/guard_costs.json --run "$RUN" --commit "$SHA"
-      # The release check reads it, to commit it as scripts/guard_costs.json. Kept a week: a pull
-      # request's run stands in when the release check's own is missing.
+      # The release check reads it, to commit it as scripts/guard_costs.json. Kept a week: the
+      # latest daily run's stands in when the release check's own is missing.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.shards.outcome == 'success'
         continue-on-error: true

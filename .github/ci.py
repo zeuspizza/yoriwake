@@ -23,6 +23,7 @@ report the test task up to date and leave the previous run's results for the ass
 """
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -195,19 +196,71 @@ def scope(paths):
             return {"unit": True, "maven": True, "gradle": True}
     return answer
 
-# What runs and judges the guards, the modules they import included: no guard mutates it, so a
-# change to it keeps fast mode.
+# What runs and judges the guards, the modules they import included, and this script, which picks
+# them: no guard mutates it, so a change to it keeps fast mode, or every guard on the shipped sources.
 GUARD_MACHINERY = {"scripts/prove_guards.py", "scripts/guard_costs.py", "scripts/guard_costs.json",
-                   ".github/guard_shards.py", ".github/workflows/guards.yml", "bench/checkout.py"}
+                   ".github/guard_shards.py", ".github/workflows/guards.yml", "bench/checkout.py",
+                   ".github/ci.py"}
+GUARD_HARNESS = "scripts/prove_guards.py"
+# Machinery that is data to a narrowed run: the costs only balance the shards, and the check still
+# requires every selected guard to fire in exactly one.
+GUARD_DATA = {"scripts/guard_costs.json"}
 
 
-def narrows_guards(paths):
+def narrows_guards(paths, catalog_only=False):
     """Whether a pull request's guards job may run only the guards its change selects, without fast
-    mode: a change that is not docs only, reaches no suite verify.yml runs, and leaves the guard
-    machinery alone. No paths runs fast mode."""
+    mode or every guard: a change that leaves the guard machinery alone and either reaches the
+    shipped sources (every guard runs daily on main) or is not docs only and reaches no suite
+    verify.yml runs. An edit to the harness's catalog alone (`catalog_only`) leaves it alone:
+    `--changed` selects each guard whose entry it adds or edits. No paths runs fast mode."""
     paths = [path for path in paths if path.strip()]
-    return (bool(paths) and needs_checks(paths) and not any(scope(paths).values())
-            and not any(path in GUARD_MACHINERY for path in paths))
+    data = GUARD_DATA | ({GUARD_HARNESS} if catalog_only else set())
+    return (bool(paths) and needs_checks(paths)
+            and (touches_product(paths) or not any(scope(paths).values()))
+            and not any(path in GUARD_MACHINERY and path not in data for path in paths))
+
+
+def harness_code(text):
+    """The guard harness's source without its catalog, as a comparable string. The catalog is the
+    guards (`MUTATIONS`) and the UPPERCASE texts they name (target paths, fragments); any other
+    assignment (a suite list, a filter, a count) is how the guards run or are selected, and stays
+    code."""
+    tree = ast.parse(text)
+    named = set()
+    for node in tree.body:
+        if _assigned(node) == ["MUTATIONS"]:
+            named = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+    tree.body = [node for node in tree.body
+                 if not (_assigned(node) == ["MUTATIONS"]
+                         or (_assigned(node) and set(_assigned(node)) <= named and _text(node.value)))]
+    return ast.dump(tree)
+
+
+def _assigned(node):
+    """The names a top-level assignment binds, or [] for anything else or any other target."""
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+    if not all(isinstance(t, ast.Name) and t.id.isupper() for t in targets):
+        return []
+    return [t.id for t in targets]
+
+
+def _text(node):
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _text(node.left) and _text(node.right)
+    return isinstance(node, (ast.Name, ast.JoinedStr))
+
+
+def catalog_only(base, head, cwd=None):
+    """Whether a pull request changes the guard harness in its catalog alone. Any doubt (no merge
+    base, the file added or removed, a syntax error) is no."""
+    try:
+        merge_base = _git(["merge-base", base, head], cwd).strip()
+        return (harness_code(_git(["show", f"{merge_base}:{GUARD_HARNESS}"], cwd))
+                == harness_code(_git(["show", f"{head}:{GUARD_HARNESS}"], cwd)))
+    except (OSError, subprocess.CalledProcessError, SyntaxError, ValueError, UnicodeDecodeError):
+        return False
 
 
 def changed_paths(base, head, cwd=None):
@@ -671,7 +724,8 @@ def main(argv=None):
 
     if args.command == "narrows-guards":
         paths = changed_paths(args.base, args.head)
-        print("true" if paths is not None and narrows_guards(paths) else "false")
+        catalog = paths is not None and GUARD_HARNESS in paths and catalog_only(args.base, args.head)
+        print("true" if paths is not None and narrows_guards(paths, catalog) else "false")
         return 0
 
     if args.command == "touches-product":
