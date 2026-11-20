@@ -111,6 +111,7 @@ public final class TouchRecorder implements CaptureSession.Touches {
             nameIn(new byte[0]);
             ZipContent.holdsAZip(new File(""));
             ReviewedLibraries.reviewed("", System.mapLibraryName("yoriwake"));
+            ReviewedChildren.reviewed(ReviewedChildren.caller(), null);
             guard(new Object[] {"", Boolean.FALSE});
             // JDK classes the agent's ASM cannot read take no hooks; said here, under its own name.
             unsupported = ClassFileSupport.testJvmUnsupported(
@@ -416,14 +417,27 @@ public final class TouchRecorder implements CaptureSession.Touches {
     }
 
     /**
-     * The child-process hook's sink. What a child does (read any class file, run any class) is
-     * out of sight, so from here on every class counts as touched. The command is not kept.
+     * The child-process hook's sink, given the command. What a child does (read any class file, run
+     * any class) is out of sight, so from here on every class counts as touched, unless the child is
+     * a reviewed one. The command is not kept.
      */
-    void childProcess(Object ignored) {
+    void childProcess(Object command) {
+        boolean outer = inside.get() == null;
+        if (outer) {
+            inside.set(Boolean.TRUE);
+        }
         try {
+            // Asked under the guard: reading Byte Buddy's version is the agent's read, not the host's.
+            if (outer && ReviewedChildren.reviewed(ReviewedChildren.caller(), command)) {
+                return;
+            }
             touch(AgentContract.TOUCH_ALL, "a child process was started");
         } catch (Throwable t) {
             incomplete = "a child process could not be recorded: " + t;
+        } finally {
+            if (outer) {
+                inside.remove();
+            }
         }
     }
 
