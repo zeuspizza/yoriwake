@@ -6275,6 +6275,24 @@ MESSAGE_LINES = 40
 OUTPUT_LINES = 60
 
 
+# Maven's resolver, naming an artifact Central did not serve: a 404 the CDN gave for one that exists,
+# a dropped transfer, a 5xx. Not the change under test, though nothing is proved either.
+INFRASTRUCTURE = "infrastructure"
+# The second form is the same failure, cached by an earlier build of the same local repository.
+CENTRAL_FAILED = re.compile(r"Could not (?:find|transfer) artifact (\S+) (?:in|from/to) central\b"
+                            r"|(\S+) was not found in https://repo\.maven\.apache\.org/maven2 during a previous attempt")
+
+
+def central_failure(lines):
+    """The artifact Maven Central did not serve, as `group:artifact:type:version`, when a line of
+    a failed build's log names one; otherwise None."""
+    for line in lines:
+        found = CENTRAL_FAILED.search(line)
+        if found:
+            return found.group(1) or found.group(2)
+    return None
+
+
 def why_unmutated_fails():
     """What the build of the suite that just failed unmutated left, as lines for the log under its
     refusal: each failing test's message, where the build's results are kept, and the end of
@@ -6340,10 +6358,13 @@ def _prove_in_worker(index):
         _WORKER["baselined"][key], timing["baseline_seconds"] = _run_suite(suite, test_class, expect)
         # Said once, by the guard that paid the baseline; the guards that share it repeat its line.
         why = why_unmutated_fails() if _WORKER["baselined"][key] else []
+        _WORKER.setdefault("central", {})[key] = central_failure(why)
     standing = _WORKER["baselined"][key]
     if standing:
         scope = f" ({test_class})" if test_class else ""
-        return index, None, "\n".join([f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
+        central = _WORKER.get("central", {}).get(key)
+        head = f"{INFRASTRUCTURE}: Maven Central did not serve {central}; " if central else ""
+        return index, None, "\n".join([f"{head}the {name} suite{scope} fails unmutated in {os.getcwd()}: "
                                        f"{standing[0]}"] + why), timing
     target = source(path)
     original = read_bytes(target)
@@ -6526,7 +6547,9 @@ def _report(index, fired, refusal, timing=None):
         _RUN["timings"][label] = timing
     if refusal:
         # Whole in the log; `--results` keeps its first line, as for a refusal that stops the run.
-        print(f"{label:62} -> NOT PROVED: {refusal}", flush=True)
+        # Still not proved there: the readers of `--results` know no other verdict.
+        verdict = "INFRASTRUCTURE" if refusal.startswith(INFRASTRUCTURE + ":") else "NOT PROVED"
+        print(f"{label:62} -> {verdict}: {refusal}", flush=True)
         outcomes[label] = ("not proved", refusal.splitlines()[0])
         return 1
     # A CRASH IS NOT A GUARD FIRING, with or without an `expect`. Only the expect check used to see

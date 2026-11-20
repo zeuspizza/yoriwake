@@ -19,6 +19,7 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py changelog <base-sha> <head-sha>
     python .github/ci.py rerun-on-download-failure -- ./gradlew build --console=plain
     python .github/ci.py list-test-kit-homes plugin/build/tmp
+    python .github/ci.py seed-maven-repo maven/build/functional-m2 ~/.m2/yoriwake-seed-1
 """
 
 import argparse
@@ -528,6 +529,35 @@ def test_kit_listing(build_tmp):
     return lines
 
 
+# What a Maven seed repository never takes: the plugin under test, which each build publishes afresh
+# (and a guard mutates), the fixtures' own artifacts a test installs (all under `dev`), and the
+# resolver's records of a failed download. A seeded fixture would reach later runs' builds.
+SEED_EXCLUDED_DIRS = (os.path.join("io", "github", "zeuspizza"), "dev")
+SEED_EXCLUDED_NAMES = ("resolver-status.properties",)
+
+
+def seed_maven_repo(source, seed):
+    """Copies into `seed` each file of the Maven local repository `source` it lacks; the number copied.
+
+    A later build reads `seed` behind its own local repository and downloads none of them again."""
+    added = 0
+    for dirpath, dirnames, names in os.walk(source):
+        relative = os.path.relpath(dirpath, source)
+        if any(relative == excluded or relative.startswith(excluded + os.sep) for excluded in SEED_EXCLUDED_DIRS):
+            dirnames[:] = []
+            continue
+        for name in names:
+            if name.endswith(".lastUpdated") or name in SEED_EXCLUDED_NAMES:
+                continue
+            target = os.path.join(seed, relative, name)
+            if os.path.exists(target):
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy2(os.path.join(dirpath, name), target)
+            added += 1
+    return added
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -584,11 +614,22 @@ def main(argv=None):
     changelog.add_argument("base")
     changelog.add_argument("head")
 
+    seeded = sub.add_parser("seed-maven-repo",
+                            help="copy what a Maven local repository downloaded into a seed; print added=")
+    seeded.add_argument("source")
+    seeded.add_argument("seed")
+
     homes = sub.add_parser("list-test-kit-homes",
                            help="list what each TestKit home under a build directory downloaded")
     homes.add_argument("build_tmp")
 
     args = parser.parse_args(argv)
+
+    if args.command == "seed-maven-repo":
+        added = seed_maven_repo(args.source, args.seed) if os.path.isdir(args.source) else 0
+        print(f"{added} files added to {args.seed}", file=sys.stderr)
+        print(f"added={added}")
+        return 0
 
     if args.command == "list-test-kit-homes":
         lines = test_kit_listing(args.build_tmp)

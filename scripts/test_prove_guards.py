@@ -121,6 +121,50 @@ def case_a_suite_that_merely_crashed_proves_no_guard():
     return failures
 
 
+def case_an_artifact_central_did_not_serve_is_named_as_infrastructure():
+    """A suite that failed unmutated because Central answered 404 for an artifact that exists is
+    reported as infrastructure, still not proved; a test that failed for itself is not."""
+    import contextlib
+    import io
+    failures = 0
+    log = ["        [INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/junit/"
+           "junit-bom/5.11.4/junit-bom-5.11.4.pom",
+           "        [ERROR] Non-resolvable import POM: The following artifacts could not be resolved: "
+           "org.junit:junit-bom:pom:5.11.4 (absent): Could not find artifact org.junit:junit-bom:pom:5.11.4 "
+           "in central (https://repo.maven.apache.org/maven2) @ line 22, column 19"]
+    if pg.central_failure(log) != "org.junit:junit-bom:pom:5.11.4":
+        failures += fail(f"Central's 404 was read as {pg.central_failure(log)!r}")
+    dropped = ["[ERROR] Could not transfer artifact org.a:b:jar:1 from/to central "
+               "(https://repo.maven.apache.org/maven2): Connection reset"]
+    if pg.central_failure(dropped) != "org.a:b:jar:1":
+        failures += fail("a dropped transfer from Central was not named")
+    cached = ["[ERROR] Non-resolvable import POM: org.junit:junit-bom:pom:5.11.4 was not found in "
+              "https://repo.maven.apache.org/maven2 during a previous attempt. This failure was cached"]
+    if pg.central_failure(cached) != "org.junit:junit-bom:pom:5.11.4":
+        failures += fail("Central's 404, cached by an earlier build, was not named")
+    for own in (["SelectionFunctionalTest > a test FAILED", "expected: <1> but was: <2>"],
+                ["[ERROR] Could not find artifact org.a:b:jar:1 in yoriwake-functional (file:/w/repo)"]):
+        if pg.central_failure(own) is not None:
+            failures += fail(f"{own[-1]!r} was read as Central's")
+    pg.MUTATIONS.append(guard())
+    index = len(pg.MUTATIONS) - 1
+    try:
+        for refusal, verdict in ((f"{pg.INFRASTRUCTURE}: Maven Central did not serve org.a:b:jar:1; "
+                                  "the maven suite fails unmutated", "-> INFRASTRUCTURE: "),
+                                 ("the maven suite fails unmutated", "-> NOT PROVED: ")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                counted = pg._report(index, None, refusal)
+            if counted != 1 or verdict not in out.getvalue():
+                failures += fail(f"{refusal!r} was reported as {out.getvalue().strip()!r}, counted {counted}")
+            if pg._RUN["outcomes"].get("g", ("",))[0] != "not proved":
+                failures += fail(f"{refusal!r} left {pg._RUN['outcomes'].get('g')} in the results")
+    finally:
+        pg.MUTATIONS.pop()
+        pg._RUN["outcomes"].pop("g", None)
+    return failures
+
+
 # What `checkout.require_clean` prints when a suite asks a dirty tree for its commit: the closing
 # advice is the last line, so a cut last line never named the files.
 DIRTY_REFUSAL = ("REFUSING: the yoriwake checkout at /w has uncommitted changes, so no commit describes "
@@ -1599,7 +1643,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_gradle_starts_through_the_wrapper_windows_can_run,
          case_a_warm_up_that_fails_keeps_its_whole_output,
          case_a_mutated_source_is_restored_byte_for_byte_whatever_its_line_endings,
-         case_the_restore_check_compares_bytes_not_decoded_text)
+         case_the_restore_check_compares_bytes_not_decoded_text,
+         case_an_artifact_central_did_not_serve_is_named_as_infrastructure)
 
 
 def test_prove_guards():

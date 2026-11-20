@@ -139,9 +139,9 @@ class ScopeFunctionalTest {
     /** The scope `lib`'s Surefire map records, one line per pattern. */
     private fun libScope(project: File): List<String> = File(assertNotNull(libMap(project)), "effective-scope").readLines()
 
-    /** JaCoCo's agent jar of [version], in the local repository every build shares. */
+    /** JaCoCo's agent jar of [version], where the builds resolved it. */
     private fun agentJar(version: String): File =
-        File(FunctionalMaven.localRepo, "org/jacoco/org.jacoco.agent/$version/org.jacoco.agent-$version-runtime.jar")
+        FunctionalMaven.resolved("org/jacoco/org.jacoco.agent/$version/org.jacoco.agent-$version-runtime.jar")
 
     /** `lib`'s POM, its Surefire configured with [surefire] and [dependencies] declared. */
     private fun configureLib(project: File, surefire: String, dependencies: String = "") = File(project, "lib/pom.xml").edit {
