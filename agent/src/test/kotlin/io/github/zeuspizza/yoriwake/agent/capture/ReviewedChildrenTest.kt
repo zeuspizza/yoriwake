@@ -33,6 +33,7 @@ class ReviewedChildrenTest {
 
         init {
             write("net/bytebuddy/agent/ByteBuddyAgent")
+            write("net/bytebuddy/agent/ByteBuddyAgent\$Installer")
             write("com/acme/Starter")
             version?.let {
                 File(dir, "META-INF/maven/net.bytebuddy/byte-buddy-agent/pom.properties")
@@ -43,6 +44,7 @@ class ReviewedChildrenTest {
 
         val agent: Class<*> get() = loader.loadClass("net.bytebuddy.agent.ByteBuddyAgent")
         val other: Class<*> get() = loader.loadClass("com.acme.Starter")
+        val nested: Class<*> get() = loader.loadClass("net.bytebuddy.agent.ByteBuddyAgent\$Installer")
 
         /** Calls [sink] with [command] from [from]'s frame. */
         fun startFrom(from: Class<*>, sink: Consumer<Any?>, command: Any?) {
@@ -85,6 +87,7 @@ class ReviewedChildrenTest {
 
         assertEquals(emptyList(), drained(recorder))
         assertTrue(ReviewedChildren.reviewed(jar.agent, attacher(jar), false))
+        assertTrue(ReviewedChildren.reviewed(jar.nested, attacher(jar), false), "a class nested in it")
     }
 
     @Test
@@ -97,6 +100,22 @@ class ReviewedChildrenTest {
         assertEquals(listOf(AgentContract.TOUCH_ALL to "a child process was started"), drained(recorder))
         assertFalse(ReviewedChildren.reviewed(jar.other, attacher(jar), false))
         assertFalse(ReviewedChildren.reviewed(null, attacher(jar), false))
+    }
+
+    @Test
+    fun `a child started while the agent is already recording touches every class without a review`(
+        @TempDir dir: File,
+    ) {
+        val jar = ByteBuddyJar(dir, "1.15.4")
+        val recorder = TouchRecorder()
+        recorder.inside.set(true)
+        try {
+            jar.startFrom(jar.agent, recorder::childProcess, attacher(jar))
+        } finally {
+            recorder.inside.remove()
+        }
+
+        assertEquals(listOf(AgentContract.TOUCH_ALL to "a child process was started"), drained(recorder))
     }
 
     @Test

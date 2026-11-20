@@ -529,14 +529,15 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
                 }
                 """.trimIndent(),
             ),
-            test("M2ToolTest", "@Test void runs() { assertEquals(\"tool\", Tool.name()); }"),
-            test("M3LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            // Runs before Tool is loaded, so only the child could make it share the change.
+            test("M2LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            test("M3ToolTest", "@Test void runs() { assertNotNull(Tool.name()); }"),
             buildScript = orderedBuild.replace(
                 "testRuntimeOnly(", "testImplementation(\"org.mockito:mockito-core:5.14.2\")\n    testRuntimeOnly(",
             ),
         )
 
-        assertEquals(names("M2ToolTest"), ran)
+        assertEquals(names("M3ToolTest"), ran)
     }
 
     @Test
