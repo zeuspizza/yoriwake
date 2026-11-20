@@ -419,6 +419,37 @@ def case_a_tree_that_does_not_compile_names_the_compiler_errors():
     return failures
 
 
+def case_a_warm_up_that_failed_fetching_a_dependency_compiles_once_more():
+    """Central once failed asm-tree's jar in two guard shards' warm-ups at the same minute; a
+    compile error is not rerun."""
+    failures = 0
+    fetch = ("Execution failed for task ':plugin:compileFunctionalTestKotlin'.\n"
+             "> Could not resolve all files for configuration ':plugin:functionalTestCompileClasspath'.\n"
+             "   > Could not find asm-tree-9.7.jar (org.ow2.asm:asm-tree:9.7).\n")
+    for outcomes, runs, refused in (([(1, fetch), (0, "")], 2, False), ([(1, fetch), (1, fetch)], 2, True),
+                                    ([(1, "e: Foo.kt:1:1 Unresolved reference: x\n")], 1, True),
+                                    ([(1, "> Could not find org.a:b:1.\n")], 1, True)):
+        started = []
+
+        def run(argv, **kwargs):
+            code, err = outcomes[len(started)]
+            started.append(argv)
+            return subprocess.CompletedProcess(argv, code, "", err)
+
+        saved = (pg.subprocess.run, pg.UNMUTATED_RESULTS, pg.WARM_UP_RETRY_PAUSE)
+        with tempfile.TemporaryDirectory() as directory:
+            pg.subprocess.run, pg.UNMUTATED_RESULTS, pg.WARM_UP_RETRY_PAUSE = run, os.path.join(directory, "kept"), 0
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    refusal = pg._warm_up([os.path.join(directory, "worker-1")], [":compile"])
+            finally:
+                pg.subprocess.run, pg.UNMUTATED_RESULTS, pg.WARM_UP_RETRY_PAUSE = saved
+        if len(started) != runs or bool(refusal) != refused:
+            failures += fail(f"{outcomes[0][1].strip().splitlines()[-1]!r}: {len(started)} runs, refused "
+                             f"{bool(refusal)}; expected {runs} runs, refused {refused}")
+    return failures
+
+
 def case_a_warm_up_that_fails_keeps_its_whole_output():
     """A compiler crash prints its cause below the `e: ` line, which the refusal leaves out; a CI
     shard uploads UNMUTATED_RESULTS. And the Kotlin daemon that compiles every tree in turn has
@@ -1644,7 +1675,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_warm_up_that_fails_keeps_its_whole_output,
          case_a_mutated_source_is_restored_byte_for_byte_whatever_its_line_endings,
          case_the_restore_check_compares_bytes_not_decoded_text,
-         case_an_artifact_central_did_not_serve_is_named_as_infrastructure)
+         case_an_artifact_central_did_not_serve_is_named_as_infrastructure,
+         case_a_warm_up_that_failed_fetching_a_dependency_compiles_once_more)
 
 
 def test_prove_guards():

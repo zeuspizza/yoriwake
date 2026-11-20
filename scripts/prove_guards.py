@@ -6210,13 +6210,28 @@ def compile_errors(output, limit=10):
     return errors[:limit]
 
 
+# A dependency file the build could not fetch, its metadata resolved: Central serving a 404 or a
+# dropped transfer for an artifact that exists. A dependency that does not exist fails on its
+# metadata instead (`Could not find group:name:version.`), and is not retried.
+FETCH_FAILED = re.compile(r"Could not (?:download|find) \S+\.(?:jar|pom|module) \(|Could not (?:GET|HEAD) '")
+# Seconds before the one rerun of a warm-up that failed on a fetch.
+WARM_UP_RETRY_PAUSE = 60
+
+
 def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
     error lines below it, or None. A failed build's whole output is kept in UNMUTATED_RESULTS: the
-    error lines alone left a compiler crash without its cause."""
+    error lines alone left a compiler crash without its cause. A build that failed fetching a
+    dependency file runs once more after a pause: Central's hiccup is not the tree failing to compile."""
     for tree in trees:
-        done = subprocess.run([wrapper(tree), "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, cwd=tree)
+        command = [wrapper(tree), "-q", *GRADLE_ARGS, *tasks]
+        done = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tree)
+        fetch = FETCH_FAILED.search((done.stderr or "") + (done.stdout or "")) if done.returncode != 0 else None
+        if fetch:
+            print(f"{tree}: the warm-up failed fetching a dependency ({fetch.group(0)}...); "
+                  f"compiling again in {WARM_UP_RETRY_PAUSE}s, once", flush=True)
+            time.sleep(WARM_UP_RETRY_PAUSE)
+            done = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tree)
         if done.returncode != 0:
             output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
