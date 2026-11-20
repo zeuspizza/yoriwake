@@ -655,8 +655,10 @@ def maven_seed_problems(text):
         if not runs:
             continue
         before = job[:runs[0] + 1]
+        # Unconditional: a restore under an `if:` leaves the runs it skips asking Central again.
         restored = any("actions/cache/restore@" in line and k + 2 < len(before)
                        and any("path: ~/.m2/yoriwake-seed-" in later for later in before[k + 1:k + 4])
+                       and not any(later.strip().startswith("if:") for later in before[k + 1:k + 4])
                        for k, line in enumerate(before))
         if not restored:
             problems.append(f"job {name} runs the Maven functional suite without first restoring a "
@@ -692,7 +694,9 @@ def case_a_maven_suite_job_without_a_seed_is_reported():
             problems += fail(f"a seeded job was reported: {maven_seed_problems(job + body)}")
     for body, what in ((suite, "a job without the seed"), (guards, "a guard job without the seed"),
                        (suite + restore + tail, "a seed restored after the suite"),
-                       (restore + suite, "a seed never handed to the suite")):
+                       (restore + suite, "a seed never handed to the suite"),
+                       (restore.replace("        with:", "        if: github.event_name == 'push'\n        with:")
+                        + tail + suite, "a seed restored only on some runs")):
         if not maven_seed_problems(job + body):
             problems += fail(f"{what} passed")
     for body in ("      - run: python3 scripts/prove_guards.py --list-selection a.json\n",
@@ -711,6 +715,8 @@ def case_a_seed_takes_what_a_build_downloaded_but_not_the_plugin_or_failures():
                  "org/a/b/1/_remote.repositories": "central",
                  "org/a/c/1/c-1.jar.lastUpdated": "failed",
                  "org/a/c/resolver-status.properties": "failed",
+                 "org/a/d/1/d-1.jar.3f2a.tmp": "half",
+                 ".locks/artifact~org.a~b~1.lock": "lock",
                  "io/github/zeuspizza/yoriwake-maven-plugin/0.1.0-SNAPSHOT/p.jar": "plugin",
                  "io/github/zeuspizza/other/1/o.jar": "installed",
                  "dev/demo/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOT.jar": "fixture"}

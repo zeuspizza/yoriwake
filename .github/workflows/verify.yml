@@ -178,11 +178,12 @@ jobs:
           restore-keys: maven-distributions-
       # What an earlier run on main downloaded for this shard's fixtures, read behind each build's own
       # local repository so Central is asked only for what it lacks; the guard jobs read all three.
+      # A seed only grows: to drop one that holds a bad file, bump v1 here and in guards.yml.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/yoriwake-seed-${{ matrix.shard }}
-          key: maven-repo-${{ matrix.shard }}-${{ github.run_id }}
-          restore-keys: maven-repo-${{ matrix.shard }}-
+          key: maven-repo-v1-${{ matrix.shard }}-${{ github.run_id }}
+          restore-keys: maven-repo-v1-${{ matrix.shard }}-
       - run: YORIWAKE_MAVEN_REPO_TAIL="$HOME/.m2/yoriwake-seed-${{ matrix.shard }}" ./gradlew :maven:functionalTest -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --console=plain
       # Saved from main only, and only when the shard downloaded something new: a pull request's
       # caches would crowd the repository's others, and an unchanged seed needs no new copy.
@@ -193,7 +194,7 @@ jobs:
         if: always() && steps.seed.outputs.added != '' && steps.seed.outputs.added != '0'
         with:
           path: ~/.m2/yoriwake-seed-${{ matrix.shard }}
-          key: maven-repo-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: maven-repo-v1-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
       # Always, and an error when empty: the check below reads every shard's results.
       # Kept a day: a re-run after a day needs "Re-run all jobs".
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

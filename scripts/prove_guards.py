@@ -6363,7 +6363,8 @@ def _prove_in_worker(index):
     if standing:
         scope = f" ({test_class})" if test_class else ""
         central = _WORKER.get("central", {}).get(key)
-        head = f"{INFRASTRUCTURE}: Maven Central did not serve {central}; " if central else ""
+        head = (f"{INFRASTRUCTURE}: Maven Central did not serve {central} (run again; if it repeats, check "
+                f"that it exists); " if central else "")
         return index, None, "\n".join([f"{head}the {name} suite{scope} fails unmutated in {os.getcwd()}: "
                                        f"{standing[0]}"] + why), timing
     target = source(path)

@@ -531,7 +531,8 @@ def test_kit_listing(build_tmp):
 
 # What a Maven seed repository never takes: the plugin under test, which each build publishes afresh
 # (and a guard mutates), the fixtures' own artifacts a test installs (all under `dev`), and the
-# resolver's records of a failed download. A seeded fixture would reach later runs' builds.
+# resolver's records of a failed download or files a stopped download left half written. A seeded
+# fixture would reach later runs' builds.
 SEED_EXCLUDED_DIRS = (os.path.join("io", "github", "zeuspizza"), "dev")
 SEED_EXCLUDED_NAMES = ("resolver-status.properties",)
 
@@ -546,8 +547,10 @@ def seed_maven_repo(source, seed):
         if any(relative == excluded or relative.startswith(excluded + os.sep) for excluded in SEED_EXCLUDED_DIRS):
             dirnames[:] = []
             continue
+        # The resolver's own bookkeeping, such as Maven 4's `.locks`, is no artifact.
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
         for name in names:
-            if name.endswith(".lastUpdated") or name in SEED_EXCLUDED_NAMES:
+            if name.endswith((".lastUpdated", ".tmp", ".part")) or name in SEED_EXCLUDED_NAMES:
                 continue
             target = os.path.join(seed, relative, name)
             if os.path.exists(target):
