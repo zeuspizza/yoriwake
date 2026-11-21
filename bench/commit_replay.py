@@ -47,6 +47,7 @@ import argparse
 import json
 import os
 import statistics
+import subprocess
 import sys
 import time
 import tomllib
@@ -250,10 +251,26 @@ def version_only(checkout, sha):
     return forcing_mutations._version_only(checkout, parent, sha, paths)
 
 
+def _git_bytes(checkout, *args, stdin=None):
+    """`git` with bytes in and out: a patch read as text loses its CRLFs and any byte that is
+    not UTF-8, and then no longer applies."""
+    return subprocess.run(["git", "-C", checkout, "-c", "core.quotePath=false", *args],
+                          input=stdin, capture_output=True)
+
+
 def whole_patch(checkout, sha):
-    """The diff of `sha` against its first parent over every path, ready for `git apply -R`."""
-    return revert._git(checkout, "diff", "--binary", "-M", "--full-index",
-                       revert._parent(checkout, sha), sha).stdout
+    """The diff of `sha` against its first parent over every path, as bytes, ready for
+    `git apply -R`."""
+    done = _git_bytes(checkout, "diff", "--binary", "-M", "--full-index",
+                      revert._parent(checkout, sha), sha)
+    if done.returncode != 0:
+        raise subprocess.CalledProcessError(done.returncode, "git diff", done.stdout, done.stderr)
+    return done.stdout
+
+
+def _patch_id(checkout, patch):
+    out = _git_bytes(checkout, "patch-id", "--stable", stdin=patch).stdout.split()
+    return out[0].decode() if out else None
 
 
 def draw(checkout, pin, count):
@@ -263,7 +280,7 @@ def draw(checkout, pin, count):
     seen, drawn = set(), []
     for sha in shas:
         text = whole_patch(checkout, sha)
-        patch_id = revert._patch_id(checkout, text) if text else None
+        patch_id = _patch_id(checkout, text) if text else None
         drawn.append({"sha": sha, "patch": text, "duplicate": patch_id in seen,
                       "version_only": bool(text) and version_only(checkout, sha)})
         if patch_id:
@@ -279,7 +296,7 @@ def replay(checkout, drawn, *, reset, compile_tests, explain, budget_seconds, cl
     compiles the reverted tree and returns its exit code; `explain(sha)` asks the explain task and
     returns the explanation it wrote, or None. `explain_narrow(sha)` asks it again on the same tree
     with `-Pyoriwake.narrowDependencies`, for a version-only commit. Once `budget_seconds` have
-    passed, the commits and second asks left are not asked.
+    passed, the commits and asks left are not asked, the commit being compiled included.
     """
     rows, started = [], clock()
     try:
@@ -293,7 +310,8 @@ def replay(checkout, drawn, *, reset, compile_tests, explain, budget_seconds, cl
                 row["reason"] = "budget"
             else:
                 began = clock()
-                row.update(_one(checkout, commit, reset, compile_tests, explain))
+                row.update(_one(checkout, commit, reset, compile_tests, explain,
+                                lambda: clock() - started >= budget_seconds))
                 if explain_narrow is not None and row["outcome"] != NOT_ASKED:
                     row["version_only"] = commit.get("version_only", False)
                     if row["version_only"]:
@@ -313,18 +331,21 @@ def replay(checkout, drawn, *, reset, compile_tests, explain, budget_seconds, cl
     return rows
 
 
-def _one(checkout, commit, reset, compile_tests, explain):
+def _one(checkout, commit, reset, compile_tests, explain, over_budget):
     if not reset():
         raise SystemExit(f"{checkout} could not be put back to the pin; stopping the replay")
     # `git apply` changes nothing unless the whole patch applies.
-    if revert._git(checkout, "apply", "-R", "--whitespace=nowarn", "-", stdin=commit["patch"],
-                   check=False).returncode != 0:
+    if _git_bytes(checkout, "apply", "-R", "--whitespace=nowarn", "-",
+                  stdin=commit["patch"]).returncode != 0:
         return {"reason": "does-not-apply"}
     compiled = compile_tests(commit["sha"])
     if compiled == STALLED:
         return {"reason": "build-stalled"}
     if compiled != 0:
         return {"reason": "does-not-compile"}
+    # A compile can take most of a budget; the explain after it would overrun it.
+    if over_budget():
+        return {"reason": "budget"}
     return _asked(explain(commit["sha"]))
 
 
@@ -366,8 +387,12 @@ def replay_project(project, checkout, commits, budget_minutes, scratch=None, pub
     import run  # noqa: PLC0415  (Gradle, the restore and the map's place are the sweep's own)
     import sweep_data  # noqa: PLC0415
 
-    if not project.get("url") or project.get("commit") in (None, "local"):
+    # A `path` project measures in another project's clone, whose history holds its pin.
+    if not (project.get("url") or project.get("path")) or project.get("commit") in (None, "local"):
         return not_replayed(project, "no upstream history")
+    # A fixture build shares another project's checkout and pin: replaying it counts that window twice.
+    if project.get("fixture"):
+        return not_replayed(project, "a fixture: its checkout's own project is replayed")
     if run.maven_build.is_maven(project):
         return not_replayed(project, "a Maven project")
     module = project.get("module") or ""
@@ -471,7 +496,7 @@ def merge(directory, planned, previous=None):
                 continue
             projects[name] = {key: data.get(key) for key in
                               ("pin", "plugin_commit", "commits", "budget_reached",
-                               "tree_restored", "seconds")}
+                               "untracked_reset", "tree_restored", "seconds")}
             # Counted again from the rows, so the figure never rests on a file's own arithmetic.
             projects[name]["distribution"] = distribution(data["rows"])
             block = narrow_dependencies_block(data["rows"])
