@@ -2235,14 +2235,18 @@ def case_a_push_to_main_skips_only_what_its_pull_request_run_proved():
         ("the run said two trees", {"log": f"tested tree {PUSHED_TREE}\ntested tree {OTHER_TREE}\n"}, everything),
         ("no run", {"runs": {"workflow_runs": []}}, everything),
         ("the newest run failed after an older green one", {"runs": {"workflow_runs": [
-            older_green, dict(run, id=7, status="completed", conclusion="failure", created_at="2026-11-20T09:00:00Z")]}},
+            older_green, dict(run, id=7, status="completed", conclusion="failure", created_at="2026-11-20T09:00:00Z")]}, "jobs": _pr_jobs(run_id=6)},
          everything),
         ("the newest run was cancelled", {"runs": {"workflow_runs": [
-            dict(run, id=7, status="completed", conclusion="cancelled", created_at="2026-11-20T09:00:00Z"), older_green]}},
+            dict(run, id=7, status="completed", conclusion="cancelled", created_at="2026-11-20T09:00:00Z"), older_green]}, "jobs": _pr_jobs(run_id=6)},
          everything),
         ("the newest run is still running", {"runs": {"workflow_runs": [
-            older_green, dict(run, id=7, status="in_progress", conclusion=None, created_at="2026-11-20T09:00:00Z")]}},
+            older_green, dict(run, id=7, status="in_progress", conclusion=None, created_at="2026-11-20T09:00:00Z")]}, "jobs": _pr_jobs(run_id=6)},
          everything),
+        ("the newest run passed after an older failed one", {"runs": {"workflow_runs": [
+            dict(older_green, conclusion="failure"),
+            dict(run, id=7, status="completed", conclusion="success", created_at="2026-11-20T09:00:00Z")]}},
+         {"unit": False, "maven": False, "gradle": False}),
         ("a run of another event", {"runs": {"workflow_runs": [dict(older_green, event="push")]}}, everything),
         ("jobs of another run", {"jobs": _pr_jobs(run_id=8)}, everything),
         ("a jobs page short of the total", {"jobs": dict(_pr_jobs(), total_count=40)}, everything),
@@ -2265,6 +2269,31 @@ def case_a_push_to_main_skips_only_what_its_pull_request_run_proved():
     for expected in ("[run 7](https://example.org/run/7)", "#9", PR_HEAD[:8], "gradle not run again"):
         if expected not in why:
             problems += fail(f"a reusing push does not name {expected!r}: {why}")
+    return problems
+
+
+def case_reuse_on_push_prints_what_decide_reads():
+    """decide takes the answers only as ci.py prints them; anything else runs everything."""
+    problems = 0
+    runs = {"workflow_runs": [{"id": 7, "head_sha": PR_HEAD, "event": "pull_request", "status": "completed",
+                               "conclusion": "success", "created_at": "x", "html_url": "https://example.org/run/7"}]}
+    pulls = [{"number": 9, "merge_commit_sha": PUSHED, "merged_at": "x", "head": {"sha": PR_HEAD}}]
+    for what, files, expected in (
+        ("a reusing push", {"pulls.json": pulls, "runs.json": runs, "jobs.json": _pr_jobs(skipped=("maven",)),
+                            "changes.log": f"2026-11-20T09:00:05.1Z tested tree {PUSHED_TREE}\n"},
+         ["unit=true", "maven=true", "gradle=false"]),
+        ("a push no pull request merged", {"pulls.json": []}, ["unit=true", "maven=true", "gradle=true"]),
+    ):
+        with tempfile.TemporaryDirectory() as root:
+            for name, content in files.items():
+                with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+                    handle.write(content if isinstance(content, str) else json.dumps(content))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ci.main(["reuse-on-push", root, "--sha", PUSHED, "--tree", PUSHED_TREE])
+        lines = out.getvalue().splitlines()
+        if code != 0 or lines[:3] != expected or len(lines) != 4 or not lines[3].startswith("reused="):
+            problems += fail(f"{what}: ci.py reuse-on-push printed {lines} (exit {code})")
     return problems
 
 
@@ -5260,6 +5289,7 @@ CASES = (
     case_verify_runs_each_job_on_the_answer_its_suites_need,
     case_a_push_to_main_skips_only_what_its_pull_request_run_proved,
     case_only_the_jobs_that_read_an_answer_prove_it,
+    case_reuse_on_push_prints_what_decide_reads,
     case_every_verify_job_has_a_time_limit,
     case_a_sweep_names_the_pull_requests_it_makes_wait,
     case_a_change_no_suite_reads_narrows_the_pull_requests_guards,
