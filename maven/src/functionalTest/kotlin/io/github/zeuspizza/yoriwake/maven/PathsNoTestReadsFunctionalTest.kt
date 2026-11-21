@@ -199,15 +199,17 @@ class PathsNoTestReadsFunctionalTest {
             "<artifactId>lib</artifactId>",
             "<artifactId>lib</artifactId>\n" +
                 "  <properties><maven.build.timestamp.format>yyyyMMddHHmmssSSS</maven.build.timestamp.format></properties>\n" +
-                "  <build><resources><resource><directory>src/main/resources</directory><filtering>true</filtering></resource></resources></build>",
+                "  <build><resources><resource><directory>src/main/resources</directory><filtering>true</filtering></resource></resources>" +
+                // First, so no changed class has loaded in its JVM when it runs, and only the stamp could select it.
+                "<plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><runOrder>alphabetical</runOrder></configuration></plugin></plugins></build>",
         )
-        val stampTest = "lib/src/test/java/dev/demo/lib/StampTest.java" to """
+        val stampTest = "lib/src/test/java/dev/demo/lib/AaStampTest.java" to """
             package dev.demo.lib;
             import java.io.InputStream;
             import java.util.Properties;
             import org.junit.jupiter.api.Test;
             import static org.junit.jupiter.api.Assertions.assertNotNull;
-            class StampTest {
+            class AaStampTest {
                 @Test void reads() throws Exception {
                     Properties stamp = new Properties();
                     try (InputStream in = getClass().getResourceAsStream("/stamp.properties")) { stamp.load(in); }
