@@ -511,6 +511,36 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a test that mocks inline does not select every later test in its JVM`(@TempDir dir: File) {
+        val ran = selectedAfter(
+            dir, "src/main/java/dev/sample/Tool.java", { it.replace("\"tool\"", "\"tool!\"") },
+            main("Tool", "public class Tool { public static String name() { return \"tool\"; } }"),
+            main("Greeter", "public final class Greeter { public String greet() { return \"hi\"; } }"),
+            first("M"),
+            // Mockito's inline mock maker starts Byte Buddy's attacher in a child JVM, as the JDK
+            // does not let a JVM attach to itself by default.
+            test(
+                "M1MockingTest",
+                """
+                @Test void mocksAFinalClass() {
+                    Greeter greeter = org.mockito.Mockito.mock(Greeter.class);
+                    org.mockito.Mockito.when(greeter.greet()).thenReturn("mocked");
+                    assertEquals("mocked", greeter.greet());
+                }
+                """.trimIndent(),
+            ),
+            // Runs before Tool is loaded, so only the child could make it share the change.
+            test("M2LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
+            test("M3ToolTest", "@Test void runs() { assertNotNull(Tool.name()); }"),
+            buildScript = orderedBuild.replace(
+                "testRuntimeOnly(", "testImplementation(\"org.mockito:mockito-core:5.14.2\")\n    testRuntimeOnly(",
+            ),
+        )
+
+        assertEquals(names("M3ToolTest"), ran)
+    }
+
+    @Test
     fun `a class loader that defines its own copy of a test class dates that class`(@TempDir dir: File) {
         val ran = selectedAfter(
             dir, "src/test/java/dev/sample/L3EditedTest.java", editTest,

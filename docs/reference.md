@@ -523,7 +523,8 @@ these are the rules that keep them selected:
   - Whatever the agent could not observe in a JVM (a hook it could not install, a record cut short,
     a jar it could not list, a class defined from bytes whose name cannot be read) counts as every
     class touched from that point. So does a child process started from it: what the child reads
-    or runs is out of the agent's sight, so every later test in that JVM runs after any change. So
+    or runs is out of the agent's sight, so every later test in that JVM runs after any change,
+    unless it is a [reviewed child process](#reviewed-child-processes). So
     does native code loaded or reached from outside the JDK, unless it is a [reviewed native
     library](#native-libraries) loaded by its own class.
 - **An edit to a test class.** Every test of an edited test class that the map knows runs, whatever
@@ -642,6 +643,28 @@ version, and until then a later version counts as the one reviewed. To propose a
 it asks for its version, a link to its native sources at that tag, every file open, `mmap`,
 directory scan and `dlopen` in them with where each path comes from, the file names its loader
 gives the library, and the class that calls `System.load` or `System.loadLibrary`.
+
+### Reviewed child processes
+
+One child process is reviewed: Byte Buddy's attacher, which `ByteBuddyAgent` starts when the JDK
+does not let a JVM attach to itself (its default), as Mockito's inline mock maker has it do. The
+child only asks the JDK to load a Java agent into the test JVM; that agent's classes are then loaded
+there, in the agent's sight. Such a child touches nothing. Every other child process applies the
+wide rule, and so does the attacher unless all of these hold:
+
+- it was started by `net.bytebuddy.agent.ByteBuddyAgent` or a class nested in it;
+- the version in `META-INF/maven/net.bytebuddy/byte-buddy-agent/pom.properties`, at the root of
+  that class's jar, is one reviewed: every release from 1.14.0 to 1.18.17;
+- its command is the one those releases build: the test JVM's own `java`, the attacher's dump
+  property, a class path of Byte Buddy's jar or its temporary copy of the attacher, main class
+  `net.bytebuddy.agent.Attacher`, the JDK's attach API, the test JVM's own process id, Byte Buddy's
+  jar or its temporary agent jar as the agent, and a Java agent rather than a native one;
+- none of `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` and `_JAVA_OPTIONS` is set in the test JVM's
+  environment, which the child inherits.
+
+A JVM started with `-Djdk.attach.allowAttachSelf=true` starts no attacher, but attaching loads the
+JDK's attach library, which is not a reviewed native library, so it applies the wide rule all the
+same.
 
 ## Your JaCoCo report
 

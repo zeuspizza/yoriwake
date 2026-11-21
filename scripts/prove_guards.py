@@ -234,6 +234,7 @@ RESOURCE_READS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture
 JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCode.java"
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
 REVIEWED_LIBRARIES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedLibraries.java"
+REVIEWED_CHILDREN = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedChildren.java"
 GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/GuardHooks.java"
 JAR_IDENTITY = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JarIdentity.java"
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
@@ -2466,6 +2467,32 @@ MUTATIONS = [
      '            touch(AgentContract.TOUCH_ALL, "a child process was started");',
      '            if (false) touch(AgentContract.TOUCH_ALL, "a child process was started");',
      agent_suite, "a child process touches every class, once"),
+    # Byte Buddy's attacher is the one child trusted: started by ByteBuddyAgent at a version
+    # reviewed, with the reviewed command, in an environment that adds no launcher options.
+    ("every child process counts as reviewed", TOUCH_RECORDER,
+     "            if (outer && ReviewedChildren.reviewed(ReviewedChildren.caller(), command)) {",
+     "            if (outer) {",
+     agent_suite, "a child process touches every class, once"),
+    ("a reviewed command matches without its caller", REVIEWED_CHILDREN,
+     '            if (caller == null || !(caller.getName().equals(CALLER) || caller.getName().startsWith(CALLER + "$"))) {',
+     "            if (caller == null) {",
+     agent_suite, "the attacher started by another class touches every class"),
+    ("the reviewed version is not checked", REVIEWED_CHILDREN,
+     "            return reviewedVersion(home, source);",
+     "            return true;",
+     agent_suite, "the attacher of a Byte Buddy version not reviewed, or of none read, is not reviewed"),
+    ("a native agent's attacher counts as reviewed", REVIEWED_CHILDREN,
+     '            if (!"false".equals(c[8])) {',
+     "            if (false) {",
+     agent_suite, "any other command from ByteBuddyAgent is not reviewed"),
+    ("the inherited launcher options are not checked", REVIEWED_CHILDREN,
+     "            if (launcherOptions) {",
+     "            if (false) {",
+     agent_suite, "the attacher is not reviewed while the environment sets launcher options"),
+    ("the child-process hook no longer passes the command", READ_HOOKS,
+     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "0"},',
+     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "-2"},',
+     functional_suite, "a test that mocks inline does not select every later test in its JVM"),
     ("the child-process hook is installed with no sink behind it", READ_HOOKS,
      '            holder.getField("PROCESS").set(null, processes);',
      "            holder.getClass();",
@@ -4013,7 +4040,7 @@ MUTATIONS = [
      functional_suite, "a test that asks for every loaded class dates every test class from that point"),
     ("where every child process starts is no longer hooked", READ_HOOKS,
      '        {"java/lang/ProcessImpl", "start", "([Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;"\n'
-     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "-2"},\n', "",
+     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "0"},\n', "",
      functional_suite, "a child JVM started with Runtime exec that reads a class file selects every later test in its JVM"),
     # A test a dating capture did not report (its class's setup threw, it was deleted, a filter left
     # it out) kept its older SUCCESSFUL record under the newer stamp, and the next unrelated change
