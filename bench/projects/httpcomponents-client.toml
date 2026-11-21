@@ -1,0 +1,19 @@
+# WHY THIS ONE: Blastradius's httpcomponents-client window, for the history replay
+# (bench/history_replay.py), which compares the share of test executions selected over 200
+# consecutive commits with its published figures: a Maven reactor of several modules, so the
+# plugin records and selects across modules built together. Not in the sweep's corpus
+# (qualification.txt).
+name = "httpcomponents-client"
+url = "https://github.com/apache/httpcomponents-client.git"
+# The window's last commit: the clone's checkout before the walk moves it.
+commit = "4dae8da4a365f639e42fea84822285f345be7755"
+build = "maven"
+module = ""
+test_plugin = "surefire"
+# The whole reactor's Surefire tests, `mvn test` at the root, as Blastradius ran them.
+scope = "reactor"
+history_from = "ef34bfa8fd6f2f6181ba2e41051050ed877e56df"
+history_to = "4dae8da4a365f639e42fea84822285f345be7755"
+daemon_java_version = 21
+flags = []
+sources = ["httpclient5/src/main/java"]

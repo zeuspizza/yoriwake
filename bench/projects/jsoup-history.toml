@@ -1,0 +1,18 @@
+# WHY THIS ONE: Blastradius's jsoup window, for the history replay (bench/history_replay.py), which
+# compares the share of test executions selected over 200 consecutive commits with its published
+# figures. Its Surefire suite, the tests Blastradius counts, beside the corpus `jsoup`, which
+# measures the Failsafe tests. Not in the sweep's corpus (qualification.txt).
+name = "jsoup-history"
+url = "https://github.com/jhy/jsoup.git"
+# The window's last commit: the clone's checkout before the walk moves it.
+commit = "9d2241ff467d03accbf902a650adc60513bf5c11"
+build = "maven"
+module = ""
+test_plugin = "surefire"
+# The whole reactor's Surefire tests, `mvn test` at the root, as Blastradius ran them.
+scope = "reactor"
+history_from = "b62e362d3945e86725c817101332b66277aff9e4"
+history_to = "9d2241ff467d03accbf902a650adc60513bf5c11"
+daemon_java_version = 21
+flags = []
+sources = ["src/main/java"]
