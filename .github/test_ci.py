@@ -636,6 +636,42 @@ def case_a_maven_suite_job_without_the_distribution_cache_is_reported():
     return problems
 
 
+def build_cache_problems(text):
+    """Each `./gradlew` line that runs the root build without `--build-cache`, and each sample build
+    with it. The root build reuses compiled outputs from earlier runs; a sample build's test runs are
+    what the map checks read, so none of it may come from a cache. Stopping a daemon builds nothing."""
+    problems = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.strip().startswith("#") or "./gradlew" not in line or "--stop" in line:
+            continue
+        sample = "-p samples/" in line
+        if sample and "--build-cache" in line:
+            problems.append(f"line {number}: a sample build uses the build cache")
+        elif not sample and "--build-cache" not in line:
+            problems.append(f"line {number}: a root build runs without --build-cache")
+    return problems
+
+
+def case_verify_reuses_compiled_outputs_but_not_the_samples():
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        return sum(fail(f"verify.yml: {problem}") for problem in build_cache_problems(handle.read()))
+
+
+def case_a_build_without_the_cache_or_a_sample_with_it_is_reported():
+    problems = 0
+    for line in ("      - run: ./gradlew build --build-cache --console=plain\n",
+                 "      - run: ./gradlew -p samples/demo test --console=plain\n",
+                 "        run: ./gradlew --stop\n",
+                 "# as `./gradlew build` gates locally\n"):
+        if build_cache_problems(line):
+            problems += fail(f"a correct line was reported: {line.strip()}")
+    for line, what in (("      - run: ./gradlew build --console=plain\n", "a root build without the cache"),
+                       ("      - run: ./gradlew -p samples/demo test --build-cache\n", "a sample build with it")):
+        if not build_cache_problems(line):
+            problems += fail(f"{what} passed")
+    return problems
+
+
 def maven_seed_problems(text):
     """Each job that runs the Maven functional suite, on its own or under the guards, without first
     restoring a seed of what earlier runs downloaded and handing it to the suite.
@@ -5339,6 +5375,8 @@ CASES = (
     case_every_job_running_the_maven_suite_restores_its_distributions,
     case_every_job_running_the_maven_suite_reads_a_seed,
     case_a_maven_suite_job_without_a_seed_is_reported,
+    case_verify_reuses_compiled_outputs_but_not_the_samples,
+    case_a_build_without_the_cache_or_a_sample_with_it_is_reported,
     case_a_seed_takes_what_a_build_downloaded_but_not_the_plugin_or_failures,
     case_a_maven_suite_job_without_the_distribution_cache_is_reported,
     case_the_reference_table_and_the_matrix_cells_agree,

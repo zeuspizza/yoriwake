@@ -28,6 +28,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Contributors: benchmark jobs reuse each project's downloaded dependencies; a rate-limited build reruns after five minutes. Map: left alone.
 - Contributors: CI runs the jobs a change's paths can reach, cancels superseded runs and stops a hung job at 35 minutes. Map: left alone.
 - Contributors: the Maven suites read dependencies earlier CI runs downloaded; a guard run names or retries a Central failure. Map: left alone.
+- Contributors: CI's builds reuse compiled outputs from earlier runs on `main`; every test still runs. Map: left alone.
 - Contributors: pull requests no longer run the functional suites on Windows; each release's matrix does. Map: left alone.
 - Contributors: a merge whose tree its pull request's run passed runs only the jobs that run skipped. Map: left alone.
 - Contributors: the offline decision replay reads a record whose empty inputs were left out, as 0.6.0 writes them. Map: left alone.

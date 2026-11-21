@@ -42,6 +42,9 @@ env:
 # The build in parallel jobs, split by task, and each functional suite further by test class into
 # shards: together they run everything `./gradlew build` runs, and the slowest shard sets the time.
 # A check job per suite, named as the suite, proves every test class ran in exactly one shard.
+# Each build of the root project passes --build-cache, so a job reuses the compiled outputs of
+# earlier runs on main, where setup-gradle saves its cache; its tests still run (build.gradle.kts).
+# The sample builds go without it: the map jobs read what their test runs did.
 jobs:
   # Whether this run needs the build at all, and which job groups its paths can affect
   # (.github/ci.py scope): `unit` the Gradle build, `maven` the Maven shards, `gradle` the Gradle
@@ -164,7 +167,7 @@ jobs:
           add-job-summary: never
       # The plugin's coverage gate needs the functional suites, which run in the shards below; the
       # coverage job gates on this job's unit-test data and theirs.
-      - run: ./gradlew build :agent:jacocoTestReport -x :plugin:functionalTest -x :plugin:functionalTestGradle9 -Pyoriwake.functional.coverage=false --console=plain
+      - run: ./gradlew build :agent:jacocoTestReport -x :plugin:functionalTest -x :plugin:functionalTestGradle9 -Pyoriwake.functional.coverage=false --build-cache --console=plain
         if: needs.changes.outputs.unit != 'false'
       - run: python3 .github/test_ci.py
       - run: python3 scripts/test_central_bundle.py
@@ -174,7 +177,7 @@ jobs:
       - name: the Maven Central bundle is complete
         if: needs.changes.outputs.unit != 'false'
         run: |
-          ./gradlew :maven:publishMavenPluginPublicationToBuildLocalRepository -PreleaseVersion=0.0.0-check --console=plain
+          ./gradlew :maven:publishMavenPluginPublicationToBuildLocalRepository -PreleaseVersion=0.0.0-check --build-cache --console=plain
           python3 scripts/central_bundle.py maven/build/local-repository io.github.zeuspizza yoriwake-maven-plugin \
             0.0.0-check "$RUNNER_TEMP/central-bundle.zip"
       - name: the release's signing and upload refusal work
@@ -249,7 +252,7 @@ jobs:
           path: ~/.m2/yoriwake-seed-${{ matrix.shard }}
           key: maven-repo-v1-${{ matrix.shard }}-${{ github.run_id }}
           restore-keys: maven-repo-v1-${{ matrix.shard }}-
-      - run: YORIWAKE_MAVEN_REPO_TAIL="$HOME/.m2/yoriwake-seed-${{ matrix.shard }}" ./gradlew :maven:functionalTest -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --console=plain
+      - run: YORIWAKE_MAVEN_REPO_TAIL="$HOME/.m2/yoriwake-seed-${{ matrix.shard }}" ./gradlew :maven:functionalTest -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
       # Saved from main only, and only when the shard downloaded something new: a pull request's
       # caches would crowd the repository's others, and an unchanged seed needs no new copy.
       - id: seed
@@ -329,7 +332,7 @@ jobs:
         with:
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --console=plain
+        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
       # read, and the homes' daemon logs, the Tooling API home's included.
@@ -418,7 +421,7 @@ jobs:
         with:
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --console=plain
+        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
       # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
       # downloaded, which tells a dependency that never arrived from one that could not be
       # read, and the homes' daemon logs, the Tooling API home's included.
@@ -508,14 +511,14 @@ jobs:
         with:
           pattern: coverage-linux-*
           path: coverage-data
-      - run: ./gradlew :plugin:jacocoTestReport :plugin:jacocoTestCoverageVerification -Pyoriwake.coverage.data=coverage-data --continue --console=plain
+      - run: ./gradlew :plugin:jacocoTestReport :plugin:jacocoTestCoverageVerification -Pyoriwake.coverage.data=coverage-data --continue --build-cache --console=plain
       # The gate must refuse rather than pass on the unit tests alone: given only their data, it
       # fails and names both functional suites.
       - name: the gate refuses missing functional data
         run: |
           mkdir unit-only
           cp coverage-data/coverage-linux-unit/test.exec unit-only/
-          if ./gradlew :plugin:jacocoTestCoverageVerification -Pyoriwake.coverage.data=unit-only --console=plain > refusal.log 2>&1; then
+          if ./gradlew :plugin:jacocoTestCoverageVerification -Pyoriwake.coverage.data=unit-only --build-cache --console=plain > refusal.log 2>&1; then
             cat refusal.log
             echo "the coverage gate passed with no functional data"
             exit 1
@@ -565,7 +568,7 @@ jobs:
           add-job-summary: on-failure
 
       - name: publish the plugin locally
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: ./gradlew :plugin:publishToMavenLocal --build-cache --console=plain
 
       # Isolated, one test JVM per test class: the sample's classes all run in one JVM, so a shared
       # capture keeps every test that ran after the changed class first loaded, and the selection
@@ -622,7 +625,7 @@ jobs:
           path: samples/demo/.gradle/yoriwake
 
       - name: publish the plugin locally
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: ./gradlew :plugin:publishToMavenLocal --build-cache --console=plain
 
       # Not `sed -i`: its flags differ between GNU and BSD, Windows has neither, and `sed` exits 0
       # when nothing matches. ci.py refuses a mutation that did not apply.
@@ -698,7 +701,7 @@ jobs:
       # different path (`gradlew.bat`) from every other job.
       - name: publish the plugin locally
         shell: bash
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: ./gradlew :plugin:publishToMavenLocal --build-cache --console=plain
 
       - name: break Alpha so its tests fail
         shell: bash
@@ -763,7 +766,7 @@ jobs:
 
       - name: publish the plugin locally
         shell: bash
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: ./gradlew :plugin:publishToMavenLocal --build-cache --console=plain
 
       - name: run the sample suite, capturing coverage
         shell: bash
@@ -822,7 +825,7 @@ jobs:
 
       - name: publish the plugin locally
         shell: bash
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: ./gradlew :plugin:publishToMavenLocal --build-cache --console=plain
 
       - name: break Alpha so its tests fail
         shell: bash
@@ -881,7 +884,7 @@ jobs:
           path: samples/demo/.gradle/yoriwake
 
       - name: publish the plugin locally
-        run: ./gradlew :plugin:publishToMavenLocal --console=plain
+        run: ./gradlew :plugin:publishToMavenLocal --build-cache --console=plain
 
       - name: break Alpha so its tests fail
         run: python3 .github/ci.py mutate samples/demo/src/main/java/dev/demo/Alpha.java
@@ -921,7 +924,7 @@ jobs:
         with:
           add-job-summary: on-failure
       - shell: bash
-        run: ./gradlew build -x functionalTest -x functionalTestGradle9 -Pyoriwake.functional.coverage=false --continue --console=plain
+        run: ./gradlew build -x functionalTest -x functionalTestGradle9 -Pyoriwake.functional.coverage=false --continue --build-cache --console=plain
       # A person reads it when the Windows unit build failed.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
