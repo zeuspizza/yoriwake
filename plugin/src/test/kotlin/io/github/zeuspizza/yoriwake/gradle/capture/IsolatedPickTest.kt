@@ -129,20 +129,37 @@ class IsolatedPickTest {
         val first = pick(IsolatedPick.rank(measuredMap(dir, sharedJvm = 20.0))!!, 2.0)
         val next = IsolatedPick.rank(measuredMap(File(dir, "next").apply { mkdirs() }, sharedJvm = 12.0, cJvm = 30.0))!!
 
-        // Alone it took 30 s, more than the 20 s the budget allows over the 20 s it was picked against.
-        assertEquals(emptyMap(), pick(next, 2.0, previous = first).classes)
-        assertEquals(mapOf("dev.sample.CTest" to 5L), pick(next, 2.6, previous = first).classes)
+        // Picked from scratch (a stamp that predates the sticky pick): alone it took 30 s, more than
+        // the 20 s the budget allows over the 20 s it was picked against.
+        val older = first.copy(candidateClasses = null)
+        assertEquals(emptyMap(), pick(next, 2.0, previous = older).classes)
+        assertEquals(mapOf("dev.sample.CTest" to 5L), pick(next, 2.6, previous = older).classes)
+    }
+
+    private fun ranking(vararg seconds: Double, isolatedSeconds: Map<String, Double> = emptyMap()) = IsolatedPick.Ranking(
+        scores = seconds.indices.associate { "dev.sample.T$it" to (if (it < seconds.size - 1) 100L - it else 0L) },
+        isolated = isolatedSeconds.keys,
+        seconds = seconds.indices.associate { "dev.sample.T$it" to seconds[it] },
+        isolatedSeconds = isolatedSeconds,
+        startOverhead = 1.0,
+        sharedJvmSeconds = 10.0,
+    )
+
+    @Test
+    fun `fewer classes than JVMs are predicted at the slowest of them`() {
+        // Estimated at 3, 5 and 7 seconds; the fourth class scores 0 and stays shared.
+        val pick = pick(ranking(1.0, 2.0, 3.0, 1.0), 10.0, forks = 4)
+        assertEquals(3, pick.classes.size)
+        assertEquals(7.0, pick.predictedExtra)
     }
 
     /**
-     * Ten classes of 1 s of tests each, by score, against a 20 s shared recording on one JVM whose
-     * JVMs took 16 s: 4 s of the test task's wall time is outside its JVMs. Each class recorded alone
-     * takes 3 s of JVM time, and each budgeted recording's extra wall time is that 4 s plus
-     * [perClass] times what its classes' JVMs took, over one JVM. Returns each recording's pick and
-     * extra wall time.
+     * Budgeted recordings in a row, on 4 JVMs, of 40 classes estimated at 3 s each whose own JVMs
+     * report 2 s and each take 5 s of an isolated JVM's wall time. The shared recording takes 20 s,
+     * 4 s of it outside its JVMs. Returns each pick's size and its recording's wall time.
      */
-    private fun recordings(perClass: Double, count: Int = 4): List<Pair<Set<String>, Double>> {
-        val names = (0 until 10).map { "dev.sample.T$it" }
+    private fun stickyRecordings(count: Int = 5): List<Pair<Int, Double>> {
+        val names = (0 until 40).map { "dev.sample.T${it.toString().padStart(2, '0')}" }
         var previous: IsolatedPick.Stamp? = null
         var wall = IsolatedPick.Wall(sharedSeconds = 20.0)
         return (1..count).map {
@@ -151,36 +168,97 @@ class IsolatedPickTest {
                 scores = names.filter { it !in alone }.associateWith { 100L - names.indexOf(it) },
                 isolated = alone,
                 seconds = names.associateWith { 1.0 },
-                isolatedSeconds = alone.associateWith { 3.0 },
+                isolatedSeconds = alone.associateWith { 2.0 },
                 startOverhead = 1.0,
                 sharedJvmSeconds = 16.0,
             )
-            val pick = IsolatedPick.pick(ranking, previous, 2.0, hostForks = 1, isolatedForks = 1, processors = 8, wall = wall) { true }
-            val extra = 4.0 + perClass * 3.0 * pick.classes.size
-            wall = wall.copy(budgetedSeconds = 20.0 + extra, predictedExtra = pick.predictedExtra)
-            previous = pick
-            pick.classes.keys to extra
+            val pick = IsolatedPick.pick(ranking, previous, 2.0, hostForks = 1, isolatedForks = 4, processors = 8, wall = wall) { true }
+            val isolatedWall = 5.0 * Math.ceil(pick.classes.size / 4.0)
+            val took = 20.0 + isolatedWall
+            previous = if (pick.classes.isEmpty()) pick else IsolatedPick.measured(pick, isolatedWall, 4)
+            wall = if (pick.classes.isEmpty()) wall else wall.copy(budgetedSeconds = took, predictedExtra = pick.predictedExtra, isolatedWallSeconds = isolatedWall)
+            pick.classes.size to took
         }
     }
 
     @Test
-    fun `calibrated against wall time, the pick stays within budget from the second recording on`() {
-        for (perClass in listOf(1.0, 2.0, 3.0)) {
-            val runs = recordings(perClass)
-            runs.drop(1).forEach { (_, extra) -> assertTrue(20.0 + extra <= 2.0 * 20.0, "$perClass x: $runs") }
-            runs.drop(1).zipWithNext().forEach { (a, b) ->
-                assertTrue(kotlin.math.abs(a.first.size - b.first.size) <= 1, "$perClass x oscillates: $runs")
-            }
-            assertTrue(runs.last().first.isNotEmpty(), "$perClass x picks nothing: $runs")
-        }
+    fun `after a first recording over the budget, the pick settles within it and stays`() {
+        val runs = stickyRecordings()
+        assertTrue(runs.first().second > 40.0, "the first recording is expected over the budget: $runs")
+        runs.drop(1).forEach { (_, took) -> assertTrue(took <= 40.0 + 1e-9, "over budget: $runs") }
+        runs.drop(1).zipWithNext().forEach { (a, b) -> assertEquals(a.first, b.first, "moves: $runs") }
+        assertTrue(runs.last().first > 0, "picks nothing: $runs")
+    }
+
+    /** Three picked classes of a 10 s shared recording under 2x, D left shared, after a recording that took [took]. */
+    private fun after(took: Double, slot: Double? = null, candidates: Int = 4): IsolatedPick.Stamp {
+        val previous = IsolatedPick.Stamp(
+            budget = 2.0, startSeconds = 1.0, pickedSeconds = 3.0,
+            classes = mapOf("dev.sample.A" to 100L, "dev.sample.B" to 100L, "dev.sample.C" to 50L),
+            sharedSeconds = 10.0, overheadSeconds = 0.0, isolatedWallSeconds = 12.0, slotSeconds = slot, candidateClasses = candidates,
+        )
+        val ranking = IsolatedPick.Ranking(
+            scores = mapOf("dev.sample.D" to 10L, "dev.sample.E" to 5L),
+            isolated = previous.classes.keys,
+            seconds = (previous.classes.keys + listOf("dev.sample.D", "dev.sample.E")).associateWith { 1.0 },
+            isolatedSeconds = mapOf("dev.sample.A" to 1.0, "dev.sample.B" to 4.0, "dev.sample.C" to 1.0),
+            startOverhead = 1.0,
+            sharedJvmSeconds = 10.0,
+        )
+        val wall = IsolatedPick.Wall(sharedSeconds = 10.0, budgetedSeconds = took, isolatedWallSeconds = 12.0)
+        return IsolatedPick.pick(ranking, previous, 2.0, 1, 4, 8, wall) { true }
     }
 
     @Test
-    fun `with no budgeted recording measured the calibration is 1`(@TempDir dir: File) {
-        val ranking = IsolatedPick.rank(map(dir))!!
+    fun `over the budget, the classes that free the fewest changes per second go first`() {
+        // B frees as many changes as A but took four times as long: its 8 s share of the isolated
+        // task's 12 s goes first, which brings 26 s under the 20 s budget less its headroom.
+        assertEquals(setOf("dev.sample.A", "dev.sample.C"), after(took = 26.0).classes.keys)
+    }
 
-        assertEquals(1.0, pick(ranking, 2.2).factor)
-        assertEquals(1.0, IsolatedPick.pick(ranking, null, 2.2, 1, 1, 8, IsolatedPick.Wall(sharedSeconds = 10.0)) { true }.factor)
+    @Test
+    fun `within the budget, the pick stays as it was`() {
+        assertEquals(setOf("dev.sample.A", "dev.sample.B", "dev.sample.C"), after(took = 19.0, slot = 2.0).classes.keys)
+    }
+
+    @Test
+    fun `well within the budget, a class is added by score at a measured class's share of a JVM`() {
+        assertEquals(setOf("dev.sample.A", "dev.sample.B", "dev.sample.C", "dev.sample.D"), after(took = 15.0, slot = 2.0, candidates = 5).classes.keys)
+    }
+
+    @Test
+    fun `a pick whose isolated run was never measured is picked from scratch`() {
+        val previous = after(took = 19.0, slot = 2.0)
+        val unmeasured = previous.copy(isolatedWallSeconds = null, candidateClasses = 5)
+        val ranking = IsolatedPick.Ranking(
+            scores = mapOf("dev.sample.D" to 10L, "dev.sample.E" to 5L),
+            isolated = unmeasured.classes.keys,
+            seconds = (unmeasured.classes.keys + listOf("dev.sample.D", "dev.sample.E")).associateWith { 1.0 },
+            startOverhead = 1.0,
+            sharedJvmSeconds = 10.0,
+        )
+        // From scratch at 2 s a class, four fit the 10 s allowance; kept as it was, three would stay.
+        assertEquals(4, IsolatedPick.pick(ranking, unmeasured, 2.0, 1, 4, 8, IsolatedPick.Wall(sharedSeconds = 10.0)) { true }.classes.size)
+    }
+
+    @Test
+    fun `a task whose classes changed by more than a quarter is picked from scratch`() {
+        val scratch = after(took = 19.0, slot = 2.0, candidates = 40)
+        assertEquals(5, scratch.candidateClasses)
+    }
+
+    @Test
+    fun `a pick of nothing is stamped, and the next recording starts from it`(@TempDir dir: File) {
+        val empty = IsolatedPick.Stamp(budget = 2.0, startSeconds = 1.0, pickedSeconds = 0.0, classes = emptyMap(), sharedSeconds = 10.0, slotSeconds = 8.0, candidateClasses = 4)
+        IsolatedPick.commit(dir, empty)
+        val stamped = IsolatedPick.Stamp.read(File(dir, IsolatedPick.STAMP_FILE))!!
+        assertEquals(empty, stamped)
+
+        // A shared recording at half the budget adds one class at 8 s over 4 JVMs, where a pick from
+        // scratch would take three, one a JVM.
+        val ranking = ranking(0.0, 0.0, 0.0, 0.0)
+        val next = IsolatedPick.pick(ranking, stamped, 2.0, 1, 4, 8, IsolatedPick.Wall(sharedSeconds = 10.0)) { true }
+        assertEquals(1, next.classes.size)
     }
 
     @Test
@@ -190,7 +268,7 @@ class IsolatedPickTest {
 
         val pick = IsolatedPick.Stamp(2.0, 1.0, 1.0, mapOf("dev.sample.A" to 1L), predictedExtra = 3.0, isolatedWallSeconds = 9.0)
         IsolatedPick.recordWall(dir, pick, 18.0)
-        assertEquals(IsolatedPick.Wall(20.0, 27.0, 3.0), IsolatedPick.Wall.read(dir))
+        assertEquals(IsolatedPick.Wall(20.0, 27.0, 3.0, 9.0), IsolatedPick.Wall.read(dir))
     }
 
     @Test

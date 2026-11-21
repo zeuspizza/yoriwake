@@ -878,6 +878,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 test.maxParallelForks, parallel, Runtime.getRuntime().availableProcessors(), IsolatedPick.Wall.read(mapDir),
             ) { name -> IsolatedPick.scanPatterns(name).first() in candidates }
             if (pick.classes.isEmpty()) {
+                // Stamped all the same, so the next recording starts from this pick, not from scratch.
+                runCatching { writeAtomically(pending, pick.encode()) }
                 test.logger.lifecycle(
                     "[yoriwake] ${test.path}: $flag picked no test class: none ranks above 0 or fits the budget, so " +
                         "this run records every class in shared JVMs"
