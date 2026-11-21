@@ -134,6 +134,65 @@ class IsolatedPickTest {
         assertEquals(mapOf("dev.sample.CTest" to 5L), pick(next, 2.6, previous = first).classes)
     }
 
+    /**
+     * Ten classes of 1 s of tests each, by score, against a 20 s shared recording on one JVM whose
+     * JVMs took 16 s: 4 s of the test task's wall time is outside its JVMs. Each class recorded alone
+     * takes 3 s of JVM time, and each budgeted recording's extra wall time is that 4 s plus
+     * [perClass] times what its classes' JVMs took, over one JVM. Returns each recording's pick and
+     * extra wall time.
+     */
+    private fun recordings(perClass: Double, count: Int = 4): List<Pair<Set<String>, Double>> {
+        val names = (0 until 10).map { "dev.sample.T$it" }
+        var previous: IsolatedPick.Stamp? = null
+        var wall = IsolatedPick.Wall(sharedSeconds = 20.0)
+        return (1..count).map {
+            val alone = previous?.classes?.keys.orEmpty()
+            val ranking = IsolatedPick.Ranking(
+                scores = names.filter { it !in alone }.associateWith { 100L - names.indexOf(it) },
+                isolated = alone,
+                seconds = names.associateWith { 1.0 },
+                isolatedSeconds = alone.associateWith { 3.0 },
+                startOverhead = 1.0,
+                sharedJvmSeconds = 16.0,
+            )
+            val pick = IsolatedPick.pick(ranking, previous, 2.0, hostForks = 1, isolatedForks = 1, processors = 8, wall = wall) { true }
+            val extra = 4.0 + perClass * 3.0 * pick.classes.size
+            wall = wall.copy(budgetedSeconds = 20.0 + extra, predictedExtra = pick.predictedExtra)
+            previous = pick
+            pick.classes.keys to extra
+        }
+    }
+
+    @Test
+    fun `calibrated against wall time, the pick stays within budget from the second recording on`() {
+        for (perClass in listOf(1.0, 2.0, 3.0)) {
+            val runs = recordings(perClass)
+            runs.drop(1).forEach { (_, extra) -> assertTrue(20.0 + extra <= 2.0 * 20.0, "$perClass x: $runs") }
+            runs.drop(1).zipWithNext().forEach { (a, b) ->
+                assertTrue(kotlin.math.abs(a.first.size - b.first.size) <= 1, "$perClass x oscillates: $runs")
+            }
+            assertTrue(runs.last().first.isNotEmpty(), "$perClass x picks nothing: $runs")
+        }
+    }
+
+    @Test
+    fun `with no budgeted recording measured the calibration is 1`(@TempDir dir: File) {
+        val ranking = IsolatedPick.rank(map(dir))!!
+
+        assertEquals(1.0, pick(ranking, 2.2).factor)
+        assertEquals(1.0, IsolatedPick.pick(ranking, null, 2.2, 1, 1, 8, IsolatedPick.Wall(sharedSeconds = 10.0)) { true }.factor)
+    }
+
+    @Test
+    fun `a recording's wall time is recorded as the shared reference or as the budgeted one`(@TempDir dir: File) {
+        IsolatedPick.recordWall(dir, null, 20.0)
+        assertEquals(IsolatedPick.Wall(sharedSeconds = 20.0), IsolatedPick.Wall.read(dir))
+
+        val pick = IsolatedPick.Stamp(2.0, 1.0, 1.0, mapOf("dev.sample.A" to 1L), predictedExtra = 3.0, isolatedWallSeconds = 9.0)
+        IsolatedPick.recordWall(dir, pick, 18.0)
+        assertEquals(IsolatedPick.Wall(20.0, 27.0, 3.0), IsolatedPick.Wall.read(dir))
+    }
+
     @Test
     fun `the pick leaves the test task a class to run`() {
         val ranking = IsolatedPick.Ranking(mapOf("dev.sample.X" to 2L, "dev.sample.Y" to 1L), emptySet(), mapOf("dev.sample.X" to 1.0, "dev.sample.Y" to 1.0))

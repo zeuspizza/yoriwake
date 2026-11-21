@@ -521,7 +521,25 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
             marker.parentFile.mkdirs()
             marker.writeText("ran")
+            recordTestWall(task as Test, testWallMarker(recordsDir.parentFile))
         }
+    }
+
+    /**
+     * Writes this run's wall time, from its tests' start to their end, for the decode to record beside
+     * the map: a budgeted recording measures its cost against it ([IsolatedPick.Wall]). Within the
+     * action that marks the run as one that executed, so it adds no action of its own.
+     */
+    private fun recordTestWall(test: Test, marker: File) {
+        test.addTestListener(object : TestListener {
+            override fun beforeSuite(suite: TestDescriptor) {}
+            override fun afterSuite(suite: TestDescriptor, result: TestResult) {
+                if (suite.parent != null) return
+                runCatching { writeAtomically(marker, ((result.endTime - result.startTime) / 1000.0).toString()) }
+            }
+            override fun beforeTest(testDescriptor: TestDescriptor) {}
+            override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {}
+        })
     }
 
     /**
@@ -857,7 +875,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
             val parallel = minOf(forks?.resolve() ?: IsolatedPick.DEFAULT_FORKS, Runtime.getRuntime().availableProcessors())
             val pick = IsolatedPick.pick(
                 ranking, IsolatedPick.Stamp.read(File(mapDir, IsolatedPick.STAMP_FILE)), budget,
-                test.maxParallelForks, parallel, Runtime.getRuntime().availableProcessors(),
+                test.maxParallelForks, parallel, Runtime.getRuntime().availableProcessors(), IsolatedPick.Wall.read(mapDir),
             ) { name -> IsolatedPick.scanPatterns(name).first() in candidates }
             if (pick.classes.isEmpty()) {
                 test.logger.lifecycle(

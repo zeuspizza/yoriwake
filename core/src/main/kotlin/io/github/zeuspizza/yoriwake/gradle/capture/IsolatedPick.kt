@@ -196,6 +196,14 @@ internal object IsolatedPick {
         val sharedSeconds: Double? = null,
         /** What each picked class was costed at when it was picked, its JVM's start included. */
         val classSeconds: Map<String, Double> = emptyMap(),
+        /** The test task's wall time outside its JVMs, kept while classes stay picked. */
+        val overheadSeconds: Double? = null,
+        /** The picked classes' costs over the JVMs they run on, before calibration. */
+        val predictedExtra: Double? = null,
+        /** The calibration the pick applied to each cost; see [pick]. */
+        val factor: Double = 1.0,
+        /** The wall time the isolated task took, once it ran. */
+        val isolatedWallSeconds: Double? = null,
     ) {
         fun encode(): String = buildString {
             append(Tsv.join("budget", budget.toString())).append('\n')
@@ -203,6 +211,10 @@ internal object IsolatedPick {
             append(Tsv.join("picked-seconds", pickedSeconds.toString())).append('\n')
             measuredStartSeconds?.let { append(Tsv.join("measured-start-seconds", it.toString())).append('\n') }
             sharedSeconds?.let { append(Tsv.join("shared-seconds", it.toString())).append('\n') }
+            overheadSeconds?.let { append(Tsv.join("overhead-seconds", it.toString())).append('\n') }
+            predictedExtra?.let { append(Tsv.join("predicted-extra", it.toString())).append('\n') }
+            append(Tsv.join("factor", factor.toString())).append('\n')
+            isolatedWallSeconds?.let { append(Tsv.join("isolated-wall-seconds", it.toString())).append('\n') }
             classes.forEach { (name, score) ->
                 val seconds = classSeconds[name]
                 append(if (seconds == null) Tsv.join("class", score.toString(), name) else Tsv.join("class", score.toString(), name, seconds.toString())).append('\n')
@@ -223,18 +235,73 @@ internal object IsolatedPick {
                     measuredStartSeconds = value("measured-start-seconds"),
                     sharedSeconds = value("shared-seconds"),
                     classSeconds = rows.filter { it[0] == "class" && it.size >= 4 }.associate { it[2] to it[3].toDouble() },
+                    overheadSeconds = value("overhead-seconds"),
+                    predictedExtra = value("predicted-extra"),
+                    factor = value("factor") ?: 1.0,
+                    isolatedWallSeconds = value("isolated-wall-seconds"),
                 )
             }.getOrNull()
         }
     }
 
     /**
+     * The wall time of a task's recordings, beside the map ([WALL_FILE]): the last fully shared
+     * recording's test task ([sharedSeconds], kept while classes stay picked), and the last
+     * budgeted recording's test task and isolated task together, with the extra its pick predicted.
+     */
+    data class Wall(
+        val sharedSeconds: Double? = null,
+        val budgetedSeconds: Double? = null,
+        val predictedExtra: Double? = null,
+    ) {
+        fun encode(): String = listOfNotNull(
+            sharedSeconds?.let { Tsv.join("shared-wall-seconds", it.toString()) },
+            budgetedSeconds?.let { Tsv.join("budgeted-wall-seconds", it.toString()) },
+            predictedExtra?.let { Tsv.join("predicted-extra", it.toString()) },
+        ).joinToString("") { "$it\n" }
+
+        companion object {
+            /** The record beside the map in [mapDir]; empty when there is none. */
+            fun read(mapDir: File): Wall = runCatching {
+                val rows = File(mapDir, WALL_FILE).takeIf(File::isFile)?.readLines().orEmpty()
+                    .filter(String::isNotBlank).map(Tsv::split)
+                val value = { key: String -> rows.firstOrNull { it[0] == key }?.getOrNull(1)?.toDoubleOrNull() }
+                Wall(value("shared-wall-seconds"), value("budgeted-wall-seconds"), value("predicted-extra"))
+            }.getOrDefault(Wall())
+        }
+    }
+
+    /** Beside the map: see [Wall]. */
+    const val WALL_FILE = "recording-wall"
+
+    /**
+     * Records the wall time of the recording that just wrote the map: [testWallSeconds], its test
+     * task's, and [pick], what it ran alone and how long that took. A fully shared recording is the
+     * new shared reference; a budgeted one whose isolated task ran is the calibration's next point.
+     */
+    fun recordWall(mapDir: File, pick: Stamp?, testWallSeconds: Double?) {
+        testWallSeconds ?: return
+        val old = Wall.read(mapDir)
+        val next = when {
+            pick == null || pick.classes.isEmpty() -> old.copy(sharedSeconds = testWallSeconds)
+            pick.isolatedWallSeconds != null && pick.predictedExtra != null ->
+                old.copy(budgetedSeconds = testWallSeconds + pick.isolatedWallSeconds, predictedExtra = pick.predictedExtra)
+            else -> return
+        }
+        writeAtomically(File(mapDir, WALL_FILE), next.encode())
+    }
+
+    /**
      * The classes to record alone: by score, highest first, while their cost fits the budget. A
      * class costs what its own JVM took when the map measured it alone; else a shared JVM's measured
      * start overhead plus twice its recorded test time, cold as a fresh JVM runs (1 second plus twice,
-     * where nothing was measured). Costs are spread over min([isolatedForks], [processors]) JVMs; the
-     * budget allows (budget - 1) times the shared recording: its JVMs' measured time, else its tests'
-     * recorded time, over [hostForks].
+     * where nothing was measured). Costs are spread over min([isolatedForks], [processors]) JVMs.
+     *
+     * The budget allows (budget - 1) times the shared recording: its test task's wall time when
+     * [wall] has it, else its JVMs' measured time, else its tests' recorded time, over [hostForks].
+     * Calibrated against wall time: the test task's time outside its JVMs is charged once, and each
+     * cost is multiplied by what the last budgeted recording's extra wall time, less that, was over
+     * the extra its pick predicted (never below 1; 1 when no budgeted recording was measured).
      *
      * Stable across recordings: a class [previous] picked that ran alone keeps the score it was
      * picked with, and, unless the map measured its JVM, the cost; the shared recording stays the one
@@ -248,6 +315,7 @@ internal object IsolatedPick {
         hostForks: Int,
         isolatedForks: Int,
         processors: Int,
+        wall: Wall = Wall(),
         runnable: (String) -> Boolean,
     ): Stamp {
         val startSeconds = ranking.startOverhead ?: DEFAULT_START_SECONDS
@@ -259,9 +327,21 @@ internal object IsolatedPick {
                 ?: previous?.classSeconds?.get(name)?.takeIf { name in carried }
                 ?: (startSeconds + COLD * (ranking.seconds[name] ?: 0.0))
         }
-        val shared = previous?.sharedSeconds?.takeIf { carried.isNotEmpty() }
+        val shared = wall.sharedSeconds
+            ?: previous?.sharedSeconds?.takeIf { carried.isNotEmpty() }
             ?: ((ranking.sharedJvmSeconds ?: ranking.seconds.values.sum()) / maxOf(1, hostForks))
-        val allowance = (budget - 1.0) * shared
+        // Outside the JVMs: what the shared recording's wall time holds beyond its JVMs' time, read
+        // off the map it recorded, and kept while classes stay picked, since the map then holds fewer.
+        val overhead = if (carried.isNotEmpty()) previous?.overheadSeconds ?: 0.0 else {
+            val jvms = ranking.sharedJvmSeconds
+            if (wall.sharedSeconds != null && jvms != null) maxOf(0.0, wall.sharedSeconds - jvms / maxOf(1, hostForks)) else 0.0
+        }
+        val factor = if (wall.sharedSeconds != null && wall.budgetedSeconds != null && wall.predictedExtra != null && wall.predictedExtra > 0) {
+            maxOf(1.0, (wall.budgetedSeconds - wall.sharedSeconds - overhead) / wall.predictedExtra)
+        } else {
+            1.0
+        }
+        val allowance = (budget - 1.0) * shared - overhead
         val parallel = maxOf(1, minOf(isolatedForks, processors))
         val left = (ranking.scores.keys + ranking.isolated).count(runnable)
         val picked = LinkedHashMap<String, Long>()
@@ -270,14 +350,16 @@ internal object IsolatedPick {
         for ((name, score) in scores.entries.sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })) {
             if (score <= 0 || !runnable(name)) continue
             if (picked.size + 1 >= left) break
-            val own = cost(name)
+            val own = factor * cost(name)
             if ((spent + own) / parallel > allowance) break
             spent += own
             picked[name] = score
-            costs[name] = own
+            costs[name] = cost(name)
         }
-        return Stamp(budget, startSeconds, picked.keys.sumOf { ranking.seconds[it] ?: 0.0 }, picked, sharedSeconds = shared,
-            classSeconds = costs)
+        return Stamp(
+            budget, startSeconds, picked.keys.sumOf { ranking.seconds[it] ?: 0.0 }, picked, sharedSeconds = shared,
+            classSeconds = costs, overheadSeconds = overhead, predictedExtra = costs.values.sum() / parallel, factor = factor,
+        )
     }
 
     /** How much slower a class's tests are taken to run in a fresh JVM than in a warm shared one. */
@@ -291,7 +373,10 @@ internal object IsolatedPick {
     fun measured(stamp: Stamp, wallSeconds: Double, forks: Int): Stamp {
         if (stamp.classes.isEmpty()) return stamp
         val used = maxOf(1, minOf(forks, stamp.classes.size))
-        return stamp.copy(measuredStartSeconds = maxOf(0.0, (wallSeconds * used - stamp.pickedSeconds) / stamp.classes.size))
+        return stamp.copy(
+            measuredStartSeconds = maxOf(0.0, (wallSeconds * used - stamp.pickedSeconds) / stamp.classes.size),
+            isolatedWallSeconds = wallSeconds,
+        )
     }
 
     /**

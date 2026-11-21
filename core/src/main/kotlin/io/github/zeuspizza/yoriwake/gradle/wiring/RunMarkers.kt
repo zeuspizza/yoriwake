@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.wiring
 
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.IsolatedPick
 import io.github.zeuspizza.yoriwake.gradle.change.CaptureStart
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
 import java.io.File
@@ -66,3 +67,9 @@ internal fun undatedRunMarker(recordsDir: File) = File(recordsDir.parentFile, "u
  * and the decode remove it.
  */
 internal fun isolatedHandOff(mapDir: File) = File(mapDir, "isolated-pick.jvm-args")
+
+/**
+ * The test task's wall time, in seconds, from its first test suite's start to its end, written as
+ * the run ends; the decode records it beside the map ([IsolatedPick.recordWall]) and removes it.
+ */
+internal fun testWallMarker(mapDir: File) = File(mapDir, "test-wall.pending")

@@ -1416,8 +1416,12 @@ records shared, with one line saying the budget is Gradle-only for now.
   JVM runs them cold (1 second plus twice, on a map recorded before JVM times were). Costs are
   spread over the JVMs the isolated part runs at once: 4, or `-Pyoriwake.isolatedCaptureForks`, and
   never more than the machine's processors. Classes are taken by score while that cost stays within
-  (n - 1) times the shared recording: its JVMs' time over the task's `maxParallelForks`. Your task
-  always keeps at least one class.
+  (n - 1) times the shared recording: its test task's wall time, recorded by every recording (its
+  JVMs' time over the task's `maxParallelForks` until one is). The test task's time outside its JVMs
+  is charged once, and each budgeted recording calibrates the next: its extra wall time over the
+  extra its pick predicted scales every cost (never below 1), since an isolated JVM costs more than
+  its own run (forking it, setting it up, handing back its results). Your task always keeps at
+  least one class.
 - **The pick is stable.** A class recorded alone has no shared JVM left to score it, so it keeps
   the score it was picked with, stamped beside the map in `isolated-pick` with the budget, its cost
   until its own JVM is measured, and the shared recording it was picked against.
