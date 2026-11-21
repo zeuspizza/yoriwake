@@ -258,9 +258,12 @@ class AnnotationFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
-    fun `an annotation change on a test helper nothing executes still runs every test`(@TempDir dir: File) {
+    fun `an annotation change on a test helper nothing executes runs the tests of the JVM that loaded it`(
+        @TempDir dir: File,
+    ) {
         // In the test output, but no test of its own and no test that executes it: the map has no
-        // coverage of it, which is what runs everything, not its annotations.
+        // coverage of it. Discovery loads it before the JVM's first test, so that load dates it and
+        // every test of the one test JVM runs, with no full run forced.
         val helper = "src/test/java/dev/sample/Fixtures.java" to """
             package dev.sample;
             @Profile("a")
@@ -272,7 +275,7 @@ class AnnotationFunctionalTest : FunctionalTestSupport() {
 
         assertEquals(all, ranTests(dir), output)
         assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
-        assertEquals("no-coverage-for-changed", decisionNotes(dir)["full-run-kind"], output)
+        assertEquals(null, decisionNotes(dir)["full-run-kind"], output)
     }
 
     @Test

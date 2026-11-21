@@ -228,6 +228,24 @@ class RulesTest {
     }
 
     @Test
+    fun `a changed class no test executed but a JVM touched forces nothing and names its window`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                listOf(id("EarlyTest") to "dev.Other", id("LoaderTest") to "dev.Other", id("LateTest") to "dev.Other"),
+                firstTouches = listOf("j\t2\tdev.Port"),
+            ),
+            AgentContract.CHANGED_CLASSES_PROPERTY to "dev.Port",
+        )
+
+        assertFalse(decision.isFullRun())
+        assertEquals(AgentContract.RULE_NONE, decision.rules()!!.forcingKinds())
+        assertEquals(AgentContract.RULE_NONE, decision.tokens(id("EarlyTest"), Verdict.SKIPPED))
+        assertEquals("shares-jvm-changed-class", decision.tokens(id("LoaderTest")))
+        assertEquals("shares-jvm-changed-class", decision.tokens(id("LateTest")))
+    }
+
+    @Test
     fun `no map, no rules`(@TempDir dir: File) {
         val decision = decide(File(dir, "absent"), AgentContract.CHANGED_CLASSES_PROPERTY to "dev.Alpha")
 

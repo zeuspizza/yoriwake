@@ -48,20 +48,22 @@ class AnnotationsAttempts : BreakAttempt() {
     // Track: code reading. Boundary: the classes judged for a changed file are the ones its name
     // compiles to. A `package-info.java` declares no type, yet compiles to `package-info.class`,
     // and a framework reads a package's annotations without executing anything: no test can hold
-    // coverage of a class with no code, so the change forces as a class the map has no coverage of.
+    // coverage of a class with no code. The read loads `package-info`, which dates the change in the
+    // JVM that read it; each test class runs in its own JVM, so the others are left out.
     @Test
-    fun `a changed package annotation forces`(@TempDir dir: File) {
+    fun `a changed package annotation selects the tests from the first that read it`(@TempDir dir: File) {
         val packageInfo = source("src/main/java/dev/sample/package-info.java", "@Level(3)\npackage dev.sample;")
         val target = testClass(
             "A1PackageTest",
             "@Test void level() { assertEquals(3, Alpha.class.getPackage().getAnnotation(Level.class).value()); }",
         )
         val result = attempt(
-            dir, "dev.sample.A1PackageTest", Aim.Forced("no-coverage-for-changed"),
+            dir, "dev.sample.A1PackageTest", Aim.Row("shares-jvm-changed-class"),
             listOf(level, packageInfo, oneClass, oneTest, target, third, thirdTest, classOrderByName),
+            buildScript = forkingBuild,
         ) { File(it, packageInfo.first).writeText("@Level(4)\npackage dev.sample;") }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: a class the annotation table lacks is new, and forces only if
@@ -97,9 +99,12 @@ class AnnotationsAttempts : BreakAttempt() {
     // Track: code reading. Boundary: a changed class only in the test output is spared the force
     // for a class the map never recorded, because discovery runs it; that holds only for a class
     // the absence rule could vouch for. An annotated helper that declares no test, which nothing
-    // executes, is not one, and its body-only change keeps its annotations identical.
+    // executes, is not one, and its body-only change keeps its annotations identical. The test that
+    // reads its class file dates it; each test class runs in its own JVM, so the others are left out.
     @Test
-    fun `a body change to an annotated test helper nothing executes forces`(@TempDir dir: File) {
+    fun `a body change to an annotated test helper nothing executes selects the tests whose JVM read it`(
+        @TempDir dir: File,
+    ) {
         val helper = source(
             "src/test/java/dev/sample/TestConfig.java",
             """
@@ -119,11 +124,12 @@ class AnnotationsAttempts : BreakAttempt() {
             """,
         )
         val result = attempt(
-            dir, "dev.sample.A1ConfigTest", Aim.Forced("no-coverage-for-changed"),
+            dir, "dev.sample.A1ConfigTest", Aim.Row("shares-jvm-changed-class"),
             listOf(level, helper, target, third, thirdTest, classOrderByName),
+            buildScript = forkingBuild,
         ) { File(it, helper.first).writeText(helper.second.replace("\"hello\"", "\"howdy\"")) }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: annotations inside method bodies are left out of the annotation

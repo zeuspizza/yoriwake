@@ -2289,7 +2289,28 @@ MUTATIONS = [
      "                    || touchMatches(touch.className(), prefix, changedClassPrefixes)) {\n"
      "                return true;",
      "            if (false) {\n                return true;",
-     agent_suite, "a class some JVM read the class file of is not proven untested by its absence"),
+     agent_suite, "a class some JVM read the class file of, or may have, is not proven untested by its absence"),
+    # A changed class no test executed is dated by its first touches instead of forcing, but only by
+    # a touch that names it, on a map one capture wrote, and only where its window is kept.
+    ("a JVM whose reads were not all observed dates every changed class no test executed", SELECTOR,
+     "            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())\n"
+     "                    || !matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {",
+     "            if (!AgentContract.FIRST_TOUCH_ANY.equals(touch.className())\n"
+     "                    && !matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {",
+     agent_suite, "a class some JVM read the class file of, or may have, is not proven untested by its absence"),
+    ("a map merged from two captures dates a changed class no test executed", SELECTOR,
+     "        return runs.size() <= 1;",
+     "        return true;",
+     agent_suite, "a changed class no test executed forces on a map merged from two captures"),
+    ("a touch between tests dates a changed class no test executed", SELECTOR,
+     "            if (firstTest != null && touch.sequence() > firstTest\n"
+     "                    && !testWindows.get(touch.jvm()).contains(touch.sequence())) {",
+     "            if (false) {",
+     agent_suite, "a changed class no test executed forces when a JVM first touched it between tests"),
+    ("optimistic mode dates a changed class no test executed by the window it drops", SELECTOR,
+     "        boolean datesByTouch = !loosened.contains(Rule.SHARES_JVM_CHANGED_CLASS);",
+     "        boolean datesByTouch = true;",
+     agent_suite, "a changed class no test executed forces under the optimistic mode"),
     # A class defined from bytes no file holds (a proxy, a generated subclass) is seen only here;
     # one loaded from a class directory or a jar is also read through the read hooks.
     ("the agent stops seeing class loads", TOUCH_RECORDER,

@@ -155,7 +155,10 @@ public final class Selector {
             /** The change touches coverage recorded before any test owned it. */
             STARTUP_COVERAGE("startup-coverage"),
 
-            /** The map has no coverage for a changed class; uncovered and unrecorded look the same. */
+            /**
+             * The map has no coverage for a changed class and no capturing JVM's first touches date
+             * it; uncovered and unrecorded look the same.
+             */
             NO_COVERAGE_FOR_CHANGED("no-coverage-for-changed"),
 
             /** A class's compiled bytes changed with no source change, and no test recorded it. */
@@ -315,7 +318,9 @@ public final class Selector {
 
     /**
      * Decides what to run, leaving out the windows {@code strictness} loosens. Every other rule,
-     * every full run and every refusal decide as under {@link Strictness#SAFE}.
+     * every full run and every refusal decide as under {@link Strictness#SAFE}, and a change only a
+     * loosened window could select from (startup coverage, a changed class only its first touches
+     * date) runs every test instead.
      */
     public static Decision decide(MapReader.Result map, ChangeSet change, Collection<String> discoveredTestIds,
             Strictness strictness) {
@@ -406,7 +411,9 @@ public final class Selector {
         }
 
         // A changed class the map has never seen forces: "uncovered" looks the same as "never
-        // loaded", "outside the scope" or "from another module". Only untested() may narrow here.
+        // loaded", "outside the scope" or "from another module". A first touch tells them apart, and
+        // untested() may narrow the rest. Optimistic mode drops the window a first touch opens.
+        boolean datesByTouch = !loosened.contains(Rule.SHARES_JVM_CHANGED_CLASS);
         List<String> unknown = new ArrayList<>();
         for (String prefix : changedClassPrefixes) {
             if (knownToMap(map.entries(), prefix, changedClassPrefixes)) {
@@ -414,6 +421,10 @@ public final class Selector {
             }
             if (ownTestClasses.contains(prefix)) {
                 // Discovery runs it whether the map knows it or not.
+                continue;
+            }
+            if (datesByTouch && datedByTouch(map, tests, prefix, changedClassPrefixes, change.exemptTestClasses())) {
+                // Its shared-JVM window selects every test that ran from its first touch on.
                 continue;
             }
             if (untested(map, prefix, absenceProvable, changedClassPrefixes)) {
@@ -588,6 +599,7 @@ public final class Selector {
         for (String prefix : changed) {
             if (!knownToMap(entries, prefix, changed)
                     && !change.ownTestClasses().contains(prefix)
+                    && !datedByTouch(map, tests, prefix, changed, change.exemptTestClasses())
                     && !untested(map, prefix, change.absenceProvable(), changed)) {
                 forcing.add(Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED);
                 break;
@@ -1347,6 +1359,69 @@ public final class Selector {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether a capturing JVM named the class in its first touches, on a map one capture wrote, so
+     * that its shared-JVM window stands in for the coverage the map lacks. A capture records a touch
+     * of every class its scope accepts in each JVM whose loads it observed, and a JVM it did not
+     * fully observe carries a {@code *} touch instead; one capture is one scope, so a JVM with no
+     * touch of the class never loaded or read it. A map merged from two captures may hold a JVM
+     * recorded under a scope that left the class out.
+     *
+     * <p>Each touch must fall in a test's own window or before its JVM's first test. One taken
+     * between tests (a class's teardown) dates the class after the tests of the class that ran it,
+     * and no coverage record of that class puts them back, as it does for a covered class. The name
+     * must match as coverage does: the wider match a Kotlin file's read allows only selects more
+     * where it opens a window, but here it would stand in for a force.
+     */
+    private static boolean datedByTouch(MapReader.Result map, List<MapReader.Entry> tests, String prefix,
+            Collection<String> changedClassPrefixes, Collection<String> exempt) {
+        if (exempt.contains(prefix)) {
+            return false;
+        }
+        Map<String, Integer> firstTests = new HashMap<>();
+        Map<String, Set<Integer>> testWindows = new HashMap<>();
+        for (MapReader.Entry test : tests) {
+            for (MapReader.Position position : map.positionsOf(test.testId())) {
+                firstTests.merge(position.jvm(), position.sequence(), Math::min);
+                testWindows.computeIfAbsent(position.jvm(), jvm -> new HashSet<>()).add(position.sequence());
+            }
+        }
+        boolean named = false;
+        for (MapReader.FirstTouch touch : map.firstTouches()) {
+            if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())
+                    || !matchesSourceFile(touch.className(), prefix, changedClassPrefixes)) {
+                continue;
+            }
+            named = true;
+            Integer firstTest = firstTests.get(touch.jvm());
+            if (firstTest != null && touch.sequence() > firstTest
+                    && !testWindows.get(touch.jvm()).contains(touch.sequence())) {
+                return false;
+            }
+        }
+        return named && oneCapture(map);
+    }
+
+    /** Whether every JVM the map holds a position or a first touch of was decoded from one capture. */
+    private static boolean oneCapture(MapReader.Result map) {
+        Set<String> runs = new HashSet<>();
+        for (MapReader.Entry entry : map.entries()) {
+            for (MapReader.Position position : map.positionsOf(entry.testId())) {
+                runs.add(runOf(position.jvm()));
+            }
+        }
+        for (MapReader.FirstTouch touch : map.firstTouches()) {
+            runs.add(runOf(touch.jvm()));
+        }
+        return runs.size() <= 1;
+    }
+
+    /** The capture a JVM id was decoded from: what precedes its worker in {@code <run>/<worker>}. */
+    private static String runOf(String jvm) {
+        int slash = jvm.indexOf('/');
+        return slash < 0 ? jvm : jvm.substring(0, slash);
     }
 
     /** Whether a capturing JVM loaded the class, or read its class or source file. */
