@@ -413,6 +413,50 @@ of the narrowed answers), `forced` and `causes` with the flag, `unrecorded`, `no
 `sums`, and at the top `projects`. Absent (None at the top) when no file carries `version_only`,
 never zero. The headline `figure` stays the answer without the flag.
 
+## Consecutive real commits (`history.json`)
+
+`bench/history_replay.py`, dispatched by `history.yml`: per project, a window of first-parent
+commits walked commit by commit, each selected against the map recorded at its parent and checked
+against its own recording full run. One file per shard (`history-<project>-<i>of<n>.json`), and the
+merged `history.json` in the run's draft release `history-<run>` with its page `history.md`.
+
+A shard's file: `schema` (`history-replay/v1`), `project`, `plugin_commit`, `scope` (`reactor`
+or the measured module), `first` and `last` (its commits), `shard` and `of`, `budget_minutes`,
+`isolated`, `seconds`, `initial` (the recording at its first commit's parent: `sha`, `status`,
+`executions`, `seconds`), `rows` and `sums`.
+
+A row:
+
+| Field | Meaning |
+|---|---|
+| `sha`, `parent` | the commit and its first parent |
+| `outcome` | `measured` or `excluded` |
+| `reason` | of an excluded commit: `does-not-build`, `not-staged`, `parent-did-not-build`, `parent-timed-out`, `timed-out`, `select-failed` or `budget` |
+| `selected_executions`, `full_executions` | test executions (JUnit XML `testcase` entries, skipped ones left out) of the selecting run and of the full run at the commit |
+| `full_skipped` | skipped entries of the full run |
+| `narrowed` | whether the selecting run ran fewer executions than the full run |
+| `forced` | why the selecting run ran everything, per measured task or execution that did; null when none said so |
+| `failed_at_parent`, `failed_at_commit`, `failed_at_commit_named` | failing tests of the two full runs, and up to 50 of the commit's named |
+| `at_risk` | failing at the commit, passing or absent at the parent |
+| `missed` | at risk and not run by the selecting run, flaky ones taken out |
+| `flaky` | missed tests that passed in one of three runs of their class alone, without the plugin |
+| `failing_both` | tests failing at the parent and the commit, never at risk |
+| `optimistic` | the explain task's answer under `yoriwake.mode=optimistic`: `executions` (the selecting run's, less the tests it loosens), `loosened`, `missed`; `{"unanswered": true}` when no explanation came back; absent when not asked |
+| `isolated` | with `--isolated`: the selecting run against the isolated map, `selected_executions`, `narrowed`, `missed`, `flaky`, measured against the shared full run, and `recorded` (whether the isolated map was re-recorded here) |
+| `seconds`, `seconds_by_run` | the pair, and its selecting and full runs |
+
+`sums`, per project counted again from its rows: `drawn`, `measured`, `narrowed`, `excluded` (by
+reason), `selected_executions` and `full_executions` over the measured pairs, `skipped_share`
+(1 - selected / full), `at_risk` and `missed` over all measured pairs and `at_risk_narrowed` and
+`missed_narrowed` over the narrowed ones, `flaky`, `failing_both`, the `optimistic` and `isolated`
+blocks over the pairs that answered, and `sums` (measured and excluded make up the drawn, and every
+reason is one of the table's).
+
+The merged file: `projects`, each with `scope`, `first`, `last`, `plugin_commits`, `shards`,
+`initial` per shard, `sums`, `rows` and `blastradius` (its published window, pairs and full-suite
+executions, for the four projects it measured); `missing`, planned shards with no readable file,
+never counted as zero; `caveats`, what the table may claim.
+
 ## Raw evidence
 
 Per project and arm, `bench/logs/evidence/`:

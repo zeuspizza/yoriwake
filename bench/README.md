@@ -104,6 +104,16 @@ reading a stack trace needs the logs of the machine that ran the sweep.
   (`commits`, default 8; `replay_only` for that figure alone) and the run page opens with it. It
   is a share of commits, not of seconds, and a decision, not a run: it says nothing about recall.
   Fields: [`docs/sweep-data-dictionary.md`](../docs/sweep-data-dictionary.md#real-commits-replayed-commit-replayjson).
+- `history_replay.py <project.toml>`: tests run and missed over consecutive real commits. Each
+  first-parent commit of a window is checked out and staged, a selecting run asks against the map
+  recorded at its parent, and a recording full run at the commit is its ground truth and its
+  child's map. Counts test executions from the JUnit XML, and missed failures (failing at the
+  commit, passing or absent at the parent, not run by the selecting run; re-run alone three times,
+  flaky ones apart). Optimistic mode is asked of the explain task on the same tree; `--isolated`
+  walks a second, isolated map beside the shared one. `scope = "reactor"` in a Maven project file
+  runs `mvn test` over the whole reactor. `plan`, `merge` and `page` drive `history.yml`, which
+  shards each window into jobs. Fields:
+  [`docs/sweep-data-dictionary.md`](../docs/sweep-data-dictionary.md#consecutive-real-commits-historyjson).
 - `config_cost.py`: what applying the plugin costs a project before it runs a test.
 - `cost.py`: what a sweep will cost before it starts, and what it cost after; `--isolated` adds
   what the paired isolated arm of `sweep.yml` would.
