@@ -11,4 +11,14 @@ subprojects {
         isPreserveFileTimestamps = false
         isReproducibleFileOrder = true
     }
+    // CI runs with the build cache to reuse compiled outputs; a test run must prove the tree in
+    // front of it, never replay a result an earlier tree produced.
+    tasks.withType<Test>().configureEach {
+        outputs.doNotCacheIf("a test run proves this tree, not an earlier one") { true }
+    }
+    // A coverage gate reads more than its declared inputs (the refusal's summaries), so a cached
+    // pass could skip a refusal.
+    tasks.withType<org.gradle.testing.jacoco.tasks.JacocoCoverageVerification>().configureEach {
+        outputs.doNotCacheIf("a coverage gate judges this tree's run, not an earlier one") { true }
+    }
 }
