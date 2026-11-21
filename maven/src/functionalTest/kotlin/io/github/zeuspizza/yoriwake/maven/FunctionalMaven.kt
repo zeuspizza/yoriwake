@@ -95,16 +95,37 @@ object FunctionalMaven {
         return Result(process.exitValue(), output)
     }
 
+    /**
+     * Central, asked again for an artifact it did not serve rather than failing every later build of
+     * the shared local repository from Maven's record of that miss: Central's 404 for an artifact
+     * that exists once failed a whole shard's builds. An artifact already present is not fetched again.
+     */
+    private const val CENTRAL = "https://repo.maven.apache.org/maven2"
+
     private fun settingsXml() = """
         <settings>
           <profiles>
             <profile>
               <id>yoriwake-functional</id>
+              <repositories>
+                <repository>
+                  <id>central</id>
+                  <url>$CENTRAL</url>
+                  <releases><updatePolicy>always</updatePolicy></releases>
+                  <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+              </repositories>
               <pluginRepositories>
                 <pluginRepository>
                   <id>yoriwake-functional</id>
                   <url>${functionalRepo.toURI()}</url>
                   <snapshots><enabled>true</enabled><updatePolicy>always</updatePolicy></snapshots>
+                </pluginRepository>
+                <pluginRepository>
+                  <id>central</id>
+                  <url>$CENTRAL</url>
+                  <releases><updatePolicy>always</updatePolicy></releases>
+                  <snapshots><enabled>false</enabled></snapshots>
                 </pluginRepository>
               </pluginRepositories>
             </profile>

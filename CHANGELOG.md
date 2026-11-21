@@ -17,6 +17,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- Contributors: a Maven functional build asks Central again for an artifact it once did not serve. Map: left alone.
 - A test that mocks inline with Mockito no longer runs every later test in its JVM: Byte Buddy's attacher is reviewed. Map: left alone.
 - A change to a file with nested or local classes, typealiases or a moved path no longer runs every test for names no class carries. Map: left alone.
 - A changed interface or annotation of constants is judged by the class it compiled to instead of running every test. Map: left alone.
