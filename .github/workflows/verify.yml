@@ -7,10 +7,12 @@ name: verify
 # tests check its constants against it, the plugin's its published tokens), docs/reference.md (the
 # plugin's tests check the names, flags and printed lines it quotes against the code, test_ci.py its
 # supported matrix against matrix.yml) and SECURITY.md (test_ci.py checks its key fingerprint
-# against RELEASE-KEY.asc) count as code. A push to main keeps the path filter. A pull request
-# that changes only paths no suite reads (the benchmark, the guard harness, the workflows and scripts
-# this one does not run) runs test_ci.py alone; one that changes only maven/ or only plugin/ besides
-# those skips the other's suites (.github/ci.py scope).
+# against RELEASE-KEY.asc) count as code. A pull request that changes only paths no suite reads
+# (the benchmark, the guard harness, the workflows and scripts this one does not run) runs
+# test_ci.py alone; one that changes only maven/ or only plugin/ besides those skips the other's
+# suites (.github/ci.py scope). A push to main keeps the path filter, and runs only the job groups
+# its pull request's run did not prove, when that run tested the pushed tree (.github/ci.py
+# reuse-on-push); anything else runs everything.
 on:
   push:
     branches: [main]
@@ -47,25 +49,78 @@ jobs:
   # skips every job below, and a skipped job satisfies a required check, where a path filter on the
   # trigger would leave the required checks waiting forever. The jobs run unless this says `false`,
   # so a detector that failed or said nothing runs everything: a wrong "not needed" would skip a
-  # check. A push to main runs everything.
+  # check. A push to main skips a group only when the merged pull request's newest run passed, said
+  # it tested this tree, and every job of that group succeeded in it; a dispatch runs everything.
   changes:
     name: what changed
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 8
+    # Only this job reads other runs, their jobs and logs, and the pull request a commit merged.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
       code: ${{ steps.decide.outputs.code }}
       unit: ${{ steps.decide.outputs.unit }}
       maven: ${{ steps.decide.outputs.maven }}
       gradle: ${{ steps.decide.outputs.gradle }}
+      reused: ${{ steps.decide.outputs.reused }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # A push to main reads them back from its pull request's run: on a pull request, the head
+      # merged with the base of that moment.
+      - name: the tree this run tests
+        run: echo "tested tree $(git rev-parse 'HEAD^{tree}')"
+      # The answers a push to main can take from its pull request's run. A run of that head still
+      # finishing (its run summary) is waited for, about two minutes. Any failure leaves no answer.
+      - id: reuse
+        if: github.event_name == 'push'
+        continue-on-error: true
+        timeout-minutes: 4
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/reuse"
+          mkdir -p "$dir"
+          gh api "repos/$REPO/commits/$SHA/pulls" > "$dir/pulls.json"
+          # GitHub may link a commit to its pull request seconds after the push.
+          if [ "$(jq length "$dir/pulls.json")" = 0 ]; then
+            sleep 10
+            gh api "repos/$REPO/commits/$SHA/pulls" > "$dir/pulls.json"
+          fi
+          head=$(jq -r --arg sha "$SHA" '[.[] | select(.merge_commit_sha == $sha)] | if length == 1 then .[0].head.sha else "" end' "$dir/pulls.json")
+          if [ -n "$head" ]; then
+            for attempt in 1 2 3 4 5 6 7 8 9; do
+              gh api "repos/$REPO/actions/workflows/verify.yml/runs?head_sha=$head&event=pull_request" > "$dir/runs.json"
+              [ "$(jq -r '.workflow_runs[0].status // "completed"' "$dir/runs.json")" != completed ] || break
+              [ "$attempt" = 9 ] || sleep 15
+            done
+            run=$(jq -r '.workflow_runs[0].id // empty' "$dir/runs.json")
+            if [ -n "$run" ]; then
+              gh api "repos/$REPO/actions/runs/$run/jobs?filter=latest&per_page=100" > "$dir/jobs.json"
+              job=$(jq -r '[.jobs[] | select(.name == "what changed")][0].id // empty' "$dir/jobs.json")
+              [ -z "$job" ] || curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                "$GITHUB_API_URL/repos/$REPO/actions/jobs/$job/logs" > "$dir/changes.log"
+            fi
+          fi
+          python3 .github/ci.py reuse-on-push "$dir" --sha "$SHA" --tree "$(git rev-parse 'HEAD^{tree}')" > "$dir/answer"
+          cat "$dir/answer" >> "$GITHUB_OUTPUT"
       - id: decide
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          UNIT: ${{ steps.reuse.outputs.unit }}
+          MAVEN: ${{ steps.reuse.outputs.maven }}
+          GRADLE: ${{ steps.reuse.outputs.gradle }}
+          REUSED: ${{ steps.reuse.outputs.reused }}
+          OUTCOME: ${{ steps.reuse.outcome }}
         run: |
           set -eu
           if [ "$EVENT" = pull_request ]; then
@@ -73,9 +128,19 @@ jobs:
               echo "code=$(python3 .github/ci.py needs-checks "$BASE" "$HEAD")"
               python3 .github/ci.py scope "$BASE" "$HEAD"
             } >> "$GITHUB_OUTPUT"
-          else
-            printf 'code=true\nunit=true\nmaven=true\ngradle=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          unit=true maven=true gradle=true reused="nothing reused: a $EVENT run runs everything"
+          if [ "$EVENT" = push ]; then
+            reused="nothing reused: the reuse step ended $OUTCOME without an answer"
+            # Only the answers ci.py can give: `maven` or `gradle` true keeps `unit` true.
+            case "$UNIT,$MAVEN,$GRADLE" in
+              true,true,true|true,true,false|true,false,true|true,false,false|false,false,false)
+                unit=$UNIT maven=$MAVEN gradle=$GRADLE reused=$REUSED ;;
+            esac
+          fi
+          printf 'code=true\nunit=%s\nmaven=%s\ngradle=%s\nreused=%s\n' "$unit" "$maven" "$gradle" "$reused" >> "$GITHUB_OUTPUT"
+          echo "$reused"
 
   # The unit and agent suites and the release's checks; the Maven suite runs in shards below, and
   # the check named as this job was gates on both. A change no suite reads runs test_ci.py alone.

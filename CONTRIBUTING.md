@@ -50,7 +50,8 @@ fork, run it as `python3 bench/scan_private.py --fork --push`.
 build includes the coverage gates; a change that lowers coverage below them fails it. CI runs the
 part of it a change's paths can reach (`.github/ci.py scope`): a change only to `maven/` skips the
 Gradle plugin's functional suites, one only to `plugin/` the Maven suite, and one that no suite
-reads runs neither; a push to `main` runs all of it.
+reads runs neither. A push to `main` runs only what its pull request's run did not prove, when that
+run tested the same tree (`.github/ci.py reuse-on-push`), and all of it otherwise.
 
 ### Coverage
 

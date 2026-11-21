@@ -356,6 +356,110 @@ def parse_shards(text):
     return [int(part) for part in parts] if all(part.isdigit() for part in parts) else []
 
 
+# Each verify.yml job by id: its name, as GitHub lists the job (a shard's with its matrix
+# expression), and the `changes` answer its `if` reads. A push to main takes an answer from a pull
+# request's run only when every job reading it succeeded there. `build` reads `code`: it succeeds
+# with its Gradle steps skipped, so it proves nothing about `unit`.
+VERIFY_JOBS = {
+    "build": ("unit and agent suites (build)", "code"),
+    "maven-shard": ("functional on Maven (shard ${{ matrix.shard }}/3)", "maven"),
+    "maven": ("unit and agent suites", "code"),
+    "functional-shard": ("functional on Gradle 8.14 (shard ${{ matrix.shard }}/3)", "gradle"),
+    "functional": ("functional on Gradle 8.14", "gradle"),
+    "functional-gradle9-shard": ("functional on Gradle 9 (shard ${{ matrix.shard }}/3)", "gradle"),
+    "functional-gradle9": ("functional on Gradle 9", "gradle"),
+    "coverage": ("coverage gate", "gradle"),
+    "capture": ("build a map", "gradle"),
+    "select": ("select on another machine", "gradle"),
+    "select-on-windows": ("select on windows, against a map captured on linux", "gradle"),
+    "capture-on-windows": ("build a map on windows", "gradle"),
+    "select-on-windows-from-windows": ("select on windows, against a map captured on windows", "gradle"),
+    "select-on-linux": ("select on linux, against a map captured on windows", "gradle"),
+    "build-windows": ("unit and agent suites on windows", "unit"),
+    "run-summary": ("run summary", "code"),
+}
+REUSABLE = ("unit", "maven", "gradle")
+SHARD_NAME = re.compile(r"\(shard \$\{\{ matrix\.shard \}\}/(\d+)\)")
+# What verify.yml's `changes` job prints of the tree its checkout holds: on a pull request, the
+# head merged with the base of that moment, which is what the run tested.
+TESTED_TREE = re.compile(r"^(?:\S+ )?tested tree ([0-9a-f]{40})\s*$", re.M)
+
+
+def verify_job_names(answer):
+    """The names GitHub lists for the jobs reading `answer`, each shard under its own."""
+    names = set()
+    for name, reads in VERIFY_JOBS.values():
+        if reads != answer:
+            continue
+        shards = SHARD_NAME.search(name)
+        if not shards:
+            names.add(name)
+            continue
+        count = int(shards.group(1))
+        names |= {SHARD_NAME.sub(f"(shard {index}/{count})", name) for index in range(1, count + 1)}
+    return names
+
+
+def tested_tree(log):
+    """The tree a `changes` job's log says its checkout held, or None when it does not say once."""
+    found = set(TESTED_TREE.findall(log or ""))
+    return found.pop() if len(found) == 1 else None
+
+
+def reuse_on_push(sha, tree, pulls, runs, jobs, log):
+    """Which of `unit`, `maven` and `gradle` a push of `sha` (whose tree is `tree`) still needs, and
+    why, in one line. An answer is taken from a pull request's run only when that pull request
+    merged as `sha`, the newest verify run of its head passed having tested `tree`, and every job
+    reading the answer succeeded in it; anything else, or an answer GitHub did not give (None),
+    runs everything. `pulls`, `runs` and `jobs` are the API's JSON, `log` the run's `changes` log."""
+    def everything(why):
+        return {"unit": True, "maven": True, "gradle": True}, f"nothing reused: {why}"
+
+    if not COMMIT.fullmatch(sha or "") or not COMMIT.fullmatch(tree or ""):
+        return everything("the pushed commit or its tree could not be read")
+    if not isinstance(pulls, list):
+        return everything(f"GitHub did not say which pull request merged as {sha[:8]}")
+    merged = [pull for pull in pulls if isinstance(pull, dict) and pull.get("merge_commit_sha") == sha
+              and pull.get("merged_at")]
+    if len(merged) != 1:
+        return everything(f"{len(merged)} pull requests merged as {sha[:8]}")
+    number, head = merged[0].get("number"), (merged[0].get("head") or {}).get("sha")
+    if not COMMIT.fullmatch(str(head or "")):
+        return everything(f"pull request #{number}'s head could not be read")
+    listed = runs.get("workflow_runs") if isinstance(runs, dict) else None
+    found = [run for run in listed or [] if isinstance(run, dict)
+             and run.get("head_sha") == head and run.get("event") == "pull_request"]
+    if not found:
+        return everything(f"no verify run of pull request #{number}'s head {head[:8]}")
+    # The newest run says what a re-run or a superseding push concluded; an older green one does not.
+    run = max(found, key=lambda run: (str(run.get("created_at") or ""), run.get("id") or 0))
+    name = f"run {run.get('id')}"
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        return everything(f"{name} of pull request #{number} is {run.get('status')}, {run.get('conclusion')}")
+    # A pull request's run tests its head merged with the base of that moment, which the head's
+    # own tree, and so this push's, need not be.
+    if tested_tree(log) != tree:
+        return everything(f"{name} of pull request #{number} did not say it tested this tree")
+    listed = jobs.get("jobs") if isinstance(jobs, dict) else None
+    if not isinstance(listed, list) or jobs.get("total_count") != len(listed) or any(
+            not isinstance(job, dict) or job.get("run_id") != run.get("id") for job in listed):
+        return everything(f"{name}'s jobs could not be read")
+    concluded = {}
+    for job in listed:
+        concluded.setdefault(job.get("name"), set()).add(job.get("conclusion"))
+    answer = {group: not all(concluded.get(job) == {"success"} for job in verify_job_names(group))
+              for group in REUSABLE}
+    # The coverage gate reads the unit build's data, and a Maven change runs the unit build, as in scope.
+    if answer["maven"] or answer["gradle"]:
+        answer["unit"] = True
+    taken = [group for group in REUSABLE if not answer[group]]
+    link = f"[{name}]({run.get('html_url')})" if run.get("html_url") else name
+    if not taken:
+        return answer, f"nothing reused: {link} of pull request #{number} proved no group"
+    return answer, (f"reused {link} of pull request #{number} at {head[:8]}, which tested this tree: "
+                    f"{', '.join(taken)} not run again")
+
+
 CHANGELOG = "CHANGELOG.md"
 VERSION_HEADING = re.compile(r"^## \[([^\]]+)\]")
 LINK_REFERENCE = re.compile(r"^\[[^\]]+\]:\s")
@@ -612,6 +716,12 @@ def main(argv=None):
     reuse.add_argument("--shards", default="", help="the shards to run, as 3,6")
     reuse.add_argument("--count", type=int, required=True)
 
+    pushed = sub.add_parser("reuse-on-push",
+                            help="print unit=, maven=, gradle= and reused=: what a push to main still runs")
+    pushed.add_argument("answers", help="a directory of pulls.json, runs.json, jobs.json and changes.log")
+    pushed.add_argument("--sha", required=True)
+    pushed.add_argument("--tree", required=True)
+
     changelog = sub.add_parser("changelog",
                                help="fail when a change adds a changelog line under a released version")
     changelog.add_argument("base")
@@ -660,6 +770,19 @@ def main(argv=None):
         print(json.dumps(shards))
         print(f"every shard runs: {why}" if why else
               f"shards {', '.join(map(str, shards))} run; the others are run {args.run}'s", file=sys.stderr)
+        return 0
+
+    if args.command == "reuse-on-push":
+        try:
+            with open(os.path.join(args.answers, "changes.log"), encoding="utf-8", errors="replace") as handle:
+                log = handle.read()
+        except OSError:
+            log = None
+        answer, why = reuse_on_push(args.sha, args.tree, *(_read_json(os.path.join(args.answers, f"{name}.json"))
+                                                           for name in ("pulls", "runs", "jobs")), log)
+        for name in REUSABLE:
+            print(f"{name}={'true' if answer[name] else 'false'}")
+        print(f"reused={' '.join(why.split())}")
         return 0
 
     if args.command == "scope":

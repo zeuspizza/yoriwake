@@ -13,8 +13,9 @@ last job of `verify.yml`, `guards.yml` and `matrix.yml` calls this with three th
 An artifact named `...-<index>-of-<count>` is one shard of the suite its name starts with; a suite
 whose shards left no results says so. A `guards-joined` artifact holds every guard shard of a run
 that kept some from an earlier run: it is read in place of the shards themselves, and the summary
-names the run each shard's results came from. The summary reports and never judges: it exits 0 whatever the
-run's result, and a file it cannot read is a line in the summary, so a red run gets no second red
+names the run each shard's results came from. A `reused` output of the `changes` job (a push to
+main of verify.yml) is a line of its own. The summary reports and never judges: it exits 0
+whatever the run's result, and a file it cannot read is a line in the summary, so a red run gets no second red
 job. It is appended to `$GITHUB_STEP_SUMMARY`, or printed when that is unset:
 
     NEEDS="$(cat needs.json)" python .github/run_summary.py <workflow.yml> <artifacts-dir>
@@ -167,6 +168,10 @@ def summary(workflow_text, needs, artifacts, run_url=None):
     lines = [f"## {cell(title)}: {overall(results.values())}", ""]
     if run_url:
         lines += [f"[The run]({run_url})", ""]
+    # verify.yml's push to main: the pull request run it took job groups from, or why none.
+    reused = (((needs.get("changes") or {}).get("outputs") or {}).get("reused") or "").strip()
+    if reused:
+        lines += [cell(reused), ""]
     lines += ["| job | result |", "| --- | --- |"]
     lines += [f"| {cell(names.get(job, job))} | {results[job]} |" for job in order]
     lines.append("")
