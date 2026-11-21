@@ -2907,7 +2907,7 @@ MUTATIONS = [
      unit_suite, "over the budget, the classes that free the fewest changes per second go first"),
     ("every recording picks from scratch", ISOLATED_PICK,
      "        val sticky = previous != null && previous.budget == budget && previous.candidateClasses != null &&",
-     "        val sticky = false && previous != null && previous.budget == budget && previous.candidateClasses != null &&",
+     "        val sticky = previous != null && previous.budget < 0 && previous.candidateClasses != null &&",
      unit_suite, "within the budget, the pick stays as it was"),
     ("a pick of nothing leaves no stamp", ISOLATED_PICK,
      "        if (pick == null) file.delete() else writeAtomically(file, pick.encode())",
