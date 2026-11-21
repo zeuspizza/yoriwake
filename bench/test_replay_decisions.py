@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import tarfile
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,7 +42,7 @@ def schema_version():
 
 
 def filter_inputs():
-    """Every property the current rule reads, as the agent records it: each one, empty or not."""
+    """Every property the current rule reads."""
     contract = open(os.path.join(AGENT_SOURCE, "contract/AgentContract.java")).read()
     rule = open(os.path.join(AGENT_SOURCE, "select/FilterRule.java")).read()
     listed = re.search(r"INPUTS\s*=\s*\{(.*?)\};", rule, re.S).group(1)
@@ -53,7 +54,7 @@ def test_id(cls):
     return f"[engine:junit-jupiter]/[class:{cls}]/[method:t()]"
 
 
-def fixture(root, verdicts, induced, schema=None, drop_input=None):
+def fixture(root, verdicts, induced, schema=None):
     """A map where Alpha covers com.acme.A and Beta covers com.acme.B, a change to A, and one row.
 
     Both ran in one JVM, Beta before that JVM first touched com.acme.A, so Beta may be skipped.
@@ -74,9 +75,9 @@ def fixture(root, verdicts, induced, schema=None, drop_input=None):
     os.makedirs(parts)
     inputs = {name: "" for name in filter_inputs()}
     inputs.update({"yoriwake.select": "true", "yoriwake.change.classes": "com.acme.A"})
-    inputs.pop(drop_input, None)
     notes = [("record-version", "2"), ("rows", str(len(verdicts))), ("outcome", "narrowed")]
-    notes += [(rd.INPUT_NOTE_PREFIX + k, v) for k, v in sorted(inputs.items())]
+    # As the agent writes them: an empty input is left out of the record, not written blank.
+    notes += [(rd.INPUT_NOTE_PREFIX + k, v) for k, v in sorted(inputs.items()) if v]
     lines = ["# test\tverdict\treason"]
     lines += [f"{run.DECISION_NOTE_PREFIX}{k}\t{v}" for k, v in notes]
     lines += [f"{test_id(cls)}\t{verdict}" for cls, verdict in verdicts]
@@ -144,14 +145,25 @@ def case_a_failure_the_recorded_arm_never_discovered_is_undetermined_not_clean()
     return failures
 
 
-def case_a_record_missing_an_input_the_rule_reads_is_not_replayed():
-    """Defaulting an input the recording agent never read answers for inputs the arm never had."""
+def case_a_row_released_0_6_0_recorded_is_replayed():
+    """A real row, its map cut to the files the selector reads for it. Its record leaves out every
+    empty input, as every record does, and was once refused for each of them."""
     failures = 0
     with tempfile.TemporaryDirectory(dir=os.path.join(ROOT, "sandbox")) as root:
-        entry = replayed(fixture(root, FAITHFUL, ["Beta::t"],
-                                 drop_input="yoriwake.change.exemptTestClasses"))
-        if entry["verdict"] != "not-replayed" or "exemptTestClasses" not in entry["reason"]:
-            failures += fail(f"a record missing an input was answered: {entry}")
+        with tarfile.open(os.path.join(HERE, "fixtures", "recorded-0.6.0-row.tar.gz")) as archive:
+            archive.extractall(root, filter="data")
+        results = os.path.join(root, "row.json")
+        data = json.load(open(results))
+        for key in ("map", "decisions"):
+            replay = data["mutations"][0]["replay"]
+            replay[key] = os.path.relpath(os.path.join(root, replay[key]), ROOT)
+        with open(results, "w") as handle:
+            json.dump(data, handle)
+        entry = replayed(results)
+        if "schema version" in entry.get("reason", ""):
+            print(f"  (not replayed, rightly: {entry['reason']}; replace the fixture)")
+        elif entry["verdict"] != "ok" or entry["tests"] != 57:
+            failures += fail(f"the recorded row was not replayed: {entry}")
     return failures
 
 
@@ -191,7 +203,8 @@ def orphan_fixture(root, union):
     part = os.path.join(root, "decisions.parts", f"{run.DECISIONS_FILE}.1-1{run.DECISION_PART_SUFFIX}")
     text = open(part).read()
     text = text.replace("input.yoriwake.change.classes\tcom.acme.A", "input.yoriwake.change.classes\tcom.acme.Orphan")
-    text = text.replace("input.yoriwake.change.absenceProvable\t", "input.yoriwake.change.absenceProvable\tcom.acme.Orphan")
+    text = text.replace("input.yoriwake.change.classes\tcom.acme.Orphan", "input.yoriwake.change.classes\tcom.acme.Orphan\n"
+                        f"{run.DECISION_NOTE_PREFIX}input.yoriwake.change.absenceProvable\tcom.acme.Orphan")
     text = text.replace("included\tREACHES_CHANGE", "excluded\tSKIPPED")
     with open(part, "w") as handle:
         handle.write(text)
@@ -289,7 +302,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_faithful_record_reproduces_exactly,
          case_an_induced_failure_the_selector_skips_is_missed,
          case_a_failure_the_recorded_arm_never_discovered_is_undetermined_not_clean,
-         case_a_record_missing_an_input_the_rule_reads_is_not_replayed,
+         case_a_row_released_0_6_0_recorded_is_replayed,
          case_a_map_of_another_schema_is_not_replayed,
          case_a_row_without_replay_inputs_is_left_out_with_its_reason,
          case_a_test_left_out_only_through_the_union_is_counted_and_one_run_either_way_is_not,
