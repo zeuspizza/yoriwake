@@ -71,9 +71,15 @@ class PathsNoTestReadsFunctionalTest {
 
     private val docsTest = "lib/src/test/java/dev/demo/lib/DocsTest.java" to """
         package dev.demo.lib;
+        import java.nio.file.Files;
+        import java.nio.file.Path;
         import org.junit.jupiter.api.Test;
         class DocsTest {
-            @Test void reads() throws Exception { java.nio.file.Files.readString(java.nio.file.Path.of("../docs/data.txt")); }
+            @Test void reads() throws Exception {
+                try (var files = Files.list(Path.of("../docs"))) {
+                    for (var f : (Iterable<Path>) files::iterator) if (f.toString().endsWith(".txt")) Files.readString(f);
+                }
+            }
         }
     """.trimIndent()
 
