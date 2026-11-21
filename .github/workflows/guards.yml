@@ -313,6 +313,11 @@ jobs:
           COUNT: ${{ needs.changes.outputs.fast_count }}
         run: |
           set -u
+          # A lone artifact is unpacked into the path itself, not into a directory of its own name.
+          if [ -f shards/changed.json ]; then
+            mkdir "shards/guards-pr-1-of-$COUNT"
+            find shards -maxdepth 1 -type f -exec mv {} "shards/guards-pr-1-of-$COUNT/" \;
+          fi
           python3 scripts/prove_guards.py --mode full --changed "${BASE:?no merge base}" --list-selection changed.json
           status=0
           if [ "$NARROW" != true ]; then
