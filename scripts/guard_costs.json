@@ -4,6 +4,7 @@
   {"run": 43377912747, "commit": "99ad9fc2", "modes": ["fast"]}
  ],
  "estimated": [
+  "functional/ChangeShapesFunctionalTest",
   "functional/InJvmParallelismCharacterizationTest",
   "functional/IsolatedCaptureBudgetFunctionalTest",
   "functional/KoverFunctionalTest",
@@ -68,6 +69,7 @@
   "functional/BootClassPathFunctionalTest": {"baseline": 40, "guard": 31},
   "functional/BranchPolicyFunctionalTest": {"baseline": 38, "guard": 32},
   "functional/CaptureFunctionalTest": {"baseline": 27, "guard": 29},
+  "functional/ChangeShapesFunctionalTest": {"baseline": 50, "guard": 50},
   "functional/ChangedBytesFunctionalTest": {"baseline": 30, "guard": 14},
   "functional/ChangedDependenciesFunctionalTest": {"baseline": 28, "guard": 28},
   "functional/ClassFileCeilingFunctionalTest": {"baseline": 27, "guard": 20},

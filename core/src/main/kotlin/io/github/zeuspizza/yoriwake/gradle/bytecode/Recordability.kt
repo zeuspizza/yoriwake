@@ -140,9 +140,10 @@ internal object Recordability {
 
     /**
      * The descriptors of the annotations on the class itself: runtime-visible or not, declaration
-     * or type use. Null when the bytes cannot be read. `kotlin.Metadata` is left out: kotlinc
-     * writes it on every Kotlin class, so counting it would be a second Kotlin rule, and the
-     * Kotlin rule in [of] already decides Kotlin.
+     * or type use. Null when the bytes cannot be read. The declaration annotations of the closed
+     * list kotlinc writes unasked ([COMPILER_WRITTEN_ANNOTATIONS]: `kotlin.Metadata` on every class,
+     * `DebugMetadata` on every coroutine lambda) are left out, wherever they were written: no framework registers a class from them, and counting them
+     * would refuse Kotlin on a second rule beside the one in [of].
      */
     fun classAnnotations(classBytes: ByteArray): List<String>? = runCatching {
         val found = mutableListOf<String>()
@@ -151,7 +152,7 @@ internal object Recordability {
                 descriptor: String,
                 visible: Boolean,
             ): org.objectweb.asm.AnnotationVisitor? {
-                if (descriptor != KOTLIN_METADATA) found += descriptor
+                if (descriptor !in COMPILER_WRITTEN_ANNOTATIONS) found += descriptor
                 return null
             }
 

@@ -2239,6 +2239,24 @@ MUTATIONS = [
      "            if (annotations.isEmpty() || (discovered && Recordability.declaresTestMethod(bytes))) {",
      "            if (true) {",
      functional_suite, "a class-level annotation keeps a class nothing executes or loads forcing"),
+    # The annotations kotlinc writes unasked (`DebugMetadata` on every coroutine lambda) say nothing a
+    # framework acts on. Counted as class-level annotations, they refuse every such lambda again.
+    ("kotlinc's own annotations keep a Kotlin class from narrowing again", RECORDABILITY,
+     "                if (descriptor !in COMPILER_WRITTEN_ANNOTATIONS) found += descriptor",
+     "                found += descriptor",
+     unit_suite, "a coroutine lambda carrying only the compiler's own annotations passes the annotation gate"),
+    # The classes the inline scan adds exist only after widening. Skipping the pass leaves them
+    # unassessed, and an inline function's lambda no test loads forces the whole suite again.
+    ("the classes the inline scan added are never vouched for again", SELECTING_STEP,
+     "        val established = establishAfterWidening(beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly)",
+     "        val established = beforeWidening",
+     functional_suite, "an inline function's sequence lambda no test loads narrows to the tests of its callers"),
+    # A file of only inline functions is waived only by the inliners found for it. With none found,
+    # a root whose SMAP a tool stripped cannot be told from no caller, so it keeps the Kotlin refusal.
+    ("an inline-only file nothing was found inlining is vouched for", SELECTION,
+     "    val candidates = widening.prefixes.toSet() - established.provable - inlineOnly",
+     "    val candidates = widening.prefixes.toSet() - established.provable",
+     unit_suite, "after widening, an inline-only file keeps the Kotlin refusal"),
     # ------------------------------------------------ once-per-JVM code and class-file readers
     #
     # A JVM runs a static initialiser, or builds a cached context, once, and coverage credits

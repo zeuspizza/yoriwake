@@ -93,6 +93,38 @@ class KotlinInlineAttempts : BreakAttempt() {
         assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
+    // Track: code reading. Boundary: once the scan answered, the classes it added to the change set
+    // are vouched for with the Kotlin refusal waived. A `sequence {}` lambda in an inline function
+    // compiles to a template class no test loads, since every caller gets its own copy, and kotlinc
+    // writes `DebugMetadata` on it. The lambda's body changes; the test that runs the caller's copy
+    // must still run.
+    @Test
+    fun `an inline function's sequence lambda no test loads selects the caller its copy is in`(@TempDir dir: File) {
+        val kept = source(
+            "src/main/kotlin/dev/demokt/Kept.kt",
+            """
+            package dev.demokt
+            inline fun isSkipped(n: Int): Boolean = n % 3 == 0
+            inline fun kept(limit: Int): Sequence<Int> = sequence { for (i in 0 until limit) if (!isSkipped(i)) yield(i) }
+            fun limitOf(n: Int): Int = n
+            """,
+        )
+        val counter = source("src/main/kotlin/dev/demokt/Counter.kt", "package dev.demokt\nclass Counter { fun count(n: Int): Int = kept(n).count() }")
+        val target = kotlinTest("A1CounterTest", "@Test fun count() { assertEquals(4, Counter().count(6)) }")
+        // Executes the file's own facade class, so the changed file is known to the map by its path.
+        val limitTest = kotlinTest("A3LimitTest", "@Test fun limit() { assertEquals(1, limitOf(1)) }")
+        val result = attempt(
+            dir, "dev.demokt.A1CounterTest", Aim.Row("reaches-change"),
+            listOf(kept, counter, target, limitTest, alpha, alphaTest),
+            buildScript = forkedKotlinBuild,
+        ) {
+            val file = File(it, kept.first)
+            file.writeText(file.readText().replace("n % 3 == 0", "n % 2 == 0"))
+        }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
     // Track: code reading. Boundary: the SMAP signal is judged across every own class, main and
     // test output alike, and a Kotlin output with none anywhere cannot say who inlined a change.
     // A post-processor here strips the SourceDebugExtension attribute from every Kotlin class, as
