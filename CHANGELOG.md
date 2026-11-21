@@ -18,6 +18,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Added
 
 - `-Pyoriwake.isolatedCaptureBudget=<n>x` records the test classes the map ranks widest each in its own JVM, within n times a shared recording. Map: left alone; narrower from the next budgeted recording.
+- `isolatedCaptureBudget`: successive budgeted recordings settle on about the same classes within the budget. Map: left alone.
 
 ### Changed
 

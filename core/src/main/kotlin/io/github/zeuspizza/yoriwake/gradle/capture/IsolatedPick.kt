@@ -295,13 +295,17 @@ internal object IsolatedPick {
      * The classes to record alone: by score, highest first, while their cost fits the budget. A
      * class costs what its own JVM took when the map measured it alone; else a shared JVM's measured
      * start overhead plus twice its recorded test time, cold as a fresh JVM runs (1 second plus twice,
-     * where nothing was measured). Costs are spread over min([isolatedForks], [processors]) JVMs.
+     * where nothing was measured). The picked classes are taken to run on min([isolatedForks],
+     * [processors]) JVMs, each to the least loaded, and to take as long as the slowest of those.
      *
      * The budget allows (budget - 1) times the shared recording: its test task's wall time when
      * [wall] has it, else its JVMs' measured time, else its tests' recorded time, over [hostForks].
      * Calibrated against wall time: the test task's time outside its JVMs is charged once, and each
      * cost is multiplied by what the last budgeted recording's extra wall time, less that, was over
-     * the extra its pick predicted (never below 1; 1 when no budgeted recording was measured).
+     * what its picked classes cost now, as this pick costs them (over the extra that pick predicted
+     * when the wall record is not [previous]'s own). Never below 1; 1 when no budgeted recording was
+     * measured. Once [previous] was calibrated above 1, the factor moves only halfway (the geometric
+     * mean of its factor and the new one), so one recording's noise does not swing the pick.
      *
      * Stable across recordings: a class [previous] picked that ran alone keeps the score it was
      * picked with, and, unless the map measured its JVM, the cost; the shared recording stays the one
@@ -336,30 +340,49 @@ internal object IsolatedPick {
             val jvms = ranking.sharedJvmSeconds
             if (wall.sharedSeconds != null && jvms != null) maxOf(0.0, wall.sharedSeconds - jvms / maxOf(1, hostForks)) else 0.0
         }
-        val factor = if (wall.sharedSeconds != null && wall.budgetedSeconds != null && wall.predictedExtra != null && wall.predictedExtra > 0) {
-            maxOf(1.0, (wall.budgetedSeconds - wall.sharedSeconds - overhead) / wall.predictedExtra)
+        val parallel = maxOf(1, minOf(isolatedForks, processors))
+        // The calibration compares like with like: a class the previous pick estimated is costed now
+        // at what its own JVM took, so the previous pick is re-predicted at those costs, when the wall
+        // record is that pick's own recording and its JVMs were measured.
+        val ownRecording = previous?.isolatedWallSeconds != null && wall.predictedExtra == previous.predictedExtra &&
+            previous.classes.keys.any { it in ranking.isolatedSeconds }
+        val predicted = if (ownRecording) {
+            makespan(previous!!.classes.keys.map { ranking.isolatedSeconds[it] ?: previous.classSeconds[it] ?: cost(it) }, parallel)
         } else {
-            1.0
+            wall.predictedExtra
+        }
+        val ratio = if (wall.sharedSeconds != null && wall.budgetedSeconds != null && predicted != null && predicted > 0) {
+            maxOf(1.0, (wall.budgetedSeconds - wall.sharedSeconds - overhead) / predicted)
+        } else {
+            null
+        }
+        val factor = when {
+            ratio == null -> 1.0
+            ownRecording && previous!!.factor > 1.0 -> Math.sqrt(previous.factor * ratio)
+            else -> ratio
         }
         val allowance = (budget - 1.0) * shared - overhead
-        val parallel = maxOf(1, minOf(isolatedForks, processors))
         val left = (ranking.scores.keys + ranking.isolated).count(runnable)
         val picked = LinkedHashMap<String, Long>()
         val costs = LinkedHashMap<String, Double>()
-        var spent = 0.0
         for ((name, score) in scores.entries.sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })) {
             if (score <= 0 || !runnable(name)) continue
             if (picked.size + 1 >= left) break
-            val own = factor * cost(name)
-            if ((spent + own) / parallel > allowance) break
-            spent += own
+            if (factor * makespan(costs.values + cost(name), parallel) > allowance) break
             picked[name] = score
             costs[name] = cost(name)
         }
         return Stamp(
             budget, startSeconds, picked.keys.sumOf { ranking.seconds[it] ?: 0.0 }, picked, sharedSeconds = shared,
-            classSeconds = costs, overheadSeconds = overhead, predictedExtra = costs.values.sum() / parallel, factor = factor,
+            classSeconds = costs, overheadSeconds = overhead, predictedExtra = makespan(costs.values, parallel), factor = factor,
         )
+    }
+
+    /** How long [costs] take on [parallel] JVMs, each in turn to the least loaded one. */
+    private fun makespan(costs: Collection<Double>, parallel: Int): Double {
+        val loads = DoubleArray(maxOf(1, parallel))
+        costs.forEach { cost -> loads[loads.indices.minByOrNull { loads[it] }!!] += cost }
+        return loads.maxOrNull() ?: 0.0
     }
 
     /** How much slower a class's tests are taken to run in a fresh JVM than in a warm shared one. */

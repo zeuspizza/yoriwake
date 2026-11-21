@@ -175,6 +175,90 @@ class IsolatedPickTest {
         }
     }
 
+    /**
+     * Budgeted recordings in a row on 4 JVMs, as on a project whose isolated JVMs report less than
+     * they cost: 40 classes estimated at 3 s each (1 s start, twice 1 s of tests), whose own JVMs
+     * report 2 s and cost 3.4 s of wall time each once forking and handing back results are counted.
+     * The shared recording takes 20 s, 4 s of it outside its JVMs. Returns each pick's size and extra.
+     */
+    private fun underReportedRecordings(count: Int = 5): List<Pair<Int, Double>> {
+        val names = (0 until 40).map { "dev.sample.T${it.toString().padStart(2, '0')}" }
+        var previous: IsolatedPick.Stamp? = null
+        var wall = IsolatedPick.Wall(sharedSeconds = 20.0)
+        return (1..count).map {
+            val alone = previous?.classes?.keys.orEmpty()
+            val ranking = IsolatedPick.Ranking(
+                scores = names.filter { it !in alone }.associateWith { 100L - names.indexOf(it) },
+                isolated = alone,
+                seconds = names.associateWith { 1.0 },
+                isolatedSeconds = alone.associateWith { 2.0 },
+                startOverhead = 1.0,
+                sharedJvmSeconds = 16.0,
+            )
+            val pick = IsolatedPick.pick(ranking, previous, 2.0, hostForks = 1, isolatedForks = 4, processors = 8, wall = wall) { true }
+            val isolatedWall = 3.4 * Math.ceil(pick.classes.size / 4.0)
+            val extra = 4.0 + isolatedWall
+            wall = wall.copy(budgetedSeconds = 20.0 + extra, predictedExtra = pick.predictedExtra)
+            previous = pick.copy(isolatedWallSeconds = isolatedWall)
+            pick.classes.size to extra
+        }
+    }
+
+    @Test
+    fun `isolated JVMs that report less than they cost still converge within budget`() {
+        val runs = underReportedRecordings()
+        runs.drop(1).forEach { (_, extra) -> assertTrue(20.0 + extra <= 2.0 * 20.0 + 1e-9, "over budget: $runs") }
+        runs.drop(1).zipWithNext().forEach { (a, b) ->
+            assertTrue(kotlin.math.abs(a.first - b.first) <= 0.1 * a.first, "swings: $runs")
+        }
+        assertTrue(runs.last().first > 0, "picks nothing: $runs")
+    }
+
+    private fun ranking(vararg seconds: Double, isolatedSeconds: Map<String, Double> = emptyMap()) = IsolatedPick.Ranking(
+        scores = seconds.indices.associate { "dev.sample.T$it" to (if (it < seconds.size - 1) 100L - it else 0L) },
+        isolated = isolatedSeconds.keys,
+        seconds = seconds.indices.associate { "dev.sample.T$it" to seconds[it] },
+        isolatedSeconds = isolatedSeconds,
+        startOverhead = 1.0,
+        sharedJvmSeconds = 10.0,
+    )
+
+    @Test
+    fun `fewer classes than JVMs are predicted at the slowest of them`() {
+        // Estimated at 3, 5 and 7 seconds; the fourth class scores 0 and stays shared.
+        val pick = pick(ranking(1.0, 2.0, 3.0, 1.0), 10.0, forks = 4)
+        assertEquals(3, pick.classes.size)
+        assertEquals(7.0, pick.predictedExtra)
+    }
+
+    private fun calibrated(previousFactor: Double, wallPredicted: Double): Double {
+        // The previous pick ran T0 alone, predicted at 3 s; its own JVM now reports 2 s, and the
+        // recording took 16 s more than the shared one.
+        val previous = IsolatedPick.Stamp(
+            budget = 2.0, startSeconds = 1.0, pickedSeconds = 1.0, classes = mapOf("dev.sample.T0" to 100L),
+            sharedSeconds = 10.0, overheadSeconds = 0.0, predictedExtra = 3.0, factor = previousFactor, isolatedWallSeconds = 5.0,
+        )
+        val wall = IsolatedPick.Wall(sharedSeconds = 10.0, budgetedSeconds = 26.0, predictedExtra = wallPredicted)
+        return IsolatedPick.pick(
+            ranking(1.0, 1.0, 1.0, isolatedSeconds = mapOf("dev.sample.T0" to 2.0)), previous, 2.0, 1, 4, 8, wall,
+        ) { true }.factor
+    }
+
+    @Test
+    fun `the calibration measures the previous pick at today's costs`() {
+        assertEquals(8.0, calibrated(previousFactor = 1.0, wallPredicted = 3.0), 1e-9)
+    }
+
+    @Test
+    fun `once calibrated, the calibration moves halfway`() {
+        assertEquals(4.0, calibrated(previousFactor = 2.0, wallPredicted = 3.0), 1e-9)
+    }
+
+    @Test
+    fun `a wall record from another recording calibrates on the extra it predicted, undamped`() {
+        assertEquals(16.0 / 5.0, calibrated(previousFactor = 2.0, wallPredicted = 5.0), 1e-9)
+    }
+
     @Test
     fun `with no budgeted recording measured the calibration is 1`(@TempDir dir: File) {
         val ranking = IsolatedPick.rank(map(dir))!!
