@@ -1628,7 +1628,7 @@ class SelectionFunctionalTest {
     }
 
     @Test
-    fun `a class a test loads but never executes still forces`(@TempDir dir: File) {
+    fun `a class a test loads but never executes runs the test that loads it`(@TempDir dir: File) {
         // Named by its package and simple name at run time, so no test class's constants name it.
         val project = withOrphan(
             dir,
@@ -1643,13 +1643,13 @@ class SelectionFunctionalTest {
             """.trimIndent() + "\n",
         )
         FunctionalMaven.run(maven, project, "verify", "-pl", "lib", "-Dyoriwake.internal.loaded").succeeded()
-        // Forced by the union, not by its absence.
+        // Never proven untested by its absence: the union holds it.
         assertContains(union(project).orEmpty(), "dev.demo.lib.Orphan\n")
         editOrphan(project)
 
         val output = selectLib(project)
 
-        assertContains(output, "Running dev.demo.lib.CounterTest")
-        assertContains(output, "Running dev.demo.lib.GreeterTest")
+        // Its load dates it, so the tests from that load on in its JVM run.
+        assertContains(output, "Running dev.demo.lib.LoaderTest")
     }
 }

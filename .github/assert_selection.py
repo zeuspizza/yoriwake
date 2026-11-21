@@ -26,10 +26,9 @@ DECISIONS = "samples/demo/.gradle/yoriwake/*/decisions.tsv"
 # skip. Change these together with ci.py's mutations.
 #
 # Alpha is reached through coverage, so the run narrows: its tests run because the map links them
-# to the change, and the rest are skipped. Epsilon no test executes; a resource names it as a
-# string, which only the resource scan sees. That makes its absence from the map unprovable, so the
-# run widens to everything, for that reason and on that change. Were the scan lost, the absence
-# would read as proof, the run would narrow, and the registry test would be skipped.
+# to the change, and the rest are skipped. Epsilon no test executes, so the map has no coverage of
+# it; the registry test loads it by the name a resource holds, and that load dates it, so the run
+# narrows to the tests from that load on in its JVM, the registry test among them.
 EXPECTED = {
     "alpha": {
         "broken": ("dev.demo.AlphaTest.doubles", "dev.demo.AlphaTest.doublesAgain"),
@@ -39,12 +38,11 @@ EXPECTED = {
     },
     "epsilon": {
         "broken": ("dev.demo.EpsilonRegistryTest.everyRegisteredTypeExposesTheMethodsTheRegistryPromises",),
-        "reason": "FULL_RUN",
+        "reason": "SHARES_JVM_WITH_CHANGE",
         "unreachable": (),
         "notes": {
             "input.yoriwake.change.classes": "dev.demo.Epsilon",
-            "outcome": "full-run",
-            "full-run-kind": "no-coverage-for-changed",
+            "outcome": "narrowed",
         },
     },
     # Alpha's change against a map recorded on another operating system: a map is per environment,
