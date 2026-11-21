@@ -172,6 +172,8 @@ internal abstract class DecodeTask : DefaultTask() {
         val notWholeTask: Provider<String>? = null,
         /** The digest of the build-script filter the run runs under; empty when unfiltered. */
         val unionFilter: Provider<String>? = null,
+        /** Whether this run may record the classes a budget picked in JVMs of their own. */
+        val isolatedWithinBudget: Boolean = false,
     )
 
     internal companion object {
@@ -214,7 +216,7 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.datesTheMap.set(wired.datesTheMap)
                 task.undatedReason.set(wired.undatedReason)
                 task.effectiveScope.set(wired.effectiveScope)
-                task.isolated.set(wired.isolated)
+                task.isolated.set(wired.isolated || wired.isolatedWithinBudget)
                 task.scheduleSet.set(wired.scheduleSet)
                 task.optimistic.set(wired.optimistic)
                 task.fullRunPolicy.set(wired.fullRunPolicy)

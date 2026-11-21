@@ -98,6 +98,7 @@ internal class Recording(
     private val fork = ForkEnvironment(session, root)
     private val sequential = session.projects.associate { it.id to Settings.recordSequentiallyOf(it, session) }
     private val captureForks = session.projects.associate { it.id to Settings.isolatedCaptureForksOf(it, session) }
+    private val budgets = session.projects.associate { it.id to Settings.isolatedCaptureBudgetOf(it, session) }
 
     init {
         if (start != null && wired.isNotEmpty() && reachesTests()) startTree()
@@ -301,6 +302,12 @@ internal class Recording(
         // and so does one that keeps its in-JVM parallelism, which captures nothing.
         if (isolated && keepsParallelism == null && (kind == RunPlan.Kind.RECORD || kind == RunPlan.Kind.OBSERVE)) {
             captureForks[project.id]?.let { raiseForks(name, project, configuration, it.resolve()) }
+        }
+        if (!isolated && budgets[project.id] != null && (kind == RunPlan.Kind.RECORD || kind == RunPlan.Kind.OBSERVE)) {
+            log.info(
+                "[yoriwake] $name: -D${SettingNames.ISOLATED_CAPTURE_BUDGET} is Gradle-only for now, so this run " +
+                    "records every test class in shared JVMs"
+            )
         }
         if (recordsSequentially) recordOneAtATime(name, mapDir, configuration, properties, inJvm)
         keepsParallelism?.let { keepParallelism(name, mapDir, parallelMarker, properties, it) }

@@ -88,7 +88,7 @@ import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
  * Lets a selecting run discover no tests without failing the build (Gradle 9 fails an empty
  * test task). Reflective: the property does not exist before Gradle 9.
  */
-private fun allowAnEmptyRun(test: Test) {
+internal fun allowAnEmptyRun(test: Test) {
     val setter = test.javaClass.methods.firstOrNull {
         it.name == "setFailOnNoDiscoveredTests" && it.parameterCount == 1
     }

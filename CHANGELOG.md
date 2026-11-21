@@ -15,6 +15,10 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ## [Unreleased]
 
+### Added
+
+- `-Pyoriwake.isolatedCaptureBudget=<n>x` records the test classes the map ranks widest each in its own JVM, within n times a shared recording. Map: left alone; narrower from the next budgeted recording.
+
 ### Changed
 
 - A test that mocks inline with Mockito no longer runs every later test in its JVM: Byte Buddy's attacher is reviewed. Map: left alone.

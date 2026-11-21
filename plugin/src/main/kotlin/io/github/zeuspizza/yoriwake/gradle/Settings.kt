@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
+import io.github.zeuspizza.yoriwake.gradle.capture.IsolatedPick
 import org.gradle.api.InvalidUserDataException
 import org.gradle.api.Project
 
@@ -55,6 +56,12 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
     val isolatedCaptureForks: IsolatedCaptureForks? = lookup(ISOLATED_CAPTURE_FORKS)?.let {
         IsolatedCaptureForks.parse(it) ?: throw InvalidUserDataException(IsolatedCaptureForks.malformed("-P", it))
     }
+    /** Null when not passed or `1x`: a recording run records every test class in shared JVMs. */
+    val isolatedCaptureBudget: Double? = lookup(ISOLATED_CAPTURE_BUDGET)?.let {
+        IsolatedPick.parseBudget(it) ?: throw InvalidUserDataException(IsolatedPick.malformed("-P", it))
+    }?.takeIf { it > 1.0 }
+    /** The budget a recording run picks under; null when off, or when `isolatedCapture` isolates every class. */
+    val isolatedWithinBudget: Double? get() = isolatedCaptureBudget.takeUnless { isolatedCapture }
     /** Null when not passed, so the build's `recordSequentially` answers. */
     val recordSequentially: Boolean? = lookup(RECORD_SEQUENTIALLY)?.let { parseFlag(RECORD_SEQUENTIALLY, it) }
     /** A file of trusted map digests; while set, a map narrows only when it names the map's. */
@@ -89,6 +96,7 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
         const val DISABLED = "yoriwake.disabled"
         const val ISOLATED_CAPTURE = SettingNames.ISOLATED_CAPTURE
         const val ISOLATED_CAPTURE_FORKS = SettingNames.ISOLATED_CAPTURE_FORKS
+        const val ISOLATED_CAPTURE_BUDGET = SettingNames.ISOLATED_CAPTURE_BUDGET
         const val RECORD_SEQUENTIALLY = SettingNames.RECORD_SEQUENTIALLY
         const val ALWAYS_RUN = "yoriwake.alwaysRun"
         const val NARROW_PLAIN_RUNNERS = "yoriwake.narrowPlainRunners"

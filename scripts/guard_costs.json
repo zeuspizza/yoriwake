@@ -5,6 +5,7 @@
  ],
  "estimated": [
   "functional/InJvmParallelismCharacterizationTest",
+  "functional/IsolatedCaptureBudgetFunctionalTest",
   "functional/KoverFunctionalTest"
  ],
  "suites": {
@@ -82,6 +83,7 @@
   "functional/HostCoverageFunctionalTest": {"baseline": 28, "guard": 32},
   "functional/InJvmParallelismCharacterizationTest": {"baseline": 52, "guard": 52},
   "functional/InitScriptFunctionalTest": {"baseline": 25, "guard": 21},
+  "functional/IsolatedCaptureBudgetFunctionalTest": {"baseline": 25, "guard": 25},
   "functional/IsolatedCaptureFunctionalTest": {"baseline": 20, "guard": 21},
   "functional/JvmSharedFunctionalTest": {"baseline": 30, "guard": 29},
   "functional/KoverFunctionalTest": {"baseline": 50, "guard": 50},

@@ -269,19 +269,23 @@ def capture_mode(map_dir):
     return MODE_SHARED if isolated == 0 else "mixed"
 
 
-def map_fits_arm(map_dir, isolated_arm):
+def map_fits_arm(map_dir, isolated_arm, reuse_mixed=False):
     """Whether a map on disk may be reused by this arm, and why not when it may not.
 
     A shared arm must not select against a map any JVM of which was recorded in isolation, and an
     isolated arm must not select against one recorded with none: the two arms share one map
     directory per task, so whichever ran last left its map behind. A map whose schema is not the
     checkout's is not reused either, since the agent would refuse it and every row would force.
+    With `reuse_mixed`, the shared arm may reuse a mixed map, as a budgeted recording writes: its
+    rows then measure selection against that map.
     """
     mode = capture_mode(map_dir)
     if mode is None:
         return True, None
     if isolated_arm and mode not in (MODE_ISOLATED, "mixed"):
         return False, f"the map on disk was recorded {mode}, and this is the isolated arm"
+    if not isolated_arm and mode == "mixed" and reuse_mixed:
+        return True, None
     if not isolated_arm and mode in (MODE_ISOLATED, "mixed"):
         return False, f"the map on disk was recorded {mode}, and this is the shared arm"
     return True, None

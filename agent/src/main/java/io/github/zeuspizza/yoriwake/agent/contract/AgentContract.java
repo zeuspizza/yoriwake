@@ -612,7 +612,10 @@ public final class AgentContract {
     /** The last line of a {@link #TOUCHES_FILE} whose observation ended normally. */
     public static final String TOUCHES_COMPLETE = "#complete";
 
-    /** The run's overhead line, written when capture ends. */
+    /**
+     * The run's overhead line, written when capture ends. Its {@code jvmMs=} token is how long the
+     * JVM had run by then, its start included.
+     */
     public static final String OVERHEAD_FILE = "overhead.txt";
 
     /**

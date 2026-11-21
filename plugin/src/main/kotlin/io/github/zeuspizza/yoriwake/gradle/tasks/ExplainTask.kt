@@ -9,6 +9,7 @@ import io.github.zeuspizza.yoriwake.gradle.report.Audit
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
+import io.github.zeuspizza.yoriwake.gradle.capture.IsolatedPick
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.MapAge
 import io.github.zeuspizza.yoriwake.gradle.capture.MapProvenance
@@ -424,6 +425,11 @@ internal abstract class ExplainTask : DefaultTask() {
             else -> "partly with a fresh test JVM per test class and partly in shared test JVMs"
         }
         logger.lifecycle("[yoriwake] $taskPath: the map was recorded $recorded ($mode)")
+        if (mode != AgentContract.MODE_SHARED) {
+            IsolatedPick.Stamp.read(File(mapDir, IsolatedPick.STAMP_FILE))?.let {
+                logger.lifecycle("[yoriwake] $taskPath: ${IsolatedPick.explain(it)}")
+            }
+        }
         // As the run applies it, with the same diffs to place paths outside the root.
         val ignore = ignoreDeclaration(paths) {
             val outside = listOfNotNull(base, age.stamp).map { ChangeDetection.outsideRoot(git, rootDir, it) }

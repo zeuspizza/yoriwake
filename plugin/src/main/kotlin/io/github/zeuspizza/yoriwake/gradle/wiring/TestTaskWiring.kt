@@ -28,6 +28,7 @@ import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.TEST_TASKS_C
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
+import io.github.zeuspizza.yoriwake.gradle.capture.IsolatedPick
 import io.github.zeuspizza.yoriwake.gradle.capture.JvmArgFiles
 import io.github.zeuspizza.yoriwake.gradle.capture.MapLocation
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
@@ -70,6 +71,9 @@ import org.gradle.api.Project
 import org.gradle.api.artifacts.ArtifactCollection
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestListener
+import org.gradle.api.tasks.testing.TestResult
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.gradle.testing.jacoco.tasks.JacocoReportBase
 
@@ -205,6 +209,11 @@ internal class TestTaskWiring(internal val settings: Settings) {
                     configured.getValue(t.name).let { Triple(it.mapDir, it.outcome, it.fromBuildScript) }
                 }
                 DecodeTask.register(project, name) { t -> configured.getValue(t.name).decode }
+                if (settings.isolatedWithinBudget != null) {
+                    IsolatedCompanion.register(project, name, settings.isolatedCaptureForks) { t ->
+                        configured.getValue(t.name).decode?.mapDir
+                    }
+                }
                 // A failed run restores the host's JaCoCo file in the decode; a report reads it after.
                 project.tasks.withType(JacocoReportBase::class.java).configureEach {
                     it.mustRunAfter(DecodeTask.nameFor(name))
@@ -379,6 +388,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         // parallelism check can throw, so `yoriwakeAudit` can name the cause; the isolation after
         // that check, which may switch capture off.
         isolateWhileCapturing(test, runPlan)
+        isolateWithinBudget(test, runPlan, mapDir, fromBuildScript)
         refuseInJvmParallelism(
             test, mapDir, runPlan.declines.firstOrNull()?.kind, runPlan.observing,
             recordSequentially, recording = runPlan.asked == RunPlan.Kind.RECORD,
@@ -449,6 +459,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
                 effectiveScope,
                 // What this run asked for; the decoder still checks that each JVM ran one class.
                 isolated = settings.isolatedCapture && !selecting,
+                isolatedWithinBudget = settings.isolatedWithinBudget != null && !selecting,
                 afterTest = afterTest,
                 scheduleSet = schedule.set,
                 optimistic = selecting && settings.mode == Strictness.OPTIMISTIC,
@@ -510,7 +521,25 @@ internal class TestTaskWiring(internal val settings: Settings) {
             }
             marker.parentFile.mkdirs()
             marker.writeText("ran")
+            recordTestWall(task as Test, testWallMarker(recordsDir.parentFile))
         }
+    }
+
+    /**
+     * Writes this run's wall time, from its tests' start to their end, for the decode to record beside
+     * the map: a budgeted recording measures its cost against it ([IsolatedPick.Wall]). Within the
+     * action that marks the run as one that executed, so it adds no action of its own.
+     */
+    private fun recordTestWall(test: Test, marker: File) {
+        test.addTestListener(object : TestListener {
+            override fun beforeSuite(suite: TestDescriptor) {}
+            override fun afterSuite(suite: TestDescriptor, result: TestResult) {
+                if (suite.parent != null) return
+                runCatching { writeAtomically(marker, ((result.endTime - result.startTime) / 1000.0).toString()) }
+            }
+            override fun beforeTest(testDescriptor: TestDescriptor) {}
+            override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {}
+        })
     }
 
     /**
@@ -792,6 +821,97 @@ internal class TestTaskWiring(internal val settings: Settings) {
             test.logger.lifecycle(
                 "[yoriwake] ${test.path}: recording with a fresh test JVM per test class " +
                     "(-P${Settings.ISOLATED_CAPTURE}), up to ${test.maxParallelForks} at a time"
+            )
+        }
+    }
+
+    /**
+     * With `-Pyoriwake.isolatedCaptureBudget`, on a run that records the whole task, moves the test
+     * classes the previous map ranks highest, as many as the budget allows, out of this task and
+     * into [IsolatedCompanion], which runs each in a JVM of its own into the same records. Hands it
+     * the JVM arguments this task's JVMs start with. A run with nothing to rank records shared.
+     *
+     * Registered beside [isolateWhileCapturing], so it runs after the refusals that switch capture off.
+     */
+    private fun isolateWithinBudget(test: Test, runPlan: RunPlan, mapDir: File, fromBuildScript: TestPatterns) {
+        val budget = settings.isolatedCaptureBudget ?: return
+        val pending = File(mapDir, IsolatedPick.PENDING_FILE)
+        val handOff = isolatedHandOff(mapDir)
+        // Whatever this run does, a pick an earlier run left must never run after it.
+        val discard = { pending.delete(); handOff.delete() }
+        if (runPlan.selecting) {
+            test.doFirst { discard() }
+            return
+        }
+        val flag = "-P${Settings.ISOLATED_CAPTURE_BUDGET}=${IsolatedPick.describe(budget)}"
+        if (settings.isolatedCapture) {
+            test.doFirst {
+                discard()
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag is ignored: -P${Settings.ISOLATED_CAPTURE} records every test class in its own JVM"
+                )
+            }
+            return
+        }
+        // What it leaves out is decided as it executes, so a cached result would not be this run's.
+        test.outputs.doNotCacheIf("a budgeted recording picks the classes it leaves out as it executes") { true }
+        val forks = settings.isolatedCaptureForks
+        val companion = IsolatedCompanion.nameFor(test.name)
+        test.doFirst {
+            discard()
+            if (test.systemProperties[RECORDS_DIR_PROPERTY]?.toString().isNullOrEmpty()) return@doFirst
+            if (!readFilterVerdict(test, fromBuildScript).definesTheTask) return@doFirst
+            val ranking = IsolatedPick.rank(mapDir)
+            if (ranking == null) {
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag has no map to rank test classes from yet, so this run records " +
+                        "every class in shared JVMs; the next one picks from its map"
+                )
+                return@doFirst
+            }
+            // The classes the task would run, after the build's own include and exclude patterns.
+            val candidates = HashSet<String>()
+            test.candidateClassFiles.visit { if (!it.isDirectory) candidates.add(it.relativePath.pathString) }
+            val parallel = minOf(forks?.resolve() ?: IsolatedPick.DEFAULT_FORKS, Runtime.getRuntime().availableProcessors())
+            val pick = IsolatedPick.pick(
+                ranking, IsolatedPick.Stamp.read(File(mapDir, IsolatedPick.STAMP_FILE)), budget,
+                test.maxParallelForks, parallel, Runtime.getRuntime().availableProcessors(), IsolatedPick.Wall.read(mapDir),
+            ) { name -> IsolatedPick.scanPatterns(name).first() in candidates }
+            if (pick.classes.isEmpty()) {
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag picked no test class: none ranks above 0 or fits the budget, so " +
+                        "this run records every class in shared JVMs"
+                )
+                return@doFirst
+            }
+            val write = { writeAtomically(handOff, IsolatedPick.handOff(test.allJvmArgs)) }
+            // Both written before anything is left out: without either, the companion cannot run them.
+            val written = runCatching {
+                writeAtomically(pending, pick.encode())
+                write()
+            }
+            if (written.isFailure) {
+                discard()
+                test.logger.lifecycle(
+                    "[yoriwake] ${test.path}: $flag could not hand its pick over (${written.exceptionOrNull()}), so this " +
+                        "run records every class in shared JVMs"
+                )
+                return@doFirst
+            }
+            // Scan patterns, not the filter: a filtered run would not date the map.
+            pick.classes.keys.forEach { test.exclude(IsolatedPick.scanPatterns(it)) }
+            // Again once every action has run, so the arguments are those the JVMs start with.
+            test.addTestListener(object : TestListener {
+                override fun beforeSuite(suite: TestDescriptor) {
+                    if (suite.parent == null) runCatching { write() }
+                }
+                override fun afterSuite(suite: TestDescriptor, result: TestResult) {}
+                override fun beforeTest(testDescriptor: TestDescriptor) {}
+                override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {}
+            })
+            test.logger.lifecycle(
+                "[yoriwake] ${test.path}: recording ${pick.classes.size} test classes in their own JVM ($flag) in " +
+                    "$companion, the rest in shared JVMs"
             )
         }
     }

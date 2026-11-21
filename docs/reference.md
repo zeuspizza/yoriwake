@@ -1397,8 +1397,57 @@ selecting builds run your tests exactly as they did.
   reaches it only through that state. A shared-JVM map sometimes selects such a test, by the rule
   above. Neither protects [order-dependent tests](#what-is-not-supported).
 
+#### Isolating only the widest classes, within a budget
+
+`-Pyoriwake.isolatedCaptureBudget=<n>x` (such as `2x` or `1.5x`) on the job that records the map
+lets that recording take up to n times a shared recording, wall clock, and spends the extra on the
+test classes whose tests the shared JVMs hold most. `1x`, the default, records as before.
+`-Pyoriwake.isolatedCapture` still isolates every class and wins when both are set, with one line
+saying the budget was ignored. On Maven, `-Dyoriwake.isolatedCaptureBudget` is accepted and the run
+records shared, with one line saying the budget is Gradle-only for now.
+
+- **The pick comes from the previous map.** Each test class is scored by its tests in shared
+  JVMs: the classes of your project that JVM had first loaded at or before a test, less those the
+  test covers itself. That counts the changes that would select the test only because of its JVM.
+  The first recording of a task has no map, records shared and says so; the next one picks.
+- **The budget is wall clock.** Each test JVM records how long it ran, its start included. A class
+  recorded alone costs what its own JVM took last time; one not yet recorded alone costs a shared
+  JVM's start overhead (its time less its tests') plus twice its tests' recorded time, as a fresh
+  JVM runs them cold (1 second plus twice, on a map recorded before JVM times were). Costs are
+  spread over the JVMs the isolated part runs at once: 4, or `-Pyoriwake.isolatedCaptureForks`, and
+  never more than the machine's processors. Classes are taken by score while that cost stays within
+  (n - 1) times the shared recording: its test task's wall time, recorded by every recording (its
+  JVMs' time over the task's `maxParallelForks` until one is). The test task's time outside its JVMs
+  is charged once, and each budgeted recording calibrates the next: its extra wall time over the
+  extra its pick predicted scales every cost (never below 1), since an isolated JVM costs more than
+  its own run (forking it, setting it up, handing back its results). Your task always keeps at
+  least one class.
+- **The pick is stable.** A class recorded alone has no shared JVM left to score it, so it keeps
+  the score it was picked with, stamped beside the map in `isolated-pick` with the budget, its cost
+  until its own JVM is measured, and the shared recording it was picked against.
+- **The picked classes run in `<task>YoriwakeIsolated`**, a test task the plugin registers beside
+  yours and runs after it, one JVM per class, with your task's classpath, framework, JVM arguments,
+  system properties and environment. Your task leaves them out through its scan patterns, so the
+  run still records the whole task, and one map holds both: `mixed`. They have their own results
+  and reports, and your task's extensions (test retry, a JaCoCo report reading your task's data) do
+  not see them. If that task does not run, their tests are missing from the map and run on every
+  selecting build until the next recording.
+- **Measured on one machine**, with the plugin's development line before 0.7.0, on generated
+  single-file changes; rows of one sample, not rates. Recording time is against a shared recording
+  of the same task on the same machine; tests selected are against the same changes selected from
+  a map recorded shared. grpc-java recorded in 1.72 times the shared recording, both tasks in one
+  invocation, with 17 of 81 classes alone, and its 9 changes selected 7,506 tests instead of
+  14,263. mockito recorded in 1.91 times and okio, where every class fits the budget, in 1.07
+  times, each as two separate invocations without the companion task; their changes selected
+  11,850 tests instead of 23,046 (12 changes) and 5,091 instead of 15,921 (4 changes). No failing
+  test was missed because of it.
+- **Not used:** a class-data-sharing archive to start the isolated JVMs faster. Gradle puts class
+  directories first on the test classpath, and a dynamic archive refuses them.
+- It does not catch order dependence, as above.
+
 `yoriwakeExplain<Task>` says how the map was recorded: `isolated`, `shared`, or `mixed` for a map
-that merged both, which only a map from an earlier release can be.
+that holds both, as a budgeted recording's does or a map from an earlier release can. For a map
+recorded within a budget it adds how many classes were recorded alone, and under which budget.
 
 ### An old map costs speed, not safety
 
@@ -2036,7 +2085,8 @@ the Gradle plugin.
   `-Dyoriwake.complement`, `-Dyoriwake.fullRun`, `-Dyoriwake.base`, `-Dyoriwake.mode` (command
   line only; see [Optimistic mode](#optimistic-mode)), `-Dyoriwake.trustedMaps`,
   `-Dyoriwake.isolatedCapture`, `-Dyoriwake.isolatedCaptureForks=<N>` (or `cores`, with
-  `isolatedCapture` only), `-Dyoriwake.recordSequentially`, `-Dyoriwake.narrowDependencies`,
+  `isolatedCapture` only), `-Dyoriwake.isolatedCaptureBudget` (accepted; records shared),
+  `-Dyoriwake.recordSequentially`, `-Dyoriwake.narrowDependencies`,
   `-Dyoriwake.narrowLineOnlyChanges`, the audit's
   `-Dyoriwake.audit.measureToll` with its two timings, and `-Dyoriwake.alwaysRun=<glob>[,<glob>…]`
   for one run. The off switch is `-Dyoriwake.enabled=false`; Gradle's `yoriwake.disabled` is not
@@ -2162,6 +2212,7 @@ Every property is a Gradle project property: `-P<name>` on the command line or i
 | `yoriwake.narrowLineOnlyChanges` | Let a selecting run narrow an edit that changes only comments, blank lines or line breaks. Overrides the build's `narrowLineOnlyChanges`; `=false` turns it off. See [Line-only changes](#line-only-changes). |
 | `yoriwake.isolatedCapture` | Record the map with a fresh test JVM per test class. Slower to record, narrower to select; a selecting run is unchanged. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
 | `yoriwake.isolatedCaptureForks=<N>` | With `yoriwake.isolatedCapture`: run up to `<N>` test JVMs at a time, or the machine's processors for `cores`, while recording in isolation; never fewer than the build's own. Off by default, and does nothing without `isolatedCapture`. See [Recording each test class in its own JVM](#recording-each-test-class-in-its-own-jvm). |
+| `yoriwake.isolatedCaptureBudget=<n>x` | Let a recording run take up to n times a shared recording, wall clock, and record the test classes the previous map ranks widest each in its own JVM. `1x` (the default) is off; `isolatedCapture` wins. See [Isolating only the widest classes, within a budget](#isolating-only-the-widest-classes-within-a-budget). |
 | `yoriwake.recordSequentially` | Record a suite that runs tests in parallel inside one JVM by running them one at a time; selecting runs keep its parallel scheduling. Overrides the extension's `recordSequentially`. |
 | `yoriwake.audit.measureToll` | With the audit: answer the payback question from two supplied timings. `-D` on Maven. |
 | `yoriwake.audit.instrumentedSeconds=<s>` | With `measureToll`: a full instrumented run's duration. `-D` on Maven. |
@@ -2264,6 +2315,7 @@ Tasks, registered per `Test` task (`<Task>` is its capitalised name, e.g. `yoriw
 | `yoriwakeAudit<Task>` | The suite's shape from its map, and every blocker with its remedy. Runs no tests. Registered even on a task the plugin declined. |
 | `yoriwakeExplain<Task>` | What selection would do about the current change, and which class forces a full run if one does. Compiles what the test task compiles, and runs no tests. |
 | `yoriwakeDecode<Task>` | Decodes a run's records into the map. A finalizer of the test task; you do not call it. |
+| `<task>YoriwakeIsolated` | With `-Pyoriwake.isolatedCaptureBudget`: runs the test classes the budget picked, each in its own JVM. A finalizer of the test task; you do not call it. |
 
 ## Upgrading and your map
 

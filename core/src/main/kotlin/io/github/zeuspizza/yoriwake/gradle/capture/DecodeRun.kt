@@ -20,6 +20,8 @@ import io.github.zeuspizza.yoriwake.gradle.report.Observation
 import io.github.zeuspizza.yoriwake.gradle.wiring.declinedLeftAloneMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.develocityRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.fullRunMarker
+import io.github.zeuspizza.yoriwake.gradle.wiring.isolatedHandOff
+import io.github.zeuspizza.yoriwake.gradle.wiring.testWallMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.parallelRefusalMarker
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.wiring.pendingHead
@@ -144,6 +146,14 @@ internal class DecodeRun(
             file.takeIf(File::isFile)?.let { runCatching { it.readText().trim() }.getOrDefault("") }
                 .also { runCatching { file.delete() } }
         }
+        // This run's pick of classes recorded alone, read once and removed: it becomes the map's
+        // stamp only if this decode writes the map.
+        val pick = IsolatedPick.takePending(mapDir)
+        val testWall = testWallMarker(mapDir).let { file ->
+            file.takeIf(File::isFile)?.let { runCatching { it.readText().trim().toDouble() }.getOrNull() }
+                .also { runCatching { file.delete() } }
+        }
+        runCatching { isolatedHandOff(mapDir).delete() }
         val datesTheMap = undatedAtExecution == null && this.datesTheMap
         val wholeTask = undatedAtExecution == null && this.wholeTask
         val undatedReason = undatedAtExecution ?: this.undatedReason
@@ -450,6 +460,12 @@ internal class DecodeRun(
                 )
             }
             else -> {
+                runCatching { IsolatedPick.recordWall(mapDir, pick, testWall) }
+                runCatching { IsolatedPick.commit(mapDir, pick) }
+                    .onFailure {
+                        runCatching { File(mapDir, IsolatedPick.STAMP_FILE).delete() }
+                        logger.info("[yoriwake] $taskPath: the isolated pick could not be stamped beside the map ($it)")
+                    }
                 writeDigest(taskPath)
                 Audit.TaskFacts.recordCoverage(mapDir, true)
                 // A merge that worked is the only thing that clears the refusal.

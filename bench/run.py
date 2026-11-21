@@ -4940,6 +4940,13 @@ def argument_parser():
     parser.add_argument("--isolated-capture", action="store_true",
                         help="record with -Pyoriwake.isolatedCapture; writes "
                              "results/<project>.isolated.json")
+    # A MAP RECORDED WITHIN A BUDGET. A budgeted recording leaves a mixed map, which the shared arm
+    # otherwise refuses as the isolated arm's and re-captures over; this lets its rows select
+    # against it instead. The map must still be this run's own capture (its stamp is checked).
+    parser.add_argument("--reuse-budgeted-map", action="store_true",
+                        help="let the shared arm reuse a mixed map on disk, as a recording with "
+                             "-Pyoriwake.isolatedCaptureBudget leaves, instead of re-capturing "
+                             "over it")
     parser.add_argument("--isolated-forks", type=int, default=os.cpu_count() or 1, metavar="N",
                         help="maxParallelForks for the isolated recording only (default: cores)")
     # THE SAME TARGETS, AND ONE GROUND TRUTH FOR BOTH ARMS. The full arm asks which tests the mutated
@@ -5362,7 +5369,7 @@ def main():
     # on disk is whichever arm captured last; reusing it would measure one arm's selection against
     # the other's recording. And a map of another schema is refused by the agent, so every row
     # would force.
-    fits, why = sweep_data.map_fits_arm(map_dir, args.isolated_capture)
+    fits, why = sweep_data.map_fits_arm(map_dir, args.isolated_capture, args.reuse_budgeted_map)
     wanted_schema = sweep_data.checkout_schema_version(SOURCE)
     found_schema = sweep_data.schema_version(map_dir)
     if fits and map_dir and wanted_schema is not None and found_schema != wanted_schema:
