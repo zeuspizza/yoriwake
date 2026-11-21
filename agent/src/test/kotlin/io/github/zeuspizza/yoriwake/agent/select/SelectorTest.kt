@@ -1914,15 +1914,62 @@ class SelectorTest {
     }
 
     @Test
-    fun `a changed class no test executed forces when a JVM first touched it between tests`(@TempDir dir: File) {
-        // A teardown between classes runs after the tests of its class, which the window would leave out.
+    fun `a changed class first touched between tests runs the tests of the class before the touch`(@TempDir dir: File) {
+        // A teardown between classes runs after the tests of its class, which the window alone would leave out.
+        val m = map(
+            dir,
+            test("com.acme.EarlierTest", "com.acme.Other"),
+            test("com.acme.TornDownTest", "com.acme.Other"),
+            test("com.acme.NextTest", "com.acme.Other"),
+            positions = listOf(
+                "j\t1\t${placed("com.acme.EarlierTest")}", "j\t2\t${placed("com.acme.TornDownTest")}",
+                "j\t4\t${placed("com.acme.NextTest")}",
+            ),
+            firstTouches = listOf("j\t3\tcom.acme.Port"),
+        )
+        val decision = decide(m, changed = listOf("com.acme.Port"))
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.TornDownTest")))
+        assertTrue(decision.includes(placed("com.acme.NextTest")))
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+        val rules = Selector.rules(m, ChangeSet.of(listOf("com.acme.Port"), emptyList()), true)
+        assertTrue(Rule.SHARES_JVM_CHANGED_CLASS in
+            rules.rulesFor(placed("com.acme.TornDownTest"), Verdict.SHARES_JVM_WITH_CHANGE))
+    }
+
+    @Test
+    fun `a changed class first touched after a skipped test runs the class that ran before it`(@TempDir dir: File) {
+        // A skipped test is recorded without running, so it can stand between a teardown and the class it tears down.
         val decision = decide(
             map(
                 dir,
                 test("com.acme.TornDownTest", "com.acme.Other"),
-                test("com.acme.NextTest", "com.acme.Other"),
-                positions = listOf("j\t1\t${placed("com.acme.TornDownTest")}", "j\t3\t${placed("com.acme.NextTest")}"),
-                firstTouches = listOf("j\t2\tcom.acme.Port"),
+                test("com.acme.NextTest", "", outcome = "SKIPPED"),
+                test("com.acme.LaterTest", "com.acme.Other"),
+                positions = listOf(
+                    "j\t1\t${placed("com.acme.TornDownTest")}", "j\t2\t${placed("com.acme.NextTest")}",
+                    "j\t4\t${placed("com.acme.LaterTest")}",
+                ),
+                firstTouches = listOf("j\t3\tcom.acme.Port"),
+            ),
+            changed = listOf("com.acme.Port"),
+        )
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertTrue(decision.includes(placed("com.acme.TornDownTest")))
+    }
+
+    @Test
+    fun `a changed class no test executed forces when a JVM first touched it after its last test`(@TempDir dir: File) {
+        // A shutdown hook runs there, and no test runs it again.
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.EarlierTest", "com.acme.Other"),
+                test("com.acme.LastTest", "com.acme.Other"),
+                positions = listOf("j\t1\t${placed("com.acme.EarlierTest")}", "j\t2\t${placed("com.acme.LastTest")}"),
+                firstTouches = listOf("j\t3\tcom.acme.Port"),
             ),
             changed = listOf("com.acme.Port"),
         )
@@ -2302,7 +2349,7 @@ class SelectorTest {
                 "j\t4\t${placed("dev.jvm.B1ReadsSourceTest")}",
                 "k\t2\t${placed("dev.jvm.PlatformTest")}",
             ),
-            firstTouches = listOf("j\t3\tdev.jvm.Platform.jvm", "k\t2\tdev.jvm.Platform_jvmKt"),
+            firstTouches = listOf("j\t4\tdev.jvm.Platform.jvm", "k\t2\tdev.jvm.Platform_jvmKt"),
         )
 
         val decision = decide(m, changed = listOf("dev.jvm.Platform_jvm"))

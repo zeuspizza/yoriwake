@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.Predicate;
 
 /**
@@ -834,26 +835,27 @@ public final class Selector {
             }
         }
         Map<Rule, Map<String, Integer>> opened = new EnumMap<>(Rule.class);
+        Map<Rule, List<MapReader.FirstTouch>> openers = new EnumMap<>(Rule.class);
         for (MapReader.FirstTouch touch : map.firstTouches()) {
             String name = touch.className();
             if (AgentContract.FIRST_TOUCH_ANY.equals(name)) {
-                open(opened, Rule.SHARES_JVM_UNOBSERVED, touch);
+                open(opened, openers, Rule.SHARES_JVM_UNOBSERVED, touch);
             }
             if (bytes.contains(name)) {
-                open(opened, Rule.SHARES_JVM_CHANGED_BYTES, touch);
+                open(opened, openers, Rule.SHARES_JVM_CHANGED_BYTES, touch);
             }
             if (touchesChange(name, dated, changed)
                     && !AgentContract.FIRST_TOUCH_ANY.equals(name)) {
-                open(opened, Rule.SHARES_JVM_CHANGED_CLASS, touch);
+                open(opened, openers, Rule.SHARES_JVM_CHANGED_CLASS, touch);
             }
         }
         if (!exempt.isEmpty()) {
             for (MapReader.FirstTouch named : map.namedTouches()) {
                 String name = named.className();
                 if (AgentContract.FIRST_TOUCH_ANY.equals(name)) {
-                    open(opened, Rule.SHARES_JVM_UNOBSERVED, named);
+                    open(opened, openers, Rule.SHARES_JVM_UNOBSERVED, named);
                 } else if (touchesChange(name, exempt, changed)) {
-                    open(opened, Rule.SHARES_JVM_CHANGED_CLASS, named);
+                    open(opened, openers, Rule.SHARES_JVM_CHANGED_CLASS, named);
                 }
             }
             for (Map.Entry<String, Integer> first : ownFirstTests(map, tests, exempt).entrySet()) {
@@ -872,6 +874,7 @@ public final class Selector {
         // An ignored path alone opens only its own window: the unobserved one belongs to the others.
         if (!unpositionedRun) {
             opened.remove(Rule.SHARES_JVM_UNOBSERVED);
+            openers.remove(Rule.SHARES_JVM_UNOBSERVED);
         }
         if (!ignored.isEmpty()) {
             Map<String, Integer> windows = ignoredPathWindows(map, ignored);
@@ -896,10 +899,84 @@ public final class Selector {
                 }
             }
         }
+        for (Map.Entry<Rule, List<MapReader.FirstTouch>> touches : openers.entrySet()) {
+            for (String id : teardownOwners(map, tests, touches.getValue())) {
+                add(byTest, id, touches.getKey());
+            }
+        }
     }
 
-    private static void open(Map<Rule, Map<String, Integer>> opened, Rule rule, MapReader.FirstTouch touch) {
+    private static void open(Map<Rule, Map<String, Integer>> opened, Map<Rule, List<MapReader.FirstTouch>> openers,
+            Rule rule, MapReader.FirstTouch touch) {
         opened.computeIfAbsent(rule, key -> new HashMap<>()).merge(touch.jvm(), touch.sequence(), Math::min);
+        openers.computeIfAbsent(rule, key -> new ArrayList<>()).add(touch);
+    }
+
+    /**
+     * The tests of each class whose teardown took one of the touches: a touch between two tests of
+     * its JVM ran after the test before it, in the teardown of that test's class or the setup of
+     * the next one, and running any test of the class runs its teardown again. The next class's
+     * tests run from the touch on already.
+     */
+    private static Set<String> teardownOwners(MapReader.Result map, List<MapReader.Entry> tests,
+            Collection<MapReader.FirstTouch> touches) {
+        Set<String> owners = new HashSet<>();
+        if (touches.isEmpty()) {
+            return owners;
+        }
+        Map<String, TreeMap<Integer, MapReader.Entry>> ran = testsBySequence(map, tests);
+        Set<String> scopes = new HashSet<>();
+        for (MapReader.FirstTouch touch : touches) {
+            scopes.addAll(teardownScopes(ran, touch));
+        }
+        for (MapReader.Entry test : tests) {
+            for (String scope : scopes) {
+                if (test.testId().startsWith(scope)) {
+                    owners.add(test.testId());
+                    break;
+                }
+            }
+        }
+        return owners;
+    }
+
+    /** Each JVM's tests by the sequence they ran at. */
+    private static Map<String, TreeMap<Integer, MapReader.Entry>> testsBySequence(MapReader.Result map,
+            List<MapReader.Entry> tests) {
+        Map<String, TreeMap<Integer, MapReader.Entry>> ran = new HashMap<>();
+        for (MapReader.Entry test : tests) {
+            for (MapReader.Position position : map.positionsOf(test.testId())) {
+                ran.computeIfAbsent(position.jvm(), jvm -> new TreeMap<>()).put(position.sequence(), test);
+            }
+        }
+        return ran;
+    }
+
+    /**
+     * The class scopes of the tests before a touch taken between two tests of its JVM, back to the
+     * last one that passed. A skipped test, or one its container failed, is recorded without running
+     * and may stand between a class's last test and its teardown; one that did not pass may have run
+     * no test code either. Empty for a touch during a test, before the JVM's first test or after its
+     * last (startup or shutdown, which no class owns), and when one of those tests names no class.
+     */
+    private static Set<String> teardownScopes(Map<String, TreeMap<Integer, MapReader.Entry>> ran,
+            MapReader.FirstTouch touch) {
+        TreeMap<Integer, MapReader.Entry> inJvm = ran.get(touch.jvm());
+        if (inJvm == null || inJvm.containsKey(touch.sequence()) || inJvm.higherKey(touch.sequence()) == null) {
+            return Collections.emptySet();
+        }
+        Set<String> scopes = new HashSet<>();
+        for (MapReader.Entry before : inJvm.headMap(touch.sequence(), false).descendingMap().values()) {
+            String scope = TestClassIds.scopeOf(before.testId());
+            if (scope == null) {
+                return Collections.emptySet();
+            }
+            scopes.add(scope);
+            if (AgentContract.OUTCOME_SUCCESSFUL.equals(before.outcome())) {
+                break;
+            }
+        }
+        return scopes;
     }
 
     private static void add(Map<String, EnumSet<Rule>> byTest, String testId, Rule rule) {
@@ -912,16 +989,18 @@ public final class Selector {
      * cached) to the first test that triggers it, and a test that only reflects on a class or reads
      * its class file executes none of it; either way the dependent test records nothing. Nothing
      * about a class can reach a test before the class arrived in that test's JVM, so the tests
-     * before that point are the only ones this rule lets go.
+     * before that point are the only ones this rule lets go, except the tests of a class whose
+     * teardown took the touch ({@link #teardownOwners}).
      *
      * <p>A test the map holds no position for runs: nothing says it ran before anything.
      */
     private static Set<String> ranAfterFirstTouch(MapReader.Result map, List<MapReader.Entry> tests,
             Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt,
             Set<Rule> loosened) {
+        List<MapReader.FirstTouch> opening = new ArrayList<>();
         Map<String, Integer> firstTouchByJvm = firstTouchWindows(map, tests, changedClassPrefixes, changedBytes, exempt,
-                loosened);
-        Set<String> after = new HashSet<>();
+                loosened, opening);
+        Set<String> after = teardownOwners(map, tests, opening);
         for (MapReader.Entry test : tests) {
             List<MapReader.Position> positions = map.positionsOf(test.testId());
             if (positions.isEmpty()) {
@@ -939,10 +1018,13 @@ public final class Selector {
         return after;
     }
 
-    /** Where {@link #ranAfterFirstTouch}'s window opens in each JVM; a JVM it does not name has none. */
+    /**
+     * Where {@link #ranAfterFirstTouch}'s window opens in each JVM; a JVM it does not name has none.
+     * Every touch that opens it is added to {@code opening}.
+     */
     private static Map<String, Integer> firstTouchWindows(MapReader.Result map, List<MapReader.Entry> tests,
             Collection<String> changedClassPrefixes, Set<String> changedBytes, Set<String> exempt,
-            Set<Rule> loosened) {
+            Set<Rule> loosened, List<MapReader.FirstTouch> opening) {
         Map<String, Integer> firstTouchByJvm = new HashMap<>();
         List<String> dated = new ArrayList<>();
         for (String prefix : changedClassPrefixes) {
@@ -963,6 +1045,7 @@ public final class Selector {
                             || classes && touchesChange(name, dated, changedClassPrefixes);
             if (opens) {
                 firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
+                opening.add(touch);
             }
         }
         // An exempt test class is dated by what can reach it from outside its own tests, and by
@@ -975,6 +1058,7 @@ public final class Selector {
                         : classes && touchesChange(name, exempt, changedClassPrefixes);
                 if (opens) {
                     firstTouchByJvm.merge(touch.jvm(), touch.sequence(), Math::min);
+                    opening.add(touch);
                 }
             }
             if (classes) {
@@ -1025,7 +1109,7 @@ public final class Selector {
         MapReader.JarTouches debug = map.debugTouches();
         Set<String> exempt = exemptKnownToMap(change.exemptTestClasses(), lines, knownTestIds);
         Map<String, Integer> arrived = firstTouchWindows(map, tests, lines, Collections.<String>emptySet(), exempt,
-                loosened);
+                loosened, new ArrayList<MapReader.FirstTouch>());
         Map<String, Integer> seen = new HashMap<>();
         for (MapReader.FirstTouch touch : debug.touches()) {
             String name = touch.className();
@@ -1476,9 +1560,9 @@ public final class Selector {
      * touch of the class never loaded or read it. A map merged from two captures may hold a JVM
      * recorded under a scope that left the class out.
      *
-     * <p>Each touch must fall in a test's own window or before its JVM's first test. One taken
-     * between tests (a class's teardown) dates the class after the tests of the class that ran it,
-     * and no coverage record of that class puts them back, as it does for a covered class. The name
+     * <p>Each touch must fall in a test's own window, before its JVM's first test, or between two
+     * tests, where {@link #teardownOwners} adds the tests of the class whose teardown it ran in. One
+     * after the JVM's last test may be a shutdown hook's, which no test runs again. The name
      * must match as coverage does: the wider match a Kotlin file's read allows only selects more
      * where it opens a window, but here it would stand in for a force.
      */
@@ -1487,14 +1571,7 @@ public final class Selector {
         if (exempt.contains(prefix)) {
             return false;
         }
-        Map<String, Integer> firstTests = new HashMap<>();
-        Map<String, Set<Integer>> testWindows = new HashMap<>();
-        for (MapReader.Entry test : tests) {
-            for (MapReader.Position position : map.positionsOf(test.testId())) {
-                firstTests.merge(position.jvm(), position.sequence(), Math::min);
-                testWindows.computeIfAbsent(position.jvm(), jvm -> new HashSet<>()).add(position.sequence());
-            }
-        }
+        Map<String, TreeMap<Integer, MapReader.Entry>> ran = testsBySequence(map, tests);
         boolean named = false;
         for (MapReader.FirstTouch touch : map.firstTouches()) {
             if (AgentContract.FIRST_TOUCH_ANY.equals(touch.className())
@@ -1502,9 +1579,9 @@ public final class Selector {
                 continue;
             }
             named = true;
-            Integer firstTest = firstTests.get(touch.jvm());
-            if (firstTest != null && touch.sequence() > firstTest
-                    && !testWindows.get(touch.jvm()).contains(touch.sequence())) {
+            TreeMap<Integer, MapReader.Entry> inJvm = ran.get(touch.jvm());
+            if (inJvm != null && touch.sequence() > inJvm.firstKey() && !inJvm.containsKey(touch.sequence())
+                    && teardownScopes(ran, touch).isEmpty()) {
                 return false;
             }
         }
