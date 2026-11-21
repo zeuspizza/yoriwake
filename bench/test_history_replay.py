@@ -188,7 +188,7 @@ def case_a_commit_the_harness_cannot_stage_is_excluded():
     failures = 0
     stubs = Stubs(staging=["c1"])
     _, rows = walk(stubs, pairs("c1", "c2"))
-    if [row.get("reason") for row in rows] != ["not-staged", "parent-did-not-build"]:
+    if [row.get("reason") for row in rows] != ["not-staged", "parent-not-staged"]:
         failures += fail(f"an unstaged commit: {rows}")
     return failures
 
@@ -261,7 +261,7 @@ def case_optimistic_leaves_out_the_loosened_tests_from_the_safe_run():
     stubs = Stubs(full={"c1": (hr.OK, ["T::b"])}, explain={"c1": [loosened]})
     _, rows = walk(stubs, pairs("c1", "c2"), explain=True)
     first = rows[0]["optimistic"]
-    if first != {"executions": 2, "loosened": 2, "missed": ["T::b"]}:
+    if first != {"executions": 2, "loosened": 2, "missed": ["T::b"], "flaky": []}:
         failures += fail(f"the optimistic decision: {first}")
     if rows[0]["missed"]:
         failures += fail("the optimistic miss leaked into the safe row")
@@ -338,14 +338,21 @@ def case_the_window_is_the_first_parent_commits_after_its_start():
 
 def case_the_plan_sizes_shards_and_the_merge_names_a_missing_one():
     failures = 0
-    entries = hr.plan(["jsoup-history", "moshi"], "full")
+    entries = hr.plan(["jsoup-history", "moshi"], "full", tip=lambda url: "tip")
     jsoup = [e for e in entries if e["project"] == "jsoup-history"]
     if len(jsoup) != 2 or "--from" not in jsoup[0]["args"]:
         failures += fail(f"jsoup-history's plan: {jsoup}")
-    latest = hr.plan(["moshi"], "latest")
-    if latest[0]["args"][:4] != ["--to", "origin/HEAD", "--commits", "20"]:
+    latest = hr.plan(["moshi", "jsoup-history"], "latest", tip=lambda url: f"tip-of-{url}")
+    if latest[0]["args"][:4] != ["--to", "tip-of-https://github.com/square/moshi.git", "--commits",
+                                 "20"]:
         failures += fail(f"the later releases' window: {latest}")
-    if "--isolated" not in hr.plan(["grpc-java"], "full", {"grpc-java"})[0]["args"]:
+    shenyu = hr.plan(["shenyu"], "full", tip=None)
+    budget = int(shenyu[0]["args"][shenyu[0]["args"].index("--budget-minutes") + 1])
+    per_shard = -(-200 // len(shenyu))
+    if (per_shard + 1) * hr.PAIR_SECONDS["shenyu"] > budget * 60 + hr.PAIR_SECONDS["shenyu"]:
+        failures += fail(f"shenyu's shards hold more pairs than their budget: {len(shenyu)} shards, "
+                         f"{budget} minutes")
+    if "--isolated" not in hr.plan(["grpc-java"], "full", {"grpc-java"}, tip=None)[0]["args"]:
         failures += fail("the isolated arm was not planned")
     directory = tempfile.mkdtemp(prefix="history-merge-")
     TMP.append(directory)
@@ -379,6 +386,90 @@ def case_a_poms_own_arg_line_is_staged_to_carry_the_agents():
     got = [open(os.path.join(root, p), encoding="utf-8").read() for p in ("pom.xml", "m/pom.xml")]
     if got != ["<argLine>@{argLine} -Xss640k</argLine>", "<argLine>@{argLine} -Xmx1g</argLine>"]:
         failures += fail(f"the staged argLines: {got}")
+    return failures
+
+
+def case_a_root_module_report_reruns_without_a_module():
+    failures = 0
+    builds = hr.Builds.__new__(hr.Builds)
+    builds.reactor, builds.checkout, builds.module = True, "/c", ""
+    got = [builds._module_of(p) for p in ("/c/target/surefire-reports/TEST-a.xml",
+                                          "/c/m/n/target/surefire-reports/TEST-b.xml")]
+    if got != ["", "m/n"]:
+        failures += fail(f"the modules of root and nested reports: {got}")
+    return failures
+
+
+def case_a_gradle_run_that_only_failed_tests_is_measured():
+    failures = 0
+    directory = tempfile.mkdtemp(prefix="history-gradle-")
+    TMP.append(directory)
+    logs = {"tests": "* What went wrong:\nExecution failed for task ':m:test'.\n> There were "
+                     "failing tests.\n\n* Try:\n",
+            "both": "* What went wrong:\nCompilation failed.\n\n* What went wrong:\n> There "
+                    "were failing tests.\n\n* Try:\n",
+            "none": "BUILD FAILED\n"}
+    want = {"tests": hr.OK, "both": hr.BUILD_FAILED, "none": hr.BUILD_FAILED}
+    for name, text in logs.items():
+        path = os.path.join(directory, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if hr._gradle_status(1, path) != want[name]:
+            failures += fail(f"a {name} log read as {hr._gradle_status(1, path)}")
+    if hr._gradle_status(0, "") != hr.OK or hr._gradle_status(hr.STALLED, "") != hr.TIMED_OUT:
+        failures += fail("exit codes 0 and stalled are not ok and timed-out")
+    return failures
+
+
+def case_a_selecting_run_that_fails_to_build_is_select_failed():
+    failures = 0
+
+    class Broken(Stubs):
+        def select(self, base):
+            super().select(base)
+            return hr.Arm(hr.BUILD_FAILED, report([]), 1.0)
+
+    _, rows = walk(Broken(), pairs("c1", "c2"))
+    if [row.get("reason") for row in rows] != ["select-failed", "select-failed"]:
+        failures += fail(f"a selecting run that failed to build: {rows}")
+    return failures
+
+
+def case_the_shared_row_lists_only_the_flaky_tests_it_missed():
+    failures = 0
+    loosened = {"loosened": [{"test": "[engine:junit-jupiter]/[class:T]/[method:b()]"}]}
+    stubs = Stubs(full={"c1": (hr.OK, ["T::b", "T::c"])}, selected={"c1": ["T::a", "T::b"]},
+                  flaky=["T::b", "T::c"], explain={"c1": [loosened]})
+    _, rows = walk(stubs, pairs("c1"), explain=True)
+    if rows[0]["flaky"] != ["T::c"] or rows[0]["optimistic"]["flaky"] != ["T::b"]:
+        failures += fail(f"the flaky tests: {rows[0]['flaky']}, {rows[0]['optimistic']}")
+    return failures
+
+
+def case_progress_files_the_unwalked_pairs_as_budget():
+    failures = 0
+    seen = []
+    window = pairs("c1", "c2", "c3")
+    hr.walk(window, prepare=Stubs().prepare, record=Stubs().record, select=Stubs().select,
+            rerun_alone=lambda t, m: False, budget_seconds=1e9, clock=Clock(),
+            progress=lambda initial, rows: seen.append(hr.sums(hr.with_unwalked(window, rows))))
+    if [(s["measured"], s["excluded"].get("budget", 0), s["sums"]) for s in seen] != \
+            [(0, 3, True), (1, 2, True), (2, 1, True), (3, 0, True)]:
+        failures += fail(f"the partial files' sums: {seen}")
+    return failures
+
+
+def case_the_merge_names_shards_that_walked_different_windows():
+    failures = 0
+    directory = tempfile.mkdtemp(prefix="history-chain-")
+    TMP.append(directory)
+    for index, rows in ((1, pairs("c1")), (2, [{"sha": "x2", "parent": "x1"}])):
+        _, walked = walk(Stubs(), rows)
+        with open(os.path.join(directory, hr.shard_file("demo", index, 2)), "w") as handle:
+            json.dump({"schema": hr.SCHEMA, "project": "demo", "rows": walked}, handle)
+    merged = hr.merge(directory, [{"project": "demo", "shard": i, "of": 2} for i in (1, 2)])
+    if not any("does not follow" in entry for entry in merged["missing"]):
+        failures += fail(f"a break between shards was not named: {merged['missing']}")
     return failures
 
 

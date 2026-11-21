@@ -116,7 +116,10 @@ jobs:
           cache-read-only: true
           # A walked project's own failing tests fail builds here; the shard's file tells what failed.
           add-job-summary: never
+      # Ends before the job does, so a shard that overruns still uploads the file it has written
+      # after every commit.
       - name: walk the shard
+        timeout-minutes: 350
         env:
           NAME: ${{ matrix.entry.project }}
           SHARD: ${{ matrix.entry.shard }}

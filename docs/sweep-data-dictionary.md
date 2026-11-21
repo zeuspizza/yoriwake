@@ -423,7 +423,8 @@ merged `history.json` in the run's draft release `history-<run>` with its page `
 A shard's file: `schema` (`history-replay/v1`), `project`, `plugin_commit`, `scope` (`reactor`
 or the measured module), `first` and `last` (its commits), `shard` and `of`, `budget_minutes`,
 `isolated`, `seconds`, `initial` (the recording at its first commit's parent: `sha`, `status`,
-`executions`, `seconds`), `rows` and `sums`.
+`executions`, `seconds`), `rows` and `sums`. The file is rewritten after every commit, the commits not yet walked filed
+`budget`, so a job stopped mid-shard leaves one whose sums hold.
 
 A row:
 
@@ -431,7 +432,7 @@ A row:
 |---|---|
 | `sha`, `parent` | the commit and its first parent |
 | `outcome` | `measured` or `excluded` |
-| `reason` | of an excluded commit: `does-not-build`, `not-staged`, `parent-did-not-build`, `parent-timed-out`, `timed-out`, `select-failed` or `budget` |
+| `reason` | of an excluded commit: `does-not-build`, `not-staged`, `parent-not-staged`, `parent-did-not-build`, `parent-timed-out`, `timed-out`, `select-failed` or `budget` |
 | `selected_executions`, `full_executions` | test executions (JUnit XML `testcase` entries, skipped ones left out) of the selecting run and of the full run at the commit |
 | `full_skipped` | skipped entries of the full run |
 | `narrowed` | whether the selecting run ran fewer executions than the full run |
@@ -439,9 +440,9 @@ A row:
 | `failed_at_parent`, `failed_at_commit`, `failed_at_commit_named` | failing tests of the two full runs, and up to 50 of the commit's named |
 | `at_risk` | failing at the commit, passing or absent at the parent |
 | `missed` | at risk and not run by the selecting run, flaky ones taken out |
-| `flaky` | missed tests that passed in one of three runs of their class alone, without the plugin |
+| `flaky` | tests the selecting run missed that passed in one of three runs of their class alone, without the plugin |
 | `failing_both` | tests failing at the parent and the commit, never at risk |
-| `optimistic` | the explain task's answer under `yoriwake.mode=optimistic`: `executions` (the selecting run's, less the tests it loosens), `loosened`, `missed`; `{"unanswered": true}` when no explanation came back; absent when not asked |
+| `optimistic` | the explain task's answer under `yoriwake.mode=optimistic`: `executions` (the selecting run's, less the tests it loosens), `loosened`, `missed`, `flaky` (re-run tests only this mode would have missed); `{"unanswered": true}` when no explanation came back; absent when not asked |
 | `isolated` | with `--isolated`: the selecting run against the isolated map, `selected_executions`, `narrowed`, `missed`, `flaky`, measured against the shared full run, and `recorded` (whether the isolated map was re-recorded here) |
 | `seconds`, `seconds_by_run` | the pair, and its selecting and full runs |
 
@@ -455,7 +456,7 @@ reason is one of the table's).
 The merged file: `projects`, each with `scope`, `first`, `last`, `plugin_commits`, `shards`,
 `initial` per shard, `sums`, `rows` and `blastradius` (its published window, pairs and full-suite
 executions, for the four projects it measured); `missing`, planned shards with no readable file,
-never counted as zero; `caveats`, what the table may claim.
+never counted as zero, and any row that does not follow the one before it (two shards that walked different windows); `caveats`, what the table may claim.
 
 ## Raw evidence
 

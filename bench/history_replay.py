@@ -27,7 +27,7 @@ A project file with `scope = "reactor"` (Maven only) runs the whole reactor's Su
 
 Every commit of the window ends in one outcome: `measured`, or `excluded` with its reason:
 `does-not-build` (C's full run failed for a reason other than tests), `not-staged` (the harness
-could not stage C), `parent-did-not-build` or `parent-timed-out` (no map and no truth at the
+could not stage C), `parent-not-staged`, `parent-did-not-build` or `parent-timed-out` (no map and no truth at the
 parent), `timed-out` (C's full run), `select-failed` (the selecting run failed for a non-test
 reason) or `budget` (the time budget ran out first). After an excluded commit the walk records again
 at the next one, so every measured pair is one commit's change.
@@ -58,7 +58,8 @@ from process import STALLED  # noqa: E402
 
 SCHEMA = "history-replay/v1"
 MEASURED, EXCLUDED = "measured", "excluded"
-EXCLUDED_REASONS = ("does-not-build", "not-staged", "parent-did-not-build", "parent-timed-out",
+EXCLUDED_REASONS = ("does-not-build", "not-staged", "parent-not-staged", "parent-did-not-build",
+                    "parent-timed-out",
                     "timed-out", "select-failed", "budget")
 OK, BUILD_FAILED, TIMED_OUT = "ok", "build-failed", "timed-out"
 RERUNS = 3
@@ -68,8 +69,6 @@ NAMED = 50
 # The corpus projects walk this many first-parent commits up to their pin.
 CORPUS_COMMITS = 50
 LATEST_COMMITS = 20
-# A shard's commits fit about this much of a six-hour job.
-SHARD_SECONDS = 5 * 3600
 # Seconds per pair on a runner: one recording full run plus one selecting run. Estimates from each
 # project's full-run size until measured pairs replace them; they size shards, nothing else.
 PAIR_SECONDS = {"shenyu": 2700, "httpcomponents-client": 540, "commons-io": 540,
@@ -93,7 +92,8 @@ CAVEATS = (
     "own; the mutation sweep remains the recall figure.",
     "A recording run's failures stand for a plain run's.",
     "Optimistic mode is the explain task's decision on the same tree, not a run.",
-    "A missed test re-run alone is its class run without the plugin, three times at most.",
+    "A missed test re-run alone is its class run without the plugin, three times at most; one "
+    "that fails at the commit only beside other classes passes alone and is filed flaky.",
     "Commits excluded are counted apart, never as measured.",
 )
 
@@ -187,23 +187,25 @@ def measure(selected, full, parent, rerun_alone, explanations=None):
         candidates = missed
     flaky = {test for test in candidates if rerun_alone(test, selected.modules.get(test)
                                                          or full.modules.get(test))}
+    shared_flaky = flaky & missed
     missed -= flaky
     if explanations:
         opt_missed = candidates - flaky
         optimistic = {"executions": selected.executions - sum(selected.counts[k] for k in left_out),
-                      "loosened": len(left_out), "missed": named(opt_missed)}
+                      "loosened": len(left_out), "missed": named(opt_missed),
+                      "flaky": named(flaky - shared_flaky)}
     elif explanations is not None:
         optimistic = {"unanswered": True}
     return {"selected_executions": selected.executions, "full_executions": full.executions,
             "full_skipped": full.skipped, "narrowed": selected.executions < full.executions,
             "failed_at_parent": len(parent.failed), "failed_at_commit": len(full.failed),
             "failed_at_commit_named": named(full.failed)[:NAMED],
-            "at_risk": named(at_risk), "missed": named(missed), "flaky": named(flaky),
+            "at_risk": named(at_risk), "missed": named(missed), "flaky": named(shared_flaky),
             "failing_both": len(both), "optimistic": optimistic}
 
 
 def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain=None,
-         isolated=None, clock=time.monotonic):
+         isolated=None, clock=time.monotonic, progress=None):
     """`(initial, rows)`: the recording at the window's first parent and one row per pair, in
     order.
 
@@ -215,6 +217,7 @@ def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain
     `isolated`, when given, is `{"record", "select"}` for the isolated map beside the shared one;
     its `select(base)` runs against that map and its `record()` re-records it at the commit.
     Once `budget_seconds` have passed, the pairs left are excluded `budget`.
+    `progress(initial, rows)`, when given, is called after the initial recording and each row.
     """
     started = clock()
     rows = []
@@ -223,7 +226,7 @@ def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain
     staged = prepare(pairs[0]["parent"]) if pairs else None
     initial = {"sha": pairs[0]["parent"] if pairs else None}
     if pairs and staged is None:
-        reason = "parent-did-not-build"
+        reason = "parent-not-staged"
         initial["status"] = "not-staged"
     elif pairs:
         full = record()
@@ -232,6 +235,8 @@ def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain
         base, truth, reason = _after(full, staged)
         if isolated is not None and base is not None:
             iso_ready = isolated["record"]().status == OK
+    if progress is not None:
+        progress(initial, rows)
     for pair in pairs:
         row = {"sha": pair["sha"], "parent": pair["parent"]}
         if clock() - started >= budget_seconds:
@@ -241,7 +246,7 @@ def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain
         staged = prepare(pair["sha"])
         if staged is None:
             row.update(outcome=EXCLUDED, reason="not-staged")
-            base, truth, reason, iso_ready = None, None, "parent-did-not-build", False
+            base, truth, reason, iso_ready = None, None, "parent-not-staged", False
         elif base is None:
             full = record()
             row.update(outcome=EXCLUDED, reason=reason, full_status=full.status)
@@ -272,6 +277,8 @@ def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain
             base, truth, reason = _after(full, staged)
         row["seconds"] = round(clock() - began, 1)
         rows.append(row)
+        if progress is not None:
+            progress(initial, rows)
         print(f"  {pair['sha'][:12]} {row['outcome']} {row.get('reason') or ''}"
               f"{_summary(row)}".rstrip(), flush=True)
     return initial, rows
@@ -450,7 +457,11 @@ class Builds:
 
     def _module_of(self, path):
         relative = os.path.relpath(path, self.checkout).replace(os.sep, "/")
-        return relative.split("/target/surefire-reports/")[0] if self.reactor else self.module
+        if not self.reactor:
+            return self.module
+        # A report of the root module is `target/surefire-reports/...`: no `-pl` for it.
+        head, found, _ = ("/" + relative).partition("/target/surefire-reports/")
+        return head.lstrip("/") if found else ""
 
     def _maven(self, arguments, log, select=False):
         maven_build.remove_stale_resources(self.checkout)
@@ -618,22 +629,25 @@ class MapSwap:
 
 
 def replay_project(project, checkout, pairs, budget_minutes, logs, *, explain=True, isolated=False,
-                   publish=False):
-    """The shard's file: the initial recording, its rows and their sums."""
+                   publish=False, write=None):
+    """The shard's file: the initial recording, its rows and their sums. `write(result)`, when
+    given, receives it after every row, the pairs not yet walked filed `budget`, so a job stopped
+    mid-shard still leaves a file whose sums hold."""
     import run  # noqa: PLC0415
     if publish:
         run.publish_plugin_under_test(maven=maven_build.is_maven(project))
     builds = Builds(project, checkout, logs, isolated_map=isolated)
 
     def prepare(sha):
-        run.checkout_commit(checkout, sha)
         try:
+            run.checkout_commit(checkout, sha)
             run.stage_checkout(checkout, project)
             if builds.maven:
                 if project.get("prepend_argline"):
                     prepend_argline(checkout)
                 maven_build.stage(checkout, project)
-        except (SystemExit, subprocess.CalledProcessError) as refused:
+        except (SystemExit, subprocess.CalledProcessError, OSError, ValueError,
+                ET.ParseError) as refused:
             print(f"  {sha[:12]} could not be staged: {refused}", flush=True)
             return None
         return subprocess.run(["git", "-C", checkout, "rev-parse", "HEAD"], capture_output=True,
@@ -641,16 +655,32 @@ def replay_project(project, checkout, pairs, budget_minutes, logs, *, explain=Tr
 
     swap = MapSwap(builds, os.path.join(logs, "maps")) if isolated else None
     started = time.monotonic()
+
+    def result(initial, rows):
+        return {"schema": SCHEMA, "project": project["name"], "plugin_commit": run.plugin_commit(),
+                "scope": "reactor" if builds.reactor else f"module {builds.module or '(root)'}",
+                "first": pairs[0]["sha"] if pairs else None,
+                "last": pairs[-1]["sha"] if pairs else None,
+                "budget_minutes": budget_minutes, "isolated": isolated,
+                "seconds": round(time.monotonic() - started, 1), "initial": initial, "rows": rows,
+                "sums": sums(rows)}
+
+    def progress(initial, rows):
+        if write is not None:
+            write(result(initial, with_unwalked(pairs, rows)))
+
     initial, rows = walk(pairs, prepare=prepare, record=builds.record, select=builds.select,
                          rerun_alone=builds.rerun_alone, budget_seconds=budget_minutes * 60,
                          explain=builds.explain if explain else None,
-                         isolated={"record": swap.record, "select": swap.select} if swap else None)
-    return {"schema": SCHEMA, "project": project["name"], "plugin_commit": run.plugin_commit(),
-            "scope": "reactor" if builds.reactor else f"module {builds.module or '(root)'}",
-            "first": pairs[0]["sha"] if pairs else None, "last": pairs[-1]["sha"] if pairs else None,
-            "budget_minutes": budget_minutes, "isolated": isolated,
-            "seconds": round(time.monotonic() - started, 1), "initial": initial, "rows": rows,
-            "sums": sums(rows)}
+                         isolated={"record": swap.record, "select": swap.select} if swap else None,
+                         progress=progress)
+    return result(initial, rows)
+
+
+def with_unwalked(pairs, rows):
+    """`rows` followed by the pairs not yet walked, each excluded `budget`."""
+    return rows + [{"sha": p["sha"], "parent": p["parent"], "outcome": EXCLUDED, "reason": "budget"}
+                   for p in pairs[len(rows):]]
 
 
 # ---- plan, merge and page -----------------------------------------------------------------------
@@ -662,28 +692,38 @@ def load_project(path):
     return project
 
 
-def window_args(project, mode):
+def default_tip(url):
+    """The commit a remote's default branch is at, read once so every shard walks the same window."""
+    out = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, text=True,
+                         check=True).stdout.split()
+    if not out:
+        raise SystemExit(f"{url}: ls-remote names no HEAD")
+    return out[0]
+
+
+def window_args(project, mode, tip=default_tip):
     """The CLI arguments naming a project's window: its own range in the full run, the latest
-    commits of its default branch in the later releases' runs."""
+    commits of its default branch, resolved once, in the later releases' runs."""
     if mode == "latest":
-        return ["--to", "origin/HEAD", "--commits", str(LATEST_COMMITS)]
+        return ["--to", tip(project["url"]), "--commits", str(LATEST_COMMITS)]
     if project.get("history_from") and project.get("history_to"):
         return ["--from", project["history_from"], "--to", project["history_to"]]
     return ["--to", project["commit"], "--commits", str(CORPUS_COMMITS)]
 
 
-def plan(names, mode, isolated=(), projects_dir=os.path.join(HERE, "projects")):
+def plan(names, mode, isolated=(), projects_dir=os.path.join(HERE, "projects"), tip=default_tip):
     """One entry per shard job: the project, its shard, the window's arguments and the budget."""
     entries = []
     for name in names:
         project = load_project(os.path.join(projects_dir, f"{name}.toml"))
-        args = window_args(project, mode)
+        args = window_args(project, mode, tip)
         commits = (int(args[args.index("--commits") + 1]) if "--commits" in args
                    else BLASTRADIUS.get(name, {}).get("pairs", CORPUS_COMMITS))
         pair = PAIR_SECONDS.get(name, 900) + (ISOLATED_PAIR_SECONDS if name in isolated else 0)
-        count = max(1, math.ceil(commits * pair / SHARD_SECONDS))
         # The last pair started inside the budget still has to finish inside the six hours.
         budget = max(60, 340 - math.ceil(1.5 * pair / 60))
+        # Each shard's pairs fit its budget after its own initial recording (about one pair).
+        count = max(1, math.ceil(commits * pair / max(pair, budget * 60 - pair)))
         for index in range(1, count + 1):
             entry_args = [*args, "--shard", f"{index}/{count}", "--budget-minutes", str(budget)]
             if name in isolated:
@@ -722,6 +762,19 @@ def merge(directory, planned):
     for name, project in projects.items():
         shards = [project["shards"][i] for i in sorted(project["shards"])]
         rows = [row for shard in shards for row in shard.get("rows") or []]
+        # Consecutive shards must continue one window: a row whose parent is not the row before
+        # it means two shards walked different windows. Across a missing shard nothing is said.
+        last, last_index = None, None
+        for index in sorted(project["shards"]):
+            shard_rows = project["shards"][index].get("rows") or []
+            run_of = ([last] if last is not None and last_index == index - 1 else []) + shard_rows
+            for before, after in zip(run_of, run_of[1:]):
+                if after.get("parent") == before.get("sha"):
+                    continue
+                missing.append(f"{name}: {str(after.get('sha'))[:12]} does not follow "
+                               f"{str(before.get('sha'))[:12]}")
+            if shard_rows:
+                last, last_index = shard_rows[-1], index
         result[name] = {"scope": shards[0].get("scope"), "first": shards[0].get("first"),
                         "last": shards[-1].get("last"),
                         "plugin_commits": sorted(str(c) for c in project["plugin_commits"]),
@@ -762,9 +815,10 @@ def page(merged):
         lines += ["", "| Project | Arm | Pairs | Test executions selected / full "
                       "| Missed failures (of at risk) |", "|---|---|---|---|---|"]
         for name, s in extra:
-            for arm, key_count, key_selected in (("optimistic (a decision)", "answered", "executions"),
-                                                 ("isolated map", "measured", "selected_executions")):
-                block = s.get(arm.split()[0])
+            for name_key, arm, key_count, key_selected in (
+                    ("optimistic", "optimistic (a decision)", "answered", "executions"),
+                    ("isolated", "isolated map", "measured", "selected_executions")):
+                block = s.get(name_key)
                 if block:
                     lines.append(f"| {name} | {arm} | {block[key_count]} | "
                                  f"{_share(block[key_selected], block['full_executions'])} | "
@@ -842,11 +896,14 @@ def main(argv=None):
                                                      f"{index}of{count}"))
     print(f"{project['name']}: shard {index}/{count}, {len(pairs)} commits "
           f"{pairs[0]['sha'][:12]}..{pairs[-1]['sha'][:12]}", flush=True)
+    def write(result):
+        result["shard"], result["of"] = index, count
+        _write(args.out, result)
+
     result = replay_project(project, checkout, pairs, args.budget_minutes, logs,
                             explain=not args.no_explain, isolated=args.isolated,
-                            publish=args.publish)
-    result["shard"], result["of"] = index, count
-    _write(args.out, result)
+                            publish=args.publish, write=write)
+    write(result)
     s = result["sums"]
     print(f"{project['name']}: {s['measured']} of {s['drawn']} measured, selected "
           f"{s['selected_executions']} of {s['full_executions']} executions, missed {s['missed']} "
