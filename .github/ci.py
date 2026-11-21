@@ -20,6 +20,8 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py rerun-on-download-failure -- ./gradlew build --console=plain
     python .github/ci.py list-test-kit-homes plugin/build/tmp
     python .github/ci.py seed-maven-repo maven/build/functional-m2 ~/.m2/yoriwake-seed-1
+    python .github/ci.py gradle-seed ~/.gradle-seed listings/*/test-kit-homes.txt --gradle 8.14
+    python .github/ci.py gradle-seed-size ~/.gradle-seed
 """
 
 import argparse
@@ -29,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 # The mutation the cross-OS check applies: Alpha.twice doubles, so tripling breaks exactly the two
@@ -368,6 +371,9 @@ VERIFY_JOBS = {
     "functional": ("functional on Gradle 8.14", "gradle"),
     "functional-gradle9-shard": ("functional on Gradle 9 (shard ${{ matrix.shard }}/3)", "gradle"),
     "functional-gradle9": ("functional on Gradle 9", "gradle"),
+    # Push only, after the shards; under `gradle` a pull request's skipped job would keep a push
+    # from reusing its shards.
+    "gradle-seed": ("seed the fixture builds' dependencies", "code"),
     "coverage": ("coverage gate", "gradle"),
     "capture": ("build a map", "gradle"),
     "select": ("select on another machine", "gradle"),
@@ -601,9 +607,10 @@ def rerun_on_download_failure(command, pause=60, sleep=time.sleep):
     return run_teed(command)[0]
 
 
-# Where each functional-test task keeps its TestKit home, and where that home keeps what it
-# downloaded: the plugin's functional tests name the home, Gradle the cache layout.
+# Where each functional-test task keeps its TestKit homes, the Tooling API's included, and where a
+# home keeps what it downloaded: the plugin's functional tests name the homes, Gradle the cache layout.
 TEST_KIT_HOME = ".gradle-test-kit-"
+TEST_KIT_HOMES = (TEST_KIT_HOME, ".gradle-tooling-api-")
 DOWNLOADED = os.path.join("caches", "modules-2", "files-2.1")
 
 
@@ -616,7 +623,7 @@ def test_kit_listing(build_tmp):
     """
     lines = []
     for dirpath, dirnames, _ in os.walk(build_tmp):
-        for home in sorted(name for name in dirnames if name.startswith(TEST_KIT_HOME)):
+        for home in sorted(name for name in dirnames if name.startswith(TEST_KIT_HOMES)):
             root = os.path.join(dirpath, home)
             lines.append(root)
             unreadable = lambda error: lines.append(f"  {os.path.relpath(error.filename, root)}\tERROR {error}")
@@ -663,6 +670,122 @@ def seed_maven_repo(source, seed):
             shutil.copy2(os.path.join(dirpath, name), target)
             added += 1
     return added
+
+
+# A listing's line for one downloaded file: `files-2.1/<group>/<module>/<version>/<sha1>/<file>`.
+LISTED_FILE = re.compile(r"^\s+caches[/\\]modules-2[/\\]files-2\.1[/\\]([^/\\]+)[/\\]([^/\\]+)[/\\]([^/\\]+)"
+                         r"[/\\][0-9a-f]+[/\\]([^/\\\t]+)\t\d+\t")
+# What a fixture build publishes itself, from this build's file repository: the plugin under test
+# and the fixtures' own artifacts. A seeded copy would reach later builds in its place.
+SEED_EXCLUDED_GROUPS = ("io.github.zeuspizza", "dev")
+# Gradle's metadata, which resolving the module brings with it.
+METADATA_EXTENSIONS = (".pom", ".module")
+
+
+def seed_coordinates(listings):
+    """Each `group:module:version` the TestKit home listings name, with the notation of each listed
+    artifact file, `group:module:version[:classifier]@ext`, for one the plain module may not bring."""
+    found = {}
+    for listing in listings:
+        with open(listing, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                match = LISTED_FILE.match(line)
+                if not match:
+                    continue
+                group, module, version, name = match.groups()
+                if any(group == excluded or group.startswith(excluded + ".") for excluded in SEED_EXCLUDED_GROUPS):
+                    continue
+                files = found.setdefault(f"{group}:{module}:{version}", {})
+                stem = f"{module}-{version}"
+                if name.endswith(METADATA_EXTENSIONS) or not name.startswith(stem) or name[len(stem):][:1] not in "-.":
+                    continue
+                rest = name[len(stem):]
+                if rest.startswith("."):
+                    files[name] = f"{group}:{module}:{version}@{rest[1:]}"
+                elif "." in rest:
+                    classifier, extension = rest[1:].rsplit(".", 1)
+                    files[name] = f"{group}:{module}:{version}:{classifier}@{extension}"
+    return found
+
+
+# Each coordinate as its own detached, non-transitive configuration with a Java runtime
+# classpath's attributes: Gradle picks the variant from the module's metadata as a fixture does
+# and files it under the same index entries. A platform (a BOM) resolves as one. A coordinate that
+# does not resolve is printed and the rest go on. Central first, then the plugin portal, as the
+# fixtures declare them: Gradle files what it found per repository.
+SEED_BUILD = """
+plugins {
+    id 'java'
+}
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
+def resolve(String notation, boolean platform) {
+    def runtime = configurations.runtimeClasspath.attributes
+    def dependency = dependencies.create(notation)
+    def configuration = configurations.detachedConfiguration(platform ? dependencies.platform(dependency) : dependency)
+    configuration.transitive = false
+    runtime.keySet().each { configuration.attributes.attribute(it, runtime.getAttribute(it)) }
+    def artifacts = configuration.incoming.artifactView { lenient = true }.artifacts
+    [artifacts.artifacts.collect { it.file.name } as Set, artifacts.failures]
+}
+def seed(String notation) {
+    def (brought, failures) = resolve(notation, false)
+    if (failures && !notation.contains('@') && resolve(notation, true)[1].isEmpty()) {
+        return brought
+    }
+    failures.each { println "not seeded: ${notation}: ${it.message?.readLines()?.find()}" }
+    brought
+}
+file('coordinates.tsv').eachLine { line ->
+    def fields = line.split('\\t') as List
+    def brought = seed(fields[0])
+    fields.drop(1).collate(2).each { name, notation ->
+        if (!brought.contains(name)) {
+            seed(notation)
+        }
+    }
+}
+"""
+
+
+def gradle_seed(home, listings, version, run=subprocess.call):
+    """Resolves into the Gradle user home `home`, under Gradle `version`, every module the listings
+    name; the build's exit code. The distribution is kept beside the build, not in `home`."""
+    coordinates = seed_coordinates(listings)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with tempfile.TemporaryDirectory() as build:
+        os.makedirs(os.path.join(build, "gradle", "wrapper"))
+        shutil.copy2(os.path.join(root, "gradlew"), os.path.join(build, "gradlew"))
+        shutil.copy2(os.path.join(root, "gradle", "wrapper", "gradle-wrapper.jar"),
+                     os.path.join(build, "gradle", "wrapper", "gradle-wrapper.jar"))
+        with open(os.path.join(build, "gradle", "wrapper", "gradle-wrapper.properties"), "w", encoding="utf-8") as handle:
+            handle.write("distributionBase=PROJECT\ndistributionPath=wrapper/dists\n"
+                         f"distributionUrl=https\\://services.gradle.org/distributions/gradle-{version}-bin.zip\n"
+                         "zipStoreBase=PROJECT\nzipStorePath=wrapper/dists\n")
+        with open(os.path.join(build, "settings.gradle"), "w", encoding="utf-8") as handle:
+            handle.write("rootProject.name = 'gradle-seed'\n")
+        with open(os.path.join(build, "build.gradle"), "w", encoding="utf-8") as handle:
+            handle.write(SEED_BUILD)
+        with open(os.path.join(build, "coordinates.tsv"), "w", encoding="utf-8") as handle:
+            for coordinate, files in sorted(coordinates.items()):
+                handle.write("\t".join([coordinate] + [part for item in sorted(files.items()) for part in item]) + "\n")
+        print(f"resolving {len(coordinates)} modules into {home} on Gradle {version}", file=sys.stderr, flush=True)
+        environment = {key: value for key, value in os.environ.items() if key != "GRADLE_RO_DEP_CACHE"}
+        environment["GRADLE_USER_HOME"] = home
+        return run([os.path.join(build, "gradlew"), "--no-daemon", "--console=plain", "-q", "--dry-run", "help"],
+                   cwd=build, env=environment)
+
+
+def gradle_seed_size(home):
+    """The number of files and their bytes in the Gradle user home `home`'s `caches/modules-2`."""
+    files = size = 0
+    for dirpath, _, names in os.walk(os.path.join(home, "caches", "modules-2")):
+        for name in names:
+            files += 1
+            size += os.path.getsize(os.path.join(dirpath, name))
+    return files, size
 
 
 def main(argv=None):
@@ -732,6 +855,15 @@ def main(argv=None):
     seeded.add_argument("source")
     seeded.add_argument("seed")
 
+    seeding = sub.add_parser("gradle-seed",
+                             help="resolve into a Gradle user home every module TestKit home listings name")
+    seeding.add_argument("home")
+    seeding.add_argument("listings", nargs="+")
+    seeding.add_argument("--gradle", required=True, help="the Gradle version that resolves them")
+
+    sizing = sub.add_parser("gradle-seed-size", help="print files= and bytes= of a Gradle user home's modules-2")
+    sizing.add_argument("home")
+
     homes = sub.add_parser("list-test-kit-homes",
                            help="list what each TestKit home under a build directory downloaded")
     homes.add_argument("build_tmp")
@@ -747,6 +879,18 @@ def main(argv=None):
     if args.command == "list-test-kit-homes":
         lines = test_kit_listing(args.build_tmp)
         print("\n".join(lines) if lines else f"no TestKit home under {args.build_tmp}")
+        homes = sum(1 for line in lines if not line.startswith(" "))
+        files = sum(1 for line in lines if line.startswith(" ") and "\tERROR " not in line)
+        print(f"the TestKit homes downloaded {files} files ({homes} homes)", file=sys.stderr)
+        return 0
+
+    if args.command == "gradle-seed":
+        return gradle_seed(args.home, args.listings, args.gradle)
+
+    if args.command == "gradle-seed-size":
+        files, size = gradle_seed_size(args.home)
+        print(f"files={files}")
+        print(f"bytes={size}")
         return 0
 
     if args.command == "changelog":

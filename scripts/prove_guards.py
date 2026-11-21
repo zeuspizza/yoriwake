@@ -6447,13 +6447,45 @@ CENTRAL_FAILED = re.compile(r"Could not (?:find|transfer) artifact (\S+) (?:in|f
                             r"|(\S+) was not found in https://repo\.maven\.apache\.org/maven2 during a previous attempt")
 
 
+# Gradle's words for the same failures: a module it searched for on Central among other locations
+# and did not find, and a 5xx or a dropped transfer of one of Central's files.
+CENTRAL = "https://repo.maven.apache.org/maven2/"
+GRADLE_NOT_FOUND = re.compile(r"Could not find ([^\s:]+):([^\s:]+):([^\s:]+)\.$"
+                              r"|Could not find \S+ \(([^\s:]+):([^\s:]+):([^\s:)]+)\)\.$")
+GRADLE_TRANSFER = re.compile(r"Could not (?:GET|HEAD) '" + re.escape(CENTRAL) + r"([^']+)'")
+# Searched in the following locations: comes next, then one location a line.
+SEARCHED_LINES = 5
+# What the fixtures publish themselves, into a file repository listed after Central: a miss there
+# is the fixture's own.
+OWN_GROUPS = ("io.github.zeuspizza", "dev")
+
+
+def _gradle_coordinate(group, module, version):
+    if any(group == own or group.startswith(own + ".") for own in OWN_GROUPS):
+        return None
+    return f"{group}:{module}:{version}"
+
+
 def central_failure(lines):
-    """The artifact Maven Central did not serve, as `group:artifact:type:version`, when a line of
-    a failed build's log names one; otherwise None."""
-    for line in lines:
+    """The artifact Maven Central did not serve, as `group:artifact:type:version` in Maven's words
+    or `group:module:version` in Gradle's, when a line of a failed build's log names one;
+    otherwise None."""
+    lines = list(lines)
+    for number, line in enumerate(lines):
         found = CENTRAL_FAILED.search(line)
         if found:
             return found.group(1) or found.group(2)
+        found = GRADLE_NOT_FOUND.search(line.rstrip())
+        if found and any(CENTRAL in later for later in lines[number + 1:number + 1 + SEARCHED_LINES]):
+            coordinate = _gradle_coordinate(*[part for part in found.groups() if part is not None])
+            if coordinate:
+                return coordinate
+        found = GRADLE_TRANSFER.search(line)
+        parts = found.group(1).split("/") if found else []
+        if len(parts) >= 4 and parts[-1].startswith(f"{parts[-3]}-{parts[-2]}"):
+            coordinate = _gradle_coordinate(".".join(parts[:-3]), parts[-3], parts[-2])
+            if coordinate:
+                return coordinate
     return None
 
 

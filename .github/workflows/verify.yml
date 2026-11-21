@@ -331,15 +331,32 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # What earlier runs on main downloaded for the fixture builds, read behind each TestKit home's
+      # own cache (GRADLE_RO_DEP_CACHE, never written), so Central is asked only for what it lacks.
+      # The gradle-seed job builds it; the guard jobs read it too.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle-seed/caches/modules-2
+          key: gradle-seed-v1-${{ github.run_id }}
+          restore-keys: gradle-seed-v1-
       - shell: bash
-        run: ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
-      # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
-      # downloaded, which tells a dependency that never arrived from one that could not be
-      # read, and the homes' daemon logs, the Tooling API home's included.
+        run: YORIWAKE_GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
+      # What each TestKit home downloaded, on every run: the log says how many files, and the
+      # gradle-seed job seeds what they name. A flake leaves nothing to diagnose once the runner
+      # is gone: the listing tells a dependency that never arrived from one that could not be
+      # read, and the homes' daemon logs, the Tooling API home's included, go with it.
       - name: list what the TestKit homes downloaded
-        if: failure()
+        if: always()
         shell: bash
         run: python3 .github/ci.py list-test-kit-homes plugin/build/tmp > plugin/build/test-kit-homes.txt
+      # The gradle-seed job of the same push to main reads it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && github.event_name == 'push'
+        with:
+          name: test-kit-listing-functionalTest-${{ matrix.shard }}-of-3
+          path: plugin/build/test-kit-homes.txt
+          if-no-files-found: ignore
+          retention-days: 1
       # A person reads it to see what a failed shard's TestKit daemons downloaded and logged.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -420,15 +437,32 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # What earlier runs on main downloaded for the fixture builds, read behind each TestKit home's
+      # own cache (GRADLE_RO_DEP_CACHE, never written), so Central is asked only for what it lacks.
+      # The gradle-seed job builds it; the guard jobs read it too.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle-seed/caches/modules-2
+          key: gradle-seed-v1-${{ github.run_id }}
+          restore-keys: gradle-seed-v1-
       - shell: bash
-        run: ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
-      # A flake leaves nothing to diagnose once the runner is gone: what each TestKit home
-      # downloaded, which tells a dependency that never arrived from one that could not be
-      # read, and the homes' daemon logs, the Tooling API home's included.
+        run: YORIWAKE_GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
+      # What each TestKit home downloaded, on every run: the log says how many files, and the
+      # gradle-seed job seeds what they name. A flake leaves nothing to diagnose once the runner
+      # is gone: the listing tells a dependency that never arrived from one that could not be
+      # read, and the homes' daemon logs, the Tooling API home's included, go with it.
       - name: list what the TestKit homes downloaded
-        if: failure()
+        if: always()
         shell: bash
         run: python3 .github/ci.py list-test-kit-homes plugin/build/tmp > plugin/build/test-kit-homes.txt
+      # The gradle-seed job of the same push to main reads it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && github.event_name == 'push'
+        with:
+          name: test-kit-listing-functionalTestGradle9-${{ matrix.shard }}-of-3
+          path: plugin/build/test-kit-homes.txt
+          if-no-files-found: ignore
+          retention-days: 1
       # A person reads it to see what a failed shard's TestKit daemons downloaded and logged.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -487,6 +521,73 @@ jobs:
           path: shards
       - name: every test class ran in exactly one shard
         run: python3 .github/functional_shards.py check shards --count 3
+
+  # One seed of what the fixture builds download, for the functional shards and the guard jobs.
+  # Built by Gradle, so its indexes hold every shard's modules: one guard job runs classes of all
+  # six shards, and Gradle reads one read-only cache. Saved from main only, when it grew; a push
+  # that reused its pull request's shards has no listing and leaves the seed as it is. A seed
+  # only grows: to drop one that holds a bad file, bump v1 here, in the shards and in guards.yml.
+  gradle-seed:
+    name: seed the fixture builds' dependencies
+    needs: [changes, functional-shard, functional-gradle9-shard]
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.changes.outputs.code != 'false' && needs.changes.outputs.gradle != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle-seed/caches/modules-2
+          key: gradle-seed-v1-${{ github.run_id }}
+          restore-keys: gradle-seed-v1-
+      # None when every shard failed before listing: the seed is then left as it is.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: test-kit-listing-*
+          path: ${{ runner.temp }}/listings
+      - id: listings
+        run: |
+          count=$(find "$RUNNER_TEMP/listings" -name test-kit-homes.txt 2>/dev/null | wc -l)
+          echo "$count TestKit home listings"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      # Under each fixture Gradle version: the versions share the downloaded files and keep their
+      # own metadata indexes. The versions of plugin/build.gradle.kts' functionalGradleVersions.
+      # A download that fails here leaves the seed as it is, unsaved; it turns no run red.
+      - id: seed
+        if: steps.listings.outputs.count != '0'
+        continue-on-error: true
+        run: |
+          set -eu
+          home="$HOME/.gradle-seed"
+          python3 .github/ci.py gradle-seed-size "$home" | sed 's/^/before_/' >> "$GITHUB_OUTPUT"
+          for version in 8.14 9.8.0; do
+            find "$RUNNER_TEMP/listings" -name test-kit-homes.txt -print0 \
+              | xargs -0 python3 .github/ci.py gradle-seed "$home" --gradle "$version"
+          done
+          # Gradle reads a read-only cache without its locks and its clean-up marker.
+          find "$home/caches/modules-2" \( -name '*.lock' -o -name gc.properties \) -delete
+          python3 .github/ci.py gradle-seed-size "$home" | tee -a "$GITHUB_OUTPUT"
+      # The repository's 10 GB of caches also hold setup-gradle's, the Maven seeds and more.
+      - name: the seed stays under 500 MB
+        if: steps.seed.outcome == 'success'
+        env:
+          BYTES: ${{ steps.seed.outputs.bytes }}
+        run: |
+          echo "the seed holds $BYTES bytes"
+          [ "$BYTES" -le 524288000 ] || { echo "over 500 MB: not saved"; exit 1; }
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          steps.seed.outcome == 'success'
+          && (steps.seed.outputs.files != steps.seed.outputs.before_files
+          || steps.seed.outputs.bytes != steps.seed.outputs.before_bytes)
+        with:
+          path: ~/.gradle-seed/caches/modules-2
+          key: gradle-seed-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
   # The plugin's coverage gate over the unit tests and every Linux shard of both functional suites,
   # as `./gradlew build` gates locally. The report goes up unless the run was cancelled, so a ratchet
@@ -946,7 +1047,7 @@ jobs:
   run-summary:
     name: run summary
     needs: [changes, build, maven-shard, maven, functional-shard, functional, functional-gradle9-shard, functional-gradle9,
-            coverage, capture, select, select-on-windows, capture-on-windows,
+            gradle-seed, coverage, capture, select, select-on-windows, capture-on-windows,
             select-on-windows-from-windows, select-on-linux, build-windows]
     if: always() && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-24.04
