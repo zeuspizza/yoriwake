@@ -194,14 +194,14 @@ internal object IsolatedPick {
         val measuredStartSeconds: Double? = null,
         /** The shared recording the budget was a multiple of, kept while classes stay picked. */
         val sharedSeconds: Double? = null,
-        /** What each picked class was costed at when it was picked, its JVM's start included. */
+        /** What each picked class was costed at when it was picked, without [jvmOverheadSeconds]. */
         val classSeconds: Map<String, Double> = emptyMap(),
         /** The test task's wall time outside its JVMs, kept while classes stay picked. */
         val overheadSeconds: Double? = null,
         /** The picked classes' costs over the JVMs they run on, before calibration. */
         val predictedExtra: Double? = null,
-        /** The calibration the pick applied to each cost; see [pick]. */
-        val factor: Double = 1.0,
+        /** What the pick added to each class's cost for its JVM, once a recording measured it; see [pick]. */
+        val jvmOverheadSeconds: Double? = null,
         /** The wall time the isolated task took, once it ran. */
         val isolatedWallSeconds: Double? = null,
     ) {
@@ -213,7 +213,7 @@ internal object IsolatedPick {
             sharedSeconds?.let { append(Tsv.join("shared-seconds", it.toString())).append('\n') }
             overheadSeconds?.let { append(Tsv.join("overhead-seconds", it.toString())).append('\n') }
             predictedExtra?.let { append(Tsv.join("predicted-extra", it.toString())).append('\n') }
-            append(Tsv.join("factor", factor.toString())).append('\n')
+            jvmOverheadSeconds?.let { append(Tsv.join("jvm-overhead-seconds", it.toString())).append('\n') }
             isolatedWallSeconds?.let { append(Tsv.join("isolated-wall-seconds", it.toString())).append('\n') }
             classes.forEach { (name, score) ->
                 val seconds = classSeconds[name]
@@ -237,7 +237,7 @@ internal object IsolatedPick {
                     classSeconds = rows.filter { it[0] == "class" && it.size >= 4 }.associate { it[2] to it[3].toDouble() },
                     overheadSeconds = value("overhead-seconds"),
                     predictedExtra = value("predicted-extra"),
-                    factor = value("factor") ?: 1.0,
+                    jvmOverheadSeconds = value("jvm-overhead-seconds"),
                     isolatedWallSeconds = value("isolated-wall-seconds"),
                 )
             }.getOrNull()
@@ -248,19 +248,22 @@ internal object IsolatedPick {
      * The wall time of a task's recordings, beside the map ([WALL_FILE]): the last fully shared
      * recording's test task ([sharedSeconds], kept while classes stay picked), and the last
      * budgeted recording's test task and isolated task together, with the extra its pick predicted
-     * and its isolated task's own wall time, which ties the record to that recording's stamp.
+     * and its isolated task's own wall time, which ties the record to that recording's stamp, and the
+     * per-JVM overhead its pick used, kept for a pick that has no stamp to read it from.
      */
     data class Wall(
         val sharedSeconds: Double? = null,
         val budgetedSeconds: Double? = null,
         val predictedExtra: Double? = null,
         val isolatedWallSeconds: Double? = null,
+        val jvmOverheadSeconds: Double? = null,
     ) {
         fun encode(): String = listOfNotNull(
             sharedSeconds?.let { Tsv.join("shared-wall-seconds", it.toString()) },
             budgetedSeconds?.let { Tsv.join("budgeted-wall-seconds", it.toString()) },
             predictedExtra?.let { Tsv.join("predicted-extra", it.toString()) },
             isolatedWallSeconds?.let { Tsv.join("isolated-wall-seconds", it.toString()) },
+            jvmOverheadSeconds?.let { Tsv.join("jvm-overhead-seconds", it.toString()) },
         ).joinToString("") { "$it\n" }
 
         companion object {
@@ -269,7 +272,10 @@ internal object IsolatedPick {
                 val rows = File(mapDir, WALL_FILE).takeIf(File::isFile)?.readLines().orEmpty()
                     .filter(String::isNotBlank).map(Tsv::split)
                 val value = { key: String -> rows.firstOrNull { it[0] == key }?.getOrNull(1)?.toDoubleOrNull() }
-                Wall(value("shared-wall-seconds"), value("budgeted-wall-seconds"), value("predicted-extra"), value("isolated-wall-seconds"))
+                Wall(
+                    value("shared-wall-seconds"), value("budgeted-wall-seconds"), value("predicted-extra"), value("isolated-wall-seconds"),
+                    value("jvm-overhead-seconds"),
+                )
             }.getOrDefault(Wall())
         }
     }
@@ -290,7 +296,7 @@ internal object IsolatedPick {
             pick.isolatedWallSeconds != null && pick.predictedExtra != null ->
                 old.copy(
                     budgetedSeconds = testWallSeconds + pick.isolatedWallSeconds, predictedExtra = pick.predictedExtra,
-                    isolatedWallSeconds = pick.isolatedWallSeconds,
+                    isolatedWallSeconds = pick.isolatedWallSeconds, jvmOverheadSeconds = pick.jvmOverheadSeconds,
                 )
             else -> return
         }
@@ -307,11 +313,12 @@ internal object IsolatedPick {
      * The budget allows (budget - 1) times the shared recording: its test task's wall time when
      * [wall] has it, else its JVMs' measured time, else its tests' recorded time, over [hostForks].
      * Calibrated against wall time: the test task's time outside its JVMs is charged once, and each
-     * cost is multiplied by what the last budgeted recording's extra wall time, less that, was over
-     * what its picked classes cost now, as this pick costs them (over the extra that pick predicted
-     * when the wall record is not [previous]'s own). Never below 1; 1 when no budgeted recording was
-     * measured. Once [previous] was calibrated above 1, the factor moves only halfway (the geometric
-     * mean of its factor and the new one), so one recording's noise does not swing the pick.
+     * class's JVM costs a fixed overhead on top of its own cost (forking it, setting it up, handing
+     * back its results): what the last budgeted recording, [previous], had its classes at their
+     * costs now take as long as its extra wall time did, less that, never below 0. It moves only
+     * halfway from the overhead [previous] used, once that was measured, so one recording's noise
+     * does not swing the pick. Without [previous]'s own wall record, the last overhead used is kept;
+     * with none, 0.
      *
      * Stable across recordings: a class [previous] picked that ran alone keeps the score it was
      * picked with, and, unless the map measured its JVM, the cost; the shared recording stays the one
@@ -347,25 +354,24 @@ internal object IsolatedPick {
             if (wall.sharedSeconds != null && jvms != null) maxOf(0.0, wall.sharedSeconds - jvms / maxOf(1, hostForks)) else 0.0
         }
         val parallel = maxOf(1, minOf(isolatedForks, processors))
-        // The calibration compares like with like: a class the previous pick estimated is costed now
-        // at what its own JVM took, so the previous pick is re-predicted at those costs when the wall
-        // record is that pick's own recording and its JVMs were measured.
+        // Like with like: a class the previous pick estimated is costed now at what its own JVM took,
+        // so the overhead is solved for the previous pick at those costs, when the wall record is that
+        // pick's own recording.
         val ownRecording = previous?.isolatedWallSeconds != null && wall.isolatedWallSeconds == previous.isolatedWallSeconds
-        val predicted = if (ownRecording && previous!!.classes.keys.any { it in ranking.isolatedSeconds }) {
-            makespan(previous!!.classes.keys.map { ranking.isolatedSeconds[it] ?: previous.classSeconds[it] ?: cost(it) }, parallel)
-        } else {
-            wall.predictedExtra
-        }
-        val ratio = if (wall.sharedSeconds != null && wall.budgetedSeconds != null && predicted != null && predicted > 0) {
-            maxOf(1.0, (wall.budgetedSeconds - wall.sharedSeconds - overhead) / predicted)
+        val solved = if (ownRecording && wall.sharedSeconds != null && wall.budgetedSeconds != null && previous!!.classes.isNotEmpty()) {
+            jvmOverheadFor(
+                previous.classes.keys.map { ranking.isolatedSeconds[it] ?: previous.classSeconds[it] ?: cost(it) }, parallel,
+                wall.budgetedSeconds - wall.sharedSeconds - overhead,
+            )
         } else {
             null
         }
-        val factor = when {
-            ratio == null -> 1.0
-            ownRecording && previous!!.factor > 1.0 -> Math.sqrt(previous.factor * ratio)
-            else -> ratio
+        val calibrated = when {
+            solved == null -> previous?.jvmOverheadSeconds ?: wall.jvmOverheadSeconds
+            previous!!.jvmOverheadSeconds != null -> (previous.jvmOverheadSeconds + solved) / 2
+            else -> solved
         }
+        val jvmOverhead = calibrated ?: 0.0
         val allowance = (budget - 1.0) * shared - overhead
         val left = (ranking.scores.keys + ranking.isolated).count(runnable)
         val picked = LinkedHashMap<String, Long>()
@@ -373,13 +379,14 @@ internal object IsolatedPick {
         for ((name, score) in scores.entries.sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })) {
             if (score <= 0 || !runnable(name)) continue
             if (picked.size + 1 >= left) break
-            if (factor * makespan(costs.values + cost(name), parallel) > allowance) break
+            if (makespan((costs.values + cost(name)).map { it + jvmOverhead }, parallel) > allowance) break
             picked[name] = score
             costs[name] = cost(name)
         }
         return Stamp(
             budget, startSeconds, picked.keys.sumOf { ranking.seconds[it] ?: 0.0 }, picked, sharedSeconds = shared,
-            classSeconds = costs, overheadSeconds = overhead, predictedExtra = makespan(costs.values, parallel), factor = factor,
+            classSeconds = costs, overheadSeconds = overhead, predictedExtra = makespan(costs.values.map { it + jvmOverhead }, parallel),
+            jvmOverheadSeconds = calibrated,
         )
     }
 
@@ -388,6 +395,18 @@ internal object IsolatedPick {
         val loads = DoubleArray(maxOf(1, parallel))
         costs.forEach { cost -> loads[loads.indices.minByOrNull { loads[it] }!!] += cost }
         return loads.maxOrNull() ?: 0.0
+    }
+
+    /** The overhead per JVM, 0 or more, that has [costs] on [parallel] JVMs take [extraSeconds]. */
+    private fun jvmOverheadFor(costs: List<Double>, parallel: Int, extraSeconds: Double): Double {
+        if (makespan(costs, parallel) >= extraSeconds) return 0.0
+        var low = 0.0
+        var high = extraSeconds
+        repeat(60) {
+            val middle = (low + high) / 2
+            if (makespan(costs.map { it + middle }, parallel) < extraSeconds) low = middle else high = middle
+        }
+        return (low + high) / 2
     }
 
     /** How much slower a class's tests are taken to run in a fresh JVM than in a warm shared one. */

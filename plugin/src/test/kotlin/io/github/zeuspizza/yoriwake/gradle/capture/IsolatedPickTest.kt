@@ -157,8 +157,9 @@ class IsolatedPickTest {
             )
             val pick = IsolatedPick.pick(ranking, previous, 2.0, hostForks = 1, isolatedForks = 1, processors = 8, wall = wall) { true }
             val extra = 4.0 + perClass * 3.0 * pick.classes.size
-            wall = wall.copy(budgetedSeconds = 20.0 + extra, predictedExtra = pick.predictedExtra)
-            previous = pick
+            val isolatedWall = extra - 4.0
+            wall = wall.copy(budgetedSeconds = 20.0 + extra, predictedExtra = pick.predictedExtra, isolatedWallSeconds = isolatedWall)
+            previous = pick.copy(isolatedWallSeconds = isolatedWall)
             pick.classes.keys to extra
         }
     }
@@ -234,40 +235,46 @@ class IsolatedPickTest {
         assertEquals(7.0, pick.predictedExtra)
     }
 
-    private fun calibrated(previousFactor: Double, wallPredicted: Double, wallIsolated: Double = 5.0): Double {
+    private fun overhead(previousOverhead: Double?, wallIsolated: Double = 5.0, wallOverhead: Double? = null): Double? {
         // The previous pick ran T0 alone, predicted at 3 s; its own JVM now reports 2 s, and the
         // recording took 16 s more than the shared one.
         val previous = IsolatedPick.Stamp(
             budget = 2.0, startSeconds = 1.0, pickedSeconds = 1.0, classes = mapOf("dev.sample.T0" to 100L),
-            sharedSeconds = 10.0, overheadSeconds = 0.0, predictedExtra = 3.0, factor = previousFactor, isolatedWallSeconds = 5.0,
+            sharedSeconds = 10.0, classSeconds = mapOf("dev.sample.T0" to 3.0), overheadSeconds = 0.0, predictedExtra = 3.0,
+            jvmOverheadSeconds = previousOverhead,
+            isolatedWallSeconds = 5.0,
         )
-        val wall = IsolatedPick.Wall(sharedSeconds = 10.0, budgetedSeconds = 26.0, predictedExtra = wallPredicted, isolatedWallSeconds = wallIsolated)
+        val wall = IsolatedPick.Wall(
+            sharedSeconds = 10.0, budgetedSeconds = 26.0, predictedExtra = 3.0, isolatedWallSeconds = wallIsolated,
+            jvmOverheadSeconds = wallOverhead,
+        )
         return IsolatedPick.pick(
             ranking(1.0, 1.0, 1.0, isolatedSeconds = mapOf("dev.sample.T0" to 2.0)), previous, 2.0, 1, 4, 8, wall,
-        ) { true }.factor
+        ) { true }.jvmOverheadSeconds
     }
 
     @Test
-    fun `the calibration measures the previous pick at today's costs`() {
-        assertEquals(8.0, calibrated(previousFactor = 1.0, wallPredicted = 3.0), 1e-9)
+    fun `the JVM overhead is what the previous pick, at today's costs, took beyond them`() {
+        assertEquals(14.0, overhead(previousOverhead = null)!!, 1e-6)
     }
 
     @Test
-    fun `once calibrated, the calibration moves halfway`() {
-        assertEquals(4.0, calibrated(previousFactor = 2.0, wallPredicted = 3.0), 1e-9)
+    fun `once measured, the JVM overhead moves halfway`() {
+        assertEquals(10.0, overhead(previousOverhead = 6.0)!!, 1e-6)
     }
 
     @Test
-    fun `a wall record from another recording calibrates on the extra it predicted, undamped`() {
-        assertEquals(16.0 / 5.0, calibrated(previousFactor = 2.0, wallPredicted = 5.0, wallIsolated = 7.0), 1e-9)
+    fun `a wall record from another recording keeps the JVM overhead last used`() {
+        assertEquals(6.0, overhead(previousOverhead = 6.0, wallIsolated = 7.0)!!, 1e-9)
+        assertEquals(4.0, overhead(previousOverhead = null, wallIsolated = 7.0, wallOverhead = 4.0)!!, 1e-9)
     }
 
     @Test
-    fun `with no budgeted recording measured the calibration is 1`(@TempDir dir: File) {
+    fun `with no budgeted recording measured there is no JVM overhead`(@TempDir dir: File) {
         val ranking = IsolatedPick.rank(map(dir))!!
 
-        assertEquals(1.0, pick(ranking, 2.2).factor)
-        assertEquals(1.0, IsolatedPick.pick(ranking, null, 2.2, 1, 1, 8, IsolatedPick.Wall(sharedSeconds = 10.0)) { true }.factor)
+        assertNull(pick(ranking, 2.2).jvmOverheadSeconds)
+        assertNull(IsolatedPick.pick(ranking, null, 2.2, 1, 1, 8, IsolatedPick.Wall(sharedSeconds = 10.0)) { true }.jvmOverheadSeconds)
     }
 
     @Test

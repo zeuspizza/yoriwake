@@ -1419,11 +1419,12 @@ records shared, with one line saying the budget is Gradle-only for now.
   least busy, and take as long as the busiest. Classes are taken by score while that stays within
   (n - 1) times the shared recording: its test task's wall time, recorded by every recording (its
   JVMs' time over the task's `maxParallelForks` until one is). The test task's time outside its JVMs
-  is charged once, and each budgeted recording calibrates the next: its extra wall time over what
-  its picked classes' own JVMs took scales every cost (never below 1), since an isolated JVM costs
-  more than its own run (forking it, setting it up, handing back its results). From the second
-  calibration on, the scale moves halfway towards the new figure, so one slow or fast recording
-  does not swing the pick. Your task always keeps at least one class.
+  is charged once, and each budgeted recording calibrates the next: an isolated JVM costs more than
+  its own run (forking it, setting it up, handing back its results), so every class is charged a
+  fixed overhead per JVM on top of its cost, the one that has the last recording's classes take
+  its extra wall time. From the second calibration on, the overhead moves halfway towards the new
+  figure, so one slow or fast recording does not swing the pick. Your task always keeps at least
+  one class.
 - **The pick is stable.** A class recorded alone has no shared JVM left to score it, so it keeps
   the score it was picked with, stamped beside the map in `isolated-pick` with the budget, its cost
   until its own JVM is measured, and the shared recording it was picked against.
