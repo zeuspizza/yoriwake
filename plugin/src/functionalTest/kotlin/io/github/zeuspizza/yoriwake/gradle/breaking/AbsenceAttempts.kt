@@ -108,9 +108,9 @@ class AbsenceAttempts : BreakAttempt() {
     // Track: code reading. Boundary: the list is taken from the classes the JVM still holds when
     // it is asked, and a class whose loader was closed and collected is no longer among them. A
     // class a loader of the test's own defines is recorded as touched when it is defined, so the
-    // changed class is not one nothing touched, whatever the list holds.
+    // changed class is dated by that touch, whatever the list holds.
     @Test
-    fun `a class loaded through a loader closed and collected before the JVM ends forces a full run`(@TempDir dir: File) {
+    fun `a class loaded through a loader closed and collected selects the tests from its load on`(@TempDir dir: File) {
         val collected = source(
             "src/test/java/dev/sample/A1CollectedLoaderTest.java",
             """
@@ -139,21 +139,21 @@ class AbsenceAttempts : BreakAttempt() {
             """,
         )
         val result = attempt(
-            dir, "dev.sample.A1CollectedLoaderTest", Aim.Forced("no-coverage-for-changed"),
+            dir, "dev.sample.A1CollectedLoaderTest", Aim.Row("shares-jvm-changed-class"),
             listOf(orphan, other, first, collected, classOrderByName),
             buildScript = buildWith(),
         ) { addStrict(it) }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
         assertFalse("dev.sample.Orphan" in union(dir), "the collected loader's class was still listed")
     }
 
     // Track: code reading. Boundary: a class a resource names can be loaded with no bytecode edge
     // to it. A provider-configuration file names this one, and the test that lists the providers'
-    // types loads it without running it, so it is in the list as well; either keeps the change
-    // from selecting nothing.
+    // types loads it without running it, so it is in the list and its first touches as well; the
+    // touch dates the change, and the list keeps it from selecting nothing.
     @Test
-    fun `a class a provider-configuration file names forces a full run`(@TempDir dir: File) {
+    fun `a class a provider-configuration file names selects the tests from its load on`(@TempDir dir: File) {
         val spi = source("src/main/java/dev/sample/Spi.java", "package dev.sample;\npublic interface Spi { int once(); }")
         val provider = source(
             orphan.first,
@@ -177,11 +177,11 @@ class AbsenceAttempts : BreakAttempt() {
             """,
         )
         val result = attempt(
-            dir, "dev.sample.A1ProviderTypesTest", Aim.Forced("no-coverage-for-changed"),
+            dir, "dev.sample.A1ProviderTypesTest", Aim.Row("shares-jvm-changed-class"),
             listOf(spi, provider, registration, other, first, types, classOrderByName),
         ) { addStrict(it) }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
         assertTrue(File(File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory), "loaded.txt").isFile, "no union")
     }
 

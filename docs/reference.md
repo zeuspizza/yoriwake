@@ -157,8 +157,12 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
 - a changed path a `dependsOn` entry matches, for that entry's task (`declared-path-changed`); see
   [Properties and tasks](#properties-and-tasks);
 - a changed class the map has never recorded (`no-coverage-for-changed`), because uncovered and
-  unrecordable look the same. A test class this task runs is the exception: discovery runs it
-  whatever the map knows. On Gradle a second exception selects nothing for the class: a capture of
+  unrecordable look the same. A test class this task runs is one exception: discovery runs it
+  whatever the map knows. A class a capturing test JVM loaded or read but never executed (an
+  interface, a mocked collaborator, an exception never thrown) is another: it runs the tests that
+  ran from that JVM's first load or read of it on, in each JVM that loaded or read it, unless a JVM
+  first did so between tests (a class's teardown runs after its tests), the map holds JVMs of more
+  than one capture, as it does after a narrowed run, or the run is optimistic. On Gradle a third exception selects nothing for the class: a capture of
   the whole task lists the classes its test JVMs loaded, and a class the capture held that is
   absent from that list, that no capturing test JVM loaded or read as a class or source file, and
   that JaCoCo was instrumenting under the scope in force now is one no test depended on. It still

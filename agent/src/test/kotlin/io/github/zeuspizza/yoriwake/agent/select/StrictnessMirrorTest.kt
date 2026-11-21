@@ -56,23 +56,37 @@ class StrictnessMirrorTest {
         return FilterRule.decisionFrom({ values[it] }, dir)
     }
 
-    private fun assertMirrors(dir: File, fixture: Fixture, label: String) {
+    /** Whether the safe selection ran a test the optimistic mode, which forces instead, could not mirror. */
+    private fun assertMirrors(dir: File, fixture: Fixture, label: String): Boolean {
         val safe = decide(dir, fixture, Strictness.SAFE)
         val optimistic = decide(dir, fixture, Strictness.OPTIMISTIC)
         val loosened = Strictness.OPTIMISTIC.loosened()
         if (safe.isFullRun()) {
             assertTrue(optimistic.isFullRun(), "$label: a full run stays one")
-            return
+            return false
         }
         val ids = fixture.tests.map { it.first } + id("NeverSeenTest")
+        if (optimistic.isFullRun()) {
+            // A changed class no test covers is selected only by the window its first touch opens,
+            // which this mode drops.
+            assertEquals(Selector.Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED, optimistic.fullRunKind(), label)
+            val covered = fixture.tests.map { it.third }.toSet()
+            assertTrue(
+                fixture.changed.any { it !in covered && fixture.firstTouches.any { touch -> touch.endsWith("\t$it") } },
+                "$label: only a changed class its first touches date forces here",
+            )
+        }
         for (test in ids) {
             val rules = optimistic.rules()!!.rulesFor(test, Verdict.SKIPPED)
-            assertEquals(
-                (rules - loosened).isNotEmpty(), optimistic.includes(test),
-                "$label: $test with rules $rules",
-            )
+            if (!optimistic.isFullRun()) {
+                assertEquals(
+                    (rules - loosened).isNotEmpty(), optimistic.includes(test),
+                    "$label: $test with rules $rules",
+                )
+            }
             assertEquals(rules.isNotEmpty(), safe.includes(test), "$label: safe, $test with rules $rules")
         }
+        return optimistic.isFullRun()
     }
 
     @Test
@@ -108,13 +122,15 @@ class StrictnessMirrorTest {
     fun `on any map and change, the optimistic selection is the tests a kept rule runs`(@TempDir root: File) {
         val random = Random(20261108)
         val classes = listOf("dev.A", "dev.B", "dev.C", "dev.D")
+        var forced = 0
         repeat(300) { round ->
             val count = 2 + random.nextInt(7)
             val tests = (0 until count).map { i ->
-                Triple(id("T${i}Test"), if (random.nextBoolean()) "j" else "k", classes.random(random))
+                // One capture's JVMs, so a first touch can date a class no test covers.
+                Triple(id("T${i}Test"), if (random.nextBoolean()) "r/j" else "r/k", classes.random(random))
             }
             val touches = buildList {
-                for (jvm in listOf("j", "k")) {
+                for (jvm in listOf("r/j", "r/k")) {
                     for (name in classes + "*") {
                         if (random.nextInt(4) == 0) add("$jvm\t${1 + random.nextInt(count)}\t$name")
                     }
@@ -129,8 +145,9 @@ class StrictnessMirrorTest {
                 bytes = classes.filter { random.nextInt(5) == 0 },
             )
             val dir = write(File(root, "r$round"), fixture)
-            assertMirrors(dir, fixture, "round $round")
+            if (assertMirrors(dir, fixture, "round $round")) forced++
         }
+        assertTrue(forced > 0, "some round dates a changed class no test covers by its first touch")
     }
 
     private fun windowFixture() = Fixture(

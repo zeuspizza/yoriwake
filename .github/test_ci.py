@@ -227,28 +227,24 @@ def _asserts(ran, failed, decisions, notes, mutated="epsilon"):
             os.chdir(here)
 
 
-def case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reason():
+def case_the_epsilon_round_fails_unless_the_registry_test_ran_by_its_load():
     """Each check must be able to fail: a run that never read the map also runs the broken test."""
     problems = 0
     broken = "dev.demo.EpsilonRegistryTest.everyRegisteredTypeExposesTheMethodsTheRegistryPromises"
     others = [f"dev.demo.{name}.t" for name in ("AlphaTest", "BetaTest", "GammaTest", "DeltaShapeTest")]
-    ran = [broken] + others
-    widened = {t: ("included", "FULL_RUN") for t in ran}
-    notes = {
-        "input.yoriwake.change.classes": "dev.demo.Epsilon",
-        "outcome": "full-run",
-        "full-run-kind": "no-coverage-for-changed",
-    }
-    if _asserts(ran, {broken}, widened, notes) != 0:
+    narrowed = {broken: ("included", "SHARES_JVM_WITH_CHANGE"), **{t: ("excluded", "SKIPPED") for t in others}}
+    notes = {"input.yoriwake.change.classes": "dev.demo.Epsilon", "outcome": "narrowed"}
+    if _asserts([broken], {broken}, narrowed, notes) != 0:
         problems += fail("a correct Epsilon round was rejected")
-    if _asserts(ran, {broken}, {**widened, broken: ("included", "NOT_IN_MAP")}, notes) == 0:
+    if _asserts([broken], {broken}, {**narrowed, broken: ("included", "NOT_IN_MAP")}, notes) == 0:
         problems += fail("the registry test included as NOT_IN_MAP passed; a map nobody read looks the same")
-    # What losing the resource scan looks like: Epsilon's absence reads as proof, and the run narrows.
-    narrowed = {broken: ("excluded", "SKIPPED"), **{t: ("excluded", "SKIPPED") for t in others}}
-    if _asserts([], set(), narrowed, {**notes, "outcome": "narrowed", "full-run-kind": ""}) == 0:
+    skipped = {**narrowed, broken: ("excluded", "SKIPPED")}
+    if _asserts([], set(), skipped, notes) == 0:
         problems += fail("a run that skipped the registry test passed the Epsilon round")
-    if _asserts(ran, {broken}, widened, {**notes, "full-run-kind": "unmappable-paths"}) == 0:
-        problems += fail("a run widened for another reason passed as the resource scan's widening")
+    widened = {t: ("included", "FULL_RUN") for t in [broken] + others}
+    full = {**notes, "outcome": "full-run", "full-run-kind": "no-coverage-for-changed"}
+    if _asserts([broken] + others, {broken}, widened, full) == 0:
+        problems += fail("a run that widened to everything passed as one the load narrowed")
     return problems
 
 
@@ -5358,7 +5354,7 @@ CASES = (
     case_restore_is_the_mutation_backwards,
     case_each_source_gets_its_own_mutation_and_restore,
     case_a_source_without_a_mutation_is_refused,
-    case_the_epsilon_round_fails_unless_its_change_widened_the_run_for_its_reason,
+    case_the_epsilon_round_fails_unless_the_registry_test_ran_by_its_load,
     case_a_map_from_another_os_must_widen_the_run_and_say_why,
     case_discard_removes_results_and_leaves_the_map_alone_by_default,
     case_discard_on_a_clean_tree_is_not_an_error,

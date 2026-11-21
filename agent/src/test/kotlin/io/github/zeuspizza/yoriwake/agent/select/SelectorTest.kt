@@ -1676,22 +1676,176 @@ class SelectorTest {
     }
 
     @Test
-    fun `a class some JVM read the class file of is not proven untested by its absence`(@TempDir dir: File) {
+    fun `a class some JVM only read the class file of runs the reader, not every test`(@TempDir dir: File) {
         // A class-file reader parses the bytes and loads nothing, so the loaded union lacks it.
         val decision = decide(
             map(
                 dir,
+                test("com.acme.EarlierTest", "com.acme.Other"),
                 test("com.acme.ReaderTest", "com.acme.ReaderTest"),
-                loaded = listOf("com.acme.ReaderTest"),
-                positions = listOf("j\t2\t${placed("com.acme.ReaderTest")}"),
+                loaded = listOf("com.acme.Other", "com.acme.ReaderTest"),
+                positions = listOf("j\t1\t${placed("com.acme.EarlierTest")}", "j\t2\t${placed("com.acme.ReaderTest")}"),
                 firstTouches = listOf("j\t2\tcom.acme.Codec"),
             ),
             changed = listOf("com.acme.Codec"),
             provable = listOf("com.acme.Codec"),
         )
 
+        assertFalse(decision.isFullRun)
+        assertTrue(decision.includes(placed("com.acme.ReaderTest")))
+        assertFalse(decision.includes(placed("com.acme.EarlierTest")))
+    }
+
+    @Test
+    fun `a class some JVM read the class file of, or may have, is not proven untested by its absence`(
+        @TempDir dir: File,
+    ) {
+        // A class-file reader parses the bytes and loads nothing, so the loaded union lacks it.
+        val read = map(
+            File(dir, "read"),
+            test("com.acme.ReaderTest", "com.acme.ReaderTest"),
+            loaded = listOf("com.acme.ReaderTest"),
+            positions = listOf("j\t2\t${placed("com.acme.ReaderTest")}"),
+            firstTouches = listOf("j\t2\tcom.acme.Codec"),
+        )
+        assertFalse(Selector.leftNoTrace(read, "com.acme.Codec", listOf("com.acme.Codec")))
+
+        // A JVM whose reads were not all observed may have read it, and names nothing to date it by.
+        val decision = decide(
+            map(
+                File(dir, "unobserved"),
+                test("com.acme.ReaderTest", "com.acme.ReaderTest"),
+                loaded = listOf("com.acme.ReaderTest"),
+                positions = listOf("j\t2\t${placed("com.acme.ReaderTest")}"),
+                firstTouches = listOf("j\t0\t${AgentContract.FIRST_TOUCH_ANY}"),
+            ),
+            changed = listOf("com.acme.Codec"),
+            provable = listOf("com.acme.Codec"),
+        )
         assertTrue(decision.isFullRun)
         assertEquals(Selector.Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED, decision.fullRunKind())
+    }
+
+    // A class the tests loaded but never executed (an interface, a mocked collaborator, an exception
+    // never thrown) has no coverage, but its first touches date it as they date any changed class.
+
+    @Test
+    fun `a changed class no test executed runs the tests from its first touch on in each JVM`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.BeforeTest", "com.acme.Other"),
+                test("com.acme.LoaderTest", "com.acme.Other"),
+                test("com.acme.AfterTest", "com.acme.Other"),
+                test("com.acme.KBeforeTest", "com.acme.Other"),
+                test("com.acme.KAfterTest", "com.acme.Other"),
+                test("com.acme.ElsewhereTest", "com.acme.Other"),
+                positions = listOf(
+                    "r/j\t2\t${placed("com.acme.BeforeTest")}", "r/j\t3\t${placed("com.acme.LoaderTest")}",
+                    "r/j\t4\t${placed("com.acme.AfterTest")}", "r/k\t4\t${placed("com.acme.KBeforeTest")}",
+                    "r/k\t6\t${placed("com.acme.KAfterTest")}", "r/m\t9\t${placed("com.acme.ElsewhereTest")}",
+                ),
+                firstTouches = listOf("r/j\t3\tcom.acme.Port", "r/k\t6\tcom.acme.Port"),
+            ),
+            changed = listOf("com.acme.Port"),
+        )
+
+        assertFalse(decision.isFullRun)
+        for (name in listOf("LoaderTest", "AfterTest", "KAfterTest")) {
+            assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.$name")))
+        }
+        for (name in listOf("BeforeTest", "KBeforeTest", "ElsewhereTest")) {
+            assertFalse(decision.includes(placed("com.acme.$name")), name)
+        }
+    }
+
+    @Test
+    fun `a changed class no test executed is dated by a touch of its nested class`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.BeforeTest", "com.acme.Other"),
+                test("com.acme.AfterTest", "com.acme.Other"),
+                positions = listOf("j\t1\t${placed("com.acme.BeforeTest")}", "j\t2\t${placed("com.acme.AfterTest")}"),
+                firstTouches = listOf("j\t2\tcom.acme.Port\$Failure"),
+            ),
+            changed = listOf("com.acme.Port"),
+        )
+
+        assertFalse(decision.isFullRun)
+        assertTrue(decision.includes(placed("com.acme.AfterTest")))
+        assertFalse(decision.includes(placed("com.acme.BeforeTest")))
+    }
+
+    @Test
+    fun `a changed class no test executed forces on a map merged from two captures`(@TempDir dir: File) {
+        // The other capture's JVM may have run under a scope that left the class out of its touches.
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.LoaderTest", "com.acme.Other"),
+                test("com.acme.RetainedTest", "com.acme.Other"),
+                positions = listOf(
+                    "r1/j\t1\t${placed("com.acme.LoaderTest")}", "r2/j\t1\t${placed("com.acme.RetainedTest")}",
+                ),
+                firstTouches = listOf("r1/j\t1\tcom.acme.Port"),
+            ),
+            changed = listOf("com.acme.Port"),
+        )
+
+        assertEquals(Selector.Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED, decision.fullRunKind())
+    }
+
+    @Test
+    fun `a changed class no test executed forces when a JVM first touched it between tests`(@TempDir dir: File) {
+        // A teardown between classes runs after the tests of its class, which the window would leave out.
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.TornDownTest", "com.acme.Other"),
+                test("com.acme.NextTest", "com.acme.Other"),
+                positions = listOf("j\t1\t${placed("com.acme.TornDownTest")}", "j\t3\t${placed("com.acme.NextTest")}"),
+                firstTouches = listOf("j\t2\tcom.acme.Port"),
+            ),
+            changed = listOf("com.acme.Port"),
+        )
+
+        assertEquals(Selector.Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED, decision.fullRunKind())
+    }
+
+    @Test
+    fun `a changed class no test executed forces under the optimistic mode`(@TempDir dir: File) {
+        // The mode drops the window that is the class's only selector.
+        val m = map(
+            dir,
+            test("com.acme.LoaderTest", "com.acme.Other"),
+            positions = listOf("j\t1\t${placed("com.acme.LoaderTest")}"),
+            firstTouches = listOf("j\t1\tcom.acme.Port"),
+        )
+
+        val optimistic = Selector.decide(
+            m, ChangeSet.of(listOf("com.acme.Port"), emptyList()), emptyList(), Strictness.OPTIMISTIC,
+        )
+
+        assertEquals(Selector.Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED, optimistic.fullRunKind())
+        assertFalse(decide(m, changed = listOf("com.acme.Port")).isFullRun)
+    }
+
+    @Test
+    fun `a full run for changed classes no JVM touched names only those`(@TempDir dir: File) {
+        val decision = decide(
+            map(
+                dir,
+                test("com.acme.LoaderTest", "com.acme.Other"),
+                positions = listOf("j\t1\t${placed("com.acme.LoaderTest")}"),
+                firstTouches = listOf("j\t1\tcom.acme.Port"),
+            ),
+            changed = listOf("com.acme.Port", "com.acme.Unseen"),
+        )
+
+        assertEquals(Selector.Decision.FullRunKind.NO_COVERAGE_FOR_CHANGED, decision.fullRunKind())
+        assertContains(decision.fullRunReason(), "com.acme.Unseen")
+        assertFalse(decision.fullRunReason().contains("com.acme.Port"))
     }
 
     // A test class nothing else names is dated by its own first test and by named touches: its

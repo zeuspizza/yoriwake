@@ -184,9 +184,10 @@ class OtherModulesJarsAttempts : BreakAttempt() {
     // Track: code reading. Boundary: a Java source of a module off this task's classpath stays in
     // the change set only when a compiled class holds a path to it of two or more segments; the
     // module's own `build` directory is one such form, for a test that reads its output by path.
-    // The test names nothing else of the source's path: not its file name, nor a part of it.
+    // The test names nothing else of the source's path: not its file name, nor a part of it. Its
+    // read of the class file dates the class, so the test runs by that window.
     @Test
-    fun `a test that reads a sibling's compiled class by path keeps that sibling's source change forcing`(@TempDir dir: File) {
+    fun `a test that reads a sibling's compiled class by path is selected when that sibling's source changes`(@TempDir dir: File) {
         val beta = source("beta/build.gradle.kts", "plugins { java }")
         val thing = source(
             "beta/src/main/java/dev/beta/Thing.java",
@@ -210,7 +211,7 @@ class OtherModulesJarsAttempts : BreakAttempt() {
             """,
         )
         val result = attempt(
-            dir, "dev.sample.A1BuildOutputTest", Aim.Forced("no-coverage-for-changed"),
+            dir, "dev.sample.A1BuildOutputTest", Aim.Row("shares-jvm-changed-class"),
             listOf(settings("beta"), beta, thing, codec, other, first, outputTest, codecTest, classOrderByName),
             buildScript = rootBuild(extra = "dependsOn(\":beta:classes\")"),
         ) {
@@ -218,7 +219,7 @@ class OtherModulesJarsAttempts : BreakAttempt() {
             File(it, thing.first).writeText(File(it, thing.first).readText().replace("v1", "v2"))
         }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 
     // Track: code reading. Boundary: the same two-segment rule, at its shortest trailing part, the

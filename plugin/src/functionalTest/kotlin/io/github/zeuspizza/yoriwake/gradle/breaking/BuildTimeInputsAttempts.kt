@@ -542,7 +542,7 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             """,
         )
         val result = attempt(
-            dir, "dev.sample.A1SiblingSourceTest", Aim.Forced("no-coverage-for-changed"),
+            dir, "dev.sample.A1SiblingSourceTest", Aim.Row("shares-jvm-changed-class"),
             listOf(
                 settings, "src/beta/build.gradle.kts" to "plugins { java }\n",
                 thing to "package dev.beta;\npublic class Thing { public int n() { return 1; } }\n",
@@ -553,6 +553,6 @@ class BuildTimeInputsAttempts : DeclinedAttempt() {
             File(it, thing).writeText("package dev.beta;\npublic class Thing { public int n() { return 2; } }\n")
         }
 
-        assertOutcome(Outcome.HELD_BY_FORCE, result)
+        assertOutcome(Outcome.HELD_BY_RULE, result)
     }
 }
