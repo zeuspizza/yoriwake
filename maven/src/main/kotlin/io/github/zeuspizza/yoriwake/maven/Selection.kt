@@ -304,6 +304,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 dependencies = dependencies,
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = selected.stamp, moved = selected.moved,
                 unionFilter = unionFilter,
+                stampedFiles = ignore.stampedFiles,
             ),
             host,
         )

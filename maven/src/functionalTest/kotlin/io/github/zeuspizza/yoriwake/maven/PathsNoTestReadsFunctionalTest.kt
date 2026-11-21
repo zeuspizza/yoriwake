@@ -194,6 +194,44 @@ class PathsNoTestReadsFunctionalTest {
     }
 
     @Test
+    fun `a resource stamped on every build that stampedFiles declares runs no test that reads it`(@TempDir dir: File) {
+        val pom = File(FunctionalMaven.demo, "lib/pom.xml").readText().replace(
+            "<artifactId>lib</artifactId>",
+            "<artifactId>lib</artifactId>\n" +
+                "  <properties><maven.build.timestamp.format>yyyyMMddHHmmssSSS</maven.build.timestamp.format></properties>\n" +
+                "  <build><resources><resource><directory>src/main/resources</directory><filtering>true</filtering></resource></resources></build>",
+        )
+        val stampTest = "lib/src/test/java/dev/demo/lib/StampTest.java" to """
+            package dev.demo.lib;
+            import java.io.InputStream;
+            import java.util.Properties;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+            class StampTest {
+                @Test void reads() throws Exception {
+                    Properties stamp = new Properties();
+                    try (InputStream in = getClass().getResourceAsStream("/stamp.properties")) { stamp.load(in); }
+                    assertNotNull(stamp.getProperty("built"));
+                }
+            }
+        """.trimIndent()
+        val project = captured(
+            dir, "<stampedFiles><path>**/stamp.properties</path></stampedFiles>", "lib/pom.xml" to pom,
+            "lib/src/main/resources/stamp.properties" to "built=\${maven.build.timestamp}\n", stampTest,
+        )
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").apply {
+            writeText(readText().replace("    public String greet", "    // Greets by name.\n    public String greet"))
+        }
+
+        val output = selecting(project)
+
+        assertEquals(setOf("dev.demo.lib.GreeterTest"), ran(output), output)
+        assertContains(output, "stampedFiles left out 1 changed file(s) of build output")
+        assertContains(output, "lib/target/classes/stamp.properties")
+        assertContains(output, "test(s) that read them when the map was captured do not run for them")
+    }
+
+    @Test
     fun `a declared pom stays in the change set as a build file`(@TempDir dir: File) {
         val project = captured(dir, "<pathIgnore><path>**/*.xml</path></pathIgnore>")
         File(project, "lib/pom.xml").apply { writeText(readText().replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <!-- touched -->")) }

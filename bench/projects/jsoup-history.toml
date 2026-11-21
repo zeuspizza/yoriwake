@@ -20,3 +20,6 @@ sources = ["src/main/java"]
 # sets, so the plugin declines every run; staged with `@{argLine}` before it, as an adopting user
 # would write it.
 prepend_argline = true
+# The bundle plugin writes this manifest on every build (`Bnd-LastModified`), so it changes with no
+# change behind it and every test from its first read on would run.
+stamped_files = ["target/classes/META-INF/MANIFEST.MF"]

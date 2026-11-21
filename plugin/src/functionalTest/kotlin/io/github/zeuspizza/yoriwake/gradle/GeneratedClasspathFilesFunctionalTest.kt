@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -203,6 +204,21 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
             output.lines().any { it.startsWith("[yoriwake] :app:test: ") && "app/build/resources/test/info.properties" in it },
             output,
         )
+    }
+
+    @Test
+    fun `a generated resource stampedFiles declares runs no test that reads it, and the run names it`(@TempDir dir: File) {
+        fixture(dir, "yoriwake { stampedFiles.add(\"**/info.properties\") }")
+        capture(dir, "-Pinfo=a")
+        editLegacy(dir)
+
+        val output = select(dir, "-Pinfo=x")
+
+        assertFalse("dev.sample.AaInfoTest" in ranTests(app(dir)), output)
+        assertTrue("dev.sample.LegacyTest" in ranTests(app(dir)), output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertContains(output, "stampedFiles left out 1 changed file(s) of build output")
+        assertContains(output, "app/build/resources/test/info.properties")
     }
 
     @Test

@@ -826,9 +826,9 @@ def stage(checkout, project):
             pom.element("groupId", PLUGIN_GROUP), pom.element("artifactId", PLUGIN_ARTIFACT),
             pom.element("version", wanted), pom.element("extensions", "true")]), 3)
         staged.append("plugin added")
-    # The project's own declarations (`path_ignore`), written as an adopting user writes them in
-    # the root POM; one the POM already holds is left as it is.
-    for name, key in (("pathIgnore", "path_ignore"),):
+    # The project's own declarations (`path_ignore`, `stamped_files`), written as an adopting user
+    # writes them in the root POM; one the POM already holds is left as it is.
+    for name, key in (("pathIgnore", "path_ignore"), ("stampedFiles", "stamped_files")):
         entries = project.get(key) or []
         configuration = plugin.find(pom.q("configuration"))
         if entries and (configuration is None or configuration.find(pom.q(name)) is None):

@@ -393,6 +393,24 @@ tasks.jar {
 and apply `gradle-git-properties`, or its task, the same way. A test that asserts on such a value
 then needs the release build to see it.
 
+Where the value cannot be made stable, declare the file in `stampedFiles`, as `pathIgnore`'s globs
+over the root-relative path of a file in an output directory or of an entry in one of your jars:
+
+```kotlin
+yoriwake {
+    stampedFiles.addAll("**/META-INF/MANIFEST.MF", "build/resources/main/build-info.properties")
+}
+```
+
+On Maven, the plugin's `<configuration>` takes `<stampedFiles><path>target/classes/META-INF/MANIFEST.MF</path></stampedFiles>`,
+read as `<pathIgnore>` is. A declared file whose content changed is no change, even for a test the
+map saw reading it, unlike a `pathIgnore` path: its readers are the whole cost. A declared file that
+appeared, is gone or cannot be read, and an attribute the class loader keeps from a declared
+manifest, still count as above. Every run that leaves one out names it, with its digest at capture
+and now and how many tests read it then, which did not run for it. What a wrong declaration costs:
+a test whose outcome depends on the value, such as one asserting the build time or the commit, is
+skipped when only that file changed, until something else selects it or a full run comes.
+
 How often this cost a narrowed run before reads were recorded, measured at the 0.2.0 release on 31
 open-source test tasks: in
 three, JUnit 5, Resilience4j and OpenTelemetry Java, a jar manifest on the test classpath takes a
@@ -2131,8 +2149,8 @@ the Gradle plugin.
   per child element, `<variable>DB_MODE</variable>`, `<property>build.*</property>`) and
   `<recordSequentially>`, `<narrowDependencies>` and `<narrowLineOnlyChanges>` are read per module
   too, a module with no plugin entry of its own taking the root's; the `-D` of the same name
-  overrides each of the last three. `<pathIgnore>` and `<pathIgnoreDefaults>` are read the same
-  way, with no `-D` form ([on Maven](#on-maven)).
+  overrides each of the last three. `<pathIgnore>`, `<pathIgnoreDefaults>` and `<stampedFiles>`
+  are read the same way, with no `-D` form ([on Maven](#on-maven)).
 
   ```xml
   <configuration>
@@ -2271,6 +2289,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `notReadByTests` | `List<String>` | empty | Deprecated: use `pathIgnore`. Globs of files no test or build reads: a changed one is no change. |
 | `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. Matched before the defaults. See [Paths no test reads](#paths-no-test-reads). |
 | `pathIgnoreDefaults` | `Boolean` | `true` | Ignore README and Markdown files, `docs/` and `.github/` without listing them. See [The defaults](#the-defaults). |
+| `stampedFiles` | `List<String>` | empty | Globs of build output on the test classpath stamped on every build that no test depends on: a changed one is no change. See [Generated files on the test classpath](#generated-files-on-the-test-classpath). |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
 | `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |

@@ -480,11 +480,14 @@ def case_staging_writes_the_projects_own_declarations_into_the_plugins_configura
     with tempfile.TemporaryDirectory() as tmp:
         staged, _ = _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": _pom("app"),
                                   ".gitignore": "target/\n"},
-                            {**PROJECT, "path_ignore": ["src/changes/changes.xml"]})
+                            {**PROJECT, "path_ignore": ["src/changes/changes.xml"],
+                             "stamped_files": ["**/META-INF/MANIFEST.MF"]})
         root = _read(tmp, "pom.xml")
         if "<pathIgnore>" not in root or "<path>src/changes/changes.xml</path>" not in root or \
                 "pathIgnore 1" not in staged:
             failures += fail(f"the project's pathIgnore was not staged: {staged}")
+        if "<path>**/META-INF/MANIFEST.MF</path>" not in root or "stampedFiles 1" not in staged:
+            failures += fail(f"the project's stampedFiles were not staged: {staged}")
         if maven_build.stage(tmp, {**PROJECT, "path_ignore": ["src/changes/changes.xml"]}):
             failures += fail("staging the same declaration again changed the POM")
     return failures
