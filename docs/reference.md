@@ -90,7 +90,7 @@ Every line carries the `[yoriwake]` prefix.
 | `:test: <reason>, so this run's coverage was not kept and the map is as it was` | a run of the whole suite that could not date the map, such as a filtered one or one during which HEAD moved; the tests it saw fail or skip keep that outcome |
 | `:test ran but recorded no coverage, …` | something is wrong: no map was built. Alert on this one. |
 | `:test would run everything: <reason>` | from `yoriwakeExplain<Task>`: what forced it |
-| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore` (on Maven, ignore them in git); see [Files written into the source tree](#files-written-into-the-source-tree) |
+| `:test: <paths> changed during :test's last capture build …` | on a forced run: untracked files that force it, by where they came from, and how to list them in `pathIgnore`; see [Files written into the source tree](#files-written-into-the-source-tree) |
 | `:test: N changed file(s) of modules this task neither loads nor reaches, … are no change: <paths>` | another module's build script or files under `src/` left out of the change set, as nothing carries them to a test; see [How it works](#how-it-works) |
 | `pathIgnore left out N changed paths (…): <paths>` | the changed paths `pathIgnore` took out of the change set, counted by entry; see [Paths no test reads](#paths-no-test-reads) |
 | `pathIgnore entry '<entry>' matches <path>, which stays in the change set (<protection>)` | a declared path that is protected, and why |
@@ -148,7 +148,7 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   Four kinds of file are no change: an IDE's state (anything under an `.idea`, `.vscode` or
   `.fleet` directory at any depth, and `*.iml` files); a file the build's `notReadByTests` lists
   (see [Properties and tasks](#properties-and-tasks)); a path the build's `pathIgnore` declares, or
-  on Gradle one of its [defaults](#the-defaults) matches (README and Markdown files, `docs/` and
+  one of its [defaults](#the-defaults) matches (README and Markdown files, `docs/` and
   `.github/`), unless kept (see [Paths no test reads](#paths-no-test-reads)); and a Java or Kotlin source of a module that is not
   on the task's runtime classpath, which no compiled class of the task names, or that module's build
   script or other file under `src/` when nothing carries it to a test (see [How it
@@ -1787,12 +1787,15 @@ belongs in the reviewed build.
 Some paths stay in the change set whatever an entry matches, so `**` cannot switch off what
 compiles or what the build reads. The run names each, with the protection that kept it:
 
-- `source-set`: a path under any source set's directory of any project of the build, or under any
-  directory named `src`. So a Markdown fixture under `src/test/resources` keeps forcing with
+- `source-set`: a path under any source set's directory of any project of the build (on Maven, any
+  module's source roots and resource and test-resource directories), or under any directory named
+  `src`. So a Markdown fixture under `src/test/resources` keeps forcing with
   `**/*.md` declared, and so does a documentation tree with its own `src` directory;
 - `build-file`: a build script (`*.gradle`, `*.gradle.kts`), `gradle.properties`, a version
   catalog, anything under a `gradle` directory, the wrapper, and build logic: `buildSrc`, a build
-  this one includes, and any directory below the root that holds its own settings file;
+  this one includes, and any directory below the root that holds its own settings file. On Maven:
+  any `pom.xml` (or polyglot `pom.*`), anything under a `.mvn` directory, `mvnw`, `mvnw.cmd`, and anything under a
+  directory below the reactor root that holds a `pom.xml` and is no module of the reactor;
 - `outside-root`: a path in the repository outside the root project's directory, when the build
   lives in a subdirectory;
 - `named-in-classes`: a path whose full path or file name a compiled class of the task holds as a
@@ -1830,7 +1833,7 @@ each failing test selection would have left out.
 
 ### The defaults
 
-A Gradle build that sets nothing ignores four entries, matched after its own: `.github/`, `docs/`
+A build that sets nothing ignores four entries, matched after its own: `.github/`, `docs/`
 (the root project's `docs` directory only), `**/README*` and `**/*.md`. So a commit that touches
 only documentation or CI configuration runs nothing extra. A default entry has every protection
 above and the same read check, and two rules a declared entry does not, since nobody vouched for it:
@@ -1854,7 +1857,24 @@ yoriwake {
 }
 ```
 
-Maven builds have no `pathIgnore`, and so no defaults.
+### On Maven
+
+A module's plugin `<configuration>` takes the same list, one child element per entry, relative to
+the reactor root, and `<pathIgnoreDefaults>`; a module with no plugin entry of its own takes the
+root's. The defaults and every rule above apply alike. A directory the POM puts on the test
+classpath as a resource or test resource is kept as `source-set`; one that is a module's own
+directory, as commons-parent copies `NOTICE.txt`, keeps the files its `<includes>` name (all of
+them when it names none). `task-input` never applies: Surefire and Failsafe declare no input
+files, and a run compares the system properties file they read as it compares the rest of the
+test JVM's environment. A TestNG suite file (`<suiteXmlFiles>`) outside `src` that an entry or a
+default matches is left out like any other file, though Surefire reads it outside the test JVM.
+
+```xml
+<configuration>
+  <pathIgnore><path>notes/**</path></pathIgnore>
+  <pathIgnoreDefaults>true</pathIgnoreDefaults>
+</configuration>
+```
 
 `notReadByTests` takes a list for the same purpose with none of this: its `*` crosses directories,
 nothing is protected, no read is checked, and only a count is printed. It is deprecated: a build
@@ -2099,7 +2119,8 @@ the Gradle plugin.
   per child element, `<variable>DB_MODE</variable>`, `<property>build.*</property>`) and
   `<recordSequentially>`, `<narrowDependencies>` and `<narrowLineOnlyChanges>` are read per module
   too, a module with no plugin entry of its own taking the root's; the `-D` of the same name
-  overrides each of the last three.
+  overrides each of the last three. `<pathIgnore>` and `<pathIgnoreDefaults>` are read the same
+  way, with no `-D` form ([on Maven](#on-maven)).
 
   ```xml
   <configuration>
@@ -2111,7 +2132,7 @@ the Gradle plugin.
 
 - **`-Dtest`** (or `-Dit.test` for Failsafe) makes a selecting run run every test it names
   (`tests-named`), as `--tests` does on Gradle.
-- **Not on Maven**: `pathIgnore`, `notReadByTests`, `dependsOn` (a test's `yoriwake-depends-on:`
+- **Not on Maven**: `notReadByTests`, `dependsOn` (a test's `yoriwake-depends-on:`
   tag still selects it) and `narrowPlainRunners`.
 - **Recording a parallel suite**: under `recordSequentially`, a recording run turns Jupiter's and
   Vintage's parallel switches off through `<properties><configurationParameters>`, which outrank
@@ -2142,8 +2163,6 @@ the Gradle plugin.
   narrowing. An untracked file of that name in a nested module's `.mvn/.develocity/` directory is
   passed over the same way, but counts when it appeared or its content changed since the map was
   captured, as an ignored file does. Tracked, a change to it forces like any other path.
-- **An untracked file that forces** a run is named with `.gitignore` as its remedy, not
-  `pathIgnore`: an ignored file counts only when its content changed since the map was captured.
 - **CI**: cache `.yoriwake/` as the [recipe](#without-the-action) caches `.gradle/yoriwake`, leaving
   out `.yoriwake/yoriwake/*/raw` and `.yoriwake/yoriwake/*/selection.tsv`. yoriwake-action runs
   Gradle only.

@@ -19,6 +19,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.change.DependencyRule
 import io.github.zeuspizza.yoriwake.gradle.change.ForcingPaths
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import io.github.zeuspizza.yoriwake.gradle.change.RefusalKind
 import io.github.zeuspizza.yoriwake.gradle.change.SelectingStep
 import io.github.zeuspizza.yoriwake.gradle.change.SelectionSetup
@@ -165,6 +166,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         narrowLineOnlyChanges: Boolean = false,
         /** The digest of the execution's own test filter, or null; see [Recording.unionFilterOf]. */
         unionFilter: String? = null,
+        /** The module's `pathIgnore`, from [Settings.pathIgnoreOf]. */
+        ignore: Settings.Ignore = Settings.Ignore(emptyList(), defaults = false),
     ): RunPlan.Kind {
         val host = Host(name, properties)
         // Whatever the run kind, as on Gradle: an observing or complement run reports the pin too.
@@ -233,7 +236,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             plan.widening!!,
             { ChangeDetection.changedPaths(git, root, it) { path -> Recording.isBuildState(path) } },
             settings.largeChangeThreshold,
-        ) { _, changed -> LargeChange.counted(changed, null) }
+        ) { base, changed -> LargeChange.counted(changed, declaration(ignore, listOf(base), changed)) }
         val selected = when (settled) {
             is SelectionSetup.Outcome.RunEverything -> {
                 host.refuse(settled.kind, settled.reason)
@@ -293,14 +296,11 @@ internal class Selection(private val session: MavenSession, private val root: Fi
             )
         }
         if (host.refused) return kind
-        val sourceDirs = ForcingPaths.sourceDirs(
-            root,
-            session.allProjects.flatMap { module -> (module.compileSourceRoots + module.testCompileSourceRoots).map(::File) },
-        )
         val done = SelectingStep.run(
             SelectingStep.Inputs(
-                mapDir, root, paths, widened.ref, widened.origin, sourceDirs, view,
-                notReadByTests = emptyList(), ignore = null, declared = emptyList(), observing = observing, text = text,
+                mapDir, root, paths, widened.ref, widened.origin, sourceDirs(), view,
+                notReadByTests = emptyList(), ignore = declaration(ignore, listOfNotNull(widened.ref, selected.stamp), paths),
+                declared = emptyList(), observing = observing, text = text,
                 dependencies = dependencies,
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = selected.stamp, moved = selected.moved,
                 unionFilter = unionFilter,
@@ -309,6 +309,75 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         )
         worked(done, widened.ref)
         return kind
+    }
+
+    /**
+     * Every reactor module's source roots and resource directories, root-relative, as Gradle's
+     * `allSource` holds both: what `pathIgnore` keeps and the forced-run remedy offers no glob for.
+     * A resource directory that is a module's own directory is not one: [resourceFiles] judges its
+     * files by the resource's includes. Read when asked: a plugin may add a source root as the build goes.
+     */
+    private fun sourceDirs(): List<String> {
+        val moduleDirs = session.allProjects.mapNotNull { it.basedir?.absoluteFile?.normalize() }.toSet()
+        return ForcingPaths.sourceDirs(
+            root,
+            session.allProjects.flatMap { module ->
+                (module.compileSourceRoots + module.testCompileSourceRoots).map(::File) +
+                    (module.resources + module.testResources).mapNotNull { it.directory?.let(::File) }
+                        .filterNot { it.absoluteFile.normalize() in moduleDirs }
+            },
+        )
+    }
+
+    /**
+     * The files among [paths] a resource directory that is a module's own directory copies onto a
+     * classpath, as commons-parent copies `NOTICE.txt` from the module's root: every file below it
+     * when the resource lists no include, or one of its includes this grammar cannot read.
+     */
+    private fun resourceFiles(paths: List<String>): Set<String> {
+        val absoluteRoot = root.absoluteFile.normalize()
+        val whole = session.allProjects.flatMap { module ->
+            val dir = module.basedir?.absoluteFile?.normalize() ?: return@flatMap emptyList()
+            (module.resources + module.testResources)
+                .filter { resource -> resource.directory?.let { File(it).absoluteFile.normalize() } == dir }
+                .mapNotNull { resource -> dir.relativeToOrNull(absoluteRoot)?.invariantSeparatorsPath?.let { it to resource.includes.orEmpty() } }
+        }
+        if (whole.isEmpty()) return emptySet()
+        return paths.filter { path ->
+            whole.any { (dir, includes) ->
+                val relative = if (dir.isEmpty()) path else path.removePrefix("$dir/").takeIf { it != path }
+                relative != null && (
+                    includes.isEmpty() || includes.any { include ->
+                        val pattern = include.trim().removePrefix("./")
+                        PathIgnore.problem(pattern) != null || PathIgnore.matches(pattern, relative)
+                    }
+                )
+            }
+        }.toSet()
+    }
+
+    /**
+     * [ignore] as the run applies it, as Gradle's `pathIgnoreDeclaration` builds one: null when no
+     * path in [paths] matches an entry or a default, so a build with nothing to leave out asks git
+     * nothing more. Protected are [sourceDirs], [resourceFiles], Maven's build files, and every path
+     * git reports outside the reactor root against any of [against]; all of [paths] when git cannot
+     * answer.
+     */
+    private fun declaration(ignore: Settings.Ignore, against: List<String>, paths: List<String>): PathIgnore.Declaration? {
+        val defaults = ignore.defaultEntries
+        if (paths.none { path -> (ignore.entries + defaults).any { PathIgnore.matches(it, path) } }) return null
+        val outside = against.map { ChangeDetection.outsideRoot(git, root, it) }
+        return PathIgnore.Declaration(
+            entries = ignore.entries,
+            rootDir = root,
+            sourceDirs = sourceDirs(),
+            buildLogicDirs = emptyList(),
+            outsideRoot = if (null in outside) paths.toSet() else outside.flatMap { it.orEmpty() }.toSet(),
+            defaults = defaults,
+            maven = true,
+            moduleDirs = session.allProjects.mapNotNull { module -> module.basedir?.relativeToOrNull(root)?.invariantSeparatorsPath },
+            sourceFiles = resourceFiles(paths),
+        )
     }
 
     /**

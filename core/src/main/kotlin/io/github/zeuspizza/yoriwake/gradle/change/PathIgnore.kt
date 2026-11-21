@@ -11,7 +11,7 @@ import java.io.File
  * taken out, whatever an entry matches, and each match is reported either way, so a wrong
  * declaration can be found.
  *
- * A Gradle build also gets [DEFAULTS], unless it turns them off: documentation and CI
+ * A build also gets [DEFAULTS], unless it turns them off: documentation and CI
  * configuration, which no build reads as a rule. A default entry is held to more than a user's,
  * since nobody vouched for it: see [gated].
  */
@@ -88,7 +88,9 @@ internal object PathIgnore {
     /**
      * The entries and what protects a path from them, as plain values a task action may hold.
      * [sourceDirs] and [buildLogicDirs] are root-relative; [outsideRoot] holds the changed paths git
-     * reported outside the Gradle root. [defaults] are tried after [entries].
+     * reported outside the Gradle root. [defaults] are tried after [entries]. [maven] adds Maven's
+     * build files to Gradle's, with [moduleDirs] the reactor's module directories, root-relative: a
+     * `pom.xml` in any other directory below the root is another build's.
      */
     class Declaration(
         val entries: List<String>,
@@ -97,6 +99,10 @@ internal object PathIgnore {
         val buildLogicDirs: List<String>,
         val outsideRoot: Set<String>,
         val defaults: List<String> = emptyList(),
+        val maven: Boolean = false,
+        val moduleDirs: List<String> = emptyList(),
+        /** Files a resource directory that is a whole module's directory takes in, kept as [Protection.SOURCE_SET]. */
+        val sourceFiles: Set<String> = emptySet(),
     ) : java.io.Serializable {
         /** Whether [path] matches an entry or a default. */
         fun matches(path: String): Boolean = (entries + defaults).any { PathIgnore.matches(it, path) }
@@ -260,12 +266,16 @@ internal object PathIgnore {
         return when {
             path in declaration.outsideRoot -> Protection.OUTSIDE_ROOT
             path.startsWith("\"") -> Protection.GIT_QUOTED
+            // Gradle's names stay build files on Maven too, so a repository that builds both ways
+            // keeps either build's files; a Gradle build treats a pom.xml as any other file.
+            declaration.maven && isMavenBuildFile(segments.last(), directories, declaration) -> Protection.BUILD_FILE
             isBuildFile(segments.last(), directories) ||
                 declaration.buildLogicDirs.any { path.startsWith("$it/") } ||
                 inNestedBuild(declaration.rootDir, directories) -> Protection.BUILD_FILE
             // Any `src` directory, not only the layouts Gradle reports: Android and multiplatform
             // test resources, assets and generator inputs live under one too.
             "src" in directories || declaration.sourceDirs.any { path.startsWith("$it/") } -> Protection.SOURCE_SET
+            path in declaration.sourceFiles -> Protection.SOURCE_SET
             else -> null
         }
     }
@@ -280,6 +290,16 @@ internal object PathIgnore {
             val dir = File(rootDir, directories.subList(0, depth + 1).joinToString("/"))
             SETTINGS_FILES.any { File(dir, it).isFile }
         }
+
+    private fun isMavenBuildFile(name: String, directories: List<String>, declaration: Declaration): Boolean =
+        name in MAVEN_BUILD_FILE_NAMES || name.startsWith("pom.") || ".mvn" in directories ||
+            directories.indices.any { depth ->
+                val dir = directories.subList(0, depth + 1).joinToString("/")
+                dir !in declaration.moduleDirs && File(declaration.rootDir, "$dir/pom.xml").isFile
+            }
+
+    // `pom.*` covers the polyglot POMs (`pom.yml`, `pom.kts`) an extension in `.mvn` enables.
+    private val MAVEN_BUILD_FILE_NAMES = setOf("mvnw", "mvnw.cmd")
 
     private val BUILD_FILE_NAMES = setOf("gradle.properties", "gradlew", "gradlew.bat")
 

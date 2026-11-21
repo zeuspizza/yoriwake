@@ -247,6 +247,7 @@ MAVEN_LISTENER = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Chain
 MAVEN_RECORDING = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Recording.kt"
 MAVEN_UNION_TRUST = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/UnionTrust.kt"
 MAVEN_SELECTION = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Selection.kt"
+MAVEN_SETTINGS = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/Settings.kt"
 MAVEN_EXPLAIN = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ExplainMojo.kt"
 MAVEN_CLASSPATH_VIEWS = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ClasspathViews.kt"
 MAVEN_FORK_SYSTEM_PROPERTIES = "maven/src/main/kotlin/io/github/zeuspizza/yoriwake/maven/ForkSystemProperties.kt"
@@ -4733,6 +4734,40 @@ MUTATIONS = [
      "            declaration.entries.firstOrNull { matches(it, path) }?.let { path to (it to false) }",
      "            declaration.defaults.firstOrNull { matches(it, path) }?.let { path to (it to true) }",
      unit_suite, "a build's own entry wins over a default that matches the same path"),
+    # pathIgnore on Maven: read per module and validated, applied to the selecting step and the
+    # large-change count, with the defaults, and with Maven's build files kept.
+    ("a Maven selecting run applies no pathIgnore", MAVEN_SELECTION,
+     "                notReadByTests = emptyList(), ignore = declaration(ignore, listOfNotNull(widened.ref, selected.stamp), paths),",
+     "                notReadByTests = emptyList(), ignore = null,",
+     maven_suite, "a change to declared paths only runs nothing extra and names each path"),
+    ("Maven counts the paths pathIgnore takes out towards largeChangeThreshold", MAVEN_SELECTION,
+     "        ) { base, changed -> LargeChange.counted(changed, declaration(ignore, listOf(base), changed)) }",
+     "        ) { _, changed -> LargeChange.counted(changed, null) }",
+     maven_suite, "paths pathIgnore takes out are not counted towards largeChangeThreshold"),
+    ("Maven has no pathIgnore defaults", MAVEN_SETTINGS,
+     "        val defaultEntries: List<String> get() = if (defaults) PathIgnore.DEFAULTS else emptyList()",
+     "        val defaultEntries: List<String> get() = emptyList()",
+     maven_suite, "with nothing set a change to documentation and CI configuration only runs nothing extra"),
+    ("Maven accepts a pathIgnore entry outside the grammar", MAVEN_SETTINGS,
+     "                PathIgnore.problem(entry)?.let { why ->",
+     "                PathIgnore.problem(entry)?.takeIf { false }?.let { why ->",
+     maven_suite, "an entry outside the grammar fails the build naming pathIgnore and the entry"),
+    ("Maven's pathIgnore leaves out a resource directory outside src", MAVEN_SELECTION,
+     "                (module.resources + module.testResources).mapNotNull { it.directory?.let(::File) }",
+     "                emptyList<File>()",
+     maven_suite, "a file in a test resource directory outside src stays in the change set"),
+    ("pathIgnore leaves out a file a module copies from its own directory", PATH_IGNORE,
+     "            path in declaration.sourceFiles -> Protection.SOURCE_SET",
+     "            false -> Protection.SOURCE_SET",
+     maven_suite, "a file a module copies from its own directory onto the classpath stays, and its other files do not"),
+    ("the Maven explanation applies no pathIgnore", MAVEN_EXPLAIN,
+     "                ignore = Settings.pathIgnoreOf(project, session),",
+     "",
+     maven_suite, "with nothing set a change to documentation and CI configuration only runs nothing extra"),
+    ("pathIgnore leaves out a Maven build file", PATH_IGNORE,
+     "            declaration.maven && isMavenBuildFile(segments.last(), directories, declaration) -> Protection.BUILD_FILE",
+     "            false -> Protection.BUILD_FILE",
+     unit_suite, "on Maven the POMs, the wrapper, mvn configuration and another build are kept as build-file"),
     # A class a framework can only run or skip whole is left out only when it holds a test and
     # every one is skipped; any other answer runs it, and its skipped tests are named as rounded up.
     # Plain JUnit 4: a class is left out only through Gradle's own early return, only when the run

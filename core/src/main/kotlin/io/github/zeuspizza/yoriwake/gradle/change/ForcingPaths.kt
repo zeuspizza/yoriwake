@@ -192,7 +192,7 @@ internal object ForcingPaths {
      * One line per origin, naming at most [NAMED] directories or files each, those holding the most
      * forcing paths first, then how many other paths force too. When git could not say which paths
      * are tracked, one line counts them instead and points to [explain] for a sample. Without
-     * [pathIgnore] (Maven, which reads none), an untracked path's remedy is `.gitignore` instead.
+     * [pathIgnore], an untracked path's remedy is `.gitignore` instead.
      */
     fun lines(
         task: String,
