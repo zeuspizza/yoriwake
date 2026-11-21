@@ -5040,6 +5040,10 @@ MUTATIONS = [
     ("an unlisted path narrows verify's jobs", ".github/ci.py",
      '        else:\n            return {"unit": True, "maven": True, "gradle": True}',
      "        else:\n            continue", ci_suite, "should be (True, True, True)"),
+    # A push to main skips a job group only for the tree its pull request's run tested.
+    ("a push to main reuses a run that tested another tree", ".github/ci.py",
+     "    if tested_tree(log) != tree:", "    if tested_tree(log) is None:", ci_suite,
+     "the run tested another tree:"),
     ("the changelog workflow stops running the check", ".github/workflows/changelog.yml",
      '        run: python3 .github/ci.py changelog "$BASE" "$HEAD"', "        run: true", ci_suite,
      "no step runs the changelog check"),

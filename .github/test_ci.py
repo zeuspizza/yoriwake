@@ -2059,29 +2059,29 @@ def case_a_change_runs_the_verify_jobs_its_paths_can_affect():
     return problems
 
 
-# Which of the `changes` job's answers each verify.yml job runs on.
-VERIFY_JOB_ANSWERS = {
-    "build": "code", "maven": "code", "run-summary": "code", "build-windows": "unit", "maven-shard": "maven",
-    "functional-shard": "gradle", "functional": "gradle", "functional-gradle9-shard": "gradle",
-    "functional-gradle9": "gradle", "coverage": "gradle", "capture": "gradle", "select": "gradle",
-    "select-on-windows": "gradle", "capture-on-windows": "gradle", "select-on-windows-from-windows": "gradle",
-    "select-on-linux": "gradle",
-}
-
-
 def verify_scope_problems(text):
     """Why verify.yml would run a job its change cannot affect, or skip one it can."""
     problems = []
     jobs = re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[-1], re.M)
+    for job in sorted(set(ci.VERIFY_JOBS) - set(jobs)):
+        problems.append(f"ci.VERIFY_JOBS lists {job}, which verify.yml has not")
     for job in jobs:
         if job == "changes":
             continue
         block = _job_block(text, job) or ""
         condition = re.search(r"^    if: (.*)$", block, re.M)
-        answer = VERIFY_JOB_ANSWERS.get(job)
-        if answer is None:
-            problems.append(f"job {job} has no answer it runs on in VERIFY_JOB_ANSWERS")
-        elif not condition or f"needs.changes.outputs.{answer} != 'false'" not in condition.group(1):
+        if job not in ci.VERIFY_JOBS:
+            problems.append(f"job {job} has no answer it runs on in ci.VERIFY_JOBS")
+            continue
+        # A push to main finds the job by this name among a pull request run's jobs.
+        name, answer = ci.VERIFY_JOBS[job]
+        named = re.search(r"^    name: (.*)$", block, re.M)
+        if not named or named.group(1).strip() != name:
+            problems.append(f"job {job} is named {named and named.group(1)!r}, not {name!r} as in ci.VERIFY_JOBS")
+        shards = ci.SHARD_NAME.search(name)
+        if shards and f"shard: [{', '.join(map(str, range(1, int(shards.group(1)) + 1)))}]" not in block:
+            problems.append(f"job {job}'s matrix is not shards 1 to {shards.group(1)}")
+        if not condition or f"needs.changes.outputs.{answer} != 'false'" not in condition.group(1):
             problems.append(f"job {job} does not run on the {answer} answer")
         # A failed `changes` job answers nothing, and `== 'true'` would then skip the job.
         if re.search(r"needs\.changes\.outputs\.\w+ == 'true'", block):
@@ -2100,6 +2100,35 @@ def verify_scope_problems(text):
         problems.append("the maven check fails on skipped shards, or passes on failed ones")
     if "scope \"$BASE\" \"$HEAD\"" not in (_job_block(text, "changes") or ""):
         problems.append("the changes job does not ask ci.py scope")
+    return problems + push_reuse_problems(text)
+
+
+def push_reuse_problems(text):
+    """Why a push to main could skip a job group its pull request's run did not prove."""
+    problems = []
+    changes = _job_block(text, "changes") or ""
+    steps = re.split(r"\n(?=      - )", changes.split("    steps:\n", 1)[-1])
+    if not any("echo \"tested tree $(git rev-parse 'HEAD^{tree}')\"" in step for step in steps):
+        problems.append("the changes job does not print the tree it tests")
+    reuse = next((step for step in steps if "id: reuse" in step), "")
+    for needed, why in (("if: github.event_name == 'push'", "runs on more than a push"),
+                        ("continue-on-error: true", "can fail the changes job"),
+                        ("timeout-minutes:", "has no time limit"),
+                        ("ci.py reuse-on-push", "does not ask ci.py reuse-on-push")):
+        if needed not in reuse:
+            problems.append(f"the reuse step {why}")
+    decide = next((step for step in steps if "id: decide" in step), "")
+    if ("UNIT: ${{ steps.reuse.outputs.unit }}" not in decide
+            or "unit=true maven=true gradle=true" not in decide):
+        problems.append("decide does not run everything unless the reuse step answered")
+    if not re.search(r"\npermissions:\n  contents: read\n\n", text):
+        problems.append("the workflow grants more than contents: read")
+    if "    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n" not in changes:
+        problems.append("the changes job cannot read runs and pull requests")
+    holders = [job for job in re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[-1], re.M)
+               if re.search(r"^\s+(actions|pull-requests): ", _job_block(text, job) or "", re.M)]
+    if holders != ["changes"]:
+        problems.append(f"reading runs or pull requests is granted to {holders}, not to the changes job alone")
     return problems
 
 
@@ -2119,11 +2148,169 @@ def case_verify_runs_each_job_on_the_answer_its_suites_need():
         (text.replace("needs.changes.outputs.maven != 'false' && needs.maven-shard.result", "needs.maven-shard.result", 1),
          "the maven check"),
         (text.replace("\n  run-summary:\n", "\n  extra:\n    if: always()\n\n  run-summary:\n", 1), "extra has no answer"),
+        (text.replace("    name: coverage gate\n", "    name: coverage\n", 1), "not 'coverage gate'"),
+        (text.replace("        shard: [1, 2, 3]\n", "        shard: [1, 2]\n", 1), "is not shards 1 to 3"),
+        (text.replace("        if: github.event_name == 'push'\n        continue-on-error: true\n",
+                      "        if: github.event_name == 'push'\n", 1), "can fail the changes job"),
+        (text.replace("        if: github.event_name == 'push'\n        continue-on-error", "        continue-on-error", 1),
+         "runs on more than a push"),
+        (text.replace("    permissions:\n      contents: read\n      actions: read\n", "    permissions:\n      contents: read\n", 1),
+         "cannot read runs"),
+        (text.replace("\npermissions:\n  contents: read\n", "\npermissions:\n  contents: read\n  actions: read\n", 1),
+         "grants more than contents: read"),
+        (text.replace("    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - name: every shard",
+                      "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    permissions:\n      actions: read\n"
+                      "    steps:\n      - name: every shard", 1), "not to the changes job alone"),
+        (text.replace("          unit=true maven=true gradle=true reused=", "          unit=$UNIT maven=true gradle=true reused=", 1),
+         "decide does not run everything"),
     ):
         if edited == text:
             problems += fail(f"the fixture edit for {expected!r} no longer applies to verify.yml")
         elif not any(expected in problem for problem in verify_scope_problems(edited)):
             problems += fail(f"an edited verify.yml was not reported for {expected!r}")
+    return problems
+
+
+PUSHED, PUSHED_TREE, PR_HEAD, OTHER_TREE = "a" * 40, "b" * 40, "c" * 40, "d" * 40
+
+
+def _pr_jobs(skipped=(), failed=(), run_id=7):
+    """A pull request run's jobs as the API lists them: a group skipped at job level shows each of
+    its matrix jobs once, under its unexpanded name (as run 44852166450, a Maven-only change, did)."""
+    jobs = [("what changed", "success")]
+    for name, group in ci.VERIFY_JOBS.values():
+        if group in skipped:
+            jobs.append((name, "skipped"))
+            continue
+        expanded = [ci.SHARD_NAME.sub(f"(shard {i}/3)", name) for i in (1, 2, 3)] if ci.SHARD_NAME.search(name) else [name]
+        jobs += [(each, "failure" if each in failed else "success") for each in expanded]
+    return {"total_count": len(jobs), "jobs": [{"name": n, "conclusion": c, "run_id": run_id} for n, c in jobs]}
+
+
+DEFAULT = object()
+
+
+def _reuse_on_push(pulls=DEFAULT, runs=DEFAULT, jobs=DEFAULT, log=DEFAULT, tree=PUSHED_TREE):
+    """The decision for a squash merge of pull request #9, whose run 7 passed every job, except where
+    an answer is given; None is an answer GitHub did not give."""
+    if pulls is DEFAULT:
+        pulls = [{"number": 9, "merge_commit_sha": PUSHED, "merged_at": "2026-11-20T10:00:00Z", "head": {"sha": PR_HEAD}}]
+    if runs is DEFAULT:
+        runs = {"workflow_runs": [{"id": 7, "head_sha": PR_HEAD, "event": "pull_request", "status": "completed",
+                                   "conclusion": "success", "created_at": "2026-11-20T09:00:00Z",
+                                   "html_url": "https://example.org/run/7"}]}
+    jobs = _pr_jobs() if jobs is DEFAULT else jobs
+    log = f"2026-11-20T09:00:05.1234567Z tested tree {PUSHED_TREE}\n" if log is DEFAULT else log
+    return ci.reuse_on_push(PUSHED, tree, pulls, runs, jobs, log)
+
+
+def case_a_push_to_main_skips_only_what_its_pull_request_run_proved():
+    """A merge whose tree its pull request's run passed need not prove it again; nothing else may skip."""
+    problems = 0
+    run = {"head_sha": PR_HEAD, "event": "pull_request", "html_url": "https://example.org/run/7"}
+    older_green = dict(run, id=6, status="completed", conclusion="success", created_at="2026-11-20T08:00:00Z")
+    everything = {"unit": True, "maven": True, "gradle": True}
+    for what, kwargs, expected in (
+        ("every job succeeded", {}, {"unit": False, "maven": False, "gradle": False}),
+        ("the Maven shards were skipped", {"jobs": _pr_jobs(skipped=("maven",))},
+         {"unit": True, "maven": True, "gradle": False}),
+        ("the Gradle suites were skipped", {"jobs": _pr_jobs(skipped=("gradle",))},
+         {"unit": True, "maven": False, "gradle": True}),
+        ("a bench-only change skipped all three", {"jobs": _pr_jobs(skipped=("unit", "maven", "gradle"))}, everything),
+        ("the Windows unit build was skipped, the Linux one succeeded", {"jobs": _pr_jobs(skipped=("unit",))},
+         {"unit": True, "maven": False, "gradle": False}),
+        ("one shard failed", {"jobs": _pr_jobs(failed=("functional on Gradle 9 (shard 2/3)",))},
+         {"unit": True, "maven": False, "gradle": True}),
+        ("a shard is missing", {"jobs": {"total_count": 22, "jobs": [
+            job for job in _pr_jobs()["jobs"] if job["name"] != "functional on Maven (shard 3/3)"]}},
+         {"unit": True, "maven": True, "gradle": False}),
+        ("no pull request", {"pulls": []}, everything),
+        ("two pull requests", {"pulls": [{"number": n, "merge_commit_sha": PUSHED, "merged_at": "x",
+                                          "head": {"sha": PR_HEAD}} for n in (9, 10)]}, everything),
+        ("a pull request merged as another commit", {"pulls": [{"number": 9, "merge_commit_sha": "e" * 40,
+                                                               "merged_at": "x", "head": {"sha": PR_HEAD}}]},
+         everything),
+        ("the run tested another tree", {"log": f"tested tree {OTHER_TREE}\n"}, everything),
+        ("the run did not say what it tested", {"log": "HEAD is now at fc0b35f\n"}, everything),
+        ("the run said two trees", {"log": f"tested tree {PUSHED_TREE}\ntested tree {OTHER_TREE}\n"}, everything),
+        ("no run", {"runs": {"workflow_runs": []}}, everything),
+        ("the newest run failed after an older green one", {"runs": {"workflow_runs": [
+            older_green, dict(run, id=7, status="completed", conclusion="failure", created_at="2026-11-20T09:00:00Z")]}, "jobs": _pr_jobs(run_id=6)},
+         everything),
+        ("the newest run was cancelled", {"runs": {"workflow_runs": [
+            dict(run, id=7, status="completed", conclusion="cancelled", created_at="2026-11-20T09:00:00Z"), older_green]}, "jobs": _pr_jobs(run_id=6)},
+         everything),
+        ("the newest run is still running", {"runs": {"workflow_runs": [
+            older_green, dict(run, id=7, status="in_progress", conclusion=None, created_at="2026-11-20T09:00:00Z")]}, "jobs": _pr_jobs(run_id=6)},
+         everything),
+        ("the newest run passed after an older failed one", {"runs": {"workflow_runs": [
+            dict(older_green, conclusion="failure"),
+            dict(run, id=7, status="completed", conclusion="success", created_at="2026-11-20T09:00:00Z")]}},
+         {"unit": False, "maven": False, "gradle": False}),
+        ("a run of another event", {"runs": {"workflow_runs": [dict(older_green, event="push")]}}, everything),
+        ("jobs of another run", {"jobs": _pr_jobs(run_id=8)}, everything),
+        ("a jobs page short of the total", {"jobs": dict(_pr_jobs(), total_count=40)}, everything),
+        ("no pull requests answer", {"pulls": None}, everything),
+        ("no runs answer", {"runs": None}, everything),
+        ("no jobs answer", {"jobs": None}, everything),
+        ("no log", {"log": None}, everything),
+        ("no tree", {"tree": ""}, everything),
+    ):
+        answer, why = _reuse_on_push(**kwargs)
+        if answer != expected:
+            problems += fail(f"{what}: {answer}, expected {expected} ({why})")
+        if (answer["maven"] or answer["gradle"]) and not answer["unit"]:
+            problems += fail(f"{what}: maven or gradle runs without the unit build: {answer}")
+        if answer == everything and not why.startswith("nothing reused: "):
+            problems += fail(f"{what}: running everything does not say why: {why!r}")
+        if "\n" in why or not why:
+            problems += fail(f"{what}: the reason is not one line: {why!r}")
+    answer, why = _reuse_on_push(jobs=_pr_jobs(skipped=("maven",)))
+    for expected in ("[run 7](https://example.org/run/7)", "#9", PR_HEAD[:8], "gradle not run again"):
+        if expected not in why:
+            problems += fail(f"a reusing push does not name {expected!r}: {why}")
+    return problems
+
+
+def case_reuse_on_push_prints_what_decide_reads():
+    """decide takes the answers only as ci.py prints them; anything else runs everything."""
+    problems = 0
+    runs = {"workflow_runs": [{"id": 7, "head_sha": PR_HEAD, "event": "pull_request", "status": "completed",
+                               "conclusion": "success", "created_at": "x", "html_url": "https://example.org/run/7"}]}
+    pulls = [{"number": 9, "merge_commit_sha": PUSHED, "merged_at": "x", "head": {"sha": PR_HEAD}}]
+    for what, files, expected in (
+        ("a reusing push", {"pulls.json": pulls, "runs.json": runs, "jobs.json": _pr_jobs(skipped=("maven",)),
+                            "changes.log": f"2026-11-20T09:00:05.1Z tested tree {PUSHED_TREE}\n"},
+         ["unit=true", "maven=true", "gradle=false"]),
+        ("a push no pull request merged", {"pulls.json": []}, ["unit=true", "maven=true", "gradle=true"]),
+    ):
+        with tempfile.TemporaryDirectory() as root:
+            for name, content in files.items():
+                with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+                    handle.write(content if isinstance(content, str) else json.dumps(content))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = ci.main(["reuse-on-push", root, "--sha", PUSHED, "--tree", PUSHED_TREE])
+        lines = out.getvalue().splitlines()
+        if code != 0 or lines[:3] != expected or len(lines) != 4 or not lines[3].startswith("reused="):
+            problems += fail(f"{what}: ci.py reuse-on-push printed {lines} (exit {code})")
+    return problems
+
+
+def case_only_the_jobs_that_read_an_answer_prove_it():
+    """`unit and agent suites (build)` succeeds with its Gradle steps skipped, and shares a prefix
+    with the jobs that do prove `unit`: a name matches whole or not at all."""
+    problems = 0
+    if ci.verify_job_names("unit") != {"unit and agent suites on windows"}:
+        problems += fail(f"unit is proved by {sorted(ci.verify_job_names('unit'))}")
+    if ci.verify_job_names("maven") != {f"functional on Maven (shard {i}/3)" for i in (1, 2, 3)}:
+        problems += fail(f"maven is proved by {sorted(ci.verify_job_names('maven'))}")
+    jobs = _pr_jobs()
+    jobs["jobs"] = [dict(job, conclusion="skipped") if job["name"] == "unit and agent suites on windows" else job
+                    for job in jobs["jobs"]]
+    answer, why = _reuse_on_push(jobs=jobs)
+    if not answer["unit"]:
+        problems += fail(f"the Linux unit job alone proved unit: {why}")
     return problems
 
 
@@ -4976,6 +5163,21 @@ def case_skipped_and_cancelled_jobs_and_no_results_are_said_as_such():
     return problems
 
 
+def case_a_push_to_main_names_the_run_it_reused_or_why_none():
+    problems = 0
+    for reused in ("reused [run 7](https://example.org/run/7) of pull request #9 at cccccccc, which tested this "
+                   "tree: gradle not run again", "nothing reused: 0 pull requests merged as aaaaaaaa"):
+        needs = {"changes": {"result": "success", "outputs": {"reused": reused}}}
+        with tempfile.TemporaryDirectory() as root:
+            text = run_summary.summary(SUMMARY_WORKFLOW, needs, os.path.join(root, "results"))
+        if f"\n{reused}\n" not in text:
+            problems += fail(f"the summary lacks {reused!r}:\n{text}")
+    with tempfile.TemporaryDirectory() as root:
+        if "reused" in _summary(root, GREEN):
+            problems += fail("a run with no reuse answer says something of one")
+    return problems
+
+
 # What branch protection requires on main; the run summary must never be one of them.
 REQUIRED_CHECKS = (
     "unit and agent suites", "unit and agent suites on windows", "functional on Gradle 8.14",
@@ -5085,6 +5287,9 @@ CASES = (
     case_every_pull_request_workflow_cancels_its_superseded_run,
     case_a_change_runs_the_verify_jobs_its_paths_can_affect,
     case_verify_runs_each_job_on_the_answer_its_suites_need,
+    case_a_push_to_main_skips_only_what_its_pull_request_run_proved,
+    case_only_the_jobs_that_read_an_answer_prove_it,
+    case_reuse_on_push_prints_what_decide_reads,
     case_every_verify_job_has_a_time_limit,
     case_a_sweep_names_the_pull_requests_it_makes_wait,
     case_a_change_no_suite_reads_narrows_the_pull_requests_guards,
@@ -5194,6 +5399,7 @@ CASES = (
     case_failure_detail_stops_at_twenty_lines_and_counts_the_rest,
     case_an_unreadable_file_is_a_line_not_an_exit_code,
     case_skipped_and_cancelled_jobs_and_no_results_are_said_as_such,
+    case_a_push_to_main_names_the_run_it_reused_or_why_none,
     case_each_run_ends_in_one_summary_that_waits_for_every_job_and_gates_nothing,
     case_a_run_summary_that_misses_a_job_or_gates_is_reported,
 )
