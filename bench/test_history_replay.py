@@ -400,6 +400,19 @@ def case_a_root_module_report_reruns_without_a_module():
     return failures
 
 
+def case_the_reactor_explain_asks_in_the_environment_of_the_map():
+    builds = hr.Builds.__new__(hr.Builds)
+    builds.reactor, builds.counter, builds.logs = True, 0, "/logs"
+    builds.run = type("Run", (), {"MAVEN_PLUGIN_VERSION": "1"})
+    builds.map_dirs = lambda: []
+    calls = []
+    builds._maven = lambda arguments, log, select=False: calls.append(arguments)
+    builds.explain("base")
+    if not calls or "-Dmaven.test.failure.ignore=true" not in calls[0]:
+        return fail(f"the reactor explain command: {calls}")
+    return 0
+
+
 def case_a_gradle_run_that_only_failed_tests_is_measured():
     failures = 0
     directory = tempfile.mkdtemp(prefix="history-gradle-")
