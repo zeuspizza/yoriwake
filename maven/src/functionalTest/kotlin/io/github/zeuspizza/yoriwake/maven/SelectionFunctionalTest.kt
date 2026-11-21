@@ -605,7 +605,7 @@ class SelectionFunctionalTest {
 
     /**
      * kotlin does not reach lib: a comment and a dependency version in lib's POM, then a resource of
-     * lib, are no change for it. A README of lib is not under `src`, and keeps forcing.
+     * lib, are no change for it. A file of lib outside `src` that no default leaves out keeps forcing.
      */
     @Test
     fun `a module's pom or resource edit selects nothing for executions off its classpath`(@TempDir dir: File) {
@@ -639,7 +639,7 @@ class SelectionFunctionalTest {
         assertContains(resource, "are no change: lib/pom.xml, lib/src/main/resources/x.json")
         assertFalse("Running dev.demo.kt.AreaTest" in resource, resource)
 
-        write(project, "lib/README.md", "# lib\n")
+        write(project, "lib/notes.txt", "lib\n")
         val readme = selectingAgainstHead(project, "kotlin")
 
         assertContains(selectingLine(readme, "kotlin"), "1 paths coverage cannot see", message = readme)
@@ -1457,7 +1457,7 @@ class SelectionFunctionalTest {
     }
 
     @Test
-    fun `a forced run names gitignore and not pathIgnore on Maven`(@TempDir dir: File) {
+    fun `a forced run names pathIgnore on Maven`(@TempDir dir: File) {
         val project = captured(dir)
         File(project, "notes.txt").writeText("notes")
         editGreeter(project)
@@ -1465,12 +1465,12 @@ class SelectionFunctionalTest {
         val output = selecting(project)
 
         assertContains(output, "notes.txt is untracked or ignored")
-        assertContains(output, "ignore it in git (.gitignore)")
-        assertFalse(output.lines().any { "[yoriwake]" in it && "pathIgnore" in it }, output)
+        assertContains(output, "list it in pathIgnore: \"notes.txt\"")
+        assertFalse(".gitignore" in output.lines().filter { "[yoriwake]" in it && "notes.txt" in it }.joinToString("\n"), output)
     }
 
     @Test
-    fun `a file a test writes during the capture names neither pathIgnore nor gitignore`(@TempDir dir: File) {
+    fun `a file a test writes during the capture is offered pathIgnore, not gitignore`(@TempDir dir: File) {
         val project = committed(dir)
         File(project, "lib/src/test/java/dev/demo/lib/GreeterTest.java").edit {
             it.replace("void greets() {", "void greets() throws Exception {").replace(
@@ -1486,7 +1486,8 @@ class SelectionFunctionalTest {
 
         val forced = output.lines().filter { "[yoriwake]" in it && "written.txt" in it }
         assertTrue(forced.any { "changed during" in it && "build directory" in it }, output)
-        assertFalse(forced.any { "pathIgnore" in it || ".gitignore" in it }, output)
+        assertTrue(forced.any { "list it in pathIgnore" in it }, output)
+        assertFalse(forced.any { ".gitignore" in it }, output)
     }
 
     @Test

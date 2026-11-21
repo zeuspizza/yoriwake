@@ -39,19 +39,24 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
     private fun mapDir(dir: File) = File(dir, ".gradle/yoriwake").listFiles()!!.single(File::isDirectory)
 
     /**
-     * A test that reads [path] by a name it builds at run time, so no compiled class holds it, and
-     * that passes whatever the file says.
+     * A test that reads [path] by walking its top directory, links followed, for files of its
+     * extension, so no compiled class holds its name, and that passes whatever the file says.
      */
     private fun reader(name: String, path: String) = "src/test/java/dev/sample/$name.java" to """
         package dev.sample;
+        import java.nio.file.FileVisitOption;
         import java.nio.file.Files;
-        import java.nio.file.Paths;
+        import java.nio.file.Path;
         import org.junit.jupiter.api.Test;
         import static org.junit.jupiter.api.Assertions.assertTrue;
         class $name {
             @Test void reads() throws Exception {
-                String path = new StringBuilder("${path.reversed()}").reverse().toString();
-                assertTrue(Files.readString(Paths.get(path)).length() > 0);
+                int read = 0;
+                try (var files = Files.walk(Path.of("${path.substringBefore('/')}"), FileVisitOption.FOLLOW_LINKS)) {
+                    for (var f : (Iterable<Path>) files::iterator)
+                        if (Files.isRegularFile(f) && f.toString().endsWith(".${path.substringAfterLast('.')}")) read += Files.readString(f).length();
+                }
+                assertTrue(read > 0);
             }
         }
     """.trimIndent()
@@ -268,10 +273,15 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
                 import static org.junit.jupiter.api.Assertions.assertTrue;
                 class ChangelogTest {
                     @Test void reads() throws Exception {
-                        String name = new StringBuilder("dm.GOLEGNAHC/").reverse().toString();
-                        try (java.io.InputStream in = ChangelogTest.class.getResourceAsStream(name)) {
-                            assertTrue(in.readAllBytes().length > 0);
+                        int read = 0;
+                        for (var root : java.util.Collections.list(ChangelogTest.class.getClassLoader().getResources(""))) {
+                            if (!"file".equals(root.getProtocol())) continue;
+                            try (var files = java.nio.file.Files.walk(java.nio.file.Path.of(root.toURI()))) {
+                                for (var f : (Iterable<java.nio.file.Path>) files::iterator)
+                                    if (f.toString().endsWith(".md")) read += java.nio.file.Files.readString(f).length();
+                            }
                         }
+                        assertTrue(read > 0);
                     }
                 }
             """.trimIndent(),

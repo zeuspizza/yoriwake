@@ -109,6 +109,7 @@ class ExplainMojo : AbstractMojo() {
                 worked = { done, base -> worked = done to base },
                 narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),
                 unionFilter = unionFilter,
+                ignore = Settings.pathIgnoreOf(project, session),
             )
             val refused = properties.getProperty(AgentContract.REFUSED_PROPERTY)
             val done = worked

@@ -166,6 +166,25 @@ class PathIgnoreTest {
     }
 
     @Test
+    fun `on Maven the POMs, the wrapper, mvn configuration and another build are kept as build-file`(@TempDir root: File) {
+        File(root, "tools/standalone/pom.xml").also { it.parentFile.mkdirs() }.writeText("")
+        File(root, "lib/pom.xml").also { it.parentFile.mkdirs() }.writeText("")
+        val maven = PathIgnore.Declaration(listOf("**"), root, emptyList(), emptyList(), emptySet(), maven = true, moduleDirs = listOf("", "lib"))
+        val kept = listOf("pom.xml", "lib/pom.xml", ".mvn/maven.config", ".mvn/extensions.xml", "mvnw", "mvnw.cmd", "lib/pom.yml", "tools/standalone/notes.md")
+
+        val applied = PathIgnore.apply(kept + "lib/README.md", maven, namesNothing)
+
+        assertEquals(kept.toSet(), applied.notIgnored.filter { it.protection == Protection.BUILD_FILE }.map { it.path }.toSet())
+        assertEquals(listOf("lib/README.md"), applied.ignored.map { it.path })
+    }
+
+    @Test
+    fun `under a Gradle declaration a pom is no build file`(@TempDir root: File) {
+        val applied = PathIgnore.apply(listOf("pom.xml"), declaration(root, "**/*.xml"), namesNothing)
+        assertEquals(listOf("pom.xml"), applied.ignored.map { it.path })
+    }
+
+    @Test
     fun `a path outside the Gradle root is kept as outside-root`(@TempDir root: File) {
         val applied = PathIgnore.apply(
             listOf("docs/x.md"), declaration(root, "docs/**", outsideRoot = setOf("docs/x.md")), namesNothing,

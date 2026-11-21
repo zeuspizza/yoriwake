@@ -93,6 +93,9 @@ internal class Recording(
     /** Each module's pinned tests, read before anything runs so that a pattern it cannot use fails the build. */
     private val pins = session.projects.associate { it.id to Settings.alwaysRunOf(it, session) }
 
+    /** Each module's `pathIgnore`, read now for the same reason. */
+    private val ignores = session.projects.associate { it.id to Settings.pathIgnoreOf(it, session) }
+
     /** Each module's environment lists and whether it records one test at a time, read now for the same reason. */
     private val environments = session.projects.associate { it.id to Settings.environmentOf(it, session) }
     private val fork = ForkEnvironment(session, root)
@@ -295,6 +298,7 @@ internal class Recording(
             text = text,
             dependencies = dependencies,
             narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),
+            ignore = ignores[project.id] ?: Settings.pathIgnoreOf(project, session),
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"

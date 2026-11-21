@@ -9,6 +9,7 @@ import io.github.zeuspizza.yoriwake.gradle.SettingNames
 import io.github.zeuspizza.yoriwake.gradle.capture.EnvironmentFingerprint
 import io.github.zeuspizza.yoriwake.gradle.capture.Schedule
 import io.github.zeuspizza.yoriwake.gradle.change.LargeChange
+import io.github.zeuspizza.yoriwake.gradle.change.PathIgnore
 import org.apache.maven.MavenExecutionException
 import org.apache.maven.execution.MavenSession
 import org.apache.maven.project.MavenProject
@@ -33,6 +34,12 @@ internal class Settings(
 
     /** What a module's environment fingerprint compares beyond the fixed variables, and leaves out. */
     class Environment(val systemPropertyIgnore: List<String>, val environmentInclude: List<String>)
+
+    /** A module's `<pathIgnore>` entries, and whether [PathIgnore.DEFAULTS] are matched after them. */
+    class Ignore(val entries: List<String>, val defaults: Boolean) {
+        /** The default entries this module matches, none when `<pathIgnoreDefaults>` is false. */
+        val defaultEntries: List<String> get() = if (defaults) PathIgnore.DEFAULTS else emptyList()
+    }
 
     companion object {
         const val PLUGIN_KEY = "io.github.zeuspizza:yoriwake-maven-plugin"
@@ -141,6 +148,30 @@ internal class Settings(
                 ?: moduleConfiguration(project, session)?.getChild("narrowLineOnlyChanges")?.value
                     ?.let { parseFlag("${project.artifactId}'s <narrowLineOnlyChanges>", it.trim()) }
                 ?: false
+
+        /**
+         * [project]'s `<pathIgnore>`, one entry per child element, and `<pathIgnoreDefaults>`, read
+         * where `<narrowLineOnlyChanges>` is. No `-D` form, as Gradle has no `-P` one: a declaration
+         * that stops a change from running tests belongs in the reviewed POM. An entry outside the
+         * grammar fails the build.
+         */
+        fun pathIgnoreOf(project: MavenProject, session: MavenSession): Ignore {
+            val configuration = moduleConfiguration(project, session)
+            val entries = configuration?.getChild("pathIgnore")?.children?.map { it.value.orEmpty().trim() }.orEmpty()
+            entries.forEach { entry ->
+                PathIgnore.problem(entry)?.let { why ->
+                    throw MavenExecutionException(
+                        "[yoriwake] ${project.artifactId}: pathIgnore holds '$entry', which $why. Entries are " +
+                            "Ant-style globs over paths relative to the reactor root: `*` and `?` within a " +
+                            "directory, `**` as a whole segment for any number of directories.",
+                        null as Throwable?,
+                    )
+                }
+            }
+            val defaults = configuration?.getChild("pathIgnoreDefaults")?.value
+                ?.let { parseFlag("${project.artifactId}'s <pathIgnoreDefaults>", it.trim()) } ?: true
+            return Ignore(entries, defaults)
+        }
 
         /**
          * How many test JVMs [project]'s executions recording in isolation may start at a time:
