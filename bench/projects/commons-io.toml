@@ -1,0 +1,19 @@
+# WHY THIS ONE: Blastradius's commons-io window, for the history replay (bench/history_replay.py),
+# which compares the share of test executions selected over consecutive commits with its published
+# figures: one Maven module with the largest suite of its four (about 5,900 executions a commit).
+# The window holds 200 commits, 197 of them first-parent (two merges); the walk is first-parent.
+# Not in the sweep's corpus (qualification.txt).
+name = "commons-io"
+url = "https://github.com/apache/commons-io.git"
+# The window's last commit: the clone's checkout before the walk moves it.
+commit = "ffd9ddae6e637c0be9ab63e3dfa5ca98f2230bc5"
+build = "maven"
+module = ""
+test_plugin = "surefire"
+# The whole reactor's Surefire tests, `mvn test` at the root, as Blastradius ran them.
+scope = "reactor"
+history_from = "d4032376f0103c3e31a884e2358b58978e183e5f"
+history_to = "ffd9ddae6e637c0be9ab63e3dfa5ca98f2230bc5"
+daemon_java_version = 21
+flags = []
+sources = ["src/main/java"]

@@ -1,0 +1,20 @@
+# WHY THIS ONE: Blastradius's shenyu window, for the history replay (bench/history_replay.py),
+# which compares the share of test executions selected over 200 consecutive commits with its
+# published figures: the widest Maven reactor of its four, a full build per run. Not in the sweep's
+# corpus (qualification.txt).
+name = "shenyu"
+url = "https://github.com/apache/shenyu.git"
+# The window's last commit: the clone's checkout before the walk moves it.
+commit = "3a411e017acfc47636e2bbfeb2958108d1f15a05"
+build = "maven"
+module = ""
+test_plugin = "surefire"
+# The whole reactor's Surefire tests, `mvn test` at the root, as Blastradius ran them.
+scope = "reactor"
+history_from = "69cd1d5721647a60007584983d96fc94452a4f6b"
+history_to = "3a411e017acfc47636e2bbfeb2958108d1f15a05"
+# Its POM compiles for Java 17.
+daemon_java_version = 17
+daemon_jvmargs = "-Xmx4g"
+flags = []
+sources = ["shenyu-common/src/main/java"]
