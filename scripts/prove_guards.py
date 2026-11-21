@@ -6237,10 +6237,11 @@ def compile_errors(output, limit=10):
     return errors[:limit]
 
 
-# A dependency file the build could not fetch, its metadata resolved: Central serving a 404 or a
-# dropped transfer for an artifact that exists. A dependency that does not exist fails on its
-# metadata instead (`Could not find group:name:version.`), and is not retried.
-FETCH_FAILED = re.compile(r"Could not (?:download|find) \S+\.(?:jar|pom|module) \(|Could not (?:GET|HEAD) '")
+# A dependency the build could not fetch: Central serving a 404 or a dropped transfer for one that
+# exists, for its file or, as once for kotlin-metadata-jvm, its metadata. A dependency that
+# truly does not exist costs one more compile.
+FETCH_FAILED = re.compile(r"Could not (?:download|find) \S+\.(?:jar|pom|module) \(|Could not (?:GET|HEAD) '"
+                          r"|Could not find [\w.-]+:[\w.-]+:[\w.-]+\.")
 # Seconds before the one rerun of a warm-up that failed on a fetch.
 WARM_UP_RETRY_PAUSE = 60
 
