@@ -2898,7 +2898,7 @@ MUTATIONS = [
      "",
      unit_suite, "the pick stops at the budget"),
     ("the calibration measures the previous pick at the costs it was predicted at", ISOLATED_PICK,
-     "        val predicted = if (ownRecording) {",
+     "        val predicted = if (ownRecording && previous!!.classes.keys.any { it in ranking.isolatedSeconds }) {",
      "        val predicted = if (false) {",
      unit_suite, "the calibration measures the previous pick at today's costs"),
     ("the calibration is not damped", ISOLATED_PICK,

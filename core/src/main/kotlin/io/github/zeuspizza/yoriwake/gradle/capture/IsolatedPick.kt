@@ -247,17 +247,20 @@ internal object IsolatedPick {
     /**
      * The wall time of a task's recordings, beside the map ([WALL_FILE]): the last fully shared
      * recording's test task ([sharedSeconds], kept while classes stay picked), and the last
-     * budgeted recording's test task and isolated task together, with the extra its pick predicted.
+     * budgeted recording's test task and isolated task together, with the extra its pick predicted
+     * and its isolated task's own wall time, which ties the record to that recording's stamp.
      */
     data class Wall(
         val sharedSeconds: Double? = null,
         val budgetedSeconds: Double? = null,
         val predictedExtra: Double? = null,
+        val isolatedWallSeconds: Double? = null,
     ) {
         fun encode(): String = listOfNotNull(
             sharedSeconds?.let { Tsv.join("shared-wall-seconds", it.toString()) },
             budgetedSeconds?.let { Tsv.join("budgeted-wall-seconds", it.toString()) },
             predictedExtra?.let { Tsv.join("predicted-extra", it.toString()) },
+            isolatedWallSeconds?.let { Tsv.join("isolated-wall-seconds", it.toString()) },
         ).joinToString("") { "$it\n" }
 
         companion object {
@@ -266,7 +269,7 @@ internal object IsolatedPick {
                 val rows = File(mapDir, WALL_FILE).takeIf(File::isFile)?.readLines().orEmpty()
                     .filter(String::isNotBlank).map(Tsv::split)
                 val value = { key: String -> rows.firstOrNull { it[0] == key }?.getOrNull(1)?.toDoubleOrNull() }
-                Wall(value("shared-wall-seconds"), value("budgeted-wall-seconds"), value("predicted-extra"))
+                Wall(value("shared-wall-seconds"), value("budgeted-wall-seconds"), value("predicted-extra"), value("isolated-wall-seconds"))
             }.getOrDefault(Wall())
         }
     }
@@ -285,7 +288,10 @@ internal object IsolatedPick {
         val next = when {
             pick == null || pick.classes.isEmpty() -> old.copy(sharedSeconds = testWallSeconds)
             pick.isolatedWallSeconds != null && pick.predictedExtra != null ->
-                old.copy(budgetedSeconds = testWallSeconds + pick.isolatedWallSeconds, predictedExtra = pick.predictedExtra)
+                old.copy(
+                    budgetedSeconds = testWallSeconds + pick.isolatedWallSeconds, predictedExtra = pick.predictedExtra,
+                    isolatedWallSeconds = pick.isolatedWallSeconds,
+                )
             else -> return
         }
         writeAtomically(File(mapDir, WALL_FILE), next.encode())
@@ -342,11 +348,10 @@ internal object IsolatedPick {
         }
         val parallel = maxOf(1, minOf(isolatedForks, processors))
         // The calibration compares like with like: a class the previous pick estimated is costed now
-        // at what its own JVM took, so the previous pick is re-predicted at those costs, when the wall
+        // at what its own JVM took, so the previous pick is re-predicted at those costs when the wall
         // record is that pick's own recording and its JVMs were measured.
-        val ownRecording = previous?.isolatedWallSeconds != null && wall.predictedExtra == previous.predictedExtra &&
-            previous.classes.keys.any { it in ranking.isolatedSeconds }
-        val predicted = if (ownRecording) {
+        val ownRecording = previous?.isolatedWallSeconds != null && wall.isolatedWallSeconds == previous.isolatedWallSeconds
+        val predicted = if (ownRecording && previous!!.classes.keys.any { it in ranking.isolatedSeconds }) {
             makespan(previous!!.classes.keys.map { ranking.isolatedSeconds[it] ?: previous.classSeconds[it] ?: cost(it) }, parallel)
         } else {
             wall.predictedExtra
