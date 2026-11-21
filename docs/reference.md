@@ -1410,24 +1410,26 @@ records shared, with one line saying the budget is Gradle-only for now.
   JVMs: the classes of your project that JVM had first loaded at or before a test, less those the
   test covers itself. That counts the changes that would select the test only because of its JVM.
   The first recording of a task has no map, records shared and says so; the next one picks.
-- **The budget is wall clock.** Each test JVM records how long it ran, its start included. A class
-  recorded alone costs what its own JVM took last time; one not yet recorded alone costs a shared
-  JVM's start overhead (its time less its tests') plus twice its tests' recorded time, as a fresh
-  JVM runs them cold (1 second plus twice, on a map recorded before JVM times were). The picked
-  classes are shared out over the JVMs the isolated part runs at once (4, or
-  `-Pyoriwake.isolatedCaptureForks`, and never more than the machine's processors), each to the
+- **The budget is wall clock.** The first budgeted recording, and one whose task's test classes
+  changed by more than a quarter, picks from scratch: a class costs what one class took of an
+  isolated JVM's time when a recording measured it, else what its own JVM took when recorded
+  alone, else a shared JVM's start overhead (its time less its tests') plus twice its tests'
+  recorded time, as a fresh JVM runs them cold (1 second plus twice, on a map recorded before JVM
+  times were). The picked classes are shared out over the JVMs the isolated part runs at once (4,
+  or `-Pyoriwake.isolatedCaptureForks`, and never more than the machine's processors), each to the
   least busy, and take as long as the busiest. Classes are taken by score while that stays within
   (n - 1) times the shared recording: its test task's wall time, recorded by every recording (its
-  JVMs' time over the task's `maxParallelForks` until one is). The test task's time outside its JVMs
-  is charged once, and each budgeted recording calibrates the next: an isolated JVM costs more than
-  its own run (forking it, setting it up, handing back its results), so every class is charged a
-  fixed overhead per JVM on top of its cost, the one that has the last recording's classes take
-  its extra wall time. From the second calibration on, the overhead moves halfway towards the new
-  figure, so one slow or fast recording does not swing the pick. Your task always keeps at least
-  one class.
-- **The pick is stable.** A class recorded alone has no shared JVM left to score it, so it keeps
-  the score it was picked with, stamped beside the map in `isolated-pick` with the budget, its cost
-  until its own JVM is measured, and the shared recording it was picked against.
+  JVMs' time over the task's `maxParallelForks` until one is). The test task's time outside its
+  JVMs is charged once. Your task always keeps at least one class.
+- **The pick is sticky.** Every later recording keeps the classes the last one picked, a pick of
+  none included. When the last recording took more than n times the shared recording, it drops
+  the classes that free the fewest changes per second of their own JVM's time first, each taken to
+  have cost its share of the isolated part's wall time, until it is 5% under. When it took 15% or
+  more under, it adds a few classes, by score: a tenth of those picked, at least one, each costing
+  what one class took of an isolated JVM, over the JVMs run at once, while it stays 5% under. In
+  between, nothing moves. A class recorded alone has no shared JVM left to score it, so it keeps the
+  score it was picked with, stamped beside the map in `isolated-pick` with the budget, its cost and
+  the shared recording it was picked against.
 - **The picked classes run in `<task>YoriwakeIsolated`**, a test task the plugin registers beside
   yours and runs after it, one JVM per class, with your task's classpath, framework, JVM arguments,
   system properties and environment. Your task leaves them out through its scan patterns, so the
