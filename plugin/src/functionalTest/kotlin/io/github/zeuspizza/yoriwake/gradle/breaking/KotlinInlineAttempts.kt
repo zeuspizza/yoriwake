@@ -95,8 +95,8 @@ class KotlinInlineAttempts : BreakAttempt() {
 
     // Track: code reading. Boundary: once the scan answered, the classes it added to the change set
     // are vouched for with the Kotlin refusal waived. A `sequence {}` lambda in an inline function
-    // compiles to a template class no test loads, since every caller gets its own copy, and kotlinc
-    // writes `DebugMetadata` on it. The lambda's body changes; the test that runs the caller's copy
+    // that calls a `crossinline` parameter compiles to a template class no test loads, since every
+    // caller gets its own copy, and kotlinc writes `DebugMetadata` on it. The lambda's body changes; the test that runs the caller's copy
     // must still run.
     @Test
     fun `an inline function's sequence lambda no test loads selects the caller its copy is in`(@TempDir dir: File) {
@@ -105,11 +105,12 @@ class KotlinInlineAttempts : BreakAttempt() {
             """
             package dev.demokt
             inline fun isSkipped(n: Int): Boolean = n % 3 == 0
-            inline fun kept(limit: Int): Sequence<Int> = sequence { for (i in 0 until limit) if (!isSkipped(i)) yield(i) }
+            inline fun kept(limit: Int, crossinline also: (Int) -> Boolean): Sequence<Int> =
+                sequence { for (i in 0 until limit) if (!isSkipped(i) && !also(i)) yield(i) }
             fun limitOf(n: Int): Int = n
             """,
         )
-        val counter = source("src/main/kotlin/dev/demokt/Counter.kt", "package dev.demokt\nclass Counter { fun count(n: Int): Int = kept(n).count() }")
+        val counter = source("src/main/kotlin/dev/demokt/Counter.kt", "package dev.demokt\nclass Counter { fun count(n: Int): Int = kept(n) { it > 100 }.count() }")
         val target = kotlinTest("A1CounterTest", "@Test fun count() { assertEquals(4, Counter().count(6)) }")
         // Executes the file's own facade class, so the changed file is known to the map by its path.
         val limitTest = kotlinTest("A3LimitTest", "@Test fun limit() { assertEquals(1, limitOf(1)) }")
