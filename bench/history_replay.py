@@ -535,8 +535,10 @@ class Builds:
         if self.reactor:
             plugin = (f"{maven_build.PLUGIN_GROUP}:{maven_build.PLUGIN_ARTIFACT}:"
                       f"{self.run.MAVEN_PLUGIN_VERSION}:explain")
-            self._maven(["test-compile", plugin, f"-Dyoriwake.base={base}",
-                         "-Dyoriwake.mode=optimistic"], log)
+            # The map was recorded with the flag: without it the ask refuses on a changed
+            # environment.
+            self._maven(["test-compile", plugin, "-Dmaven.test.failure.ignore=true",
+                         f"-Dyoriwake.base={base}", "-Dyoriwake.mode=optimistic"], log)
         else:
             self.run.gradle(self.checkout, self.project,
                             [*self.run.INIT_SCRIPT_ARGS, commit_replay.explain_task(self.task),
