@@ -488,11 +488,16 @@ class Builds:
             reason = self.run.full_run_reason(log, self.task)
             return {self.task: reason} if self.run.is_force_reason(reason) else None
         reasons = {}
-        pattern = re.compile(r"^\[yoriwake\] (\S+ surefire:test \([^)]*\)): (.*)$")
+        # `<artifactId> surefire:test (<id>): <reason>`, or `... (<id>) declined, <kind>: <detail>`.
+        pattern = re.compile(r"^\[yoriwake\] (\S+ surefire:test \([^)]*\))(?::| (declined, [a-z0-9-]+):) (.*)$")
         for line in maven_build.plugin_lines(log):
             found = pattern.match(line)
-            if found and found.group(1) not in reasons and self.run.is_force_reason(found.group(2)):
-                reasons[found.group(1)] = found.group(2)[:300]
+            if not found or found.group(1) in reasons:
+                continue
+            if found.group(2):
+                reasons[found.group(1)] = found.group(2)
+            elif self.run.is_force_reason(found.group(3)):
+                reasons[found.group(1)] = found.group(3)[:300]
         return reasons or None
 
     def record(self, isolated=False):
@@ -543,7 +548,9 @@ class Builds:
             if self.reactor:
                 self._maven((["-pl", module, "-am"] if module else [])
                             + ["test", f"-Dtest={cls}", "-Dsurefire.failIfNoSpecifiedTests=false",
-                               f"-D{maven_build.ENABLED_PROPERTY}=false", "-Djacoco.skip=true",
+                               # JaCoCo stays on: an argLine staged to start with `@{argLine}`
+                               # needs the agent's to be defined.
+                               f"-D{maven_build.ENABLED_PROPERTY}=false",
                                "-Dmaven.test.failure.ignore=true"], log)
             else:
                 self.run.gradle(self.checkout, self.project,
@@ -552,6 +559,26 @@ class Builds:
             if test in report.counts and test not in report.failed:
                 return True
         return False
+
+
+OWN_ARGLINE = re.compile(r"<argLine>(?![^<]*argLine\})")
+
+
+def prepend_argline(checkout):
+    """Puts `@{argLine} ` before each POM's own `<argLine>` that does not already name it, as a user
+    adopting the plugin does: an argLine of the guest's own otherwise replaces the one the JaCoCo
+    agent sets, and the plugin declines. Left for the staging commit to take in."""
+    for root, dirs, files in os.walk(checkout):
+        dirs[:] = [d for d in dirs if d not in (".git", "target", maven_build.MAPS_HOME)]
+        if "pom.xml" not in files:
+            continue
+        path = os.path.join(root, "pom.xml")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        staged = OWN_ARGLINE.sub("<argLine>@{argLine} ", text)
+        if staged != text:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(staged)
 
 
 class MapSwap:
@@ -604,6 +631,8 @@ def replay_project(project, checkout, pairs, budget_minutes, logs, *, explain=Tr
         try:
             run.stage_checkout(checkout, project)
             if builds.maven:
+                if project.get("prepend_argline"):
+                    prepend_argline(checkout)
                 maven_build.stage(checkout, project)
         except (SystemExit, subprocess.CalledProcessError) as refused:
             print(f"  {sha[:12]} could not be staged: {refused}", flush=True)

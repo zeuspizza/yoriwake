@@ -366,6 +366,22 @@ def case_the_plan_sizes_shards_and_the_merge_names_a_missing_one():
     return failures
 
 
+def case_a_poms_own_arg_line_is_staged_to_carry_the_agents():
+    failures = 0
+    root = tempfile.mkdtemp(prefix="history-argline-")
+    TMP.append(root)
+    os.makedirs(os.path.join(root, "m"))
+    for path, text in (("pom.xml", "<argLine>-Xss640k</argLine>"),
+                       ("m/pom.xml", "<argLine>@{argLine} -Xmx1g</argLine>")):
+        with open(os.path.join(root, path), "w", encoding="utf-8") as handle:
+            handle.write(text)
+    hr.prepend_argline(root)
+    got = [open(os.path.join(root, p), encoding="utf-8").read() for p in ("pom.xml", "m/pom.xml")]
+    if got != ["<argLine>@{argLine} -Xss640k</argLine>", "<argLine>@{argLine} -Xmx1g</argLine>"]:
+        failures += fail(f"the staged argLines: {got}")
+    return failures
+
+
 def test_history_replay():
     failures = 0
     try:

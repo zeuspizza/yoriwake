@@ -16,3 +16,7 @@ history_to = "9d2241ff467d03accbf902a650adc60513bf5c11"
 daemon_java_version = 21
 flags = []
 sources = ["src/main/java"]
+# Its Surefire configuration sets an `<argLine>` of its own, which replaces the one JaCoCo's agent
+# sets, so the plugin declines every run; staged with `@{argLine}` before it, as an adopting user
+# would write it.
+prepend_argline = true
