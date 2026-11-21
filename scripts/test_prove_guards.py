@@ -121,6 +121,50 @@ def case_a_suite_that_merely_crashed_proves_no_guard():
     return failures
 
 
+def case_an_artifact_central_did_not_serve_is_named_as_infrastructure():
+    """A suite that failed unmutated because Central answered 404 for an artifact that exists is
+    reported as infrastructure, still not proved; a test that failed for itself is not."""
+    import contextlib
+    import io
+    failures = 0
+    log = ["        [INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/junit/"
+           "junit-bom/5.11.4/junit-bom-5.11.4.pom",
+           "        [ERROR] Non-resolvable import POM: The following artifacts could not be resolved: "
+           "org.junit:junit-bom:pom:5.11.4 (absent): Could not find artifact org.junit:junit-bom:pom:5.11.4 "
+           "in central (https://repo.maven.apache.org/maven2) @ line 22, column 19"]
+    if pg.central_failure(log) != "org.junit:junit-bom:pom:5.11.4":
+        failures += fail(f"Central's 404 was read as {pg.central_failure(log)!r}")
+    dropped = ["[ERROR] Could not transfer artifact org.a:b:jar:1 from/to central "
+               "(https://repo.maven.apache.org/maven2): Connection reset"]
+    if pg.central_failure(dropped) != "org.a:b:jar:1":
+        failures += fail("a dropped transfer from Central was not named")
+    cached = ["[ERROR] Non-resolvable import POM: org.junit:junit-bom:pom:5.11.4 was not found in "
+              "https://repo.maven.apache.org/maven2 during a previous attempt. This failure was cached"]
+    if pg.central_failure(cached) != "org.junit:junit-bom:pom:5.11.4":
+        failures += fail("Central's 404, cached by an earlier build, was not named")
+    for own in (["SelectionFunctionalTest > a test FAILED", "expected: <1> but was: <2>"],
+                ["[ERROR] Could not find artifact org.a:b:jar:1 in yoriwake-functional (file:/w/repo)"]):
+        if pg.central_failure(own) is not None:
+            failures += fail(f"{own[-1]!r} was read as Central's")
+    pg.MUTATIONS.append(guard())
+    index = len(pg.MUTATIONS) - 1
+    try:
+        for refusal, verdict in ((f"{pg.INFRASTRUCTURE}: Maven Central did not serve org.a:b:jar:1; "
+                                  "the maven suite fails unmutated", "-> INFRASTRUCTURE: "),
+                                 ("the maven suite fails unmutated", "-> NOT PROVED: ")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                counted = pg._report(index, None, refusal)
+            if counted != 1 or verdict not in out.getvalue():
+                failures += fail(f"{refusal!r} was reported as {out.getvalue().strip()!r}, counted {counted}")
+            if pg._RUN["outcomes"].get("g", ("",))[0] != "not proved":
+                failures += fail(f"{refusal!r} left {pg._RUN['outcomes'].get('g')} in the results")
+    finally:
+        pg.MUTATIONS.pop()
+        pg._RUN["outcomes"].pop("g", None)
+    return failures
+
+
 # What `checkout.require_clean` prints when a suite asks a dirty tree for its commit: the closing
 # advice is the last line, so a cut last line never named the files.
 DIRTY_REFUSAL = ("REFUSING: the yoriwake checkout at /w has uncommitted changes, so no commit describes "
@@ -372,6 +416,37 @@ def case_a_tree_that_does_not_compile_names_the_compiler_errors():
             failures += fail(f"expected a line with {expected!r}, got {found}")
     if pg.compile_errors("e: one\n" * 30) != ["e: one"] * 10:
         failures += fail("the error lines are not capped at ten")
+    return failures
+
+
+def case_a_warm_up_that_failed_fetching_a_dependency_compiles_once_more():
+    """Central once failed asm-tree's jar in two guard shards' warm-ups at the same minute; a
+    compile error is not rerun."""
+    failures = 0
+    fetch = ("Execution failed for task ':plugin:compileFunctionalTestKotlin'.\n"
+             "> Could not resolve all files for configuration ':plugin:functionalTestCompileClasspath'.\n"
+             "   > Could not find asm-tree-9.7.jar (org.ow2.asm:asm-tree:9.7).\n")
+    for outcomes, runs, refused in (([(1, fetch), (0, "")], 2, False), ([(1, fetch), (1, fetch)], 2, True),
+                                    ([(1, "e: Foo.kt:1:1 Unresolved reference: x\n")], 1, True),
+                                    ([(1, "> Could not find org.a:b:1.\n")], 1, True)):
+        started = []
+
+        def run(argv, **kwargs):
+            code, err = outcomes[len(started)]
+            started.append(argv)
+            return subprocess.CompletedProcess(argv, code, "", err)
+
+        saved = (pg.subprocess.run, pg.UNMUTATED_RESULTS, pg.WARM_UP_RETRY_PAUSE)
+        with tempfile.TemporaryDirectory() as directory:
+            pg.subprocess.run, pg.UNMUTATED_RESULTS, pg.WARM_UP_RETRY_PAUSE = run, os.path.join(directory, "kept"), 0
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    refusal = pg._warm_up([os.path.join(directory, "worker-1")], [":compile"])
+            finally:
+                pg.subprocess.run, pg.UNMUTATED_RESULTS, pg.WARM_UP_RETRY_PAUSE = saved
+        if len(started) != runs or bool(refusal) != refused:
+            failures += fail(f"{outcomes[0][1].strip().splitlines()[-1]!r}: {len(started)} runs, refused "
+                             f"{bool(refusal)}; expected {runs} runs, refused {refused}")
     return failures
 
 
@@ -1599,7 +1674,9 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_gradle_starts_through_the_wrapper_windows_can_run,
          case_a_warm_up_that_fails_keeps_its_whole_output,
          case_a_mutated_source_is_restored_byte_for_byte_whatever_its_line_endings,
-         case_the_restore_check_compares_bytes_not_decoded_text)
+         case_the_restore_check_compares_bytes_not_decoded_text,
+         case_an_artifact_central_did_not_serve_is_named_as_infrastructure,
+         case_a_warm_up_that_failed_fetching_a_dependency_compiles_once_more)
 
 
 def test_prove_guards():

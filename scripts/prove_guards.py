@@ -234,6 +234,7 @@ RESOURCE_READS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture
 JDK_CODE = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JdkCode.java"
 READ_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReadHooks.java"
 REVIEWED_LIBRARIES = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedLibraries.java"
+REVIEWED_CHILDREN = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/ReviewedChildren.java"
 GUARD_HOOKS = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/GuardHooks.java"
 JAR_IDENTITY = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/capture/JarIdentity.java"
 ATTACHED_LOADER = "agent/src/main/java/io/github/zeuspizza/yoriwake/agent/host/AttachedLoader.java"
@@ -2470,6 +2471,32 @@ MUTATIONS = [
      '            touch(AgentContract.TOUCH_ALL, "a child process was started");',
      '            if (false) touch(AgentContract.TOUCH_ALL, "a child process was started");',
      agent_suite, "a child process touches every class, once"),
+    # Byte Buddy's attacher is the one child trusted: started by ByteBuddyAgent at a version
+    # reviewed, with the reviewed command, in an environment that adds no launcher options.
+    ("every child process counts as reviewed", TOUCH_RECORDER,
+     "            if (outer && ReviewedChildren.reviewed(ReviewedChildren.caller(), command)) {",
+     "            if (outer) {",
+     agent_suite, "a child process touches every class, once"),
+    ("a reviewed command matches without its caller", REVIEWED_CHILDREN,
+     '            if (caller == null || !(caller.getName().equals(CALLER) || caller.getName().startsWith(CALLER + "$"))) {',
+     "            if (caller == null) {",
+     agent_suite, "the attacher started by another class touches every class"),
+    ("the reviewed version is not checked", REVIEWED_CHILDREN,
+     "            return reviewedVersion(home, source);",
+     "            return true;",
+     agent_suite, "the attacher of a Byte Buddy version not reviewed, or of none read, is not reviewed"),
+    ("a native agent's attacher counts as reviewed", REVIEWED_CHILDREN,
+     '            if (!"false".equals(c[8])) {',
+     "            if (false) {",
+     agent_suite, "any other command from ByteBuddyAgent is not reviewed"),
+    ("the inherited launcher options are not checked", REVIEWED_CHILDREN,
+     "            if (launcherOptions) {",
+     "            if (false) {",
+     agent_suite, "the attacher is not reviewed while the environment sets launcher options"),
+    ("the child-process hook no longer passes the command", READ_HOOKS,
+     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "0"},',
+     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "-2"},',
+     functional_suite, "a test that mocks inline does not select every later test in its JVM"),
     ("the child-process hook is installed with no sink behind it", READ_HOOKS,
      '            holder.getField("PROCESS").set(null, processes);',
      "            holder.getClass();",
@@ -4037,7 +4064,7 @@ MUTATIONS = [
      functional_suite, "a test that asks for every loaded class dates every test class from that point"),
     ("where every child process starts is no longer hooked", READ_HOOKS,
      '        {"java/lang/ProcessImpl", "start", "([Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;"\n'
-     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "-2"},\n', "",
+     '            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "0"},\n', "",
      functional_suite, "a child JVM started with Runtime exec that reads a class file selects every later test in its JVM"),
     # A test a dating capture did not report (its class's setup threw, it was deleted, a filter left
     # it out) kept its older SUCCESSFUL record under the newer stamp, and the next unrelated change
@@ -6234,13 +6261,28 @@ def compile_errors(output, limit=10):
     return errors[:limit]
 
 
+# A dependency file the build could not fetch, its metadata resolved: Central serving a 404 or a
+# dropped transfer for an artifact that exists. A dependency that does not exist fails on its
+# metadata instead (`Could not find group:name:version.`), and is not retried.
+FETCH_FAILED = re.compile(r"Could not (?:download|find) \S+\.(?:jar|pom|module) \(|Could not (?:GET|HEAD) '")
+# Seconds before the one rerun of a warm-up that failed on a fetch.
+WARM_UP_RETRY_PAUSE = 60
+
+
 def _warm_up(trees, tasks):
     """Compiles `tasks` in each tree, one tree at a time. Returns a refusal, with the compiler's
     error lines below it, or None. A failed build's whole output is kept in UNMUTATED_RESULTS: the
-    error lines alone left a compiler crash without its cause."""
+    error lines alone left a compiler crash without its cause. A build that failed fetching a
+    dependency file runs once more after a pause: Central's hiccup is not the tree failing to compile."""
     for tree in trees:
-        done = subprocess.run([wrapper(tree), "-q", *GRADLE_ARGS, *tasks], capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, cwd=tree)
+        command = [wrapper(tree), "-q", *GRADLE_ARGS, *tasks]
+        done = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tree)
+        fetch = FETCH_FAILED.search((done.stderr or "") + (done.stdout or "")) if done.returncode != 0 else None
+        if fetch:
+            print(f"{tree}: the warm-up failed fetching a dependency ({fetch.group(0)}...); "
+                  f"compiling again in {WARM_UP_RETRY_PAUSE}s, once", flush=True)
+            time.sleep(WARM_UP_RETRY_PAUSE)
+            done = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=tree)
         if done.returncode != 0:
             output = (done.stderr or "") + "\n" + (done.stdout or "")
             tail = (done.stderr or done.stdout).strip().splitlines()
@@ -6297,6 +6339,24 @@ def _timed_run(suite, test_class, expect=None):
 # and of the end of Gradle's output. The kept results hold the rest.
 MESSAGE_LINES = 40
 OUTPUT_LINES = 60
+
+
+# Maven's resolver, naming an artifact Central did not serve: a 404 the CDN gave for one that exists,
+# a dropped transfer, a 5xx. Not the change under test, though nothing is proved either.
+INFRASTRUCTURE = "infrastructure"
+# The second form is the same failure, cached by an earlier build of the same local repository.
+CENTRAL_FAILED = re.compile(r"Could not (?:find|transfer) artifact (\S+) (?:in|from/to) central\b"
+                            r"|(\S+) was not found in https://repo\.maven\.apache\.org/maven2 during a previous attempt")
+
+
+def central_failure(lines):
+    """The artifact Maven Central did not serve, as `group:artifact:type:version`, when a line of
+    a failed build's log names one; otherwise None."""
+    for line in lines:
+        found = CENTRAL_FAILED.search(line)
+        if found:
+            return found.group(1) or found.group(2)
+    return None
 
 
 def why_unmutated_fails():
@@ -6364,10 +6424,14 @@ def _prove_in_worker(index):
         _WORKER["baselined"][key], timing["baseline_seconds"] = _run_suite(suite, test_class, expect)
         # Said once, by the guard that paid the baseline; the guards that share it repeat its line.
         why = why_unmutated_fails() if _WORKER["baselined"][key] else []
+        _WORKER.setdefault("central", {})[key] = central_failure(why)
     standing = _WORKER["baselined"][key]
     if standing:
         scope = f" ({test_class})" if test_class else ""
-        return index, None, "\n".join([f"the {name} suite{scope} fails unmutated in {os.getcwd()}: "
+        central = _WORKER.get("central", {}).get(key)
+        head = (f"{INFRASTRUCTURE}: Maven Central did not serve {central} (run again; if it repeats, check "
+                f"that it exists); " if central else "")
+        return index, None, "\n".join([f"{head}the {name} suite{scope} fails unmutated in {os.getcwd()}: "
                                        f"{standing[0]}"] + why), timing
     target = source(path)
     original = read_bytes(target)
@@ -6550,7 +6614,9 @@ def _report(index, fired, refusal, timing=None):
         _RUN["timings"][label] = timing
     if refusal:
         # Whole in the log; `--results` keeps its first line, as for a refusal that stops the run.
-        print(f"{label:62} -> NOT PROVED: {refusal}", flush=True)
+        # Still not proved there: the readers of `--results` know no other verdict.
+        verdict = "INFRASTRUCTURE" if refusal.startswith(INFRASTRUCTURE + ":") else "NOT PROVED"
+        print(f"{label:62} -> {verdict}: {refusal}", flush=True)
         outcomes[label] = ("not proved", refusal.splitlines()[0])
         return 1
     # A CRASH IS NOT A GUARD FIRING, with or without an `expect`. Only the expect check used to see

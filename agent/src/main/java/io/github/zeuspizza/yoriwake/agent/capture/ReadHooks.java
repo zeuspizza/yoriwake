@@ -123,10 +123,10 @@ final class ReadHooks {
         {"sun/misc/Unsafe", "defineAnonymousClass", "(Ljava/lang/Class;[B[Ljava/lang/Object;)Ljava/lang/Class;", "2"},
     };
 
-    /** Where every child process starts, {@code ProcessBuilder} and {@code Runtime.exec} alike. */
+    /** Where every child process starts, {@code ProcessBuilder} and {@code Runtime.exec} alike; the sink gets the command. */
     static final String[][] PROCESSES = {
         {"java/lang/ProcessImpl", "start", "([Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;"
-            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "-2"},
+            + "[Ljava/lang/ProcessBuilder$Redirect;Z)Ljava/lang/Process;", "0"},
     };
 
     /**

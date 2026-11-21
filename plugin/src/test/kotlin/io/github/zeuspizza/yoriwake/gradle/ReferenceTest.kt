@@ -107,6 +107,7 @@ class ReferenceTest {
     /** -D properties the reference names that belong to the JDK, each with why it is named. */
     private val jdkProperties = mapOf(
         "user.timezone" to "the test JVM's time zone, which the environment fingerprint compares only when set",
+        "jdk.attach.allowAttachSelf" to "the JDK's own switch that lets a JVM attach to itself, named where the reviewed child processes are",
     )
 
     @Test
