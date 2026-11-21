@@ -204,8 +204,8 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   the same place, whatever changed it, a file `pathIgnore` leaves out, a `-P` or `-D` property or
   nothing in the tree (`dependencies-changed`). The run names up to five. A map recorded before
   dependencies were runs every test once (`classpath-files-unrecorded`) and records them;
-- a change touching startup coverage (code a test JVM ran before its first test) that every test
-  depends on, or that the map cannot date to the JVMs that ran it;
+- a change touching startup coverage (code a test JVM ran outside any test) when the JVMs that ran
+  it hold every test, or when no JVM's first touches name it;
 - more changed paths than `largeChangeThreshold` (5,000 by default) against the base the run was
   asked about, with untracked files and the working tree's drift, less the paths `pathIgnore` takes
   out and those `notReadByTests` lists (`large-change`). A change that
@@ -511,8 +511,8 @@ these are the rules that keep them selected:
   or reads its class or source file (an architecture rule, a class-path scanner, a header check),
   executes none of it. So a changed class selects every test that ran at or after the point it was
   first loaded, executed, or had its class or source file read in the same test JVM
-  (`shares-jvm-with-change`). Tests that ran before that point stay skipped. Code a JVM runs before
-  its first test counts as first loaded there, so a change to it runs every test of that JVM.
+  (`shares-jvm-with-change`). Tests that ran before that point stay skipped. Code a JVM runs outside
+  any test (before its first test, between two classes, at shutdown) runs every test of that JVM.
   - An archive a test opens with code other than the JDK's `ZipFile` (a `ZipInputStream` over the
     file, a scanner's own zip reader) counts as a read of every class file in it, and in every
     archive nested in it. An archive is known by its content, not its name: a `.zip`, `.war` or

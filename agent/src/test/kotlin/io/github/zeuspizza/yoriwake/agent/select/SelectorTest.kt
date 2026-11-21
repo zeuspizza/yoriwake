@@ -340,8 +340,8 @@ class SelectorTest {
         assertContains(decision.fullRunReason(), "build.gradle.kts")
     }
 
-    // Startup work is a first touch of each JVM that ran it, before its first test. It runs that
-    // JVM's tests, and forces only when the touches cannot date it or every test would run.
+    // Startup work is a first touch of each JVM that ran it. It runs that JVM's tests, and forces
+    // only when no touch names it or every test would run.
 
     private val startup = Triple(AgentContract.UNATTRIBUTED_RECORD_ID, "NONE", "com.acme.Startup")
 
@@ -413,21 +413,137 @@ class SelectorTest {
         val decision = decide(m, changed = listOf("com.acme.Startup"))
 
         assertEquals(Selector.Decision.FullRunKind.STARTUP_COVERAGE, decision.fullRunKind())
-        assertContains(decision.fullRunReason(), "which no JVM's first touches date")
+        assertContains(decision.fullRunReason(), "which no JVM's first touches name")
         assertEquals(Selector.Decision.FullRunKind.STARTUP_COVERAGE.token(),
             Selector.rules(m, ChangeSet.of(listOf("com.acme.Startup"), emptyList()), true).forcingKinds())
     }
 
     @Test
-    fun `a change touching a class no test owns first run after a test of its JVM forces a full run`(@TempDir dir: File) {
+    fun `a change touching a class no test owns first run after a test of its JVM runs every test of that JVM`(@TempDir dir: File) {
         // A teardown between classes, or a shutdown tail, is recorded as no test's: A0's class may
-        // have run Startup after A0, which first touches do not reach.
+        // have run Startup after A0, so A0 runs although its JVM touched Startup after it.
         val m = startupInJvmA(dir, startupTouch = "com.acme.Other", bTouches = listOf("a\t4\tcom.acme.Startup"))
 
         val decision = decide(m, changed = listOf("com.acme.Startup"))
 
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertEquals(Selector.Decision.Reason.SHARES_JVM_WITH_CHANGE, decision.reasonFor(placed("com.acme.A0")))
+        assertTrue(decision.includes(placed("com.acme.A1")))
+        assertFalse(decision.includes(placed("com.acme.B0")))
+        val rules = Selector.rules(m, ChangeSet.of(listOf("com.acme.Startup"), emptyList()), true)
+        assertEquals(AgentContract.RULE_NONE, rules.forcingKinds())
+        assertTrue(Rule.SHARES_JVM_CHANGED_CLASS in rules.rulesFor(placed("com.acme.A0"), Verdict.SHARES_JVM_WITH_CHANGE))
+    }
+
+    @Test
+    fun `changed bytes in startup coverage first run after a test of its JVM run every test of that JVM`(@TempDir dir: File) {
+        val m = startupInJvmA(dir, startupTouch = "com.acme.Other", bTouches = listOf("a\t4\tcom.acme.Startup"))
+
+        val decision = decide(m, changed = listOf("com.acme.A1"), bytes = listOf("com.acme.Startup"))
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertTrue(decision.includes(placed("com.acme.A0")))
+        assertFalse(decision.includes(placed("com.acme.B0")))
+        val rules = Selector.rules(m, ChangeSet.of(listOf("com.acme.A1"), emptyList()).withChangedBytes(listOf("com.acme.Startup")), true)
+        assertTrue(Rule.SHARES_JVM_CHANGED_BYTES in rules.rulesFor(placed("com.acme.A0"), Verdict.SHARES_JVM_WITH_CHANGE))
+    }
+
+    @Test
+    fun `a startup change touched between two classes of a JVM runs the class before the touch`(@TempDir dir: File) {
+        // The touch at 3 may be C1's class teardown: C1's tests run although they came before it.
+        val m = map(
+            dir,
+            test("com.acme.C1", "com.acme.C1"),
+            test("com.acme.C1b", "com.acme.C1"),
+            test("com.acme.C2", "com.acme.C2"),
+            test("com.acme.B0", "com.acme.B0"),
+            startup,
+            positions = listOf(
+                "a\t1\t${placed("com.acme.C1")}",
+                "a\t2\t${placed("com.acme.C1b")}",
+                "a\t4\t${placed("com.acme.C2")}",
+                "b\t1\t${placed("com.acme.B0")}",
+            ),
+            firstTouches = listOf("a\t3\tcom.acme.Startup"),
+        )
+
+        val decision = decide(m, changed = listOf("com.acme.Startup"))
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertTrue(decision.includes(placed("com.acme.C1")))
+        assertTrue(decision.includes(placed("com.acme.C1b")))
+        assertTrue(decision.includes(placed("com.acme.C2")))
+        assertFalse(decision.includes(placed("com.acme.B0")))
+    }
+
+    @Test
+    fun `a startup change runs every test of a JVM that touched every class after its first test`(@TempDir dir: File) {
+        // From its touch of every class on, b's touches no longer say what it ran, Startup included.
+        val m = startupInJvmA(dir, startupTouch = "com.acme.Other",
+            bTouches = listOf("b\t3\t${AgentContract.FIRST_TOUCH_ANY}"))
+
+        val decision = decide(m, changed = listOf("com.acme.Startup"))
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertTrue(decision.includes(placed("com.acme.B0")))
+        assertFalse(decision.includes(placed("com.acme.A0")))
+        val rules = Selector.rules(m, ChangeSet.of(listOf("com.acme.Startup"), emptyList()), true)
+        assertTrue(Rule.SHARES_JVM_UNOBSERVED in rules.rulesFor(placed("com.acme.B0"), Verdict.SHARES_JVM_WITH_CHANGE))
+    }
+
+    @Test
+    fun `a startup change in changed bytes runs every test of a JVM that touched every class after its first test`(@TempDir dir: File) {
+        val m = startupInJvmA(dir, startupTouch = "com.acme.Other",
+            bTouches = listOf("b\t3\t${AgentContract.FIRST_TOUCH_ANY}"))
+
+        val decision = decide(m, changed = listOf("com.acme.A1"), bytes = listOf("com.acme.Startup"))
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertTrue(decision.includes(placed("com.acme.B0")))
+        val rules = Selector.rules(m, ChangeSet.of(listOf("com.acme.A1"), emptyList()).withChangedBytes(listOf("com.acme.Startup")), true)
+        assertTrue(Rule.SHARES_JVM_UNOBSERVED in rules.rulesFor(placed("com.acme.B0"), Verdict.SHARES_JVM_WITH_CHANGE))
+    }
+
+    @Test
+    fun `an edited test class in startup coverage a named touch dates after its first test runs every test of that JVM`(@TempDir dir: File) {
+        val m = map(
+            dir,
+            test("com.acme.EarlierTest", "com.acme.EarlierTest"),
+            test("com.acme.EditedTest", "com.acme.EditedTest"),
+            test("com.acme.ElsewhereTest", "com.acme.ElsewhereTest"),
+            Triple(AgentContract.UNATTRIBUTED_RECORD_ID, "NONE", "com.acme.EditedTest"),
+            positions = listOf(
+                "j\t2\t${placed("com.acme.EarlierTest")}",
+                "j\t3\t${placed("com.acme.EditedTest")}",
+                "k\t2\t${placed("com.acme.ElsewhereTest")}",
+            ),
+            namedTouches = listOf("j\t4\tcom.acme.EditedTest"),
+        )
+
+        val decision = decide(m, changed = listOf("com.acme.EditedTest"), exempt = listOf("com.acme.EditedTest"))
+
+        assertFalse(decision.isFullRun, decision.fullRunReason())
+        assertTrue(decision.includes(placed("com.acme.EarlierTest")))
+        assertFalse(decision.includes(placed("com.acme.ElsewhereTest")))
+        val rules = Selector.rules(m, ChangeSet.of(listOf("com.acme.EditedTest"), emptyList())
+            .withExemptTestClasses(listOf("com.acme.EditedTest")).withOwnTestClasses(listOf("com.acme.EditedTest")), true)
+        assertTrue(Rule.SHARES_JVM_CHANGED_CLASS in rules.rulesFor(placed("com.acme.EarlierTest"), Verdict.SHARES_JVM_WITH_CHANGE))
+    }
+
+    @Test
+    fun `a startup change one JVM first ran after its first test runs every test without saying every test depends on it`(@TempDir dir: File) {
+        val m = map(
+            dir,
+            test("A", "com.acme.A"),
+            startup,
+            positions = listOf("j\t2\t${placed("A")}"),
+            firstTouches = listOf("j\t3\tcom.acme.Startup"),
+        )
+
+        val decision = decide(m, changed = listOf("com.acme.Startup"))
+
         assertEquals(Selector.Decision.FullRunKind.STARTUP_COVERAGE, decision.fullRunKind())
-        assertContains(decision.fullRunReason(), "which no JVM's first touches date to its start")
+        assertContains(decision.fullRunReason(), "of com.acme.Startup, and the shared-JVM windows select every test")
         assertEquals(Selector.Decision.FullRunKind.STARTUP_COVERAGE.token(),
             Selector.rules(m, ChangeSet.of(listOf("com.acme.Startup"), emptyList()), true).forcingKinds())
     }
@@ -467,12 +583,13 @@ class SelectorTest {
 
     @Test
     fun `a change touching startup coverage forces a full run when another JVM touched every class`(@TempDir dir: File) {
+        // b's touch of every class says its touches are incomplete, not that it ran Startup.
         val m = startupInJvmA(dir, bTouches = listOf("b\t0\t${AgentContract.FIRST_TOUCH_ANY}"))
 
         val decision = decide(m, changed = listOf("com.acme.Startup"))
 
         assertEquals(Selector.Decision.FullRunKind.STARTUP_COVERAGE, decision.fullRunKind())
-        assertContains(decision.fullRunReason(), "every test depends on")
+        assertContains(decision.fullRunReason(), "the shared-JVM windows select every test")
         assertEquals(Selector.Decision.FullRunKind.STARTUP_COVERAGE.token(),
             Selector.rules(m, ChangeSet.of(listOf("com.acme.Startup"), emptyList()), true).forcingKinds())
     }

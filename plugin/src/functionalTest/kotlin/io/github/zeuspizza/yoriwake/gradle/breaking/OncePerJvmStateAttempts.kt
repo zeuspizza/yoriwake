@@ -7,8 +7,8 @@ import java.io.File
 /**
  * Attempts on state a test JVM builds once and every later test shares. Coverage credits such
  * work to whichever test or window triggered it, so a changed class selects every test that ran at
- * or after it first arrived in the JVM. Startup work no test owns arrives before every test of its
- * JVM, so it runs that JVM's tests, and forces a full run when that is every test. A map that cannot
+ * or after it first arrived in the JVM. Work no test owns runs every test of the JVM that ran it,
+ * and forces a full run when that is every test. A map that cannot
  * be read runs everything.
  */
 class OncePerJvmStateAttempts : BreakAttempt() {
@@ -309,6 +309,49 @@ class OncePerJvmStateAttempts : BreakAttempt() {
             dir, "dev.sample.A1StartupTest", Aim.Row("shares-jvm-changed-class"),
             listOf(codec, other, otherTest, filter, registration, target),
             buildScript = forkedBuild,
+        ) { changeCodec(it) }
+
+        assertOutcome(Outcome.HELD_BY_RULE, result)
+    }
+
+    // Track: code reading. Boundary: a JUnit 4 class's @AfterClass runs after its last test, and
+    // on the vintage engine the window after a runner's test names no class, so its code is filed
+    // as no test's, first touched after the JVM's first test. The JVM's tests run from its start,
+    // the class whose teardown it was included, and the JVM that never ran the code is left out.
+    @Test
+    fun `a teardown change after the last test runs only the class whose JVM ran it`(@TempDir dir: File) {
+        val build = minimalBuild.replace(
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")",
+            "testRuntimeOnly(\"org.junit.platform:junit-platform-launcher\")\n" +
+                "testImplementation(\"junit:junit:4.13.2\")\ntestRuntimeOnly(\"org.junit.vintage:junit-vintage-engine\")",
+        ).replace("tasks.test { useJUnitPlatform() }", "tasks.test { useJUnitPlatform(); forkEvery = 1 }")
+        val otherTest = source(
+            "src/test/java/dev/sample/A0OtherTest.java",
+            """
+            package dev.sample;
+            import org.junit.Test;
+            import static org.junit.Assert.assertEquals;
+            public class A0OtherTest { @Test public void usesOther() { assertEquals(1, new Other().one()); } }
+            """,
+        )
+        val target = source(
+            "src/test/java/dev/sample/A1TeardownTest.java",
+            """
+            package dev.sample;
+            import org.junit.AfterClass;
+            import org.junit.Test;
+            import static org.junit.Assert.assertEquals;
+            public class A1TeardownTest {
+                @Test public void usesOther() { assertEquals(1, new Other().one()); }
+                @AfterClass public static void encodes() { assertEquals("cba", new Codec().encode("abc")); }
+            }
+            """,
+        )
+
+        val result = attempt(
+            dir, "dev.sample.A1TeardownTest", Aim.Row("shares-jvm-changed-class"),
+            listOf(codec, other, otherTest, target),
+            buildScript = build,
         ) { changeCodec(it) }
 
         assertOutcome(Outcome.HELD_BY_RULE, result)

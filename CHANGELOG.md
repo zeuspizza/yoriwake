@@ -23,6 +23,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A change to code a test JVM ran outside any test after its first test runs that JVM's tests, not every test. Map: left alone.
 - A changed class tests loaded but never executed runs the tests from its first load or read on in each JVM, not every test. Map: left alone.
 - Contributors: a Maven functional build asks Central again for an artifact it once did not serve; a guard compile retries any missing dependency once. Map: left alone.
 - A test that mocks inline with Mockito no longer runs every later test in its JVM: Byte Buddy's attacher is reviewed. Map: left alone.
