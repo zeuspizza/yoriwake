@@ -19,7 +19,7 @@ both the parent and C are counted apart, never as missed.
 
 Optimistic mode is a decision, not a run: before each selecting run, the explain task is asked with
 `yoriwake.mode=optimistic`, and the tests it loosens are taken out of the safe selecting run's
-executions. With `--isolated` (Gradle only), a second map recorded with a fresh test JVM per class
+executions. With `--isolated`, a second map recorded with a fresh test JVM per class
 walks beside the shared one: a second selecting run against it and a second recording per commit.
 
 A project file with `scope = "reactor"` (Maven only) runs the whole reactor's Surefire tests,
@@ -425,8 +425,6 @@ class Builds:
         if self.maven and not self.reactor:
             raise SystemExit(f"{project['name']}: a Maven project walks its whole reactor; set "
                              f"scope = \"reactor\"")
-        if isolated_map and self.maven:
-            raise SystemExit(f"{project['name']}: the isolated map is not proven on Maven")
         self.module = project.get("module") or ""
         self.task = run.test_task_path(project)
         self.counter = 0
@@ -520,7 +518,8 @@ class Builds:
         return self._arm("record-isolated" if isolated else "record",
                          [*self.run.INIT_SCRIPT_ARGS, self.task, *flags, "--rerun-tasks",
                           "--continue", *self.run.TIMING_ARM_FLAGS],
-                         ["test", "-Dmaven.test.failure.ignore=true"])
+                         ["test", "-Dmaven.test.failure.ignore=true",
+                          *(["-Dyoriwake.isolatedCapture"] if isolated else [])])
 
     def select(self, base, isolated=False):
         return self._arm("select-isolated" if isolated else "select",
@@ -601,6 +600,10 @@ class MapSwap:
 
     def _dir(self):
         run = self.builds.run
+        if self.builds.reactor:
+            # Every execution's map: the reactor's maps are swapped together.
+            root = maven_build.maps_root(self.builds.checkout)
+            return root if os.path.isdir(root) else None
         return run.find_map(self.builds.checkout, self.builds.module,
                             run.test_task_name(self.builds.project))
 
@@ -877,7 +880,7 @@ def main(argv=None):
     parser.add_argument("--shard", default="1/1", help="i/n: the i-th of n runs of the window")
     parser.add_argument("--budget-minutes", type=float, default=DEFAULT_BUDGET_MINUTES)
     parser.add_argument("--isolated", action="store_true",
-                        help="also walk a map recorded with a fresh test JVM per class (Gradle)")
+                        help="also walk a map recorded with a fresh test JVM per class")
     parser.add_argument("--no-explain", action="store_true", help="skip the optimistic ask")
     parser.add_argument("--publish", action="store_true",
                         help="publish the plugin under test first")
