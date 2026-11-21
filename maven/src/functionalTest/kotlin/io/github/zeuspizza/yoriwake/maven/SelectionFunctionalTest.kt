@@ -1470,7 +1470,7 @@ class SelectionFunctionalTest {
     }
 
     @Test
-    fun `a file a test writes during the capture names neither pathIgnore nor gitignore`(@TempDir dir: File) {
+    fun `a file a test writes during the capture is offered pathIgnore, not gitignore`(@TempDir dir: File) {
         val project = committed(dir)
         File(project, "lib/src/test/java/dev/demo/lib/GreeterTest.java").edit {
             it.replace("void greets() {", "void greets() throws Exception {").replace(
@@ -1486,7 +1486,8 @@ class SelectionFunctionalTest {
 
         val forced = output.lines().filter { "[yoriwake]" in it && "written.txt" in it }
         assertTrue(forced.any { "changed during" in it && "build directory" in it }, output)
-        assertFalse(forced.any { "pathIgnore" in it || ".gitignore" in it }, output)
+        assertTrue(forced.any { "list it in pathIgnore" in it }, output)
+        assertFalse(forced.any { ".gitignore" in it }, output)
     }
 
     @Test
