@@ -227,6 +227,21 @@ class IsolatedPickTest {
     }
 
     @Test
+    fun `a pick whose isolated run was never measured is picked from scratch`() {
+        val previous = after(took = 19.0, slot = 2.0)
+        val unmeasured = previous.copy(isolatedWallSeconds = null, candidateClasses = 5)
+        val ranking = IsolatedPick.Ranking(
+            scores = mapOf("dev.sample.D" to 10L, "dev.sample.E" to 5L),
+            isolated = unmeasured.classes.keys,
+            seconds = (unmeasured.classes.keys + listOf("dev.sample.D", "dev.sample.E")).associateWith { 1.0 },
+            startOverhead = 1.0,
+            sharedJvmSeconds = 10.0,
+        )
+        // From scratch at 2 s a class, four fit the 10 s allowance; kept as it was, three would stay.
+        assertEquals(4, IsolatedPick.pick(ranking, unmeasured, 2.0, 1, 4, 8, IsolatedPick.Wall(sharedSeconds = 10.0)) { true }.classes.size)
+    }
+
+    @Test
     fun `a task whose classes changed by more than a quarter is picked from scratch`() {
         val scratch = after(took = 19.0, slot = 2.0, candidates = 40)
         assertEquals(5, scratch.candidateClasses)

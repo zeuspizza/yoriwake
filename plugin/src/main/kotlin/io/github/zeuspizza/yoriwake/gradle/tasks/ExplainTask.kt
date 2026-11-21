@@ -426,7 +426,7 @@ internal abstract class ExplainTask : DefaultTask() {
         }
         logger.lifecycle("[yoriwake] $taskPath: the map was recorded $recorded ($mode)")
         if (mode != AgentContract.MODE_SHARED) {
-            IsolatedPick.Stamp.read(File(mapDir, IsolatedPick.STAMP_FILE))?.let {
+            IsolatedPick.Stamp.read(File(mapDir, IsolatedPick.STAMP_FILE))?.takeIf { it.classes.isNotEmpty() }?.let {
                 logger.lifecycle("[yoriwake] $taskPath: ${IsolatedPick.explain(it)}")
             }
         }

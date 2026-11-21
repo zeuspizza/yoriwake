@@ -306,18 +306,19 @@ internal object IsolatedPick {
     /**
      * The classes to record alone. A recording keeps what [previous] picked, under the same budget,
      * unless the task's test classes changed by more than [REPICK] since the pick was made from
-     * scratch, or [REPICK] of the picked ones are gone:
+     * scratch, or [REPICK] of the picked ones are gone, or [previous] picked classes whose isolated
+     * run was never measured:
      * - when [previous]'s recording (its [wall] record) took more than the budget, it drops the
      *   classes that free the fewest changes per second of their own JVM's time first, each taken to
-     *   have cost its share of the isolated task's wall time, until it is back under the budget less
-     *   [HEADROOM];
+     *   save its share of the isolated task's wall time less what its tests take back in the test
+     *   task, until it is back under the budget less [HEADROOM];
      * - when it took less than the budget less [ADD_MARGIN], it adds up to a tenth more classes (at
-     *   least one), by score, each costing a measured class's share of an isolated JVM's time over
-     *   the JVMs run at once, while that stays under the budget less [HEADROOM].
+     *   least one), by score, each costing what it adds to the busiest isolated JVM less what its
+     *   tests took in the test task, while that stays under the budget less [HEADROOM].
      *
      * From scratch (the first budgeted recording, or a changed task), classes are taken by score
-     * while their cost fits: a measured class's share of an isolated JVM when one was measured, else
-     * what its own JVM took when the map measured it alone, else a shared JVM's measured start
+     * while their cost fits: a measured class's share of an isolated JVM, or what its own JVM took
+     * when the map measured it alone where that is more, else a shared JVM's measured start
      * overhead plus twice its recorded test time, cold as a fresh JVM runs (1 second plus twice,
      * where nothing was measured). They are taken to run on min([isolatedForks], [processors]) JVMs,
      * each to the least loaded, and to take as long as the slowest of those.
@@ -359,6 +360,10 @@ internal object IsolatedPick {
         val parallel = maxOf(1, minOf(isolatedForks, processors))
         val left = (ranking.scores.keys + ranking.isolated).count(runnable)
         val slot = previous?.slotSeconds
+        // A class's share of an isolated JVM: the measured slot, or more where its own JVM took more.
+        val slotOf = { name: String -> listOfNotNull(slot, ranking.isolatedSeconds[name]).maxOrNull() ?: estimate(name) }
+        // What a class's tests take back in the test task, warm and spread over its JVMs.
+        val sharedPart = { warm: Double -> warm / maxOf(1, hostForks) }
         val order = compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key }
         val stamp = { picked: Map<String, Long>, costs: Map<String, Double>, extra: Double ->
             Stamp(
@@ -371,7 +376,8 @@ internal object IsolatedPick {
         val kept = previous?.classes.orEmpty().filterKeys(runnable)
         val sticky = previous != null && previous.budget == budget && previous.candidateClasses != null &&
             Math.abs(left - previous.candidateClasses) <= REPICK * previous.candidateClasses &&
-            previous.classes.size - kept.size <= REPICK * previous.classes.size
+            previous.classes.size - kept.size <= REPICK * previous.classes.size &&
+            (previous.classes.isEmpty() || previous.isolatedWallSeconds != null)
         if (sticky) {
             val ceiling = budget * shared
             // What the previous recording took: a fully shared one (an empty pick) its test task, a
@@ -392,7 +398,12 @@ internal object IsolatedPick {
                 for (name in kept.keys.sortedWith(compareBy<String> { kept.getValue(it) / maxOf(own(it), 1e-9) }.thenBy { it })) {
                     val forBudget = over && took > ceiling * (1 - HEADROOM)
                     if (!forBudget && picked.size < left) break
-                    if (forBudget) took -= share(name)
+                    if (forBudget) {
+                        // Its tests go back to the test task, cold seconds as they ran alone, warm there.
+                        val gain = share(name) - sharedPart((ranking.seconds[name] ?: 0.0) / COLD)
+                        if (gain <= 0 && picked.size < left) continue
+                        took -= gain
+                    }
                     picked.remove(name)
                 }
             } else if (measured != null && measured <= ceiling * (1 - ADD_MARGIN)) {
@@ -401,7 +412,9 @@ internal object IsolatedPick {
                 for ((name, score) in scores.entries.sortedWith(order)) {
                     if (added >= cap || picked.size + 1 >= left) break
                     if (name in picked || score <= 0 || !runnable(name)) continue
-                    val cost = (slot ?: estimate(name)) / parallel
+                    val slots = picked.keys.map(slotOf)
+                    val cost = makespan(slots + slotOf(name), parallel) - makespan(slots, parallel) -
+                        sharedPart(ranking.seconds[name] ?: 0.0)
                     if (took + cost > ceiling * (1 - HEADROOM)) break
                     took += cost
                     picked[name] = score
@@ -411,7 +424,7 @@ internal object IsolatedPick {
             return stamp(picked, picked.keys.associateWith { previous.classSeconds[it] ?: own(it) }, took - shared)
         }
 
-        val cost = { name: String -> slot ?: estimate(name) }
+        val cost = slotOf
         val allowance = (budget - 1.0) * shared - overhead
         val picked = LinkedHashMap<String, Long>()
         val costs = LinkedHashMap<String, Double>()

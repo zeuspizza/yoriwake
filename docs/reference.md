@@ -1422,12 +1422,14 @@ records shared, with one line saying the budget is Gradle-only for now.
   JVMs' time over the task's `maxParallelForks` until one is). The test task's time outside its
   JVMs is charged once. Your task always keeps at least one class.
 - **The pick is sticky.** Every later recording keeps the classes the last one picked, a pick of
-  none included. When the last recording took more than n times the shared recording, it drops
-  the classes that free the fewest changes per second of their own JVM's time first, each taken to
-  have cost its share of the isolated part's wall time, until it is 5% under. When it took 15% or
+  none included (a pick whose isolated part never finished starts over). When the last recording
+  took more than n times the shared recording, it drops the classes that free the fewest changes
+  per second of their own JVM's time first, each taken to save its share of the isolated part's
+  wall time less what its tests take back in your task, until it is 5% under. When it took 15% or
   more under, it adds a few classes, by score: a tenth of those picked, at least one, each costing
-  what one class took of an isolated JVM, over the JVMs run at once, while it stays 5% under. In
-  between, nothing moves. A class recorded alone has no shared JVM left to score it, so it keeps the
+  what it adds to the busiest isolated JVM (what one class took of an isolated JVM, or its own
+  JVM's time where more) less its tests' time in your task, while it stays 5% under. In between,
+  nothing moves. A class recorded alone has no shared JVM left to score it, so it keeps the
   score it was picked with, stamped beside the map in `isolated-pick` with the budget, its cost and
   the shared recording it was picked against.
 - **The picked classes run in `<task>YoriwakeIsolated`**, a test task the plugin registers beside
