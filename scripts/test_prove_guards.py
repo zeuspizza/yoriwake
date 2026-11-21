@@ -142,10 +142,39 @@ def case_an_artifact_central_did_not_serve_is_named_as_infrastructure():
               "https://repo.maven.apache.org/maven2 during a previous attempt. This failure was cached"]
     if pg.central_failure(cached) != "org.junit:junit-bom:pom:5.11.4":
         failures += fail("Central's 404, cached by an earlier build, was not named")
+    # Gradle's form, as a guard shard printed it: the BOM first, then the follow-on
+    # without a version.
+    gradle = ["        > Could not resolve all files for configuration ':testCompileClasspath'.",
+              "           > Could not find org.junit:junit-bom:5.11.4.",
+              "             Searched in the following locations:",
+              "               - https://repo.maven.apache.org/maven2/org/junit/junit-bom/5.11.4/junit-bom-5.11.4.pom",
+              "               - file:/tmp/junit-842/repo/org/junit/junit-bom/5.11.4/junit-bom-5.11.4.pom",
+              "             Required by:",
+              "                 root project :",
+              "           > Could not find org.junit.jupiter:junit-jupiter:.",
+              "             Required by:",
+              "                 root project :"]
+    if pg.central_failure(gradle) != "org.junit:junit-bom:5.11.4":
+        failures += fail(f"Gradle's miss on Central was read as {pg.central_failure(gradle)!r}")
+    transfer = ["   > Could not GET 'https://repo.maven.apache.org/maven2/org/a/b/1.0/b-1.0.jar'. "
+                "Received status code 502 from server: Bad Gateway"]
+    if pg.central_failure(transfer) != "org.a:b:1.0":
+        failures += fail(f"Gradle's failed transfer from Central was read as {pg.central_failure(transfer)!r}")
+    artifact = ["   > Could not find b-1.0-linux.jar (org.a:b:1.0).", "     Searched in the following locations:",
+                "         https://repo.maven.apache.org/maven2/org/a/b/1.0/b-1.0-linux.jar"]
+    if pg.central_failure(artifact) != "org.a:b:1.0":
+        failures += fail(f"Gradle's missing artifact on Central was read as {pg.central_failure(artifact)!r}")
     for own in (["SelectionFunctionalTest > a test FAILED", "expected: <1> but was: <2>"],
-                ["[ERROR] Could not find artifact org.a:b:jar:1 in yoriwake-functional (file:/w/repo)"]):
+                ["[ERROR] Could not find artifact org.a:b:jar:1 in yoriwake-functional (file:/w/repo)"],
+                ["   > Could not find org.a:b:1.", "     Searched in the following locations:",
+                 "       - file:/tmp/junit-1/repo/org/a/b/1/b-1.pom"],
+                ["   > Could not find dev.lib:core:2.", "     Searched in the following locations:",
+                 "       - https://repo.maven.apache.org/maven2/dev/lib/core/2/core-2.pom",
+                 "       - file:/tmp/junit-1/repo/dev/lib/core/2/core-2.pom"],
+                ["   > Could not find org.a:b:.", "     Searched in the following locations:",
+                 "       - https://repo.maven.apache.org/maven2/org/a/b/maven-metadata.xml"]):
         if pg.central_failure(own) is not None:
-            failures += fail(f"{own[-1]!r} was read as Central's")
+            failures += fail(f"{own!r} was read as Central's")
     pg.MUTATIONS.append(guard())
     index = len(pg.MUTATIONS) - 1
     try:

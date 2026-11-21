@@ -656,6 +656,12 @@ testing {
                         providers.gradleProperty("yoriwake.functional.junitVersion").orNull?.let {
                             systemProperty("yoriwake.functional.junitVersion", it)
                         }
+                        // On CI, the fixture builds read the dependencies an earlier run on main
+                        // downloaded instead of asking Central in every job. Only when the directory
+                        // exists: Gradle warns about a missing one in output the tests assert on.
+                        providers.environmentVariable("YORIWAKE_GRADLE_RO_DEP_CACHE").orNull
+                            ?.takeIf { file(it).isDirectory }
+                            ?.let { environment("GRADLE_RO_DEP_CACHE", it) }
                         systemProperty("yoriwake.functional.coverage", functionalCoverage.toString())
                         // A script that stops compiling against the Gradle API leaves its daemon's view
                         // here for CI to upload; the suite registers the capture as a service.

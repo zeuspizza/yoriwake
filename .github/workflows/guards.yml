@@ -204,6 +204,14 @@ jobs:
           key: maven-repo-v1-3-${{ github.run_id }}
           restore-keys: maven-repo-v1-3-
       - run: echo "YORIWAKE_MAVEN_REPO_TAIL=$HOME/.m2/yoriwake-seed-1,$HOME/.m2/yoriwake-seed-2,$HOME/.m2/yoriwake-seed-3" >> "$GITHUB_ENV"
+      # The fixture builds' seed, as verify saves it on main: read-only behind each TestKit home's
+      # own cache, so a guard's Gradle suite asks Central only for what it lacks.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle-seed/caches/modules-2
+          key: gradle-seed-v1-${{ github.run_id }}
+          restore-keys: gradle-seed-v1-
+      - run: echo "YORIWAKE_GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
       - run: mkdir -p results
       # Not on a narrowed pull request: no guard of fast mode mutates what its change touched.
       - if: needs.changes.outputs.narrow != 'true'
@@ -389,6 +397,14 @@ jobs:
           key: maven-repo-v1-3-${{ github.run_id }}
           restore-keys: maven-repo-v1-3-
       - run: echo "YORIWAKE_MAVEN_REPO_TAIL=$HOME/.m2/yoriwake-seed-1,$HOME/.m2/yoriwake-seed-2,$HOME/.m2/yoriwake-seed-3" >> "$GITHUB_ENV"
+      # The fixture builds' seed, as verify saves it on main: read-only behind each TestKit home's
+      # own cache, so a guard's Gradle suite asks Central only for what it lacks.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle-seed/caches/modules-2
+          key: gradle-seed-v1-${{ github.run_id }}
+          restore-keys: gradle-seed-v1-
+      - run: echo "YORIWAKE_GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
       # With the run and commit its guards ran at, for a later dispatch that takes this shard.
       - env:
           RUN: ${{ github.run_id }}

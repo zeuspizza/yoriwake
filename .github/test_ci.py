@@ -2253,7 +2253,7 @@ def case_a_push_to_main_skips_only_what_its_pull_request_run_proved():
          {"unit": True, "maven": False, "gradle": False}),
         ("one shard failed", {"jobs": _pr_jobs(failed=("functional on Gradle 9 (shard 2/3)",))},
          {"unit": True, "maven": False, "gradle": True}),
-        ("a shard is missing", {"jobs": {"total_count": 22, "jobs": [
+        ("a shard is missing", {"jobs": {"total_count": len(_pr_jobs()["jobs"]) - 1, "jobs": [
             job for job in _pr_jobs()["jobs"] if job["name"] != "functional on Maven (shard 3/3)"]}},
          {"unit": True, "maven": True, "gradle": False}),
         ("no pull request", {"pulls": []}, everything),
@@ -3050,8 +3050,9 @@ def functional_evidence_problems(text):
         uploads = [step for step in block.split("\n      - ") if "upload-artifact@" in step]
         evidence = [step for step in uploads if ".gradle-test-kit-" in step]
         listing = [step for step in block.split("\n      - ") if "ci.py list-test-kit-homes" in step]
-        if not listing or "if: failure()" not in listing[0]:
-            problems.append(f"{job}: no step lists what the TestKit homes' caches hold when it fails")
+        if not listing or "if: always()" not in listing[0]:
+            problems.append(f"{job}: no step lists what the TestKit homes' caches hold when it fails, "
+                            f"and on every run for the seed")
         if not evidence:
             problems.append(f"{job}: a flake leaves nothing to diagnose: no upload of the TestKit homes")
         elif not all("if: failure()" in step and "include-hidden-files: true" in step for step in evidence):
@@ -3080,8 +3081,8 @@ def case_a_shard_that_drops_its_evidence_is_reported():
          "skips the hidden"),
         (text.replace(block, block.replace(".gradle-test-kit-", ".gradle-elsewhere-")),
          "leaves nothing to diagnose"),
-        (text.replace(block, block.replace("        if: failure()\n        shell: bash\n        run: python3 .github/ci.py list",
-                                           "        shell: bash\n        run: python3 .github/ci.py list", 1)),
+        (text.replace(block, block.replace("        if: always()\n        shell: bash\n        run: python3 .github/ci.py list",
+                                           "        if: failure()\n        shell: bash\n        run: python3 .github/ci.py list", 1)),
          "when it fails"),
         (text.replace(block, block.replace("            plugin/build/test-kit-homes.txt\n", "", 1)),
          "leaves out the listing"),
@@ -3187,6 +3188,198 @@ def case_no_test_kit_home_is_said_rather_than_silent():
     if code != 0 or "no TestKit home" not in out.getvalue():
         return fail(f"an empty build directory was not reported as having no home: {code}, {out.getvalue()!r}")
     return 0
+
+
+def case_a_tooling_api_home_is_listed_too():
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as root:
+        files = os.path.join(root, "functionalTest", "work", ".gradle-tooling-api-8.14", "caches", "modules-2",
+                             "files-2.1", "org.a", "b", "1", "ab12")
+        os.makedirs(files)
+        open(os.path.join(files, "b-1.jar"), "w").close()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            ci.main(["list-test-kit-homes", root])
+    if "b-1.jar\t0\t" not in out.getvalue():
+        return fail(f"the Tooling API home's downloads were not listed: {out.getvalue()!r}")
+    return 0
+
+
+def case_the_gradle_seed_resolves_each_listed_module_but_not_the_fixtures_own():
+    """A module resolves as its plain coordinate, so Gradle picks the variant a fixture does; an
+    artifact file the plain module may not bring gets its own notation; metadata never does."""
+    listing = "\n".join([
+        "/w/plugin/build/tmp/functionalTest/work/.gradle-test-kit-8.14",
+        "  caches/modules-2/files-2.1/org.junit/junit-bom/5.11.4/ab12/junit-bom-5.11.4.pom\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/org.junit/junit-bom/5.11.4/cd34/junit-bom-5.11.4.module\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/org.a/b/1.0/ef56/b-1.0.jar\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/org.a/b/1.0/ef57/b-1.0-linux-x86_64.jar\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/org.a/b/1.0/ef58/b-1.0.zip\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/org.a/c/2/ff00/gone.jar\tERROR [Errno 2]",
+        "  caches/modules-2/files-2.1/io.github.zeuspizza/yoriwake/0.1.0/aa00/yoriwake-0.1.0.jar\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/dev.lib/core/2/aa01/core-2.jar\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/dev/x/1/aa02/x-1.jar\t7\t2026-11-21T00:00:00Z",
+        "  caches/modules-2/files-2.1/develocity/x/1/aa03/x-1.jar\t7\t2026-11-21T00:00:00Z"])
+    expected = {"org.junit:junit-bom:5.11.4": {},
+                "org.a:b:1.0": {"b-1.0.jar": "org.a:b:1.0@jar",
+                                "b-1.0-linux-x86_64.jar": "org.a:b:1.0:linux-x86_64@jar",
+                                "b-1.0.zip": "org.a:b:1.0@zip"},
+                "develocity:x:1": {"x-1.jar": "develocity:x:1@jar"}}
+    with tempfile.TemporaryDirectory() as root:
+        path = os.path.join(root, "test-kit-homes.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(listing + "\n")
+        found = ci.seed_coordinates([path, path])
+        ran = []
+        code = ci.gradle_seed(os.path.join(root, "seed"), [path], "9.8.0",
+                              run=lambda command, cwd, env: ran.append((command, cwd, env,
+                                  open(os.path.join(cwd, "coordinates.tsv"), encoding="utf-8").read(),
+                                  open(os.path.join(cwd, "gradle", "wrapper", "gradle-wrapper.properties"),
+                                       encoding="utf-8").read())) or 0)
+    problems = 0
+    if found != expected:
+        problems += fail(f"the listing gave {found}, not {expected}")
+    if code != 0 or len(ran) != 1:
+        return problems + fail(f"the seed build ran {len(ran)} times and exited {code}")
+    command, _, env, coordinates, wrapper = ran[0]
+    if env.get("GRADLE_USER_HOME") != os.path.join(root, "seed") or "GRADLE_RO_DEP_CACHE" in env:
+        problems += fail("the seed build does not write into the seed, or reads a read-only cache")
+    if "gradle-9.8.0-bin.zip" not in wrapper or "distributionBase=PROJECT" not in wrapper:
+        problems += fail(f"the seed build's Gradle is not 9.8.0 kept beside the build: {wrapper!r}")
+    if "org.a:b:1.0\tb-1.0-linux-x86_64.jar\torg.a:b:1.0:linux-x86_64@jar\t" not in coordinates:
+        problems += fail(f"the seed build's coordinates miss a classifier's notation: {coordinates!r}")
+    return problems
+
+
+def case_the_seed_size_counts_metadata_and_files():
+    """An index that grew while no file was downloaded still counts as growth."""
+    with tempfile.TemporaryDirectory() as root:
+        if ci.gradle_seed_size(root) != (0, 0):
+            return fail("a home without a cache was not empty")
+        for path, text in (("caches/modules-2/files-2.1/org.a/b/1/ab/b-1.jar", "jar"),
+                           ("caches/modules-2/metadata-2.107/descriptors/org.a/b/1/x/descriptor.bin", "index"),
+                           ("caches/8.14/other.bin", "not the seed")):
+            os.makedirs(os.path.dirname(os.path.join(root, path)), exist_ok=True)
+            with open(os.path.join(root, path), "w", encoding="utf-8") as handle:
+                handle.write(text)
+        if ci.gradle_seed_size(root) != (2, 8):
+            return fail(f"the seed size is {ci.gradle_seed_size(root)}, not (2, 8)")
+    return 0
+
+
+GRADLE_SEED_PATH = "path: ~/.gradle-seed/caches/modules-2"
+
+
+def gradle_seed_problems(text, versions=None):
+    """Each job that runs the Gradle functional suite, on its own or under the guards, without first
+    restoring the fixture builds' seed and handing it to the suite; and a seed job that would save
+    from a pull request, before its size check, or under other Gradle versions than the suites'.
+
+    Central once did not serve a BOM to a fixture build and printed two guards NOT PROVED."""
+    problems = []
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("jobs:")), len(lines))
+    heads = [(i, m.group(1)) for i, line in enumerate(lines)
+             if i > start and (m := re.match(r"^  ([\w-]+):\s*$", line))]
+    for n, (head, name) in enumerate(heads):
+        job = lines[head:heads[n + 1][0] if n + 1 < len(heads) else len(lines)]
+        if name == "gradle-seed":
+            block = "\n".join(job)
+            condition = re.search(r"^    if: (.*)$", block, re.M)
+            if not condition or "github.event_name == 'push'" not in condition.group(1):
+                problems.append("job gradle-seed saves a seed from more than a push to main")
+            check = block.find("the seed stays under 500 MB")
+            save = block.find("actions/cache/save@")
+            if save < 0 or check < 0 or save < check:
+                problems.append("job gradle-seed saves the seed before its size check, or never")
+            elif GRADLE_SEED_PATH not in block[save:]:
+                problems.append("job gradle-seed saves another path than the shards restore")
+            if versions is not None:
+                found = re.search(r"for version in ([^;\n]+); do", block)
+                if not found or sorted(found.group(1).split()) != sorted(versions):
+                    problems.append(f"job gradle-seed resolves under {found and found.group(1)!r}, "
+                                    f"not the suites' Gradle versions {versions}")
+            continue
+        # `-x :plugin:functionalTest` is the unit build leaving the suite out.
+        runs = [k for k, line in enumerate(job) if re.search(r"(?<!-x ):plugin:functionalTest", line)
+                or ("scripts/prove_guards.py" in line
+                    and not any(flag in line for flag in ("--list-selection", "--against")))]
+        if not runs:
+            continue
+        before = job[:runs[0] + 1]
+        restored = any("actions/cache/restore@" in line
+                       and any(GRADLE_SEED_PATH in later for later in before[k + 1:k + 4])
+                       and not any(later.strip().startswith("if:") for later in before[k + 1:k + 4])
+                       for k, line in enumerate(before))
+        if not restored:
+            problems.append(f"job {name} runs the Gradle functional suite without first restoring the seed "
+                            f"under ~/.gradle-seed")
+        elif not any("YORIWAKE_GRADLE_RO_DEP_CACHE=" in line for line in before):
+            problems.append(f"job {name} restores the Gradle seed but does not set YORIWAKE_GRADLE_RO_DEP_CACHE")
+    return problems
+
+
+def _functional_gradle_versions():
+    """The fixture Gradle versions the two functional suites run by default."""
+    with open(os.path.join(REPOSITORY, "plugin", "build.gradle.kts"), encoding="utf-8") as handle:
+        script = handle.read()
+    plain = re.search(r'"functionalTest" to "([^"]+)"', script)
+    nine = re.search(r'"functionalTestGradle9" to \(.*\?: "([^"]+)"\)', script)
+    return [found.group(1) for found in (plain, nine) if found]
+
+
+def case_every_job_running_the_gradle_suite_reads_the_seed():
+    """matrix.yml, jdk-ea.yml and the release keep fresh downloads, as they did before the seed."""
+    problems = 0
+    versions = _functional_gradle_versions()
+    if len(versions) != 2:
+        problems += fail(f"plugin/build.gradle.kts names the suites' Gradle versions as {versions}")
+    for name in ("verify.yml", "guards.yml"):
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
+            text = handle.read()
+        if name == "verify.yml" and "  gradle-seed:\n" not in text:
+            problems += fail("verify.yml: no gradle-seed job builds the seed")
+        for problem in gradle_seed_problems(text, versions):
+            problems += fail(f"{name}: {problem}")
+    return problems
+
+
+def case_a_gradle_suite_job_without_the_seed_is_reported():
+    problems = 0
+    restore = ("      - uses: actions/cache/restore@0123456789012345678901234567890123456789 # v6.1.0\n"
+               "        with:\n          " + GRADLE_SEED_PATH + "\n          key: gradle-seed-v1-1\n")
+    handed = "      - run: echo \"YORIWAKE_GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches\" >> \"$GITHUB_ENV\"\n"
+    suite = "      - run: ./gradlew :plugin:functionalTestGradle9\n"
+    guards = "      - run: python3 scripts/prove_guards.py --mode full\n"
+    job = "jobs:\n  build:\n    steps:\n"
+    for body in (restore + handed + suite, restore + handed + guards,
+                 restore + "      - run: YORIWAKE_GRADLE_RO_DEP_CACHE=x ./gradlew :plugin:functionalTest\n"):
+        if gradle_seed_problems(job + body):
+            problems += fail(f"a seeded job was reported: {gradle_seed_problems(job + body)}")
+    for body, what in ((suite, "a job without the seed"), (guards, "a guard job without the seed"),
+                       (suite + restore + handed, "a seed restored after the suite"),
+                       (restore + suite, "a seed never handed to the suite"),
+                       (restore.replace("        with:", "        if: github.event_name == 'push'\n        with:")
+                        + handed + suite, "a seed restored only on some runs")):
+        if not gradle_seed_problems(job + body):
+            problems += fail(f"{what} passed")
+    with open(os.path.join(WORKFLOWS, "verify.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    block = _job_block(text, "gradle-seed") or ""
+    check = block[block.find("      # The repository's 10 GB"):block.find("      - uses: actions/cache/save@")]
+    for edited, expected in (
+        (text.replace(block, block.replace("github.event_name == 'push' && ", "")), "more than a push"),
+        (text.replace(block, block.replace(check, "") + check), "before its size check"),
+        (text.replace(block, block.replace("for version in 8.14 9.8.0", "for version in 8.14")),
+         "not the suites' Gradle versions"),
+    ):
+        found = gradle_seed_problems(edited, _functional_gradle_versions())
+        if edited == text:
+            problems += fail(f"the fixture edit for {expected!r} no longer applies to verify.yml")
+        elif not any(expected in problem for problem in found):
+            problems += fail(f"an edited verify.yml was not reported for {expected!r}: {found}")
+    return problems
 
 
 REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -5288,6 +5481,11 @@ CASES = (
     case_the_windows_functional_suites_run_in_the_release_check_only,
     case_the_test_kit_listing_names_each_cached_file_and_its_size,
     case_no_test_kit_home_is_said_rather_than_silent,
+    case_a_tooling_api_home_is_listed_too,
+    case_the_gradle_seed_resolves_each_listed_module_but_not_the_fixtures_own,
+    case_the_seed_size_counts_metadata_and_files,
+    case_every_job_running_the_gradle_suite_reads_the_seed,
+    case_a_gradle_suite_job_without_the_seed_is_reported,
     case_a_dropped_or_rate_limited_download_is_a_download_failure,
     case_the_matrix_capture_and_select_build_through_the_download_rerun,
     case_every_corpus_job_starts_from_the_dependency_pack,
