@@ -286,8 +286,8 @@ globs to list in [`pathIgnore`](#paths-no-test-reads), and the condition under w
 safe. No glob is offered for a directory that holds sources: a source file among the changed files,
 or a source tree laid out as a source set's (`main/java`, `main/kotlin`) in it or one level below.
 Listed, a later change to those sources would no longer count as one. Nor for a path under a source
-set's directory or any `src` directory, which `pathIgnore` never leaves out: generating it under the
-build directory instead stops the full runs.
+set's directory or any `src` directory: generating it under the build directory instead stops the
+full runs.
 
 - **Changed during the last capture build** (`written-during-capture`): created, rewritten or
   deleted while the capture that dated the map ran, by its tests or its tasks. If a test writes it
@@ -1799,9 +1799,10 @@ Some paths stay in the change set whatever an entry matches, so `**` cannot swit
 compiles or what the build reads. The run names each, with the protection that kept it:
 
 - `source-set`: a path under any source set's directory of any project of the build (on Maven, any
-  module's source roots and resource and test-resource directories), or under any directory named
-  `src`. So a Markdown fixture under `src/test/resources` keeps forcing with
-  `**/*.md` declared, and so does a documentation tree with its own `src` directory;
+  module's source roots and resource and test-resource directories). So a Markdown fixture under
+  `src/test/resources` keeps forcing with `**/*.md` declared. A default entry also keeps out of any
+  directory named `src`; the build's own entry may name a file there that no source set holds,
+  such as the changes plugin's `src/changes/changes.xml`;
 - `build-file`: a build script (`*.gradle`, `*.gradle.kts`), `gradle.properties`, a version
   catalog, anything under a `gradle` directory, the wrapper, and build logic: `buildSrc`, a build
   this one includes, and any directory below the root that holds its own settings file. On Maven:

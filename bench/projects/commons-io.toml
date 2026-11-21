@@ -17,3 +17,6 @@ history_to = "ffd9ddae6e637c0be9ab63e3dfa5ca98f2230bc5"
 daemon_java_version = 21
 flags = []
 sources = ["src/main/java"]
+# The maven-changes-plugin's input, edited in about a quarter of the window's commits; no module
+# declares `src/changes` as a source or resource root, and no test reads it.
+path_ignore = ["src/changes/changes.xml"]
