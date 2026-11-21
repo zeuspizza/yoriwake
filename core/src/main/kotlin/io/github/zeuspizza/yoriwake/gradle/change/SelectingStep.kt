@@ -108,6 +108,8 @@ internal object SelectingStep {
         val moved: Set<String> = emptySet(),
         /** The digest of the build-script filter this run runs under; null when unfiltered. */
         val unionFilter: String? = null,
+        /** The build's `stampedFiles`: build output that changes on every build, which no test outcome depends on. */
+        val stampedFiles: List<String> = emptyList(),
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -155,7 +157,10 @@ internal object SelectingStep {
         // with no change behind it; read now, after the run's inputs are built, and again by the
         // host's last look, after the build's own last actions.
         var handedOver = true
-        val classpathFiles = classpathFilesRule(mapDir, classpathFacts, inputs.text, bump?.discount ?: { false }) { compared ->
+        val classpathFiles = classpathFilesRule(
+            mapDir, classpathFacts, inputs.text, bump?.discount ?: { false }, inputs.stampedFiles,
+            leftOut = { host.lifecycle("[yoriwake] ${host.name}: ${stampedFilesLine(it, mapDir)}") },
+        ) { compared ->
             handedOver = host.handOver(compared)
         }.let { verdict ->
             // Nothing for the last look to compare against, so nothing vouches for what the build's

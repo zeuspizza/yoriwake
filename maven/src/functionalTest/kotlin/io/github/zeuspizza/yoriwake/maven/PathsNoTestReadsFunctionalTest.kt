@@ -144,6 +144,96 @@ class PathsNoTestReadsFunctionalTest {
     }
 
     @Test
+    fun `a declared file under src no module declares as a root runs nothing extra, one in a resource directory stays`(
+        @TempDir dir: File,
+    ) {
+        val project = captured(
+            dir, "<pathIgnore><path>**/changes.xml</path></pathIgnore>",
+            "src/changes/changes.xml" to "<document/>\n", "lib/src/test/resources/changes.xml" to "<document/>\n",
+        )
+        write(project, "src/changes/changes.xml", "<document><release/></document>\n")
+
+        val output = selecting(project)
+
+        assertEquals(emptySet(), ran(output), output)
+        assertContains(output, "pathIgnore left out 1 changed paths (1 by '**/changes.xml'): src/changes/changes.xml")
+
+        write(project, "lib/src/test/resources/changes.xml", "<document><release/></document>\n")
+        val resource = selecting(project)
+
+        assertContains(
+            resource,
+            "pathIgnore entry '**/changes.xml' matches lib/src/test/resources/changes.xml, which stays in the change set (source-set)",
+        )
+    }
+
+    @Test
+    fun `a test that read a declared file under src at capture runs`(@TempDir dir: File) {
+        val changesTest = "lib/src/test/java/dev/demo/lib/ChangesTest.java" to """
+            package dev.demo.lib;
+            import java.nio.file.Files;
+            import java.nio.file.Path;
+            import org.junit.jupiter.api.Test;
+            class ChangesTest {
+                @Test void reads() throws Exception {
+                    try (var files = Files.list(Path.of("../src/changes"))) {
+                        for (var f : (Iterable<Path>) files::iterator) if (f.toString().endsWith(".xml")) Files.readString(f);
+                    }
+                }
+            }
+        """.trimIndent()
+        val project = captured(
+            dir, "<pathIgnore><path>src/changes/</path></pathIgnore>", "src/changes/changes.xml" to "<document/>\n", changesTest,
+        )
+        write(project, "src/changes/changes.xml", "<document><release/></document>\n")
+
+        val output = selecting(project)
+
+        assertContains(ran(output), "dev.demo.lib.ChangesTest", output)
+        assertContains(output, "src/changes/changes.xml was read at capture")
+    }
+
+    @Test
+    fun `a resource stamped on every build that stampedFiles declares runs no test that reads it`(@TempDir dir: File) {
+        val pom = File(FunctionalMaven.demo, "lib/pom.xml").readText().replace(
+            "<artifactId>lib</artifactId>",
+            "<artifactId>lib</artifactId>\n" +
+                "  <properties><maven.build.timestamp.format>yyyyMMddHHmmssSSS</maven.build.timestamp.format></properties>\n" +
+                "  <build><resources><resource><directory>src/main/resources</directory><filtering>true</filtering></resource></resources>" +
+                // First, so no changed class has loaded in its JVM when it runs, and only the stamp could select it.
+                "<plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><runOrder>alphabetical</runOrder></configuration></plugin></plugins></build>",
+        )
+        val stampTest = "lib/src/test/java/dev/demo/lib/AaStampTest.java" to """
+            package dev.demo.lib;
+            import java.io.InputStream;
+            import java.util.Properties;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertNotNull;
+            class AaStampTest {
+                @Test void reads() throws Exception {
+                    Properties stamp = new Properties();
+                    try (InputStream in = getClass().getResourceAsStream("/stamp.properties")) { stamp.load(in); }
+                    assertNotNull(stamp.getProperty("built"));
+                }
+            }
+        """.trimIndent()
+        val project = captured(
+            dir, "<stampedFiles><path>**/stamp.properties</path></stampedFiles>", "lib/pom.xml" to pom,
+            "lib/src/main/resources/stamp.properties" to "built=\${maven.build.timestamp}\n", stampTest,
+        )
+        File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").apply {
+            writeText(readText().replace("    public String greet", "    // Greets by name.\n    public String greet"))
+        }
+
+        val output = selecting(project)
+
+        assertEquals(setOf("dev.demo.lib.GreeterTest"), ran(output), output)
+        assertContains(output, "stampedFiles left out 1 changed file(s) of build output")
+        assertContains(output, "lib/target/classes/stamp.properties")
+        assertContains(output, "test(s) that read them when the map was captured do not run for them")
+    }
+
+    @Test
     fun `a declared pom stays in the change set as a build file`(@TempDir dir: File) {
         val project = captured(dir, "<pathIgnore><path>**/*.xml</path></pathIgnore>")
         File(project, "lib/pom.xml").apply { writeText(readText().replace("<artifactId>lib</artifactId>", "<artifactId>lib</artifactId>\n  <!-- touched -->")) }

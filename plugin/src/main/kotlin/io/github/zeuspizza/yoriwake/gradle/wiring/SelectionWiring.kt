@@ -139,6 +139,7 @@ internal fun TestTaskWiring.configureSelection(
     notReadByTests: List<String>,
     pathIgnore: List<String>,
     pathIgnoreDefaults: Boolean,
+    stampedFiles: List<String>,
     environment: EnvironmentFingerprint.Rules,
     projectDir: String,
     declarations: List<Declarations.Declaration>,
@@ -250,12 +251,13 @@ internal fun TestTaskWiring.configureSelection(
                 notReadByTests, ignore, declared, observing, dependencies = dependencies,
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = stamp, moved = moved,
                 unionFilter = unionFilterOf(test),
+                stampedFiles = stampedFiles,
                 // The task's own inputs, read only when a default entry left a path out.
                 taskInputs = { extraTaskInputs(rootDir, test.inputs.files.files, test.classpath.files + test.testClassesDirs.files) },
             ),
             GradleSelectingHost(
                 test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes,
-                classpathFacts::projectArtifacts,
+                classpathFacts::projectArtifacts, stampedFiles,
             ),
         )
     }
@@ -845,6 +847,7 @@ private class GradleSelectingHost(
     private val buildDirs: Collection<String> = emptyList(),
     private val homes: Map<String, File> = emptyMap(),
     private val projectArtifacts: () -> Set<File> = { emptySet() },
+    private val stampedFiles: List<String> = emptyList(),
 ) : SelectingStep.Host {
     override val name: String get() = test.path
 
@@ -861,7 +864,10 @@ private class GradleSelectingHost(
     // The build's own doFirst actions run after this one: the last look compares again.
     override fun handOver(compared: Map<String, String>): Boolean =
         runCatching {
-            LastLook.write(mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared, homes, projectArtifacts = projectArtifacts())
+            LastLook.write(
+                mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared, homes, projectArtifacts = projectArtifacts(),
+                stamped = stampedFiles,
+            )
         }.isSuccess
 
     override fun captureNothing() {

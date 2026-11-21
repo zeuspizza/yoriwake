@@ -202,6 +202,32 @@ class PathIgnoreFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a declared file under src that no source set holds runs nothing extra`(@TempDir dir: File) {
+        captured(dir, declaring("**/changes.xml"), "src/changes/changes.xml" to "<document/>\n")
+        File(dir, "src/changes/changes.xml").writeText("<document><release/></document>\n")
+
+        val output = selecting(dir)
+
+        assertEquals(emptySet(), ranTests(dir), output)
+        assertEquals("1", decisionNotes(dir)["paths-ignored"], output)
+        assertContains(output, "pathIgnore left out 1 changed paths (1 by '**/changes.xml'): src/changes/changes.xml")
+    }
+
+    @Test
+    fun `a test that read a declared file under src at capture runs, with every later test in its JVM`(@TempDir dir: File) {
+        captured(
+            dir, declaring("**/changes.xml"), "src/changes/changes.xml" to "<document/>\n",
+            reader("ChangesTest", "src/changes/changes.xml"), laterTest,
+        )
+        File(dir, "src/changes/changes.xml").writeText("<document><release/></document>\n")
+
+        val output = selecting(dir)
+
+        assertEquals(setOf("dev.sample.ChangesTest", "dev.sample.ZuluTest"), ranTests(dir), output)
+        assertContains(output, "src/changes/changes.xml was read at capture")
+    }
+
+    @Test
     fun `a declared path beside a source change runs what the source change alone runs`(@TempDir dir: File) {
         captured(dir, declaring("docs/**"), guide)
         File(dir, "docs/guide.md").writeText("# Guide, again\n")

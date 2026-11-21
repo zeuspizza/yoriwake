@@ -19,7 +19,7 @@ class LargeChangeTest {
     @Test
     fun `paths pathIgnore takes out are not counted, protected ones are`() {
         val changed = listOf("docs/a.md", "docs/b.md", "docs/src/c.md", "src/main/java/A.java", "docs/a.md")
-        val declaration = PathIgnore.Declaration(listOf("docs/**"), File("."), emptyList(), emptyList(), emptySet())
+        val declaration = PathIgnore.Declaration(listOf("docs/**"), File("."), listOf("docs/src"), emptyList(), emptySet())
 
         assertEquals(4, LargeChange.counted(changed, null))
         assertEquals(2, LargeChange.counted(changed, declaration))

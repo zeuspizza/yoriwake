@@ -133,14 +133,27 @@ class PathIgnoreTest {
     }
 
     @Test
-    fun `a file under any src directory is kept as source-set`(@TempDir root: File) {
+    fun `a file under any src directory is kept from a default as source-set`(@TempDir root: File) {
         val applied = PathIgnore.apply(
             listOf("core/src/test/resources/expected.md", "app/src/test/resources/fixture.md", "docs/src/docs/x.md"),
-            declaration(root, "**/*.md"), namesNothing,
+            withDefaults(root), namesNothing,
         )
         assertTrue(applied.ignored.isEmpty())
         assertEquals(setOf(Protection.SOURCE_SET), applied.notIgnored.map { it.protection }.toSet())
         assertEquals(3, applied.kept.size)
+    }
+
+    @Test
+    fun `the build's own entry leaves out a file under src that no declared root holds`(@TempDir root: File) {
+        val applied = PathIgnore.apply(
+            listOf("src/changes/changes.xml", "src/main/resources/changes.xml"),
+            declaration(root, "**/changes.xml", sourceDirs = listOf("src/main/java", "src/main/resources")), namesNothing,
+        )
+        assertEquals(listOf(PathIgnore.Ignored("src/changes/changes.xml", "**/changes.xml")), applied.ignored)
+        assertEquals(
+            listOf(PathIgnore.Kept("src/main/resources/changes.xml", "**/changes.xml", Protection.SOURCE_SET)),
+            applied.notIgnored,
+        )
     }
 
     @Test
@@ -212,7 +225,9 @@ class PathIgnoreTest {
     @Test
     fun `a double star alone leaves out only unprotected paths`(@TempDir root: File) {
         val paths = listOf("src/main/java/a/A.java", "src/main/resources/app.yml", "build.gradle.kts", "README.md")
-        val applied = PathIgnore.apply(paths, declaration(root, "**"), namesNothing)
+        val applied = PathIgnore.apply(
+            paths, declaration(root, "**", sourceDirs = listOf("src/main/java", "src/main/resources")), namesNothing,
+        )
         assertEquals(listOf("README.md"), applied.ignored.map { it.path })
         assertEquals(paths - "README.md", applied.kept)
     }

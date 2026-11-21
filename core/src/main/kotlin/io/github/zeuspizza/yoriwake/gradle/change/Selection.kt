@@ -1,5 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle.change
 
+import io.github.zeuspizza.yoriwake.agent.select.MapReader
+import io.github.zeuspizza.yoriwake.agent.select.Selector
 import io.github.zeuspizza.yoriwake.gradle.bytecode.DigestScan
 import io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope
 import io.github.zeuspizza.yoriwake.gradle.bytecode.InlineScan
@@ -279,6 +281,10 @@ internal fun classpathFilesRule(
     text: TrackedText = TrackedText(facts.rootDir),
     /** Rows a moved dependency module accounts for, which `narrowDependencies` judged already. */
     discount: (String) -> Boolean = { false },
+    /** The build's `stampedFiles`: a moved file one matches is no move ([ClasspathFiles.stamped]). */
+    stamped: List<String> = emptyList(),
+    /** Each file [stamped] left out, with its digest at capture and now. */
+    leftOut: (Map<String, Pair<String, String>>) -> Unit = {},
     walked: (Map<String, String>) -> Unit = {},
 ): ClasspathFilesVerdict {
     val recorded = CoverageDecoder.readClasspathFiles(mapDir)
@@ -298,7 +304,10 @@ internal fun classpathFilesRule(
         is ClasspathFiles.Walk.Refused ->
             ClasspathFilesVerdict.Unrecorded("this task's classpath files could not be digested (${walk.reason})")
         is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(recorded, walk.digests.also(walked)).let { all ->
-            val moved = ClasspathFiles.Moved(all.files.filterKeys { !discount(it) })
+            val counted = all.files.filterKeys { !discount(it) }
+            val declared = ClasspathFiles.stamped(ClasspathFiles.Moved(counted), stamped, facts.rootDir)
+            if (declared.isNotEmpty()) leftOut(declared.associateWith { recorded.getValue(it) to walk.digests.getValue(it) })
+            val moved = ClasspathFiles.Moved(counted - declared)
             val handed = moved.traceable(facts.rootDir)
             val dependencies = moved.files.filterKeys { it.startsWith(ClasspathFiles.DEPENDENCY_PREFIX) }
             when {
@@ -313,6 +322,35 @@ internal fun classpathFilesRule(
         }
     }
 }
+
+/**
+ * Names what `stampedFiles` left out of a run: each file with its digest at capture and now, and how
+ * many tests the map shows reading one, which this run does not select for it. A wrong declaration
+ * skips them, so every run that leaves a file out says so.
+ */
+internal fun stampedFilesLine(leftOut: Map<String, Pair<String, String>>, mapDir: File): String {
+    val readers = runCatching {
+        MapReader.read(mapDir).takeIf { it.isUsable }?.let { Selector.movedFileReaders(it, leftOut.keys) }?.takeIf { it >= 0 }
+    }.getOrNull()
+    val files = leftOut.entries.take(STAMPED_NAMED).joinToString { (path, digests) ->
+        "$path (${digests.first.take(DIGEST_SHOWN)} -> ${digests.second.take(DIGEST_SHOWN)})"
+    } + if (leftOut.size > STAMPED_NAMED) " and ${leftOut.size - STAMPED_NAMED} more" else ""
+    val read = when (readers) {
+        null -> "the map cannot say which tests read them"
+        0 -> "no test read them when the map was captured"
+        else -> "the $readers test(s) that read them when the map was captured do not run for them"
+    }
+    return "stampedFiles left out ${leftOut.size} changed file(s) of build output, declared to change on every " +
+        "build with no test depending on them: $files; $read"
+}
+
+/** What a run whose build output moved with no change behind it can do about a file stamped on every build. */
+private const val STAMPED_REMEDY =
+    "A file the build stamps with the time or the commit on every build changes with no change behind it: " +
+        "make its value fixed for test builds, or list it in stampedFiles if no test depends on it."
+
+private const val STAMPED_NAMED = 5
+private const val DIGEST_SHOWN = 12
 
 /**
  * [this] refused on what the classpath-files comparison found, unless it already refuses (its own
@@ -339,7 +377,7 @@ internal fun InlineWidening.withClasspathFiles(
     if (verdict is ClasspathFilesVerdict.Handed) {
         log(
             "build output on this task's classpath changed since the map was captured: " +
-                "${verdict.moved.named()}; the tests that read it run"
+                "${verdict.moved.named()}; the tests that read it run. $STAMPED_REMEDY"
         )
         return withMovedFiles(verdict.files)
     }
@@ -347,7 +385,7 @@ internal fun InlineWidening.withClasspathFiles(
         is ClasspathFilesVerdict.Moved -> InlineWidening.refuse(
             "build output on this task's classpath changed since the map was captured: " +
                 "${verdict.moved.named()}. A file generated from the commit, a property or the clock " +
-                "reaches a test through no tracked path. The whole suite runs.",
+                "reaches a test through no tracked path. The whole suite runs. $STAMPED_REMEDY",
             scanExhausted = false,
             kind = RefusalKind.CLASSPATH_FILES_CHANGED,
             detail = verdict.moved.named(),

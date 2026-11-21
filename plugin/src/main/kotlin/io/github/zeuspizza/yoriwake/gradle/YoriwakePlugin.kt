@@ -430,11 +430,21 @@ public abstract class YoriwakeExtension {
      * Paths no test reads, as Ant-style globs over paths relative to the root project, as Gradle's
      * `include` takes them: `pathIgnore.add("CHANGELOG.md")`, and `docs/` for everything under
      * `docs`. A changed path one matches leaves the change set, and every run that leaves one out
-     * names it. Sources, resources, build files and anything under a `src` directory are never left
-     * out, and a test the map saw reading a path runs when it changes. Empty by default; its
-     * entries are matched before the defaults [pathIgnoreDefaults] adds.
+     * names it. Sources, resources and build files are never left out, nor is anything under a
+     * `src` directory a default matches, and a test the map saw reading a path runs when it
+     * changes. Empty by default; its entries are matched before the defaults [pathIgnoreDefaults] adds.
      */
     public abstract val pathIgnore: org.gradle.api.provider.ListProperty<String>
+
+    /**
+     * Build output on the test classpath that changes on every build with no test outcome depending
+     * on it, such as a manifest or properties file stamped with the build time or the commit: globs
+     * as [pathIgnore] takes them, over the root-relative path of a file in an output directory
+     * (`build/resources/main/build.properties`) or of a jar entry (`build/libs/app.jar!/META-INF/MANIFEST.MF`).
+     * A change to only such a file selects no test, even one that read it; every run that leaves
+     * one out names it, with how many tests read it. Empty by default.
+     */
+    public abstract val stampedFiles: org.gradle.api.provider.ListProperty<String>
 
     /**
      * Whether README files, Markdown files and whatever lies under the root project's `docs` and

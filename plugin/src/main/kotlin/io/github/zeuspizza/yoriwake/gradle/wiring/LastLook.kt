@@ -125,6 +125,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
         val gradleUserHome: File? = null,
         /** [ClasspathFiles.table]'s project artifacts when the comparing action compared a table. */
         val projectArtifacts: Set<File> = emptySet(),
+        /** The build's `stampedFiles`, which the comparing action left out of what moved. */
+        val stamped: List<String> = emptyList(),
     )
 
     companion object {
@@ -182,6 +184,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                 is ClasspathFiles.Walk.Refused ->
                     "this task's classpath files could not be digested again before the test JVM started (${now.reason})"
                 is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(compared.digests, now.digests)
+                    .let { moved -> ClasspathFiles.Moved(moved.files - ClasspathFiles.stamped(moved, compared.stamped, compared.rootDir)) }
                     .takeUnless { it.isEmpty }
                     ?.let {
                         "build output on this task's classpath changed after it was compared, while the task's " +
@@ -244,7 +247,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
 
         /**
          * Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes], and
-         * the table's [homes] and [projectArtifacts] when it compared one, or the walk's [gradleUserHome].
+         * the table's [homes] and [projectArtifacts] when it compared one, or the walk's [gradleUserHome],
+         * and the build's [stamped] files.
          */
         fun write(
             mapDir: File,
@@ -255,12 +259,14 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             homes: Map<String, File> = emptyMap(),
             gradleUserHome: File? = null,
             projectArtifacts: Set<File> = emptySet(),
+            stamped: List<String> = emptyList(),
         ) {
             val lines = listOf("root\t${Tsv.escape(rootDir.absolutePath)}", "classes\t$classes") +
                 buildDirs.map { "build\t${Tsv.escape(it)}" } +
                 homes.map { (name, home) -> "home\t${Tsv.escape(name)}\t${Tsv.escape(home.absolutePath)}" } +
                 listOfNotNull(gradleUserHome?.let { "gradle-user-home\t${Tsv.escape(it.absolutePath)}" }) +
                 projectArtifacts.map { "project\t${Tsv.escape(it.absolutePath)}" } +
+                stamped.map { "stamped\t${Tsv.escape(it)}" } +
                 digests.map { (path, digest) -> "file\t${Tsv.escape(path)}\t$digest" }
             writeAtomically(handOver(mapDir), lines.joinToString("\n", postfix = "\n$END\n"))
         }
@@ -276,6 +282,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             val homes = mutableMapOf<String, File>()
             var gradleUserHome: File? = null
             val projectArtifacts = mutableSetOf<File>()
+            val stamped = mutableListOf<String>()
             for (line in lines.dropLast(1)) {
                 val parts = line.split('\t')
                 when {
@@ -286,10 +293,11 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                     parts.size == 3 && parts[0] == "home" -> homes[Tsv.unescape(parts[1])] = File(Tsv.unescape(parts[2]))
                     parts.size == 2 && parts[0] == "gradle-user-home" -> gradleUserHome = File(Tsv.unescape(parts[1]))
                     parts.size == 2 && parts[0] == "project" -> projectArtifacts += File(Tsv.unescape(parts[1]))
+                    parts.size == 2 && parts[0] == "stamped" -> stamped += Tsv.unescape(parts[1])
                     else -> return null
                 }
             }
-            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes, gradleUserHome, projectArtifacts)
+            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes, gradleUserHome, projectArtifacts, stamped)
         }
 
         private const val END = "end"

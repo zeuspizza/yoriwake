@@ -73,6 +73,25 @@ class LastLookTest {
     }
 
     @Test
+    fun `a stamped file rewritten since it was compared does not force, as the comparing action left it out`(@TempDir root: File) {
+        val resources = File(root, "app/build/resources/test")
+        val stamp = File(resources, "build-time.properties").apply { parentFile.mkdirs(); writeText("time=1\n") }
+        val info = File(resources, "build-info.properties").apply { writeText("flavor=a\n") }
+        val classpath = listOf(resources)
+        val walk = { c: LastLook.Compared -> ClasspathFiles.walk(classpath, c.buildDirs, c.rootDir, classes = c.classes) }
+        val digests = assertIs<ClasspathFiles.Walk.Found>(ClasspathFiles.walk(classpath, emptyList(), root)).digests
+        LastLook.write(File(root, "map").apply { mkdirs() }, root, emptyList(), classes = false, digests, stamped = listOf("**/build-time.properties"))
+        val compared = assertNotNull(LastLook.read(LastLook.handOver(File(root, "map")).readText()))
+
+        assertEquals(listOf("**/build-time.properties"), compared.stamped)
+        stamp.writeText("time=2\n")
+        assertNull(LastLook.whatMoved(compared, walk))
+
+        info.writeText("flavor=b\n")
+        assertContains(assertNotNull(LastLook.whatMoved(compared, walk)), "build-info.properties")
+    }
+
+    @Test
     fun `a complement whose test JVM starts with another configuration than the record's forces, the same one does not`() {
         val record = record("late-a")
 

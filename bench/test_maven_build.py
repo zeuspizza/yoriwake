@@ -475,6 +475,24 @@ def case_staging_adds_jacoco_only_where_no_pom_declares_its_agent():
     return failures
 
 
+def case_staging_writes_the_projects_own_declarations_into_the_plugins_configuration():
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        staged, _ = _staged(tmp, {"pom.xml": ROOT_POM, "app/pom.xml": _pom("app"),
+                                  ".gitignore": "target/\n"},
+                            {**PROJECT, "path_ignore": ["src/changes/changes.xml"],
+                             "stamped_files": ["**/META-INF/MANIFEST.MF"]})
+        root = _read(tmp, "pom.xml")
+        if "<pathIgnore>" not in root or "<path>src/changes/changes.xml</path>" not in root or \
+                "pathIgnore 1" not in staged:
+            failures += fail(f"the project's pathIgnore was not staged: {staged}")
+        if "<path>**/META-INF/MANIFEST.MF</path>" not in root or "stampedFiles 1" not in staged:
+            failures += fail(f"the project's stampedFiles were not staged: {staged}")
+        if maven_build.stage(tmp, {**PROJECT, "path_ignore": ["src/changes/changes.xml"]}):
+            failures += fail("staging the same declaration again changed the POM")
+    return failures
+
+
 def case_staging_finds_an_execution_declared_without_an_id_under_mavens_default():
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -688,6 +706,7 @@ def case_staging_refuses_a_pom_it_would_write_back_as_another_tree():
 
 
 CASES = [
+    case_staging_writes_the_projects_own_declarations_into_the_plugins_configuration,
     case_staging_changes_no_line_it_did_not_edit,
     case_staging_edits_in_place_under_a_tag_spread_over_lines,
     case_staging_refuses_a_pom_it_would_write_back_as_another_tree,

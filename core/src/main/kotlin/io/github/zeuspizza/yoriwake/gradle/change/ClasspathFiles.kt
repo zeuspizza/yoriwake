@@ -541,6 +541,20 @@ internal object ClasspathFiles {
     }
 
     /**
+     * The files of [moved] the build's `stampedFiles` declares no test outcome depends on: each
+     * whose key (`<dir>/<file>`, `<jar>!/<entry>`, relative to the root) an entry of [stamped]
+     * matches, as `pathIgnore` matches a path, and whose readers a capture records ([Moved.traceable]):
+     * a non-class file beneath the root whose content changed. A file that appeared, is gone or
+     * cannot be read, a dependency, and what the class loader takes from a manifest still move.
+     */
+    fun stamped(moved: Moved, stamped: List<String>, rootDir: File): Set<String> {
+        if (stamped.isEmpty()) return emptySet()
+        return moved.files.filter { (path, how) ->
+            stamped.any { PathIgnore.matches(it, path) } && Moved(mapOf(path to how)).traceable(rootDir) != null
+        }.keys
+    }
+
+    /**
      * Every file whose digest differs from [recorded], that appeared, or that is gone. A file that
      * could not be read at either end counts as moved.
      */

@@ -314,6 +314,37 @@ class ClasspathFilesTest {
     }
 
     @Test
+    fun `a changed file stampedFiles names is no move, and every other move stays`(@TempDir root: File) {
+        file(root, "app/build/resources/main/build.properties", "time=2\n")
+        file(root, "app/build/resources/main/app.properties", "name=b\n")
+        val manifest = "app/build/libs/app.jar!/META-INF/MANIFEST.MF"
+        val moved = ClasspathFiles.compare(
+            recorded = mapOf(
+                "app/build/resources/main/build.properties" to "1", "app/build/resources/main/app.properties" to "1",
+                manifest to "1", manifest + ClasspathFiles.EXPOSED_SUFFIX to "e", "gone.properties" to "1",
+                "${ClasspathFiles.DEPENDENCY_PREFIX}lib/META-INF/MANIFEST.MF" to "1",
+            ),
+            current = mapOf(
+                "app/build/resources/main/build.properties" to "2", "app/build/resources/main/app.properties" to "2",
+                manifest to "2", manifest + ClasspathFiles.EXPOSED_SUFFIX to "f",
+                "${ClasspathFiles.DEPENDENCY_PREFIX}lib/META-INF/MANIFEST.MF" to "2",
+            ),
+        )
+        val stamped = listOf("**/build.properties", "**/META-INF/MANIFEST.MF", "**/gone.properties", "**")
+
+        assertEquals(
+            setOf("app/build/resources/main/build.properties", manifest),
+            ClasspathFiles.stamped(moved, stamped.dropLast(1), root),
+        )
+        assertEquals(emptySet(), ClasspathFiles.stamped(moved, emptyList(), root))
+        // Even `**` leaves what the class loader takes, a dependency and a file that is gone moving.
+        assertEquals(
+            setOf("app/build/resources/main/build.properties", "app/build/resources/main/app.properties", manifest),
+            ClasspathFiles.stamped(moved, listOf("**"), root),
+        )
+    }
+
+    @Test
     fun `a changed file with a comma in its name is handed over`(@TempDir root: File) {
         // The list reaches the selector escaped, so the comma no longer splits it.
         assertEquals(listOf("a,b.properties"), changed(root, "a,b.properties", "a"))

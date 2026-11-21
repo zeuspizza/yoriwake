@@ -286,8 +286,8 @@ globs to list in [`pathIgnore`](#paths-no-test-reads), and the condition under w
 safe. No glob is offered for a directory that holds sources: a source file among the changed files,
 or a source tree laid out as a source set's (`main/java`, `main/kotlin`) in it or one level below.
 Listed, a later change to those sources would no longer count as one. Nor for a path under a source
-set's directory or any `src` directory, which `pathIgnore` never leaves out: generating it under the
-build directory instead stops the full runs.
+set's directory or any `src` directory: generating it under the build directory instead stops the
+full runs.
 
 - **Changed during the last capture build** (`written-during-capture`): created, rewritten or
   deleted while the capture that dated the map ran, by its tests or its tasks. If a test writes it
@@ -392,6 +392,24 @@ tasks.jar {
 
 and apply `gradle-git-properties`, or its task, the same way. A test that asserts on such a value
 then needs the release build to see it.
+
+Where the value cannot be made stable, declare the file in `stampedFiles`, as `pathIgnore`'s globs
+over the root-relative path of a file in an output directory or of an entry in one of your jars:
+
+```kotlin
+yoriwake {
+    stampedFiles.addAll("**/META-INF/MANIFEST.MF", "build/resources/main/build-info.properties")
+}
+```
+
+On Maven, the plugin's `<configuration>` takes `<stampedFiles><path>target/classes/META-INF/MANIFEST.MF</path></stampedFiles>`,
+read as `<pathIgnore>` is. A declared file whose content changed is no change, even for a test the
+map saw reading it, unlike a `pathIgnore` path: its readers are the whole cost. A declared file that
+appeared, is gone or cannot be read, and an attribute the class loader keeps from a declared
+manifest, still count as above. Every run that leaves one out names it, with its digest at capture
+and now and how many tests read it then, which did not run for it. What a wrong declaration costs:
+a test whose outcome depends on the value, such as one asserting the build time or the commit, is
+skipped when only that file changed, until something else selects it or a full run comes.
 
 How often this cost a narrowed run before reads were recorded, measured at the 0.2.0 release on 31
 open-source test tasks: in
@@ -1799,9 +1817,10 @@ Some paths stay in the change set whatever an entry matches, so `**` cannot swit
 compiles or what the build reads. The run names each, with the protection that kept it:
 
 - `source-set`: a path under any source set's directory of any project of the build (on Maven, any
-  module's source roots and resource and test-resource directories), or under any directory named
-  `src`. So a Markdown fixture under `src/test/resources` keeps forcing with
-  `**/*.md` declared, and so does a documentation tree with its own `src` directory;
+  module's source roots and resource and test-resource directories). So a Markdown fixture under
+  `src/test/resources` keeps forcing with `**/*.md` declared. A default entry also keeps out of any
+  directory named `src`; the build's own entry may name a file there that no source set holds,
+  such as the changes plugin's `src/changes/changes.xml`;
 - `build-file`: a build script (`*.gradle`, `*.gradle.kts`), `gradle.properties`, a version
   catalog, anything under a `gradle` directory, the wrapper, and build logic: `buildSrc`, a build
   this one includes, and any directory below the root that holds its own settings file. On Maven:
@@ -2130,8 +2149,8 @@ the Gradle plugin.
   per child element, `<variable>DB_MODE</variable>`, `<property>build.*</property>`) and
   `<recordSequentially>`, `<narrowDependencies>` and `<narrowLineOnlyChanges>` are read per module
   too, a module with no plugin entry of its own taking the root's; the `-D` of the same name
-  overrides each of the last three. `<pathIgnore>` and `<pathIgnoreDefaults>` are read the same
-  way, with no `-D` form ([on Maven](#on-maven)).
+  overrides each of the last three. `<pathIgnore>`, `<pathIgnoreDefaults>` and `<stampedFiles>`
+  are read the same way, with no `-D` form ([on Maven](#on-maven)).
 
   ```xml
   <configuration>
@@ -2270,6 +2289,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `notReadByTests` | `List<String>` | empty | Deprecated: use `pathIgnore`. Globs of files no test or build reads: a changed one is no change. |
 | `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. Matched before the defaults. See [Paths no test reads](#paths-no-test-reads). |
 | `pathIgnoreDefaults` | `Boolean` | `true` | Ignore README and Markdown files, `docs/` and `.github/` without listing them. See [The defaults](#the-defaults). |
+| `stampedFiles` | `List<String>` | empty | Globs of build output on the test classpath stamped on every build that no test depends on: a changed one is no change. See [Generated files on the test classpath](#generated-files-on-the-test-classpath). |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
 | `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |

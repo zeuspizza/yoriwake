@@ -806,9 +806,10 @@ def stage(checkout, project):
     ours = [p for p in pom.plugins(build) if pom.is_plugin(p, PLUGIN_ARTIFACT, PLUGIN_GROUP)]
     wanted = "${" + VERSION_PROPERTY + "}"
     if ours:
-        version = ours[0].find(pom.q("version"))
+        plugin = ours[0]
+        version = plugin.find(pom.q("version"))
         if version is None:
-            version = _append(ours[0], pom.element("version"), 4)
+            version = _append(plugin, pom.element("version"), 4)
         if (version.text or "").strip() != wanted:
             version.text = wanted
             staged.append("plugin version")
@@ -821,10 +822,19 @@ def stage(checkout, project):
                              f"{', '.join(declared)} but not in the root POM's build/plugins, so "
                              f"staging cannot re-point it without a second declaration; refusing")
         build = build if build is not None else _append(pom.root, pom.element("build"), 1)
-        _append(pom.ensure(build, "plugins", 2), pom.element("plugin", children=[
+        plugin = _append(pom.ensure(build, "plugins", 2), pom.element("plugin", children=[
             pom.element("groupId", PLUGIN_GROUP), pom.element("artifactId", PLUGIN_ARTIFACT),
             pom.element("version", wanted), pom.element("extensions", "true")]), 3)
         staged.append("plugin added")
+    # The project's own declarations (`path_ignore`, `stamped_files`), written as an adopting user
+    # writes them in the root POM; one the POM already holds is left as it is.
+    for name, key in (("pathIgnore", "path_ignore"), ("stampedFiles", "stamped_files")):
+        entries = project.get(key) or []
+        configuration = plugin.find(pom.q("configuration"))
+        if entries and (configuration is None or configuration.find(pom.q(name)) is None):
+            _append(pom.ensure(plugin, "configuration", 4),
+                    pom.element(name, children=[pom.element("path", e) for e in entries]), 5)
+            staged.append(f"{name} {len(entries)}")
     if not any(execution.agent_goal in other.agent_goals() for other in poms):
         build = build if build is not None else _append(pom.root, pom.element("build"), 1)
         agent = pom.element("execution", children=[

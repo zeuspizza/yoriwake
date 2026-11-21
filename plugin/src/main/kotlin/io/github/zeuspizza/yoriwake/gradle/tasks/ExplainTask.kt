@@ -133,6 +133,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Optional
     abstract val pathIgnoreDefaults: Property<Boolean>
 
+    /** The build's `stampedFiles`: build output whose change alone is no move. */
+    @get:Input
+    @get:Optional
+    abstract val stampedFiles: ListProperty<String>
+
     /**
      * The test task's input files, and its classpath and test classes beside them: what the run's
      * task-input rule for the default entries compares.
@@ -467,6 +472,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     stamp = age.stamp,
                     moved = driftOnly.toSet(),
                     unionFilter = unionFilter.orNull,
+                    stampedFiles = stampedFiles.getOrElse(emptyList()),
                 ),
                 ExplainingHost(taskPath, properties) { logger.lifecycle(it) },
             )
@@ -590,6 +596,7 @@ internal abstract class ExplainTask : DefaultTask() {
             notReadByTests: List<String>,
             pathIgnore: List<String>,
             pathIgnoreDefaults: Boolean,
+            stampedFiles: List<String>,
             environment: EnvironmentFingerprint.Rules,
             largeChange: Int,
             narrowPlainRunners: Boolean,
@@ -624,6 +631,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.notReadByTests.set(notReadByTests)
                 task.pathIgnore.set(pathIgnore)
                 task.pathIgnoreDefaults.set(pathIgnoreDefaults)
+                task.stampedFiles.set(stampedFiles)
                 task.declared = declarations.filter { it.task == testName }.map { it.resolved to it.glob }
                 task.testInputs = test.inputs.files
                 task.testOwned = test.classpath + test.testClassesDirs

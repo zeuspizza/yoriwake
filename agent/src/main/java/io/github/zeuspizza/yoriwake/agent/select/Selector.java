@@ -1144,6 +1144,32 @@ public final class Selector {
     }
 
     /**
+     * How many of the map's tests the windows of the moved classpath files {@code moved} would run:
+     * what a run that declares them stamped leaves out, for its own report. -1 when the map records
+     * no reads, so it cannot say.
+     */
+    public static int movedFileReaders(MapReader.Result map, Collection<String> moved) {
+        if (map.resourceReads() == null) {
+            return -1;
+        }
+        List<MapReader.Entry> tests = new ArrayList<>();
+        for (MapReader.Entry entry : map.entries()) {
+            if (!AgentContract.UNATTRIBUTED_RECORD_ID.equals(entry.testId())
+                    && !entry.testId().startsWith(AgentContract.CLASS_SCOPED_RECORD_PREFIX)) {
+                tests.add(entry);
+            }
+        }
+        Map<String, Integer> opens = movedFileWindows(map, tests, moved);
+        Set<String> readers = new HashSet<>();
+        for (MapReader.Entry test : tests) {
+            if (ranInWindow(map, test, opens)) {
+                readers.add(test.testId());
+            }
+        }
+        return readers.size();
+    }
+
+    /**
      * Where each JVM's window for the ignored paths opens: at its first read of one of them, of a
      * directory above one, of an entry of one that is an archive, or of every file. Only a JVM
      * whose reads the map recorded opens one: for any other, and for a map that records no reads,

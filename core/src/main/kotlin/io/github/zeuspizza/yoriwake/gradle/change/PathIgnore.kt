@@ -178,7 +178,7 @@ internal object PathIgnore {
         }.toMap()
         if (matched.isEmpty()) return Applied.none(paths)
         val protectedBy = mutableMapOf<String, Protection>()
-        matched.keys.forEach { path -> protection(path, declaration)?.let { protectedBy[path] = it } }
+        matched.forEach { (path, entry) -> protection(path, declaration, entry.second)?.let { protectedBy[path] = it } }
         val candidates = matched.keys - protectedBy.keys
         if (candidates.isNotEmpty()) {
             // A file a test names can be read without the read being seen: handed to a process,
@@ -259,8 +259,11 @@ internal object PathIgnore {
         }
     }
 
-    /** What keeps [path] in the change set whatever matched it, or null when nothing does. */
-    fun protection(path: String, declaration: Declaration): Protection? {
+    /**
+     * What keeps [path] in the change set whatever matched it, or null when nothing does; [default]
+     * when a default entry matched it rather than the build's own.
+     */
+    fun protection(path: String, declaration: Declaration, default: Boolean = true): Protection? {
         val segments = path.split('/')
         val directories = segments.dropLast(1)
         return when {
@@ -272,9 +275,11 @@ internal object PathIgnore {
             isBuildFile(segments.last(), directories) ||
                 declaration.buildLogicDirs.any { path.startsWith("$it/") } ||
                 inNestedBuild(declaration.rootDir, directories) -> Protection.BUILD_FILE
-            // Any `src` directory, not only the layouts Gradle reports: Android and multiplatform
-            // test resources, assets and generator inputs live under one too.
-            "src" in directories || declaration.sourceDirs.any { path.startsWith("$it/") } -> Protection.SOURCE_SET
+            // A default keeps out of any `src` directory, not only the layouts the build reports:
+            // Android and multiplatform test resources, assets and generator inputs live under one
+            // too. The build's own entry may name a file there no module declares as a root, such
+            // as the changes plugin's `src/changes/changes.xml`.
+            (default && "src" in directories) || declaration.sourceDirs.any { path.startsWith("$it/") } -> Protection.SOURCE_SET
             path in declaration.sourceFiles -> Protection.SOURCE_SET
             else -> null
         }
