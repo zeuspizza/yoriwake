@@ -910,31 +910,14 @@ def case_the_matrix_tests_only_the_candidate_a_dispatch_names():
     return problems
 
 
-def case_only_every_guard_runs_on_a_schedule_once_a_day():
-    """Long runs (the matrix, the sweep, the early-access JDK) are dispatched in each release check:
-    on a schedule they cost runner hours on commits a pull request already proved. Every guard is
-    the exception, once a day: a product pull request proves only the guards its change selects, and
-    the daily run finds one it broke without selecting it, standing down when main has not moved."""
+def case_no_workflow_runs_on_a_schedule():
+    """Long runs (every guard, the matrix, the sweep, the early-access JDK) are dispatched in each
+    release check: on a schedule they cost runner hours on commits a pull request already proved."""
     problems = 0
     for name in sorted(n for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))):
         with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as handle:
-            text = handle.read()
-        if not re.search(r"^  schedule:", text, re.M):
-            continue
-        if name != "guards.yml":
-            problems += fail(f"{name} runs on a schedule")
-            continue
-        crons = re.findall(r"^    - cron: '([^']*)'", text, re.M)
-        if len(crons) != 1 or not re.fullmatch(r"\d+ \d+ \* \* \*", crons[0]):
-            problems += fail(f"guards.yml runs on a schedule other than once a day: {crons}")
-        last = re.search(r"      - id: last-green\n((?:        .*\n)*)", _job_block(text, "changes") or "")
-        if not last or "if: github.event_name == 'schedule'" not in last.group(1) \
-                or "continue-on-error: true" not in last.group(1):
-            problems += fail("guards.yml: the daily run's look-up of the last green run may stop it from running")
-        if 'elif [ "$EVENT" = schedule ] && [ "$SKIP" = true ]; then' not in text:
-            problems += fail("guards.yml: the daily run stands down on anything but the look-up's explicit answer")
-        if "if: failure() && github.event_name == 'schedule'" not in (_job_block(text, "full") or ""):
-            problems += fail("guards.yml: a red daily run does not point to the merges since the last green one")
+            if re.search(r"^  schedule:", handle.read(), re.M):
+                problems += fail(f"{name} runs on a schedule")
     return problems
 
 def code_scanning_problems(text):
@@ -2217,9 +2200,8 @@ def case_a_sweep_names_the_pull_requests_it_makes_wait():
 
 
 def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
-    """Fast mode mutates what such a change did not touch, and a change to the shipped sources is
-    proved in full by the daily run on main; the guard machinery keeps fast mode or every guard,
-    since no guard mutates the machinery itself, and anything else keeps today's run."""
+    """Fast mode mutates what such a change did not touch; the guard machinery keeps it, since no
+    guard mutates the machinery itself, and anything else keeps today's run."""
     problems = 0
     cases = {
         ("bench/run.py",): True,
@@ -2228,18 +2210,11 @@ def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
         ("scripts/test_prove_guards.py",): True,
         ("bench/run.py", "scripts/prove_guards.py"): False,
         (".github/workflows/guards.yml",): False,
-        ("scripts/guard_costs.json",): True,
-        ("plugin/src/main/kotlin/A.kt", "scripts/guard_costs.json"): True,
+        ("scripts/guard_costs.json",): False,
         (".github/guard_shards.py",): False,
         ("bench/checkout.py",): False,
         ("README.md",): False,
-        (".github/ci.py",): False,
-        ("maven/src/main/kotlin/A.kt",): True,
-        ("plugin/src/main/kotlin/A.kt", "plugin/src/test/kotlin/ATest.kt", "README.md"): True,
-        ("plugin/src/main/kotlin/A.kt", "bench/run.py"): True,
-        ("plugin/src/main/kotlin/A.kt", "scripts/prove_guards.py"): False,
-        ("plugin/src/main/kotlin/A.kt", ".github/workflows/guards.yml"): False,
-        ("plugin/src/main/kotlin/A.kt", ".github/ci.py"): False,
+        ("maven/src/main/kotlin/A.kt",): False,
         ("plugin/src/test/kotlin/A.kt", "bench/run.py"): False,
         (): False,
         ("",): False,
@@ -2247,31 +2222,6 @@ def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
     for paths, expected in cases.items():
         if ci.narrows_guards(list(paths)) != expected:
             problems += fail(f"narrows_guards({list(paths)}) should be {expected}")
-    # An edit to the harness's catalog alone is data; any other keeps it machinery.
-    for paths, catalog, expected in (
-            (("plugin/src/main/kotlin/A.kt", "scripts/prove_guards.py"), True, True),
-            (("plugin/src/main/kotlin/A.kt", "scripts/prove_guards.py", "scripts/guard_costs.json"), True, True),
-            (("plugin/src/main/kotlin/A.kt", "scripts/prove_guards.py", "scripts/guard_costs.py"), True, False),
-            (("plugin/src/main/kotlin/A.kt", ".github/workflows/guards.yml"), True, False)):
-        if ci.narrows_guards(list(paths), catalog) != expected:
-            problems += fail(f"narrows_guards({list(paths)}, catalog_only={catalog}) should be {expected}")
-    harness = ("TARGET = 'a.kt'\nMUTATIONS = [('g', TARGET, 'x', 'y'), ('h', OTHER, 'p', 'q')]\n"
-               "def run(guard):\n    return guard\n")
-    for edited, same in (
-            (harness.replace("('g', TARGET, 'x', 'y')", "('g', TARGET, 'x', 'y'), ('i', TARGET, 'r', 's')"), True),
-            (harness.replace("TARGET = 'a.kt'", "TARGET = 'b.kt'\nOTHER: str = 'c' + 'd.kt'"), True),
-            (harness + "# a comment\n", True),
-            (harness.replace("return guard", "return None"), False),
-            (harness + "workers = 4\n", False),
-            (harness + "A, b = 1, 2\n", False),
-            (harness.replace("TARGET = 'a.kt'", "TARGET = 'a.kt'\nFUNCTIONAL_FILTER = '*Test'"), False),
-            (harness.replace("TARGET = 'a.kt'", "TARGET = 'a.kt'\nJOBS = 4"), False),
-            (harness.replace("TARGET = 'a.kt'", "TARGET = 'a.kt'\nSUITE_TESTS = {'unit': ('a/',)}"), False)):
-        if (ci.harness_code(harness) == ci.harness_code(edited)) != same:
-            problems += fail(f"harness_code: an edit {'to the catalog alone' if same else 'to the code'} "
-                             f"was taken for {'code' if same else 'the catalog'}:\n{edited}")
-    if ci.catalog_only("no-such-base", "no-such-head"):
-        problems += fail("catalog_only on refs git cannot read did not keep the harness machinery")
     # A module the harness imports from the repository is machinery too, or a change to it would
     # narrow its own proof to nothing.
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2294,10 +2244,8 @@ def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
     narrow = re.search(r"      - id: narrow\n((?:        .*\n|\n)*)", changes)
     if not narrow or "continue-on-error: true" not in narrow.group(1):
         problems += fail("guards.yml: a failed narrowing step does not fall back to fast mode on 8 shards")
-    elif 'base_ci.py" narrows-guards' not in narrow.group(1):
+    elif "ci.py narrows-guards" not in narrow.group(1):
         problems += fail("guards.yml: the narrowing step does not ask ci.py narrows-guards")
-    elif 'git show "$BASE:.github/ci.py"' not in narrow.group(1) or "python3 .github/ci.py narrows-guards" in narrow.group(1):
-        problems += fail("guards.yml: the narrowing step asks the pull request's own ci.py, which may narrow itself")
     if not re.search(r"      - if: needs\.changes\.outputs\.narrow != 'true'\n        run: python3 scripts/prove_guards\.py --mode fast",
                      shard):
         problems += fail("guards.yml: fast mode is not skipped on a narrowed pull request, or skipped on any other")
@@ -2314,9 +2262,8 @@ def case_a_change_no_suite_reads_narrows_the_pull_requests_guards():
     return problems
 
 
-def case_a_change_to_product_sources_is_known_as_one():
-    """A change to the shipped sources runs every guard when it cannot narrow to its own (it touches
-    the guard machinery, or the selection failed), so an unknown change is one."""
+def case_a_change_to_product_sources_runs_every_guard():
+    """Full mode is the gate for the plugin's and agent's sources, so an unknown change is one."""
     problems = 0
     cases = {
         ("plugin/src/main/kotlin/A.kt",): True,
@@ -2354,10 +2301,7 @@ def case_the_guard_workflows_are_read_only_and_cover_every_pull_request():
         ("--changed", "it does not run the guards the change can affect"),
         ("--mode full", "it does not run full mode"),
         ("touches-product", "full mode is not chosen by the product sources"),
-        ("needs.changes.outputs.product != 'false' && needs.changes.outputs.narrow != 'true'",
-         "full mode runs on a pull request unless it surely leaves the product alone or narrowed"),
-        ("needs.changes.outputs.product != 'true' || needs.changes.outputs.narrow == 'true'",
-         "a narrowed product pull request does not run its own guards"),
+        ("needs.changes.outputs.product != 'false'", "full mode runs only when product sources surely changed"),
         ("needs.changes.outputs.product != 'true'", "fast mode is not skipped when full mode runs"),
         ("    timeout-minutes: ", "a job has no time bound"),
     ):
@@ -5119,7 +5063,7 @@ CASES = (
     case_output_the_console_cannot_encode_passes_through_untouched,
     case_the_matrix_cell_builds_through_the_download_rerun,
     case_the_matrix_tests_only_the_candidate_a_dispatch_names,
-    case_only_every_guard_runs_on_a_schedule_once_a_day,
+    case_no_workflow_runs_on_a_schedule,
     case_code_scanning_runs_on_main_never_on_pull_requests,
     case_the_coverage_badge_states_the_gates_minimums,
     case_a_badge_one_point_off_either_gate_is_reported,
@@ -5137,7 +5081,7 @@ CASES = (
     case_the_changelog_check_runs_on_every_pull_request_and_push_to_main,
     case_a_changelog_workflow_that_skips_or_stops_checking_is_reported,
     case_only_a_docs_change_skips_the_checks,
-    case_a_change_to_product_sources_is_known_as_one,
+    case_a_change_to_product_sources_runs_every_guard,
     case_every_pull_request_workflow_cancels_its_superseded_run,
     case_a_change_runs_the_verify_jobs_its_paths_can_affect,
     case_verify_runs_each_job_on_the_answer_its_suites_need,

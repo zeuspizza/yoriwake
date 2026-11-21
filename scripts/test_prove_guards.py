@@ -420,15 +420,16 @@ def case_a_tree_that_does_not_compile_names_the_compiler_errors():
 
 
 def case_a_warm_up_that_failed_fetching_a_dependency_compiles_once_more():
-    """Central once failed asm-tree's jar in two guard shards' warm-ups at the same minute; a
-    compile error is not rerun."""
+    """Central once failed asm-tree's jar in two guard shards' warm-ups at the same minute, and
+    kotlin-metadata-jvm's metadata in another; a compile error is not rerun."""
     failures = 0
     fetch = ("Execution failed for task ':plugin:compileFunctionalTestKotlin'.\n"
              "> Could not resolve all files for configuration ':plugin:functionalTestCompileClasspath'.\n"
              "   > Could not find asm-tree-9.7.jar (org.ow2.asm:asm-tree:9.7).\n")
     for outcomes, runs, refused in (([(1, fetch), (0, "")], 2, False), ([(1, fetch), (1, fetch)], 2, True),
                                     ([(1, "e: Foo.kt:1:1 Unresolved reference: x\n")], 1, True),
-                                    ([(1, "> Could not find org.a:b:1.\n")], 1, True)):
+                                    ([(1, "> Could not find org.jetbrains.kotlin:kotlin-metadata-jvm:2.1.20.\n"),
+                                      (0, "")], 2, False)):
         started = []
 
         def run(argv, **kwargs):
