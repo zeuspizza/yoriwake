@@ -406,6 +406,12 @@ def case_a_project_without_history_or_without_this_runs_map_is_marked_not_replay
         monkey(run, "gradle", lambda *args: (_ for _ in ()).throw(AssertionError("a build ran")))
         local = commit_replay.replay_project(project_file(repo, commit="local", url=None),
                                              repo.root, 8, 30, scratch)
+        in_clone = commit_replay.replay_project(
+            project_file(repo, commit="0" * 40, url=None, path="checkouts/owner"), repo.root, 8,
+            30, scratch)
+        fixture = commit_replay.replay_project(
+            project_file(repo, url=None, path="checkouts/owner", fixture=True), repo.root, 8, 30,
+            scratch)
         other = commit_replay.replay_project(project_file(repo, commit="0" * 40), repo.root, 8, 30,
                                              scratch)
         os.remove(os.path.join(map_dir, sweep_data.CAPTURE_STAMP_FILE))
@@ -418,6 +424,10 @@ def case_a_project_without_history_or_without_this_runs_map_is_marked_not_replay
                           ("no stamp", unstamped), ("no map", mapless)):
         if result["replayed"] or result["rows"] or not result.get("reason"):
             failures += fail(f"{label}: came back {result}")
+    if in_clone.get("reason") != "the map was captured at another commit":
+        failures += fail(f"a `path` project without a url read its history as: {in_clone}")
+    if fixture["replayed"] or "fixture" not in fixture.get("reason", ""):
+        failures += fail(f"a fixture build sharing another project's checkout came back {fixture}")
     return failures
 
 
@@ -531,11 +541,11 @@ def case_the_distribution_sums_and_a_padded_list_does_not():
 def case_the_budget_stops_the_loop_and_counts_the_rest():
     repo = history()
     failures = 0
-    ticks = iter(range(0, 10_000, 40))
+    ticks = iter(range(0, 10_000, 20))
     rows = replayed(repo, 3, budget_seconds=100, clock=lambda: next(ticks))
     reasons = [row.get("reason") for row in rows]
     if reasons[0] is not None or reasons[-1] != "budget":
-        failures += fail(f"a budget of 100 s over 40 s steps left {reasons}")
+        failures += fail(f"a budget of 100 s over 20 s steps left {reasons}")
     counts = commit_replay.distribution(rows)
     if not counts["sums"] or counts["not_asked"].get("budget", 0) < 1:
         failures += fail(f"the distribution past the budget reads {counts}")
@@ -544,13 +554,60 @@ def case_the_budget_stops_the_loop_and_counts_the_rest():
     return failures
 
 
+def case_the_budget_running_out_during_a_compile_leaves_that_commit_s_explain_not_asked():
+    repo = history()
+    failures = 0
+    now = [0]
+    asked = []
+    drawn = commit_replay.draw(repo.root, pin(repo), 1)
+    stubbed = stubs(repo)
+    explain = stubbed["explain"]
+
+    def slow_compile(sha):
+        now[0] += 200
+        return 0
+
+    def counted(sha):
+        asked.append(sha)
+        return explain(sha)
+
+    stubbed.update(compile_tests=slow_compile, explain=counted)
+    rows = commit_replay.replay(repo.root, drawn, budget_seconds=100, clock=lambda: now[0],
+                                **stubbed)
+    if asked or [row.get("reason") for row in rows] != ["budget"]:
+        failures += fail(f"a compile past the budget was still explained: {rows}, asked {asked}")
+    if not commit_replay.at_pin(repo.root, pin(repo)):
+        failures += fail("the tree is not at the pin after a commit the budget cut")
+    return failures
+
+
+def case_a_patch_with_crlf_or_bytes_that_are_not_utf8_applies():
+    root = os.path.join(tempfile.mkdtemp(prefix="commit-replay-"), "repo")
+    TMP.append(os.path.dirname(root))
+    repo = Repo(root)
+    repo.commit("base", {".gitattributes": "* -text\n", "core/src/Win.java": "class Win {}\n"})
+    repo.write("core/src/Win.java", b"class Win {\r\n  int w = 1;\r\n}\r\n", binary=True)
+    repo.commit("crlf")
+    repo.write("core/src/Latin.java", "class Latin { String s = \"caf\u00e9\"; }\n".encode("latin-1"),
+               binary=True)
+    repo.commit("latin-1")
+    rows = by_name(repo, replayed(repo, 2))
+    failures = 0
+    for name in ("crlf", "latin-1"):
+        if rows[name]["outcome"] != "narrowed":
+            failures += fail(f"the {name} commit came back {rows[name]}")
+    if not commit_replay.at_pin(repo.root, pin(repo)):
+        failures += fail("the tree is not at the pin after the replay")
+    return failures
+
+
 def case_the_whole_patch_covers_paths_outside_the_source_roots():
     repo = history()
     failures = 0
     text = commit_replay.whole_patch(repo.root, repo.shas["docs"])
-    if "README.md" not in text or not revert.applies(repo.root, text):
+    if b"README.md" not in text or not revert.applies(repo.root, text.decode()):
         failures += fail("the whole patch of a README commit does not carry the README")
-    if commit_replay.whole_patch(repo.root, repo.shas["base"]).count("diff --git") != 5:
+    if commit_replay.whole_patch(repo.root, repo.shas["base"]).count(b"diff --git") != 5:
         failures += fail("a root commit is not its diff against the empty tree")
     return failures
 
@@ -587,7 +644,7 @@ def downloads():
 def case_two_projects_sum_and_a_missing_one_is_listed_not_counted():
     failures = 0
     directory = downloads()
-    record(directory, "alpha")
+    record(directory, "alpha", untracked_reset=True)
     record(directory, "beta", rows=ROWS[:3], budget_reached=True)
     record(directory, "fixture", replayed=False, reason="no upstream history", rows=[])
     os.makedirs(os.path.join(directory, "replay-broken", "broken"))
@@ -608,6 +665,9 @@ def case_two_projects_sum_and_a_missing_one_is_listed_not_counted():
     if merged["cut_short"] != ["beta"] or sorted(merged["projects"]) != ["alpha", "beta"]:
         failures += fail(f"projects read {sorted(merged['projects'])}, cut short "
                          f"{merged['cut_short']}")
+    if merged["projects"]["alpha"].get("untracked_reset") is not True:
+        failures += fail(f"the merge dropped whether the untracked files were reset: "
+                         f"{merged['projects']['alpha']}")
     if merged["projects"]["alpha"]["distribution"]["narrowed"] != 2:
         failures += fail("a file's own arithmetic was trusted over its rows")
     if merged["plugin_commits"] != ["plugin-sha"] or merged["commits"] != ["8"]:
@@ -712,7 +772,7 @@ def case_the_budget_ending_between_the_two_asks_leaves_the_second_not_asked():
     repo = bumps()
     # Newest first: the code commit, then the script bump's first ask, pass inside the budget; its
     # second does not.
-    ticks = iter([0, 0, 0, 1, 1, 1, 200] + list(range(300, 10_000, 100)))
+    ticks = iter([0, 0, 0, 0, 1, 1, 1, 1, 200] + list(range(300, 10_000, 100)))
     rows, asked = paired(repo, {}, budget_seconds=100, clock=lambda: next(ticks))
     failures = 0
     script = rows["script"]

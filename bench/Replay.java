@@ -27,10 +27,12 @@ import java.util.Map;
  * recorded them. An ids file holds one {@code id <TAB> kind} per line, kind {@code test} or
  * {@code container}.
  *
+ * <p>An input the inputs file does not hold is empty: the agent's record drops an empty note
+ * rather than write it blank, so an absent input is how every record spells an empty one.
+ *
  * <p>A job the current selector cannot faithfully re-decide writes {@code <output>.refused}
- * instead, one line saying why: a record missing an input the rule now reads (defaulting it would
- * answer for inputs the arm never had), or a map of another schema version (which the rule reads
- * as no map at all, so the answer would describe a map the arm did not select against).
+ * instead, one line saying why: a map of another schema version (which the rule reads as no map
+ * at all, so the answer would describe a map the arm did not select against).
  */
 public final class Replay {
 
@@ -46,17 +48,6 @@ public final class Replay {
                 if (tab > 0) {
                     inputs.put(line.substring(0, tab), line.substring(tab + 1));
                 }
-            }
-            List<String> missing = new ArrayList<>();
-            for (String input : FilterRule.INPUTS) {
-                if (!inputs.containsKey(input)) {
-                    missing.add(input);
-                }
-            }
-            if (!missing.isEmpty()) {
-                refuse(f[3], "the record carries no input for " + String.join(", ", missing)
-                        + ": recorded by an agent that did not read it");
-                continue;
             }
             Path schema = Path.of(f[0], AgentContract.MAP_SCHEMA_VERSION_FILE);
             String found = Files.isRegularFile(schema)
