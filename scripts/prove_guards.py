@@ -2250,17 +2250,34 @@ MUTATIONS = [
      "            for (String id : ranAfterFirstTouch(map, tests, changedClassPrefixes, changedBytes, exempt, loosened)) {",
      "            for (String id : new HashSet<String>()) {",
      agent_suite, "a test that ran after its JVM first loaded a changed class is selected"),
-    # Startup work is a first touch of each JVM that ran it, so the windows above stand in for the
-    # force. They cannot where no JVM's touches date the startup class, where a mode drops them, or
-    # where they reach every test: a run of every test that records nothing.
+    # Startup work is a first touch of each JVM that ran it, so every test of those JVMs stands in
+    # for the force: a touch after the first test may be a teardown of a class that ran before it.
+    # The force stays where no JVM's touches name the startup class, where a mode drops the
+    # windows, or where they reach every test: a run of every test that records nothing.
     ("startup coverage no JVM's touches date stops forcing", SELECTOR,
      "            if (undated != null) {",
      "            if (false) {",
      agent_suite, "a change touching startup coverage that no JVM's first touches date forces a full run"),
-    ("a class no test owns first run after a test of its JVM is dated as startup work", SELECTOR,
-     "            if (firstTest != null && touch.sequence() > firstTest) {",
-     "            if (false) {",
-     agent_suite, "a change touching a class no test owns first run after a test of its JVM forces a full run"),
+    ("a JVM that touched a startup class after its first test runs only from the touch", SELECTOR,
+     "                if (ranInAny(map, test, jvms) && selected.add(test.testId())) {",
+     "                if (false && selected.add(test.testId())) {",
+     agent_suite, "a startup change touched between two classes of a JVM runs the class before the touch"),
+    ("a JVM that touched every class is left out of a startup change", SELECTOR,
+     "                    jvms.computeIfAbsent(Rule.SHARES_JVM_UNOBSERVED, key -> new HashSet<>()).add(touch.jvm());",
+     "                    jvms.computeIfAbsent(Rule.SHARES_JVM_UNOBSERVED, key -> new HashSet<>());",
+     agent_suite, "a startup change runs every test of a JVM that touched every class after its first test"),
+    ("a JVM that touched every class is left out of a startup change in changed bytes", SELECTOR,
+     "                    jvms.computeIfAbsent(Rule.SHARES_JVM_UNOBSERVED, key -> new HashSet<>()).add(byteTouch.jvm());",
+     "                    jvms.computeIfAbsent(Rule.SHARES_JVM_UNOBSERVED, key -> new HashSet<>());",
+     agent_suite, "a startup change in changed bytes runs every test of a JVM that touched every class after its first test"),
+    ("the rules leave a late startup touch's earlier tests unexplained", SELECTOR,
+     "                    if (ranInAny(map, test, jvms.getValue())) {",
+     "                    if (false) {",
+     agent_suite, "a change touching a class no test owns first run after a test of its JVM runs every test of that JVM"),
+    ("a startup class a JVM first ran after its first test is reported as one every test depends on", SELECTOR,
+     "            if (firstTest != null && touch.sequence() <= firstTest",
+     "            if (firstTest != null",
+     agent_suite, "a startup change one JVM first ran after its first test runs every test without saying every test depends on it"),
     ("startup coverage under the optimistic mode stops forcing", SELECTOR,
      "            if (!loosened.isEmpty()) {",
      "            if (false) {",
