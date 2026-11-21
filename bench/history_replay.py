@@ -479,26 +479,30 @@ class Builds:
         if status == BUILD_FAILED:
             detail = os.path.basename(log)
         elif select:
-            detail = self.forced(log)
+            detail = self.forced(since)
         return Arm(status, report, seconds, detail)
 
-    def forced(self, log):
-        """Why the selecting run ran everything, per measured execution that did; None when none."""
-        if not self.reactor:
-            reason = self.run.full_run_reason(log, self.task)
-            return {self.task: reason} if self.run.is_force_reason(reason) else None
-        reasons = {}
-        # `<artifactId> surefire:test (<id>): <reason>`, or `... (<id>) declined, <kind>: <detail>`.
-        pattern = re.compile(r"^\[yoriwake\] (\S+ surefire:test \([^)]*\))(?::| (declined, [a-z0-9-]+):) (.*)$")
-        for line in maven_build.plugin_lines(log):
-            found = pattern.match(line)
-            if not found or found.group(1) in reasons:
-                continue
-            if found.group(2):
-                reasons[found.group(1)] = found.group(2)
-            elif self.run.is_force_reason(found.group(3)):
-                reasons[found.group(1)] = found.group(3)[:300]
-        return reasons or None
+    def map_dirs(self):
+        if self.reactor:
+            root = maven_build.maps_root(self.checkout)
+            return [os.path.join(root, d) for d in (sorted(os.listdir(root))
+                                                    if os.path.isdir(root) else [])]
+        directory = self.run.find_map(self.checkout, self.module,
+                                      self.run.test_task_name(self.project))
+        return [directory] if directory else []
+
+    def forced(self, since):
+        """Per map whose selecting run wrote a decision record since `since` and did not narrow:
+        its full-run kind (or refusal kind) and reason, from the record. None when none."""
+        forced = {}
+        for directory in self.map_dirs():
+            notes = (self.run.read_decision_record(directory, since) or {}).get("notes") or {}
+            if notes and notes.get("outcome") != "narrowed":
+                forced[os.path.basename(directory)] = {
+                    "outcome": notes.get("outcome"),
+                    "kind": notes.get("refusal-kind") or notes.get("full-run-kind"),
+                    "reason": (notes.get("full-run-reason") or "")[:300] or None}
+        return forced or None
 
     def record(self, isolated=False):
         flags = [self.run.ISOLATED_CAPTURE_FLAG] if isolated else []
@@ -523,17 +527,12 @@ class Builds:
                       f"{self.run.MAVEN_PLUGIN_VERSION}:explain")
             self._maven(["test-compile", plugin, f"-Dyoriwake.base={base}",
                          "-Dyoriwake.mode=optimistic"], log)
-            root = maven_build.maps_root(self.checkout)
-            paths = [os.path.join(root, d, "explain.json") for d in
-                     (os.listdir(root) if os.path.isdir(root) else [])]
         else:
             self.run.gradle(self.checkout, self.project,
                             [*self.run.INIT_SCRIPT_ARGS, commit_replay.explain_task(self.task),
                              f"-Pyoriwake.base={base}", "-Pyoriwake.mode=optimistic",
                              *self.run.TIMING_ARM_FLAGS], log)
-            directory = self.run.find_map(self.checkout, self.module,
-                                          self.run.test_task_name(self.project))
-            paths = [os.path.join(directory, "explain.json")] if directory else []
+        paths = [os.path.join(d, "explain.json") for d in self.map_dirs()]
         found = [e for e in (commit_replay.read_explanation(p, since) for p in paths)
                  if isinstance(e, dict)]
         return found or None
