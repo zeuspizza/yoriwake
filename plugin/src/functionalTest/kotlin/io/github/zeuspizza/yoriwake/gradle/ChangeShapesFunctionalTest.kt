@@ -227,6 +227,42 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `an inline function's sequence lambda no test loads narrows to the tests of its callers`(@TempDir dir: File) {
+        // The lambda calls an inline parameter, so every caller of `kept` gets its own copy of it
+        // and the class it compiles to in Kept.kt is never loaded; it inlines `isSkipped`, so the
+        // inline scan adds it to the change set beside Beta.
+        val kept = "src/main/kotlin/dev/sample/Kept.kt" to """
+            package dev.sample
+            inline fun isSkipped(n: Int): Boolean = n % 3 == 0
+            inline fun kept(limit: Int, crossinline also: (Int) -> Boolean): Sequence<Int> =
+                sequence { for (i in 0 until limit) if (!isSkipped(i) && !also(i)) yield(i) }
+            fun limitOf(n: Int): Int = n
+        """.trimIndent()
+        val beta = "src/main/kotlin/dev/sample/Beta.kt" to """
+            package dev.sample
+            class Beta { fun count(n: Int): Int = kept(n) { it > 100 }.count() }
+        """.trimIndent()
+        val alphaTest = "src/test/kotlin/dev/sample/AlphaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class AlphaTest { @Test fun limit() { assertEquals(1, limitOf(1)) } }
+        """.trimIndent()
+        val betaTest = "src/test/kotlin/dev/sample/BetaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class BetaTest { @Test fun count() { assertEquals(4, Beta().count(6)) } }
+        """.trimIndent()
+
+        val output = selectAfter(dir, kotlinBuild, kept, beta, alphaTest, betaTest, edit = {
+            edit(dir, kept.first, "n % 3 == 0", "n % 2 == 0")
+        }, run = GradleRunner::buildAndFail)
+
+        assertNarrowedTo(dir, both, output)
+    }
+
+    @Test
     fun `an overriding toString deleted runs the test that formatted the class`(@TempDir dir: File) {
         val beta = "src/main/java/dev/sample/Beta.java" to """
             package dev.sample;

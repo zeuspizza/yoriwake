@@ -148,7 +148,7 @@ internal object SelectingStep {
                     scoped.droppedFiles.take(REPORTED).joinToString() + if (scoped.droppedFiles.size > REPORTED) ", ..." else ""
             )
         }
-        val established = establish(
+        val beforeWidening = establish(
             { message -> host.lifecycle("[yoriwake] ${host.name}: $message") },
             mapDir, scoped.change, classpathFacts, inputs.unionFilter,
         )
@@ -176,8 +176,8 @@ internal object SelectingStep {
             scoped.change.inlinableSourceChanged,
             digestRule(mapDir, bytesAreFresh = true),
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
-            ownTestClasses = established.testClasses,
-            inlinedAway = established.inlinedAway,
+            ownTestClasses = beforeWidening.testClasses,
+            inlinedAway = beforeWidening.inlinedAway,
             lineOnly = if (!inputs.narrowLineOnlyChanges) null else LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
             inlineSources = scoped.change.inlineSources,
         ).withClasspathFiles(
@@ -187,6 +187,8 @@ internal object SelectingStep {
             // An accepted build file left the change set, yet a test may read it as a file: it runs
             // the tests from each JVM's first read of it on, as a moved classpath file does.
             .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }
+        // Only now are the classes that inlined a changed source known, and the scan's answer with them.
+        val established = establishAfterWidening(beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly)
         reportDigest(widening) { message -> host.lifecycle("[yoriwake] ${host.name}: $message") }
         reportLines(widening.lines).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
         val lines = widening.lines

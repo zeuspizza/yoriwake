@@ -119,6 +119,46 @@ internal fun establish(
 }
 
 /**
+ * [established] once [widening] has run: every class of its change set [establish] did not vouch
+ * for, the classes that inlined a changed source among them, assessed with the Kotlin refusal
+ * waived. A widening that did not force added every own class whose SMAP names a changed Kotlin
+ * source, and compared every class's bytes with the capture's: an inliner the scan cannot name
+ * (its SMAP stripped, a renamed facade) was recompiled with the new body, so its bytes moved and
+ * its recorders run. Either way the copies select or force on their own, so an inlined copy is no
+ * longer a reason to refuse. A forced widening has no change set to assess, and a line-only prefix left it
+ * before the scan. A file of only `inline` functions ([inlineOnly]) stays with
+ * [Established.inlinedAway], which waives it only when some class was found inlining it: with
+ * none found, a root whose SMAP was stripped cannot be told from a file nothing calls.
+ * Unchanged when the task runs code in JVMs the agent cannot see, or the artifacts cannot be read.
+ */
+internal fun establishAfterWidening(
+    established: Established,
+    mapDir: File,
+    facts: ClasspathView,
+    widening: InlineWidening,
+    /** [ChangeDetection.Change.inlineOnly]. */
+    inlineOnly: Set<String>,
+): Established {
+    val candidates = widening.prefixes.toSet() - established.provable - inlineOnly
+    if (candidates.isEmpty()) return established
+    val artifacts = runCatching {
+        TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
+    }.getOrNull() ?: return established
+    if (artifacts.runsCodeInUnobservedJvms()) return established
+    val verdicts = AbsenceEvidence.unannotated(
+        absenceVerdicts({}, mapDir, candidates, artifacts, inlinesAccountedFor = true),
+        artifacts::classesFor,
+    ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
+    val gated = verdicts + unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys, artifacts)
+    return established.copy(
+        provable = established.provable + gated.filterValues { it.provable }.keys,
+        refusals = established.refusals - candidates + gated
+            .filterValues { !it.provable }
+            .mapValues { (_, verdict) -> verdict.reason.orEmpty() },
+    )
+}
+
+/**
  * Of [changedBytes], the test classes whose own known tests are all that could see them: a constant
  * copied into a test class moves its bytes with no source change, and discovery, which loads it, is
  * recorded by no test. Each is a top-level class of this task's own test output that declares a test

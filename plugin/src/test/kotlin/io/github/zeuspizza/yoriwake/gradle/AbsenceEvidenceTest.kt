@@ -172,6 +172,21 @@ class AbsenceEvidenceTest {
         assertTrue(verdicts.getValue(logic).provable)
     }
 
+    // The waiver is for Kotlin alone: the constant gate still refuses with every inlined copy accounted for.
+    @Test
+    fun `with inlined copies accounted for, a Kotlin class is provable and a Kotlin constant holder is not`() {
+        val scopes = listOf(EffectiveScope(listOf("io.github.zeuspizza.yoriwake.gradle.fixtures.*"), emptyList()))
+        val ordinary = "io.github.zeuspizza.yoriwake.gradle.fixtures.OrdinaryKotlin"
+        val holder = "io.github.zeuspizza.yoriwake.gradle.fixtures.KotlinShapesKt"
+
+        val waived = AbsenceEvidence.assess(listOf(ordinary, holder), scopes, compiled, namedNowhere, inlinesAccountedFor = true)
+
+        assertTrue(waived.getValue(ordinary).provable)
+        assertFalse(waived.getValue(holder).provable)
+        assertTrue(waived.getValue(holder).reason!!.contains("compile-time constant"))
+        assertFalse(AbsenceEvidence.assess(listOf(ordinary), scopes, compiled, namedNowhere).getValue(ordinary).provable)
+    }
+
     @Test
     fun `one annotated class in the file refuses the prefix`() {
         val both = AbsenceEvidence.CompiledClasses {

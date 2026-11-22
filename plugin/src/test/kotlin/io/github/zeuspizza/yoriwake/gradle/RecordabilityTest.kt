@@ -370,6 +370,17 @@ class RecordabilityTest {
         assertFalse(verdict("io.github.zeuspizza.yoriwake.gradle.fixtures.MixedKotlin").recordable)
     }
 
+    // kotlinc writes `DebugMetadata` on every coroutine lambda, and no framework registers a class
+    // from it: counted as a class-level annotation, it refused every `sequence {}` lambda.
+    @Test
+    fun `a coroutine lambda carrying only the compiler's own annotations passes the annotation gate`() {
+        val lambda = bytesOf("io.github.zeuspizza.yoriwake.gradle.fixtures.YieldsTwice\$values\$1")
+        assertTrue(String(lambda, Charsets.ISO_8859_1).contains("Lkotlin/coroutines/jvm/internal/DebugMetadata;"))
+
+        assertEquals(emptyList(), Recordability.classAnnotations(lambda))
+        assertEquals(listOf("Ljava/lang/Deprecated;"), Recordability.classAnnotations(bytesOf("io.github.zeuspizza.yoriwake.gradle.fixtures.HasVisibleAnnotation")))
+    }
+
     @Test
     fun `bytecode that cannot be read is refused rather than assumed`() {
         val verdict = Recordability.of(byteArrayOf(1, 2, 3))

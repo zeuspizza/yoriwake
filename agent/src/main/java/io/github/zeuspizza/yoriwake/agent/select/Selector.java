@@ -1516,8 +1516,10 @@ public final class Selector {
      *
      * <ul>
      *   <li>the daemon proved it was in the effective instrumentation scope, carries probes,
-     *       declares no compile-time constant, is not Kotlin, carries no class-level annotation,
-     *       and no read resource names it;
+     *       declares no compile-time constant, is not Kotlin unless the inline scan and the bytes
+     *       comparison both answered, which put every class carrying its code in the change,
+     *       carries no class-level annotation but the compiler's own, and no read resource names
+     *       it;
      *   <li>the map's recorded scope is the scope in force now;
      *   <li>no capturing JVM loaded it or read its class or source file;
      *   <li>the class is absent from a trustworthy loaded-class union.

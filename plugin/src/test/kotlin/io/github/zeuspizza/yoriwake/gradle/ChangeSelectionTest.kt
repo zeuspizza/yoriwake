@@ -25,6 +25,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.annotationRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.compareDigests
 import io.github.zeuspizza.yoriwake.gradle.change.constantHolderRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
+import io.github.zeuspizza.yoriwake.gradle.change.establishAfterWidening
 import io.github.zeuspizza.yoriwake.gradle.change.ownTestClassesByBytes
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
@@ -1682,6 +1683,70 @@ class ChangeSelectionTest {
     private val annotations: Map<String, String> by lazy {
         val fileClass = compiled("$fixtures.KotlinShapesKt")
         mapOf(fileClass.first to Recordability.annotationDigest(fileClass.second).value!!)
+    }
+
+    /** A map captured under the fixtures' scope that held [held]. */
+    private fun heldMap(dir: File, vararg held: String): File = File(dir, "map").apply {
+        mkdirs()
+        File(this, AgentContract.EFFECTIVE_SCOPE_FILE).writeText(
+            io.github.zeuspizza.yoriwake.gradle.bytecode.EffectiveScope(listOf("$fixtures.*"), emptyList()).serialize() + "\n"
+        )
+        File(this, CoverageDecoder.CLASS_DIGESTS_FILE).writeText(held.joinToString("") { "$it\tabc\n" })
+    }
+
+    private val kotlinRefusal = "it is Kotlin, whose inline members are copied into their call sites"
+
+    // Once the scan answered, every class carrying code of a changed Kotlin source is in the change
+    // set, so neither the changed class nor its inliner needs the Kotlin refusal any longer.
+    @Test
+    fun `after widening, a changed Kotlin class and its inliner are vouched for with the Kotlin refusal waived`(
+        @TempDir dir: File,
+    ) {
+        val ordinary = "$fixtures.OrdinaryKotlin"
+        val inliner = "$fixtures.InlinesSomethingElse"
+        val facts = oneModule(dir, compiled(ordinary), compiled(inliner))
+        val before = Established(emptySet(), emptySet(), refusals = mapOf(ordinary to kotlinRefusal))
+
+        val after = establishAfterWidening(
+            before, heldMap(dir, ordinary, inliner), facts,
+            InlineWidening.widened(listOf(inliner, ordinary), setOf(inliner)), inlineOnly = emptySet(),
+        )
+
+        assertEquals(setOf(ordinary, inliner), after.provable)
+        assertEquals(emptyMap(), after.refusals)
+    }
+
+    // An inline-only file is waived only by the inliners found for it; with none, a root whose SMAP
+    // was stripped cannot be told from no caller at all.
+    @Test
+    fun `after widening, an inline-only file keeps the Kotlin refusal`(@TempDir dir: File) {
+        val ordinary = "$fixtures.OrdinaryKotlin"
+        val facts = oneModule(dir, compiled(ordinary))
+        val before = Established(emptySet(), emptySet(), refusals = mapOf(ordinary to kotlinRefusal))
+
+        val after = establishAfterWidening(
+            before, heldMap(dir, ordinary), facts,
+            InlineWidening.widened(listOf(ordinary), emptySet()), inlineOnly = setOf(ordinary),
+        )
+
+        assertEquals(emptySet(), after.provable)
+        assertEquals(mapOf(ordinary to kotlinRefusal), after.refusals)
+    }
+
+    @Test
+    fun `after widening, an inliner the capture did not hold is refused and named`(@TempDir dir: File) {
+        val ordinary = "$fixtures.OrdinaryKotlin"
+        val inliner = "$fixtures.InlinesSomethingElse"
+        val facts = oneModule(dir, compiled(ordinary), compiled(inliner))
+
+        val after = establishAfterWidening(
+            Established(emptySet(), emptySet()), heldMap(dir, ordinary), facts,
+            InlineWidening.widened(listOf(inliner, ordinary), setOf(inliner)), inlineOnly = emptySet(),
+        )
+
+        assertEquals(setOf(ordinary), after.provable)
+        assertEquals(setOf(inliner), after.refusals.keys)
+        assertTrue(after.refusals.getValue(inliner).contains("the capture did not hold"))
     }
 
     @Test
