@@ -592,19 +592,23 @@ internal object ClasspathFiles {
         rootDir: File,
     ): Set<String> {
         if (normalization == null) return emptySet()
-        val dirs = classpath.map(File::getAbsoluteFile).filter(File::isDirectory).map { pathOf(rootDir, it) + "/" }
+        val entries = classpath.map(File::getAbsoluteFile)
+        val dirs = entries.filter(File::isDirectory).map { pathOf(rootDir, it) + "/" }
+        // Only a jar on the classpath itself: Gradle never fingerprints one a manifest names.
+        val jars = entries.filter(File::isFile).mapTo(hashSetOf()) { pathOf(rootDir, it) }
         return moved.files.filter { (path, how) ->
             Moved(mapOf(path to how)).traceable(rootDir) != null && (
-                ignoredWhole(path, dirs, normalization) ||
-                    (path.endsWith("!/" + JarFile.MANIFEST_NAME) && sameAttributes(path, recorded, current, normalization))
+                ignoredWhole(path, dirs, jars, normalization) ||
+                    (path.endsWith("!/" + JarFile.MANIFEST_NAME) && path.substringBefore("!/") in jars &&
+                        sameAttributes(path, recorded, current, normalization))
                 )
         }.keys
     }
 
-    /** Whether [path] is ignored within every classpath entry holding it; one no entry holds is not. */
-    private fun ignoredWhole(path: String, dirs: List<String>, normalization: Normalization): Boolean {
+    /** Whether [path] is ignored within every classpath entry holding it; one no entry holds is not, nor an entry of a jar not on it. */
+    private fun ignoredWhole(path: String, dirs: List<String>, jars: Set<String>, normalization: Normalization): Boolean {
         val bang = path.indexOf("!/")
-        if (bang >= 0) return normalization.ignoresResource(path.substring(bang + 2))
+        if (bang >= 0) return path.substring(0, bang) in jars && normalization.ignoresResource(path.substring(bang + 2))
         val within = dirs.filter { path.startsWith(it) }.map { path.removePrefix(it) }
         return within.isNotEmpty() && within.all(normalization::ignoresResource)
     }

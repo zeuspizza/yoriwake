@@ -203,9 +203,9 @@ internal fun TestTaskWiring.configureSelection(
     val stampedConstants = project.extensions.findByType(YoriwakeExtension::class.java)?.stampedConstants?.getOrElse(emptyList()).orEmpty()
     // As far as it is declared by now: a later declaration is missed, which leaves its change moving.
     val normalization = when (val read = RuntimeNormalization.read(project)) {
-        is RuntimeNormalization.Companion.Read.Declared -> read.normalization
-        RuntimeNormalization.Companion.Read.None -> null
-        is RuntimeNormalization.Companion.Read.Unreadable -> {
+        is RuntimeNormalization.Read.Declared -> read.normalization
+        RuntimeNormalization.Read.None -> null
+        is RuntimeNormalization.Read.Unreadable -> {
             test.logger.info(
                 "[yoriwake] ${test.path}: the build's runtime classpath normalization could not be read (${read.why}); " +
                     "a change it ignores still moves"

@@ -13,14 +13,14 @@ class RuntimeNormalizationTest {
     @Test
     fun `a build's runtime classpath normalization is read without fixing it, and matched as Gradle matches it`() {
         val project = ProjectBuilder.builder().build()
-        assertEquals(RuntimeNormalization.Companion.Read.None, RuntimeNormalization.read(project))
+        assertEquals(RuntimeNormalization.Read.None, RuntimeNormalization.read(project))
         project.normalization.runtimeClasspath.apply {
             ignore("org/gradle/build-receipt.properties")
             ignore("generated/**")
             metaInf { it.ignoreAttribute("Bnd-LastModified") }
         }
 
-        val read = assertIs<RuntimeNormalization.Companion.Read.Declared>(RuntimeNormalization.read(project)).normalization
+        val read = assertIs<RuntimeNormalization.Read.Declared>(RuntimeNormalization.read(project)).normalization
         // Reading it left it open: Gradle refuses a declaration after the normalization is fixed.
         project.normalization.runtimeClasspath.ignore("later.properties")
 

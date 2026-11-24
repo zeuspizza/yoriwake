@@ -654,7 +654,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.pathIgnoreDefaults.set(pathIgnoreDefaults)
                 task.stampedFiles.set(stampedFiles)
                 project.extensions.findByType(YoriwakeExtension::class.java)?.let { task.stampedConstants.set(it.stampedConstants) }
-                (RuntimeNormalization.read(project) as? RuntimeNormalization.Companion.Read.Declared)?.normalization?.let {
+                (RuntimeNormalization.read(project) as? RuntimeNormalization.Read.Declared)?.normalization?.let {
                     task.normalizedResources.set(it.resources)
                     task.normalizedAttributes.set(it.attributes)
                 }

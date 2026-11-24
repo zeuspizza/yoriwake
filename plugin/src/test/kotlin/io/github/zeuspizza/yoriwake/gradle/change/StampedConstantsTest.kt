@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
@@ -187,5 +188,31 @@ class StampedConstantsTest {
         val then = capture(root, classes)
         javac(classes, buildConfig(1), app("y"))
         assertNull(apply(then, root, classes, listOf("BuildConfig#BUILD_TIME"), changedPrefixes = listOf("App")))
+    }
+
+    @Test
+    fun `a class is tracked only when its source file lies in a source directory outside every build directory`(@TempDir root: File) {
+        File(root, "app/src/main/java/dev/App.java").apply { parentFile.mkdirs(); writeText("") }
+        File(root, "app/build/generated/stamp/dev/Stamp.java").apply { parentFile.mkdirs(); writeText("") }
+        val facts = object : io.github.zeuspizza.yoriwake.gradle.facts.ClasspathView {
+            override val rootDir = root
+            override val moduleDirs = mapOf("app" to ":app")
+            override val buildDirs = mapOf(":app" to File(root, "app/build").absolutePath)
+            override val dependencyHomes = emptyMap<String, File>()
+            override val ownPath = ":app"
+            override fun classpathFiles() = emptySet<File>()
+            override fun testOutputFiles() = emptySet<File>()
+            override fun compileTimeFiles() = emptySet<File>()
+            override fun declaredModules(): Set<String>? = null
+            override fun jacocoVersion(): String? = null
+            override fun jacocoSetting() = ""
+            override fun testJvm(): Int? = null
+            override fun agentCeiling(): String? = null
+        }
+        val tracked = trackedSource(root, listOf("app/src/main/java", "app/build/generated/stamp"), facts)
+
+        assertTrue(tracked("dev.App", "App.java"))
+        assertFalse(tracked("dev.Stamp", "Stamp.java"))
+        assertFalse(tracked("dev.Other", "Other.java"))
     }
 }

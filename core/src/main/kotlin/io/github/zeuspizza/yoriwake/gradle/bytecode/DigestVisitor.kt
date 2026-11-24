@@ -427,10 +427,10 @@ internal class DigestVisitor(
         }
     }
 
-    /** Thrown by the line digest at an attribute ASM cannot show it. */
     /** What a masked value feeds: no literal renders as this type's name. */
     private data class Masked(val field: String)
 
+    /** Thrown by the line digest at an attribute ASM cannot show it. */
     class UnknownAttribute(type: String?) : RuntimeException("it carries an attribute ASM does not know: $type")
 
     private companion object {

@@ -1561,6 +1561,7 @@ class ClasspathFilesTest {
         val resources = File(root, "app/build/resources/main")
         file(root, "app/build/resources/main/org/build-receipt.properties", "time=2\n")
         file(root, "app/build/resources/main/deeper/org/build-receipt.properties", "time=2\n")
+        val appJar = jar(File(root, "app/build/libs/app.jar"), 0L, "org/build-receipt.properties" to "time=2\n")
         val inJar = "app/build/libs/app.jar!/org/build-receipt.properties"
         val keys = listOf(
             "app/build/resources/main/org/build-receipt.properties", "app/build/resources/main/deeper/org/build-receipt.properties", inJar,
@@ -1574,10 +1575,12 @@ class ClasspathFilesTest {
         // Within the directory on the classpath, not anywhere beneath it; a file that is gone still moves.
         assertEquals(
             setOf("app/build/resources/main/org/build-receipt.properties", inJar),
-            ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, listOf(resources), root),
+            ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, listOf(resources, appJar), root),
         )
-        // A file no classpath directory holds is not taken as ignored, and no normalization ignores nothing.
-        assertEquals(setOf(inJar), ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, emptyList(), root))
+        // A file no classpath entry holds is not taken as ignored, an entry of a jar only a manifest
+        // names included, and no normalization ignores nothing.
+        assertEquals(setOf(inJar), ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, listOf(appJar), root))
+        assertEquals(emptySet(), ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, emptyList(), root))
         assertEquals(emptySet(), ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), null, listOf(resources), root))
     }
 

@@ -45,18 +45,18 @@ internal data class RuntimeNormalization(val resources: List<String>, val attrib
         }
     }.getOrNull()
 
+    /** What [read] found: a declaration, none, or why it could not tell. */
+    sealed interface Read {
+        data class Declared(val normalization: RuntimeNormalization) : Read
+        data object None : Read
+        data class Unreadable(val why: String) : Read
+    }
+
     companion object {
         private const val DEFAULT = "org.gradle.normalization.internal.DefaultRuntimeClasspathNormalization"
         private const val INTERNAL = "org.gradle.normalization.internal.RuntimeClasspathNormalizationInternal"
         private const val RESOURCE_FILTER = "org.gradle.api.internal.changedetection.state.ResourceFilter"
         private const val ENTRY_FILTER = "org.gradle.api.internal.changedetection.state.ResourceEntryFilter"
-
-        /** What [read] found: a declaration, none, or why it could not tell. */
-        sealed interface Read {
-            data class Declared(val normalization: RuntimeNormalization) : Read
-            data object None : Read
-            data class Unreadable(val why: String) : Read
-        }
 
         /**
          * [project]'s runtime classpath normalization as declared so far. Its internal state is read
