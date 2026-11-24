@@ -583,6 +583,10 @@ def unit_suite():
          "--tests", "*PathIgnoreTest*",
          # Which test classes a budgeted recording runs alone, and how many the budget allows.
          "--tests", "*IsolatedPickTest*",
+         # The JaCoCo a class is judged by: the map's and this run's, how the map keeps the older
+         # one, and when the bundled agent replaces Gradle's default.
+         "--tests", "*ClassFileCeilingTest*", "--tests", "*JacocoVersionRecordTest*",
+         "--tests", "*JacocoSwapTest*",
          "--rerun"])
     if done.returncode == 0:
         return []
@@ -866,8 +870,9 @@ SUITES = [
     # About 1.4s warm with a mutation applied, both tasks.
     ("jdk identity", jdk_identity_suite, 1.5),
     # 19.0-20.2s over three unmutated runs with the moved-classpath-files class, warm daemon, on
-    # an Apple M1 Max; 18.9-19.3s without it.
-    ("unit", unit_suite, 19.5),
+    # an Apple M1 Max; 18.9-19.3s without it. The three JaCoCo-ceiling classes add about 2%
+    # (27.4-27.7s against 26.9-27.3s, three warm runs each, on a slower machine).
+    ("unit", unit_suite, 20),
     ("qualify", qualify_suite, 12),
     ("config cost", config_cost_suite, 1),
     # The shaded jars and both direct SBOMs, then the merge and its check; an estimate until a
