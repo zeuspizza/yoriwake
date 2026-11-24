@@ -447,6 +447,18 @@ public abstract class YoriwakeExtension {
     public abstract val stampedFiles: org.gradle.api.provider.ListProperty<String>
 
     /**
+     * Compile-time constants of the build's own classes that change on every build with no test
+     * outcome depending on them, such as Android's `BuildConfig` fields stamped with the build time
+     * or the commit: `<class>#<field>` each (`com.example.BuildConfig#BUILD_TIME`), a `static final`
+     * field or a Kotlin `const val`. When every constant whose value moved is declared, a class whose
+     * only change is the values of declared constants, copied into it by the compiler, is no change:
+     * the tests that executed it do not run for it. Every run that leaves one out names it, with how
+     * many tests executed what it left out. Masked digests are recorded at the next capture. Empty by
+     * default.
+     */
+    public abstract val stampedConstants: org.gradle.api.provider.ListProperty<String>
+
+    /**
      * Whether README files, Markdown files and whatever lies under the root project's `docs` and
      * `.github` directories are ignored as [pathIgnore] entries without being listed. A path one matches is also kept unless the map recorded every
      * test JVM's reads, and whenever the test task declares an input file of its own under the root.

@@ -267,6 +267,8 @@ internal class DigestRule(
     val recorded: Map<String, String>?,
     /** Whether the bytes to walk come from this run's compile tasks. */
     val bytesAreFresh: Boolean,
+    /** Which constants moved with no source change, and what `stampedConstants` leaves out; null asks nothing. */
+    val constants: StampedConstants.Rule? = null,
 )
 
 /**
@@ -288,11 +290,24 @@ internal data class DigestWidening(
     val recorded: Int = 0,
     /** See [DigestRule.bytesAreFresh]. */
     val bytesAreFresh: Boolean = true,
+    /** What [StampedConstants] found; [added] is already less the classes it left out. */
+    val stamped: StampedConstants.Found? = null,
 )
 
 /** The comparison every selecting call site runs. Top-level: a task action may not reach Project. */
-internal fun digestRule(mapDir: File, bytesAreFresh: Boolean): DigestRule =
-    DigestRule(CoverageDecoder.readClassDigests(mapDir), bytesAreFresh)
+internal fun digestRule(
+    mapDir: File,
+    bytesAreFresh: Boolean,
+    /** The build's `stampedConstants`. */
+    stampedConstants: List<String> = emptyList(),
+    /** Whether a class, by its name and `SourceFile`, was compiled from a tracked source file. */
+    tracked: (className: String, sourceFile: String) -> Boolean = { _, _ -> false },
+): DigestRule = DigestRule(
+    CoverageDecoder.readClassDigests(mapDir), bytesAreFresh,
+    StampedConstants.Rule(
+        CoverageDecoder.readConstantFields(mapDir), CoverageDecoder.readMaskedDigests(mapDir), stampedConstants, tracked,
+    ),
+)
 
 /** What comparing the build-produced files on the classpath against the map found. */
 internal sealed interface ClasspathFilesVerdict {
@@ -622,7 +637,12 @@ private fun widen(
     }
 
     // Computed before the refusals so a forced run still records what the comparison found.
-    val digest = digestRule?.let { rule -> compareDigests(rule, artifacts) }
+    val digest = digestRule?.let { rule -> compareDigests(rule, artifacts) }?.let { compared ->
+        val rule = digestRule.constants
+        if (rule == null || compared.silence != null) compared
+        else runCatching { StampedConstants.apply(rule, compared.added, asked, artifacts) }.getOrNull()
+            ?.let { compared.copy(added = it.added, stamped = it) } ?: compared
+    }
     val bytesUnknown = digest != null && digest.silence != null
     // Before every rule that reads the changed classes: a class whose line digest matches has the
     // same constants, annotations and inline bodies, and its inliners reach the bytes rule.

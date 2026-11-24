@@ -299,6 +299,7 @@ internal class Recording(
             dependencies = dependencies,
             narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),
             ignore = ignores[project.id] ?: Settings.pathIgnoreOf(project, session),
+            stampedConstants = Settings.stampedConstantsOf(project, session),
         )
         // A selecting or complement execution may leave out every test, which Surefire would otherwise fail on.
         if (kind == RunPlan.Kind.SELECT || kind == RunPlan.Kind.COMPLEMENT) child(configuration, "failIfNoTests").value = "false"
@@ -405,6 +406,7 @@ internal class Recording(
             fullRunPolicy = selection.fullRunPolicy,
             notWholeTask = run.notWholeTask.orEmpty(),
             unionFilter = run.unionFilter,
+            stampedConstants = Settings.stampedConstantsOf(project, session).isNotEmpty(),
         ).run()
     }
 

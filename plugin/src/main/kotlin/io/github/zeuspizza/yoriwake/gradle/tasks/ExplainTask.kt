@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
+import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
@@ -138,6 +139,11 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val stampedFiles: ListProperty<String>
+
+    /** The build's `stampedConstants`: constants stamped on every build, which no test outcome depends on. */
+    @get:Input
+    @get:Optional
+    abstract val stampedConstants: ListProperty<String>
 
     /** The paths the build's runtime classpath normalization ignores within a classpath entry. */
     @get:Input
@@ -487,6 +493,7 @@ internal abstract class ExplainTask : DefaultTask() {
                     normalization = RuntimeNormalization(
                         normalizedResources.getOrElse(emptyList()), normalizedAttributes.getOrElse(emptyList()),
                     ).takeUnless { it.resources.isEmpty() && it.attributes.isEmpty() }?.filters(),
+                    stampedConstants = stampedConstants.getOrElse(emptyList()),
                 ),
                 ExplainingHost(taskPath, properties) { logger.lifecycle(it) },
             )
@@ -646,6 +653,7 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.pathIgnore.set(pathIgnore)
                 task.pathIgnoreDefaults.set(pathIgnoreDefaults)
                 task.stampedFiles.set(stampedFiles)
+                project.extensions.findByType(YoriwakeExtension::class.java)?.let { task.stampedConstants.set(it.stampedConstants) }
                 (RuntimeNormalization.read(project) as? RuntimeNormalization.Companion.Read.Declared)?.normalization?.let {
                     task.normalizedResources.set(it.resources)
                     task.normalizedAttributes.set(it.attributes)

@@ -22,6 +22,7 @@ import io.github.zeuspizza.yoriwake.agent.select.PathGlob
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
+import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
@@ -199,6 +200,7 @@ internal fun TestTaskWiring.configureSelection(
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+    val stampedConstants = project.extensions.findByType(YoriwakeExtension::class.java)?.stampedConstants?.getOrElse(emptyList()).orEmpty()
     // As far as it is declared by now: a later declaration is missed, which leaves its change moving.
     val normalization = when (val read = RuntimeNormalization.read(project)) {
         is RuntimeNormalization.Companion.Read.Declared -> read.normalization
@@ -272,6 +274,7 @@ internal fun TestTaskWiring.configureSelection(
                 unionFilter = unionFilterOf(test),
                 stampedFiles = stampedFiles,
                 normalization = filters,
+                stampedConstants = stampedConstants,
                 // The task's own inputs, read only when a default entry left a path out.
                 taskInputs = { extraTaskInputs(rootDir, test.inputs.files.files, test.classpath.files + test.testClassesDirs.files) },
             ),

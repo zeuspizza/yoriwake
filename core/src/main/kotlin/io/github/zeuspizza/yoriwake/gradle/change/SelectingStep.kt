@@ -112,6 +112,8 @@ internal object SelectingStep {
         val stampedFiles: List<String> = emptyList(),
         /** The build's runtime classpath normalization (Gradle's); null when it declares none or it could not be read. */
         val normalization: ClasspathFiles.Normalization? = null,
+        /** The build's `stampedConstants`: compile-time constants stamped on every build, which no test outcome depends on. */
+        val stampedConstants: List<String> = emptyList(),
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -178,7 +180,7 @@ internal object SelectingStep {
         val widening = widenForInlining(
             scoped.change.classPrefixes, classpathFacts, CoverageDecoder.readConstants(mapDir),
             scoped.change.inlinableSourceChanged,
-            digestRule(mapDir, bytesAreFresh = true),
+            digestRule(mapDir, bytesAreFresh = true, inputs.stampedConstants, trackedSource(rootDir, inputs.sourceDirs, classpathFacts)),
             recordedAnnotations = CoverageDecoder.readAnnotationDigests(mapDir),
             ownTestClasses = beforeWidening.testClasses,
             inlinedAway = beforeWidening.inlinedAway,
@@ -193,6 +195,10 @@ internal object SelectingStep {
             .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }
         // Only now are the classes that inlined a changed source known, and the scan's answer with them.
         val established = establishAfterWidening(beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly)
+        widening.digest?.stamped?.let { found ->
+            StampedConstants.lines(found) { StampedConstants.testsExecuting(mapDir, it) }
+                .forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
+        }
         reportDigest(widening) { message -> host.lifecycle("[yoriwake] ${host.name}: $message") }
         reportLines(widening.lines).forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
         val lines = widening.lines
@@ -569,4 +575,19 @@ internal object SelectingStep {
         capture = true, fullRun = true, mapCurrent = false,
         reason = "observing selection, so this run captures the map as a recording run does.",
     )
+}
+
+/**
+ * Whether a class, by its binary name and the source file it names, was compiled from a file in one
+ * of [sourceDirs] outside every build directory: a file someone writes, not one a build generates.
+ */
+internal fun trackedSource(rootDir: File, sourceDirs: List<String>, facts: ClasspathView): (String, String) -> Boolean {
+    val buildDirs = facts.buildDirs.values.map { File(it).let { dir -> if (dir.isAbsolute) dir else File(rootDir, it) }.absoluteFile }
+    val written = sourceDirs.map { File(rootDir, it).absoluteFile }.filter { dir ->
+        buildDirs.none { build -> dir == build || dir.path.startsWith(build.path + File.separator) }
+    }
+    return { name, sourceFile ->
+        val packageDir = name.substringBeforeLast('.', "").replace('.', '/')
+        written.any { File(it, if (packageDir.isEmpty()) sourceFile else "$packageDir/$sourceFile").isFile }
+    }
 }

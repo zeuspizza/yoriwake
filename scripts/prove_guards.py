@@ -284,6 +284,8 @@ CONFIG_COST = "bench/config_cost.py"
 TASK_ARTIFACTS = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/TaskArtifacts.kt"
 DIGEST_VISITOR = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/DigestVisitor.kt"
 RECORDABILITY = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/bytecode/Recordability.kt"
+STAMPED_CONSTANTS = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/StampedConstants.kt"
+RUNTIME_NORMALIZATION = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/RuntimeNormalization.kt"
 ABSENCE_EVIDENCE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/AbsenceEvidence.kt"
 PY_ISOLATION = "bench/isolation.py"
 TARGET_ORDERING = "bench/target_ordering.py"
@@ -580,6 +582,9 @@ def unit_suite():
          "--tests", "*ClasspathFilesTest*",
          # pathIgnore's grammar, checked against Gradle's own, and what it may never leave out.
          "--tests", "*PathIgnoreTest*",
+         # What stampedConstants and Gradle's runtime classpath normalization leave out, and what
+         # the last look compares again before the test JVM starts.
+         "--tests", "*StampedConstantsTest*", "--tests", "*RuntimeNormalizationTest*", "--tests", "*LastLookTest*",
          # Which test classes a budgeted recording runs alone, and how many the budget allows.
          "--tests", "*IsolatedPickTest*",
          "--rerun"])
@@ -4862,6 +4867,87 @@ MUTATIONS = [
      '            return Ignore(entries("pathIgnore"), defaults, entries("stampedFiles"))',
      '            return Ignore(entries("pathIgnore"), defaults)',
      maven_suite, "a resource stamped on every build that stampedFiles declares runs no test that reads it"),
+    # Gradle's runtime classpath normalization: what it ignores is no move, under stampedFiles'
+    # conditions; a manifest compares attribute by attribute against a map that records them.
+    ("the build's runtime classpath normalization leaves out nothing", SELECTION,
+     "                ClasspathFiles.Moved(counted - declared), recorded, walk.digests, normalization, facts.classpathFiles(), facts.rootDir,",
+     "                ClasspathFiles.Moved(counted - declared), recorded, walk.digests, null, facts.classpathFiles(), facts.rootDir,",
+     functional_suite, "a generated resource the build's runtime classpath normalization ignores runs no test that reads it"),
+    ("the normalization leaves out a file that appeared, is gone, or the class loader keeps", CLASSPATH_FILES,
+     "            Moved(mapOf(path to how)).traceable(rootDir) != null && (",
+     "            true && (",
+     unit_suite, "a changed file the normalization ignores within its classpath entry is no move, and every other move stays"),
+    ("the normalization ignores a path no classpath directory holds, or one deeper than it names", CLASSPATH_FILES,
+     "        return within.isNotEmpty() && within.all(normalization::ignoresResource)",
+     "        return true",
+     unit_suite, "a changed file the normalization ignores within its classpath entry is no move, and every other move stays"),
+    ("a manifest whose unignored attribute changed is left out", CLASSPATH_FILES,
+     "            .all { normalization.ignoresAttribute(it.substringAfter('/')) }",
+     "            .all { true }",
+     unit_suite, "a jar manifest moves unless only attributes the normalization ignores changed, and an older map's still moves"),
+    ("a manifest is left out against a map that records no attributes", CLASSPATH_FILES,
+     "        val then = recorded[manifest + ATTRIBUTES_SUFFIX]?.takeIf { it != UNREADABLE }?.let(::parseAttributes) ?: return false",
+     "        val then = recorded[manifest + ATTRIBUTES_SUFFIX]?.takeIf { it != UNREADABLE }?.let(::parseAttributes) ?: return true",
+     unit_suite, "a jar manifest moves unless only attributes the normalization ignores changed, and an older map's still moves"),
+    ("a manifest's attribute row is compared as a file", CLASSPATH_FILES,
+     "            if (path.endsWith(ATTRIBUTES_SUFFIX)) continue",
+     "            if (false) continue",
+     unit_suite, "a jar manifest moves unless only attributes the normalization ignores changed, and an older map's still moves"),
+    ("the last look ignores the normalization", LAST_LOOK,
+     "                            moved.files - ClasspathFiles.normalized(moved, compared.digests, now.digests, filters, classpath, compared.rootDir)",
+     "                            moved.files",
+     unit_suite, "a file the normalization ignores, rewritten since it was compared, does not force"),
+    ("Gradle's runtime classpath normalization is read as none", RUNTIME_NORMALIZATION,
+     '            val read = RuntimeNormalization(declared("resourceFilter"), declared("manifestAttributeResourceFilter"))',
+     "            val read = RuntimeNormalization(emptyList(), emptyList())",
+     unit_suite, "a build's runtime classpath normalization is read without fixing it, and matched as Gradle matches it"),
+    # stampedConstants: constants that moved with no source change are named; a class whose only
+    # change is declared constants' values is left out, only when every constant that moved is
+    # declared, and only for a holder or a class compiled from a tracked source that did not change.
+    ("the run names no constant stamped on every build", STAMPED_CONSTANTS,
+     "        if (found.moved.isNotEmpty()) {",
+     "        if (false) {",
+     unit_suite, "a stamped constant is named, and a class whose only change is a declared value is left out"),
+    ("stampedConstants leaves out nothing", SELECTION,
+     "        else runCatching { StampedConstants.apply(rule, compared.added, asked, artifacts) }.getOrNull()",
+     "        else null",
+     functional_suite, "a constant stampedConstants declares runs no test that executed its copies, and the run names it"),
+    ("a capture under stampedConstants records no masked digests", DECODE_RUN,
+     "                maskedDigests = if (!stampedConstants || constantFields == null) null else runCatching {",
+     "                maskedDigests = if (true) null else runCatching {",
+     functional_suite, "a constant stampedConstants declares runs no test that executed its copies, and the run names it"),
+    ("masking replaces a literal that is not a constant's value", RECORDABILITY,
+     "        fun fieldOf(value: Any?): String? = value?.let(byValue::get)",
+     "        fun fieldOf(value: Any?): String? = value?.let { byValue[it] ?: byValue.values.firstOrNull() }",
+     unit_suite, "a masked digest leaves out constant values and their inlined copies, and nothing else"),
+    ("a value two constants share is masked as one of them", RECORDABILITY,
+     "            .filterValues { it.size == 1 }",
+     "            .filterValues { it.isNotEmpty() }.mapValues { listOf(it.value.first()) }",
+     unit_suite, "a masked digest leaves out constant values and their inlined copies, and nothing else"),
+    ("masking applies though an undeclared constant moved", STAMPED_CONSTANTS,
+     '            undeclared.isNotEmpty() -> "${undeclared.take(NAMED).joinToString()} moved too and stampedConstants does not declare " +',
+     '            false -> "${undeclared.take(NAMED).joinToString()} moved too and stampedConstants does not declare " +',
+     unit_suite, "nothing is left out when an undeclared constant moved too, or a class cannot qualify"),
+    ("masking applies to a class whose source changed", STAMPED_CONSTANTS,
+     "        val masked = unchangedSource.filterTo(sortedSetOf()) { name ->",
+     "        val masked = added.filterTo(sortedSetOf()) { name ->",
+     unit_suite, "nothing is left out when an undeclared constant moved too, or a class cannot qualify"),
+    ("masking applies to a generated class that holds no declared constant", STAMPED_CONSTANTS,
+     "            val eligible = name in holders || Recordability.sourceFile(b)?.let { rule.tracked(name, it) } == true",
+     "            val eligible = true",
+     unit_suite, "nothing is left out when an undeclared constant moved too, or a class cannot qualify"),
+    ("a constant missing from the map's table reads as unmoved", STAMPED_CONSTANTS,
+     "            val moved = (then.keys + now.keys).filter { then[it] != now[it] }.sorted()",
+     "            val moved = then.keys.filter { then[it] != now[it] }.sorted()",
+     unit_suite, "nothing is left out when an undeclared constant moved too, or a class cannot qualify"),
+    ("an entry naming no constant field is honoured", STAMPED_CONSTANTS,
+     "            all?.get(owner)?.any { it.name == entry.substringAfter('#', \"\") } == true",
+     "            true",
+     unit_suite, "a stamped constant is named, and a class whose only change is a declared value is left out"),
+    ("a map captured without stampedConstants is masked", STAMPED_CONSTANTS,
+     '            rule.recordedMasked == null -> "the map was not captured under stampedConstants; a capture records what it needs"',
+     '            false -> "the map was not captured under stampedConstants; a capture records what it needs"',
+     unit_suite, "nothing is left out when an undeclared constant moved too, or a class cannot qualify"),
     ("the Maven explanation applies no pathIgnore", MAVEN_EXPLAIN,
      "                ignore = Settings.pathIgnoreOf(project, session),",
      "",
