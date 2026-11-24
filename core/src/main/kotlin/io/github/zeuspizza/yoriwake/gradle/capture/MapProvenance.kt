@@ -43,6 +43,8 @@ internal object MapProvenance {
         AgentContract.MISS_TOUCH_FILE,
         AgentContract.DEBUG_TOUCH_FILE,
         CoverageDecoder.LINE_DIGESTS_FILE,
+        CoverageDecoder.CONSTANT_FIELDS_FILE,
+        CoverageDecoder.MASKED_DIGESTS_FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.DIRS_FILE,
         CoverageDecoder.JACOCO_VERSION_FILE,

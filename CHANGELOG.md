@@ -19,6 +19,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 - A test JVM newer than Gradle's default JaCoCo supports gets the plugin's bundled JaCoCo agent, instead of running every test. Map: kept; one an older JaCoCo recorded runs every test until the next recording, on Maven too.
 - `stampedFiles`, on Gradle and Maven: build output stamped on every build (a manifest, a build-info file) that no test depends on is no change, named on every run. Map: left alone.
+- `stampedConstants`: a class whose only change is a declared constant's value (`BuildConfig`) is no change. Map: left alone.
+- What Gradle's runtime classpath `normalization` ignores is no change to a selecting run. Map: left alone.
 - Maven reads `<pathIgnore>`, with Gradle's defaults: a change to only README, Markdown, `docs/` or `.github/` runs nothing extra. Map: left alone.
 - Benchmarks: a history replay counts the tests run and missed over consecutive real commits (`history.yml`). Map: left alone.
 - `-Pyoriwake.isolatedCaptureBudget=<n>x` records the test classes the map ranks widest each in its own JVM, within n times a shared recording. Map: left alone; narrower from the next budgeted recording.

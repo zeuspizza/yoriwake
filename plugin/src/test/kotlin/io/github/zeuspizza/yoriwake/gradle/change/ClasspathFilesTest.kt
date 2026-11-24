@@ -32,8 +32,9 @@ class ClasspathFilesTest {
 
     private fun found(walk: ClasspathFiles.Walk) = assertIs<ClasspathFiles.Walk.Found>(walk).digests
 
-    /** [found] without each jar manifest's loaded-attribute row, for tests about which files are walked. */
-    private fun files(walk: ClasspathFiles.Walk) = found(walk).filterKeys { !it.endsWith(ClasspathFiles.EXPOSED_SUFFIX) }
+    /** [found] without each jar manifest's loaded-attribute and attribute rows, for tests about which files are walked. */
+    private fun files(walk: ClasspathFiles.Walk) =
+        found(walk).filterKeys { !it.endsWith(ClasspathFiles.EXPOSED_SUFFIX) && !it.endsWith(ClasspathFiles.ATTRIBUTES_SUFFIX) }
 
     @Test
     fun `a resource directory and an own jar give a row per non-class file, the jar per entry`(@TempDir root: File) {
@@ -55,6 +56,7 @@ class ClasspathFilesTest {
                 "app/build/resources/test/nested/data.json",
                 "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF",
                 "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.EXPOSED_SUFFIX}",
+                "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF${ClasspathFiles.ATTRIBUTES_SUFFIX}",
             ),
             digests.keys,
         )
@@ -1544,5 +1546,78 @@ class ClasspathFilesTest {
         for (key in keys.filter { it.read != ClasspathFiles.Read.BUILT }) assertTrue(key.key in rows, "${key.key} in $rows")
         assertEquals(listOf("app/build/classes", "repo/g/d/1/d-1.jar"), keys.filter { it.read == ClasspathFiles.Read.BUILT }.map { it.key })
         assertTrue(rows.keys.any { it.startsWith("repo/g/d/1/d-1.jar!/") }, rows.toString())
+    }
+
+    /** Ignores what [paths] and [attributes] name exactly, as a build's normalization would declare them. */
+    private fun normalization(paths: Set<String> = emptySet(), attributes: Set<String> = emptySet()) =
+        object : ClasspathFiles.Normalization {
+            override fun ignoresResource(path: String) = path in paths
+
+            override fun ignoresAttribute(name: String) = name in attributes
+        }
+
+    @Test
+    fun `a changed file the normalization ignores within its classpath entry is no move, and every other move stays`(@TempDir root: File) {
+        val resources = File(root, "app/build/resources/main")
+        file(root, "app/build/resources/main/org/build-receipt.properties", "time=2\n")
+        file(root, "app/build/resources/main/deeper/org/build-receipt.properties", "time=2\n")
+        val appJar = jar(File(root, "app/build/libs/app.jar"), 0L, "org/build-receipt.properties" to "time=2\n")
+        val inJar = "app/build/libs/app.jar!/org/build-receipt.properties"
+        val keys = listOf(
+            "app/build/resources/main/org/build-receipt.properties", "app/build/resources/main/deeper/org/build-receipt.properties", inJar,
+        )
+        val moved = ClasspathFiles.compare(
+            recorded = keys.associateWith { "1" } + ("app/build/resources/main/gone.properties" to "1"),
+            current = keys.associateWith { "2" },
+        )
+        val ignoring = normalization(paths = setOf("org/build-receipt.properties", "gone.properties"))
+
+        // Within the directory on the classpath, not anywhere beneath it; a file that is gone still moves.
+        assertEquals(
+            setOf("app/build/resources/main/org/build-receipt.properties", inJar),
+            ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, listOf(resources, appJar), root),
+        )
+        // A file no classpath entry holds is not taken as ignored, an entry of a jar only a manifest
+        // names included, and no normalization ignores nothing.
+        assertEquals(setOf(inJar), ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, listOf(appJar), root))
+        assertEquals(emptySet(), ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), ignoring, emptyList(), root))
+        assertEquals(emptySet(), ClasspathFiles.normalized(moved, emptyMap(), emptyMap(), null, listOf(resources), root))
+    }
+
+    @Test
+    fun `a jar manifest moves unless only attributes the normalization ignores changed, and an older map's still moves`(@TempDir root: File) {
+        val jar = File(root, "app/build/libs/app.jar")
+        fun manifest(vararg attributes: String) =
+            "Manifest-Version: 1.0\n" + attributes.joinToString("") { "$it\n" } + "\nName: dev/sample/\nSealed: false\n\n"
+        fun walk(vararg attributes: String): Map<String, String> {
+            jar(jar, 0L, "META-INF/MANIFEST.MF" to manifest(*attributes), "dev/sample/a.txt" to "a")
+            return found(ClasspathFiles.walk(listOf(jar), emptyList(), root))
+        }
+        val key = "app/build/libs/app.jar!/META-INF/MANIFEST.MF"
+        val ignoring = normalization(attributes = setOf("bnd-lastmodified"))
+        val then = walk("Bnd-LastModified: 1", "Built-By: a")
+        assertTrue(key + ClasspathFiles.ATTRIBUTES_SUFFIX in then, then.toString())
+
+        val stamped = walk("Bnd-LastModified: 2", "Built-By: a")
+        val moved = ClasspathFiles.compare(then, stamped)
+        assertEquals(setOf(key), moved.files.keys)
+        assertEquals(setOf(key), ClasspathFiles.normalized(moved, then, stamped, ignoring, listOf(jar), root))
+        // Added or removed, an ignored attribute is still only that attribute.
+        val added = walk("Bnd-LastModified: 2", "Built-By: a", "Bnd-Extra: 1")
+        assertEquals(emptySet(), ClasspathFiles.normalized(ClasspathFiles.compare(then, added), then, added, ignoring, listOf(jar), root))
+        assertEquals(
+            setOf(key),
+            ClasspathFiles.normalized(ClasspathFiles.compare(then, added), then, added, normalization(attributes = setOf("bnd-lastmodified", "bnd-extra")), listOf(jar), root),
+        )
+
+        val built = walk("Bnd-LastModified: 2", "Built-By: b")
+        assertEquals(emptySet(), ClasspathFiles.normalized(ClasspathFiles.compare(then, built), then, built, ignoring, listOf(jar), root))
+
+        // A map recorded before the attribute rows has none to compare with, and reads none as appeared.
+        val older = then.filterKeys { !it.endsWith(ClasspathFiles.ATTRIBUTES_SUFFIX) }
+        val sinceOlder = ClasspathFiles.compare(older, stamped)
+        assertEquals(setOf(key), sinceOlder.files.keys)
+        assertEquals(emptySet(), ClasspathFiles.normalized(sinceOlder, older, stamped, ignoring, listOf(jar), root))
+        assertEquals(emptySet(), ClasspathFiles.compare(stamped, older).files.keys - key)
     }
 }

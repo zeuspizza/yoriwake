@@ -22,6 +22,7 @@ import io.github.zeuspizza.yoriwake.agent.select.PathGlob
 import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
+import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CaptureDecision
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
@@ -199,6 +200,19 @@ internal fun TestTaskWiring.configureSelection(
     // Held from configuration time: a task action may not reach Task.extensions under the
     // configuration cache.
     val jacoco = test.extensions.findByName("jacoco") as? JacocoTaskExtension
+    val stampedConstants = project.extensions.findByType(YoriwakeExtension::class.java)?.stampedConstants?.getOrElse(emptyList()).orEmpty()
+    // As far as it is declared by now: a later declaration is missed, which leaves its change moving.
+    val normalization = when (val read = RuntimeNormalization.read(project)) {
+        is RuntimeNormalization.Read.Declared -> read.normalization
+        RuntimeNormalization.Read.None -> null
+        is RuntimeNormalization.Read.Unreadable -> {
+            test.logger.info(
+                "[yoriwake] ${test.path}: the build's runtime classpath normalization could not be read (${read.why}); " +
+                    "a change it ignores still moves"
+            )
+            null
+        }
+    }
     // Written by the action below; a file it could not write reads as a refusal in the test JVM.
     val changeSetFile = File(mapDir, AgentContract.CHANGE_SET_FILE)
     test.systemProperty(CHANGE_SET_FILE_PROPERTY, changeSetFile.absolutePath)
@@ -245,6 +259,13 @@ internal fun TestTaskWiring.configureSelection(
             return@doFirst
         }
         runCatching { LastLook.handOver(mapDir).delete() }
+        val filters = normalization?.filters()
+        if (normalization != null && filters == null) {
+            test.logger.lifecycle(
+                "[yoriwake] ${test.path}: the build's runtime classpath normalization could not be applied, as this " +
+                    "Gradle's internals differ from what yoriwake reads; a change it ignores still moves"
+            )
+        }
         SelectingStep.run(
             SelectingStep.Inputs(
                 mapDir, rootDir, paths, against, widened.origin, sourceDirs, classpathFacts,
@@ -252,12 +273,14 @@ internal fun TestTaskWiring.configureSelection(
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = stamp, moved = moved,
                 unionFilter = unionFilterOf(test),
                 stampedFiles = stampedFiles,
+                normalization = filters,
+                stampedConstants = stampedConstants,
                 // The task's own inputs, read only when a default entry left a path out.
                 taskInputs = { extraTaskInputs(rootDir, test.inputs.files.files, test.classpath.files + test.testClassesDirs.files) },
             ),
             GradleSelectingHost(
                 test, jacoco, mapDir, rootDir, classpathFacts.buildDirs.values, classpathFacts.dependencyHomes,
-                classpathFacts::projectArtifacts, stampedFiles,
+                classpathFacts::projectArtifacts, stampedFiles, normalization.takeIf { filters != null },
             ),
         )
     }
@@ -848,6 +871,7 @@ private class GradleSelectingHost(
     private val homes: Map<String, File> = emptyMap(),
     private val projectArtifacts: () -> Set<File> = { emptySet() },
     private val stampedFiles: List<String> = emptyList(),
+    private val normalization: RuntimeNormalization? = null,
 ) : SelectingStep.Host {
     override val name: String get() = test.path
 
@@ -866,7 +890,7 @@ private class GradleSelectingHost(
         runCatching {
             LastLook.write(
                 mapDir, requireNotNull(rootDir), buildDirs, classes = false, compared, homes, projectArtifacts = projectArtifacts(),
-                stamped = stampedFiles,
+                stamped = stampedFiles, normalization = normalization,
             )
         }.isSuccess
 

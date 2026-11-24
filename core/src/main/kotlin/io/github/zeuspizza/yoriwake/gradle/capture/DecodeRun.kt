@@ -80,6 +80,8 @@ internal class DecodeRun(
     private val notWholeTask: String = "",
     /** The digest of the build-script filter the run ran under; null when it ran unfiltered. */
     private val unionFilter: String? = null,
+    /** Whether the build declares `stampedConstants`, which a capture then records masked digests for. */
+    private val stampedConstants: Boolean = false,
 ) {
 
     /** The host's console, at its three levels. */
@@ -338,6 +340,8 @@ internal class DecodeRun(
                 )
             }
         }
+        // Only a capture that dates the map writes them; read once for both tables.
+        val constantFields = if (!datesTheMap) null else runCatching { artifacts?.constantFields() }.getOrNull()
         val outcome = runCatching {
             CoverageDecoder.decode(
                 mapDir,
@@ -404,6 +408,15 @@ internal class DecodeRun(
                             null
                         }
                     }
+                }.getOrNull(),
+                // Each constant's value, so a later run can name the constants that moved with no source change.
+                constantFields = constantFields?.flatMap { (owner, declared) ->
+                    declared.map { "$owner#${it.name}:${it.descriptor}" to it.valueDigest }
+                }?.toMap(),
+                // What each class digests to with the values of constants left out, for stampedConstants.
+                maskedDigests = if (!stampedConstants || constantFields == null) null else runCatching {
+                    val mask = Recordability.ConstantMask(constantFields)
+                    (artifacts?.classDigests { Recordability.maskedDigest(it, mask) } as? DigestScan.Found)?.digests
                 }.getOrNull(),
                 // What the test JVM saw on its classpath, walked before it started; null records none,
                 // and the next selecting run forces until a capture does.

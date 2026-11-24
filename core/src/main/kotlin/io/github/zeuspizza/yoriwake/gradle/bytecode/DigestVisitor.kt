@@ -31,11 +31,15 @@ import org.objectweb.asm.tree.TableSwitchInsnNode
  * With [lines], the line digest: the class digest's content plus every local variable, minus the
  * SMAP, Kotlin's copy of it, `DebugMetadata`'s line elements, and every label no instruction,
  * handler or local variable range refers to. An attribute ASM does not know refuses the class.
+ *
+ * With [mask], the masked class digest (`Recordability.maskedDigest`): every field's
+ * `ConstantValue`, and each `ldc` of a value [mask] names, feed a placeholder instead of the value.
  */
 internal class DigestVisitor(
     private val sink: MessageDigest,
     /** Whether this is the line digest. */
     private val lines: Boolean = false,
+    private val mask: Recordability.ConstantMask? = null,
 ) : ClassVisitor(Opcodes.ASM9) {
 
     private val labels = HashMap<Label, Int>()
@@ -168,7 +172,7 @@ internal class DigestVisitor(
         signature: String?,
         value: Any?,
     ): FieldVisitor {
-        feed("field", access, name, descriptor, signature, value)
+        feed("field", access, name, descriptor, signature, if (mask != null && value != null) Masked("constant") else value)
         return Field()
     }
 
@@ -345,7 +349,7 @@ internal class DigestVisitor(
             feed("label", id(label))
         }
 
-        override fun visitLdcInsn(value: Any?) = feed("ldc", value)
+        override fun visitLdcInsn(value: Any?) = feed("ldc", mask?.fieldOf(value)?.let(::Masked) ?: value)
 
         override fun visitIincInsn(varIndex: Int, increment: Int) = feed("iinc", varIndex, increment)
 
@@ -422,6 +426,9 @@ internal class DigestVisitor(
             return Values()
         }
     }
+
+    /** What a masked value feeds: no literal renders as this type's name. */
+    private data class Masked(val field: String)
 
     /** Thrown by the line digest at an attribute ASM cannot show it. */
     class UnknownAttribute(type: String?) : RuntimeException("it carries an attribute ASM does not know: $type")

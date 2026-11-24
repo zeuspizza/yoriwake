@@ -789,6 +789,42 @@ internal class TaskArtifacts(
     }
 
     /**
+     * `className -> its constant fields` for own classes that declare one, walked as
+     * [constantDigests] walks them. Null when the walk could not finish, or a class could not be read.
+     */
+    fun constantFields(): Map<String, List<Recordability.ConstantField>>? {
+        val roots = ownRoots()
+        if (roots.isEmpty() && ownJars.isEmpty()) return null
+        val fields = mutableMapOf<String, List<Recordability.ConstantField>>()
+        fun add(name: String, bytes: ByteArray): Boolean {
+            val declared = Recordability.constantFields(bytes) ?: return false
+            if (declared.isNotEmpty()) fields[name] = declared
+            return true
+        }
+        val refusal = walkOwnClasses(roots) { root, entry ->
+            val bytes = runCatching { entry.readBytes() }.getOrNull()
+                ?: return@walkOwnClasses "${entry.absolutePath} could not be read"
+            if (add(classNameOf(root, entry), bytes)) null else "${entry.absolutePath} could not be read as a class"
+        }
+        if (refusal != null) return null
+        for (jar in ownJars) {
+            val ok = runCatching {
+                ZipFile(jar).use { zip ->
+                    for (entry in zip.entries()) {
+                        if (entry.isDirectory || !entry.name.endsWith(".class")) continue
+                        if (entry.size > MAX_RESOURCE_BYTES) return null
+                        val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                        if (!add(entry.name.removeSuffix(".class").replace('/', '.'), bytes)) return null
+                    }
+                }
+                true
+            }.getOrDefault(false)
+            if (!ok) return null
+        }
+        return fields
+    }
+
+    /**
      * `className -> class digest` for every own class. Sees constants and `inline` bodies copied
      * into a consumer whose source `git diff` shows unchanged. Complete or refused, never partial:
      * a class missing from a partial map would read as a matching digest.

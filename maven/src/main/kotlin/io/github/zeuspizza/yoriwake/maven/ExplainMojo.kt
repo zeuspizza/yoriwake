@@ -110,6 +110,7 @@ class ExplainMojo : AbstractMojo() {
                 narrowLineOnlyChanges = Settings.narrowLineOnlyChangesOf(project, session),
                 unionFilter = unionFilter,
                 ignore = Settings.pathIgnoreOf(project, session),
+                stampedConstants = Settings.stampedConstantsOf(project, session),
             )
             val refused = properties.getProperty(AgentContract.REFUSED_PROPERTY)
             val done = worked

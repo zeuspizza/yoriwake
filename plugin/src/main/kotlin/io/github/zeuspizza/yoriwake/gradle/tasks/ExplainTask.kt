@@ -6,6 +6,7 @@ import io.github.zeuspizza.yoriwake.agent.select.Strictness
 import io.github.zeuspizza.yoriwake.gradle.RunPlan
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.report.Audit
+import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin
 import io.github.zeuspizza.yoriwake.gradle.YoriwakePlugin.Companion.noBaseFound
 import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
@@ -43,6 +44,7 @@ import io.github.zeuspizza.yoriwake.gradle.report.selectionShare
 import io.github.zeuspizza.yoriwake.gradle.report.writeExplanation
 import io.github.zeuspizza.yoriwake.gradle.report.writeUnanswered
 import io.github.zeuspizza.yoriwake.gradle.wiring.DevelocityDetection
+import io.github.zeuspizza.yoriwake.gradle.wiring.RuntimeNormalization
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestPatterns
 import io.github.zeuspizza.yoriwake.gradle.wiring.buildLogicDirs
@@ -137,6 +139,21 @@ internal abstract class ExplainTask : DefaultTask() {
     @get:Input
     @get:Optional
     abstract val stampedFiles: ListProperty<String>
+
+    /** The build's `stampedConstants`: constants stamped on every build, which no test outcome depends on. */
+    @get:Input
+    @get:Optional
+    abstract val stampedConstants: ListProperty<String>
+
+    /** The paths the build's runtime classpath normalization ignores within a classpath entry. */
+    @get:Input
+    @get:Optional
+    abstract val normalizedResources: ListProperty<String>
+
+    /** The manifest attributes the build's runtime classpath normalization ignores. */
+    @get:Input
+    @get:Optional
+    abstract val normalizedAttributes: ListProperty<String>
 
     /**
      * The test task's input files, and its classpath and test classes beside them: what the run's
@@ -473,6 +490,10 @@ internal abstract class ExplainTask : DefaultTask() {
                     moved = driftOnly.toSet(),
                     unionFilter = unionFilter.orNull,
                     stampedFiles = stampedFiles.getOrElse(emptyList()),
+                    normalization = RuntimeNormalization(
+                        normalizedResources.getOrElse(emptyList()), normalizedAttributes.getOrElse(emptyList()),
+                    ).takeUnless { it.resources.isEmpty() && it.attributes.isEmpty() }?.filters(),
+                    stampedConstants = stampedConstants.getOrElse(emptyList()),
                 ),
                 ExplainingHost(taskPath, properties) { logger.lifecycle(it) },
             )
@@ -632,6 +653,11 @@ internal abstract class ExplainTask : DefaultTask() {
                 task.pathIgnore.set(pathIgnore)
                 task.pathIgnoreDefaults.set(pathIgnoreDefaults)
                 task.stampedFiles.set(stampedFiles)
+                project.extensions.findByType(YoriwakeExtension::class.java)?.let { task.stampedConstants.set(it.stampedConstants) }
+                (RuntimeNormalization.read(project) as? RuntimeNormalization.Read.Declared)?.normalization?.let {
+                    task.normalizedResources.set(it.resources)
+                    task.normalizedAttributes.set(it.attributes)
+                }
                 task.declared = declarations.filter { it.task == testName }.map { it.resolved to it.glob }
                 task.testInputs = test.inputs.files
                 task.testOwned = test.classpath + test.testClassesDirs
