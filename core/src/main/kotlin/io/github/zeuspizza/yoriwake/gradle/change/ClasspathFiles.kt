@@ -38,6 +38,13 @@ internal object ClasspathFiles {
     const val EXPOSED_SUFFIX = "#loader-exposed"
 
     /**
+     * Appended to a jar manifest's path for a digest of each attribute of each section
+     * ([attributes]), which a build's runtime classpath normalization compares attribute by
+     * attribute ([normalized]). A detail of the manifest's row, never a file: [compare] leaves it out.
+     */
+    const val ATTRIBUTES_SUFFIX = "#attributes"
+
+    /**
      * The manifest attributes the JDK's class loader acts on or hands to code: the class path and
      * multi-release flag it opens the jar with, the module name it gives the jar on the module
      * path, and what a package defined from the jar reports.
@@ -139,6 +146,7 @@ internal object ClasspathFiles {
                                     val bytes = runCatching { zip.getInputStream(zipped).use { it.readBytes() } }.getOrNull()
                                     digests[key] = bytes?.let { sha256(ByteArrayInputStream(it)) } ?: UNREADABLE
                                     digests[key + EXPOSED_SUFFIX] = bytes?.let(::exposed) ?: UNREADABLE
+                                    digests[key + ATTRIBUTES_SUFFIX] = bytes?.let(::attributes) ?: UNREADABLE
                                     continue
                                 }
                                 digests[key] = runCatching {
@@ -555,12 +563,78 @@ internal object ClasspathFiles {
     }
 
     /**
+     * What a build's runtime classpath normalization (Gradle's `normalization { runtimeClasspath }`)
+     * leaves out of its own up-to-date check of the test task's classpath.
+     */
+    interface Normalization {
+        /** Whether a file at [path], relative to the classpath entry holding it, is left out whole. */
+        fun ignoresResource(path: String): Boolean
+
+        /** Whether a jar manifest's attribute [name] is left out. */
+        fun ignoresAttribute(name: String): Boolean
+    }
+
+    /**
+     * The files of [moved] a build's [normalization] leaves out, as its own up-to-date check of the
+     * test task would: a file whose path within each classpath entry holding it is ignored, and a
+     * jar manifest whose attributes, less the ignored ones, are those of [recorded] (an older map
+     * records none, so its manifests still move). Only a non-class file beneath the root whose content
+     * changed qualifies ([Moved.traceable]); what the class loader takes from a manifest still moves.
+     * [classpath] names the classpath entries, whose directories are the roots a path is taken
+     * within.
+     */
+    fun normalized(
+        moved: Moved,
+        recorded: Map<String, String>,
+        current: Map<String, String>,
+        normalization: Normalization?,
+        classpath: Collection<File>,
+        rootDir: File,
+    ): Set<String> {
+        if (normalization == null) return emptySet()
+        val dirs = classpath.map(File::getAbsoluteFile).filter(File::isDirectory).map { pathOf(rootDir, it) + "/" }
+        return moved.files.filter { (path, how) ->
+            Moved(mapOf(path to how)).traceable(rootDir) != null && (
+                ignoredWhole(path, dirs, normalization) ||
+                    (path.endsWith("!/" + JarFile.MANIFEST_NAME) && sameAttributes(path, recorded, current, normalization))
+                )
+        }.keys
+    }
+
+    /** Whether [path] is ignored within every classpath entry holding it; one no entry holds is not. */
+    private fun ignoredWhole(path: String, dirs: List<String>, normalization: Normalization): Boolean {
+        val bang = path.indexOf("!/")
+        if (bang >= 0) return normalization.ignoresResource(path.substring(bang + 2))
+        val within = dirs.filter { path.startsWith(it) }.map { path.removePrefix(it) }
+        return within.isNotEmpty() && within.all(normalization::ignoresResource)
+    }
+
+    /** Whether every attribute of [manifest] that differs from [recorded]'s, added or removed ones included, is ignored. */
+    private fun sameAttributes(
+        manifest: String,
+        recorded: Map<String, String>,
+        current: Map<String, String>,
+        normalization: Normalization,
+    ): Boolean {
+        val then = recorded[manifest + ATTRIBUTES_SUFFIX]?.takeIf { it != UNREADABLE }?.let(::parseAttributes) ?: return false
+        val now = current[manifest + ATTRIBUTES_SUFFIX]?.takeIf { it != UNREADABLE }?.let(::parseAttributes) ?: return false
+        return (then.keys + now.keys).filter { then[it] != now[it] }
+            .all { normalization.ignoresAttribute(it.substringAfter('/')) }
+    }
+
+    private fun parseAttributes(row: String): Map<String, String> =
+        if (row.isEmpty()) emptyMap()
+        else row.split(';').associate { it.substringBeforeLast('=') to it.substringAfterLast('=') }
+
+    /**
      * Every file whose digest differs from [recorded], that appeared, or that is gone. A file that
-     * could not be read at either end counts as moved.
+     * could not be read at either end counts as moved. A manifest's [ATTRIBUTES_SUFFIX] row is no
+     * file: a map recorded before it existed would otherwise read every manifest's as appeared.
      */
     fun compare(recorded: Map<String, String>, current: Map<String, String>): Moved {
         val moved = sortedMapOf<String, String>()
         for ((path, now) in current) {
+            if (path.endsWith(ATTRIBUTES_SUFFIX)) continue
             val then = recorded[path]
             moved[path] = when {
                 then == null -> "appeared"
@@ -570,7 +644,7 @@ internal object ClasspathFiles {
             }
         }
         for (path in recorded.keys) {
-            if (path !in current) moved[path] = "gone"
+            if (path !in current && !path.endsWith(ATTRIBUTES_SUFFIX)) moved[path] = "gone"
         }
         return Moved(moved)
     }
@@ -591,6 +665,23 @@ internal object ClasspathFiles {
             }
         }
         sha256(ByteArrayInputStream(text.toByteArray()))
+    }.getOrDefault(UNREADABLE)
+
+    /**
+     * Each attribute of each section of a manifest, as `<section>/<name>=<digest>` joined by `;`
+     * in a fixed order: the main section as an empty section, a per-entry section by a digest of
+     * its name, the name lower-cased as the JDK compares it. [UNREADABLE] when it does not parse.
+     */
+    private fun attributes(bytes: ByteArray): String = runCatching {
+        val manifest = Manifest(ByteArrayInputStream(bytes))
+        val sections = listOf("" to manifest.mainAttributes) +
+            manifest.entries.entries.map { sha256(ByteArrayInputStream(it.key.toByteArray())).take(16) to it.value }
+        sections.flatMap { (section, attributes) ->
+            attributes.entries.map { (name, value) ->
+                "$section/${name.toString().lowercase(java.util.Locale.ROOT)}=" +
+                    sha256(ByteArrayInputStream(value.toString().toByteArray())).take(16)
+            }
+        }.sorted().joinToString(";")
     }.getOrDefault(UNREADABLE)
 
     /**

@@ -58,7 +58,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             if (!handed.isFile) return
             val compared = runCatching { read(handed.readText()) }.getOrNull()
             runCatching { handed.delete() }
-            whatMoved(compared) { again(test.classpath.files, it) }
+            whatMoved(compared, test.classpath.files) { again(test.classpath.files, it) }
         } ?: return
         // Left out by its record no more: the run is a full run that captures nothing.
         if (complementing) test.setSystemProperties(test.systemProperties - AgentContract.COMPLEMENT_RECORD_PROPERTY)
@@ -127,6 +127,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
         val projectArtifacts: Set<File> = emptySet(),
         /** The build's `stampedFiles`, which the comparing action left out of what moved. */
         val stamped: List<String> = emptyList(),
+        /** The build's runtime classpath normalization, which the comparing action applied. */
+        val normalization: RuntimeNormalization? = null,
     )
 
     companion object {
@@ -176,7 +178,12 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
          * ([compared], null when it could not be read) and [walk] of the classpath now; null when
          * nothing moved. Anything that cannot be established forces.
          */
-        internal fun whatMoved(compared: Compared?, walk: (Compared) -> ClasspathFiles.Walk): String? {
+        internal fun whatMoved(
+            compared: Compared?,
+            /** The classpath [walk] digests, whose directories the normalization's paths are taken within. */
+            classpath: Collection<File> = emptyList(),
+            walk: (Compared) -> ClasspathFiles.Walk,
+        ): String? {
             if (compared == null) {
                 return "the classpath files it compared could not be read back before the test JVM started"
             }
@@ -185,6 +192,12 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                     "this task's classpath files could not be digested again before the test JVM started (${now.reason})"
                 is ClasspathFiles.Walk.Found -> ClasspathFiles.compare(compared.digests, now.digests)
                     .let { moved -> ClasspathFiles.Moved(moved.files - ClasspathFiles.stamped(moved, compared.stamped, compared.rootDir)) }
+                    .let { moved ->
+                        val filters = compared.normalization?.filters()
+                        ClasspathFiles.Moved(
+                            moved.files - ClasspathFiles.normalized(moved, compared.digests, now.digests, filters, classpath, compared.rootDir)
+                        )
+                    }
                     .takeUnless { it.isEmpty }
                     ?.let {
                         "build output on this task's classpath changed after it was compared, while the task's " +
@@ -248,7 +261,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
         /**
          * Written by a comparing action, with the walk's [rootDir], [buildDirs] and [classes], and
          * the table's [homes] and [projectArtifacts] when it compared one, or the walk's [gradleUserHome],
-         * and the build's [stamped] files.
+         * and the build's [stamped] files and [normalization].
          */
         fun write(
             mapDir: File,
@@ -260,6 +273,7 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             gradleUserHome: File? = null,
             projectArtifacts: Set<File> = emptySet(),
             stamped: List<String> = emptyList(),
+            normalization: RuntimeNormalization? = null,
         ) {
             val lines = listOf("root\t${Tsv.escape(rootDir.absolutePath)}", "classes\t$classes") +
                 buildDirs.map { "build\t${Tsv.escape(it)}" } +
@@ -267,6 +281,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                 listOfNotNull(gradleUserHome?.let { "gradle-user-home\t${Tsv.escape(it.absolutePath)}" }) +
                 projectArtifacts.map { "project\t${Tsv.escape(it.absolutePath)}" } +
                 stamped.map { "stamped\t${Tsv.escape(it)}" } +
+                normalization?.resources.orEmpty().map { "normalized-resource\t${Tsv.escape(it)}" } +
+                normalization?.attributes.orEmpty().map { "normalized-attribute\t${Tsv.escape(it)}" } +
                 digests.map { (path, digest) -> "file\t${Tsv.escape(path)}\t$digest" }
             writeAtomically(handOver(mapDir), lines.joinToString("\n", postfix = "\n$END\n"))
         }
@@ -283,6 +299,8 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
             var gradleUserHome: File? = null
             val projectArtifacts = mutableSetOf<File>()
             val stamped = mutableListOf<String>()
+            val resources = mutableListOf<String>()
+            val attributes = mutableListOf<String>()
             for (line in lines.dropLast(1)) {
                 val parts = line.split('\t')
                 when {
@@ -294,10 +312,16 @@ internal class LastLook(private val mapDir: File, private val agentArgument: Str
                     parts.size == 2 && parts[0] == "gradle-user-home" -> gradleUserHome = File(Tsv.unescape(parts[1]))
                     parts.size == 2 && parts[0] == "project" -> projectArtifacts += File(Tsv.unescape(parts[1]))
                     parts.size == 2 && parts[0] == "stamped" -> stamped += Tsv.unescape(parts[1])
+                    parts.size == 2 && parts[0] == "normalized-resource" -> resources += Tsv.unescape(parts[1])
+                    parts.size == 2 && parts[0] == "normalized-attribute" -> attributes += Tsv.unescape(parts[1])
                     else -> return null
                 }
             }
-            return Compared(root ?: return null, buildDirs, classes ?: return null, digests, homes, gradleUserHome, projectArtifacts, stamped)
+            val normalization = if (resources.isEmpty() && attributes.isEmpty()) null else RuntimeNormalization(resources, attributes)
+            return Compared(
+                root ?: return null, buildDirs, classes ?: return null, digests, homes, gradleUserHome, projectArtifacts, stamped,
+                normalization,
+            )
         }
 
         private const val END = "end"

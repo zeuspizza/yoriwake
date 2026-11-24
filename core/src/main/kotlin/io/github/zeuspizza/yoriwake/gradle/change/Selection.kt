@@ -325,6 +325,10 @@ internal fun classpathFilesRule(
     stamped: List<String> = emptyList(),
     /** Each file [stamped] left out, with its digest at capture and now. */
     leftOut: (Map<String, Pair<String, String>>) -> Unit = {},
+    /** The build's runtime classpath normalization: a moved file it ignores is no move ([ClasspathFiles.normalized]). */
+    normalization: ClasspathFiles.Normalization? = null,
+    /** Each file [normalization] left out, with its digest at capture and now. */
+    normalizedOut: (Map<String, Pair<String, String>>) -> Unit = {},
     walked: (Map<String, String>) -> Unit = {},
 ): ClasspathFilesVerdict {
     val recorded = CoverageDecoder.readClasspathFiles(mapDir)
@@ -347,7 +351,11 @@ internal fun classpathFilesRule(
             val counted = all.files.filterKeys { !discount(it) }
             val declared = ClasspathFiles.stamped(ClasspathFiles.Moved(counted), stamped, facts.rootDir)
             if (declared.isNotEmpty()) leftOut(declared.associateWith { recorded.getValue(it) to walk.digests.getValue(it) })
-            val moved = ClasspathFiles.Moved(counted - declared)
+            val normalized = ClasspathFiles.normalized(
+                ClasspathFiles.Moved(counted - declared), recorded, walk.digests, normalization, facts.classpathFiles(), facts.rootDir,
+            )
+            if (normalized.isNotEmpty()) normalizedOut(normalized.associateWith { recorded.getValue(it) to walk.digests.getValue(it) })
+            val moved = ClasspathFiles.Moved(counted - declared - normalized)
             val handed = moved.traceable(facts.rootDir)
             val dependencies = moved.files.filterKeys { it.startsWith(ClasspathFiles.DEPENDENCY_PREFIX) }
             when {
@@ -368,7 +376,12 @@ internal fun classpathFilesRule(
  * many tests the map shows reading one, which this run does not select for it. A wrong declaration
  * skips them, so every run that leaves a file out says so.
  */
-internal fun stampedFilesLine(leftOut: Map<String, Pair<String, String>>, mapDir: File): String {
+internal fun stampedFilesLine(
+    leftOut: Map<String, Pair<String, String>>,
+    mapDir: File,
+    by: String = "stampedFiles",
+    why: String = "declared to change on every build with no test depending on them",
+): String {
     val readers = runCatching {
         MapReader.read(mapDir).takeIf { it.isUsable }?.let { Selector.movedFileReaders(it, leftOut.keys) }?.takeIf { it >= 0 }
     }.getOrNull()
@@ -380,9 +393,19 @@ internal fun stampedFilesLine(leftOut: Map<String, Pair<String, String>>, mapDir
         0 -> "no test read them when the map was captured"
         else -> "the $readers test(s) that read them when the map was captured do not run for them"
     }
-    return "stampedFiles left out ${leftOut.size} changed file(s) of build output, declared to change on every " +
-        "build with no test depending on them: $files; $read"
+    return "$by left out ${leftOut.size} changed file(s) of build output, $why: $files; $read"
 }
+
+/**
+ * Names what the build's runtime classpath normalization left out of a run, as [stampedFilesLine]
+ * names what `stampedFiles` did: the build's own up-to-date check of the test task ignores the
+ * same change.
+ */
+internal fun normalizedFilesLine(leftOut: Map<String, Pair<String, String>>, mapDir: File): String =
+    stampedFilesLine(
+        leftOut, mapDir, "the build's runtime classpath normalization",
+        "which it leaves out of the test task's up-to-date check",
+    )
 
 /** What a run whose build output moved with no change behind it can do about a file stamped on every build. */
 private const val STAMPED_REMEDY =

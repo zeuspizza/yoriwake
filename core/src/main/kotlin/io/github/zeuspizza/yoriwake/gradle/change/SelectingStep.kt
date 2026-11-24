@@ -110,6 +110,8 @@ internal object SelectingStep {
         val unionFilter: String? = null,
         /** The build's `stampedFiles`: build output that changes on every build, which no test outcome depends on. */
         val stampedFiles: List<String> = emptyList(),
+        /** The build's runtime classpath normalization (Gradle's); null when it declares none or it could not be read. */
+        val normalization: ClasspathFiles.Normalization? = null,
     )
 
     /** What [run] worked out, for an explanation of the run to report without running it again. */
@@ -160,6 +162,8 @@ internal object SelectingStep {
         val classpathFiles = classpathFilesRule(
             mapDir, classpathFacts, inputs.text, bump?.discount ?: { false }, inputs.stampedFiles,
             leftOut = { host.lifecycle("[yoriwake] ${host.name}: ${stampedFilesLine(it, mapDir)}") },
+            normalization = inputs.normalization,
+            normalizedOut = { host.lifecycle("[yoriwake] ${host.name}: ${normalizedFilesLine(it, mapDir)}") },
         ) { compared ->
             handedOver = host.handOver(compared)
         }.let { verdict ->

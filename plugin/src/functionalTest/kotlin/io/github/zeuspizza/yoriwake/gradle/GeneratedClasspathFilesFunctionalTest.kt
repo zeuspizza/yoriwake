@@ -222,6 +222,38 @@ class GeneratedClasspathFilesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a generated resource the build's runtime classpath normalization ignores runs no test that reads it`(@TempDir dir: File) {
+        fixture(dir, "normalization { runtimeClasspath { ignore(\"info.properties\") } }")
+        capture(dir, "-Pinfo=a")
+        editLegacy(dir)
+
+        val output = select(dir, "-Pinfo=x")
+
+        assertFalse("dev.sample.AaInfoTest" in ranTests(app(dir)), output)
+        assertTrue("dev.sample.LegacyTest" in ranTests(app(dir)), output)
+        assertEquals(null, decisionNotes(dir)[AgentContract.FULL_RUN_KIND_NOTE], output)
+        assertContains(output, "the build's runtime classpath normalization left out 1 changed file(s) of build output")
+        assertContains(output, "app/build/resources/test/info.properties")
+    }
+
+    @Test
+    fun `a sibling jar's manifest attribute the normalization ignores runs no test that reads it, and another still does`(@TempDir dir: File) {
+        fixture(dir, "normalization { runtimeClasspath { metaInf { ignoreAttribute(\"Build-Revision\") } } }")
+        capture(dir, "-Prev=r1")
+        changeBeta(app(dir))
+
+        val ignored = select(dir, "-Prev=r2")
+
+        assertFalse("dev.sample.AbRevisionTest" in ranTests(app(dir)), ignored)
+        assertContains(ignored, "the build's runtime classpath normalization left out 1 changed file(s) of build output")
+        assertContains(ignored, "lib/build/libs/lib.jar!/META-INF/MANIFEST.MF")
+
+        val other = select(dir, "-Prev=r2", "-Ptime=t2")
+
+        assertTrue("dev.sample.AbRevisionTest" in ranTests(app(dir)), other)
+    }
+
+    @Test
     fun `a generated resource with a comma in its name runs the test that reads it`(@TempDir dir: File) {
         // A list of moved files is comma-joined on its way to the test JVM.
         val users = """
