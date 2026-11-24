@@ -168,6 +168,8 @@ internal class Selection(private val session: MavenSession, private val root: Fi
         unionFilter: String? = null,
         /** The module's `pathIgnore`, from [Settings.pathIgnoreOf]. */
         ignore: Settings.Ignore = Settings.Ignore(emptyList(), defaults = false),
+        /** The module's `stampedConstants`, from [Settings.stampedConstantsOf]. */
+        stampedConstants: List<String> = emptyList(),
     ): RunPlan.Kind {
         val host = Host(name, properties)
         // Whatever the run kind, as on Gradle: an observing or complement run reports the pin too.
@@ -305,6 +307,7 @@ internal class Selection(private val session: MavenSession, private val root: Fi
                 narrowLineOnlyChanges = narrowLineOnlyChanges, stamp = selected.stamp, moved = selected.moved,
                 unionFilter = unionFilter,
                 stampedFiles = ignore.stampedFiles,
+                stampedConstants = stampedConstants,
             ),
             host,
         )

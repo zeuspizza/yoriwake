@@ -412,6 +412,17 @@ and now and how many tests read it then, which did not run for it. What a wrong 
 a test whose outcome depends on the value, such as one asserting the build time or the commit, is
 skipped when only that file changed, until something else selects it or a full run comes.
 
+A build that already tells Gradle such a change does not matter needs no `stampedFiles`: what its
+`normalization { runtimeClasspath { ... } }` ignores, Gradle leaves out of the test task's
+up-to-date check, and a selecting run leaves it out too, under the same conditions as a declared
+file. That is a file `ignore(...)` names, as Gradle matches it within each classpath entry
+(`metaInf { ignoreManifest() }` and `ignoreCompletely()` included), and a jar manifest whose
+attributes, less those `metaInf { ignoreAttribute(...) }` names, are what they were at capture (a
+map captured before 0.7.0 records no attributes, so such a manifest still counts until the next
+capture). `properties { ignoreProperty(...) }` is not honoured: declare such a file in
+`stampedFiles`. Gradle does not publish its normalization; yoriwake reads Gradle's internal state,
+and where a Gradle version keeps it elsewhere the run says so and the change counts.
+
 How often this cost a narrowed run before reads were recorded, measured at the 0.2.0 release on 31
 open-source test tasks: in
 three, JUnit 5, Resilience4j and OpenTelemetry Java, a jar manifest on the test classpath takes a
@@ -426,6 +437,47 @@ narrowed but still ran all 262: 147 reached by the edit and 115 sharing a test J
 run cannot tell how many of those 115 the moved manifest added. JUnit 5 ran everything because its
 map had no coverage for the edited file. A day later no task narrowed, and none ran everything for
 this rule.
+
+### Constants stamped on every build
+
+Android's `BuildConfig`, and any generated class like it, can carry the build time or the commit as
+a compile-time constant (`BUILD_TIME`, `GIT_COMMIT_HASH`). The compiler copies such a value into
+every class that reads it, so those classes change on every build with no source change behind
+them, and their tests run; when one is startup code, every test runs. Every selecting run names
+such constants, whatever it then decides: the class, the fields whose value moved, and how many
+other changed classes load one of the new values.
+
+The fix that keeps every test honest is a fixed value for test builds: on Android a fixed
+`buildConfigField` for the test variant, or a value the build takes from a property that CI keeps
+the same on every build; the commit likewise. A build that holds the commit fixed between the capture and
+the change sees no move at all.
+
+Where the value cannot be fixed, declare the constants in `stampedConstants`, `<class>#<field>`
+each, a Java `static final` constant or a Kotlin `const val` of the build's own classes:
+
+```kotlin
+yoriwake {
+    stampedConstants.addAll("com.example.BuildConfig#BUILD_TIME", "com.example.BuildConfig#GIT_COMMIT_HASH")
+}
+```
+
+On Maven, `<stampedConstants><constant>com.example.BuildConfig#BUILD_TIME</constant></stampedConstants>`.
+The next capture records what each class digests to with constant values left out. From then on,
+when every constant whose value moved since the capture is declared, a class whose source did not
+change and whose only difference is the values of declared constants is no change: the holder, and
+each class compiled from a source file of yours that copied the value. A value the compiler pushes
+as a literal (a `boolean`, a `char`, an `int` between -32768 and 32767) is left out in its holder
+only, and a value two constants share, a value folded into a longer string, in an annotation or in a
+`switch` still count. A constant elsewhere that copies a declared one (`const val APP_VERSION =
+BuildConfig.VERSION_NAME`) moved too, so nothing is left out until it is declared as well; the run
+names it. An entry that names no such field declares nothing, and the run says so.
+
+Every run that leaves classes out names the constants, their value digests at capture and now, and
+how many tests executed the classes it left out, which did not run for them. What a wrong
+declaration costs: a test whose outcome depends on the value, such as an About screen asserting the
+build time or an upgrade path keyed on a version code, is skipped when only that value changed,
+until something else selects it or a full run comes. A version code is usually read by tests; a
+build time or a commit rarely is.
 
 ### The environment fingerprint
 
@@ -2150,8 +2202,8 @@ the Gradle plugin.
   per child element, `<variable>DB_MODE</variable>`, `<property>build.*</property>`) and
   `<recordSequentially>`, `<narrowDependencies>` and `<narrowLineOnlyChanges>` are read per module
   too, a module with no plugin entry of its own taking the root's; the `-D` of the same name
-  overrides each of the last three. `<pathIgnore>`, `<pathIgnoreDefaults>` and `<stampedFiles>`
-  are read the same way, with no `-D` form ([on Maven](#on-maven)).
+  overrides each of the last three. `<pathIgnore>`, `<pathIgnoreDefaults>`, `<stampedFiles>` and
+  `<stampedConstants>` are read the same way, with no `-D` form ([on Maven](#on-maven)).
 
   ```xml
   <configuration>
@@ -2291,6 +2343,7 @@ The extension, `yoriwake { }` in the build script of each project that applies t
 | `pathIgnore` | `List<String>` | empty | Ant-style globs of paths no test reads: a changed one leaves the change set, unless protected. Matched before the defaults. See [Paths no test reads](#paths-no-test-reads). |
 | `pathIgnoreDefaults` | `Boolean` | `true` | Ignore README and Markdown files, `docs/` and `.github/` without listing them. See [The defaults](#the-defaults). |
 | `stampedFiles` | `List<String>` | empty | Globs of build output on the test classpath stamped on every build that no test depends on: a changed one is no change. See [Generated files on the test classpath](#generated-files-on-the-test-classpath). |
+| `stampedConstants` | `List<String>` | empty | `<class>#<field>` compile-time constants stamped on every build that no test depends on: a class whose only change is their values is no change. See [Constants stamped on every build](#constants-stamped-on-every-build). |
 | `environmentInclude` | `List<String>` | empty | Environment variables compared besides `TZ`, `LANG` and `LC_ALL`. See [The environment fingerprint](#the-environment-fingerprint). |
 | `systemPropertyIgnore` | `List<String>` | empty | System properties left out of that comparison. |
 | `dependsOn` | `List<String>` | empty | `task=glob` entries: paths a `Test` task's tests depend on where coverage cannot see; a changed one runs that task in full. |

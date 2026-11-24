@@ -86,6 +86,68 @@ internal object Recordability {
         if (!visitor.constants) null else hash(visitor.constantValues.sorted().joinToString(";"))
     }.getOrNull()
 
+    /** A compile-time constant field this class declares: its name, descriptor and `ConstantValue`. */
+    data class ConstantField(val name: String, val descriptor: String, val value: Any) {
+        /** A digest of the value with its type, as `constant-fields` records it. */
+        val valueDigest: String get() = hash("$descriptor=$value")
+    }
+
+    /**
+     * The values a masked class digest leaves out ([maskedDigest]): for each own class's constant
+     * fields, by `<class>#<field>`, a value an `ldc` loads, so only a `String`, `long`, `float`,
+     * `double`, or an `int` outside the range a push instruction carries (a smaller `int`, `boolean`
+     * or `char` is pushed like any literal). A value two fields share names no field and is not masked.
+     */
+    class ConstantMask(fields: Map<String, List<ConstantField>>) {
+        private val byValue: Map<Any, String> = fields
+            .flatMap { (owner, declared) -> declared.filter { loadedByLdc(it.value) }.map { it.value to "$owner#${it.name}" } }
+            .groupBy({ it.first }, { it.second })
+            .filterValues { it.size == 1 }
+            .mapValues { it.value.single() }
+
+        /** The field an `ldc` of [value] loads a copy of, or null when it names none. */
+        fun fieldOf(value: Any?): String? = value?.let(byValue::get)
+
+        private fun loadedByLdc(value: Any): Boolean = when (value) {
+            is String, is Long, is Float, is Double -> true
+            is Int -> value !in Short.MIN_VALUE..Short.MAX_VALUE
+            else -> false
+        }
+    }
+
+    /** Each compile-time constant field this class declares, in declaration order; null when it cannot be read. */
+    fun constantFields(classBytes: ByteArray): List<ConstantField>? = runCatching {
+        val visitor = Inspector()
+        ClassReader(classBytes).accept(visitor, ClassReader.SKIP_CODE or ClassReader.SKIP_FRAMES)
+        visitor.declared.map { ConstantField(it.name, it.descriptor, it.value) }
+    }.getOrNull()
+
+    /** The source file a class names (`SourceFile`), or null when it names none or cannot be read. */
+    fun sourceFile(classBytes: ByteArray): String? = runCatching {
+        var source: String? = null
+        ClassReader(classBytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitSource(file: String?, debug: String?) {
+                    source = file
+                }
+            },
+            ClassReader.SKIP_CODE or ClassReader.SKIP_FRAMES,
+        )
+        source
+    }.getOrNull()
+
+    /**
+     * [classDigest] with every field's `ConstantValue`, and each copy of a constant [mask] names, fed
+     * as a placeholder naming no value: two builds of a class whose only difference is the values of
+     * constants, theirs or those they inlined, digest alike. The caller decides when that difference
+     * may be ignored; masked alone, it says nothing.
+     */
+    fun maskedDigest(classBytes: ByteArray, mask: ConstantMask): Digest = runCatching {
+        val sink = MessageDigest.getInstance(ALGORITHM)
+        ClassReader(classBytes).accept(DigestVisitor(sink, mask = mask), ClassReader.SKIP_FRAMES)
+        Digest.of(hex(sink.digest()))
+    }.getOrElse { Digest.refused("its bytecode could not be read: $it") }
+
     /** A class's digest, or why it has none. Exactly one of the two is non-null. */
     data class Digest(val value: String?, val reason: String?) {
         companion object {

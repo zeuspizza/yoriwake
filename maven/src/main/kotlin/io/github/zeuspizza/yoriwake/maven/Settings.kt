@@ -177,6 +177,13 @@ internal class Settings(
         }
 
         /**
+         * [project]'s `<stampedConstants>`, `<class>#<field>` per child element, read where
+         * `<stampedFiles>` is. An entry naming no constant declares nothing, which each run says.
+         */
+        fun stampedConstantsOf(project: MavenProject, session: MavenSession): List<String> =
+            moduleConfiguration(project, session)?.getChild("stampedConstants")?.children?.map { it.value.orEmpty().trim() }.orEmpty()
+
+        /**
          * How many test JVMs [project]'s executions recording in isolation may start at a time:
          * `-Dyoriwake.isolatedCaptureForks`, from where `-Dyoriwake.isolatedCapture` is read. Null when
          * unset; a value that is neither a count nor `cores` fails the build.

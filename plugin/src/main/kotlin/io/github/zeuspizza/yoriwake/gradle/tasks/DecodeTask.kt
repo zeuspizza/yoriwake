@@ -1,5 +1,6 @@
 package io.github.zeuspizza.yoriwake.gradle.tasks
 
+import io.github.zeuspizza.yoriwake.gradle.YoriwakeExtension
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.capture.DecodeRun
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -89,6 +90,11 @@ internal abstract class DecodeTask : DefaultTask() {
     @get:Input
     abstract val fullRunPolicy: Property<Boolean>
 
+    /** Whether the build declares `stampedConstants`, under which a capture records masked digests. */
+    @get:Input
+    @get:Optional
+    abstract val stampedConstants: Property<Boolean>
+
     @get:Internal("where git runs, not a set of files this task reads")
     lateinit var rootDir: File
 
@@ -137,6 +143,7 @@ internal abstract class DecodeTask : DefaultTask() {
             },
             optimistic = optimistic.getOrElse(false),
             fullRunPolicy = fullRunPolicy.getOrElse(false),
+            stampedConstants = stampedConstants.getOrElse(false),
             notWholeTask = notWholeTask.getOrElse(""),
             unionFilter = unionFilter.getOrElse("").takeIf(String::isNotEmpty),
         ).run()
@@ -220,6 +227,9 @@ internal abstract class DecodeTask : DefaultTask() {
                 task.scheduleSet.set(wired.scheduleSet)
                 task.optimistic.set(wired.optimistic)
                 task.fullRunPolicy.set(wired.fullRunPolicy)
+                task.stampedConstants.set(
+                    project.extensions.findByType(YoriwakeExtension::class.java)?.stampedConstants?.map { it.isNotEmpty() } ?: project.provider { false }
+                )
                 task.afterTest = wired.afterTest
                 // A File, not the property: wired as a property it carries the test task as its
                 // producer, which the configuration cache cannot store on this task. None when the

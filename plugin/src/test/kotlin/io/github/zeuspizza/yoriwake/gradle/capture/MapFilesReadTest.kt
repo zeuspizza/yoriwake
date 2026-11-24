@@ -46,6 +46,7 @@ class MapFilesReadTest {
         "EFFECTIVE_SCOPE_FILE" to "effective-scope", "LOADED_FILE" to "loaded.txt",
         "LOADED_PROVENANCE_FILE" to "loaded-provenance", "LOADED_SCOPE_FILE" to "loaded-scope",
         "CONSTANTS_FILE" to "constants", "CLASS_DIGESTS_FILE" to "class-digests",
+        "CONSTANT_FIELDS_FILE" to "constant-fields", "MASKED_DIGESTS_FILE" to "class-digests-masked",
         "ANNOTATION_DIGESTS_FILE" to "annotation-digests", "CAPTURE_COMMIT_FILE" to "capture-commit",
         "RESOURCE_DIGESTS_FILE" to "resource-digests",
         "SNAPSHOT_FILE" to "worktree-snapshot", "MAP_SCHEMA_VERSION_FILE" to "schema-version",

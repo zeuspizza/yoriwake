@@ -111,6 +111,21 @@ internal object CoverageDecoder {
     const val CONSTANTS_FILE = "constants"
 
     /**
+     * `<class>#<field>:<descriptor><TAB>digest of its value` for every compile-time constant of the
+     * build's own classes, so a selecting run can name the constants whose value moved. Absent, a
+     * run names their classes only, and masks nothing (`stampedConstants`).
+     */
+    const val CONSTANT_FIELDS_FILE = "constant-fields"
+
+    /**
+     * `className<TAB>masked digest` (`Recordability.maskedDigest`) for every own class, recorded
+     * while the build declares `stampedConstants`: what a class digests to with the values of
+     * constants left out, which a selecting run compares only when every constant that moved is
+     * declared. Absent, nothing is masked.
+     */
+    const val MASKED_DIGESTS_FILE = "class-digests-masked"
+
+    /**
      * `className<TAB>digest` for every class in this build's output: catches constants and Kotlin
      * `inline` bodies copied into a consumer whose source did not change. Only ever widens.
      *
@@ -235,6 +250,10 @@ internal object CoverageDecoder {
         constants: Map<String, String>? = null,
         /** See [CLASS_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
         classDigests: Map<String, String>? = null,
+        /** See [CONSTANT_FIELDS_FILE]. Null when the walk did not finish; the file is then removed. */
+        constantFields: Map<String, String>? = null,
+        /** See [MASKED_DIGESTS_FILE]. Null when not declared or the walk did not finish; the file is then removed. */
+        maskedDigests: Map<String, String>? = null,
         /** See [ANNOTATION_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
         annotationDigests: Map<String, String>? = null,
         /** See [RESOURCE_DIGESTS_FILE]. Null when the walk did not finish; the file is then removed. */
@@ -349,6 +368,8 @@ internal object CoverageDecoder {
         )
         writeConstants(mapDir, constants, datesTheMap)
         writeDigestTable(File(mapDir, CLASS_DIGESTS_FILE), classDigests, datesTheMap)
+        writeDigestTable(File(mapDir, CONSTANT_FIELDS_FILE), constantFields, datesTheMap)
+        writeDigestTable(File(mapDir, MASKED_DIGESTS_FILE), maskedDigests, datesTheMap)
         writeDigestTable(File(mapDir, ANNOTATION_DIGESTS_FILE), annotationDigests, datesTheMap)
         writeDigestTable(File(mapDir, RESOURCE_DIGESTS_FILE), classpathFiles?.mapKeys { Tsv.escape(it.key) }, datesTheMap)
         // The same gate: a record newer than the retained touches would compare a bump against them.
@@ -609,6 +630,12 @@ internal object CoverageDecoder {
         }
         digests
     }.getOrNull()
+
+    /** Reads [CONSTANT_FIELDS_FILE] as strictly as [readClassDigests]; null when there is none to vouch for. */
+    fun readConstantFields(mapDir: File): Map<String, String>? = readDigestTable(File(mapDir, CONSTANT_FIELDS_FILE))
+
+    /** Reads [MASKED_DIGESTS_FILE] as strictly as [readClassDigests]; null when there is none to vouch for. */
+    fun readMaskedDigests(mapDir: File): Map<String, String>? = readDigestTable(File(mapDir, MASKED_DIGESTS_FILE))
 
     /** Reads [CONSTANTS_FILE]. Empty when absent or unreadable, which forces as it always did. */
     fun readConstants(mapDir: File): Map<String, String> = runCatching {
