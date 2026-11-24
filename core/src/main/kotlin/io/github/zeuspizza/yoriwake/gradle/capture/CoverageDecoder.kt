@@ -66,6 +66,7 @@ import io.github.zeuspizza.yoriwake.agent.contract.AgentContract.WORKER_DIR_PREF
 import io.github.zeuspizza.yoriwake.agent.contract.TestClassIds
 import io.github.zeuspizza.yoriwake.agent.contract.Tsv
 import io.github.zeuspizza.yoriwake.agent.select.MapReader
+import io.github.zeuspizza.yoriwake.gradle.bytecode.ClassFileSupport
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord
 import io.github.zeuspizza.yoriwake.gradle.change.ClasspathFiles
 import io.github.zeuspizza.yoriwake.gradle.change.WorkingTree
@@ -160,6 +161,13 @@ internal object CoverageDecoder {
 
     /** The commit the map was last captured at; see [AgentContract.CAPTURE_COMMIT_FILE]. */
     const val CAPTURE_COMMIT_FILE = AgentContract.CAPTURE_COMMIT_FILE
+
+    /**
+     * The oldest JaCoCo version, by the Java it officially instruments, whose agent recorded any of
+     * the map's records: a class above it was instrumented by a JaCoCo that could not be trusted
+     * with it. Absent when unknown, which a run judges by the host's JaCoCo version.
+     */
+    const val JACOCO_VERSION_FILE = "jacoco-version"
 
     /**
      * Why each worker whose tests may have run concurrently captured nothing, by its record
@@ -289,6 +297,8 @@ internal object CoverageDecoder {
          * [MapReader.read].
          */
         unionFilter: String? = null,
+        /** The JaCoCo version whose agent captured these records; see [JACOCO_VERSION_FILE]. Null is unknown. */
+        jacocoVersion: String? = null,
     ): Outcome? {
         val workers = recordsDir(mapDir)
             .listFiles { f: File -> f.isDirectory && f.name.startsWith(WORKER_DIR_PREFIX) }
@@ -359,6 +369,8 @@ internal object CoverageDecoder {
             mapDir, selecting, datesTheMap, wholeTask, jvmCount(workers), loadedScope, notWholeTask, unionFilter,
         )
         writeCaptureCommit(mapDir, captureCommit, datesTheMap)
+        // Only a capture that keeps no older record speaks for the whole map, dating or not.
+        writeJacocoVersion(mapDir, jacocoVersion, replaces = retained.isEmpty())
         // After the capture commit, which both stamps name.
         writeDebugTouches(mapDir, positions, debugTouches)
         writeDigestTable(
@@ -1304,6 +1316,31 @@ internal object CoverageDecoder {
             }
             store.contents.filter(ExecutionData::hasHits).map { it.name.replace('/', '.') }.toSet()
         }.getOrNull()
+    }
+
+    /** The map's [JACOCO_VERSION_FILE], or null when it has none or it cannot be read. */
+    fun readJacocoVersion(mapDir: File): String? = runCatching {
+        File(mapDir, JACOCO_VERSION_FILE).takeIf(File::isFile)?.readText()?.trim()?.takeIf(String::isNotEmpty)
+    }.getOrNull()
+
+    /**
+     * [version] when it [replaces] the map's records, else the older of it and the map's; unknown on
+     * either side removes the file.
+     */
+    private fun writeJacocoVersion(mapDir: File, version: String?, replaces: Boolean) {
+        val file = File(mapDir, JACOCO_VERSION_FILE)
+        val kept = if (replaces) {
+            version
+        } else {
+            readJacocoVersion(mapDir)?.let { recorded -> version?.let { olderJacoco(recorded, it) } }
+        }
+        if (kept.isNullOrBlank()) file.delete() else writeAtomically(file, kept.trim() + "\n")
+    }
+
+    /** Whichever of [a] and [b] officially instruments the older Java; [a] on a tie. */
+    private fun olderJacoco(a: String, b: String): String {
+        fun java(v: String) = ClassFileSupport.jacocoJava(v)
+        return if (java(b) < java(a)) b else a
     }
 
     /** Stamps the capture commit, or removes it when unknown: a stale one hides later changes. */

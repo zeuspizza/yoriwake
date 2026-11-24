@@ -5,6 +5,7 @@ import io.github.zeuspizza.yoriwake.gradle.change.ChangeDetection
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.tasks.AuditTask
 import io.github.zeuspizza.yoriwake.gradle.wiring.AgentJar
+import io.github.zeuspizza.yoriwake.gradle.wiring.JacocoSwap
 import io.github.zeuspizza.yoriwake.gradle.wiring.LastLook
 import io.github.zeuspizza.yoriwake.gradle.wiring.ScopeOutcome
 import io.github.zeuspizza.yoriwake.gradle.wiring.TestTaskWiring
@@ -66,6 +67,7 @@ public abstract class YoriwakePlugin : Plugin<Project> {
             project.tasks.withType(Test::class.java).configureEach { test ->
                 test.doFirst(LastLook.NAME, LastLook(MapLocation.forTask(cacheDir, test.path), agentArgument))
             }
+            project.plugins.withId("jacoco") { JacocoSwap.registerTask(project) }
         }
         val configured = java.util.concurrent.atomic.AtomicBoolean(false)
         HOST_PLUGINS.forEach { pluginId ->

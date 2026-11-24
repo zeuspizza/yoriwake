@@ -59,7 +59,7 @@ class MapProvenanceTest {
     private val releasedDigest = "638c298d36cfd92afc529aca0b0b635542d09b5912f8aa190b3a0cdf340b02ef"
     private val digestUpTo050 = "965cdb082c9b16416f782c73b99086925df47091ee6bbc0eac7353c6d06dde73"
     private val digestOf060 = "d2b179ea4235ed4027ea6c7486f8dde4afc8803206d5d7eb2cebd6cb8db4973b"
-    private val currentDigest = "23c81120c58d672fdebaaf76bf7fb27ee37272b5b1089d180a117cc3c35c867b"
+    private val currentDigest = "d810d9470c31ea0398435f7613e3faf07c1906388a9b59fdb17e928ec31ccf62"
 
     @Test
     fun `each digest scheme gives the digest its release wrote`(@TempDir dir: File) {

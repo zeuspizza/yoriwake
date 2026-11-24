@@ -47,6 +47,7 @@ internal object MapProvenance {
         CoverageDecoder.MASKED_DIGESTS_FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.DIRS_FILE,
+        CoverageDecoder.JACOCO_VERSION_FILE,
     ).sorted()
 
     /**

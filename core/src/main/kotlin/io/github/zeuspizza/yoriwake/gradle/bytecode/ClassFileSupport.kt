@@ -52,6 +52,9 @@ internal object ClassFileSupport {
         return JacocoCeiling(row.second, null)
     }
 
+    /** [jacocoCeiling]'s Java version for a version read from a build, empty when unreadable. */
+    fun jacocoJava(version: String): Int = jacocoCeiling(version.ifEmpty { null }).java
+
     /** The class-file major version in [bytes]' header; -1 when it is too short to hold one. */
     fun majorOf(bytes: ByteArray): Int =
         if (bytes.size < 8) -1

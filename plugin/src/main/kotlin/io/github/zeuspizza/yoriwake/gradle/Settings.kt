@@ -74,6 +74,8 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
 
     /** On unless `=false`: a whole recording capture lists the classes its test JVMs loaded. */
     val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: true
+    /** A JaCoCo version that stands in for Gradle's default, for tests on the JDKs at hand. */
+    val jacocoDefault: String? = lookup(JACOCO_DEFAULT)
     val classGranularity: Boolean = parseFlag(CLASS_GRANULARITY, lookup(CLASS_GRANULARITY))
     /** Null when not passed, so the build's `narrowPlainRunners` answers. */
     val narrowPlainRunners: Boolean? = lookup(NARROW_PLAIN_RUNNERS)?.let { parseFlag(NARROW_PLAIN_RUNNERS, it) }
@@ -108,6 +110,7 @@ internal class Settings(lookup: (String) -> String?, commandLine: (String) -> St
         const val UNINSTRUMENTED_SECONDS = SettingNames.UNINSTRUMENTED_SECONDS
 
         const val LOADED = "yoriwake.internal.loaded"
+        const val JACOCO_DEFAULT = "yoriwake.internal.jacocoDefault"
         const val CLASS_GRANULARITY = "yoriwake.internal.select.classGranularity"
         const val COUNTERS = "yoriwake.internal.counters"
         const val FORCED_SHARE = "yoriwake.internal.payback.forcedShare"

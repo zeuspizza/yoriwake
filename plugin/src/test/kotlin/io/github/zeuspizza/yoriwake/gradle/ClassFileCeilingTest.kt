@@ -40,6 +40,7 @@ class ClassFileCeilingTest {
     private fun facts(
         dir: File,
         jacoco: String? = "0.8.15",
+        capturing: String? = null,
         testJvm: Int? = 21,
         agentCeiling: String? = null,
         classes: Map<String, ByteArray> = emptyMap(),
@@ -72,17 +73,74 @@ class ClassFileCeilingTest {
             testOutputs = project.files(),
             classpath = project.files(output, *jarFiles.toTypedArray()),
             jacocoVersion = project.provider { jacoco },
+            capturingJacocoVersion = project.provider { capturing },
             testJvm = project.provider { testJvm },
             agentCeiling = project.provider { agentCeiling },
         )
     }
 
-    private fun widen(facts: ClasspathFacts, prefixes: List<String> = listOf("com.acme.Changed")) =
+    private fun widen(
+        facts: ClasspathFacts,
+        prefixes: List<String> = listOf("com.acme.Changed"),
+        recordedJacoco: String? = null,
+    ) =
         widenForInlining(
             prefixes, facts,
             digestRule = DigestRule(recorded = null, bytesAreFresh = true),
             recordedAnnotations = emptyMap(),
+            recordedJacoco = recordedJacoco,
         )
+
+    /** Java 26 classes under Gradle 9.7's default JaCoCo, 0.8.14, which officially reaches Java 25. */
+    private fun java26(dir: File, capturing: String? = null) =
+        facts(dir, jacoco = "0.8.14", capturing = capturing, classes = mapOf("com.acme.A" to classAt("com.acme.A", 70)))
+
+    @Test
+    fun `a map recorded by a JaCoCo that instruments the classes narrows under it`(@TempDir dir: File) {
+        val widening = widen(java26(dir, capturing = "0.8.15"), recordedJacoco = "0.8.15")
+
+        assertFalse(widening.refusalKind == RefusalKind.CLASS_FILE_UNSUPPORTED, widening.refusal)
+    }
+
+    @Test
+    fun `a map that does not say which JaCoCo recorded it is judged by the host's, and lifted by a recording run`(@TempDir dir: File) {
+        val widening = widen(java26(dir, capturing = "0.8.15"))
+
+        assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, widening.refusalKind)
+        assertContains(widening.refusal!!, "the map does not say which JaCoCo recorded it")
+        assertContains(widening.refusal!!, "JaCoCo 0.8.14 (`jacoco.toolVersion`)")
+        assertContains(widening.refusal!!, "A recording run with this run's JaCoCo 0.8.15 lifts this.")
+    }
+
+    @Test
+    fun `a map an older JaCoCo recorded refuses after the host's is raised, until a recording run`(@TempDir dir: File) {
+        val widening = widen(
+            facts(dir, jacoco = "0.8.15", classes = mapOf("com.acme.A" to classAt("com.acme.A", 70))),
+            recordedJacoco = "0.8.14",
+        )
+
+        assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, widening.refusalKind)
+        assertContains(widening.refusal!!, "the map was recorded by JaCoCo 0.8.14, which officially instruments up to Java 25")
+        assertContains(widening.refusal!!, "A recording run with this run's JaCoCo 0.8.15 lifts this.")
+    }
+
+    @Test
+    fun `a run captured by a JaCoCo older than the map's is judged by its own`(@TempDir dir: File) {
+        val widening = widen(java26(dir), recordedJacoco = "0.8.15")
+
+        assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, widening.refusalKind)
+        assertContains(widening.refusal!!, "JaCoCo 0.8.14 (`jacoco.toolVersion`) officially instruments up to Java 25")
+        assertContains(widening.refusal!!, "A `jacoco.toolVersion` that officially supports Java 26 lifts this.")
+    }
+
+    @Test
+    fun `a map and a host both too old ask for a newer JaCoCo and a recording run`(@TempDir dir: File) {
+        val widening = widen(java26(dir), recordedJacoco = "0.8.12")
+
+        assertEquals(RefusalKind.CLASS_FILE_UNSUPPORTED, widening.refusalKind)
+        assertContains(widening.refusal!!, "the map was recorded by JaCoCo 0.8.12")
+        assertContains(widening.refusal!!, "A `jacoco.toolVersion` that officially supports Java 26 and a recording run lifts this.")
+    }
 
     @Test
     fun `a class newer than the plugin's ASM reads refuses by name`(@TempDir dir: File) {

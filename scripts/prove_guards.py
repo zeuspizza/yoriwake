@@ -263,6 +263,7 @@ EXPLAIN_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks
 ENVIRONMENT_FINGERPRINT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
 JVM_ARG_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
 CLASS_FILE_CEILING = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
+JACOCO_SWAP = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/JacocoSwap.kt"
 COORDINATE_DIFF = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/CoordinateDiff.kt"
 DEPENDENCY_RULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/DependencyRule.kt"
 CLASSPATH_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathRecord.kt"
@@ -587,6 +588,10 @@ def unit_suite():
          "--tests", "*StampedConstantsTest*", "--tests", "*RuntimeNormalizationTest*", "--tests", "*LastLookTest*",
          # Which test classes a budgeted recording runs alone, and how many the budget allows.
          "--tests", "*IsolatedPickTest*",
+         # The JaCoCo a class is judged by: the map's and this run's, how the map keeps the older
+         # one, and when the bundled agent replaces Gradle's default.
+         "--tests", "*ClassFileCeilingTest*", "--tests", "*JacocoVersionRecordTest*",
+         "--tests", "*JacocoSwapTest*",
          "--rerun"])
     if done.returncode == 0:
         return []
@@ -870,8 +875,9 @@ SUITES = [
     # About 1.4s warm with a mutation applied, both tasks.
     ("jdk identity", jdk_identity_suite, 1.5),
     # 19.0-20.2s over three unmutated runs with the moved-classpath-files class, warm daemon, on
-    # an Apple M1 Max; 18.9-19.3s without it.
-    ("unit", unit_suite, 19.5),
+    # an Apple M1 Max; 18.9-19.3s without it. The three JaCoCo-ceiling classes add about 2%
+    # (27.4-27.7s against 26.9-27.3s, three warm runs each, on a slower machine).
+    ("unit", unit_suite, 20),
     ("qualify", qualify_suite, 12),
     ("config cost", config_cost_suite, 1),
     # The shaded jars and both direct SBOMs, then the merge and its check; an estimate until a
@@ -5159,6 +5165,24 @@ MUTATIONS = [
      "    if (jvmMajor != null && jvmMajor > agentCeiling) return testJvmRefusal(jvmMajor, agentCeiling, classes)",
      "    if (false) return testJvmRefusal(jvmMajor!!, agentCeiling, classes)",
      functional_suite, "a test JVM newer than the agent reads runs every test"),
+    # A map is only as good as the oldest JaCoCo that recorded it, and a run's records only as good
+    # as the JaCoCo capturing them; the bundled agent replaces only Gradle's default.
+    ("the ceiling ignores the map's recorded JaCoCo", CLASS_FILE_CEILING,
+     "    val jacocoCeiling = jacocoVersion?.let { minOf(majorCeiling(it.capturing), majorCeiling(it.recorded)) }",
+     "    val jacocoCeiling = jacocoVersion?.let { majorCeiling(it.capturing) }",
+     unit_suite, "a map that does not say which JaCoCo recorded it is judged by the host's, and lifted by a recording run"),
+    ("the ceiling ignores this run's capturing JaCoCo", CLASS_FILE_CEILING,
+     "    val jacocoCeiling = jacocoVersion?.let { minOf(majorCeiling(it.capturing), majorCeiling(it.recorded)) }",
+     "    val jacocoCeiling = jacocoVersion?.let { majorCeiling(it.recorded) }",
+     unit_suite, "a run captured by a JaCoCo older than the map's is judged by its own"),
+    ("a merge keeps the newer recorded JaCoCo", COVERAGE_DECODER,
+     "        return if (java(b) < java(a)) b else a",
+     "        return if (java(b) > java(a)) b else a",
+     unit_suite, "a dating capture names its own JaCoCo and a merge keeps the older"),
+    ("a pinned toolVersion is replaced by the bundled agent", JACOCO_SWAP,
+     "        if (toolVersion == null || toolVersion != default || java == null || bundled == null) return null",
+     "        if (toolVersion == null || java == null || bundled == null) return null",
+     unit_suite, "a version the build chose is never replaced"),
     ("the agent backstop does not force", SELECTOR,
      "            return Decision.fullRun(reason, Decision.FullRunKind.TEST_JVM_UNSUPPORTED, knownTestIds);",
      "            ;",

@@ -3,6 +3,7 @@ package io.github.zeuspizza.yoriwake.gradle.tasks
 import io.github.zeuspizza.yoriwake.gradle.Settings
 import io.github.zeuspizza.yoriwake.gradle.bytecode.TaskArtifacts
 import io.github.zeuspizza.yoriwake.gradle.bytecode.scanOrExplain
+import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import io.github.zeuspizza.yoriwake.gradle.change.classFileCeiling
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
 import io.github.zeuspizza.yoriwake.gradle.facts.classpathFacts
@@ -109,7 +110,10 @@ internal abstract class AuditTask : DefaultTask() {
             },
             ceiling = facts?.let {
                 runCatching {
-                    classFileCeiling(it, TaskArtifacts(it.classpath.files, it.buildDirs.values, it.testOutputs.files))
+                    classFileCeiling(
+                        it, TaskArtifacts(it.classpath.files, it.buildDirs.values, it.testOutputs.files),
+                        CoverageDecoder.readJacocoVersion(mapDir),
+                    )
                 }.getOrNull()
             },
             // The module's own classes against how many the map has seen: the same

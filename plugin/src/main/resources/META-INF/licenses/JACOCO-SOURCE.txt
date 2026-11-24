@@ -7,3 +7,7 @@ file. SPDX-License-Identifier: EPL-2.0
 
 Source code: https://github.com/jacoco/jacoco/tree/v${jacocoVersion}
 Also available from Maven Central as org.jacoco:org.jacoco.core:${jacocoVersion}:sources.
+
+JaCoCo ${bundledJacocoAgentVersion}'s agent (org.jacoco:org.jacoco.agent), unmodified, as
+yoriwake-jacoco/org.jacoco.agent-${bundledJacocoAgentVersion}.jar in this jar, under the same licence.
+Source code: https://github.com/jacoco/jacoco/tree/v${bundledJacocoAgentVersion}

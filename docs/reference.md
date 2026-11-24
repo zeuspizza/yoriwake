@@ -759,6 +759,9 @@ same.
   - runs declined over in-JVM parallelism.
 - **A job whose coverage report matters** runs without `-Pyoriwake.select`. It records, so it
   reports everything it ran.
+- **A test JVM newer than Gradle's default JaCoCo** (see [New JDKs](#new-jdks)) gets the plugin's
+  bundled JaCoCo agent. `jacocoTestReport` keeps `jacoco.toolVersion` and reads that agent's
+  execution file as it reads its own.
 
 ## Kover
 
@@ -842,7 +845,7 @@ Three readers parse class files whose version each new JDK raises, and each has 
 | Reader | Reads | Ceiling in this release | Above it |
 |---|---|---|---|
 | The plugin's ASM | the task's own compiled classes, for digests, constants, annotations and inline bodies | Java 27 | `class-file-unsupported` |
-| Your project's JaCoCo (`jacoco.toolVersion`) | the same classes, to instrument them | the newest Java its release notes officially support; experimental support does not count | `class-file-unsupported` |
+| The JaCoCo that recorded the map, and the one capturing this run | the same classes, to instrument them | the newest Java its release notes officially support; experimental support does not count | `class-file-unsupported` |
 | The agent's ASM | the test JVM's own JDK classes, to see what tests read | Java 27 | `test-jvm-unsupported` |
 
 A selecting run checks both before anything else that reads the classes, from each class file's
@@ -850,10 +853,12 @@ header, so it holds whatever the map records. It runs every test, names the firs
 newest version (or the test JVM's Java version), each reader it is above, and what lifts it:
 
 - **`class-file-unsupported`**, from the plugin's ASM: a newer yoriwake. From JaCoCo: a
-  `jacoco.toolVersion` that officially supports that Java. A JaCoCo newer than any yoriwake knows
-  is held to the newest one it does, and an older or unreadable one to the oldest; the run says so
-  in one line. A build that swaps the JaCoCo agent artifact is judged by the `toolVersion` it sets.
-  A multi-release jar entry counts only where the test JVM would load it.
+  `jacoco.toolVersion` that officially supports that Java; when the map was recorded by an older
+  JaCoCo than this run's, a recording run. The map keeps the oldest JaCoCo that recorded any of its
+  records; a map from before it did is taken as recorded by `jacoco.toolVersion`. A JaCoCo newer
+  than any yoriwake knows is held to the newest one it does, and an older or unreadable one to the
+  oldest; the run says so in one line. A build that swaps the JaCoCo agent artifact is judged by the
+  `toolVersion` it sets. A multi-release jar entry counts only where the test JVM would load it.
 - **`test-jvm-unsupported`**: a newer yoriwake, or a test toolchain of an older Java. When Gradle
   cannot report the test JVM's version (an `executable` it cannot probe), the agent checks the JVM
   it runs in: the run is a full run of that kind, and a recording run marks every class touched.
@@ -861,9 +866,14 @@ newest version (or the test JVM's Java version), each reader it is above, and wh
 A recording run in either situation records as usual and prints one line saying selecting runs will
 run every test, and why. `yoriwakeAudit<Task>` reports both as blockers.
 
-Gradle 8.14 defaults to JaCoCo 0.8.13 (Java 24) and Gradle 9.8.0 to 0.8.15 (Java 26), so a project
-compiling for a newer Java on its default JaCoCo runs every test until `jacoco.toolVersion` is
-raised.
+Gradle 8.14 defaults to JaCoCo 0.8.13 (Java 24) and Gradle 9.8.0 to 0.8.15 (Java 26). When a
+project leaves `jacoco.toolVersion` at the running Gradle's default and declares no JaCoCo agent of
+its own, and a test task yoriwake instruments runs on a Java newer than that default officially
+supports, the plugin attaches its bundled JaCoCo 0.8.15 agent to the project's test tasks instead,
+when that one supports the Java, and each run says so in one line. A map recorded before then
+runs every test until the next recording run. A `toolVersion` the build sets is never replaced (one equal to
+Gradle's default reads as left alone), and the report tasks keep it. On Maven the
+jacoco-maven-plugin `<version>` is always the agent.
 
 ### Supported hosts
 

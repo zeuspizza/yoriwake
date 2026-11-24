@@ -55,6 +55,7 @@ class MapFilesReadTest {
         "JAR_TOUCH_FILE" to "jar-touch.tsv", "MISS_TOUCH_FILE" to "miss-touch.tsv",
         "DEBUG_TOUCH_FILE" to "debug-touch.tsv", "LINE_DIGESTS_FILE" to "line-digests",
         "ClasspathRecord.FILE" to "classpath.tsv", "DIRS_FILE" to "classpath-dirs.tsv",
+        "JACOCO_VERSION_FILE" to "jacoco-version",
     )
 
     private val mapFileUse = Regex("""File\(\s*mapDir\s*,\s*([A-Za-z_.]+|"[^"]*")""")

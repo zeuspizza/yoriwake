@@ -340,7 +340,7 @@ jobs:
           key: gradle-seed-v1-${{ github.run_id }}
           restore-keys: gradle-seed-v1-
       - shell: bash
-        run: YORIWAKE_GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
+        run: YORIWAKE_GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" ./gradlew :plugin:functionalTest -x functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
       # What each TestKit home downloaded, on every run: the log says how many files, and the
       # gradle-seed job seeds what they name. A flake leaves nothing to diagnose once the runner
       # is gone: the listing tells a dependency that never arrived from one that could not be
@@ -446,7 +446,7 @@ jobs:
           key: gradle-seed-v1-${{ github.run_id }}
           restore-keys: gradle-seed-v1-
       - shell: bash
-        run: YORIWAKE_GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
+        run: YORIWAKE_GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" GRADLE_RO_DEP_CACHE="$HOME/.gradle-seed/caches" ./gradlew :plugin:functionalTestGradle9 -Pyoriwake.functional.shard=${{ matrix.shard }}/3 -Pyoriwake.functional.shardTable=linux --continue --build-cache --console=plain
       # What each TestKit home downloaded, on every run: the log says how many files, and the
       # gradle-seed job seeds what they name. A flake leaves nothing to diagnose once the runner
       # is gone: the listing tells a dependency that never arrived from one that could not be

@@ -211,7 +211,11 @@ jobs:
           path: ~/.gradle-seed/caches/modules-2
           key: gradle-seed-v1-${{ github.run_id }}
           restore-keys: gradle-seed-v1-
-      - run: echo "YORIWAKE_GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
+      # The repository's own builds read it too: a dependency new on this branch (the bundled JaCoCo
+      # agent) is then taken from what the fixtures downloaded, not asked of Central by every worker.
+      - run: |
+          echo "YORIWAKE_GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
+          echo "GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
       - run: mkdir -p results
       # Not on a narrowed pull request: no guard of fast mode mutates what its change touched.
       - if: needs.changes.outputs.narrow != 'true'
@@ -404,7 +408,11 @@ jobs:
           path: ~/.gradle-seed/caches/modules-2
           key: gradle-seed-v1-${{ github.run_id }}
           restore-keys: gradle-seed-v1-
-      - run: echo "YORIWAKE_GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
+      # The repository's own builds read it too: a dependency new on this branch (the bundled JaCoCo
+      # agent) is then taken from what the fixtures downloaded, not asked of Central by every worker.
+      - run: |
+          echo "YORIWAKE_GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
+          echo "GRADLE_RO_DEP_CACHE=$HOME/.gradle-seed/caches" >> "$GITHUB_ENV"
       # With the run and commit its guards ran at, for a later dispatch that takes this shard.
       - env:
           RUN: ${{ github.run_id }}
