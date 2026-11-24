@@ -329,8 +329,9 @@ internal class DecodeRun(
             null
         }
         if (!selecting) {
-            // Recorded as usual; said now, so the full runs that follow are no surprise.
-            artifacts?.let { runCatching { classFileCeiling(facts, it) }.getOrNull() }?.let { ceiling ->
+            // Recorded as usual; said now, so the full runs that follow are no surprise. This
+            // capture dates the map, so the map is then recorded by this run's JaCoCo.
+            artifacts?.let { runCatching { classFileCeiling(facts, it, facts.capturingJacocoVersion()) }.getOrNull() }?.let { ceiling ->
                 logger.lifecycle(
                     "[yoriwake] $taskPath: selecting runs of this task will run every test " +
                         "(${ceiling.kind.token}): ${ceiling.cause}. ${ceiling.remedy}"
@@ -425,6 +426,7 @@ internal class DecodeRun(
                 classpathRecord = classpathRecord,
                 notWholeTask = undatedAtExecution?.let { "the run could not date the map ($it)" } ?: notWholeTask,
                 unionFilter = unionFilter,
+                jacocoVersion = runCatching { facts.capturingJacocoVersion() }.getOrNull(),
             )
         }
         // A map we cannot write leaves the previous one alone; it never fails someone

@@ -45,6 +45,7 @@ internal object MapProvenance {
         CoverageDecoder.LINE_DIGESTS_FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.FILE,
         io.github.zeuspizza.yoriwake.gradle.change.ClasspathRecord.DIRS_FILE,
+        CoverageDecoder.JACOCO_VERSION_FILE,
     ).sorted()
 
     /**
@@ -75,6 +76,17 @@ internal object MapProvenance {
                 "jvm-mode.tsv", "environment.tsv", "environment-fingerprints.tsv", "fingerprint-salt", "scope",
                 "effective-scope", "loaded.txt", "loaded-provenance", "loaded-scope", "constants", "class-digests",
                 "annotation-digests", "resource-digests", "capture-commit", "worktree-snapshot", "schema-version",
+            ),
+        ),
+        EarlierScheme(
+            "0.6.0",
+            listOf(
+                "coverage.tsv", "positions.tsv", "first-touch.tsv", "named-touch.tsv", "resource-touch.tsv",
+                "jvm-mode.tsv", "environment.tsv", "environment-fingerprints.tsv", "fingerprint-salt", "scope",
+                "effective-scope", "loaded.txt", "loaded-provenance", "loaded-scope", "constants", "class-digests",
+                "annotation-digests", "resource-digests", "capture-commit", "worktree-snapshot", "schema-version",
+                "jar-touch.tsv", "miss-touch.tsv", "debug-touch.tsv", "line-digests", "classpath.tsv",
+                "classpath-dirs.tsv",
             ),
         ),
     )

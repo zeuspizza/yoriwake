@@ -180,6 +180,7 @@ internal object SelectingStep {
             inlinedAway = beforeWidening.inlinedAway,
             lineOnly = if (!inputs.narrowLineOnlyChanges) null else LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
             inlineSources = scoped.change.inlineSources,
+            recordedJacoco = CoverageDecoder.readJacocoVersion(mapDir),
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),

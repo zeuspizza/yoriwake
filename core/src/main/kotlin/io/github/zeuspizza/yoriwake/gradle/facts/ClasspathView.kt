@@ -50,6 +50,12 @@ internal interface ClasspathView {
     /** Where the build sets [jacocoVersion], as the refusal and its remedy name it. */
     fun jacocoSetting(): String
 
+    /**
+     * The JaCoCo version whose agent captures this task's runs: [jacocoVersion], unless the front
+     * end attaches another in its place; null as [jacocoVersion] is.
+     */
+    fun capturingJacocoVersion(): String? = jacocoVersion()
+
     /** The test JVM's feature version, null when nobody can tell. */
     fun testJvm(): Int?
 

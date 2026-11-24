@@ -561,9 +561,11 @@ internal fun widenForInlining(
     lineOnly: LineOnlyRule? = null,
     /** [ChangeDetection.Change.inlineSources]: source names the inline scan asks about besides the prefixes. */
     inlineSources: Set<String> = emptySet(),
+    /** The oldest JaCoCo that recorded the map, from `CoverageDecoder.readJacocoVersion`; null takes the host's. */
+    recordedJacoco: String? = null,
 ): InlineWidening = widen(
     prefixes, facts, recordedConstants, inlinableSourceChanged, digestRule, recordedAnnotations, ownTestClasses,
-    inlinedAway, lineOnly, inlineSources,
+    inlinedAway, lineOnly, inlineSources, recordedJacoco,
 ).let { widening -> if (lineOnly == null) widening else widening.withLines(widening.lines ?: LineOnly.NONE) }
 
 private fun widen(
@@ -577,6 +579,7 @@ private fun widen(
     inlinedAway: Set<String>,
     lineOnly: LineOnlyRule?,
     inlineSources: Set<String>,
+    recordedJacoco: String?,
 ): InlineWidening {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -594,7 +597,7 @@ private fun widen(
 
     // First, and without the digest table: a class no reader of it can take is what leaves a map
     // without one, and its cause would otherwise surface as an unreadable digest or no coverage.
-    classFileCeiling(facts, artifacts)?.let { ceiling ->
+    classFileCeiling(facts, artifacts, recordedJacoco)?.let { ceiling ->
         return InlineWidening.refuse(ceiling.reason, scanExhausted = false, kind = ceiling.kind)
     }
 

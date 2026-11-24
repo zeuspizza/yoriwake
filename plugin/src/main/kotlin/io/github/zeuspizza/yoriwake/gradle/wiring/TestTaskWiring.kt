@@ -285,6 +285,7 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
 
         val agent = injectAgent(project, test)
+        attachBundledJacoco(project, test)
 
         // Validated at configuration time so a typo fails the build now rather than protecting
         // nothing. The agent re-parses the same string in the test JVM.
@@ -1139,6 +1140,17 @@ internal class TestTaskWiring(internal val settings: Settings) {
             runCatching { SelectionRecord.writeStart(mapDir, SelectionRecord.Start(token, identity.observe(test).forStart())) }
                 .onFailure { test.logger.info("[yoriwake] ${test.path}: the selection record's start could not be written ($it)") }
         }
+    }
+
+    /**
+     * Lets the project's JaCoCo agent be the bundled one when this task's test JVM is newer than
+     * Gradle's default instruments (see [JacocoSwap]); when it is, each run says so.
+     */
+    private fun attachBundledJacoco(project: Project, test: Test) {
+        JacocoSwap.register(project, test, settings.jacocoDefault)
+        val line = project.provider { JacocoSwap.line(project, test) }
+        val path = test.path
+        test.doFirst { task -> line.orNull?.let { task.logger.lifecycle("[yoriwake] $path: $it") } }
     }
 
     /** Puts the agent on the test runtime classpath. */

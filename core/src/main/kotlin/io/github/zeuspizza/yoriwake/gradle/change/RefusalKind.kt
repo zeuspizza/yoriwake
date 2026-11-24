@@ -183,10 +183,11 @@ internal enum class RefusalKind(val token: String, val requested: Boolean = fals
     LATE_TASK_ACTION("late-task-action"),
 
     /**
-     * A class of the task's own output is compiled for a newer Java than the plugin's ASM reads or
-     * the host's JaCoCo officially instruments, so its digest or its coverage cannot be trusted. A
-     * newer yoriwake, or a newer JaCoCo (`jacoco.toolVersion` on Gradle, the jacoco-maven-plugin
-     * version on Maven), lifts this.
+     * A class of the task's own output is compiled for a newer Java than the plugin's ASM reads, or
+     * than the JaCoCo that recorded the map or captures this run officially instruments, so its
+     * digest or its coverage cannot be trusted. A newer yoriwake, or a newer JaCoCo
+     * (`jacoco.toolVersion` on Gradle, the jacoco-maven-plugin version on Maven) and, for a map an
+     * older one recorded, a recording run, lifts this.
      */
     CLASS_FILE_UNSUPPORTED("class-file-unsupported"),
 

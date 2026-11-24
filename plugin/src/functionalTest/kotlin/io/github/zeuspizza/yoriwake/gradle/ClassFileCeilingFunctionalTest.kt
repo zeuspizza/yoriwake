@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -37,17 +38,25 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
     /** Java 21 classes under a JaCoCo whose official support ends at Java 20. */
     private val jacocoBehindTheClasses = "$minimalBuild\njacoco { toolVersion = \"0.8.10\" }"
 
-    private fun captured(dir: File, script: String): String {
+    private fun captured(dir: File, script: String, vararg args: String): String {
         build(dir, "build.gradle.kts" to script, oneClass, secondClass, unused, oneTest, secondTest, classOrderByName)
         toolchains(dir)
         committed(dir)
-        return runner(dir, "test").build().output
+        return runner(dir, "test", *args).build().output
     }
 
-    private fun select(dir: File): String {
+    private fun select(dir: File, vararg args: String): String {
         File(dir, "build/test-results").deleteRecursively()
-        return runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD").build().output
+        return runner(dir, "test", "-Pyoriwake.select", "-Pyoriwake.base=HEAD", *args).build().output
     }
+
+    /** Gradle's default JaCoCo taken to be 0.8.10, which the build's `toolVersion` then equals. */
+    private val defaultBehindTheClasses = "-Pyoriwake.internal.jacocoDefault=0.8.10"
+
+    private val bundledLine = "yoriwake attaches its bundled JaCoCo 0.8.15 agent in its place"
+
+    private fun mapJacoco(dir: File): String? =
+        File(dir, ".gradle/yoriwake").walkTopDown().singleOrNull { it.name == "jacoco-version" }?.readText()?.trim()
 
     @Test
     fun `a class compiled for a newer Java than the plugin reads runs every test`(@TempDir dir: File) {
@@ -88,6 +97,63 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
 
         assertEquals("class-file-unsupported", decisionNotes(dir)["refusal-kind"])
         assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
+    }
+
+    @Test
+    fun `classes newer than Gradle's default JaCoCo instruments are captured with the bundled JaCoCo and narrow`(@TempDir dir: File) {
+        val capture = captured(dir, jacocoBehindTheClasses, defaultBehindTheClasses)
+        assertContains(capture, bundledLine)
+        assertFalse("class-file-unsupported" in capture, capture)
+        assertEquals("0.8.15", mapJacoco(dir))
+
+        changeBeta(dir)
+        val output = select(dir, defaultBehindTheClasses)
+
+        assertContains(output, bundledLine)
+        val notes = decisionNotes(dir)
+        assertEquals(null, notes["refusal-kind"], notes.toString())
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir))
+    }
+
+    @Test
+    fun `a map the build's own JaCoCo recorded runs every test under the bundled one until a recording run`(@TempDir dir: File) {
+        captured(dir, jacocoBehindTheClasses)
+        assertEquals("0.8.10", mapJacoco(dir))
+
+        changeBeta(dir)
+        val refused = select(dir, defaultBehindTheClasses)
+
+        assertEquals("class-file-unsupported", decisionNotes(dir)["refusal-kind"])
+        assertContains(refused, "the map was recorded by JaCoCo 0.8.10")
+        assertContains(refused, "A recording run with this run's JaCoCo 0.8.15 lifts this.")
+        assertEquals(setOf("dev.sample.AlphaTest", "dev.sample.BetaTest"), ranTests(dir))
+
+        commit(dir, "beta")
+        runner(dir, "test", defaultBehindTheClasses).build()
+        assertEquals("0.8.15", mapJacoco(dir))
+        File(dir, "src/main/java/dev/sample/Beta.java").writeText(
+            "package dev.sample;\npublic class Beta { public int thrice(int n) { return 3 * n; } }\n"
+        )
+        select(dir, defaultBehindTheClasses)
+
+        assertEquals(null, decisionNotes(dir)["refusal-kind"])
+        assertEquals(setOf("dev.sample.BetaTest"), ranTests(dir))
+    }
+
+    @Test
+    fun `a disabled run keeps the build's own JaCoCo agent`(@TempDir dir: File) {
+        val printsAgent = """
+            val agent: FileCollection = configurations.getByName("jacocoAgent")
+            tasks.register("agentJar") { doLast { println("agent: " + agent.files.map { it.name }) } }
+        """.trimIndent()
+        captured(dir, "$jacocoBehindTheClasses\n$printsAgent", defaultBehindTheClasses)
+
+        val swapped = runner(dir, "test", "agentJar", defaultBehindTheClasses).build().output
+        val disabled = runner(dir, "test", "agentJar", defaultBehindTheClasses, "-Pyoriwake.disabled").build().output
+
+        assertContains(swapped, "agent: [org.jacoco.agent-0.8.15.jar]")
+        assertContains(disabled, "agent: [org.jacoco.agent-0.8.10.jar]")
+        assertFalse(bundledLine in disabled, disabled)
     }
 
     /** A test JVM on this JDK judged against an agent ceiling below it, set the way [how] says. */

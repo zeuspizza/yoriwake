@@ -263,6 +263,7 @@ EXPLAIN_TASK = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/tasks
 ENVIRONMENT_FINGERPRINT = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/EnvironmentFingerprint.kt"
 JVM_ARG_FILES = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/capture/JvmArgFiles.kt"
 CLASS_FILE_CEILING = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClassFileCeiling.kt"
+JACOCO_SWAP = "plugin/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/wiring/JacocoSwap.kt"
 COORDINATE_DIFF = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/CoordinateDiff.kt"
 DEPENDENCY_RULE = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/DependencyRule.kt"
 CLASSPATH_RECORD = "core/src/main/kotlin/io/github/zeuspizza/yoriwake/gradle/change/ClasspathRecord.kt"
@@ -5065,6 +5066,24 @@ MUTATIONS = [
      "    if (jvmMajor != null && jvmMajor > agentCeiling) return testJvmRefusal(jvmMajor, agentCeiling, classes)",
      "    if (false) return testJvmRefusal(jvmMajor!!, agentCeiling, classes)",
      functional_suite, "a test JVM newer than the agent reads runs every test"),
+    # A map is only as good as the oldest JaCoCo that recorded it, and a run's records only as good
+    # as the JaCoCo capturing them; the bundled agent replaces only Gradle's default.
+    ("the ceiling ignores the map's recorded JaCoCo", CLASS_FILE_CEILING,
+     "    val jacocoCeiling = jacocoVersion?.let { minOf(majorCeiling(it.capturing), majorCeiling(it.recorded)) }",
+     "    val jacocoCeiling = jacocoVersion?.let { majorCeiling(it.capturing) }",
+     unit_suite, "a map that does not say which JaCoCo recorded it is judged by the host's, and lifted by a recording run"),
+    ("the ceiling ignores this run's capturing JaCoCo", CLASS_FILE_CEILING,
+     "    val jacocoCeiling = jacocoVersion?.let { minOf(majorCeiling(it.capturing), majorCeiling(it.recorded)) }",
+     "    val jacocoCeiling = jacocoVersion?.let { majorCeiling(it.recorded) }",
+     unit_suite, "a run captured by a JaCoCo older than the map's is judged by its own"),
+    ("a merge keeps the newer recorded JaCoCo", COVERAGE_DECODER,
+     "        return if (java(b) < java(a)) b else a",
+     "        return if (java(b) > java(a)) b else a",
+     unit_suite, "a dating capture names its own JaCoCo and a merge keeps the older"),
+    ("a pinned toolVersion is replaced by the bundled agent", JACOCO_SWAP,
+     "        if (toolVersion == null || toolVersion != default || java == null || bundled == null) return null",
+     "        if (toolVersion == null || java == null || bundled == null) return null",
+     unit_suite, "a version the build chose is never replaced"),
     ("the agent backstop does not force", SELECTOR,
      "            return Decision.fullRun(reason, Decision.FullRunKind.TEST_JVM_UNSUPPORTED, knownTestIds);",
      "            ;",

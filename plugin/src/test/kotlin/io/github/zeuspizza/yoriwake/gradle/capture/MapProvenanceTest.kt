@@ -58,7 +58,8 @@ class MapProvenanceTest {
     // Computed outside this code, by the digest's definition over each release's file list.
     private val releasedDigest = "638c298d36cfd92afc529aca0b0b635542d09b5912f8aa190b3a0cdf340b02ef"
     private val digestUpTo050 = "965cdb082c9b16416f782c73b99086925df47091ee6bbc0eac7353c6d06dde73"
-    private val currentDigest = "d2b179ea4235ed4027ea6c7486f8dde4afc8803206d5d7eb2cebd6cb8db4973b"
+    private val digestOf060 = "d2b179ea4235ed4027ea6c7486f8dde4afc8803206d5d7eb2cebd6cb8db4973b"
+    private val currentDigest = "25273efca176c34814366eed466715ef379211349d9ada2376b490d03b30626e"
 
     @Test
     fun `each digest scheme gives the digest its release wrote`(@TempDir dir: File) {
@@ -66,6 +67,7 @@ class MapProvenanceTest {
 
         assertEquals(releasedDigest, MapProvenance.digest(dir, MapProvenance.EARLIER.single { it.releases == "0.2.0" }.files))
         assertEquals(digestUpTo050, MapProvenance.digest(dir, MapProvenance.EARLIER.single { it.releases == "0.3.0 to 0.5.0" }.files))
+        assertEquals(digestOf060, MapProvenance.digest(dir, MapProvenance.EARLIER.single { it.releases == "0.6.0" }.files))
         assertEquals(
             currentDigest, MapProvenance.digest(dir),
             "the digested files changed: freeze the last released list in MapProvenance.EARLIER, so a " +

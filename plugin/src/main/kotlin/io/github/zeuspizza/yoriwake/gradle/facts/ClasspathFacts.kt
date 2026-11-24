@@ -39,6 +39,8 @@ internal data class ClasspathFacts(
      * other rules, which then leave JaCoCo's ceiling out.
      */
     val jacocoVersion: org.gradle.api.provider.Provider<String>? = null,
+    /** The JaCoCo version whose agent captures the task's runs, absent when it is [jacocoVersion]'s. */
+    val capturingJacocoVersion: org.gradle.api.provider.Provider<String>? = null,
     /** The test JVM's feature version as its launcher reports it, absent when nobody can tell. */
     val testJvm: org.gradle.api.provider.Provider<Int>? = null,
     /** A lower agent ceiling the task hands its test JVM, for tests on installed JDKs; else absent. */
@@ -78,6 +80,8 @@ internal data class ClasspathFacts(
     override fun jacocoVersion(): String? = jacocoVersion?.let { it.readOrNull() ?: "" }
 
     override fun jacocoSetting(): String = "`jacoco.toolVersion`"
+
+    override fun capturingJacocoVersion(): String? = capturingJacocoVersion.readOrNull() ?: jacocoVersion()
 
     override fun testJvm(): Int? = testJvm.readOrNull()
 
@@ -169,6 +173,7 @@ internal fun classpathFacts(
     jacocoVersion = project.provider {
         project.extensions.findByType(org.gradle.testing.jacoco.plugins.JacocoPluginExtension::class.java)?.toolVersion
     },
+    capturingJacocoVersion = project.provider { io.github.zeuspizza.yoriwake.gradle.wiring.JacocoSwap.versionFor(project) },
     // Absent, never thrown, when the launcher cannot be probed (an `executable` that is a script):
     // the configuration cache resolves this when it stores, and the test JVM then judges itself.
     testJvm = test.javaLauncher.let { launcher ->

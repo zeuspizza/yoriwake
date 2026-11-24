@@ -1,5 +1,6 @@
 import org.gradle.plugin.compatibility.compatibility
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import java.security.MessageDigest
 import java.util.Properties
 import java.util.UUID
 import java.util.zip.CRC32
@@ -30,6 +31,9 @@ repositories {
 }
 
 val jacocoVersion = "0.8.12"
+// The JaCoCo agent the plugin attaches in place of Gradle's default when that default cannot
+// instrument the test JVM's Java. A row of jacoco-java-support.tsv must name it.
+val bundledJacocoAgentVersion = "0.8.15"
 val asmVersion = "9.10.1"
 // The JDK this build compiles and tests on, and the daemon JDK functional builds run on by default.
 val buildJdk = 21
@@ -115,8 +119,26 @@ val unpackAgentClasses by tasks.registering(Sync::class) {
     exclude { it.path.startsWith("META-INF/") && !it.path.startsWith("META-INF/licenses/") }
 }
 
+// JaCoCo's own agent artifact, unmodified: Gradle's jacocoAgent configuration takes it as it takes
+// Gradle's default, and reads its version from the file name.
+val bundledJacocoAgent: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
+dependencies {
+    bundledJacocoAgent("org.jacoco:org.jacoco.agent:$bundledJacocoAgentVersion")
+}
+
+val bundleJacocoAgent by tasks.registering(Copy::class) {
+    from(bundledJacocoAgent)
+    into(layout.buildDirectory.dir("bundled-jacoco-agent/yoriwake-jacoco"))
+}
+
 sourceSets.main {
     output.dir(mapOf("builtBy" to bundleAgent), layout.buildDirectory.dir("bundled-agent"))
+    output.dir(mapOf("builtBy" to bundleJacocoAgent), layout.buildDirectory.dir("bundled-jacoco-agent"))
     output.dir(mapOf("builtBy" to unpackAgentClasses), layout.buildDirectory.dir("agent-classes"))
 }
 
@@ -312,7 +334,11 @@ val mergeSbom by tasks.registering {
     val packages = packageOf
     val v = version.toString()
     val out = sbomFile
+    val jacocoAgentVersion = bundledJacocoAgentVersion
+    val jacocoAgentPurl = "pkg:maven/org.jacoco/org.jacoco.agent@$bundledJacocoAgentVersion?type=jar"
+    val jacocoAgentFile: FileCollection = bundledJacocoAgent
     inputs.files(pluginBom, agentBom)
+    inputs.files(jacocoAgentFile)
     inputs.property("version", v)
     inputs.property("relocations", pluginRelocations + agentRelocations.mapKeys { "agent:" + it.key })
     outputs.file(out)
@@ -335,6 +361,16 @@ val mergeSbom by tasks.registering {
             "description" to "The test JVM's agent: nested in the plugin jar as yoriwake-agent.jar, and its classes unpacked into it",
             "components" to components(agentBom.get().asFile).map { library(it, agentRelocations) },
         )
+        val jacocoAgent = linkedMapOf(
+            "type" to "library", "bom-ref" to jacocoAgentPurl, "group" to "org.jacoco", "name" to "org.jacoco.agent",
+            "version" to jacocoAgentVersion, "purl" to jacocoAgentPurl,
+            "hashes" to listOf(mapOf("alg" to "SHA-256", "content" to jacocoAgentFile.singleFile.readBytes().let { bytes ->
+                MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            })),
+            "licenses" to listOf(mapOf("license" to mapOf("id" to "EPL-2.0"))),
+            "description" to "JaCoCo's agent, unmodified: nested in the plugin jar under yoriwake-jacoco/, attached " +
+                "in place of Gradle's default JaCoCo when that cannot instrument the test JVM's Java",
+        )
         val bom = linkedMapOf(
             "bomFormat" to "CycloneDX", "specVersion" to "1.6", "version" to 1,
             "metadata" to mapOf(
@@ -345,7 +381,7 @@ val mergeSbom by tasks.registering {
             ),
             // The core module is the plugin's own code, compiled into its jar, not a library it bundles.
             "components" to components(pluginBom.get().asFile).filterNot { "project_path=" in it["purl"] as String }
-                .map { library(it, pluginRelocations) } + agent,
+                .map { library(it, pluginRelocations) } + agent + jacocoAgent,
         )
         // GitHub's attestation refuses a CycloneDX document without a serial number. A random one
         // would make two builds of one commit differ, so it is derived from the document itself.
@@ -377,6 +413,8 @@ val checkSbom by tasks.registering {
     inputs.file(jar)
     inputs.property("resolved", resolved)
     inputs.property("targets", targets)
+    val jacocoAgentPurl = "pkg:maven/org.jacoco/org.jacoco.agent@$bundledJacocoAgentVersion?type=jar"
+    val jacocoAgentEntry = "yoriwake-jacoco/org.jacoco.agent-$bundledJacocoAgentVersion.jar"
     doLast {
         val bom = groovy.json.JsonSlurper().parse(sbom.get().asFile) as Map<*, *>
         // What GitHub's attestation reads a document as CycloneDX by; without any of them the
@@ -387,8 +425,8 @@ val checkSbom by tasks.registering {
         val listed = (bom["components"] as List<*>).map { it as Map<*, *> }
         val agent = listed.single { (it["name"] as String) == "yoriwake-agent" }
         val libraries = listed.filter { it !== agent }.map { it["purl"] as String }.toSet()
-        check(libraries == resolved.get()) {
-            "the SBOM lists $libraries, but the plugin jar bundles ${resolved.get()}"
+        check(libraries == resolved.get() + jacocoAgentPurl) {
+            "the SBOM lists $libraries, but the plugin jar bundles ${resolved.get() + jacocoAgentPurl}"
         }
         fun relocatedTo(components: List<*>) = components.flatMap { c ->
             ((c as Map<*, *>)["properties"] as List<*>?).orEmpty().map { (it as Map<*, *>)["value"] as String }
@@ -403,6 +441,7 @@ val checkSbom by tasks.registering {
         }
         ZipFile(jar.get().asFile).use { zip ->
             val entries = zip.entries().toList().map { it.name }
+            check(jacocoAgentEntry in entries) { "the plugin jar lacks $jacocoAgentEntry, which the SBOM lists" }
             // The agent's classes are unpacked into the plugin jar as well, so its relocations are there too.
             val named = relocatedTo(listed - agent) + relocatedTo(agent["components"] as List<*>)
             check(shadedRoots(entries) == named) {
@@ -422,8 +461,12 @@ tasks.check { dependsOn(checkSbom) }
 
 tasks.processResources {
     val version = jacocoVersion
+    val agentVersion = bundledJacocoAgentVersion
     inputs.property("jacocoVersion", version)
-    filesMatching("META-INF/licenses/JACOCO-SOURCE.txt") { expand("jacocoVersion" to version) }
+    inputs.property("bundledJacocoAgentVersion", agentVersion)
+    filesMatching(listOf("META-INF/licenses/JACOCO-SOURCE.txt", "yoriwake-jacoco/version")) {
+        expand("jacocoVersion" to version, "bundledJacocoAgentVersion" to agentVersion)
+    }
 }
 
 kotlin {
