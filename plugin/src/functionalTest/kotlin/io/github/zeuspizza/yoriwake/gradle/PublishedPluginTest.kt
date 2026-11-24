@@ -104,6 +104,7 @@ class PublishedPluginTest {
                 "pkg:maven/org.ow2.asm/asm-commons@$asm?type=jar" to "io.github.zeuspizza.yoriwake.shaded.plugin.asm",
                 "pkg:maven/org.ow2.asm/asm-tree@$asm?type=jar" to "io.github.zeuspizza.yoriwake.shaded.plugin.asm",
                 "pkg:maven/io.github.zeuspizza/yoriwake-agent@$version?type=jar" to null,
+                "pkg:maven/org.jacoco/org.jacoco.agent@${declared("bundledJacocoAgentVersion")}?type=jar" to null,
             ),
             bundled(sbom),
         )

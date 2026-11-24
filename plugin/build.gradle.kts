@@ -687,6 +687,7 @@ testing {
                         systemProperty("yoriwake.sbom", sbomFile.get().asFile.absolutePath)
                         systemProperty("yoriwake.jacocoVersion", jacocoVersion)
                         systemProperty("yoriwake.asmVersion", asmVersion)
+                        systemProperty("yoriwake.bundledJacocoAgentVersion", bundledJacocoAgentVersion)
                         // What the identity test compares the TestKit daemon's JDK with.
                         systemProperty("yoriwake.functional.expectedJdk", (functionalCellJdk ?: buildJdk).toString())
                         systemProperty("yoriwake.functional.toolchainPaths", toolchainPaths)

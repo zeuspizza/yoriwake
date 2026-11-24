@@ -143,8 +143,10 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
     @Test
     fun `a disabled run keeps the build's own JaCoCo agent`(@TempDir dir: File) {
         val printsAgent = """
-            val agent: FileCollection = configurations.getByName("jacocoAgent")
-            tasks.register("agentJar") { doLast { println("agent: " + agent.files.map { it.name }) } }
+            tasks.register("agentJar") {
+                val agent: FileCollection = configurations.getByName("jacocoAgent")
+                doLast { println("agent: " + agent.files.map { it.name }) }
+            }
         """.trimIndent()
         captured(dir, "$jacocoBehindTheClasses\n$printsAgent", defaultBehindTheClasses)
 

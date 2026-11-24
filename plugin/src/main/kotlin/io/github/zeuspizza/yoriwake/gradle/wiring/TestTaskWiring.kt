@@ -284,8 +284,8 @@ internal class TestTaskWiring(internal val settings: Settings) {
             return
         }
 
-        val agent = injectAgent(project, test)
-        attachBundledJacoco(project, test)
+        JacocoSwap.register(project, test, settings.jacocoDefault)
+        val agent = injectAgent(project, test, project.provider { JacocoSwap.line(project, test) })
 
         // Validated at configuration time so a typo fails the build now rather than protecting
         // nothing. The agent re-parses the same string in the test JVM.
@@ -1143,18 +1143,10 @@ internal class TestTaskWiring(internal val settings: Settings) {
     }
 
     /**
-     * Lets the project's JaCoCo agent be the bundled one when this task's test JVM is newer than
-     * Gradle's default instruments (see [JacocoSwap]); when it is, each run says so.
+     * Puts the agent on the test runtime classpath, and says so when the project's JaCoCo agent is
+     * the bundled one ([swapLine], see [JacocoSwap]).
      */
-    private fun attachBundledJacoco(project: Project, test: Test) {
-        JacocoSwap.register(project, test, settings.jacocoDefault)
-        val line = project.provider { JacocoSwap.line(project, test) }
-        val path = test.path
-        test.doFirst { task -> line.orNull?.let { task.logger.lifecycle("[yoriwake] $path: $it") } }
-    }
-
-    /** Puts the agent on the test runtime classpath. */
-    private fun injectAgent(project: Project, test: Test): File? {
+    private fun injectAgent(project: Project, test: Test, swapLine: org.gradle.api.provider.Provider<String>): File? {
         // Unpacked at execution time, named at configuration time: writing the jar during
         // configuration invalidated the first build's own cache entry.
         if (!AgentJar.isBundled()) {
@@ -1166,8 +1158,12 @@ internal class TestTaskWiring(internal val settings: Settings) {
         }
         val agent = AgentJar.locationUnder(project.cacheDir())
         test.classpath += project.files(agent)
+        val path = test.path
         // Re-checked every run, so a cleaned cache directory gets its agent back.
-        test.doFirst { AgentJar.extractTo(agent.parentFile) }
+        test.doFirst { task ->
+            AgentJar.extractTo(agent.parentFile)
+            swapLine.orNull?.let { task.logger.lifecycle("[yoriwake] $path: $it") }
+        }
         return agent
     }
 
