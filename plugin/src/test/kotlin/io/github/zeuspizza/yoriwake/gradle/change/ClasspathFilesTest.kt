@@ -1567,10 +1567,10 @@ class ClasspathFilesTest {
             "app/build/resources/main/org/build-receipt.properties", "app/build/resources/main/deeper/org/build-receipt.properties", inJar,
         )
         val moved = ClasspathFiles.compare(
-            recorded = keys.associateWith { "1" } + ("app/build/resources/main/gone/org/build-receipt.properties" to "1"),
+            recorded = keys.associateWith { "1" } + ("app/build/resources/main/gone.properties" to "1"),
             current = keys.associateWith { "2" },
         )
-        val ignoring = normalization(paths = setOf("org/build-receipt.properties"))
+        val ignoring = normalization(paths = setOf("org/build-receipt.properties", "gone.properties"))
 
         // Within the directory on the classpath, not anywhere beneath it; a file that is gone still moves.
         assertEquals(
