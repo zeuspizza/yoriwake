@@ -3831,6 +3831,29 @@ def case_every_harness_build_turns_off_the_guests_own_test_selection():
     return failures
 
 
+def case_every_harness_build_recompiles_in_full_what_it_compiles():
+    """Rows build on a reused checkout: an incremental compile there wrote Groovy test classes that
+    differ from a clean build of the same sources, and every later row ran their tests."""
+    failures = 0
+    seen = []
+    original = run.run, run.test_progress_paths
+    run.run = lambda argv, *args, **kwargs: seen.append(argv) or (0, 0.0)
+    run.test_progress_paths = lambda checkout, project: []
+    try:
+        run.gradle(run.ROOT, {}, [":m:test"], os.devnull)
+    finally:
+        run.run, run.test_progress_paths = original
+    argv = seen[0] if seen else []
+    if not any(a == "-I" and b == run.FULL_RECOMPILE_INIT for a, b in zip(argv, argv[1:])):
+        failures += fail("a harness build does not carry the full-recompile init script")
+    for flag in ("-Pkotlin.incremental=false", "-Pkapt.incremental.apt=false", "-Pksp.incremental=false"):
+        if flag not in argv:
+            failures += fail(f"a harness build does not pass {flag}")
+    if not os.path.isfile(run.FULL_RECOMPILE_INIT):
+        failures += fail(f"the full-recompile init script is missing: {run.FULL_RECOMPILE_INIT}")
+    return failures
+
+
 def case_a_killed_build_stops_its_daemons_before_the_harness_goes_on():
     """A killed client leaves its daemon finishing the build and decoding into the map; the next
     thing the harness does is copy that map."""
@@ -5837,6 +5860,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_project_flag_names_an_init_script_in_the_checkout_that_exists,
          case_a_harness_property_in_a_project_s_flags_is_read_by_a_script_they_pass,
          case_every_harness_build_turns_off_the_guests_own_test_selection,
+         case_every_harness_build_recompiles_in_full_what_it_compiles,
          case_a_killed_build_stops_its_daemons_before_the_harness_goes_on,
          case_a_stop_that_fails_is_said_and_does_not_raise,
          case_every_harness_build_retries_a_failed_download_longer,

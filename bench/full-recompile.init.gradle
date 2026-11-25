@@ -1,0 +1,23 @@
+/*
+ * Harness only: a compile task that runs recompiles everything it compiles, as a clean build would.
+ *
+ * Rows build on a reused checkout, so an incremental compile, after a mutation and again after its
+ * revert, left class files that differ from a clean build of the same sources: Groovy classes
+ * built against a trait without its source lost a field and reordered their interfaces, and
+ * AspectJ's weaver reordered synthetic methods. The map is captured from a clean build, as a
+ * user's CI builds on a fresh checkout, so every row then saw bytes change with no source change
+ * behind them, and ran the tests of classes nothing touched. Kotlin, kapt and KSP get the same
+ * from `FULL_RECOMPILE_FLAGS` in run.py: their switches are project properties.
+ *
+ * Set when the task graph is ready, after every build script's own `configureEach`, as in
+ * guest-selection-off.init.gradle; a guest build that turns incremental compilation on (gradle's
+ * own does, for Groovy) is overridden. Not in scripts/yoriwake.init.gradle.kts: how a user's build
+ * compiles is the user's business.
+ */
+gradle.taskGraph.whenReady { graph ->
+    graph.allTasks.each { task ->
+        if (task instanceof JavaCompile || task instanceof GroovyCompile) {
+            task.options.incremental = false
+        }
+    }
+}
