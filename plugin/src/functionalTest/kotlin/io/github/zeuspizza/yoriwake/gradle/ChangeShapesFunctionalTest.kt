@@ -218,7 +218,11 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
             edit(dir, moved, "return n * 3", "if (true) { throw IllegalStateException(\"entry\") }\n    return n * 3")
         }, run = GradleRunner::buildAndFail)
 
-        assertNarrowedTo(dir, setOf("dev.sample.BetaTest"), output)
+        // BetaTest's own bytes moved too (it now calls `BetaMovedKt`), and discovery loaded it in
+        // AlphaTest's window, so AlphaTest runs with it; what is pinned is that the run narrowed
+        // rather than forcing on `BetaMovedKt`.
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertTrue("dev.sample.BetaTest" in ranTests(dir), output)
     }
 
     @Test
