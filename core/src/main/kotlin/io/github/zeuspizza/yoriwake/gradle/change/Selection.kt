@@ -601,9 +601,11 @@ internal fun widenForInlining(
     inlineSources: Set<String> = emptySet(),
     /** The oldest JaCoCo that recorded the map, from `CoverageDecoder.readJacocoVersion`; null takes the host's. */
     recordedJacoco: String? = null,
+    /** The name a class was recorded under: a moved file's ([ChangeDetection.Change.movedFrom]) is the old file's. */
+    recordedAs: (String) -> String = { it },
 ): InlineWidening = widen(
     prefixes, facts, recordedConstants, inlinableSourceChanged, digestRule, recordedAnnotations, ownTestClasses,
-    inlinedAway, lineOnly, inlineSources, recordedJacoco,
+    inlinedAway, lineOnly, inlineSources, recordedJacoco, recordedAs,
 ).let { widening -> if (lineOnly == null) widening else widening.withLines(widening.lines ?: LineOnly.NONE) }
 
 private fun widen(
@@ -618,6 +620,7 @@ private fun widen(
     lineOnly: LineOnlyRule?,
     inlineSources: Set<String>,
     recordedJacoco: String?,
+    recordedAs: (String) -> String,
 ): InlineWidening {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -659,7 +662,7 @@ private fun widen(
         else InlineWidening.widened(emptyList(), emptySet(), digest).withLines(lines)
     }
 
-    constantHolderRefusal(prefixes, recordedConstants, digest, artifacts::classesFor)
+    constantHolderRefusal(prefixes, recordedConstants, digest, recordedAs, artifacts::classesFor)
         ?.let { return it.withDigest(digest).withLines(lines) }
 
     // The throwable is kept as the only account of why the scan failed.
@@ -686,7 +689,7 @@ private fun widen(
         ).withLines(lines)
     }
     // Last, so every refusal above keeps its own token when both apply.
-    annotationRefusal(prefixes, recordedAnnotations, ownTestClasses, artifacts::classesFor)
+    annotationRefusal(prefixes, recordedAnnotations, ownTestClasses, recordedAs, artifacts::classesFor)
         ?.let { return it.withDigest(digest).withLines(lines) }
     if (bytesUnknown) return bytesRefusal(digest).withLines(lines)
     // Asked per file, since the scan above answers for the change set as a whole. A scan that
@@ -779,6 +782,8 @@ internal fun constantHolderRefusal(
     recordedConstants: Map<String, String> = emptyMap(),
     /** The bytes comparison of this call; null when none was asked for. */
     comparison: DigestWidening? = null,
+    /** The name a class's constants were recorded under. */
+    recordedAs: (String) -> String = { it },
     classesOf: (String) -> List<Pair<String, ByteArray>>?,
 ): InlineWidening? = runCatching {
     val compared = comparison != null && comparison.silence == null
@@ -804,7 +809,7 @@ internal fun constantHolderRefusal(
             // The question is whether a constant changed, not whether one exists. A class the map
             // never recorded, or one whose digest cannot be computed now, still forces; only an
             // exact match licenses skipping.
-            val recorded = recordedConstants[name]
+            val recorded = recordedConstants[recordedAs(name)]
             if (digest != null && recorded == digest) {
                 continue
             }
@@ -935,13 +940,15 @@ internal fun changeSet(
     /** [InlineWidening.lines]; null with `narrowLineOnlyChanges` off. */
     lines: LineOnly? = null,
 ): io.github.zeuspizza.yoriwake.agent.select.ChangeSet =
-    io.github.zeuspizza.yoriwake.agent.select.ChangeSet.of(changed, scoped.change.unmappablePaths.sorted())
+    io.github.zeuspizza.yoriwake.agent.select.ChangeSet.of(
+        changed.map(scoped.change::movedFrom).distinct(), scoped.change.unmappablePaths.sorted(),
+    )
         .withAccountedFor(accountedFor(paths, scoped, lines?.prefixes.orEmpty()))
         .withLinesOnly(lines?.classes.orEmpty())
         .withAbsenceProvable(established.provable)
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
-        .withChangedBytes(changedBytes.sorted())
+        .withChangedBytes(changedBytes.map(scoped.change::movedFrom).distinct().sorted())
         .withMovedFiles(movedFiles.sorted())
         .withIgnoredPaths(scoped.ignore.ignored.map { it.path })
 
@@ -1067,6 +1074,8 @@ internal fun scopedChange(
     moved: Set<String> = emptySet(),
     /** The test task's input files under the root beyond its classpath and test classes, root-relative. */
     taskInputs: () -> List<String> = { emptyList() },
+    /** Each Kotlin source git pairs as moved, to the path it moved from ([ChangeDetection.movedKotlinSources]). */
+    movedFrom: Map<String, String> = emptyMap(),
     /** Where the step's log goes. */
     report: (String) -> Unit = {},
 ): ScopedChange {
@@ -1118,12 +1127,19 @@ internal fun scopedChange(
             compiledOutputOf(path, facts)?.let { buildDir -> artifacts.classesCompiledFrom(buildDir, packageName, fileName) }
         },
         { pathNames -> readAsSource(mapDir, pathNames) },
+        movedFrom,
     )
     if (resolved.replaced + resolved.routed > 0) {
         report(
             "named ${resolved.replaced + resolved.routed} changed file(s) by the classes compiled from them " +
                 "(${resolved.dropped} name(s) no class carries dropped, ${resolved.routed} file(s) of no code routed): " +
                 resolved.change.classPrefixes.sorted().joinToString()
+        )
+    }
+    if (resolved.change.movedNames.isNotEmpty()) {
+        report(
+            "judged ${resolved.change.movedNames.size} moved Kotlin file(s) as the file they moved from: " +
+                resolved.change.movedNames.entries.sortedBy { it.key }.joinToString { (moved, old) -> "$moved as $old" }
         )
     }
     return ScopedChange(
@@ -1159,6 +1175,8 @@ internal fun annotationRefusal(
     recorded: Map<String, String>?,
     /** [Established.testClasses]: the changed sources in this task's own test output. */
     ownTestClasses: Set<String> = emptySet(),
+    /** The name a class's annotations were recorded under. */
+    recordedAs: (String) -> String = { it },
     classesOf: (String) -> List<Pair<String, ByteArray>>?,
 ): InlineWidening? = runCatching {
     fun refuse(kind: RefusalKind, name: String, why: String) = InlineWidening.refuse(
@@ -1190,7 +1208,7 @@ internal fun annotationRefusal(
                     kind = RefusalKind.SCAN_REFUSED,
                     detail = "the annotations of $name could not be read",
                 )
-            if (name in recorded) continue
+            if (recordedAs(name) in recorded) continue
             if (prefix in ownTestClasses && Recordability.declaresTestMethod(bytes)) continue
             if (compilerWritten) continue
             return@runCatching refuse(

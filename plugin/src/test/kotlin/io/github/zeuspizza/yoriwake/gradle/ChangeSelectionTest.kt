@@ -1836,4 +1836,36 @@ class ChangeSelectionTest {
         assertTrue("$fixtures.Kotlin" in widening.prefixes, "got ${widening.prefixes}")
         assertEquals(emptySet(), widening.accountedByInliners)
     }
+
+    @Test
+    fun `a moved file class's constant is read under the name the map recorded it by`() {
+        // The file class `FooMovedKt` of a moved `Foo.kt` holds what `FooKt` held at capture.
+        val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
+        val recordedAs = { n: String -> if (n == name) "pkg.FooKt" else n }
+        val unchanged = mapOf("pkg.FooKt" to Recordability.constantDigest(bytesOf(name))!!)
+
+        assertNull(constantHolderRefusal(setOf(name), unchanged, recordedAs = recordedAs) { p -> listOf(p to bytesOf(p)) })
+        assertEquals(
+            RefusalKind.CONSTANT_UNRECORDED,
+            constantHolderRefusal(setOf(name), unchanged) { p -> listOf(p to bytesOf(p)) }?.refusalKind,
+        )
+        assertEquals(
+            RefusalKind.CONSTANT_CHANGED,
+            constantHolderRefusal(setOf(name), mapOf("pkg.FooKt" to "not-the-digest"), recordedAs = recordedAs) { p ->
+                listOf(p to bytesOf(p))
+            }?.refusalKind,
+        )
+    }
+
+    @Test
+    fun `a moved file class's annotations are read under the name the map recorded them by`() {
+        val name = "com.acme.ServiceMovedKt"
+        val recorded = mapOf("com.acme.ServiceKt" to annotationsOf(profiled(name, "a")))
+
+        assertNull(annotationRefusal(setOf(name), recorded, recordedAs = { "com.acme.ServiceKt" }) { listOf(name to profiled(name, "a")) })
+        assertEquals(
+            RefusalKind.ANNOTATIONS_UNRECORDED,
+            annotationRefusal(setOf(name), recorded) { listOf(name to profiled(name, "a")) }?.refusalKind,
+        )
+    }
 }

@@ -45,7 +45,26 @@ internal object ChangeDetection {
          * carries them, which an inliner's SMAP still names its source by.
          */
         val inlineSources: Set<String> = emptySet(),
-    )
+        /**
+         * The path name of each changed Kotlin file git pairs as moved, to the path name of the file
+         * it moved from, when only the move created that name: no class of the file carries it, its
+         * file class does. The selector judges it as the old file's ([movedFrom], [CompiledNames]).
+         */
+        val movedNames: Map<String, String> = emptyMap(),
+    ) {
+        /**
+         * [name] as the selector judges it: a moved file's path name, file class or a class nested
+         * in its file class, under the file it moved from; any other name as it is.
+         */
+        fun movedFrom(name: String): String {
+            for ((moved, old) in movedNames) {
+                if (name == moved) return old
+                val fileClass = moved + "Kt"
+                if (name == fileClass || name.startsWith("$fileClass$")) return old + "Kt" + name.removePrefix(fileClass)
+            }
+            return name
+        }
+    }
 
     // Only Kotlin `inline` bodies are copied into callers and erase the edge; Groovy has no
     // `inline`. Anything else counts as inlinable, the conservative direction.
@@ -484,6 +503,28 @@ internal object ChangeDetection {
             "--end-of-options", against,
         )
     )
+
+    /**
+     * Each Kotlin source git pairs as moved since [against], at any similarity its rename detection
+     * accepts: its path to the path it moved from, both as [trackedPaths] names them. Empty when git
+     * could not answer, which leaves every move unpaired.
+     */
+    fun movedKotlinSources(git: Runner, projectDir: File, against: String): Map<String, String> {
+        val listed = git.run(
+            listOf(
+                "diff", "--name-status", "--find-renames", "--diff-filter=R", "--ignore-submodules=none",
+                "--end-of-options", against,
+            )
+        ) ?: return emptyMap()
+        val pairs = listed.mapNotNull { line ->
+            val fields = line.split('\t')
+            if (fields.size != 3 || !fields[0].startsWith("R")) return@mapNotNull null
+            val (_, old, moved) = fields
+            if (old.endsWith(".kt") && moved.endsWith(".kt")) listOf(moved, old) else null
+        }
+        if (pairs.isEmpty()) return emptyMap()
+        return rebaseToProject(git, projectDir, pairs.flatten()).chunked(2).associate { (moved, old) -> moved to old }
+    }
 
     /**
      * The paths [trackedPaths] reports for [against] that lie outside the build's root, which it

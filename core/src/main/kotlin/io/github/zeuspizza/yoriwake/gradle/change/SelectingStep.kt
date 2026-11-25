@@ -141,6 +141,9 @@ internal object SelectingStep {
             if (bump == null) paths else paths - bump.paths.toSet(),
             classpathFacts, inputs.notReadByTests, inputs.ignore, mapDir,
             bases = listOfNotNull(against, inputs.stamp), moved = inputs.moved, taskInputs = inputs.taskInputs,
+            // Asked only when a Kotlin source changed: git's rename detection pairs nothing else here.
+            movedFrom = if (paths.none { it.endsWith(".kt") }) emptyMap()
+            else ChangeDetection.movedKotlinSources(ChangeDetection.directRunner(rootDir), rootDir, against),
             // No colon after the task, as on the "selecting against" line: a `<task>: ` line is a reason.
             report = { message -> host.lifecycle("[yoriwake] ${host.name} $message") },
         )
@@ -187,6 +190,7 @@ internal object SelectingStep {
             lineOnly = if (!inputs.narrowLineOnlyChanges) null else LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
             inlineSources = scoped.change.inlineSources,
             recordedJacoco = CoverageDecoder.readJacocoVersion(mapDir),
+            recordedAs = scoped.change::movedFrom,
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
@@ -260,10 +264,11 @@ internal object SelectingStep {
         writeChangeSet(
             host, changeSetFile,
             mapOf(
-                CHANGED_CLASSES_PROPERTY to changed,
+                // A moved Kotlin file's own names as the old file's, whose classes the map recorded.
+                CHANGED_CLASSES_PROPERTY to changed.map(scoped.change::movedFrom).distinct(),
                 // Its own property: the change set is also the selector's anchor set for nested
                 // classes.
-                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,
+                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes.mapTo(sortedSetOf(), scoped.change::movedFrom),
                 // Escaped, since a file name can hold the comma that joins the list.
                 MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles.map(PathIgnore::escape),
                 UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,
