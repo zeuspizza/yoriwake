@@ -19,9 +19,10 @@ guess.
   commit the map was captured at. Uncommitted, untracked and gitignored files count too, by content,
   so an edited ignored fixture selects the tests that read it. A changed git submodule counts as its
   path whatever its `ignore` setting, or that of a submodule nested in it, untracked files in it
-  included, its own build output too. Build state does not: `.gradle/`, `.kotlin/`, the build
-  directories of this build's projects, and a `build/` directory beside any other Gradle build
-  script (`buildSrc`, an included build, a project a TestKit test wrote). A change reaches a test
+  included, its own build output too. Build state does not: `.gradle/`, `.kotlin/`,
+  `.intellijPlatform/`, the build directories of this build's projects, and a `build/` directory
+  beside any other Gradle build script (`buildSrc`, an included build, a project a TestKit test
+  wrote). A change reaches a test
   that reads such a file through the tracked sources that produce it. A non-class file the build
   put on a test task's runtime classpath (a resource, an entry of one of your own jars) is the
   exception: it counts by content, compared with the capture's just before the tests start, so one

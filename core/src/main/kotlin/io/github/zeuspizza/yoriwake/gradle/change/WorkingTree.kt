@@ -90,7 +90,10 @@ internal object WorkingTree {
         val directories = path.split('/').dropLast(1)
         // `.kotlin` is the Kotlin Gradle plugin's state beside `.gradle`: a marker per live
         // compiler session, so every run that starts a new daemon would otherwise force.
+        // `.intellijPlatform` is the IntelliJ Platform Gradle Plugin's cache, written into the root
+        // during the build, after the change set is taken, and read by no test by path.
         return ".gradle" in directories || ".kotlin" in directories || ".git" in directories ||
+            ".intellijPlatform" in directories ||
             NotRead.isIdeState(path) ||
             isUnderExcluded(path, excluded) ||
             directories.indices.any { i ->

@@ -2015,6 +2015,12 @@ MUTATIONS = [
      '".gradle" in directories || ".kotlin" in directories ||',
      '".gradle" in directories ||',
      unit_suite, "build output and gradle state are not snapshotted"),
+    # The IntelliJ Platform Gradle Plugin writes its cache into the root during the build, after
+    # the change set is taken: counted as changes, every run on such a build refused as stale.
+    ("the IntelliJ Platform plugin's cache enters the change set again", WORKING_TREE,
+     '            ".intellijPlatform" in directories ||',
+     '            false ||',
+     unit_suite, "the IntelliJ Platform plugin's cache is build state, a tracked file under it is not"),
     ("build output of another Gradle build enters the change set again", WORKING_TREE,
      "                directories[i] == \"build\" && isGradleBuild(",
      "                false && isGradleBuild(",
