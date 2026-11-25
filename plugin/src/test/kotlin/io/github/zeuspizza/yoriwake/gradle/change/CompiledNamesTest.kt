@@ -385,7 +385,13 @@ class CompiledNamesTest {
     }
 
     /** [module], moved from [oldPath] (no longer on disk), resolved with git's pair when [paired]. */
-    private fun resolveMoved(module: Module, oldPath: String, paired: Boolean = true, inChange: Boolean = true): CompiledNames.Resolved {
+    private fun resolveMoved(
+        module: Module,
+        oldPath: String,
+        paired: Boolean = true,
+        inChange: Boolean = true,
+        pairable: Boolean = true,
+    ): CompiledNames.Resolved {
         val artifacts = TaskArtifacts(listOf(module.classes), listOf(module.build.absolutePath))
         val paths = if (inChange) listOf(oldPath, module.path) else listOf(module.path)
         return CompiledNames.resolve(
@@ -393,6 +399,7 @@ class CompiledNamesTest {
             { _, packageName, fileName -> artifacts.classesCompiledFrom(module.build.absolutePath, packageName, fileName) },
             { emptySet() },
             if (paired) mapOf(module.path to oldPath) else emptyMap(),
+            { pairable },
         )
     }
 
@@ -425,6 +432,13 @@ class CompiledNamesTest {
         val module = module(dir, "src/main/kotlin/pkg/FooMoved.kt", movedFile, "pkg.Foo", "pkg.FooMovedKt")
 
         assertEquals(emptyMap(), resolveMoved(module, "src/main/kotlin/pkg/Foo.kt", paired = false).change.movedNames)
+    }
+
+    @Test
+    fun `a moved file whose path name a class elsewhere carries, or whose file class the map held, keeps its own names`(@TempDir dir: File) {
+        val module = module(dir, "src/main/kotlin/pkg/FooMoved.kt", movedFile, "pkg.Foo", "pkg.FooMovedKt")
+
+        assertEquals(emptyMap(), resolveMoved(module, "src/main/kotlin/pkg/Foo.kt", pairable = false).change.movedNames)
     }
 
     @Test

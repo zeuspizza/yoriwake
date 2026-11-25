@@ -951,7 +951,7 @@ internal fun changeSet(
     )
         .withAccountedFor(accountedFor(paths, scoped, lines?.prefixes.orEmpty()))
         .withLinesOnly(lines?.classes.orEmpty())
-        .withAbsenceProvable(established.provable.map(scoped.change::movedFrom))
+        .withAbsenceProvable(provableAsJudged(established, scoped.change))
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
         .withChangedBytes(changedBytes.map(scoped.change::movedFrom).distinct().sorted())
@@ -1012,6 +1012,27 @@ internal data class ScopedChange(
         get() = dropped > 0 &&
             change.classPrefixes.isEmpty() &&
             change.unmappablePaths.isEmpty()
+}
+
+/**
+ * Whether a moved Kotlin file's path name may be judged as the old file's: no class of this build
+ * carries it (another file's class of that name is that class's own), and the map, recorded by
+ * [held], never held its file class, as one captured after the move did. Unknown is no.
+ */
+internal fun movedNamePairable(
+    pathName: String,
+    classesFor: (String) -> List<Pair<String, ByteArray>>?,
+    held: Map<String, String>?,
+): Boolean = held != null && pathName + "Kt" !in held &&
+    classesFor(pathName)?.none { (name, _) -> name == pathName } == true
+
+/**
+ * [Established.provable] under the names the selector judges: a moved file's name is provable as
+ * the old file's only while no name judged as that one was refused.
+ */
+internal fun provableAsJudged(established: Established, change: ChangeDetection.Change): List<String> {
+    val refused = established.refusals.keys.mapTo(HashSet(), change::movedFrom)
+    return established.provable.map(change::movedFrom).filterNot { it in refused }.distinct()
 }
 
 /**
@@ -1134,6 +1155,7 @@ internal fun scopedChange(
         },
         { pathNames -> readAsSource(mapDir, pathNames) },
         movedFrom,
+        { pathName -> movedNamePairable(pathName, artifacts::classesFor, mapDir?.let(CoverageDecoder::readClassDigests)) },
     )
     if (resolved.replaced + resolved.routed > 0) {
         report(

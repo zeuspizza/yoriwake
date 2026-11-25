@@ -277,7 +277,7 @@ internal object SelectingStep {
                 // Every changed path, before any is dropped, for the tests that declare a dependency on one.
                 // Escaped, since a path can hold the comma that joins the list.
                 CHANGED_PATHS_PROPERTY to paths.map(PathIgnore::escape),
-                ABSENCE_PROVABLE_PROPERTY to established.provable.map(scoped.change::movedFrom),
+                ABSENCE_PROVABLE_PROPERTY to provableAsJudged(established, scoped.change),
                 // Separate property: a test class that has ever run is in the loaded-class union by
                 // definition, so the absence rule would never fire for it.
                 OWN_TEST_CLASSES_PROPERTY to ownTestClasses,

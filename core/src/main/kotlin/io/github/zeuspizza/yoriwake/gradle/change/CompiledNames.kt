@@ -22,7 +22,8 @@ internal object CompiledNames {
      * such a read is a touch the selector matches by the path name alone.
      *
      * [movedFrom] pairs a moved Kotlin file's path with the path it moved from. When both are in
-     * [change] and only the new file's class carries its path name, that name goes to
+     * [change], only the new file's file class carries its path name, and [pairable] answers that no
+     * class anywhere carries it and the map never held that file class, the name goes to
      * [ChangeDetection.Change.movedNames]: the move created it, and the tests of the old file's
      * classes are the ones that ran this code.
      */
@@ -32,6 +33,7 @@ internal object CompiledNames {
         listed: (path: String, packageName: String, fileName: String) -> List<String>?,
         readAsSource: (pathNames: Collection<String>) -> Set<String>,
         movedFrom: Map<String, String> = emptyMap(),
+        pairable: (pathName: String) -> Boolean = { false },
     ): Resolved {
         fun classesOf(path: String): List<String>? {
             val packageName = ChangeDetection.packageOf(projectDir, path) ?: return null
@@ -52,7 +54,7 @@ internal object CompiledNames {
             val resolved = namesFor(path, names, classes)
             val pathName = ChangeDetection.pathName(path)
             val old = movedFrom[path]?.takeIf { it in change.prefixesByPath }?.let(ChangeDetection::pathName)
-            if (old != null && pathName != null && pathName in resolved && pathName !in classes) movedNames[pathName] = old
+            if (old != null && pathName != null && pathName in resolved && pathName !in classes && pairable(pathName)) movedNames[pathName] = old
             if (resolved != names) replaced++
             dropped += (names - resolved).size
             keepTrack(path, resolved)

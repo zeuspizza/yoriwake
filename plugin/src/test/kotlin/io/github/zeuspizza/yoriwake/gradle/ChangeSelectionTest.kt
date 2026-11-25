@@ -26,7 +26,9 @@ import io.github.zeuspizza.yoriwake.gradle.change.compareDigests
 import io.github.zeuspizza.yoriwake.gradle.change.constantHolderRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
 import io.github.zeuspizza.yoriwake.gradle.change.establishAfterWidening
+import io.github.zeuspizza.yoriwake.gradle.change.movedNamePairable
 import io.github.zeuspizza.yoriwake.gradle.change.ownTestClassesByBytes
+import io.github.zeuspizza.yoriwake.gradle.change.provableAsJudged
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -1883,6 +1885,37 @@ class ChangeSelectionTest {
         assertEquals(
             RefusalKind.ANNOTATIONS_UNRECORDED,
             annotationRefusal(setOf(name), recorded) { listOf(name to profiled(name, "a")) }?.refusalKind,
+        )
+    }
+
+    @Test
+    fun `a moved file's path name is judged as the old file's only when no class carries it and the map never held its file class`() {
+        val nothing: (String) -> List<Pair<String, ByteArray>>? = { listOf("pkg.FooMovedKt" to ByteArray(0)) }
+        val classOfThatName: (String) -> List<Pair<String, ByteArray>>? = { listOf("pkg.FooMoved" to ByteArray(0)) }
+
+        assertTrue(movedNamePairable("pkg.FooMoved", nothing, mapOf("pkg.FooKt" to "a")))
+        // Another file declares a class of that name: rewriting it would hide that class's tests.
+        assertFalse(movedNamePairable("pkg.FooMoved", classOfThatName, mapOf("pkg.FooKt" to "a")))
+        // A map captured after the move recorded the new file class under its own name.
+        assertFalse(movedNamePairable("pkg.FooMoved", nothing, mapOf("pkg.FooMovedKt" to "a")))
+        assertFalse(movedNamePairable("pkg.FooMoved", nothing, null))
+        assertFalse(movedNamePairable("pkg.FooMoved", { null }, mapOf("pkg.FooKt" to "a")))
+    }
+
+    @Test
+    fun `a moved file's name provable under its own name is not provable as a name that was refused`() {
+        val change = ChangeDetection.Change(emptySet(), emptyList(), movedNames = mapOf("pkg.FooMoved" to "pkg.Foo"))
+
+        assertEquals(
+            listOf("pkg.Foo", "pkg.Other"),
+            provableAsJudged(Established(setOf("pkg.FooMoved", "pkg.Other"), emptySet()), change).sorted(),
+        )
+        assertEquals(
+            listOf("pkg.Other"),
+            provableAsJudged(
+                Established(setOf("pkg.FooMoved", "pkg.Other"), emptySet(), refusals = mapOf("pkg.Foo" to "annotated")),
+                change,
+            ),
         )
     }
 }
