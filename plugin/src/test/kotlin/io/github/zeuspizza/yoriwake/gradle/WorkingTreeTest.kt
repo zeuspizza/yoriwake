@@ -101,6 +101,26 @@ class WorkingTreeTest {
     }
 
     @Test
+    fun `the IntelliJ Platform plugin's cache is build state, a tracked file under it is not`(
+        @TempDir dir: File,
+    ) {
+        val root = repo(dir)
+        File(root, ".intellijPlatform/tracked.txt").also { it.parentFile.mkdirs() }.writeText("x")
+        git(root, "add", ".")
+        git(root, "-c", "user.email=t@e.com", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+            "commit", "-m", "tracked")
+        File(root, ".intellijPlatform/tracked.txt").writeText("y")
+        // Written by the plugin during the build, after the change set is taken, and never ignored.
+        File(root, ".intellijPlatform/localPlatformArtifacts/ideaIC.xml").also { it.parentFile.mkdirs() }
+            .writeText("x")
+        File(root, "sub/.intellijPlatform/self-update.lock").also { it.parentFile.mkdirs() }.writeText("x")
+
+        val listed = assertNotNull(WorkingTree.listing(root, emptyList()))
+
+        assertEquals(setOf(".intellijPlatform/tracked.txt"), listed.toSet())
+    }
+
+    @Test
     fun `build directories are named relative to the root, and never as the whole tree`(
         @TempDir dir: File,
     ) {

@@ -29,6 +29,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Changed
 
 - `pathIgnore` may name a file under `src` that no source set or Maven module declares as a root, such as `src/changes/changes.xml`, so a broad existing entry (`**/*.json`) now reaches such files too; the defaults never do. Map: left alone.
+- Files the IntelliJ Platform Gradle Plugin writes under `.intellijPlatform/` during a build are build state, not a change. Map: left alone.
 - A change to code a test JVM ran outside any test after its first test runs that JVM's tests, not every test. Map: left alone.
 - A changed class tests loaded but never executed runs the tests from its first load or read on in each JVM, not every test. Map: left alone.
 - A changed class a JVM first loaded between two tests, in a teardown, runs the class before it too, not every test. Map: left alone.

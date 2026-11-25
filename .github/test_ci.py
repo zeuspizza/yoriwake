@@ -460,7 +460,7 @@ def case_a_map_consumer_that_resolves_its_own_jdk_is_reported():
         problems += fail("an inverted condition that gives the same-OS row '21' passed")
     if not unpinned_map_jdks(own.replace("name: coverage-map\n", "pattern: coverage-map*\n")):
         problems += fail("a consumer downloading the map by pattern was not checked")
-    if not any(p.startswith("capture:") for p in unpinned_map_jdks(verify.replace("        id: java\n", "", 1))):
+    if not any(p.startswith("capture:") for p in unpinned_map_jdks(verify.replace("        id: jdk\n", "", 1))):
         problems += fail("a capture whose JDK output reads no step passed")
     return problems
 
@@ -5475,7 +5475,27 @@ def case_a_run_summary_that_misses_a_job_or_gates_is_reported():
     return problems
 
 
+def case_a_captured_jdk_is_named_as_temurin_publishes_the_same_build():
+    """setup-java refuses a version with a build number unless it equals a published name, and a
+    map selected against on another build runs every test."""
+    published = [("21.0.13+100000002.0.LTS", "21.0.13.1+2-LTS"), ("21.0.13+9.0.LTS", "21.0.13+9-LTS")]
+    problems = 0
+    for installed, runtime, expected in (
+            ("21.0.13+9", "21.0.13+9-LTS", "21.0.13+9.0.LTS"),
+            ("21.0.13+9.0", None, "21.0.13+9.0.LTS"),
+            ("21.0.13+2", "21.0.13.1+2-LTS", "21.0.13+100000002.0.LTS"),
+            ("21.0.13+9.0.LTS", None, "21.0.13+9.0.LTS"),
+            ("21.0.13+90", None, "21.0.13+90"),
+            ("21.0.13+2", None, "21.0.13+2")):
+        if (got := ci.temurin_version(installed, runtime, published)) != expected:
+            problems += fail(f"{installed} ({runtime}) is named {got}, not {expected}")
+    if (got := ci.temurin_version("21.0.13+9.0", None, [])) != "21.0.13+9":
+        problems += fail(f"with nothing published, 21.0.13+9.0 is named {got}")
+    return problems
+
+
 CASES = (
+    case_a_captured_jdk_is_named_as_temurin_publishes_the_same_build,
     case_every_functional_shard_keeps_its_evidence_when_it_fails,
     case_a_shard_that_drops_its_evidence_is_reported,
     case_the_windows_functional_suites_run_in_the_release_check_only,
