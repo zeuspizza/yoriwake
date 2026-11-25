@@ -270,7 +270,7 @@ internal object SelectingStep {
                 CHANGED_CLASSES_PROPERTY to changed.map(scoped.change::movedFrom).distinct(),
                 // Its own property: the change set is also the selector's anchor set for nested
                 // classes.
-                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes.mapTo(sortedSetOf(), scoped.change::movedFrom),
+                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,
                 // Escaped, since a file name can hold the comma that joins the list.
                 MOVED_FILES_PROPERTY to if (widening.forces) emptyList() else widening.movedFiles.map(PathIgnore::escape),
                 UNMAPPABLE_PATHS_PROPERTY to scoped.change.unmappablePaths,

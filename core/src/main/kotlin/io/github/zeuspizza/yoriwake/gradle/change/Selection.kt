@@ -954,7 +954,7 @@ internal fun changeSet(
         .withAbsenceProvable(provableAsJudged(established, scoped.change))
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
-        .withChangedBytes(changedBytes.map(scoped.change::movedFrom).distinct().sorted())
+        .withChangedBytes(changedBytes.sorted())
         .withMovedFiles(movedFiles.sorted())
         .withIgnoredPaths(scoped.ignore.ignored.map { it.path })
 

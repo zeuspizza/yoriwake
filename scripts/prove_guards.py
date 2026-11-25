@@ -1778,9 +1778,9 @@ MUTATIONS = [
      unit_suite, "a Kotlin file the scan reads as code-less is routed as its file class"),
     # A moved Kotlin file's new file class is a class the map never saw; the selector judges it as
     # the file it moved from, whose tests ran this code.
-    ("a moved file's changed file class reaches the selector under its new name", SELECTING_STEP,
-     "widening.changedBytes.mapTo(sortedSetOf(), scoped.change::movedFrom)",
-     "widening.changedBytes",
+    ("a moved file's names reach the selector as its own", SELECTING_STEP,
+     "CHANGED_CLASSES_PROPERTY to changed.map(scoped.change::movedFrom).distinct(),",
+     "CHANGED_CLASSES_PROPERTY to changed,",
      functional_suite, "a Kotlin file of top-level functions moved and edited runs the test that called them"),
     ("a moved file's class of its own new name is judged as the old file's", COMPILED_NAMES,
      "pathName in resolved && pathName !in classes && pairable(pathName)) movedNames[pathName] = old",
@@ -2047,7 +2047,7 @@ MUTATIONS = [
      "",
      agent_suite, "an edited test class names own-class-changed on its tests"),
     ("the plugin stops handing changed bytes to the test JVM", SELECTING_STEP,
-     "                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes.mapTo(sortedSetOf(), scoped.change::movedFrom),",
+     "                CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,",
      "                CHANGED_BYTES_PROPERTY to emptySet<String>(),",
      functional_suite, "a class rewritten after compilation selects the tests that recorded it"),
     # A suite that runs builds writes thousands of files under buildSrc's or a TestKit project's
