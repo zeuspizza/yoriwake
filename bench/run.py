@@ -44,6 +44,13 @@ INIT_SCRIPT_ARGS = ["-I", INIT_SCRIPT, yoriwake_checkout.init_script_version_fla
 # Every harness build carries this, whichever arm: a guest's own Develocity test selection skipped
 # classes in both arms, ground truth included. See the script's own note.
 GUEST_SELECTION_OFF = os.path.join(HERE, "guest-selection-off.init.gradle")
+# Every harness build carries these, whichever arm: a compile task that runs recompiles all it
+# compiles, as on the fresh checkout a user's CI builds and the map is captured from. Rows build on a
+# reused checkout, and an incremental compile there wrote bytes a clean build does not. See the
+# script's own note; Kotlin, kapt and KSP take theirs as project properties.
+FULL_RECOMPILE_INIT = os.path.join(HERE, "full-recompile.init.gradle")
+FULL_RECOMPILE_FLAGS = ["-I", FULL_RECOMPILE_INIT, "-Pkotlin.incremental=false",
+                        "-Pkapt.incremental.apt=false", "-Pksp.incremental=false"]
 # Every build of a project with `max_parallel_forks`, whichever arm; see `fork_cap_flags`.
 FORK_CAP_INIT = os.path.join(HERE, "fork-cap.init.gradle")
 # The public flag the isolated arm records with; Settings.ISOLATED_CAPTURE, pinned by
@@ -1317,7 +1324,8 @@ def _build_once(checkout, project, task_args, log_path):
         instruments.append(f"-Pyoriwake.internal.counters={counters}")
     launched = time.time()
     with sweep_data.TestJvmSampler() as sampler:
-        result = run([wrapper(checkout), "-I", GUEST_SELECTION_OFF] + daemon_jvm_flags(project) +
+        result = run([wrapper(checkout), "-I", GUEST_SELECTION_OFF] + FULL_RECOMPILE_FLAGS +
+                     daemon_jvm_flags(project) +
                      fork_cap_flags(project) + REPOSITORY_RETRY_FLAGS + guest_flags(project) + task_args + instruments +
                      ["--no-build-cache", "--console=plain"],
                      checkout, log_path,
