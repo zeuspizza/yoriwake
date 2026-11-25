@@ -1798,6 +1798,10 @@ MUTATIONS = [
      "            if (recordedAs(name) in recorded) continue",
      "            if (name in recorded) continue",
      unit_suite, "a moved file class's annotations are read under the name the map recorded them by"),
+    ("a moved file's classes are looked for among the capture's under their new names", SELECTION,
+     "firstOrNull { (name, _) -> recordedAs(name) !in held }",
+     "firstOrNull { (name, _) -> name !in held }",
+     unit_suite, "after widening, an inliner the capture held under the name it moved from is vouched for"),
     ("the SMAP reader names a dotted source file by its raw path again", INLINED_SOURCES,
      "                byId[id] = if (path.endsWith(\".kt\")) kotlinSourcePrefix(path) else path.replace('/', '.')",
      "                byId[id] = path.removeSuffix(\".kt\").replace('/', '.')",
@@ -2287,7 +2291,9 @@ MUTATIONS = [
     # The classes the inline scan adds exist only after widening. Skipping the pass leaves them
     # unassessed, and an inline function's lambda no test loads forces the whole suite again.
     ("the classes the inline scan added are never vouched for again", SELECTING_STEP,
-     "        val established = establishAfterWidening(beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly)",
+     "        val established = establishAfterWidening(\n"
+     "            beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly, scoped.change::movedFrom,\n"
+     "        )",
      "        val established = beforeWidening",
      functional_suite, "an inline function's sequence lambda no test loads narrows to the tests of its callers"),
     # A file of only inline functions is waived only by the inliners found for it. With none found,
@@ -3059,7 +3065,7 @@ MUTATIONS = [
      "    val loaded: Boolean = lookup(LOADED)?.let { parseFlag(LOADED, it) } ?: false",
      functional_suite, "a class nothing executes, loads or names stops forcing a full run"),
     ("a class the capture did not hold is absent for a reason", SELECTION,
-     "    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)\n",
+     "    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts, recordedAs)\n",
      "    val unheld = emptyMap<String, AbsenceEvidence.Verdict>()\n",
      functional_suite, "a class newer than it forces until the next capture"),
     ("the decoder labels a JVM isolated without the run having asked", COVERAGE_DECODER,

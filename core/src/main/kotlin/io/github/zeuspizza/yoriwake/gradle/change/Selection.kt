@@ -48,6 +48,8 @@ internal fun establish(
     facts: ClasspathView,
     /** The selecting run's build-script filter digest, or null when it runs unfiltered. */
     unionFilter: String? = null,
+    /** The name a class was recorded under: a moved file's ([ChangeDetection.Change.movedFrom]) is the old file's. */
+    recordedAs: (String) -> String = { it },
 ): Established {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -87,7 +89,7 @@ internal fun establish(
     }
     // A test class discovery runs is judged by its own tests, so a new one is no absence at all;
     // any other class the capture did not hold forces, as before there was a union.
-    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)
+    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts, recordedAs)
     val gated = verdicts + unheld
     // The same gates with the Kotlin refusal waived, which only the inlining classes can answer for.
     val inlineOnly = change.inlineOnly.intersect(change.classPrefixes)
@@ -99,7 +101,7 @@ internal fun establish(
             artifacts::classesFor,
         ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
             .filterValues { it.provable }.keys
-            .let { it - unheldAtCapture(mapDir, it, artifacts).keys }
+            .let { it - unheldAtCapture(mapDir, it, artifacts, recordedAs).keys }
         if (candidates.isEmpty()) emptySet() else runCatching {
             val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir, unionFilter)
             candidates.filterTo(sortedSetOf()) { prefix ->
@@ -138,6 +140,8 @@ internal fun establishAfterWidening(
     widening: InlineWidening,
     /** [ChangeDetection.Change.inlineOnly]. */
     inlineOnly: Set<String>,
+    /** The name a class was recorded under, as for [establish]. */
+    recordedAs: (String) -> String = { it },
 ): Established {
     val candidates = widening.prefixes.toSet() - established.provable - inlineOnly
     if (candidates.isEmpty()) return established
@@ -149,7 +153,7 @@ internal fun establishAfterWidening(
         absenceVerdicts({}, mapDir, candidates, artifacts, inlinesAccountedFor = true),
         artifacts::classesFor,
     ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
-    val gated = verdicts + unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys, artifacts)
+    val gated = verdicts + unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys, artifacts, recordedAs)
     return established.copy(
         provable = established.provable + gated.filterValues { it.provable }.keys,
         refusals = established.refusals - candidates + gated
@@ -894,6 +898,8 @@ private fun unheldAtCapture(
     mapDir: File,
     prefixes: Set<String>,
     artifacts: TaskArtifacts,
+    /** The name a class was held under: a moved file's class was held under the old file's. */
+    recordedAs: (String) -> String,
 ): Map<String, AbsenceEvidence.Verdict> {
     if (prefixes.isEmpty()) {
         return emptyMap()
@@ -903,7 +909,7 @@ private fun unheldAtCapture(
             AbsenceEvidence.Verdict(false, "the map records no class digests, so the capture's classes are unknown")
         }
     return prefixes.mapNotNull { prefix ->
-        artifacts.classesFor(prefix)?.firstOrNull { (name, _) -> name !in held }?.let { (name, _) ->
+        artifacts.classesFor(prefix)?.firstOrNull { (name, _) -> recordedAs(name) !in held }?.let { (name, _) ->
             prefix to AbsenceEvidence.Verdict(false, "the capture did not hold $name")
         }
     }.toMap()
@@ -945,7 +951,7 @@ internal fun changeSet(
     )
         .withAccountedFor(accountedFor(paths, scoped, lines?.prefixes.orEmpty()))
         .withLinesOnly(lines?.classes.orEmpty())
-        .withAbsenceProvable(established.provable)
+        .withAbsenceProvable(established.provable.map(scoped.change::movedFrom))
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
         .withChangedBytes(changedBytes.map(scoped.change::movedFrom).distinct().sorted())

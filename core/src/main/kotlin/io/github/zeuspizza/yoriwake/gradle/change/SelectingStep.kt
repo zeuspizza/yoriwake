@@ -157,7 +157,7 @@ internal object SelectingStep {
         }
         val beforeWidening = establish(
             { message -> host.lifecycle("[yoriwake] ${host.name}: $message") },
-            mapDir, scoped.change, classpathFacts, inputs.unionFilter,
+            mapDir, scoped.change, classpathFacts, inputs.unionFilter, scoped.change::movedFrom,
         )
 
         // A file the build generated onto the classpath from something git does not track moves
@@ -199,7 +199,9 @@ internal object SelectingStep {
             // the tests from each JVM's first read of it on, as a moved classpath file does.
             .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }
         // Only now are the classes that inlined a changed source known, and the scan's answer with them.
-        val established = establishAfterWidening(beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly)
+        val established = establishAfterWidening(
+            beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly, scoped.change::movedFrom,
+        )
         widening.digest?.stamped?.let { found ->
             StampedConstants.lines(found) { StampedConstants.testsExecuting(mapDir, it) }
                 .forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
@@ -275,7 +277,7 @@ internal object SelectingStep {
                 // Every changed path, before any is dropped, for the tests that declare a dependency on one.
                 // Escaped, since a path can hold the comma that joins the list.
                 CHANGED_PATHS_PROPERTY to paths.map(PathIgnore::escape),
-                ABSENCE_PROVABLE_PROPERTY to established.provable,
+                ABSENCE_PROVABLE_PROPERTY to established.provable.map(scoped.change::movedFrom),
                 // Separate property: a test class that has ever run is in the loaded-class union by
                 // definition, so the absence rule would never fire for it.
                 OWN_TEST_CLASSES_PROPERTY to ownTestClasses,

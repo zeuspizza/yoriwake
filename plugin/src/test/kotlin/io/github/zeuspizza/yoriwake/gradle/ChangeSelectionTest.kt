@@ -1749,6 +1749,23 @@ class ChangeSelectionTest {
         assertTrue(after.refusals.getValue(inliner).contains("the capture did not hold"))
     }
 
+    // A moved Kotlin file's lambda is a class the capture held under the old file class's name.
+    @Test
+    fun `after widening, an inliner the capture held under the name it moved from is vouched for`(@TempDir dir: File) {
+        val ordinary = "$fixtures.OrdinaryKotlin"
+        val inliner = "$fixtures.InlinesSomethingElse"
+        val facts = oneModule(dir, compiled(ordinary), compiled(inliner))
+
+        val after = establishAfterWidening(
+            Established(emptySet(), emptySet()), heldMap(dir, ordinary, "pkg.FooKt\$1"), facts,
+            InlineWidening.widened(listOf(inliner, ordinary), setOf(inliner)), inlineOnly = emptySet(),
+            recordedAs = { if (it == inliner) "pkg.FooKt\$1" else it },
+        )
+
+        assertEquals(setOf(ordinary, inliner), after.provable)
+        assertEquals(emptyMap(), after.refusals)
+    }
+
     @Test
     fun `an inline-only file whose inliners were found leaves the change set and keeps its inliners`(
         @TempDir dir: File,
