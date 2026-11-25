@@ -5478,15 +5478,18 @@ def case_a_run_summary_that_misses_a_job_or_gates_is_reported():
 def case_a_captured_jdk_is_named_as_temurin_publishes_the_same_build():
     """setup-java refuses a version with a build number unless it equals a published name, and a
     map selected against on another build runs every test."""
-    published = ["21.0.13+100000002.0.LTS", "21.0.13+9.0.LTS"]
+    published = [("21.0.13+100000002.0.LTS", "21.0.13.1+2-LTS"), ("21.0.13+9.0.LTS", "21.0.13+9-LTS")]
     problems = 0
-    for installed, expected in (("21.0.13+9", "21.0.13+9.0.LTS"), ("21.0.13+9.0", "21.0.13+9.0.LTS"),
-                                ("21.0.13+9.0.LTS", "21.0.13+9.0.LTS")):
-        if (got := ci.temurin_version(installed, published)) != expected:
-            problems += fail(f"{installed} is named {got}, not {expected}")
-    if (got := ci.temurin_version("21.0.13+90", published)) != "21.0.13+90":
-        problems += fail(f"another build stands in for 21.0.13+90: {got}")
-    if (got := ci.temurin_version("21.0.13+9.0", [])) != "21.0.13+9":
+    for installed, runtime, expected in (
+            ("21.0.13+9", "21.0.13+9-LTS", "21.0.13+9.0.LTS"),
+            ("21.0.13+9.0", None, "21.0.13+9.0.LTS"),
+            ("21.0.13+2", "21.0.13.1+2-LTS", "21.0.13+100000002.0.LTS"),
+            ("21.0.13+9.0.LTS", None, "21.0.13+9.0.LTS"),
+            ("21.0.13+90", None, "21.0.13+90"),
+            ("21.0.13+2", None, "21.0.13+2")):
+        if (got := ci.temurin_version(installed, runtime, published)) != expected:
+            problems += fail(f"{installed} ({runtime}) is named {got}, not {expected}")
+    if (got := ci.temurin_version("21.0.13+9.0", None, [])) != "21.0.13+9":
         problems += fail(f"with nothing published, 21.0.13+9.0 is named {got}")
     return problems
 

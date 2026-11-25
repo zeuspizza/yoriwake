@@ -61,20 +61,35 @@ MAP_FILE = "coverage.tsv"
 DECISIONS_FILE = "decisions.tsv"
 
 
-def temurin_version(installed, published):
+def temurin_version(installed, runtime, published):
     """The name setup-java installs the JDK a capture reported as `installed` by, among Temurin's
-    `published` release names: the same build, as Adoptium names it (`21.0.13+9` and `21.0.13+9.0`
-    are published as `21.0.13+9.0.LTS`). setup-java only takes a version with a build number when
+    `published` releases as (name, OpenJDK version) pairs: the release whose OpenJDK version is
+    the JDK's own `runtime` version (`21.0.13.1+2-LTS` is published as `21.0.13+100000002.0.LTS`,
+    which setup-java reports as `21.0.13+2`), else the name of the same build (`21.0.13+9` and
+    `21.0.13+9.0` as `21.0.13+9.0.LTS`). setup-java only takes a version with a build number when
     it equals a published name, and a map selected against on another build runs every test, so
-    another build of the same patch (`21.0.13+100000002.0.LTS`) never stands in. With no published
-    name for it, `installed` without a trailing `.0`."""
+    no other build stands in. With no published name for it, `installed` without a trailing `.0`."""
     version = installed[:-2] if re.search(r"\+\d+\.0$", installed) else installed
-    return next((name for name in published if name == version or name.startswith(version + ".")), version)
+    return next((name for name, openjdk in published if runtime and openjdk == runtime),
+                next((name for name, _ in published if name == version or name.startswith(version + ".")),
+                     version))
+
+
+def java_runtime_version():
+    """The runtime version of the JDK at `JAVA_HOME` (`21.0.13.1+2-LTS`), or None."""
+    java = os.path.join(os.environ.get("JAVA_HOME", ""), "bin", "java")
+    try:
+        said = subprocess.run([java, "-XshowSettings:properties", "-version"], capture_output=True,
+                              text=True, timeout=60).stderr
+    except OSError:
+        return None
+    found = re.search(r"^\s*java\.runtime\.version = (\S+)", said, re.MULTILINE)
+    return found.group(1) if found else None
 
 
 def temurin_releases(installed):
-    """Temurin's GA release names for the patch release `installed` belongs to; empty when
-    Adoptium cannot be asked."""
+    """Temurin's GA releases of the patch release `installed` belongs to, as (name, OpenJDK
+    version) pairs; empty when Adoptium cannot be asked."""
     patch = installed.split("+")[0]
     numbers = patch.split(".")
     if len(numbers) != 3 or not all(n.isdigit() for n in numbers):
@@ -86,7 +101,7 @@ def temurin_releases(installed):
         # Adoptium refuses urllib's default user agent.
         request = urllib.request.Request(url, headers={"User-Agent": "yoriwake-ci"})
         with urllib.request.urlopen(request, timeout=30) as response:
-            return [v["semver"] for v in json.load(response)["versions"]]
+            return [(v["semver"], v["openjdk_version"]) for v in json.load(response)["versions"]]
     except (OSError, ValueError, KeyError, TypeError):
         return []
 
@@ -965,7 +980,7 @@ def main(argv=None):
         return 0
 
     if args.command == "temurin-version":
-        print(temurin_version(args.installed, temurin_releases(args.installed)))
+        print(temurin_version(args.installed, java_runtime_version(), temurin_releases(args.installed)))
         return 0
 
     if args.command == "scope":
