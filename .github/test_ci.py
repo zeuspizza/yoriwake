@@ -4280,6 +4280,20 @@ def case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_r
         problems += fail("the plan accepted isolated=both")
     except subprocess.CalledProcessError:
         pass
+    # The budget arm is off unless asked for, and only a full run that measures rows takes it.
+    for inputs, wanted in (({"tier": "full"}, "off"), ({"tier": "full", "BUDGET": "paired"}, "paired"),
+                           ({"tier": "reduced", "BUDGET": "paired"}, "off"),
+                           ({"tier": "full", "BUDGET": "paired", "REPLAY_ONLY": "true",
+                             "COMMITS": "8"}, "off")):
+        wrote = []
+        _sweep_plan(inputs.pop("tier"), "demo", outputs=wrote, **inputs)
+        if f"budget={wanted}\n" not in wrote[0]:
+            problems += fail(f"a plan of {inputs} hands on {wrote}, not budget={wanted}")
+    try:
+        _sweep_plan("full", "demo", BUDGET="both")
+        problems += fail("the plan accepted budget=both")
+    except subprocess.CalledProcessError:
+        pass
     with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
         if "      isolated: ${{ needs.plan.outputs.isolated }}\n" not in _job(handle.read(), "project"):
             problems += fail("sweep.yml does not pass the plan's isolated arm to each project")
