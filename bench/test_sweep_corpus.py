@@ -607,6 +607,18 @@ def case_a_setup_forced_project_is_named_with_its_reason_and_fails_the_sweep():
     return failures
 
 
+def case_a_chart_of_the_shared_arm_reads_neither_paired_arm_file():
+    """`<name>.isolated.json` and `<name>.budget.json` beside `<name>.json` are not two more
+    projects of the shared arm."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import readme_charts  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as directory:
+        paths = [_results(name, [_row("narrowed")], directory, project="demo")
+                 for name in ("demo", "demo.isolated", "demo.budget")]
+        projects, _ = readme_charts.load("shared", paths)
+    return 0 if list(projects) == ["demo"] else fail(f"the shared arm read {list(projects)}")
+
+
 def case_a_time_chart_states_its_cap_and_never_pools_caps_silently():
     """Chart 2 draws timed rows only, says its cap, and refuses capped beside uncapped."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

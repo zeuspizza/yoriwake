@@ -208,7 +208,7 @@ def merge_isolated(merged, recording, shards, arm="isolated"):
     have = {(s.get("shard") or [None])[0] for s in shards} & set(range(1, (count or 0) + 1))
     if not have:
         return None, {"status": DID_NOT_FINISH,
-                      "reason": f"0 of {count} slices measured their isolated arm"}
+                      "reason": f"0 of {count} slices measured their {arm} arm"}
     rows = {}
     for shard in shards:
         for row in shard.get("mutations") or []:

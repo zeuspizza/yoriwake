@@ -5036,6 +5036,9 @@ def main():
     args = parser.parse_args()
     if args.isolated_capture and args.isolated_budget:
         parser.error("--isolated-capture and --isolated-budget are two arms; one at a time")
+    if args.isolated_budget and not (args.capture_only or args.pair_with):
+        parser.error("--isolated-budget records its map with --capture-only over the shared arm's "
+                     "map, and measures rows with --pair-with; one of them")
     if args.isolated_budget and args.recapture:
         parser.error("--isolated-budget records over the shared arm's map; --recapture would "
                      "discard it")
@@ -5420,8 +5423,11 @@ def main():
     # on disk is whichever arm captured last; reusing it would measure one arm's selection against
     # the other's recording. And a map of another schema is refused by the agent, so every row
     # would force.
-    fits, why = sweep_data.map_fits_arm(map_dir, args.isolated_capture,
-                                        args.reuse_budgeted_map or bool(args.isolated_budget))
+    # A budgeted map is mixed, or isolated whole when the pick took every class: the stamp below
+    # names the arm, and its mode says nothing more.
+    fits, why = ((True, None) if args.isolated_budget
+                 else sweep_data.map_fits_arm(map_dir, args.isolated_capture,
+                                              args.reuse_budgeted_map))
     wanted_schema = sweep_data.checkout_schema_version(SOURCE)
     found_schema = sweep_data.schema_version(map_dir)
     if fits and map_dir and wanted_schema is not None and found_schema != wanted_schema:

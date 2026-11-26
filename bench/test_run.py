@@ -5484,6 +5484,34 @@ def case_an_unwarmed_shard_suspects_the_runner_only_for_a_build_that_never_reach
     return failures
 
 
+def case_the_budget_arm_records_over_the_shared_map_or_measures_paired_rows_only():
+    """`--isolated-budget` records with `--capture-only` or measures with `--pair-with`, never
+    beside `--recapture` (which would discard the map its pick reads) or the isolated arm."""
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    failures = 0
+    for flags, said_part in ((["--isolated-budget", "2x"], "one of them"),
+                             (["--isolated-budget", "2x", "--capture-only", "--recapture"],
+                              "--recapture would discard it"),
+                             (["--isolated-budget", "2x", "--capture-only", "--isolated-capture"],
+                              "two arms; one at a time"),
+                             (["--pair-with", "x.json"], "--isolated-budget")):
+        saved, err, said = sys.argv, io.StringIO(), ""
+        sys.argv = ["run.py", "bench/projects/none.toml", *flags]
+        try:
+            with contextlib.redirect_stderr(err):
+                run.main()
+        except SystemExit:
+            said = err.getvalue()
+        except Exception:  # noqa: BLE001 -- past the flags, so not refused
+            pass
+        finally:
+            sys.argv = saved
+        if said_part not in said:
+            failures += fail(f"{' '.join(flags)} was not refused with {said_part!r}: {said[-200:]!r}")
+    return failures
+
+
 def case_a_sharded_pool_run_refuses_a_timing_cap():
     import contextlib  # noqa: PLC0415
     import io  # noqa: PLC0415
@@ -5851,6 +5879,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_a_mutation_row_counts_the_files_and_modules_it_changed,
          case_a_named_shape_set_writes_its_own_results_and_scratch,
          case_the_budget_arm_takes_a_multiple_above_one_and_refuses_an_empty_pick,
+         case_the_budget_arm_records_over_the_shared_map_or_measures_paired_rows_only,
          case_narrow_dependencies_is_on_once_for_the_run_and_writes_its_own_folder,
          case_narrow_dependencies_is_a_shared_arm_unsharded_forcing_run_on_gradle,
          case_narrow_dependencies_draws_the_dependency_family_alone_up_to_its_cap,

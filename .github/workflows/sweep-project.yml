@@ -236,8 +236,15 @@ jobs:
             exit 0
           fi
           left=$(( $(cat "$RUNNER_TEMP/record-start") + 340 * 60 - $(date +%s) ))
+          # The isolated recording after it keeps the time it had before this arm existed: about
+          # four shared recordings (0.6.0's isolated arm took 3.3 times the shared one), and this
+          # one takes at most three (2x and the pick), each with ten minutes to spare.
+          capture=$(jq -r '.capture_seconds // 0 | floor' "bench/results/$NAME.json")
+          cap=$(( 3 * capture + 600 ))
+          left=$(( left - 4 * capture - 600 ))
+          [ "$left" -le "$cap" ] || left=$cap
           if [ "$left" -lt 600 ]; then
-            echo "::warning::$NAME: $((left / 60)) minutes left in the job, too few for a budget recording"
+            echo "::warning::$NAME: $((left / 60)) minutes left beside the isolated recording, too few for a budget recording"
             exit 0
           fi
           bench/machine_sampler.sh & sampler=$!
