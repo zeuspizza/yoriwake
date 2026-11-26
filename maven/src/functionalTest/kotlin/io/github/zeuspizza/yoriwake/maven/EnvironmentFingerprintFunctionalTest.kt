@@ -508,7 +508,8 @@ class EnvironmentFingerprintFunctionalTest {
     @Test
     fun `explain under the recorded environment narrows and names a variable a test read that nobody compares`(@TempDir dir: File) {
         val project = captured(dir, environment = mapOf("DB_MODE" to "a")) {
-            File(it, "lib/src/test/java/dev/demo/lib/ModeTest.java").writeText(
+            // Named to run before GreeterTest, so only GreeterTest reaches the change.
+            File(it, "lib/src/test/java/dev/demo/lib/EnvModeTest.java").writeText(
                 """
                 package dev.demo.lib;
 
@@ -516,7 +517,7 @@ class EnvironmentFingerprintFunctionalTest {
 
                 import org.junit.jupiter.api.Test;
 
-                class ModeTest {
+                class EnvModeTest {
                     @Test
                     void readsItsMode() {
                         assertNotNull(System.getenv("DB_MODE"));

@@ -185,6 +185,47 @@ class ChangeShapesFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a Kotlin file of top-level functions moved and edited runs the test that called them`(@TempDir dir: File) {
+        // The moved file compiles to `BetaMovedKt`, a class the map never saw; judged as `BetaKt`,
+        // whose tests ran this code. Alpha is as above, for the inline scan.
+        val alpha = "src/main/kotlin/dev/sample/Alpha.kt" to """
+            package dev.sample
+            inline fun doubled(n: Int): Int = n * 2
+            class Alpha { fun twice(n: Int): Int = doubled(n) }
+        """.trimIndent()
+        val beta = "src/main/kotlin/dev/sample/Beta.kt" to """
+            package dev.sample
+            fun thrice(n: Int): Int {
+                return n * 3
+            }
+        """.trimIndent()
+        val alphaTest = "src/test/kotlin/dev/sample/AlphaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class AlphaTest { @Test fun twice() { assertEquals(2, Alpha().twice(1)) } }
+        """.trimIndent()
+        val betaTest = "src/test/kotlin/dev/sample/BetaTest.kt" to """
+            package dev.sample
+            import org.junit.jupiter.api.Test
+            import kotlin.test.assertEquals
+            class BetaTest { @Test fun thrice() { assertEquals(3, thrice(1)) } }
+        """.trimIndent()
+        val moved = "src/main/kotlin/dev/sample/BetaMoved.kt"
+
+        val output = selectAfter(dir, kotlinBuild, alpha, beta, alphaTest, betaTest, edit = {
+            git(dir, "mv", beta.first, moved)
+            edit(dir, moved, "return n * 3", "if (true) { throw IllegalStateException(\"entry\") }\n    return n * 3")
+        }, run = GradleRunner::buildAndFail)
+
+        // BetaTest's own bytes moved too (it now calls `BetaMovedKt`), and discovery loaded it in
+        // AlphaTest's window, so AlphaTest runs with it; what is pinned is that the run narrowed
+        // rather than forcing on `BetaMovedKt`.
+        assertEquals("narrowed", decisionNotes(dir)["outcome"], output)
+        assertTrue("dev.sample.BetaTest" in ranTests(dir), output)
+    }
+
+    @Test
     fun `a Kotlin function given a new suspend lambda runs its caller's test`(@TempDir dir: File) {
         // The lambda compiles to a class the map never saw, which carries only the annotations
         // the compiler writes on every such class. Alpha is as above, for the inline scan.

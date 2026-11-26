@@ -141,6 +141,9 @@ internal object SelectingStep {
             if (bump == null) paths else paths - bump.paths.toSet(),
             classpathFacts, inputs.notReadByTests, inputs.ignore, mapDir,
             bases = listOfNotNull(against, inputs.stamp), moved = inputs.moved, taskInputs = inputs.taskInputs,
+            // Asked only when a Kotlin source changed: git's rename detection pairs nothing else here.
+            movedFrom = if (paths.none { it.endsWith(".kt") }) emptyMap()
+            else ChangeDetection.movedKotlinSources(ChangeDetection.directRunner(rootDir), rootDir, against),
             // No colon after the task, as on the "selecting against" line: a `<task>: ` line is a reason.
             report = { message -> host.lifecycle("[yoriwake] ${host.name} $message") },
         )
@@ -154,7 +157,7 @@ internal object SelectingStep {
         }
         val beforeWidening = establish(
             { message -> host.lifecycle("[yoriwake] ${host.name}: $message") },
-            mapDir, scoped.change, classpathFacts, inputs.unionFilter,
+            mapDir, scoped.change, classpathFacts, inputs.unionFilter, scoped.change::movedFrom,
         )
 
         // A file the build generated onto the classpath from something git does not track moves
@@ -187,6 +190,7 @@ internal object SelectingStep {
             lineOnly = if (!inputs.narrowLineOnlyChanges) null else LineOnlyRule.of(mapDir, rootDir, scoped.change, classpathFiles),
             inlineSources = scoped.change.inlineSources,
             recordedJacoco = CoverageDecoder.readJacocoVersion(mapDir),
+            recordedAs = scoped.change::movedFrom,
         ).withClasspathFiles(
             classpathFiles,
             forcedByPaths = scoped.change.unmappablePaths.isNotEmpty(),
@@ -195,7 +199,9 @@ internal object SelectingStep {
             // the tests from each JVM's first read of it on, as a moved classpath file does.
             .let { if (bump == null) it else it.withMovedFiles((it.movedFiles + bump.paths).distinct().sorted()) }
         // Only now are the classes that inlined a changed source known, and the scan's answer with them.
-        val established = establishAfterWidening(beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly)
+        val established = establishAfterWidening(
+            beforeWidening, mapDir, classpathFacts, widening, scoped.change.inlineOnly, scoped.change::movedFrom,
+        )
         widening.digest?.stamped?.let { found ->
             StampedConstants.lines(found) { StampedConstants.testsExecuting(mapDir, it) }
                 .forEach { host.lifecycle("[yoriwake] ${host.name}: $it") }
@@ -260,7 +266,8 @@ internal object SelectingStep {
         writeChangeSet(
             host, changeSetFile,
             mapOf(
-                CHANGED_CLASSES_PROPERTY to changed,
+                // A moved Kotlin file's own names as the old file's, whose classes the map recorded.
+                CHANGED_CLASSES_PROPERTY to changed.map(scoped.change::movedFrom).distinct(),
                 // Its own property: the change set is also the selector's anchor set for nested
                 // classes.
                 CHANGED_BYTES_PROPERTY to if (widening.forces) emptySet() else widening.changedBytes,
@@ -270,7 +277,7 @@ internal object SelectingStep {
                 // Every changed path, before any is dropped, for the tests that declare a dependency on one.
                 // Escaped, since a path can hold the comma that joins the list.
                 CHANGED_PATHS_PROPERTY to paths.map(PathIgnore::escape),
-                ABSENCE_PROVABLE_PROPERTY to established.provable,
+                ABSENCE_PROVABLE_PROPERTY to provableAsJudged(established, scoped.change),
                 // Separate property: a test class that has ever run is in the loaded-class union by
                 // definition, so the absence rule would never fire for it.
                 OWN_TEST_CLASSES_PROPERTY to ownTestClasses,

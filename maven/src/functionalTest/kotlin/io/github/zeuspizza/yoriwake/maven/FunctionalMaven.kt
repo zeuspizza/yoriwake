@@ -77,7 +77,10 @@ object FunctionalMaven {
         val command = listOf(
             mvn.path, "-B", "-s", settings.path, "-Dmaven.repo.local=${localRepo.path}",
             *(if (localRepoTail.isEmpty()) emptyArray() else arrayOf("-Dmaven.repo.local.tail=$localRepoTail")),
-            "-Dyoriwake.version=$pluginVersion", *arguments,
+            // Surefire's default order is the file system's listing, which differs between runner
+            // images; a test that ran before the changed class was loaded is what a narrowed run
+            // leaves out, so the order is pinned. A test's own runOrder still wins.
+            "-Dyoriwake.version=$pluginVersion", "-Dsurefire.runOrder=alphabetical", *arguments,
         )
         val process = ProcessBuilder(command).directory(project).redirectErrorStream(true).apply {
             environment()["JAVA_HOME"] = System.getProperty("java.home")

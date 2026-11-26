@@ -20,12 +20,20 @@ internal object CompiledNames {
      * [ChangeDetection.split] left it: its names, or unmappable for a code-less file. A path name
      * no class carries stays when [readAsSource] answers that a test JVM read the file by that name:
      * such a read is a touch the selector matches by the path name alone.
+     *
+     * [movedFrom] pairs a moved Kotlin file's path with the path it moved from. When both are in
+     * [change], only the new file's file class carries its path name, and [pairable] answers that no
+     * class anywhere carries it and the map never held that file class, the name goes to
+     * [ChangeDetection.Change.movedNames]: the move created it, and the tests of the old file's
+     * classes are the ones that ran this code.
      */
     fun resolve(
         change: ChangeDetection.Change,
         projectDir: File,
         listed: (path: String, packageName: String, fileName: String) -> List<String>?,
         readAsSource: (pathNames: Collection<String>) -> Set<String>,
+        movedFrom: Map<String, String> = emptyMap(),
+        pairable: (pathName: String) -> Boolean = { false },
     ): Resolved {
         fun classesOf(path: String): List<String>? {
             val packageName = ChangeDetection.packageOf(projectDir, path) ?: return null
@@ -35,6 +43,7 @@ internal object CompiledNames {
         var dropped = 0
         val inlineSources = change.inlineSources.toMutableSet()
         val droppedPathNames = linkedMapOf<String, String>()
+        val movedNames = linkedMapOf<String, String>()
         fun keepTrack(path: String, resolved: Set<String>) {
             val pathName = ChangeDetection.pathName(path)?.takeIf { it !in resolved } ?: return
             droppedPathNames[path] = pathName
@@ -43,6 +52,9 @@ internal object CompiledNames {
         val byPath = change.prefixesByPath.mapValuesTo(linkedMapOf()) { (path, names) ->
             val classes = classesOf(path) ?: return@mapValuesTo names
             val resolved = namesFor(path, names, classes)
+            val pathName = ChangeDetection.pathName(path)
+            val old = movedFrom[path]?.takeIf { it in change.prefixesByPath }?.let(ChangeDetection::pathName)
+            if (old != null && pathName != null && pathName in resolved && pathName !in classes && pairable(pathName)) movedNames[pathName] = old
             if (resolved != names) replaced++
             dropped += (names - resolved).size
             keepTrack(path, resolved)
@@ -77,6 +89,7 @@ internal object CompiledNames {
                 prefixesByPath = byPath,
                 codeLess = change.codeLess.filterKeys { it in unmappable },
                 inlineSources = inlineSources,
+                movedNames = movedNames,
             ),
             replaced, dropped, routed,
         )

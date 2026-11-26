@@ -828,6 +828,43 @@ class ChangeDetectionTest {
             inlineOnly("package a\n\n// fun plain() = 1\n/* val x = 2 */\ninline fun quad(n: Int) = n * 4\n"),
         )
     }
+
+    @Test
+    fun `a Kotlin file moved and edited is paired with the path it moved from`(@TempDir repo: File) {
+        fun git(vararg args: String) = ProcessBuilder("git", *args)
+            .directory(repo).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor()
+        val body = (1..20).joinToString("\n") { "fun f$it(n: Int): Int = n + $it" }
+        File(repo, "lib/src/main/kotlin/pkg").mkdirs()
+        File(repo, "settings.gradle.kts").writeText("")
+        File(repo, "lib/src/main/kotlin/pkg/Foo.kt").writeText("package pkg\n$body\n")
+        File(repo, "lib/src/main/kotlin/pkg/Gone.kt").writeText("package pkg\nclass Gone\n")
+        git("init")
+        git("add", ".")
+        git("-c", "user.email=t@e.com", "-c", "user.name=t", "commit", "-m", "base")
+        git("mv", "lib/src/main/kotlin/pkg/Foo.kt", "lib/src/main/kotlin/pkg/FooMoved.kt")
+        File(repo, "lib/src/main/kotlin/pkg/FooMoved.kt").appendText("fun added(): Int = 0\n")
+        // Added beside a deleted file it shares nothing with: no move.
+        git("rm", "-q", "lib/src/main/kotlin/pkg/Gone.kt")
+        File(repo, "lib/src/main/kotlin/pkg/Other.kt").writeText("package other\nobject Unrelated { val x = listOf(1, 2, 3) }\n")
+        git("add", ".")
+
+        val runner = ChangeDetection.directRunner(repo)
+
+        assertEquals(
+            mapOf("lib/src/main/kotlin/pkg/FooMoved.kt" to "lib/src/main/kotlin/pkg/Foo.kt"),
+            ChangeDetection.movedKotlinSources(runner, repo, "HEAD"),
+        )
+        // From a build rooted below the repository, as trackedPaths names them.
+        assertEquals(
+            mapOf("src/main/kotlin/pkg/FooMoved.kt" to "src/main/kotlin/pkg/Foo.kt"),
+            ChangeDetection.movedKotlinSources(ChangeDetection.directRunner(File(repo, "lib")), File(repo, "lib"), "HEAD"),
+        )
+    }
+
+    @Test
+    fun `git failing to list moves pairs nothing`() {
+        assertEquals(emptyMap(), ChangeDetection.movedKotlinSources({ null }, File("."), "HEAD"))
+    }
 }
 
 /**

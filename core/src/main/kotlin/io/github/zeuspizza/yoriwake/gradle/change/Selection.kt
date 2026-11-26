@@ -48,6 +48,8 @@ internal fun establish(
     facts: ClasspathView,
     /** The selecting run's build-script filter digest, or null when it runs unfiltered. */
     unionFilter: String? = null,
+    /** The name a class was recorded under: a moved file's ([ChangeDetection.Change.movedFrom]) is the old file's. */
+    recordedAs: (String) -> String = { it },
 ): Established {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -87,7 +89,7 @@ internal fun establish(
     }
     // A test class discovery runs is judged by its own tests, so a new one is no absence at all;
     // any other class the capture did not hold forces, as before there was a union.
-    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts)
+    val unheld = unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys - exemptTestClasses, artifacts, recordedAs)
     val gated = verdicts + unheld
     // The same gates with the Kotlin refusal waived, which only the inlining classes can answer for.
     val inlineOnly = change.inlineOnly.intersect(change.classPrefixes)
@@ -99,7 +101,7 @@ internal fun establish(
             artifacts::classesFor,
         ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
             .filterValues { it.provable }.keys
-            .let { it - unheldAtCapture(mapDir, it, artifacts).keys }
+            .let { it - unheldAtCapture(mapDir, it, artifacts, recordedAs).keys }
         if (candidates.isEmpty()) emptySet() else runCatching {
             val map = io.github.zeuspizza.yoriwake.agent.select.MapReader.read(mapDir, unionFilter)
             candidates.filterTo(sortedSetOf()) { prefix ->
@@ -138,6 +140,8 @@ internal fun establishAfterWidening(
     widening: InlineWidening,
     /** [ChangeDetection.Change.inlineOnly]. */
     inlineOnly: Set<String>,
+    /** The name a class was recorded under, as for [establish]. */
+    recordedAs: (String) -> String = { it },
 ): Established {
     val candidates = widening.prefixes.toSet() - established.provable - inlineOnly
     if (candidates.isEmpty()) return established
@@ -149,7 +153,7 @@ internal fun establishAfterWidening(
         absenceVerdicts({}, mapDir, candidates, artifacts, inlinesAccountedFor = true),
         artifacts::classesFor,
     ) { prefix -> artifacts.onlyInTestOutput(artifacts.classesFor(prefix)) }
-    val gated = verdicts + unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys, artifacts)
+    val gated = verdicts + unheldAtCapture(mapDir, verdicts.filterValues { it.provable }.keys, artifacts, recordedAs)
     return established.copy(
         provable = established.provable + gated.filterValues { it.provable }.keys,
         refusals = established.refusals - candidates + gated
@@ -601,9 +605,11 @@ internal fun widenForInlining(
     inlineSources: Set<String> = emptySet(),
     /** The oldest JaCoCo that recorded the map, from `CoverageDecoder.readJacocoVersion`; null takes the host's. */
     recordedJacoco: String? = null,
+    /** The name a class was recorded under: a moved file's ([ChangeDetection.Change.movedFrom]) is the old file's. */
+    recordedAs: (String) -> String = { it },
 ): InlineWidening = widen(
     prefixes, facts, recordedConstants, inlinableSourceChanged, digestRule, recordedAnnotations, ownTestClasses,
-    inlinedAway, lineOnly, inlineSources, recordedJacoco,
+    inlinedAway, lineOnly, inlineSources, recordedJacoco, recordedAs,
 ).let { widening -> if (lineOnly == null) widening else widening.withLines(widening.lines ?: LineOnly.NONE) }
 
 private fun widen(
@@ -618,6 +624,7 @@ private fun widen(
     lineOnly: LineOnlyRule?,
     inlineSources: Set<String>,
     recordedJacoco: String?,
+    recordedAs: (String) -> String,
 ): InlineWidening {
     val artifacts = runCatching {
         TaskArtifacts(facts.classpathFiles(), facts.buildDirs.values, facts.testOutputFiles())
@@ -659,7 +666,7 @@ private fun widen(
         else InlineWidening.widened(emptyList(), emptySet(), digest).withLines(lines)
     }
 
-    constantHolderRefusal(prefixes, recordedConstants, digest, artifacts::classesFor)
+    constantHolderRefusal(prefixes, recordedConstants, digest, recordedAs, artifacts::classesFor)
         ?.let { return it.withDigest(digest).withLines(lines) }
 
     // The throwable is kept as the only account of why the scan failed.
@@ -686,7 +693,7 @@ private fun widen(
         ).withLines(lines)
     }
     // Last, so every refusal above keeps its own token when both apply.
-    annotationRefusal(prefixes, recordedAnnotations, ownTestClasses, artifacts::classesFor)
+    annotationRefusal(prefixes, recordedAnnotations, ownTestClasses, recordedAs, artifacts::classesFor)
         ?.let { return it.withDigest(digest).withLines(lines) }
     if (bytesUnknown) return bytesRefusal(digest).withLines(lines)
     // Asked per file, since the scan above answers for the change set as a whole. A scan that
@@ -779,6 +786,8 @@ internal fun constantHolderRefusal(
     recordedConstants: Map<String, String> = emptyMap(),
     /** The bytes comparison of this call; null when none was asked for. */
     comparison: DigestWidening? = null,
+    /** The name a class's constants were recorded under. */
+    recordedAs: (String) -> String = { it },
     classesOf: (String) -> List<Pair<String, ByteArray>>?,
 ): InlineWidening? = runCatching {
     val compared = comparison != null && comparison.silence == null
@@ -804,7 +813,7 @@ internal fun constantHolderRefusal(
             // The question is whether a constant changed, not whether one exists. A class the map
             // never recorded, or one whose digest cannot be computed now, still forces; only an
             // exact match licenses skipping.
-            val recorded = recordedConstants[name]
+            val recorded = recordedConstants[recordedAs(name)]
             if (digest != null && recorded == digest) {
                 continue
             }
@@ -889,6 +898,8 @@ private fun unheldAtCapture(
     mapDir: File,
     prefixes: Set<String>,
     artifacts: TaskArtifacts,
+    /** The name a class was held under: a moved file's class was held under the old file's. */
+    recordedAs: (String) -> String,
 ): Map<String, AbsenceEvidence.Verdict> {
     if (prefixes.isEmpty()) {
         return emptyMap()
@@ -898,7 +909,7 @@ private fun unheldAtCapture(
             AbsenceEvidence.Verdict(false, "the map records no class digests, so the capture's classes are unknown")
         }
     return prefixes.mapNotNull { prefix ->
-        artifacts.classesFor(prefix)?.firstOrNull { (name, _) -> name !in held }?.let { (name, _) ->
+        artifacts.classesFor(prefix)?.firstOrNull { (name, _) -> recordedAs(name) !in held }?.let { (name, _) ->
             prefix to AbsenceEvidence.Verdict(false, "the capture did not hold $name")
         }
     }.toMap()
@@ -935,10 +946,12 @@ internal fun changeSet(
     /** [InlineWidening.lines]; null with `narrowLineOnlyChanges` off. */
     lines: LineOnly? = null,
 ): io.github.zeuspizza.yoriwake.agent.select.ChangeSet =
-    io.github.zeuspizza.yoriwake.agent.select.ChangeSet.of(changed, scoped.change.unmappablePaths.sorted())
+    io.github.zeuspizza.yoriwake.agent.select.ChangeSet.of(
+        changed.map(scoped.change::movedFrom).distinct(), scoped.change.unmappablePaths.sorted(),
+    )
         .withAccountedFor(accountedFor(paths, scoped, lines?.prefixes.orEmpty()))
         .withLinesOnly(lines?.classes.orEmpty())
-        .withAbsenceProvable(established.provable)
+        .withAbsenceProvable(provableAsJudged(established, scoped.change))
         .withOwnTestClasses(established.testClasses)
         .withExemptTestClasses(established.exemptTestClasses)
         .withChangedBytes(changedBytes.sorted())
@@ -999,6 +1012,27 @@ internal data class ScopedChange(
         get() = dropped > 0 &&
             change.classPrefixes.isEmpty() &&
             change.unmappablePaths.isEmpty()
+}
+
+/**
+ * Whether a moved Kotlin file's path name may be judged as the old file's: no class of this build
+ * carries it (another file's class of that name is that class's own), and the map, recorded by
+ * [held], never held its file class, as one captured after the move did. Unknown is no.
+ */
+internal fun movedNamePairable(
+    pathName: String,
+    classesFor: (String) -> List<Pair<String, ByteArray>>?,
+    held: Map<String, String>?,
+): Boolean = held != null && pathName + "Kt" !in held &&
+    classesFor(pathName)?.none { (name, _) -> name == pathName } == true
+
+/**
+ * [Established.provable] under the names the selector judges: a moved file's name is provable as
+ * the old file's only while no name judged as that one was refused.
+ */
+internal fun provableAsJudged(established: Established, change: ChangeDetection.Change): List<String> {
+    val refused = established.refusals.keys.mapTo(HashSet(), change::movedFrom)
+    return established.provable.map(change::movedFrom).filterNot { it in refused }.distinct()
 }
 
 /**
@@ -1067,6 +1101,8 @@ internal fun scopedChange(
     moved: Set<String> = emptySet(),
     /** The test task's input files under the root beyond its classpath and test classes, root-relative. */
     taskInputs: () -> List<String> = { emptyList() },
+    /** Each Kotlin source git pairs as moved, to the path it moved from ([ChangeDetection.movedKotlinSources]). */
+    movedFrom: Map<String, String> = emptyMap(),
     /** Where the step's log goes. */
     report: (String) -> Unit = {},
 ): ScopedChange {
@@ -1118,12 +1154,20 @@ internal fun scopedChange(
             compiledOutputOf(path, facts)?.let { buildDir -> artifacts.classesCompiledFrom(buildDir, packageName, fileName) }
         },
         { pathNames -> readAsSource(mapDir, pathNames) },
+        movedFrom,
+        { pathName -> movedNamePairable(pathName, artifacts::classesFor, mapDir?.let(CoverageDecoder::readClassDigests)) },
     )
     if (resolved.replaced + resolved.routed > 0) {
         report(
             "named ${resolved.replaced + resolved.routed} changed file(s) by the classes compiled from them " +
                 "(${resolved.dropped} name(s) no class carries dropped, ${resolved.routed} file(s) of no code routed): " +
                 resolved.change.classPrefixes.sorted().joinToString()
+        )
+    }
+    if (resolved.change.movedNames.isNotEmpty()) {
+        report(
+            "judged ${resolved.change.movedNames.size} moved Kotlin file(s) as the file they moved from: " +
+                resolved.change.movedNames.entries.sortedBy { it.key }.joinToString { (moved, old) -> "$moved as $old" }
         )
     }
     return ScopedChange(
@@ -1159,6 +1203,8 @@ internal fun annotationRefusal(
     recorded: Map<String, String>?,
     /** [Established.testClasses]: the changed sources in this task's own test output. */
     ownTestClasses: Set<String> = emptySet(),
+    /** The name a class's annotations were recorded under. */
+    recordedAs: (String) -> String = { it },
     classesOf: (String) -> List<Pair<String, ByteArray>>?,
 ): InlineWidening? = runCatching {
     fun refuse(kind: RefusalKind, name: String, why: String) = InlineWidening.refuse(
@@ -1190,7 +1236,7 @@ internal fun annotationRefusal(
                     kind = RefusalKind.SCAN_REFUSED,
                     detail = "the annotations of $name could not be read",
                 )
-            if (name in recorded) continue
+            if (recordedAs(name) in recorded) continue
             if (prefix in ownTestClasses && Recordability.declaresTestMethod(bytes)) continue
             if (compilerWritten) continue
             return@runCatching refuse(

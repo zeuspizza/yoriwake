@@ -26,7 +26,9 @@ import io.github.zeuspizza.yoriwake.gradle.change.compareDigests
 import io.github.zeuspizza.yoriwake.gradle.change.constantHolderRefusal
 import io.github.zeuspizza.yoriwake.gradle.change.digestRule
 import io.github.zeuspizza.yoriwake.gradle.change.establishAfterWidening
+import io.github.zeuspizza.yoriwake.gradle.change.movedNamePairable
 import io.github.zeuspizza.yoriwake.gradle.change.ownTestClassesByBytes
+import io.github.zeuspizza.yoriwake.gradle.change.provableAsJudged
 import io.github.zeuspizza.yoriwake.gradle.change.widenForInlining
 import io.github.zeuspizza.yoriwake.gradle.facts.BuildMemo
 import io.github.zeuspizza.yoriwake.gradle.facts.ClasspathFacts
@@ -1749,6 +1751,23 @@ class ChangeSelectionTest {
         assertTrue(after.refusals.getValue(inliner).contains("the capture did not hold"))
     }
 
+    // A moved Kotlin file's lambda is a class the capture held under the old file class's name.
+    @Test
+    fun `after widening, an inliner the capture held under the name it moved from is vouched for`(@TempDir dir: File) {
+        val ordinary = "$fixtures.OrdinaryKotlin"
+        val inliner = "$fixtures.InlinesSomethingElse"
+        val facts = oneModule(dir, compiled(ordinary), compiled(inliner))
+
+        val after = establishAfterWidening(
+            Established(emptySet(), emptySet()), heldMap(dir, ordinary, "pkg.FooKt\$1"), facts,
+            InlineWidening.widened(listOf(inliner, ordinary), setOf(inliner)), inlineOnly = emptySet(),
+            recordedAs = { if (it == inliner) "pkg.FooKt\$1" else it },
+        )
+
+        assertEquals(setOf(ordinary, inliner), after.provable)
+        assertEquals(emptyMap(), after.refusals)
+    }
+
     @Test
     fun `an inline-only file whose inliners were found leaves the change set and keeps its inliners`(
         @TempDir dir: File,
@@ -1835,5 +1854,68 @@ class ChangeSelectionTest {
         assertFalse(widening.forces, widening.refusal)
         assertTrue("$fixtures.Kotlin" in widening.prefixes, "got ${widening.prefixes}")
         assertEquals(emptySet(), widening.accountedByInliners)
+    }
+
+    @Test
+    fun `a moved file class's constant is read under the name the map recorded it by`() {
+        // The file class `FooMovedKt` of a moved `Foo.kt` holds what `FooKt` held at capture.
+        val name = "io.github.zeuspizza.yoriwake.gradle.fixtures.HasConstant"
+        val recordedAs = { n: String -> if (n == name) "pkg.FooKt" else n }
+        val unchanged = mapOf("pkg.FooKt" to Recordability.constantDigest(bytesOf(name))!!)
+
+        assertNull(constantHolderRefusal(setOf(name), unchanged, recordedAs = recordedAs) { p -> listOf(p to bytesOf(p)) })
+        assertEquals(
+            RefusalKind.CONSTANT_UNRECORDED,
+            constantHolderRefusal(setOf(name), unchanged) { p -> listOf(p to bytesOf(p)) }?.refusalKind,
+        )
+        assertEquals(
+            RefusalKind.CONSTANT_CHANGED,
+            constantHolderRefusal(setOf(name), mapOf("pkg.FooKt" to "not-the-digest"), recordedAs = recordedAs) { p ->
+                listOf(p to bytesOf(p))
+            }?.refusalKind,
+        )
+    }
+
+    @Test
+    fun `a moved file class's annotations are read under the name the map recorded them by`() {
+        val name = "com.acme.ServiceMovedKt"
+        val recorded = mapOf("com.acme.ServiceKt" to annotationsOf(profiled(name, "a")))
+
+        assertNull(annotationRefusal(setOf(name), recorded, recordedAs = { "com.acme.ServiceKt" }) { listOf(name to profiled(name, "a")) })
+        assertEquals(
+            RefusalKind.ANNOTATIONS_UNRECORDED,
+            annotationRefusal(setOf(name), recorded) { listOf(name to profiled(name, "a")) }?.refusalKind,
+        )
+    }
+
+    @Test
+    fun `a moved file's path name is judged as the old file's only when no class carries it and the map never held its file class`() {
+        val nothing: (String) -> List<Pair<String, ByteArray>>? = { listOf("pkg.FooMovedKt" to ByteArray(0)) }
+        val classOfThatName: (String) -> List<Pair<String, ByteArray>>? = { listOf("pkg.FooMoved" to ByteArray(0)) }
+
+        assertTrue(movedNamePairable("pkg.FooMoved", nothing, mapOf("pkg.FooKt" to "a")))
+        // Another file declares a class of that name: rewriting it would hide that class's tests.
+        assertFalse(movedNamePairable("pkg.FooMoved", classOfThatName, mapOf("pkg.FooKt" to "a")))
+        // A map captured after the move recorded the new file class under its own name.
+        assertFalse(movedNamePairable("pkg.FooMoved", nothing, mapOf("pkg.FooMovedKt" to "a")))
+        assertFalse(movedNamePairable("pkg.FooMoved", nothing, null))
+        assertFalse(movedNamePairable("pkg.FooMoved", { null }, mapOf("pkg.FooKt" to "a")))
+    }
+
+    @Test
+    fun `a moved file's name provable under its own name is not provable as a name that was refused`() {
+        val change = ChangeDetection.Change(emptySet(), emptyList(), movedNames = mapOf("pkg.FooMoved" to "pkg.Foo"))
+
+        assertEquals(
+            listOf("pkg.Foo", "pkg.Other"),
+            provableAsJudged(Established(setOf("pkg.FooMoved", "pkg.Other"), emptySet()), change).sorted(),
+        )
+        assertEquals(
+            listOf("pkg.Other"),
+            provableAsJudged(
+                Established(setOf("pkg.FooMoved", "pkg.Other"), emptySet(), refusals = mapOf("pkg.Foo" to "annotated")),
+                change,
+            ),
+        )
     }
 }

@@ -383,4 +383,85 @@ class CompiledNamesTest {
         assertEquals(setOf("pkg.utils"), change.inlineSources)
         assertTrue(change.inlinableSourceChanged)
     }
+
+    /** [module], moved from [oldPath] (no longer on disk), resolved with git's pair when [paired]. */
+    private fun resolveMoved(
+        module: Module,
+        oldPath: String,
+        paired: Boolean = true,
+        inChange: Boolean = true,
+        pairable: Boolean = true,
+    ): CompiledNames.Resolved {
+        val artifacts = TaskArtifacts(listOf(module.classes), listOf(module.build.absolutePath))
+        val paths = if (inChange) listOf(oldPath, module.path) else listOf(module.path)
+        return CompiledNames.resolve(
+            ChangeDetection.split(paths, module.dir), module.dir,
+            { _, packageName, fileName -> artifacts.classesCompiledFrom(module.build.absolutePath, packageName, fileName) },
+            { emptySet() },
+            if (paired) mapOf(module.path to oldPath) else emptyMap(),
+            { pairable },
+        )
+    }
+
+    private val movedFile = """
+        package pkg
+
+        class Foo
+
+        fun twice(n: Int): Int = n * 2
+    """
+
+    @Test
+    fun `a moved Kotlin file's path name and file class are judged as the file it moved from`(@TempDir dir: File) {
+        val module = module(dir, "src/main/kotlin/pkg/FooMoved.kt", movedFile, "pkg.Foo", "pkg.FooMovedKt", "pkg.FooMovedKt\$twice\$1")
+
+        val change = resolveMoved(module, "src/main/kotlin/pkg/Foo.kt").change
+
+        // The daemon's own rules still read the new file's classes by their own names.
+        assertTrue("pkg.FooMoved" in change.classPrefixes, change.classPrefixes.toString())
+        assertEquals(mapOf("pkg.FooMoved" to "pkg.Foo"), change.movedNames)
+        assertEquals("pkg.Foo", change.movedFrom("pkg.FooMoved"))
+        assertEquals("pkg.FooKt", change.movedFrom("pkg.FooMovedKt"))
+        assertEquals("pkg.FooKt\$twice\$1", change.movedFrom("pkg.FooMovedKt\$twice\$1"))
+        assertEquals("pkg.Foo", change.movedFrom("pkg.Foo"))
+        assertEquals("pkg.FooMovedKtx", change.movedFrom("pkg.FooMovedKtx"))
+    }
+
+    @Test
+    fun `a new file git does not pair with a deleted one keeps its own names`(@TempDir dir: File) {
+        val module = module(dir, "src/main/kotlin/pkg/FooMoved.kt", movedFile, "pkg.Foo", "pkg.FooMovedKt")
+
+        assertEquals(emptyMap(), resolveMoved(module, "src/main/kotlin/pkg/Foo.kt", paired = false).change.movedNames)
+    }
+
+    @Test
+    fun `a moved file whose path name a class elsewhere carries, or whose file class the map held, keeps its own names`(@TempDir dir: File) {
+        val module = module(dir, "src/main/kotlin/pkg/FooMoved.kt", movedFile, "pkg.Foo", "pkg.FooMovedKt")
+
+        assertEquals(emptyMap(), resolveMoved(module, "src/main/kotlin/pkg/Foo.kt", pairable = false).change.movedNames)
+    }
+
+    @Test
+    fun `a moved file whose old path is not in the change set keeps its own names`(@TempDir dir: File) {
+        val module = module(dir, "src/main/kotlin/pkg/FooMoved.kt", movedFile, "pkg.Foo", "pkg.FooMovedKt")
+
+        assertEquals(emptyMap(), resolveMoved(module, "src/main/kotlin/pkg/Foo.kt", inChange = false).change.movedNames)
+    }
+
+    @Test
+    fun `a moved file that declares a class of its new name keeps that class's own name`(@TempDir dir: File) {
+        val module = module(
+            dir, "src/main/kotlin/pkg/FooMoved.kt",
+            """
+            package pkg
+
+            class FooMoved
+
+            fun twice(n: Int): Int = n * 2
+            """,
+            "pkg.FooMoved", "pkg.FooMovedKt",
+        )
+
+        assertEquals(emptyMap(), resolveMoved(module, "src/main/kotlin/pkg/Foo.kt").change.movedNames)
+    }
 }
