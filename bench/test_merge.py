@@ -252,11 +252,12 @@ def case_the_sweep_says_whether_the_isolated_arm_ran():
     return 0 if summary.get("isolated_arm") == "not run" else fail(f"summary: {summary}")
 
 
-def _isolated(root, name, rows, slices=(1,), of=1, **stamps):
-    """A project's paired isolated arm as the workflow lays it out beside the shared files."""
+def _isolated(root, name, rows, slices=(1,), of=1, arm="isolated", **stamps):
+    """A project's paired isolated (or budget) arm as the workflow lays it out beside the shared
+    files."""
     header = {**STAMPS, "project": name, **stamps}
-    files = [("isolated-recording.json", {**header, "capture_seconds": 30.0, "mutations": []})]
-    files += [(f"isolated-shard-{k}-of-{of}.json", {**_shard(rows, k, of), **header})
+    files = [(f"{arm}-recording.json", {**header, "capture_seconds": 30.0, "mutations": []})]
+    files += [(f"{arm}-shard-{k}-of-{of}.json", {**_shard(rows, k, of), **header})
               for k in slices]
     for file, data in files:
         with open(os.path.join(root, name, file), "w", encoding="utf-8") as handle:
@@ -297,6 +298,41 @@ def case_a_paired_isolated_arm_merges_beside_the_shared_file_with_both_arms_figu
             written["baseline_seconds"] != 4.0 or written["paired_with"] != "demo.json":
         failures += fail("the isolated file is not the shared file's rows under its own map")
     return failures
+
+
+def case_a_budget_arm_merges_into_its_own_file_apart_from_the_isolated_one():
+    shared = [{**_row(i, narrowed=i == 0, broke=i == 0), "selected_seconds": 9.0,
+               "decision_outcome": "narrowed" if i == 0 else "full-run"} for i in range(3)]
+    with tempfile.TemporaryDirectory() as root:
+        art, out = os.path.join(root, "art"), os.path.join(root, "out")
+        _project(art, "demo", shared)
+        _isolated(art, "demo", [_paired(row, narrowed=True) for row in shared])
+        _isolated(art, "demo", [_paired(row, narrowed=False) for row in shared[:2]], arm="budget")
+        code, summary = _merge([art, "--planned", "demo", "--arm", "full", "--isolated",
+                                "--budget", "--out", out])
+        if code != 0:
+            return fail(f"a budget arm beside the isolated one was refused: {summary}")
+        with open(os.path.join(out, "demo.isolated.json"), encoding="utf-8") as handle:
+            isolated = json.load(handle)
+        with open(os.path.join(out, "demo.budget.json"), encoding="utf-8") as handle:
+            budget = json.load(handle)
+    failures = 0
+    state = summary["budget"]["demo"]
+    if (summary.get("budget_arm"), state["status"], state["paired_rows"]) != ("ran", "ran", 2):
+        failures += fail(f"the budget arm's state: {summary.get('budget_arm')}, {state}")
+    if state["budget"]["tests_run"] != 10 or state["shared"]["rows"] != 2:
+        failures += fail(f"the budget arm's figures: {state}")
+    if [r["selected_distinct"] for r in isolated["mutations"]] != [1, 1, 1] or \
+            [r["selected_distinct"] for r in budget["mutations"]] != [5, 5]:
+        failures += fail("the budget rows were read into the isolated file or the other way")
+    return failures
+
+
+def case_a_maven_project_has_no_budget_arm_and_says_so():
+    data, state = merge.merge_isolated({"build_tool": "maven"}, None, [], arm="budget")
+    if data is not None or state["status"] != "not run" or "budget" not in state["reason"]:
+        return fail(f"a Maven project's budget arm: {state}")
+    return 0
 
 
 def case_a_slice_without_its_isolated_rows_takes_them_out_of_both_arms_figures():

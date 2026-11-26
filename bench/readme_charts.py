@@ -58,7 +58,7 @@ def load(arm, paths=None, commit=None):
     suffix = ".isolated.json" if arm == "isolated" else ".json"
     projects, skipped, stamps, sources = {}, {}, {}, {}
     for path in sorted(paths or glob.glob(os.path.join(RESULTS, "*" + suffix))):
-        if arm == "shared" and path.endswith(".isolated.json"):
+        if arm == "shared" and path.endswith((".isolated.json", ".budget.json")):
             continue
         try:
             with open(path, encoding="utf-8") as handle:

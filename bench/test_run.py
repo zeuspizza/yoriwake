@@ -3960,7 +3960,7 @@ def case_a_projects_fork_cap_reaches_every_build_of_both_arms():
 
 def _slice_flags(**given):
     flags = dict(accepted_out=None, shard=None, only_target=None, replay=None, control=False,
-                 isolated_capture=False, pair_with=None)
+                 isolated_capture=False, isolated_budget=None, pair_with=None)
     flags.update(given)
     return argparse.Namespace(**flags)
 
@@ -3969,7 +3969,8 @@ def case_a_slice_takes_an_isolated_arm_only_paired_with_its_own_rows():
     failures = 0
     accepted = (_slice_flags(shard="1/2"), _slice_flags(accepted_out="a.json"),
                 _slice_flags(shard="1/2", isolated_capture=True, pair_with="shard-1-of-2.json"),
-                _slice_flags(isolated_capture=True), _slice_flags())
+                _slice_flags(isolated_capture=True), _slice_flags(),
+                _slice_flags(shard="1/2", isolated_budget="2x", pair_with="shard-1-of-2.json"))
     for flags in accepted:
         if run.sharded_arm_refusal(flags):
             failures += fail(f"{flags} was refused: {run.sharded_arm_refusal(flags)}")
@@ -3978,7 +3979,9 @@ def case_a_slice_takes_an_isolated_arm_only_paired_with_its_own_rows():
                _slice_flags(accepted_out="a.json", isolated_capture=True),
                _slice_flags(accepted_out="a.json", isolated_capture=True, pair_with="x.json"),
                _slice_flags(shard="1/2", control=True), _slice_flags(shard="1/2", replay=3),
-               _slice_flags(shard="1/2", only_target=["T"]))
+               _slice_flags(shard="1/2", only_target=["T"]),
+               _slice_flags(shard="1/2", isolated_budget="2x"),
+               _slice_flags(accepted_out="a.json", isolated_budget="2x"))
     for flags in refused:
         if not run.sharded_arm_refusal(flags):
             failures += fail(f"{flags} was accepted")
@@ -5481,6 +5484,34 @@ def case_an_unwarmed_shard_suspects_the_runner_only_for_a_build_that_never_reach
     return failures
 
 
+def case_the_budget_arm_records_over_the_shared_map_or_measures_paired_rows_only():
+    """`--isolated-budget` records with `--capture-only` or measures with `--pair-with`, never
+    beside `--recapture` (which would discard the map its pick reads) or the isolated arm."""
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    failures = 0
+    for flags, said_part in ((["--isolated-budget", "2x"], "one of them"),
+                             (["--isolated-budget", "2x", "--capture-only", "--recapture"],
+                              "--recapture would discard it"),
+                             (["--isolated-budget", "2x", "--capture-only", "--isolated-capture"],
+                              "two arms; one at a time"),
+                             (["--pair-with", "x.json"], "--isolated-budget")):
+        saved, err, said = sys.argv, io.StringIO(), ""
+        sys.argv = ["run.py", "bench/projects/none.toml", *flags]
+        try:
+            with contextlib.redirect_stderr(err):
+                run.main()
+        except SystemExit:
+            said = err.getvalue()
+        except Exception:  # noqa: BLE001 -- past the flags, so not refused
+            pass
+        finally:
+            sys.argv = saved
+        if said_part not in said:
+            failures += fail(f"{' '.join(flags)} was not refused with {said_part!r}: {said[-200:]!r}")
+    return failures
+
+
 def case_a_sharded_pool_run_refuses_a_timing_cap():
     import contextlib  # noqa: PLC0415
     import io  # noqa: PLC0415
@@ -5536,6 +5567,39 @@ def case_a_named_shape_set_writes_its_own_results_and_scratch():
                     os.path.join("L", "demo.isolated.recall-arm")):
         print(f"  FAIL: the isolated arm of a named set: {isolated}")
         failures += 1
+    budget = run.results_location("R", "L", "demo", run.DEFAULT_SHAPES, budget=True)
+    if budget != (os.path.join("R", "demo.budget.json"), os.path.join("L", "demo.budget")):
+        failures += fail(f"the budget arm's paths: {budget}")
+    return failures
+
+
+def case_the_budget_arm_takes_a_multiple_above_one_and_refuses_an_empty_pick():
+    """`--isolated-budget` takes the plugin's spelling of a budget that isolates something, and
+    the map's pick is counted by its class lines, so a pick of none reads as 0."""
+    failures = 0
+    for good in ("2x", "1.5x", "10x"):
+        if run.budget_value(good) != good:
+            failures += fail(f"{good} was not taken")
+    for bad in ("1x", "1.0x", "2", "x", "", "-2x", "2X"):
+        try:
+            run.budget_value(bad)
+            failures += fail(f"{bad!r} was taken")
+        except argparse.ArgumentTypeError:
+            pass
+    with tempfile.TemporaryDirectory() as map_dir:
+        if run.picked_classes(map_dir) != 0:
+            failures += fail("a map with no pick file counts a picked class")
+        with open(os.path.join(map_dir, run.ISOLATED_PICK_FILE), "w", encoding="utf-8") as handle:
+            handle.write("budget\t2.0\nstart-seconds\t1.0\npicked-seconds\t3.0\n")
+        if run.picked_classes(map_dir) != 0:
+            failures += fail("a pick with no class line counts a picked class")
+        with open(os.path.join(map_dir, run.ISOLATED_PICK_FILE), "a", encoding="utf-8") as handle:
+            handle.write("class\t12\tp.A\nclass\t7\tp.B\t1.5\n")
+        if run.picked_classes(map_dir) != 2:
+            failures += fail(f"two class lines read as {run.picked_classes(map_dir)}")
+    args = run.argument_parser().parse_args(["bench/projects/demo.toml", "--isolated-budget", "2x"])
+    if "--isolated-budget" not in (run.maven_refusal(args) or ""):
+        failures += fail("a Maven project took --isolated-budget")
     return failures
 
 
@@ -5814,6 +5878,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_editing_the_shape_composition_moves_the_grammar_digest,
          case_a_mutation_row_counts_the_files_and_modules_it_changed,
          case_a_named_shape_set_writes_its_own_results_and_scratch,
+         case_the_budget_arm_takes_a_multiple_above_one_and_refuses_an_empty_pick,
+         case_the_budget_arm_records_over_the_shared_map_or_measures_paired_rows_only,
          case_narrow_dependencies_is_on_once_for_the_run_and_writes_its_own_folder,
          case_narrow_dependencies_is_a_shared_arm_unsharded_forcing_run_on_gradle,
          case_narrow_dependencies_draws_the_dependency_family_alone_up_to_its_cap,

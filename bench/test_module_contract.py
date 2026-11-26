@@ -246,6 +246,13 @@ def case_the_u31_names_the_harness_reads_are_the_ones_the_product_writes():
     names = _read(os.path.join(CORE, "SettingNames.kt"))
     if "-P" + (_kotlin_constant(names, "ISOLATED_CAPTURE") or "") != run.ISOLATED_CAPTURE_FLAG:
         failures += fail(f"SettingNames.ISOLATED_CAPTURE is {_kotlin_constant(names, 'ISOLATED_CAPTURE')!r}")
+    if "-P" + (_kotlin_constant(names, "ISOLATED_CAPTURE_BUDGET") or "") \
+            != run.ISOLATED_CAPTURE_BUDGET_FLAG:
+        failures += fail("SettingNames.ISOLATED_CAPTURE_BUDGET is "
+                         f"{_kotlin_constant(names, 'ISOLATED_CAPTURE_BUDGET')!r}")
+    pick = _read(os.path.join(CORE, "capture", "IsolatedPick.kt"))
+    if _kotlin_constant(pick, "STAMP_FILE") != run.ISOLATED_PICK_FILE:
+        failures += fail(f"IsolatedPick.STAMP_FILE is {_kotlin_constant(pick, 'STAMP_FILE')!r}")
     if _kotlin_constant(settings, "COUNTERS") != "yoriwake.internal.counters":
         failures += fail("Settings.COUNTERS moved; run.gradle passes -Pyoriwake.internal.counters")
     verdict = _read(os.path.join(AGENT, "select", "Verdict.java"))

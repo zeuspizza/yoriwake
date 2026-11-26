@@ -9,6 +9,10 @@ name: sweep-project
 # With `isolated` at `paired` the record job also records the project's map a second time, with a
 # fresh test JVM per class, and each slice measures its rows against that map once their shared arms
 # are done. Both are extra: neither can cost the project a shared row.
+#
+# With `budget` at `paired` the record job also records a third map with
+# `-Pyoriwake.isolatedCaptureBudget=2x`, over the shared one before the isolated recording discards
+# it, and each slice measures its rows against that map last. Extra in the same way.
 on:
   workflow_call:
     inputs:
@@ -30,6 +34,10 @@ on:
         default: false
       isolated:
         description: paired also measures each row against an isolated map
+        type: string
+        default: 'off'
+      budget:
+        description: paired also measures each row against a map recorded within a 2x budget
         type: string
         default: 'off'
 
@@ -57,6 +65,7 @@ jobs:
       shards: ${{ steps.record.outputs.shards }}
       of: ${{ steps.record.outputs.of }}
       isolated: ${{ steps.isolated-upload.outcome == 'success' }}
+      budget: ${{ steps.budget-upload.outcome == 'success' }}
       deps: ${{ steps.deps-upload.outcome == 'success' && steps.deps.outputs.name || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,6 +133,7 @@ jobs:
           CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
           FACTOR: ${{ inputs.factor }}
           ISOLATED: ${{ inputs.isolated }}
+          BUDGET: ${{ inputs.budget }}
         run: |
           set -eu
           # Where the step above could not start the clock.
@@ -147,6 +157,7 @@ jobs:
           paired=()
           build=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("build", "gradle"))' "${args[0]}")
           [ "${ISOLATED:-off}" != paired ] || [ "$build" = maven ] || paired=(--isolated)
+          [ "${BUDGET:-off}" != paired ] || [ "$build" = maven ] || paired+=(--budget)
           # The dispatch input's default, for a run that has none.
           shards=$(python3 bench/shard.py "bench/logs/$NAME/accepted.json" --factor "${FACTOR:-1.5}" \
             "${priced[@]+"${priced[@]}"}" "${paired[@]+"${paired[@]}"}")
@@ -202,6 +213,67 @@ jobs:
       - if: steps.deps-pack.outcome != 'skipped'
         continue-on-error: true
         run: rm -rf "$RUNNER_TEMP/deps"
+      # The map recorded again within a 2x isolated-capture budget, for the slices' third pass. Over
+      # the shared map, which the plugin picks the classes to isolate from, so before the isolated
+      # recording discards it; on this runner, so its seconds compare with the shared recording's.
+      # A pick of no class would record shared, and run.py refuses it. The same limits as below.
+      - name: record the budget map
+        id: budget
+        if: inputs.budget == 'paired' && !inputs.replay_only && steps.record.outputs.shards != '[]'
+        continue-on-error: true
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
+        run: |
+          set -eu
+          unset GITHUB_STEP_SUMMARY
+          toml=$(jq -r '.[0]' <<< "$ARGS")
+          build=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("build", "gradle"))' "$toml")
+          if [ "$build" = maven ]; then
+            echo "$NAME is a Maven project, which has no isolated-capture budget"
+            exit 0
+          fi
+          left=$(( $(cat "$RUNNER_TEMP/record-start") + 340 * 60 - $(date +%s) ))
+          # The isolated recording after it keeps the time it had before this arm existed: about
+          # four shared recordings (0.6.0's isolated arm took 3.3 times the shared one), and this
+          # one takes at most three (2x and the pick), each with ten minutes to spare.
+          capture=$(jq -r '.capture_seconds // 0 | floor' "bench/results/$NAME.json")
+          cap=$(( 3 * capture + 600 ))
+          left=$(( left - 4 * capture - 600 ))
+          [ "$left" -le "$cap" ] || left=$cap
+          if [ "$left" -lt 600 ]; then
+            echo "::warning::$NAME: $((left / 60)) minutes left beside the isolated recording, too few for a budget recording"
+            exit 0
+          fi
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          mapfile -t shapes < <(jq -r 'index("--shapes") as $at | if $at then .[$at], .[$at + 1] else empty end' <<< "$ARGS")
+          code=0
+          timeout --kill-after=60 "$left" python3 bench/run.py "$toml" "${shapes[@]+"${shapes[@]}"}" \
+            --isolated-budget 2x --capture-only || code=$?
+          if [ "$code" = 124 ] || [ "$code" = 137 ]; then
+            echo "::warning::$NAME: the budget recording did not finish in $((left / 60)) minutes; its slices measure no budget arm"
+            exit 0
+          elif [ "$code" != 0 ]; then
+            echo "::warning::$NAME: the budget recording failed (exit $code); its slices measure no budget arm"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/budget/$NAME"
+          cp "bench/results/$NAME.budget.json" "$RUNNER_TEMP/budget/$NAME/recording.json"
+          tar -czf "$RUNNER_TEMP/budget/$NAME/state.tar.gz" -C bench "logs/$NAME.budget" \
+            "results/$NAME.budget.json" "$CHECKOUT/.gradle/yoriwake"
+          echo "recorded=true" >> "$GITHUB_OUTPUT"
+      # Read by the slices' third pass and the merge, as the isolated map's below.
+      - if: ${{ !cancelled() && steps.budget.outputs.recorded == 'true' }}
+        id: budget-upload
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: budget-${{ fromJSON(inputs.project).project }}
+          retention-days: 3
+          path: ${{ runner.temp }}/budget/
       # The same map again with a fresh test JVM per class, for the slices' second pass: on this
       # runner, so both recordings' seconds are one machine's. Last, so the shared state and the
       # slices' list are what they are without it. It gets what the job has left and no more: a
@@ -334,6 +406,13 @@ jobs:
         with:
           name: isolated-${{ fromJSON(inputs.project).project }}
           path: ${{ runner.temp }}/isolated
+      - if: needs.record.outputs.budget == 'true'
+        id: budget
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: budget-${{ fromJSON(inputs.project).project }}
+          path: ${{ runner.temp }}/budget
       - name: measure this slice
         env:
           NAME: ${{ fromJSON(inputs.project).project }}
@@ -410,6 +489,47 @@ jobs:
           name: isolated-shard-${{ fromJSON(inputs.project).project }}-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}
           retention-days: 3
           path: ${{ runner.temp }}/isolated-slice/
+      # The same rows against the budget map, last, as the isolated pass above: the map directory
+      # makes way for it, and a fault or a timeout costs this arm alone.
+      - name: measure this slice against the budget map
+        id: third
+        if: needs.record.outputs.budget == 'true' && steps.budget.outcome == 'success'
+        continue-on-error: true
+        env:
+          NAME: ${{ fromJSON(inputs.project).project }}
+          ARGS: ${{ toJSON(fromJSON(inputs.project).args) }}
+          GITHUB_TOKEN: ${{ fromJSON(inputs.project).project == 'bitwarden-android' && github.token || '' }}
+          CHECKOUT: ${{ fromJSON(inputs.project).checkout }}
+          SHARD: ${{ matrix.shard }}/${{ needs.record.outputs.of }}
+          SLICE: shard-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}.json
+        run: |
+          set -eu
+          unset GITHUB_STEP_SUMMARY
+          left=$(( $(cat "$RUNNER_TEMP/slice-start") + 340 * 60 - $(date +%s) ))
+          if [ "$left" -lt 300 ]; then
+            echo "::warning::$NAME $SHARD: no time left in the job for the budget arm"
+            exit 0
+          fi
+          bench/machine_sampler.sh & sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          rm -rf "bench/$CHECKOUT/.gradle/yoriwake"
+          tar -xzf "$RUNNER_TEMP/budget/$NAME/state.tar.gz" -C bench
+          mapfile -t shapes < <(jq -r 'index("--shapes") as $at | if $at then .[$at], .[$at + 1] else empty end' <<< "$ARGS")
+          timeout --kill-after=60 "$left" python3 bench/run.py "$(jq -r '.[0]' <<< "$ARGS")" \
+            "${shapes[@]+"${shapes[@]}"}" --isolated-budget 2x --pair-with "bench/logs/$NAME/$SLICE" \
+            --accepted "bench/logs/$NAME/accepted.json" --shard "$SHARD"
+          mkdir -p "$RUNNER_TEMP/budget-slice/evidence"
+          cp "bench/logs/$NAME.budget/$SLICE" "$RUNNER_TEMP/budget-slice/"
+          cp "bench/logs/evidence/$NAME-budget.tar.gz" "$RUNNER_TEMP/budget-slice/evidence/" \
+            2>/dev/null || true
+      # Its own artifact, which the merge reads where it is there.
+      - if: ${{ !cancelled() && steps.third.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: budget-shard-${{ fromJSON(inputs.project).project }}-${{ matrix.shard }}-of-${{ needs.record.outputs.of }}
+          retention-days: 3
+          path: ${{ runner.temp }}/budget-slice/
       - name: say what this job downloaded
         if: ${{ !cancelled() }}
         continue-on-error: true
