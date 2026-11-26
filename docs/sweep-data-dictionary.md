@@ -55,6 +55,15 @@ or "does not apply", never zero. Figures derived from these fields carry the cav
   before the second pass starts. Not covered: the slices start when the record job ends, so they
   wait for the second recording, and a runner lost during it loses the project's slices, as one
   lost during the commit replay does. A Maven project has no isolated capture.
+- **Budget, paired, on Actions** (`sweep.yml`, input `budget`: `off` by default, `paired` in the
+  release check; `results/<project>.budget.json`, scratch `logs/<project>.budget/`): the record job
+  records a third map with `-Pyoriwake.isolatedCaptureBudget=2x` over the shared one, before the
+  isolated recording discards it (`run.py --isolated-budget 2x --capture-only`): the first budgeted
+  recording after a shared one, the plugin picking from the shared map. A pick of no class is
+  refused, as it would have recorded shared. Each slice then asks the budget map about its rows
+  last (`--isolated-budget 2x --pair-with <its shared slice> --shard K/N`), as the isolated arm
+  does; `merge.py --budget` writes `<project>.budget.json` and `budget.<project>` and `budget_arm`
+  in `sweep.json`. The header stamps `capture_budget` and `capture_picked_classes`. Gradle only.
 - **Setup errors fail fast** (from 0.2): every row and the preflight start from the
   untracked and ignored files present when the checkout was prepared plus those the capture wrote
   (`logs/<project>/untracked-snapshot.json`); files a baseline or an earlier row wrote are removed,
@@ -164,6 +173,7 @@ failure would save more hours and keep fewer of those rows.
 | field | source | serves |
 |---|---|---|
 | `capture_mode` | the arm run.py was asked for | every per-arm comparison |
+| `capture_budget`, `capture_picked_classes` | `--isolated-budget`, and the classes the plugin's pick (`isolated-pick` in the map) named; None on the other arms | the budget arm against the shared one |
 | `capture_max_parallel_forks` | `--isolated-forks` (default: cores); never above `max_parallel_forks`; None on the shared arm | overhead shared vs isolated (the isolated figure is not the host's layout) |
 | `max_parallel_forks` | the project file's cap on every build's test forks, both arms and every phase alike (`fork-cap.init.gradle`, which only lowers); None: the guest's own forks | which files ran fewer forks than the guest's CI would |
 | `paired_with` | `--pair-with`; each row is matched to its paired row per mutation, `(target, kind, index)`, and a paired file holding one mutation twice is refused (files written before 2026-10-08 matched by label, so two declarations of one name could take each other's ground truth) | provenance of the isolated rows' ground truth |

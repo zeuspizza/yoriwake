@@ -1,7 +1,9 @@
 """Cuts a project's accepted target list into slices, each one CI job of both arms.
 
 With `--isolated` each slice also measures its rows a second time against an isolated map, so each
-row is priced with that arm's cost on top (`cost.isolated_arm`).
+row is priced with that arm's cost on top (`cost.isolated_arm`). With `--budget` each slice also
+measures them against a map recorded within an isolated-capture budget, priced as the isolated
+arm's second pass again: it selects against a map at least as narrow as the shared one.
 
 Each slice holds at most 90 minutes of projected rows, plus its fixed cost: the job's setup, and
 the warm-up run only when the slice times a row (`run.slice_times_a_row`). A row longer than that
@@ -102,6 +104,8 @@ def main(argv=None):
                         help="runner seconds per local second, for the qualification table only")
     parser.add_argument("--isolated", action="store_true",
                         help="each slice also measures its rows against an isolated map")
+    parser.add_argument("--budget", action="store_true",
+                        help="each slice also measures its rows against a budgeted map")
     parser.add_argument("--priced-from",
                         help="this project's results file from the last published sweep")
     args = parser.parse_args(argv)
@@ -118,9 +122,10 @@ def main(argv=None):
                         forced_share_without_rows=0.0)
     warmup = factor * (last.get("baseline_seconds") or 0)
     shared = costs = row_costs(unit, count, factor)
-    if args.isolated:
+    passes = int(args.isolated) + int(args.budget)
+    if passes:
         paired = 60 * factor * cost.isolated_arm(last, count)["row_minutes"]
-        costs = [round(seconds + paired, 1) for seconds in shared]
+        costs = [round(seconds + passes * paired, 1) for seconds in shared]
     accepted["slices"] = plan(costs, SETUP_SECONDS + warmup, required=shared) if count else []
     for number, ((start, end), fixed) in enumerate(
             zip(accepted["slices"], fixed_seconds(accepted["slices"], warmup, recall_only,

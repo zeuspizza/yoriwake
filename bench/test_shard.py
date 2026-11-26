@@ -68,7 +68,7 @@ def case_a_row_over_the_default_budget_gets_its_own_slice():
     return 0 if slices == [[0, 1], [1, 2], [2, 3]] else fail(f"a 100-minute row: {slices}")
 
 
-def _sliced(accepted, bench=None, priced_from=None, factor="3", isolated=False):
+def _sliced(accepted, bench=None, priced_from=None, factor="3", isolated=False, budget=False):
     """`shard.py`'s slices and its per-slice costs for this list, with `bench` as the bench
     directory a record job's header and the qualification table are read from."""
     with tempfile.TemporaryDirectory() as root:
@@ -81,6 +81,7 @@ def _sliced(accepted, bench=None, priced_from=None, factor="3", isolated=False):
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
                 shard.main([path, "--factor", factor] + (["--isolated"] if isolated else [])
+                           + (["--budget"] if budget else [])
                            + (["--priced-from", priced_from] if priced_from else []))
         finally:
             sweep_corpus.BENCH = saved
@@ -139,6 +140,24 @@ def case_a_paired_isolated_arm_makes_each_row_dearer_and_the_slices_shorter():
         failures += fail(f"rows of both arms from a 12-minute header: {slices}, {minutes}")
     if not len(slices) > len(alone):
         failures += fail(f"both arms fit the slices of one: {slices}, {alone}")
+    return failures
+
+
+def case_a_budget_arm_beside_the_isolated_one_prices_a_third_pass():
+    failures = 0
+    with tempfile.TemporaryDirectory() as bench:
+        os.makedirs(os.path.join(bench, "results"))
+        with open(os.path.join(bench, "results", "kafka.json"), "w", encoding="utf-8") as handle:
+            json.dump({"baseline_seconds": 720, "mutations": []}, handle)
+        two, _ = _sliced(_accepted(21, recall_only=True), bench=bench, isolated=True)
+        slices, minutes = _sliced(_accepted(21, recall_only=True), bench=bench, isolated=True,
+                                  budget=True)
+    # The isolated case's 37.7 minutes a row, and the same second pass once more.
+    if not minutes or any(abs(m / (end - start) - 50.8) > 0.5
+                          for m, (start, end) in zip(minutes, slices)) or any(m > 90 for m in minutes):
+        failures += fail(f"rows of three passes from a 12-minute header: {slices}, {minutes}")
+    if not len(slices) > len(two):
+        failures += fail(f"three passes fit the slices of two: {slices}, {two}")
     return failures
 
 

@@ -37,6 +37,11 @@ name: sweep
 # project. That arm is extra: a recording that does not fit what its job has left, or a slice whose
 # second pass fails, is named as not finished and costs no shared row. Other tiers do not take it.
 #
+# With `budget` at `paired` (off by default; the release check turns it on), a full sweep measures
+# every row once more against a map recorded with `-Pyoriwake.isolatedCaptureBudget=2x` over the
+# shared one, the first budgeted recording after a shared one, as a user's would be. Extra in the
+# same way, beside the isolated arm, into `<project>.budget.json`.
+#
 # Dispatched in each release check on the gate commit, and again on a candidate whose diff touches
 # product code (`RELEASING.md`), never on a schedule: a full sweep of every
 # project takes about 7.5 to 10 hours.
@@ -83,6 +88,11 @@ on:
         type: choice
         options: [paired, 'off']
         default: paired
+      budget:
+        description: paired also measures each row against a map recorded within a 2x isolated-capture budget (full tier only)
+        type: choice
+        options: ['off', paired]
+        default: 'off'
 
 permissions:
   contents: read
@@ -104,6 +114,7 @@ jobs:
       tier: ${{ steps.plan.outputs.tier }}
       projects: ${{ steps.plan.outputs.projects }}
       isolated: ${{ steps.plan.outputs.isolated }}
+      budget: ${{ steps.plan.outputs.budget }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -137,6 +148,7 @@ jobs:
           COMMITS: ${{ inputs.commits }}
           REPLAY_ONLY: ${{ inputs.replay_only }}
           ISOLATED: ${{ inputs.isolated }}
+          BUDGET: ${{ inputs.budget }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
@@ -145,6 +157,10 @@ jobs:
           case ${ISOLATED:-paired} in
             paired|off) ;;
             *) echo "isolated takes paired or off, not '$ISOLATED'"; exit 1 ;;
+          esac
+          case ${BUDGET:-off} in
+            paired|off) ;;
+            *) echo "budget takes paired or off, not '$BUDGET'"; exit 1 ;;
           esac
           case ${COMMITS:-8} in
             *[!0-9]*) echo "commits takes a count, not '$COMMITS'"; exit 1 ;;
@@ -216,6 +232,10 @@ jobs:
           [ "$TIER" = full ] && [ "$REPLAY_ONLY" != true ] && isolated=${ISOLATED:-paired}
           echo "isolated=$isolated" >> "$GITHUB_OUTPUT"
           echo "isolated arm: $isolated"
+          budget=off
+          [ "$TIER" = full ] && [ "$REPLAY_ONLY" != true ] && budget=${BUDGET:-off}
+          echo "budget=$budget" >> "$GITHUB_OUTPUT"
+          echo "budget arm: $budget"
           projects='[]'
           if [ "$TIER" = reduced ] || [ "$TIER" = full ]; then
             only=()
@@ -322,7 +342,7 @@ jobs:
           cp published/merged/*.json bench/results/
           # The shared arm's rows, as before the sweep had a second arm: its rows hold arms no
           # job of theirs ran.
-          rm -f bench/results/sweep.json bench/results/*.isolated.json
+          rm -f bench/results/sweep.json bench/results/*.isolated.json bench/results/*.budget.json
           for kept in published/evidence/*.tar.gz; do tar -xzf "$kept" -C bench/logs; done
           python3 bench/replay_decisions.py
 
@@ -351,6 +371,7 @@ jobs:
       commits: ${{ inputs.commits }}
       replay_only: ${{ inputs.replay_only }}
       isolated: ${{ needs.plan.outputs.isolated }}
+      budget: ${{ needs.plan.outputs.budget }}
 
   merge:
     needs: [plan, project]
@@ -377,6 +398,7 @@ jobs:
           COMMITS: ${{ inputs.commits }}
           REPLAY_ONLY: ${{ inputs.replay_only }}
           ISOLATED: ${{ needs.plan.outputs.isolated }}
+          BUDGET: ${{ needs.plan.outputs.budget }}
         run: |
           set -euo pipefail
           names=$(jq -r '.[].project' <<< "$PLAN")
@@ -439,18 +461,23 @@ jobs:
               for kept in "$shard"/evidence/*.tar.gz; do
                 cp "$kept" "evidence/shard-$name-$k-of-$of-$(basename "$kept")"
               done
-              # The slice's second pass, where it ran: absent is an arm that did not finish.
-              second="downloaded/isolated-shard-$name-$k-of-$of"
-              if [ -f "$second/shard-$k-of-$of.json" ]; then
-                cp "$second/shard-$k-of-$of.json" "art/$name/isolated-shard-$k-of-$of.json"
-                for kept in "$second"/evidence/*.tar.gz; do
-                  [ ! -f "$kept" ] || cp "$kept" "evidence/shard-$name-$k-of-$of-$(basename "$kept")"
-                done
+              # The slice's second and third passes, where they ran: absent is an arm that did not
+              # finish.
+              for arm in isolated budget; do
+                second="downloaded/$arm-shard-$name-$k-of-$of"
+                if [ -f "$second/shard-$k-of-$of.json" ]; then
+                  cp "$second/shard-$k-of-$of.json" "art/$name/$arm-shard-$k-of-$of.json"
+                  for kept in "$second"/evidence/*.tar.gz; do
+                    [ ! -f "$kept" ] || cp "$kept" "evidence/shard-$name-$k-of-$of-$(basename "$kept")"
+                  done
+                fi
+              done
+            done
+            for arm in isolated budget; do
+              if [ -f "downloaded/$arm-$name/$name/recording.json" ]; then
+                cp "downloaded/$arm-$name/$name/recording.json" "art/$name/$arm-recording.json"
               fi
             done
-            if [ -f "downloaded/isolated-$name/$name/recording.json" ]; then
-              cp "downloaded/isolated-$name/$name/recording.json" "art/$name/isolated-recording.json"
-            fi
           done
           missing_args=()
           for entry in "${declared[@]+"${declared[@]}"}"; do missing_args+=(--missing "$entry"); done
@@ -495,6 +522,7 @@ jobs:
           fi
           isolated=()
           [ "${ISOLATED:-off}" != paired ] || isolated=(--isolated)
+          [ "${BUDGET:-off}" != paired ] || isolated+=(--budget)
           python3 bench/merge.py art --planned $names "${missing_args[@]+"${missing_args[@]}"}" \
             --arm "$ARM" --out merged "${completes[@]+"${completes[@]}"}" \
             "${isolated[@]+"${isolated[@]}"}"

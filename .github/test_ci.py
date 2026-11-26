@@ -4284,7 +4284,8 @@ def case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_r
         if "      isolated: ${{ needs.plan.outputs.isolated }}\n" not in _job(handle.read(), "project"):
             problems += fail("sweep.yml does not pass the plan's isolated arm to each project")
         handle.seek(0)
-        if "rm -f bench/results/sweep.json bench/results/*.isolated.json\n" not in handle.read():
+        if "rm -f bench/results/sweep.json bench/results/*.isolated.json bench/results/*.budget.json\n" \
+                not in handle.read():
             problems += fail("the replay of a published run would replay its isolated rows too")
     with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
         project = handle.read()
@@ -4312,6 +4313,23 @@ def case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_r
             problems += fail(f"the isolated map's upload lacks {needed!r}")
     if "      isolated: ${{ steps.isolated-upload.outcome == 'success' }}\n" not in record:
         problems += fail("the record job does not tell its slices whether the map was uploaded")
+    # The budget map is recorded over the shared one, so before the isolated recording discards
+    # it, and only after the shared state is uploaded; its slices' pass comes after the isolated
+    # pass's upload.
+    budget = step_of(record, "record the budget map")
+    if not (record.index("name: record-${{") < record.index("name: record the budget map")
+            < record.index("name: record the isolated map")):
+        problems += fail("the budget recording does not run between the shared upload and the "
+                         "isolated recording")
+    for needed in ("--isolated-budget 2x --capture-only", "continue-on-error: true"):
+        if needed not in budget:
+            problems += fail(f"the budget recording lacks {needed!r}")
+    if "--recapture" in budget:
+        problems += fail("the budget recording would discard the shared map it starts from")
+    if not shard.index("name: isolated-shard-${{") < shard.index(
+            "name: measure this slice against the budget map") < shard.index(
+                "name: budget-shard-${{"):
+        problems += fail("a slice's budget pass is not after its isolated pass's upload")
     second = step_of(shard, "measure this slice against the isolated map")
     # The shared rows are uploaded before the second pass starts, and its own after it.
     if not shard.index("name: measure this slice\n") < shard.index("name: shard-${{") < shard.index(
@@ -4827,7 +4845,7 @@ def case_a_change_to_the_maven_plugin_alone_sweeps_the_maven_projects():
         if (code or (planned is None) is not (arm is None) or "--build" in (planned or "")
                 or (arm and f"--arm {arm}" not in planned)
                 or wrote != [f"tier={tier}\nisolated={'paired' if tier == 'full' else 'off'}\n"
-                             f"projects=[]\n"] or bool(warning) is not warned
+                             f"budget=off\nprojects=[]\n"] or bool(warning) is not warned
                 or (warned and mojo not in warning[0])):
             problems += fail(f"a selector change over {changed}, only={only!r}: exit {code}, "
                              f"planned {asked}, handed on {wrote}, said {output!r}")

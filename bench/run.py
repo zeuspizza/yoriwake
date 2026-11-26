@@ -56,6 +56,12 @@ FORK_CAP_INIT = os.path.join(HERE, "fork-cap.init.gradle")
 # The public flag the isolated arm records with; Settings.ISOLATED_CAPTURE, pinned by
 # test_module_contract.py.
 ISOLATED_CAPTURE_FLAG = "-Pyoriwake.isolatedCapture"
+# The public flag the budget arm records with; Settings.ISOLATED_CAPTURE_BUDGET, pinned by
+# test_module_contract.py.
+ISOLATED_CAPTURE_BUDGET_FLAG = "-Pyoriwake.isolatedCaptureBudget"
+# The plugin's record of the classes a budgeted recording ran in their own JVM, in the map
+# directory (IsolatedPick.STAMP_FILE): one `class` line per picked class.
+ISOLATED_PICK_FILE = "isolated-pick"
 
 # The two timing arms differ in one thing that is not instrumentation: the capture arm applies the
 # plugin and the baseline does not, so the capture arm alone pays to STORE a configuration-cache
@@ -1504,6 +1510,22 @@ def fork_cap_flags(project):
     return [] if cap is None else ["-I", FORK_CAP_INIT, f"-Dyoriwake.harness.forkCap={cap}"]
 
 
+def budget_value(text):
+    """`--isolated-budget`'s value as the plugin spells it: a multiple above 1, such as `2x`."""
+    if re.fullmatch(r"\d+(\.\d+)?x", text or "") and float(text[:-1]) > 1:
+        return text
+    raise argparse.ArgumentTypeError(f"a budget is a multiple above 1 such as 2x, not {text!r}")
+
+
+def picked_classes(map_dir):
+    """How many test classes the map's isolated pick names; 0 when it has none."""
+    try:
+        with open(os.path.join(map_dir, ISOLATED_PICK_FILE), encoding="utf-8") as handle:
+            return sum(1 for line in handle if line.split("\t", 1)[0] == "class")
+    except OSError:
+        return 0
+
+
 def isolated_forks(requested, project):
     """The isolated recording's fork count: `--isolated-forks`, never above the project's cap."""
     cap = fork_cap(project)
@@ -2458,7 +2480,7 @@ def shape_folder(shapes, narrow_dependencies=False):
 
 
 def results_location(results_root, logs_root, name, shapes, isolated=False, control=False,
-                     narrow_dependencies=False):
+                     narrow_dependencies=False, budget=False):
     """`(results file, scratch directory)` for a project under a shape set.
 
     The default set keeps `<results>/<project>.json`, so every earlier comparison still reads the
@@ -2467,7 +2489,7 @@ def results_location(results_root, logs_root, name, shapes, isolated=False, cont
     default file, and its rows were restored by hand. `--narrow-dependencies` writes under the
     set's folder with its own suffix.
     """
-    stem = name + (".isolated" if isolated else "")
+    stem = name + (".isolated" if isolated else ".budget" if budget else "")
     if shapes == DEFAULT_SHAPES:
         out_path = os.path.join(results_root, stem + ".json")
         scratch = os.path.join(logs_root, stem + (".control" if control else ""))
@@ -4363,11 +4385,12 @@ def sharded_arm_refusal(args):
         return None
     if args.only_target or args.replay or args.control:
         return "a sharded sweep is a mutation sweep, with no --only-target, --replay or --control"
-    if args.accepted_out and (args.isolated_capture or args.pair_with):
+    second = args.isolated_capture or args.isolated_budget
+    if args.accepted_out and (second or args.pair_with):
         return "the recording job of a sharded sweep records the shared arm"
-    if bool(args.isolated_capture) != bool(args.pair_with):
-        return ("a slice's isolated arm is paired with the slice's own shared rows: pass "
-                "--isolated-capture and --pair-with together")
+    if bool(second) != bool(args.pair_with):
+        return ("a slice's isolated or budget arm is paired with the slice's own shared rows: pass "
+                "--isolated-capture or --isolated-budget, and --pair-with, together")
     return None
 
 
@@ -4861,6 +4884,7 @@ def maven_refusal(args):
     asked = [flag for flag, on in (("--class-granularity", args.class_granularity),
                                    ("--class-selection", args.class_selection),
                                    ("--isolated-capture", args.isolated_capture),
+                                   ("--isolated-budget", args.isolated_budget),
                                    ("--replay", args.replay),
                                    (f"--ground-truth {args.ground_truth}",
                                     args.ground_truth != "full"),
@@ -4955,6 +4979,12 @@ def argument_parser():
                         help="let the shared arm reuse a mixed map on disk, as a recording with "
                              "-Pyoriwake.isolatedCaptureBudget leaves, instead of re-capturing "
                              "over it")
+    # THE BUDGET ARM. The map recorded again with -Pyoriwake.isolatedCaptureBudget, starting from
+    # the shared arm's own map: the plugin picks the classes to isolate from the previous map, and
+    # with none it records shared, which would repeat the shared arm under another name.
+    parser.add_argument("--isolated-budget", metavar="NX", type=budget_value,
+                        help="record with -Pyoriwake.isolatedCaptureBudget=NX over the shared "
+                             "arm's map; writes results/<project>.budget.json")
     parser.add_argument("--isolated-forks", type=int, default=os.cpu_count() or 1, metavar="N",
                         help="maxParallelForks for the isolated recording only (default: cores)")
     # THE SAME TARGETS, AND ONE GROUND TRUTH FOR BOTH ARMS. The full arm asks which tests the mutated
@@ -5004,8 +5034,14 @@ def argument_parser():
 def main():
     parser = argument_parser()
     args = parser.parse_args()
-    if args.pair_with and not args.isolated_capture:
-        parser.error("--pair-with pairs an isolated arm with a shared one; pass --isolated-capture")
+    if args.isolated_capture and args.isolated_budget:
+        parser.error("--isolated-capture and --isolated-budget are two arms; one at a time")
+    if args.isolated_budget and args.recapture:
+        parser.error("--isolated-budget records over the shared arm's map; --recapture would "
+                     "discard it")
+    if args.pair_with and not (args.isolated_capture or args.isolated_budget):
+        parser.error("--pair-with pairs an isolated or budget arm with a shared one; pass "
+                     "--isolated-capture or --isolated-budget")
     if args.pair_with and (args.replay or args.only_target):
         parser.error("--pair-with measures a mutation sweep's rows; not with --replay or "
                      "--only-target")
@@ -5026,10 +5062,11 @@ def main():
     refusal = sharded_arm_refusal(args)
     if refusal:
         parser.error(refusal)
-    if args.capture_only and (not args.isolated_capture or args.pair_with or sharding
+    if args.capture_only and (not (args.isolated_capture or args.isolated_budget)
+                              or args.pair_with or sharding
                               or args.replay or args.only_target or args.control):
-        parser.error("--capture-only records the isolated map alone: pass --isolated-capture, "
-                     "and no rows to measure")
+        parser.error("--capture-only records the isolated or budget map alone: pass "
+                     "--isolated-capture or --isolated-budget, and no rows to measure")
     # A SHARDED `pool/v1` RUN CANNOT TIME THE ROWS A SINGLE JOB WOULD. The timing cap times the first
     # rows by draw position, a shard counts that position on the recording job's whole list, and a
     # single job skips the targets of a family that already stopped, so the two would time
@@ -5062,7 +5099,7 @@ def main():
     if refusal:
         parser.error(refusal)
     if args.control:
-        if args.isolated_capture or args.replay or args.only_target:
+        if args.isolated_capture or args.isolated_budget or args.replay or args.only_target:
             parser.error("--control is a shared-arm mutation sweep")
         args.recapture = True
     maven = maven_build.build_tool(project) == maven_build.MAVEN
@@ -5106,13 +5143,15 @@ def main():
     # Sampled before this sweep starts a daemon of its own, so it describes what the sweep INHERITED
     # rather than what it built. None where the question cannot be asked; see daemon_uptime_seconds.
     daemon_uptime_at_start = daemon_uptime_seconds()
-    arm_name = "isolated" if args.isolated_capture else "shared"
+    arm_name = ("isolated" if args.isolated_capture
+                else "budget" if args.isolated_budget else "shared")
     # A control's scratch, evidence and map stamp are its own, so no measurement reads them.
     arm_label = arm_name + ("-control" if args.control else "")
     results_root = CONTROL_RESULTS if args.control else RESULTS
     out_path, scratch = results_location(results_root, os.path.join(HERE, "logs"), project["name"],
                                          args.shapes, args.isolated_capture, args.control,
-                                         args.narrow_dependencies)
+                                         args.narrow_dependencies,
+                                         budget=bool(args.isolated_budget))
     os.makedirs(scratch, exist_ok=True)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     if shard:
@@ -5246,7 +5285,8 @@ def main():
     # A shard's capture and baseline are the recording job's, whose header is the results file.
     # Each arm's own: the isolated map's recording wrote the isolated file's header.
     header_path = (results_location(results_root, os.path.join(HERE, "logs"), project["name"],
-                                    args.shapes, args.isolated_capture)[0] if shard else out_path)
+                                    args.shapes, args.isolated_capture,
+                                    budget=bool(args.isolated_budget))[0] if shard else out_path)
     if os.path.isfile(header_path):
         with open(header_path, encoding="utf-8") as handle:
             previous = json.load(handle)
@@ -5264,6 +5304,8 @@ def main():
     # denominator and must stay a plain shared-JVM run.
     if args.isolated_capture:
         select_flags.append(ISOLATED_CAPTURE_FLAG)
+    if args.isolated_budget:
+        select_flags.append(f"{ISOLATED_CAPTURE_BUDGET_FLAG}={args.isolated_budget}")
 
     paired_rows = None
     if args.pair_with:
@@ -5295,6 +5337,7 @@ def main():
         baseline_seconds_paired = paired.get("baseline_seconds")
     RUN_STAMPS.update({
         "capture_mode": arm_name,
+        "capture_budget": args.isolated_budget,
         **fork_stamps(project, args),
         "paired_with": os.path.relpath(args.pair_with, ROOT) if args.pair_with else None,
         # THIS INVOCATION'S sample rule and arm set; each row carries its own `narrowed_target`,
@@ -5377,7 +5420,8 @@ def main():
     # on disk is whichever arm captured last; reusing it would measure one arm's selection against
     # the other's recording. And a map of another schema is refused by the agent, so every row
     # would force.
-    fits, why = sweep_data.map_fits_arm(map_dir, args.isolated_capture, args.reuse_budgeted_map)
+    fits, why = sweep_data.map_fits_arm(map_dir, args.isolated_capture,
+                                        args.reuse_budgeted_map or bool(args.isolated_budget))
     wanted_schema = sweep_data.checkout_schema_version(SOURCE)
     found_schema = sweep_data.schema_version(map_dir)
     if fits and map_dir and wanted_schema is not None and found_schema != wanted_schema:
@@ -5392,11 +5436,21 @@ def main():
         print(f"REFUSING: a shard measures against the recording job's map, and "
               f"{why if map_dir else 'there is none'}", flush=True)
         return 1
-    if not fits and not args.recapture:
+    # THE BUDGET RECORDING STARTS FROM THE SHARED ARM'S MAP, this run's own, and keeps it: the
+    # plugin's pick reads it, and a recording over no map records shared.
+    over_shared = bool(args.isolated_budget and args.capture_only)
+    if over_shared:
+        fits, why = (sweep_data.stamp_fits(map_dir, sweep_data.capture_stamp(
+            "shared", plugin_commit(), project["commit"])) if map_dir else (False, "there is none"))
+        if not fits:
+            print(f"REFUSING: the budget recording starts from the shared arm's map, and {why}",
+                  flush=True)
+            return 1
+    elif not fits and not args.recapture:
         print(f"  {why}; re-capturing", flush=True)
         args.recapture = True
 
-    if map_dir is None or args.recapture:
+    if map_dir is None or args.recapture or over_shared:
         # RESET, NOT MERGE, and the distinction is the whole value of the flag. The
         # plugin's capture ADDS to whatever the map directory already holds, so re-capturing over an
         # existing map leaves a blend of two generations. Measured on moshi the first time this was
@@ -5482,7 +5536,7 @@ def main():
         # that deleted a temporary directory would still pass with this call removed -- the vacuous
         # guard this project keeps finding. What would catch a regression is a capture whose map
         # holds records it did not write, which is the residue count the benchmark notes keep.
-        if map_dir is not None:
+        if map_dir is not None and not over_shared:
             remove_tree(map_dir)
 
         # The isolated arm records a fresh JVM per test class, with as many at a time as the
@@ -5492,6 +5546,8 @@ def main():
                           "-Dyoriwake.harness.maxParallelForks="
                           f"{isolated_forks(args.isolated_forks, project)}"]
                          if args.isolated_capture else [])
+        if args.isolated_budget:
+            isolated_args = [f"{ISOLATED_CAPTURE_BUDGET_FLAG}={args.isolated_budget}"]
         capture_log = os.path.join(scratch, "capture.log")
         capture_started = time.time()
         capture_code, capture_seconds = gradle(
@@ -5544,6 +5600,15 @@ def main():
                 "archive": os.path.relpath(archive, ROOT),
                 "bytes": sweep_data.archive_evidence(archive, [(capture_raw, "raw")])}
             shutil.rmtree(capture_raw, ignore_errors=True)
+        # A BUDGET THAT PICKED NOTHING RECORDED SHARED: its rows would repeat the shared arm's
+        # under the budget's name.
+        if args.isolated_budget:
+            RUN_STAMPS["capture_picked_classes"] = picked_classes(capture_map)
+            if not RUN_STAMPS["capture_picked_classes"]:
+                print(f"REFUSING: the budget recording picked no test class to isolate (no "
+                      f"{ISOLATED_PICK_FILE} class in the map); its arm would be the shared one",
+                      flush=True)
+                return 1
         if args.capture_only:
             # The slices' paired rows bring the baseline and the ground truth with them.
             RUN_STAMPS["baseline_arm"] = None
