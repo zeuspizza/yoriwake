@@ -15,5 +15,9 @@ scope = "reactor"
 history_from = "ef34bfa8fd6f2f6181ba2e41051050ed877e56df"
 history_to = "4dae8da4a365f639e42fea84822285f345be7755"
 daemon_java_version = 21
-flags = []
+# The parent POM's `use-toolchains` profile switches on whenever ~/.m2/toolchains.xml exists, which
+# setup-java always writes, and asks for a JDK of the window's source level (1.8 early on): no CI
+# job has one, so every commit was excluded. Off, the tests run on the build JDK above; a JDK 8
+# test JVM could not load the plugin's agent anyway.
+flags = ["-P!use-toolchains"]
 sources = ["httpclient5/src/main/java"]
