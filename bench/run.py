@@ -4676,6 +4676,38 @@ def publish_tasks(maven):
     return [":plugin:publishToMavenLocal"] + ([":maven:publishToMavenLocal"] if maven else [])
 
 
+# Set by a CI job that restored the plugin one earlier job of its run published (bench/publish_once.py):
+# the path of that publish's stamp. Hundreds of jobs each building the plugin drew Maven Central's
+# rate limit on the plugin build's own dependencies, and lost their projects' rows to it.
+PUBLISHED_STAMP_VARIABLE = "YORIWAKE_PUBLISHED"
+
+
+def adopt_published(path, maven):
+    """Takes the plugin another job published as the one under test, once its stamp says it was
+    built from this checkout: the same commit, selector and Maven plugin sources. Never publishes
+    instead: a stamp that does not match is a defect of the run, not something to work around."""
+    global PUBLISHED_SELECTOR_DIGEST, PUBLISHED_COMMIT, PUBLISHED_MAVEN_DIGEST
+    try:
+        with open(path, encoding="utf-8") as handle:
+            stamp = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"{PUBLISHED_STAMP_VARIABLE} names {path}, which cannot be read ({error}). "
+                         "Refusing to measure, because which plugin is in mavenLocal cannot be "
+                         "established.")
+    commit = yoriwake_checkout.commit(short=True)
+    ours = {"commit": commit, "selector_digest": selector_digest(),
+            "maven_digest": maven_build.digest(SOURCE)}
+    differ = sorted(key for key, value in ours.items() if stamp.get(key) != value)
+    if differ:
+        raise SystemExit(f"the published plugin at {path} was not built from this checkout "
+                         f"({', '.join(differ)} differ: {stamp} against {ours}). Refusing to "
+                         "measure, because the results would be stamped with this commit regardless.")
+    PUBLISHED_SELECTOR_DIGEST = ours["selector_digest"]
+    PUBLISHED_MAVEN_DIGEST = ours["maven_digest"] if maven else None
+    PUBLISHED_COMMIT = commit
+    print(f"using the plugin under test published at {commit} ({path})", flush=True)
+
+
 def publish_plugin_under_test(maven=False):
     """Publishes the plugin the yoriwake checkout contains, before anything is measured.
 
@@ -4693,6 +4725,10 @@ def publish_plugin_under_test(maven=False):
     than no benchmark, because its output is indistinguishable from a real result.
     """
     global PUBLISHED_SELECTOR_DIGEST, PUBLISHED_COMMIT, PUBLISHED_MAVEN_DIGEST
+    stamp = os.environ.get(PUBLISHED_STAMP_VARIABLE)
+    if stamp:
+        adopt_published(os.path.expanduser(stamp), maven)
+        return
     # Before the build, so a dirty checkout costs nothing: every row is stamped with its HEAD.
     commit = yoriwake_checkout.commit(short=True)
     print(f"publishing the plugin under test to mavenLocal from {SOURCE} at {commit}", flush=True)
