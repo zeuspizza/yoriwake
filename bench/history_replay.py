@@ -743,7 +743,8 @@ def shard_file(name, index, count):
 
 def merge(directory, planned):
     """`history.json` from the shard files under `directory`: per project its rows in window order
-    and their sums. A planned shard with no readable file is named missing, never counted zero."""
+    and their sums. A planned shard with no readable file is named missing, never counted zero, and
+    so is a project whose every commit was excluded."""
     found = {}
     for root, _, files in os.walk(directory):
         for name in files:
@@ -787,6 +788,9 @@ def merge(directory, planned):
                         "initial": [shard.get("initial") for shard in shards],
                         "sums": sums(rows), "rows": rows,
                         "blastradius": BLASTRADIUS.get(name)}
+        # A project that measured nothing is named, or its row of dashes passes for a result.
+        if rows and not result[name]["sums"]["measured"]:
+            missing.append(f"{name}: none of its {len(rows)} commits measured")
     return {"schema": SCHEMA, "projects": dict(sorted(result.items())), "missing": missing,
             "caveats": list(CAVEATS)}
 

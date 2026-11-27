@@ -486,6 +486,20 @@ def case_the_merge_names_shards_that_walked_different_windows():
     return failures
 
 
+def case_a_project_that_measured_no_commit_is_named():
+    directory = tempfile.mkdtemp(prefix="history-excluded-")
+    TMP.append(directory)
+    rows = [{"sha": f"c{i}", "parent": f"c{i - 1}", "outcome": hr.EXCLUDED, "reason": "does-not-build"}
+            for i in (1, 2)]
+    with open(os.path.join(directory, hr.shard_file("demo", 1, 1)), "w") as handle:
+        json.dump({"schema": hr.SCHEMA, "project": "demo", "rows": rows}, handle)
+    merged = hr.merge(directory, [{"project": "demo", "shard": 1, "of": 1}])
+    if merged["missing"] != ["demo: none of its 2 commits measured"] \
+            or "demo: none of its 2 commits measured" not in hr.page(merged):
+        return fail(f"an all-excluded project was not named: {merged['missing']}")
+    return 0
+
+
 def test_history_replay():
     failures = 0
     try:

@@ -4478,6 +4478,56 @@ def _isolated_steps_keep_inside_their_job(project):
     return problems
 
 
+def case_a_sweep_project_s_slices_and_replay_install_the_record_job_s_jdk_builds():
+    """The record job names each JDK build it installed, and the slices and the replay install
+    those builds, in the same order: a map selected against on another build runs every test."""
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        text = handle.read()
+    versions = r"          java-version: \|\n((?:            .+\n)+)"
+    record = _job(text, "record")
+    found = re.search(versions, record)
+    if not found:
+        return fail("the record job sets up no JDK")
+    majors = found.group(1).split()
+    problems = 0
+    naming = _named_step(record, "name the JDK builds")
+    if "id: jdks" not in naming or "ci.py temurin-version" not in naming \
+            or f"for n in {' '.join(majors)}; do" not in naming:
+        problems += fail(f"the record job does not name the build of each of {majors}: {naming}")
+    for major in majors:
+        if f"      jdk{major}: ${{{{ steps.jdks.outputs.jdk{major} }}}}\n" not in record:
+            problems += fail(f"the record job does not hand JDK {major}'s build on")
+    wanted = [f"${{{{ needs.record.outputs.jdk{major} }}}}" for major in majors]
+    for job in ("shard", "replay"):
+        installed = re.search(versions, _job(text, job))
+        got = [line.strip() for line in installed.group(1).splitlines()] if installed else None
+        if got != wanted:
+            problems += fail(f"{job} installs {got}, not the record job's builds {wanted}")
+    return problems
+
+
+def case_the_merge_downloads_what_it_merges_and_not_the_dependencies():
+    """The merge job's download takes every artifact a project's jobs leave for the merge, and
+    leaves out `deps-*`, which alone fills the runner's disk, and `failed-record-*`."""
+    with open(os.path.join(WORKFLOWS, "sweep.yml"), encoding="utf-8") as handle:
+        merge = _job(handle.read(), "merge")
+    with open(os.path.join(WORKFLOWS, "sweep-project.yml"), encoding="utf-8") as handle:
+        project = handle.read()
+    found = re.search(r"download-artifact@.*\n        with:\n          pattern: '@\(([\w|]+)\)-\*'\n", merge)
+    if not found:
+        return fail("the merge job downloads every artifact of the run, not by a pattern")
+    taken = set(found.group(1).split("|"))
+    uploaded = set(re.findall(r"^          name: ([a-z-]+?)-\$\{\{", project, re.M))
+    problems = 0
+    for name in sorted(uploaded - {"failed-record"}):
+        if name.split("-")[0] not in taken:
+            problems += fail(f"the merge does not download {name}-*")
+    for name in ("deps", "failed"):
+        if name in taken:
+            problems += fail(f"the merge downloads {name}-*")
+    return problems
+
+
 def case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged():
     """The page and `sweep-results` come from `merged/`, also on a run that then fails for a missing
     project, and the page never turns the run red. The per-job artifacts keep their three days."""
@@ -5673,6 +5723,8 @@ CASES = (
     case_no_guest_build_writes_to_the_run_page,
     case_real_commits_are_replayed_in_a_job_of_their_own_that_no_slice_waits_for,
     case_a_full_run_measures_each_row_against_an_isolated_map_too_and_loses_no_row_to_it,
+    case_the_merge_downloads_what_it_merges_and_not_the_dependencies,
+    case_a_sweep_project_s_slices_and_replay_install_the_record_job_s_jdk_builds,
     case_the_merge_writes_the_page_and_uploads_the_results_whenever_it_merged,
     case_every_setup_gradle_step_writes_its_summary_only_when_it_can_explain_a_failure,
     case_a_setup_gradle_step_that_writes_its_summary_on_success_is_reported,

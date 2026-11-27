@@ -67,6 +67,11 @@ jobs:
       isolated: ${{ steps.isolated-upload.outcome == 'success' }}
       budget: ${{ steps.budget-upload.outcome == 'success' }}
       deps: ${{ steps.deps-upload.outcome == 'success' && steps.deps.outputs.name || '' }}
+      jdk11: ${{ steps.jdks.outputs.jdk11 }}
+      jdk17: ${{ steps.jdks.outputs.jdk17 }}
+      jdk25: ${{ steps.jdks.outputs.jdk25 }}
+      jdk26: ${{ steps.jdks.outputs.jdk26 }}
+      jdk21: ${{ steps.jdks.outputs.jdk21 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,6 +85,19 @@ jobs:
             25
             26
             21
+      # The exact builds installed here, which the slices and the replay install in turn: a map
+      # selected against on another build of the same JDK runs every test.
+      - name: name the JDK builds
+        id: jdks
+        run: |
+          set -euo pipefail
+          for n in 11 17 25 26 21; do
+            home=$(printenv "JAVA_HOME_${n}_X64")
+            installed=$(basename "$(dirname "$home")")
+            build=$(JAVA_HOME="$home" python3 .github/ci.py temurin-version "${installed/-/+}")
+            [ -n "$build" ]
+            echo "jdk$n=$build" >> "$GITHUB_OUTPUT"
+          done
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
@@ -371,11 +389,11 @@ jobs:
         with:
           distribution: temurin
           java-version: |
-            11
-            17
-            25
-            26
-            21
+            ${{ needs.record.outputs.jdk11 }}
+            ${{ needs.record.outputs.jdk17 }}
+            ${{ needs.record.outputs.jdk25 }}
+            ${{ needs.record.outputs.jdk26 }}
+            ${{ needs.record.outputs.jdk21 }}
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
@@ -556,11 +574,11 @@ jobs:
         with:
           distribution: temurin
           java-version: |
-            11
-            17
-            25
-            26
-            21
+            ${{ needs.record.outputs.jdk11 }}
+            ${{ needs.record.outputs.jdk17 }}
+            ${{ needs.record.outputs.jdk25 }}
+            ${{ needs.record.outputs.jdk26 }}
+            ${{ needs.record.outputs.jdk21 }}
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true

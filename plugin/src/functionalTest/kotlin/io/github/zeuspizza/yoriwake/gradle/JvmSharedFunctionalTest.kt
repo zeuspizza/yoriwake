@@ -533,7 +533,7 @@ class JvmSharedFunctionalTest : FunctionalTestSupport() {
             test("M2LaterTest", "@Test void later() { assertEquals(1, new Other().one()); }"),
             test("M3ToolTest", "@Test void runs() { assertNotNull(Tool.name()); }"),
             buildScript = orderedBuild.replace(
-                "testRuntimeOnly(", "testImplementation(\"org.mockito:mockito-core:5.14.2\")\n    testRuntimeOnly(",
+                "testRuntimeOnly(", "testImplementation(\"org.mockito:mockito-core:5.23.0\")\n    testRuntimeOnly(",
             ),
         )
 
