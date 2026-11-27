@@ -66,6 +66,51 @@ class EnvironmentFingerprintTest {
     }
 
     @Test
+    fun `a rebuild or patch of the same JDK release matches`() {
+        listOf("21.0.13+9-LTS" to "21.0.13.1+2-LTS", "17.0.21+9" to "17.0.21.1+1", "21.0.13+9" to "21.0.13+10").forEach { (recorded, now) ->
+            recordedUnder(view(jdk = recorded))
+            assertEquals(Verdict.Matches, EnvironmentFingerprint.check(mapDir, view(jdk = now), rules()).verdict, "$recorded -> $now")
+        }
+    }
+
+    @Test
+    fun `a JDK update names both versions`() {
+        recordedUnder(view(jdk = "21.0.12+7-LTS"))
+        val verdict = EnvironmentFingerprint.check(mapDir, view(jdk = "21.0.13+9-LTS"), rules()).verdict
+        assertIs<Verdict.Changed>(verdict)
+        assertEquals("jdk.version", verdict.component)
+        assertContains(verdict.reason, "21.0.12+7-LTS")
+        assertContains(verdict.reason, "21.0.13+9-LTS")
+        recordedUnder(view(jdk = "17.0.13"))
+        assertIs<Verdict.Changed>(EnvironmentFingerprint.check(mapDir, view(jdk = "21.0.13"), rules()).verdict)
+    }
+
+    @Test
+    fun `the same JDK release from another vendor differs`() {
+        recordedUnder(view(jdk = "21.0.13+9-LTS", vendor = "Eclipse Adoptium"))
+        val verdict = EnvironmentFingerprint.check(mapDir, view(jdk = "21.0.13.1+2-LTS", vendor = "Microsoft"), rules()).verdict
+        assertIs<Verdict.Changed>(verdict)
+        assertEquals("jdk.vendor", verdict.component)
+    }
+
+    @Test
+    fun `a JDK version that does not parse is compared as a whole string`() {
+        recordedUnder(view(jdk = "unknown"))
+        assertIs<Verdict.Changed>(EnvironmentFingerprint.check(mapDir, view(jdk = "21.0.13+9"), rules()).verdict)
+        recordedUnder(view(jdk = "1.8.0_392-b08"))
+        assertEquals(Verdict.Matches, EnvironmentFingerprint.check(mapDir, view(jdk = "1.8.0_392-b08"), rules()).verdict)
+        assertIs<Verdict.Changed>(EnvironmentFingerprint.check(mapDir, view(jdk = "1.8.0_392-b09"), rules()).verdict)
+    }
+
+    @Test
+    fun `an early-access JDK build matches no other build`() {
+        recordedUnder(view(jdk = "26-ea+20"))
+        assertIs<Verdict.Changed>(EnvironmentFingerprint.check(mapDir, view(jdk = "26-ea+27"), rules()).verdict)
+        recordedUnder(view(jdk = "26-ea+27"))
+        assertIs<Verdict.Changed>(EnvironmentFingerprint.check(mapDir, view(jdk = "26+35"), rules()).verdict)
+    }
+
+    @Test
     fun `a system property with another value is named and neither value is printed`() {
         recordedUnder(view(jvmArgs = listOf("-Dfeature.x=on")))
         val verdict = EnvironmentFingerprint.check(mapDir, view(jvmArgs = listOf("-Dfeature.x=off")), rules()).verdict
