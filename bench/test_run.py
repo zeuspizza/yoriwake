@@ -4207,6 +4207,72 @@ def _publish(outcomes):
         return refused, len(seen), list(PAUSES), sorted(os.listdir(os.path.join(directory, "logs")))
 
 
+def _adopt(stamp, maven=False):
+    """What `publish_plugin_under_test` does with `stamp` as the published plugin's stamp: (refusal
+    or None, Gradle builds run, the three globals it set)."""
+    builds = []
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, "published.json")
+        if stamp is not None:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(stamp, handle)
+        original = (run.run, run.selector_digest, run.yoriwake_checkout.commit, run.maven_build.digest,
+                    run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT,
+                    os.environ.get(run.PUBLISHED_STAMP_VARIABLE))
+        run.run = lambda argv, *args, **kwargs: builds.append(argv) or (0, 0.0)
+        run.selector_digest, run.yoriwake_checkout.commit = (lambda: "digest"), (lambda short=False: "abc")
+        run.maven_build.digest = lambda source: "maven"
+        os.environ[run.PUBLISHED_STAMP_VARIABLE] = path
+        refused = None
+        try:
+            run.publish_plugin_under_test(maven=maven)
+        except SystemExit as error:
+            refused = str(error)
+        finally:
+            adopted = (run.PUBLISHED_COMMIT, run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST)
+            (run.run, run.selector_digest, run.yoriwake_checkout.commit, run.maven_build.digest,
+             run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT,
+             variable) = original
+            if variable is None:
+                os.environ.pop(run.PUBLISHED_STAMP_VARIABLE, None)
+            else:
+                os.environ[run.PUBLISHED_STAMP_VARIABLE] = variable
+        return refused, len(builds), adopted
+
+
+def case_a_plugin_published_by_another_job_is_used_only_when_built_from_this_checkout():
+    failures = 0
+    matching = {"commit": "abc", "selector_digest": "digest", "maven_digest": "maven"}
+    refused, builds, adopted = _adopt(matching, maven=True)
+    if refused or builds or adopted != ("abc", "digest", "maven"):
+        failures += fail(f"a matching stamp should be adopted without a build, got {refused!r}, "
+                         f"{builds} builds, {adopted}")
+    refused, builds, adopted = _adopt(matching)
+    if refused or builds or adopted != ("abc", "digest", None):
+        failures += fail(f"a Gradle project should carry no Maven digest, got {refused!r}, {adopted}")
+    for key in matching:
+        refused, builds, _ = _adopt({**matching, key: "other"}, maven=True)
+        if not refused or key not in refused or builds:
+            failures += fail(f"a stamp whose {key} differs should refuse without a build, got "
+                             f"{refused!r}, {builds} builds")
+    refused, builds, _ = _adopt(None)
+    if not refused or builds:
+        failures += fail(f"a missing stamp should refuse without a build, got {refused!r}, {builds} builds")
+    return failures
+
+
+def case_without_a_published_stamp_the_plugin_is_built_here():
+    saved = os.environ.pop(run.PUBLISHED_STAMP_VARIABLE, None)
+    try:
+        refused, builds, _, _ = _publish([("", 0)])
+    finally:
+        if saved is not None:
+            os.environ[run.PUBLISHED_STAMP_VARIABLE] = saved
+    if refused or builds != 1:
+        return fail(f"without the variable the plugin should be built once, got {refused!r}, {builds} builds")
+    return 0
+
+
 def case_the_publish_of_the_plugin_under_test_reruns_once_on_a_download_failure():
     failures = 0
     rate_limited = _fixture("download-failure-429.txt")
@@ -5937,6 +6003,8 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_the_harness_reads_a_download_failure_as_the_ci_script_does,
          case_a_maven_guest_pauses_longer_after_a_rate_limit,
          case_the_publish_of_the_plugin_under_test_reruns_once_on_a_download_failure,
+         case_a_plugin_published_by_another_job_is_used_only_when_built_from_this_checkout,
+         case_without_a_published_stamp_the_plugin_is_built_here,
          case_staging_and_flags_treat_a_stored_null_oppositely,
          case_a_row_records_the_tree_and_the_flags_it_was_measured_under,
          case_only_the_selector_source_moves_the_digest,

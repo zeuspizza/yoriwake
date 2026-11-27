@@ -89,8 +89,37 @@ jobs:
           jq -r '.[] | "\(.project) \(.shard)/\(.of): \(.args | join(" "))"' plan.json
           echo "shards=$(jq -c . plan.json)" >> "$GITHUB_OUTPUT"
 
-  shard:
+  # The plugin under test, built and published once for every shard (bench/publish_once.py): each
+  # building it drew Maven Central's rate limit on the plugin build's own dependencies. A failed
+  # publish fails the run here, before any shard starts.
+  publish:
     needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          add-job-summary: on-failure
+      - name: publish the plugin under test
+        run: python3 bench/publish_once.py --out "$RUNNER_TEMP/plugin-under-test"
+      # Every shard of this run restores it into its mavenLocal.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-under-test
+          retention-days: 3
+          path: ${{ runner.temp }}/plugin-under-test/
+          if-no-files-found: error
+
+  shard:
+    needs: [plan, publish]
     name: ${{ matrix.entry.project }} ${{ matrix.entry.shard }}/${{ matrix.entry.of }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -98,6 +127,9 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      # The stamp of the plugin restored below, checked instead of publishing it again.
+      YORIWAKE_PUBLISHED: ~/.m2/repository/io/github/zeuspizza/published.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,6 +148,10 @@ jobs:
           cache-read-only: true
           # A walked project's own failing tests fail builds here; the shard's file tells what failed.
           add-job-summary: never
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-under-test
+          path: ~/.m2/repository/io/github/zeuspizza
       # Ends before the job does, so a shard that overruns still uploads the file it has written
       # after every commit.
       - name: walk the shard
