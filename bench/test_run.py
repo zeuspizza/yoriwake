@@ -4261,6 +4261,37 @@ def case_a_plugin_published_by_another_job_is_used_only_when_built_from_this_che
     return failures
 
 
+def case_the_stamp_publish_once_writes_is_the_one_a_job_adopts():
+    import publish_once
+    failures = 0
+    with tempfile.TemporaryDirectory() as directory:
+        repository = os.path.join(directory, "repository")
+        os.makedirs(os.path.join(repository, publish_once.GROUP, "yoriwake-gradle-plugin"))
+        out = os.path.join(directory, "out")
+
+        def publish(maven=False):
+            run.PUBLISHED_COMMIT, run.PUBLISHED_SELECTOR_DIGEST = "abc", "digest"
+            run.PUBLISHED_MAVEN_DIGEST = "maven" if maven else None
+
+        original = (run.publish_plugin_under_test, run.PUBLISHED_SELECTOR_DIGEST,
+                    run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT)
+        run.publish_plugin_under_test = publish
+        try:
+            publish_once.main(["--out", out, "--repository", repository])
+        finally:
+            (run.publish_plugin_under_test, run.PUBLISHED_SELECTOR_DIGEST,
+             run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT) = original
+        if not os.path.isdir(os.path.join(out, "yoriwake-gradle-plugin")):
+            failures += fail(f"the plugin's group was not handed over: {os.listdir(out)}")
+        with open(os.path.join(out, "published.json"), encoding="utf-8") as handle:
+            stamp = json.load(handle)
+    refused, builds, adopted = _adopt(stamp, maven=True)
+    if refused or builds or adopted != ("abc", "digest", "maven"):
+        failures += fail(f"the stamp publish_once wrote was not adopted: {stamp} gave {refused!r}, "
+                         f"{builds} builds, {adopted}")
+    return failures
+
+
 def case_without_a_published_stamp_the_plugin_is_built_here():
     saved = os.environ.pop(run.PUBLISHED_STAMP_VARIABLE, None)
     try:
@@ -6005,6 +6036,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_the_publish_of_the_plugin_under_test_reruns_once_on_a_download_failure,
          case_a_plugin_published_by_another_job_is_used_only_when_built_from_this_checkout,
          case_without_a_published_stamp_the_plugin_is_built_here,
+         case_the_stamp_publish_once_writes_is_the_one_a_job_adopts,
          case_staging_and_flags_treat_a_stored_null_oppositely,
          case_a_row_records_the_tree_and_the_flags_it_was_measured_under,
          case_only_the_selector_source_moves_the_digest,

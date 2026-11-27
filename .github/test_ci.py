@@ -4650,11 +4650,12 @@ def case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_
                          "but on the reduced arm, which a failed member makes unpublishable")
     if "needs.plan.outputs.projects != '[]'" not in call:
         problems += fail("the project calls run on a plan with no project")
-    if "needs: [plan, project]" not in merge or "!cancelled()" not in merge \
+    if "needs: [plan, publish, project]" not in merge or "!cancelled()" not in merge \
             or "needs.plan.result == 'success'" not in merge \
+            or "needs.publish.result == 'success'" not in merge \
             or "needs.plan.outputs.projects != '[]'" not in merge:
         problems += fail("the merge does not follow every project, failed ones included, and only "
-                         "a plan that has projects")
+                         "a plan that has projects and a published plugin")
     if re.findall(r"^  ([\w-]+):$", project.split("\njobs:\n", 1)[1], re.M) != ["record", "shard", "replay"]:
         problems += fail("sweep-project.yml is not one record job, its slices and its replay")
     if "    needs: record\n" not in _job(project, "shard"):

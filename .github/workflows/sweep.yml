@@ -404,10 +404,11 @@ jobs:
       budget: ${{ needs.plan.outputs.budget }}
 
   merge:
-    needs: [plan, project]
+    needs: [plan, publish, project]
     # Also when a project's record or shard job failed: it is declared missing, and the merge fails
-    # the run after publishing the rest. Not on a run that planned no project.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.projects != '[]' }}
+    # the run after publishing the rest. Not on a run that planned no project, nor one whose plugin
+    # under test was never published: every project would read as missing for the wrong reason.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.publish.result == 'success' && needs.plan.outputs.projects != '[]' }}
     runs-on: ubuntu-24.04
     # The only job that can write, and it runs no guest code.
     permissions:

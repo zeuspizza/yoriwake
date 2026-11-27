@@ -188,10 +188,10 @@ jobs:
           if-no-files-found: ignore
 
   merge:
-    needs: [plan, shard]
+    needs: [plan, publish, shard]
     # Also when a shard failed: it is named missing, and the merge fails the run after publishing
-    # the rest.
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    # the rest. Not when the plugin under test was never published: no shard measured anything.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     # The only job that can write, and it runs no guest code.
     permissions:
