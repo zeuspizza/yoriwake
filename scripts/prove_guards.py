@@ -5783,16 +5783,16 @@ MUTATIONS = [
      '            listOfNotNull(listed("suiteXmlFiles", "surefire.suiteXmlFiles").takeIf(List<String>::isNotEmpty)?.let { "suiteXmlFiles $it" })\n',
      '            emptyList<String>()\n',
      maven_suite, "a capture run through a TestNG suite file keys the union to it"),
-    # Code the integration tests reach may run in a JVM a mojo before them started, which no union
-    # lists: only a run after mojos known to start nothing trusts a Failsafe union.
-    ("an unlisted mojo before Failsafe no longer drops its union", MAVEN_UNION_TRUST,
-     '        unvettedMojo?.let { return "$it ran before it and may run code in another JVM, which no union sees" }\n',
-     '',
-     maven_suite, "a Failsafe execution after a mojo that may start a process records no union"),
-    ("a Failsafe selecting run trusts a union after an unlisted mojo", MAVEN_RECORDING,
-     '            unionFilter = failsafeDoubt(execution, classpath)?.let { UnionTrust.UNVETTED } ?: unionFilter,\n',
+    # Integration tests commonly drive an application another JVM runs, which no union lists: a
+    # Failsafe execution neither keeps nor trusts one.
+    ("a Failsafe execution keeps a union", MAVEN_UNION_TRUST,
+     '        if (!failsafe) return null\n',
+     '        return null\n',
+     maven_suite, "a Failsafe execution records no union"),
+    ("a Failsafe selecting run trusts a union", MAVEN_RECORDING,
+     '            unionFilter = failsafeDoubt(execution)?.let { UnionTrust.UNVETTED } ?: unionFilter,\n',
      '            unionFilter = unionFilter,\n',
-     maven_suite, "a class nothing loads narrows the integration tests, unless a mojo that may start a process ran first"),
+     maven_suite, "a union in a Failsafe map is not trusted"),
     # A test that runs a Maven build through maven-verifier runs code in JVMs the agent never sees.
     ("a task that forks a Maven build narrows on absence", TASK_ARTIFACTS,
      '"gradle-testkit", "maven-verifier", ',

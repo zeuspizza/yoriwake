@@ -1,8 +1,6 @@
 package io.github.zeuspizza.yoriwake.maven
 
 import org.junit.jupiter.api.Test
-import java.io.File
-import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
@@ -37,35 +35,14 @@ class UnionTrustTest {
 
     @Test
     fun `a Surefire execution is never in doubt`() {
-        assertNull(UnionTrust.failsafeDoubt(false, "app exec-maven-plugin:exec", listOf(File("testcontainers-1.20.4.jar"))))
+        assertNull(UnionTrust.failsafeDoubt(false))
     }
 
     @Test
-    fun `a Failsafe execution after only listed mojos, with no container launcher, is trusted`() {
-        assertNull(UnionTrust.failsafeDoubt(true, null, listOf(File("junit-jupiter-5.11.4.jar"))))
-    }
-
-    @Test
-    fun `a Failsafe execution after a mojo that may start a process is not trusted`() {
-        assertContains(
-            assertNotNull(UnionTrust.failsafeDoubt(true, "app exec-maven-plugin:exec", emptyList())),
-            "app exec-maven-plugin:exec ran before it",
+    fun `a Failsafe execution is always in doubt, since its tests may drive an application another JVM runs`() {
+        assertEquals(
+            "integration tests commonly drive an application another JVM runs, which no union sees",
+            UnionTrust.failsafeDoubt(true),
         )
-    }
-
-    @Test
-    fun `a Failsafe execution with a container launcher on its classpath is not trusted`() {
-        assertContains(
-            assertNotNull(UnionTrust.failsafeDoubt(true, null, listOf(File("/repo/testcontainers-1.20.4.jar")))),
-            "testcontainers-1.20.4.jar is on its classpath",
-        )
-    }
-
-    @Test
-    fun `JaCoCo's agent setup and the packaging plugins start no process`() {
-        listOf("org.jacoco:jacoco-maven-plugin", "org.apache.maven.plugins:maven-jar-plugin", Settings.PLUGIN_KEY)
-            .forEach { assertContains(UnionTrust.STARTS_NO_PROCESS, it) }
-        listOf("org.codehaus.mojo:exec-maven-plugin", "org.apache.maven.plugins:maven-antrun-plugin")
-            .forEach { assertEquals(false, it in UnionTrust.STARTS_NO_PROCESS, it) }
     }
 }
