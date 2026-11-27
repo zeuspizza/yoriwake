@@ -499,8 +499,8 @@ What it compares:
   named with both values: `jdk.version was 17.0.9+9 when the map was recorded and is 21.0.4+7 now`.
   The runtime version is compared by its feature, interim and update version (21.0.13): a
   vendor's rebuild or patch of the same release (`21.0.13+9` and `21.0.13.1+2`) keeps the map.
-  An early-access build, and a version that does not parse as a runtime version (Java 8's), match
-  only the same string;
+  A pre-release build (`26-ea`, `-internal`), and a version that does not parse as a runtime
+  version (Java 8's), match only the same string;
 - every system property the task passes to the test JVM, `-D` arguments, argument providers and
   JVM argument files (`@file`, read as the `java` launcher reads them) and the file
   `-XX:VMOptionsFile` names (read as the JVM reads it) included, Gradle's own
