@@ -87,6 +87,14 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
 
     private fun refusalLine(output: String) = output.lines().single { "differs from the one the map was recorded in" in it }
 
+    /** Another build of [version]'s release, as a vendor's patch respin names it: 21.0.8+9-LTS becomes 21.0.8.1+10-LTS. */
+    private fun rebuildOf(version: String): String {
+        val v = Runtime.Version.parse(version)
+        val patch = v.version().getOrElse(3) { 0 } + 1
+        val build = v.build().orElse(0) + 1
+        return "${v.feature()}.${v.interim()}.${v.update()}.$patch+$build" + v.optional().map { "-$it" }.orElse("")
+    }
+
     @Test
     fun `the same environment narrows as before`(@TempDir dir: File) {
         recorded(dir)
@@ -123,6 +131,18 @@ class EnvironmentFingerprintFunctionalTest : FunctionalTestSupport() {
         val next = runner(dir, "test", "-Pyoriwake.select").build().output
         assertEquals(null, decisionNotes(dir)["refusal-kind"], next)
         assertEquals(narrowed, ranTests(dir), next)
+    }
+
+    @Test
+    fun `a map recorded on a rebuild of the same JDK release narrows`(@TempDir dir: File) {
+        recorded(dir)
+        val real = fingerprints(dir).readLines().map(Tsv::split).single { it[1] == "jdk.version" }[2]
+        rewriteRecorded(dir, "jdk.version", rebuildOf(real))
+
+        val output = runner(dir, "test", "-Pyoriwake.select").build().output
+
+        assertEquals(null, decisionNotes(dir)["refusal-kind"], output)
+        assertEquals(narrowed, ranTests(dir), output)
     }
 
     @Test

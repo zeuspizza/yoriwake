@@ -123,6 +123,14 @@ class EnvironmentFingerprintFunctionalTest {
 
     private fun refusalLine(output: String) = output.lines().single { "differs from the one the map was recorded in" in it }
 
+    /** Another build of [version]'s release, as a vendor's patch respin names it: 21.0.8+9-LTS becomes 21.0.8.1+10-LTS. */
+    private fun rebuildOf(version: String): String {
+        val v = Runtime.Version.parse(version)
+        val patch = v.version().getOrElse(3) { 0 } + 1
+        val build = v.build().orElse(0) + 1
+        return "${v.feature()}.${v.interim()}.${v.update()}.$patch+$build" + v.optional().map { "-$it" }.orElse("")
+    }
+
     private fun assertRanEverything(project: File, output: String) {
         assertContains(output, "Tests run: 2, Failures: 0")
         assertEquals("environment-changed", notes(project)["refusal-kind"], output)
@@ -301,6 +309,19 @@ class EnvironmentFingerprintFunctionalTest {
         File(project, "lib/src/main/java/dev/demo/lib/Greeter.java").edit { it.replace("\"Hello,\" + \" \"", "\"Hello\" + \", \"") }
         git(project, "commit", "-q", "-am", "another edit")
         assertNarrowed(selecting(project))
+    }
+
+    @Test
+    fun `a map recorded on a rebuild of the same JDK release narrows`(@TempDir dir: File) {
+        val project = captured(dir)
+        rewriteBlock(libMap(project)) { components ->
+            components.map { if (it.first == "jdk.version") it.first to rebuildOf(it.second) else it }
+        }
+
+        val output = selecting(project)
+
+        assertNarrowed(output)
+        assertEquals(null, notes(project)["refusal-kind"], output)
     }
 
     @Test

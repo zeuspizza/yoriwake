@@ -5155,6 +5155,11 @@ MUTATIONS = [
      "        for (fingerprint in recorded) {",
      "        for (fingerprint in recorded.take(0)) {",
      functional_suite, "a map recorded on another JDK runs everything, names both, and records this one"),
+    # A rebuild of the same release keeps the map; an update is a change.
+    ("a JDK update reads as the same release", ENVIRONMENT_FINGERPRINT,
+     "        return a.feature() == b.feature() && a.interim() == b.interim() && a.update() == b.update()",
+     "        return a.feature() == b.feature()",
+     unit_suite, "a JDK update names both versions"),
     ("a map with no fingerprint reads as a match", ENVIRONMENT_FINGERPRINT,
      "            ?: return Check(Verdict.Unrecorded(UNRECORDED), current.ignored)",
      "            ?: return Check(Verdict.Matches, current.ignored)",
