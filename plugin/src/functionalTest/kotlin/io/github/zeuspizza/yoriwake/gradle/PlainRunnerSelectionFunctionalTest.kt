@@ -24,7 +24,7 @@ class PlainRunnerSelectionFunctionalTest : FunctionalTestSupport() {
         repositories { mavenCentral() }
         dependencies {
             testImplementation("junit:junit:4.13.2")
-            testImplementation("org.mockito:mockito-core:5.14.2")
+            testImplementation("org.mockito:mockito-core:5.23.0")
         }
         tasks.test { useJUnit() }
     """.trimIndent()

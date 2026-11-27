@@ -446,7 +446,7 @@ class FrameworkCachesAttempts : BreakAttempt() {
         val mockMaker = "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker" to "mock-maker-subclass\n"
         val mockitoBuild = minimalBuild.replace(
             "testRuntimeOnly(",
-            "testImplementation(\"org.mockito:mockito-core:5.14.2\")\n    testRuntimeOnly(",
+            "testImplementation(\"org.mockito:mockito-core:5.23.0\")\n    testRuntimeOnly(",
         )
 
         val result = attempt(
