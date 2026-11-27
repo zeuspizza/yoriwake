@@ -28,6 +28,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A map table an older yoriwake left behind is ignored, not believed. Map: left alone; the next recording stamps it.
 - A Kotlin file moved, edited or not, runs the tests of the file it moved from, not every test. Map: left alone.
 - `pathIgnore` may name a file under `src` that no source set or Maven module declares as a root, such as `src/changes/changes.xml`, so a broad existing entry (`**/*.json`) now reaches such files too; the defaults never do. Map: left alone.
 - Files the IntelliJ Platform Gradle Plugin writes under `.intellijPlatform/` during a build are build state, not a change. Map: left alone.
