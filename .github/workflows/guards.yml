@@ -32,9 +32,10 @@ on:
         required: false
         default: ''
 
-# A newer push to a pull request cancels its older run.
+# A newer push to a pull request or to main cancels the older run on that ref. A dispatched run
+# runs on its own.
 concurrency:
-  group: guards-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  group: guards-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 # Read-only, no secrets, and triggered by pull_request rather than pull_request_target, so the

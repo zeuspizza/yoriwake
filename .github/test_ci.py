@@ -964,8 +964,9 @@ def code_scanning_problems(text):
         problems.append("it runs on pull requests")
     if not re.search(r"^permissions:\n  contents: read\n(?!  )", text, re.M):
         problems.append("its top-level token is not read-only")
-    if "concurrency:" in text:
-        problems.append("a concurrency group can cancel the analysis of a push to main")
+    if not re.search(r"^concurrency:\n  group: codeql-.*github\.run_id.*github\.ref.*\n  cancel-in-progress: true\n",
+                     text, re.M):
+        problems.append("a newer push to main does not cancel the older analysis")
     jobs = re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[-1], re.M)
     for job in jobs:
         block = _job_block(text, job) or ""
@@ -1002,7 +1003,7 @@ def case_code_scanning_runs_on_main_never_on_pull_requests():
                       "language: python\n            build-mode: manual"), "python is not analysed"),
         (text.replace("      security-events: write\n", "      security-events: write\n      actions: write\n", 1),
          "exactly contents: read and security-events: write"),
-        (text.replace("\njobs:\n", "\nconcurrency: codeql\n\njobs:\n", 1), "concurrency group"),
+        (text.replace("  cancel-in-progress: true\n", "", 1), "does not cancel"),
         (text.replace("  workflow_dispatch:\n", "", 1), "cannot be dispatched"),
         (text.replace("    branches: [main]\n", "    branches: [release]\n", 1), "pushes to main"),
         (re.sub(r"\n +-Dorg\.gradle\.jvmargs=[^\n]*", "", text), "default daemon memory"),
