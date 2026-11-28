@@ -3207,6 +3207,15 @@ def case_the_init_script_and_the_harnesses_agree_with_the_mirror_step():
         with open(path, encoding="utf-8") as handle:
             if text not in handle.read():
                 problems += fail(f"{os.path.relpath(path, root)} does not read {text}")
+    # The Plugin Portal sends a request for a Central artifact on to Central: the mirror goes before
+    # it too, listed or the implicit one a build without plugin repositories resolves from.
+    with open(ci.CENTRAL_MIRROR_INIT, encoding="utf-8") as handle:
+        script = handle.read()
+    for text in ("uri.host == 'plugins.gradle.org' && path == '/m2'",
+                 "CentralMirror.mirrorFirst(settings.pluginManagement.repositories)",
+                 "settings.pluginManagement.repositories.gradlePluginPortal()"):
+        if text not in script:
+            problems += fail(f"the init script leaves the Plugin Portal's way to Central open: {text} is gone")
     return problems
 
 

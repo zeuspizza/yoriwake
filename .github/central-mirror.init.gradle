@@ -1,37 +1,38 @@
 // CI only: `.github/ci.py central-mirror` installs this into a job's Gradle user home. Every
-// repository a build points at Maven Central asks Google's mirror of Central instead, and Central
-// itself, added right after it, serves what the mirror does not have. Central rate-limits a runner
-// pool's shared address (429), and one such answer failed whole jobs; the mirror states no limit.
-// Groovy, not Kotlin: it runs in every Gradle a job starts, guests' old ones included.
+// repository list that asks Maven Central or the Gradle Plugin Portal (which sends a request for a
+// Central artifact on to Central) gets Google's mirror of Central right before that repository,
+// which stays in place, filters and all, for what the mirror does not have. Central rate-limits a
+// runner pool's shared address (429), and one such answer failed whole jobs; the mirror states no
+// limit. Groovy, not Kotlin: it runs in every Gradle a job starts, guests' old ones included.
 
 class CentralMirror {
     // ci.py's CENTRAL_MIRROR: the two must name the same URL.
-    static final String MIRROR = 'https://maven-central.storage-download.googleapis.com/maven2/'
-    static final String CENTRAL = 'https://repo.maven.apache.org/maven2/'
-    static final String FALLBACK = 'yoriwakeCentralFallback'
+    static final String URL = 'https://maven-central.storage-download.googleapis.com/maven2/'
+    static final String NAME = 'yoriwakeCentralMirror'
 
-    static boolean central(URI uri) {
-        uri != null && uri.host in ['repo.maven.apache.org', 'repo1.maven.org'] &&
-            (uri.path ?: '').replaceAll('/+$', '') == '/maven2'
+    static boolean reachesCentral(URI uri) {
+        def path = (uri?.path ?: '').replaceAll('/+$', '')
+        uri != null && (uri.host in ['repo.maven.apache.org', 'repo1.maven.org'] && path == '/maven2' ||
+            uri.host == 'plugins.gradle.org' && path == '/m2')
     }
 
     static void mirrorFirst(RepositoryHandler repositories) {
-        def mirror = { MavenArtifactRepository repository ->
-            if (repository.name.startsWith(FALLBACK) || !central(repository.url)) {
+        def before = { ArtifactRepository repository ->
+            if (!(repository instanceof MavenArtifactRepository) || repository.name == NAME ||
+                    repositories.findByName(NAME) != null || !reachesCentral(repository.url)) {
                 return
             }
-            repository.url = MIRROR
-            if (repositories.findByName(FALLBACK) == null) {
-                repositories.maven { MavenArtifactRepository fallback ->
-                    fallback.name = FALLBACK
-                    fallback.url = CENTRAL
-                }
+            def mirror = repositories.maven { MavenArtifactRepository it ->
+                it.name = NAME
+                it.url = URL
             }
+            repositories.remove(mirror)
+            repositories.add(repositories.indexOf(repository), mirror)
         }
         // Those a root project's `allprojects` block added before this project's callback ran, then
-        // every later one. A copy: the fallback joins the container while it is walked.
-        repositories.withType(MavenArtifactRepository).toList().each(mirror)
-        repositories.withType(MavenArtifactRepository).whenObjectAdded(mirror)
+        // every later one. A copy: the mirror joins the container while it is walked.
+        repositories.toList().each(before)
+        repositories.whenObjectAdded(before)
     }
 }
 
@@ -41,6 +42,14 @@ gradle.beforeSettings { settings ->
     // Gradle 6.8 and later.
     if (settings.hasProperty('dependencyResolutionManagement')) {
         CentralMirror.mirrorFirst(settings.dependencyResolutionManagement.repositories)
+    }
+}
+
+// A build that declares no plugin repository resolves its `plugins {}` from the Portal without
+// listing it; listed, the mirror goes before it as above.
+gradle.settingsEvaluated { settings ->
+    if (settings.pluginManagement.repositories.isEmpty()) {
+        settings.pluginManagement.repositories.gradlePluginPortal()
     }
 }
 
