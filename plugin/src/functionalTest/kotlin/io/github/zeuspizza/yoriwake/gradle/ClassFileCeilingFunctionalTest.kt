@@ -1,6 +1,7 @@
 package io.github.zeuspizza.yoriwake.gradle
 
 import io.github.zeuspizza.yoriwake.agent.contract.AgentContract
+import io.github.zeuspizza.yoriwake.gradle.capture.CoverageDecoder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -56,7 +57,8 @@ class ClassFileCeilingFunctionalTest : FunctionalTestSupport() {
     private val bundledLine = "yoriwake attaches its bundled JaCoCo 0.8.15 agent in its place"
 
     private fun mapJacoco(dir: File): String? =
-        File(dir, ".gradle/yoriwake").walkTopDown().singleOrNull { it.name == "jacoco-version" }?.readText()?.trim()
+        File(dir, ".gradle/yoriwake").walkTopDown().singleOrNull { it.name == "jacoco-version" }
+            ?.let { CoverageDecoder.readJacocoVersion(it.parentFile) }
 
     @Test
     fun `a class compiled for a newer Java than the plugin reads runs every test`(@TempDir dir: File) {

@@ -114,7 +114,8 @@ internal object CoverageDecoder {
     /**
      * `<class>#<field>:<descriptor><TAB>digest of its value` for every compile-time constant of the
      * build's own classes, so a selecting run can name the constants whose value moved. Absent, a
-     * run names their classes only, and masks nothing (`stampedConstants`).
+     * run names their classes only, and masks nothing (`stampedConstants`). Stamped as
+     * [LINE_DIGESTS_FILE] is: one an older yoriwake left beside a later capture reads as absent.
      */
     const val CONSTANT_FIELDS_FILE = "constant-fields"
 
@@ -122,7 +123,8 @@ internal object CoverageDecoder {
      * `className<TAB>masked digest` (`Recordability.maskedDigest`) for every own class, recorded
      * while the build declares `stampedConstants`: what a class digests to with the values of
      * constants left out, which a selecting run compares only when every constant that moved is
-     * declared. Absent, nothing is masked.
+     * declared. Absent, nothing is masked. Stamped as [LINE_DIGESTS_FILE] is: one an older
+     * yoriwake left beside a later capture reads as absent.
      */
     const val MASKED_DIGESTS_FILE = "class-digests-masked"
 
@@ -165,7 +167,9 @@ internal object CoverageDecoder {
     /**
      * The oldest JaCoCo version, by the Java it officially instruments, whose agent recorded any of
      * the map's records: a class above it was instrumented by a JaCoCo that could not be trusted
-     * with it. Absent when unknown, which a run judges by the host's JaCoCo version.
+     * with it. Absent when unknown, which a run judges by the host's JaCoCo version. A second line
+     * stamps the capture commit and the JVMs of the records it speaks for, as [DEBUG_TOUCH_FILE]'s
+     * first line does: one an older yoriwake left beside other records reads as absent.
      */
     const val JACOCO_VERSION_FILE = "jacoco-version"
 
@@ -341,6 +345,8 @@ internal object CoverageDecoder {
         val (positions, firstTouches, namedTouches, modes, resourceTouches) = merged6
         val (jarTouches, missTouches, debugTouches) = merged6.drop(5)
 
+        // Read before any write: its stamp names the records this capture merges with.
+        val recordedJacoco = readJacocoVersion(mapDir)
         mapDir.mkdirs()
         // Version marker off first, back on last: each write is atomic but the set is not, and
         // MapReader refuses an unversioned map, so an interrupted decode forces a full run.
@@ -370,18 +376,15 @@ internal object CoverageDecoder {
         )
         writeCaptureCommit(mapDir, captureCommit, datesTheMap)
         // Only a capture that keeps no older record speaks for the whole map, dating or not.
-        writeJacocoVersion(mapDir, jacocoVersion, replaces = retained.isEmpty())
-        // After the capture commit, which both stamps name.
+        writeJacocoVersion(mapDir, jacocoVersion, recordedJacoco, replaces = retained.isEmpty(), positions)
+        // After the capture commit, which every stamp names.
         writeDebugTouches(mapDir, positions, debugTouches)
-        writeDigestTable(
-            File(mapDir, LINE_DIGESTS_FILE),
-            captureCommit?.takeIf(String::isNotBlank)?.let { commit -> lineDigests?.plus(DEBUG_TOUCH_STAMP to commit.trim()) },
-            datesTheMap,
-        )
+        val stamp = captureCommit?.takeIf(String::isNotBlank)?.trim()
+        writeDigestTable(File(mapDir, LINE_DIGESTS_FILE), stamp?.let { lineDigests?.plus(DEBUG_TOUCH_STAMP to it) }, datesTheMap)
         writeConstants(mapDir, constants, datesTheMap)
         writeDigestTable(File(mapDir, CLASS_DIGESTS_FILE), classDigests, datesTheMap)
-        writeDigestTable(File(mapDir, CONSTANT_FIELDS_FILE), constantFields, datesTheMap)
-        writeDigestTable(File(mapDir, MASKED_DIGESTS_FILE), maskedDigests, datesTheMap)
+        writeDigestTable(File(mapDir, CONSTANT_FIELDS_FILE), stamp?.let { constantFields?.plus(DEBUG_TOUCH_STAMP to it) }, datesTheMap)
+        writeDigestTable(File(mapDir, MASKED_DIGESTS_FILE), stamp?.let { maskedDigests?.plus(DEBUG_TOUCH_STAMP to it) }, datesTheMap)
         writeDigestTable(File(mapDir, ANNOTATION_DIGESTS_FILE), annotationDigests, datesTheMap)
         writeDigestTable(File(mapDir, RESOURCE_DIGESTS_FILE), classpathFiles?.mapKeys { Tsv.escape(it.key) }, datesTheMap)
         // The same gate: a record newer than the retained touches would compare a bump against them.
@@ -643,11 +646,27 @@ internal object CoverageDecoder {
         digests
     }.getOrNull()
 
-    /** Reads [CONSTANT_FIELDS_FILE] as strictly as [readClassDigests]; null when there is none to vouch for. */
-    fun readConstantFields(mapDir: File): Map<String, String>? = readDigestTable(File(mapDir, CONSTANT_FIELDS_FILE))
+    /**
+     * Reads [CONSTANT_FIELDS_FILE] as strictly as [readClassDigests]; null when there is none to vouch
+     * for, or it is stamped with any commit but the map's capture commit.
+     */
+    fun readConstantFields(mapDir: File): Map<String, String>? {
+        val fields = readDigestTable(File(mapDir, CONSTANT_FIELDS_FILE)) ?: return null
+        val commit = readCaptureStamp(mapDir) ?: return null
+        if (fields[DEBUG_TOUCH_STAMP] != commit) return null
+        return fields - DEBUG_TOUCH_STAMP
+    }
 
-    /** Reads [MASKED_DIGESTS_FILE] as strictly as [readClassDigests]; null when there is none to vouch for. */
-    fun readMaskedDigests(mapDir: File): Map<String, String>? = readDigestTable(File(mapDir, MASKED_DIGESTS_FILE))
+    /**
+     * Reads [MASKED_DIGESTS_FILE] as strictly as [readClassDigests]; null when there is none to vouch
+     * for, or it is stamped with any commit but the map's capture commit.
+     */
+    fun readMaskedDigests(mapDir: File): Map<String, String>? {
+        val masked = readDigestTable(File(mapDir, MASKED_DIGESTS_FILE)) ?: return null
+        val commit = readCaptureStamp(mapDir) ?: return null
+        if (masked[DEBUG_TOUCH_STAMP] != commit) return null
+        return masked - DEBUG_TOUCH_STAMP
+    }
 
     /** Reads [CONSTANTS_FILE]. Empty when absent or unreadable, which forces as it always did. */
     fun readConstants(mapDir: File): Map<String, String> = runCatching {
@@ -1318,23 +1337,33 @@ internal object CoverageDecoder {
         }.getOrNull()
     }
 
-    /** The map's [JACOCO_VERSION_FILE], or null when it has none or it cannot be read. */
+    /**
+     * The map's [JACOCO_VERSION_FILE], or null when it has none, it cannot be read, or its stamp is
+     * not the map's capture commit and the JVMs its positions hold now.
+     */
     fun readJacocoVersion(mapDir: File): String? = runCatching {
-        File(mapDir, JACOCO_VERSION_FILE).takeIf(File::isFile)?.readText()?.trim()?.takeIf(String::isNotEmpty)
+        val recorded = File(mapDir, JACOCO_VERSION_FILE).takeIf(File::isFile)?.readLines() ?: return null
+        val commit = readCaptureStamp(mapDir) ?: return null
+        val positions = File(mapDir, POSITIONS_FILE).takeIf(File::isFile)?.readLines()?.filter(String::isNotBlank) ?: return null
+        if (recorded.getOrNull(1) != debugStamp(commit, positions)) return null
+        recorded.first().trim().takeIf(String::isNotEmpty)
     }.getOrNull()
 
     /**
-     * [version] when it [replaces] the map's records, else the older of it and the map's; unknown on
-     * either side removes the file.
+     * [version] when it [replaces] the map's records, else the older of it and [recorded], the map's
+     * before this capture; unknown on either side, or no capture commit to stamp, removes the file.
      */
-    private fun writeJacocoVersion(mapDir: File, version: String?, replaces: Boolean) {
+    private fun writeJacocoVersion(
+        mapDir: File, version: String?, recorded: String?, replaces: Boolean, positions: List<String>,
+    ) {
         val file = File(mapDir, JACOCO_VERSION_FILE)
-        val kept = if (replaces) {
-            version
-        } else {
-            readJacocoVersion(mapDir)?.let { recorded -> version?.let { olderJacoco(recorded, it) } }
+        val kept = if (replaces) version else recorded?.let { older -> version?.let { olderJacoco(older, it) } }
+        val commit = readCaptureStamp(mapDir)
+        if (kept.isNullOrBlank() || commit == null) {
+            file.delete()
+            return
         }
-        if (kept.isNullOrBlank()) file.delete() else writeAtomically(file, kept.trim() + "\n")
+        writeAtomically(file, kept.trim() + "\n" + debugStamp(commit, positions) + "\n")
     }
 
     /** Whichever of [a] and [b] officially instruments the older Java; [a] on a tie. */

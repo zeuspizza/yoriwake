@@ -147,6 +147,38 @@ class LineOnlyRecordTest {
     }
 
     @Test
+    fun `constant fields and masked digests are read back only under the map's capture commit`() {
+        capture("1", recorded, started, complete)
+        val fields = mapOf("com.acme.A#X:I" to "1111")
+        val masked = mapOf("com.acme.A" to "2222")
+        CoverageDecoder.decode(
+            dir, listOf("com.acme"), captureCommit = commit, datesTheMap = true, constantFields = fields, maskedDigests = masked,
+        )
+        assertEquals(fields, CoverageDecoder.readConstantFields(dir))
+        assertEquals(masked, CoverageDecoder.readMaskedDigests(dir))
+
+        // A later capture by a yoriwake that does not write the tables leaves them behind.
+        File(dir, CoverageDecoder.CAPTURE_COMMIT_FILE).writeText("b".repeat(40) + "\n")
+        assertNull(CoverageDecoder.readConstantFields(dir))
+        assertNull(CoverageDecoder.readMaskedDigests(dir))
+
+        File(dir, CoverageDecoder.CAPTURE_COMMIT_FILE).delete()
+        assertNull(CoverageDecoder.readConstantFields(dir))
+        assertNull(CoverageDecoder.readMaskedDigests(dir))
+    }
+
+    @Test
+    fun `constant fields and masked digests without a stamp read as absent`() {
+        capture("1", recorded, started, complete)
+        decode()
+        File(dir, CoverageDecoder.CONSTANT_FIELDS_FILE).writeText("com.acme.A#X:I\t1111\n")
+        File(dir, CoverageDecoder.MASKED_DIGESTS_FILE).writeText("com.acme.A\t2222\n")
+
+        assertNull(CoverageDecoder.readConstantFields(dir))
+        assertNull(CoverageDecoder.readMaskedDigests(dir))
+    }
+
+    @Test
     fun `a torn line-digest table reads as absent`() {
         capture("1", recorded, started, complete)
         decode(mapOf("com.acme.A" to "1111"))

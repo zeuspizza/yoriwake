@@ -24,9 +24,11 @@ class JacocoVersionRecordTest {
         File(dir, AgentContract.RAW_SCHEMA_VERSION_FILE).writeText("${AgentContract.RAW_SCHEMA_VERSION}\n")
     }
 
+    private val commit = "a".repeat(40)
+
     private fun decode(mapDir: File, test: String, jacoco: String?, dates: Boolean) {
         worker(mapDir, test)
-        CoverageDecoder.decode(mapDir, listOf("com.acme"), datesTheMap = dates, jacocoVersion = jacoco)
+        CoverageDecoder.decode(mapDir, listOf("com.acme"), captureCommit = commit, datesTheMap = dates, jacocoVersion = jacoco)
     }
 
     @Test
@@ -55,9 +57,38 @@ class JacocoVersionRecordTest {
     }
 
     @Test
-    fun `a first capture that does not date the map still names its JaCoCo`(@TempDir mapDir: File) {
+    fun `a map with no capture commit has no JaCoCo`(@TempDir mapDir: File) {
         decode(mapDir, "A", "0.8.15", dates = false)
 
-        assertEquals("0.8.15", CoverageDecoder.readJacocoVersion(mapDir))
+        assertNull(CoverageDecoder.readJacocoVersion(mapDir))
+    }
+
+    @Test
+    fun `a JaCoCo another capture stamped is not believed`(@TempDir mapDir: File) {
+        decode(mapDir, "A", "0.8.15", dates = true)
+        // A later capture by a yoriwake that does not write the file dates the map and leaves it.
+        File(mapDir, CoverageDecoder.CAPTURE_COMMIT_FILE).writeText("b".repeat(40) + "\n")
+        assertNull(CoverageDecoder.readJacocoVersion(mapDir))
+
+        // Nor is it merged into a capture that keeps the records it does not speak for.
+        decode(mapDir, "B", "0.8.15", dates = false)
+        assertNull(CoverageDecoder.readJacocoVersion(mapDir))
+    }
+
+    @Test
+    fun `a JaCoCo stamped before another capture added its JVMs is not believed`(@TempDir mapDir: File) {
+        decode(mapDir, "A", "0.8.15", dates = true)
+        // Such a capture that does not date the map leaves the capture commit and moves the positions.
+        File(mapDir, AgentContract.POSITIONS_FILE).appendText("other/worker-9\t1\t[class:TB]/[method:t()]\n")
+
+        assertNull(CoverageDecoder.readJacocoVersion(mapDir))
+    }
+
+    @Test
+    fun `an unstamped JaCoCo is not believed`(@TempDir mapDir: File) {
+        decode(mapDir, "A", "0.8.15", dates = true)
+        File(mapDir, CoverageDecoder.JACOCO_VERSION_FILE).writeText("0.8.15\n")
+
+        assertNull(CoverageDecoder.readJacocoVersion(mapDir))
     }
 }
