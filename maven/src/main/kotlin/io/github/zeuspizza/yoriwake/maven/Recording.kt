@@ -67,9 +67,6 @@ internal class Recording(
     /** What each started execution's decode reads back; `-T` starts and ends them on several threads. */
     private val running = ConcurrentHashMap<String, Run>()
 
-    /** The first mojo of this invocation not in [UnionTrust.STARTS_NO_PROCESS]; see [failsafeDoubt]. */
-    private val unvettedMojo = java.util.concurrent.atomic.AtomicReference<String?>(null)
-
     private class Run(
         val mapDir: File,
         val undatedReason: String?,
@@ -117,11 +114,6 @@ internal class Recording(
 
     fun started(event: ExecutionEvent) {
         val execution = event.mojoExecution ?: return
-        // Any mojo not known to start nothing may leave code running in a JVM no union lists, whatever
-        // its phase or module, until the integration tests that follow it reach that code.
-        if ("${execution.groupId}:${execution.artifactId}" !in UnionTrust.STARTS_NO_PROCESS) {
-            unvettedMojo.compareAndSet(null, "${event.project.artifactId} ${execution.artifactId}:${execution.goal}")
-        }
         val key = keyOf(event.project, execution)
         val outcome = wired[key]
         if (outcome == null) {
@@ -292,7 +284,7 @@ internal class Recording(
                 ?.toIntOrNull()?.let { it > 0 } == true,
             properties = properties,
             alwaysRun = pins[project.id].orEmpty(),
-            unionFilter = failsafeDoubt(execution, classpath)?.let { UnionTrust.UNVETTED } ?: unionFilter,
+            unionFilter = failsafeDoubt(execution)?.let { UnionTrust.UNVETTED } ?: unionFilter,
             namedTests = parameter(project, configuration, "test", if (execution.artifactId == FAILSAFE) "it.test" else "test")
                 ?.let { "tests were named with -D${if (execution.artifactId == FAILSAFE) "it.test" else "test"}=$it" },
             text = text,
@@ -326,7 +318,7 @@ internal class Recording(
             hostArguments + arguments(resolved(project, toolOptionsOf(configuration)).orEmpty()) +
                 arguments(resolved(project, launcherOptionsOf(configuration)).orEmpty())
         )
-        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize(), notWholeTaskOf(project, execution, classpath, undated), unionFilter)
+        running[key] = Run(mapDir, undated, classpath, reports, isolated, kind, scope?.serialize(), notWholeTaskOf(project, execution, undated), unionFilter)
     }
 
     /** Every model file read this session that lies in the checkout: each module's POM, and its parents'. */
@@ -394,7 +386,8 @@ internal class Recording(
             facts = view(project, execution, classpath, execution.configuration),
             taskArtifacts = { TaskArtifacts(classpath, buildDirs, listOf(File(project.build.testOutputDirectory))) },
             junitXml = run.reports,
-            unionDiscarded = "Changes to code no test executes will force a full run until a capture of the " +
+            unionDiscarded = if (execution.artifactId == FAILSAFE) "Changes to code no test executes run its integration tests."
+            else "Changes to code no test executes will force a full run until a capture of the " +
                 "whole execution with -D$INTERNAL_LOADED keeps one.",
             buildState = { isBuildState(it) },
             logger = object : DecodeRun.Log {
@@ -546,17 +539,16 @@ internal class Recording(
     /**
      * Why this run's loaded-class union may not speak for the whole execution, or null when it may:
      * flagged and dating the map. Groups, tags, JUnit 5 engines and TestNG suite files key the union
-     * instead ([unionFilterOf]). A Failsafe execution keeps one only as [failsafeDoubt] allows.
+     * instead ([unionFilterOf]). A Failsafe execution keeps none ([failsafeDoubt]).
      * Empty, which says nothing, when the lists were not asked for.
      */
-    private fun notWholeTaskOf(project: MavenProject, execution: MojoExecution, classpath: List<File>, undated: String?): String? {
+    private fun notWholeTaskOf(project: MavenProject, execution: MojoExecution, undated: String?): String? {
         if (!recordsLoaded(project)) return ""
         if (undated != null) return "the run could not date the map ($undated)"
-        return failsafeDoubt(execution, classpath)
+        return failsafeDoubt(execution)
     }
 
-    private fun failsafeDoubt(execution: MojoExecution, classpath: List<File>): String? =
-        UnionTrust.failsafeDoubt(execution.artifactId == FAILSAFE, unvettedMojo.get(), classpath)
+    private fun failsafeDoubt(execution: MojoExecution): String? = UnionTrust.failsafeDoubt(execution.artifactId == FAILSAFE)
 
     /** The previous run's records, decisions and observation go before this one writes any. */
     private fun discardPrevious(mapDir: File, recordsDir: File, name: String) {

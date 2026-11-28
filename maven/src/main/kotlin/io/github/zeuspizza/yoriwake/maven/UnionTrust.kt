@@ -1,47 +1,20 @@
 package io.github.zeuspizza.yoriwake.maven
 
-import java.io.File
-
 /** When a Maven execution's loaded-class union may be trusted, and under which test filter. */
 internal object UnionTrust {
     /**
-     * Plugins whose goals start no process that outlives them: Maven's packaging, test and
-     * deployment plugins, JaCoCo's agent setup, OSGi manifests, and the checks and helpers beside them. Any
-     * other mojo before a Failsafe execution keeps its union from being trusted.
+     * Why a Failsafe execution's union may not list every class its tests reach, or null when
+     * [failsafe] is false: its tests commonly drive an application another JVM runs (a server
+     * started by `docker compose`, a CI service, a process the test starts), and nothing the test
+     * JVM sees tells such a server from none.
      */
-    val STARTS_NO_PROCESS = setOf(
-        "org.apache.maven.plugins:maven-clean-plugin", "org.apache.maven.plugins:maven-resources-plugin",
-        "org.apache.maven.plugins:maven-compiler-plugin", "org.apache.maven.plugins:maven-surefire-plugin",
-        "org.apache.maven.plugins:maven-failsafe-plugin", "org.apache.maven.plugins:maven-jar-plugin",
-        "org.apache.maven.plugins:maven-war-plugin", "org.apache.maven.plugins:maven-source-plugin",
-        "org.apache.maven.plugins:maven-javadoc-plugin", "org.apache.maven.plugins:maven-shade-plugin",
-        "org.apache.maven.plugins:maven-assembly-plugin", "org.apache.maven.plugins:maven-enforcer-plugin",
-        "org.apache.maven.plugins:maven-dependency-plugin", "org.apache.maven.plugins:maven-remote-resources-plugin",
-        "org.apache.maven.plugins:maven-install-plugin", "org.apache.maven.plugins:maven-deploy-plugin",
-        "org.jacoco:jacoco-maven-plugin", "org.codehaus.mojo:build-helper-maven-plugin",
-        "org.codehaus.mojo:flatten-maven-plugin", "org.codehaus.mojo:animal-sniffer-maven-plugin",
-        "org.apache.felix:maven-bundle-plugin", "com.github.siom79.japicmp:japicmp-maven-plugin",
-        Settings.PLUGIN_KEY,
-    )
-
-    /**
-     * Why a Failsafe execution's union may not list every class its tests reach, or null when it
-     * may (or [failsafe] is false): [unvettedMojo], a mojo before it not in [STARTS_NO_PROCESS],
-     * which may have left code running in another JVM, or a container launcher on its
-     * [classpath], which starts one over the Docker socket.
-     */
-    fun failsafeDoubt(failsafe: Boolean, unvettedMojo: String?, classpath: List<File>): String? {
+    fun failsafeDoubt(failsafe: Boolean): String? {
         if (!failsafe) return null
-        unvettedMojo?.let { return "$it ran before it and may run code in another JVM, which no union sees" }
-        return classpath.firstOrNull { it.name.startsWith(CONTAINER_LAUNCHER) }
-            ?.let { "${it.name} is on its classpath and may run code in a container, which no union sees" }
+        return "integration tests commonly drive an application another JVM runs, which no union sees"
     }
 
-    /** The file-name start of Testcontainers' jars, which start containers over the Docker socket. */
-    const val CONTAINER_LAUNCHER = "testcontainers"
-
     /**
-     * The union filter of a Failsafe run whose union cannot be trusted: no capture writes it, so
+     * The union filter of a Failsafe run, whose union is never trusted: no capture writes it, so
      * no union matches it.
      */
     const val UNVETTED = "unvetted"

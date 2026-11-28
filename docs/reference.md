@@ -179,8 +179,9 @@ It forces a full run whenever it cannot prove a narrower one is safe, and says w
   filter only. A selecting run that runs everything records the list as a capture does; a narrowed
   one keeps the list it found. On Maven the list is recorded only under
   `-Dyoriwake.internal.loaded`, keyed the same way to `groups`, tags, engines or suite files; a
-  Failsafe execution keeps none when a mojo of its project ran in `pre-integration-test` before it,
-  where a build starts the application its integration tests drive;
+  Failsafe execution keeps none, since integration tests commonly drive an application another
+  JVM runs (a server `docker compose` or a CI service started, a process the test starts), whose
+  classes no list sees;
 - a changed source that compiles to a class the map never saw, when that class carries an
   annotation, on itself or any member, other than the ones the Kotlin compiler writes on its own
   (`annotations-unrecorded`); a map that recorded no annotations at all forces the same way. A new

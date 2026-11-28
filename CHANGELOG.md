@@ -52,7 +52,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Contributors: the history replay's optimistic ask answers on Maven projects too. Map: left alone.
 - Contributors: benchmark builds recompile in full what they compile, as a fresh checkout does, so a row no longer sees bytes an earlier incremental compile left. Map: left alone.
 - Reference: names the projects where recording in isolation paid back within ten selecting runs. Map: left alone.
-- A capture under a test filter the build sets (Gradle build script; Maven groups, tags, engines, suite files), with a default-package source, or under Failsafe keeps its loaded-class union; one that keeps none says why. Map: left alone; a union appears at the next full capture.
+- A capture under a test filter the build sets (Gradle build script; Maven groups, tags, engines, suite files), or with a default-package source, keeps its loaded-class union; one that keeps none says why; a Failsafe execution keeps none. Map: left alone; a union appears at the next full capture.
 
 ## [0.6.0] - 2026-11-16
 
