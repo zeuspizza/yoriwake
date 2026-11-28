@@ -105,12 +105,26 @@ object FunctionalMaven {
      */
     private const val CENTRAL = "https://repo.maven.apache.org/maven2"
 
+    /**
+     * On CI, Central's mirror, asked before Central: Central's 429s for a runner pool's shared
+     * address failed whole shards. Maven tries the next repository when one fails or misses.
+     */
+    private val mirror = System.getenv("YORIWAKE_CENTRAL_MIRROR").orEmpty()
+
+    private fun mirrored(element: String) = if (mirror.isEmpty()) "" else """
+                <$element>
+                  <id>yoriwake-central-mirror</id>
+                  <url>$mirror</url>
+                  <releases><updatePolicy>always</updatePolicy></releases>
+                  <snapshots><enabled>false</enabled></snapshots>
+                </$element>"""
+
     private fun settingsXml() = """
         <settings>
           <profiles>
             <profile>
               <id>yoriwake-functional</id>
-              <repositories>
+              <repositories>${mirrored("repository")}
                 <repository>
                   <id>central</id>
                   <url>$CENTRAL</url>
@@ -123,7 +137,7 @@ object FunctionalMaven {
                   <id>yoriwake-functional</id>
                   <url>${functionalRepo.toURI()}</url>
                   <snapshots><enabled>true</enabled><updatePolicy>always</updatePolicy></snapshots>
-                </pluginRepository>
+                </pluginRepository>${mirrored("pluginRepository")}
                 <pluginRepository>
                   <id>central</id>
                   <url>$CENTRAL</url>

@@ -105,9 +105,18 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        # verify's capture job runs the same publish on main and saves what it resolved, the JaCoCo
+        # agent included; this job's own entry once lacked it.
+        env:
+          GRADLE_BUILD_ACTION_CACHE_KEY_JOB: capture
         with:
           cache-read-only: true
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - name: publish the plugin under test
         run: python3 bench/publish_once.py --out "$RUNNER_TEMP/plugin-under-test"
       # Every shard of this run restores it into its mavenLocal.
@@ -148,6 +157,11 @@ jobs:
           cache-read-only: true
           # A walked project's own failing tests fail builds here; the shard's file tells what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: plugin-under-test

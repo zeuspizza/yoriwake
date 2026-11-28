@@ -165,6 +165,11 @@ jobs:
         with:
           # The release signing check's refusals fail builds by design; its steps tell what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: needs.changes.outputs.unit != 'false'
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       # The plugin's coverage gate needs the functional suites, which run in the shards below; the
       # coverage job gates on this job's unit-test data and theirs.
       - run: ./gradlew build :agent:jacocoTestReport -x :plugin:functionalTest -x :plugin:functionalTestGradle9 -Pyoriwake.functional.coverage=false --build-cache --console=plain
@@ -236,6 +241,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       # The Maven suite's distributions, fetched once and kept: setup-gradle's cache leaves them out.
       # Keyed on the file that pins their versions and SHA-512s; an older set still restores, so a
       # new version is the only fetch.
@@ -331,6 +341,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       # What earlier runs on main downloaded for the fixture builds, read behind each TestKit home's
       # own cache (GRADLE_RO_DEP_CACHE, never written), so Central is asked only for what it lacks.
       # The gradle-seed job builds it; the guard jobs read it too.
@@ -437,6 +452,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       # What earlier runs on main downloaded for the fixture builds, read behind each TestKit home's
       # own cache (GRADLE_RO_DEP_CACHE, never written), so Central is asked only for what it lacks.
       # The gradle-seed job builds it; the guard jobs read it too.
@@ -539,6 +559,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.gradle-seed/caches/modules-2
@@ -608,6 +633,11 @@ jobs:
         with:
           # The gate's refusal of missing data fails a build by design; its steps tell what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-linux-*
@@ -671,6 +701,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
 
       - name: publish the plugin locally
         run: ./gradlew :plugin:publishToMavenLocal --build-cache --console=plain
@@ -723,6 +758,11 @@ jobs:
         with:
           # The mutated source fails its builds by design; the assertion tells what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -796,6 +836,12 @@ jobs:
         with:
           # The mutated source fails its builds by design; the assertion tells what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: python .github/ci.py central-mirror
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -866,6 +912,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: python .github/ci.py central-mirror
 
       - name: publish the plugin locally
         shell: bash
@@ -920,6 +972,12 @@ jobs:
         with:
           # The mutated source fails its builds by design; the assertion tells what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: python .github/ci.py central-mirror
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -980,6 +1038,11 @@ jobs:
         with:
           # The mutated source fails its builds by design; the assertion tells what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -1026,6 +1089,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: python .github/ci.py central-mirror
       - shell: bash
         run: ./gradlew build -x functionalTest -x functionalTestGradle9 -Pyoriwake.functional.coverage=false --continue --build-cache --console=plain
       # A person reads it when the Windows unit build failed.

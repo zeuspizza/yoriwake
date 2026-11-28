@@ -94,6 +94,12 @@ jobs:
         with:
           cache-read-only: true
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: if [ "$RUNNER_OS" = Windows ]; then python .github/ci.py central-mirror; else python3 .github/ci.py central-mirror; fi
 
       # Only the JDKs installed above and the runner's own, by path: auto-detection misses the
       # runner's tool cache, and a JDK found anywhere else would not be the one the cell names.
@@ -165,6 +171,12 @@ jobs:
         with:
           cache-read-only: true
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: if [ "$RUNNER_OS" = Windows ]; then python .github/ci.py central-mirror; else python3 .github/ci.py central-mirror; fi
 
       # A dependency download that fails in transit costs a rerun, not the job, in each build here.
       - name: publish the plugin locally
@@ -227,6 +239,12 @@ jobs:
           cache-read-only: true
           # The mutated source fails its builds by design; the assertion tells what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: if [ "$RUNNER_OS" = Windows ]; then python .github/ci.py central-mirror; else python3 .github/ci.py central-mirror; fi
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

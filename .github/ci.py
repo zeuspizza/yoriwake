@@ -22,6 +22,7 @@ report the test task up to date and leave the previous run's results for the ass
     python .github/ci.py seed-maven-repo maven/build/functional-m2 ~/.m2/yoriwake-seed-1
     python .github/ci.py gradle-seed ~/.gradle-seed listings/*/test-kit-homes.txt --gradle 8.14
     python .github/ci.py gradle-seed-size ~/.gradle-seed
+    python .github/ci.py central-mirror
 """
 
 import argparse
@@ -820,7 +821,10 @@ def gradle_seed(home, listings, version, run=subprocess.call):
         print(f"resolving {len(coordinates)} modules into {home} on Gradle {version}", file=sys.stderr, flush=True)
         environment = {key: value for key, value in os.environ.items() if key != "GRADLE_RO_DEP_CACHE"}
         environment["GRADLE_USER_HOME"] = home
-        return run([os.path.join(build, "gradlew"), "--no-daemon", "--console=plain", "-q", "--dry-run", "help"],
+        # Through the mirror as the fixture builds go: Gradle files metadata per repository.
+        init = os.environ.get(CENTRAL_MIRROR_INIT_ENV, "")
+        mirrored = ["-I", init] if init and os.path.isfile(init) else []
+        return run([os.path.join(build, "gradlew"), "--no-daemon", "--console=plain", "-q", *mirrored, "--dry-run", "help"],
                    cwd=build, env=environment)
 
 
@@ -832,6 +836,86 @@ def gradle_seed_size(home):
             files += 1
             size += os.path.getsize(os.path.join(dirpath, name))
     return files, size
+
+
+# Google's mirror of Maven Central, which every CI job asks before Central: Central answers a runner
+# pool's shared address with 429 under load, and one such answer failed whole jobs. The init script
+# names the same URL.
+CENTRAL_MIRROR = "https://maven-central.storage-download.googleapis.com/maven2/"
+# What the probe asks for: a file Central will always hold.
+CENTRAL_MIRROR_PROBE = "org/apache/maven/apache-maven/3.9.0/apache-maven-3.9.0.pom"
+CENTRAL_MIRROR_INIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "central-mirror.init.gradle")
+# The functional harnesses read these: the URL for the Maven fixtures' settings,
+# the installed init script for each TestKit home and the Gradle seed.
+CENTRAL_MIRROR_ENV = "YORIWAKE_CENTRAL_MIRROR"
+CENTRAL_MIRROR_INIT_ENV = "YORIWAKE_CENTRAL_MIRROR_INIT"
+
+# Maven guests: an active profile that lists the mirror before every repository of the build.
+# Maven tries the next repository when one fails, so Central, from the super POM, stays the fallback.
+CENTRAL_MIRROR_PROFILE = f"""  <profiles>
+    <profile>
+      <id>yoriwake-central-mirror</id>
+      <repositories>
+        <repository>
+          <id>yoriwake-central-mirror</id>
+          <url>{CENTRAL_MIRROR}</url>
+          <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+      </repositories>
+      <pluginRepositories>
+        <pluginRepository>
+          <id>yoriwake-central-mirror</id>
+          <url>{CENTRAL_MIRROR}</url>
+          <snapshots><enabled>false</enabled></snapshots>
+        </pluginRepository>
+      </pluginRepositories>
+    </profile>
+  </profiles>
+  <activeProfiles><activeProfile>yoriwake-central-mirror</activeProfile></activeProfiles>
+"""
+
+
+def mirror_reachable(timeout=20):
+    """Whether the mirror serves the probe's file now."""
+    request = urllib.request.Request(CENTRAL_MIRROR + CENTRAL_MIRROR_PROBE, method="HEAD")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status == 200
+    except OSError:
+        return False
+
+
+def install_central_mirror(gradle_home, maven_home, reachable=mirror_reachable):
+    """Points this machine's Gradle and Maven builds at the mirror first; the environment lines the
+    job's later steps need, or none when the mirror did not answer and nothing was installed.
+
+    The profile joins a Maven `settings.xml` already there, as setup-java writes one; a file with
+    profiles of its own is left alone."""
+    if not reachable():
+        print(f"the Central mirror {CENTRAL_MIRROR} did not answer: builds resolve from Central", file=sys.stderr)
+        return []
+    init_dir = os.path.join(gradle_home, "init.d")
+    os.makedirs(init_dir, exist_ok=True)
+    installed = os.path.join(init_dir, "yoriwake-central-mirror.gradle")
+    shutil.copyfile(CENTRAL_MIRROR_INIT, installed)
+    settings = os.path.join(maven_home, "settings.xml")
+    try:
+        with open(settings, encoding="utf-8") as handle:
+            existing = handle.read()
+    except FileNotFoundError:
+        existing = "<settings>\n</settings>\n"
+    if "yoriwake-central-mirror" in existing:
+        pass
+    elif "<profiles>" in existing or "<activeProfiles>" in existing or "</settings>" not in existing:
+        print(f"{settings} has profiles of its own: Maven builds resolve as it says", file=sys.stderr)
+    else:
+        # setup-java writes one holding only its <servers>: the profile joins it.
+        at = existing.rindex("</settings>")
+        os.makedirs(maven_home, exist_ok=True)
+        with open(settings, "w", encoding="utf-8") as handle:
+            handle.write(existing[:at] + CENTRAL_MIRROR_PROFILE + existing[at:])
+    print(f"Gradle and Maven builds ask {CENTRAL_MIRROR} before Central", file=sys.stderr)
+    return [f"{CENTRAL_MIRROR_ENV}={CENTRAL_MIRROR}", f"{CENTRAL_MIRROR_INIT_ENV}={installed}"]
 
 
 def main(argv=None):
@@ -914,11 +998,22 @@ def main(argv=None):
     sizing = sub.add_parser("gradle-seed-size", help="print files= and bytes= of a Gradle user home's modules-2")
     sizing.add_argument("home")
 
+    sub.add_parser("central-mirror",
+                   help="make this machine's Gradle and Maven builds ask Central's mirror first")
+
     homes = sub.add_parser("list-test-kit-homes",
                            help="list what each TestKit home under a build directory downloaded")
     homes.add_argument("build_tmp")
 
     args = parser.parse_args(argv)
+
+    if args.command == "central-mirror":
+        lines = install_central_mirror(os.environ.get("GRADLE_USER_HOME") or os.path.join(os.path.expanduser("~"), ".gradle"),
+                                       os.path.join(os.path.expanduser("~"), ".m2"))
+        if lines and os.environ.get("GITHUB_ENV"):
+            with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+                handle.write("".join(line + "\n" for line in lines))
+        return 0
 
     if args.command == "seed-maven-repo":
         added = seed_maven_repo(args.source, args.seed) if os.path.isdir(args.source) else 0

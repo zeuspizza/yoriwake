@@ -1,0 +1,65 @@
+// CI only: `.github/ci.py central-mirror` installs this into a job's Gradle user home. Every
+// repository list that asks Maven Central or the Gradle Plugin Portal (which sends a request for a
+// Central artifact on to Central) gets Google's mirror of Central right before that repository,
+// which stays in place, filters and all, for what the mirror does not have. Central rate-limits a
+// runner pool's shared address (429), and one such answer failed whole jobs; the mirror states no
+// limit. Groovy, not Kotlin: it runs in every Gradle a job starts, guests' old ones included.
+
+class CentralMirror {
+    // ci.py's CENTRAL_MIRROR: the two must name the same URL.
+    static final String URL = 'https://maven-central.storage-download.googleapis.com/maven2/'
+    static final String NAME = 'yoriwakeCentralMirror'
+
+    static boolean reachesCentral(URI uri) {
+        def path = (uri?.path ?: '').replaceAll('/+$', '')
+        uri != null && (uri.host in ['repo.maven.apache.org', 'repo1.maven.org'] && path == '/maven2' ||
+            uri.host == 'plugins.gradle.org' && path == '/m2')
+    }
+
+    static void mirrorFirst(RepositoryHandler repositories) {
+        def before = { ArtifactRepository repository ->
+            if (!(repository instanceof MavenArtifactRepository) || repository.name == NAME ||
+                    repositories.findByName(NAME) != null || !reachesCentral(repository.url)) {
+                return
+            }
+            def mirror = repositories.maven { MavenArtifactRepository it ->
+                it.name = NAME
+                it.url = URL
+            }
+            repositories.remove(mirror)
+            repositories.add(repositories.indexOf(repository), mirror)
+        }
+        // Those a root project's `allprojects` block added before this project's callback ran, then
+        // every later one. A copy: the mirror joins the container while it is walked.
+        repositories.toList().each(before)
+        repositories.whenObjectAdded(before)
+    }
+}
+
+gradle.beforeSettings { settings ->
+    CentralMirror.mirrorFirst(settings.buildscript.repositories)
+    CentralMirror.mirrorFirst(settings.pluginManagement.repositories)
+    // Gradle 6.8 and later.
+    if (settings.hasProperty('dependencyResolutionManagement')) {
+        CentralMirror.mirrorFirst(settings.dependencyResolutionManagement.repositories)
+    }
+}
+
+// A build that declares no plugin repository resolves its `plugins {}` from the Portal without
+// listing it; listed, the mirror goes before it as above.
+gradle.settingsEvaluated { settings ->
+    if (settings.pluginManagement.repositories.isEmpty()) {
+        settings.pluginManagement.repositories.gradlePluginPortal()
+    }
+}
+
+// Gradle 8.8's callback keeps a build under Isolated Projects valid; `beforeProject` is older.
+def eachProject = { Project project ->
+    CentralMirror.mirrorFirst(project.buildscript.repositories)
+    CentralMirror.mirrorFirst(project.repositories)
+}
+if (GradleVersion.current().baseVersion >= GradleVersion.version('8.8')) {
+    gradle.lifecycle.beforeProject(eachProject)
+} else {
+    gradle.beforeProject(eachProject)
+}
