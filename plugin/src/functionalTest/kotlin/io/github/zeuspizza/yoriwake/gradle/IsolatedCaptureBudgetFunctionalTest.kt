@@ -178,6 +178,43 @@ class IsolatedCaptureBudgetFunctionalTest : FunctionalTestSupport() {
     }
 
     @Test
+    fun `a build that reads its test tasks' launcher as it configures them still records within budget`(
+        @TempDir dir: File,
+    ) {
+        sample(dir)
+        // Reading a test task's launcher fixes its value, the companion's included.
+        File(dir, "build.gradle.kts").appendText("\ntasks.withType<Test>().configureEach { javaLauncher.get() }\n")
+        commit(dir, "reads the launcher")
+        runner(dir, "test").build()
+        File(dir, "build/test-results").deleteRecursively()
+
+        val output = runner(dir, "test", *budget.toTypedArray()).build().output
+
+        assertTrue(File(dir, "build/test-results/testYoriwakeIsolated/TEST-dev.sample.E2LaterTest.xml").isFile, output)
+    }
+
+    @Test
+    fun `a build that fixes the isolated task's timeout to one its test task does not have fails naming both`(
+        @TempDir dir: File,
+    ) {
+        sample(dir)
+        runner(dir, "test").build()
+        File(dir, "build/test-results").deleteRecursively()
+        val script = File(dir, "build.gradle.kts")
+        script.writeText(
+            "import java.time.Duration\n" + script.readText() +
+                "\ntasks.withType<Test>().configureEach {\n" +
+                "    if (name == \"testYoriwakeIsolated\") { timeout.set(Duration.ofMinutes(5)); timeout.finalizeValue() }\n" +
+                "}\n",
+        )
+        commit(dir, "fixes the timeout")
+
+        val output = runner(dir, "test", *budget.toTypedArray()).buildAndFail().output
+
+        assertContains(output, ":testYoriwakeIsolated: the build fixed its timeout to PT5M before yoriwake could give it the test task's, none")
+    }
+
+    @Test
     fun `a budgeted recording with no map records shared`(@TempDir dir: File) {
         sample(dir)
 

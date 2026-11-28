@@ -9,6 +9,7 @@ import io.github.zeuspizza.yoriwake.gradle.capture.writeAtomically
 import io.github.zeuspizza.yoriwake.gradle.tasks.DecodeTask
 import java.io.File
 import org.gradle.api.Project
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.TestDescriptor
 import org.gradle.api.tasks.testing.TestListener
@@ -54,10 +55,10 @@ internal object IsolatedCompanion {
             task.setExcludes(source.excludes)
             task.ignoreFailures = source.ignoreFailures
             task.failFast = source.failFast
-            task.timeout.set(source.timeout)
+            copyUnlessFixed(task, "timeout", task.timeout, source.timeout) { it }
             task.workingDir = source.workingDir
             task.environment = source.environment
-            task.javaLauncher.set(source.javaLauncher)
+            copyUnlessFixed(task, "javaLauncher", task.javaLauncher, source.javaLauncher) { it.metadata.installationPath.asFile }
             // The test task's own arguments carry its assertion switch.
             task.enableAssertions = false
             task.forkEvery = 1
@@ -105,5 +106,32 @@ internal object IsolatedCompanion {
         }
         project.tasks.named(testName).configure { it.finalizedBy(name) }
         project.tasks.named(DecodeTask.nameFor(testName)).configure { it.mustRunAfter(name) }
+    }
+
+    /**
+     * Gives [task] the test task's value of [property], unless the build already fixed the
+     * companion's, as one that reads every test task's launcher while configuring it does: then the
+     * value it fixed must be the test task's, compared by [identity].
+     */
+    private fun <T : Any> copyUnlessFixed(
+        task: Test,
+        property: String,
+        target: Property<T>,
+        source: Property<T>,
+        identity: (T) -> Any,
+    ) {
+        try {
+            target.set(source)
+        } catch (alreadyFixed: IllegalStateException) {
+            val fixed = target.orNull?.let(identity)
+            val wanted = source.orNull?.let(identity)
+            if (fixed != wanted) {
+                throw IllegalStateException(
+                    "${task.path}: the build fixed its $property to ${fixed ?: "none"} before yoriwake could give it the test task's, " +
+                        "${wanted ?: "none"}; configure the two alike, or record without -P${Settings.ISOLATED_CAPTURE_BUDGET}",
+                    alreadyFixed,
+                )
+            }
+        }
     }
 }

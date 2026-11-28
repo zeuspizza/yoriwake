@@ -28,6 +28,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- `isolatedCaptureBudget` records on a build that reads its test tasks' Java launcher as it configures them. Map: left alone.
 - A map table an older yoriwake left behind is ignored, not believed. Map: left alone; the next recording stamps it.
 - A map captured one test class per JVM no longer runs the test JVM out of heap, failing every test. Map: left alone.
 - A JDK rebuild or patch of the same release (21.0.13 -> 21.0.13.1) keeps the map. Map: left alone.
