@@ -6295,6 +6295,16 @@ MUTATIONS = [
      '            " ($also$REMEDY)"',
      '            ""',
      maven_suite, "another value of a user property runs every test"),
+    # A decision that failed, retried for each test, read a map too large for the heap once per
+    # test: every test of the JVM ran out of memory with it.
+    ("a failed decision is attempted again for every test", SELECTION_RUN,
+     "                decisionFailure = failure;\n", "",
+     agent_suite, "a failed decision is not attempted again for the next test"),
+    # A row per class per JVM is millions of rows in a map captured one class per JVM; held as
+    # strings of their own they do not fit a test JVM's heap.
+    ("touch rows stop sharing their names", MAP_READER,
+     "                indexes.put(name, index);\n", "",
+     agent_suite, "a map with a row per class per JVM reads every touch, in order, sharing repeated names"),
 ]
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
 SUITE_TESTS = {

@@ -20,6 +20,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -116,6 +117,51 @@ public final class MapReader {
         /** A binary class name, or {@code *} for every class. */
         public String className() {
             return className;
+        }
+    }
+
+    /**
+     * Touch rows held as three ints each, their JVM ids and names shared. The touch files hold a
+     * row per class per JVM, millions in a map captured one class per JVM, while only a few
+     * thousand names recur: a {@link FirstTouch} per row did not fit a test JVM's heap.
+     */
+    static final class Touches extends AbstractList<FirstTouch> {
+        private final List<String> names = new ArrayList<>();
+        private final Map<String, Integer> indexes = new HashMap<>();
+        private int[] rows = new int[3 * 1024];
+        private int size;
+
+        void add(String jvm, int sequence, String className) {
+            if (3 * size + 3 > rows.length) {
+                rows = Arrays.copyOf(rows, rows.length * 2);
+            }
+            rows[3 * size] = indexOf(jvm);
+            rows[3 * size + 1] = sequence;
+            rows[3 * size + 2] = indexOf(className);
+            size++;
+        }
+
+        private int indexOf(String name) {
+            Integer index = indexes.get(name);
+            if (index == null) {
+                index = names.size();
+                names.add(name);
+                indexes.put(name, index);
+            }
+            return index;
+        }
+
+        @Override
+        public FirstTouch get(int index) {
+            if (index < 0 || index >= size) {
+                throw new IndexOutOfBoundsException("touch " + index + " of " + size);
+            }
+            return new FirstTouch(names.get(rows[3 * index]), rows[3 * index + 1], names.get(rows[3 * index + 2]));
+        }
+
+        @Override
+        public int size() {
+            return size;
         }
     }
 
@@ -417,8 +463,8 @@ public final class MapReader {
             return Result.unusable(Result.Reason.NO_MAP, "the map at " + mapDir + " is empty");
         }
         Map<String, List<Position>> positions = new HashMap<>();
-        List<FirstTouch> firstTouches = new ArrayList<>();
-        List<FirstTouch> namedTouches = new ArrayList<>();
+        Touches firstTouches = new Touches();
+        Touches namedTouches = new Touches();
         // Without them nothing says which tests ran after a class arrived, so nothing may narrow.
         for (String name : new String[] {POSITIONS_FILE, FIRST_TOUCH_FILE, NAMED_TOUCH_FILE}) {
             File file = new File(mapDir, name);
@@ -446,7 +492,7 @@ public final class MapReader {
                                 .add(new Position(parts[0], sequence));
                     } else {
                         (FIRST_TOUCH_FILE.equals(name) ? firstTouches : namedTouches)
-                                .add(new FirstTouch(parts[0], sequence, parts[2]));
+                                .add(parts[0], sequence, parts[2]);
                     }
                 }
             } catch (IOException e) {
@@ -518,7 +564,7 @@ public final class MapReader {
             return null;
         }
         Set<String> recorded = new HashSet<>();
-        List<FirstTouch> touches = new ArrayList<>();
+        Touches touches = new Touches();
         try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -536,7 +582,7 @@ public final class MapReader {
                 if (AgentContract.JARS_RECORDED.equals(parts[2])) {
                     recorded.add(parts[0]);
                 } else {
-                    touches.add(new FirstTouch(parts[0], sequence, parts[2]));
+                    touches.add(parts[0], sequence, parts[2]);
                 }
             }
         } catch (IOException e) {
