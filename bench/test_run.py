@@ -2543,6 +2543,69 @@ def case_the_gap_counts_leaf_ids_not_containers():
     return failures
 
 
+def case_every_selecting_run_names_why_it_narrowed_or_not():
+    """one cause per record: a refusal or a forcing by kind, the outcome notes as tokens, a
+    run that skipped under 5 % as wide under its most common rule, a record the build ignored
+    as not applied, and no record as its own cause."""
+    failures = 0
+    tests = [_template(_P, f"m{n}()") for n in range(4)]
+
+    def cause(record, selected, full):
+        return run.narrowing_cause(record, selected, full)
+
+    refused = _record(included=tests, outcome="selection-not-requested")
+    refused["notes"].update({"refusal-kind": "constant-changed", "full-run-reason": "x" * 400})
+    forced = _record(included=tests, outcome="full-run")
+    forced["notes"]["full-run-kind"] = "setup"
+    wide = _record(included=tests)
+    wide["rules"] = {tests[0]: ("covers",), tests[1]: ("shares-jvm:p", "covers"),
+                     tests[2]: ("shares-jvm:p",), tests[3]: ("shares-jvm:p",)}
+    by_reason = _record(included=tests)
+    cases = [
+        (cause(None, 3, 4), {"cause": "no-record", "detail": None}),
+        (cause(refused, 4, 4), {"cause": "refused:constant-changed", "detail": "x" * 300}),
+        (cause(forced, 4, 4), {"cause": "forced:setup", "detail": None}),
+        (cause(_record(outcome="selection-not-requested"), 4, 4),
+         {"cause": "not-requested", "detail": None}),
+        (cause(_record(outcome="not-decided"), 4, 4), {"cause": "not-decided", "detail": None}),
+        (cause(_record(outcome="complemented"), 2, 4), {"cause": "complemented", "detail": None}),
+        (cause(_record(included=tests[:1], excluded=tests[1:]), 1, 4),
+         {"cause": "narrowed", "detail": None}),
+        (cause(wide, 4, 4), {"cause": "wide:shares-jvm:p", "detail": "3 of 4"}),
+        (cause(wide, 97, 100), {"cause": "wide:shares-jvm:p", "detail": "3 of 4"}),
+        (cause(by_reason, 4, 4), {"cause": "wide:COVERS_CHANGE", "detail": "4 of 4"}),
+        (cause(_record(included=tests[:2], excluded=tests[2:]), 4, 4),
+         {"cause": "not-applied", "detail": "2 of 4 included"}),
+        (cause(_record(included=tests[:2], excluded=tests[2:]), 4, None),
+         {"cause": "narrowed", "detail": None}),
+    ]
+    torn = _record(included=tests)
+    del torn["notes"]["outcome"]
+    split = _record(included=tests)
+    split["notes"] = {"writer-outcomes": "full-run,narrowed"}
+    cases += [(cause(torn, 4, 4), {"cause": "unknown", "detail": None}),
+              (cause(split, 4, 4), {"cause": "writers-disagree", "detail": "full-run,narrowed"})]
+    for number, (got, wanted) in enumerate(cases):
+        if got != wanted:
+            failures += fail(f"case {number}: {got}, wanted {wanted}")
+    # A reactor's cause is the one whose maps hold the most included tests; each map keeps its own.
+    small = _record(included=tests[:1], outcome="full-run")
+    small["notes"]["full-run-kind"] = "setup"
+    row, per_map = run.narrowing_causes({"a": small, "b": wide, "c": None}, 4, 4)
+    if row["cause"] != "wide:shares-jvm:p" or sorted(per_map) != ["a", "b", "c"] \
+            or per_map["c"]["cause"] != "no-record":
+        failures += fail(f"the reactor's cause was {row}, per map {per_map}")
+    # The run's own counts say it narrowed, whatever the map with the most included tests says.
+    row, per_map = run.narrowing_causes({"a": small, "b": wide}, 1, 4)
+    if row["cause"] != "narrowed" or per_map["a"]["cause"] != "forced:setup":
+        failures += fail(f"a reactor run that skipped 3 of 4 read {row}, per map {per_map}")
+    if run.narrowing_causes({}, 0, 4) != ({"cause": "no-record", "detail": None}, None):
+        failures += fail("a run with no map read as a cause other than no-record")
+    if run.narrowing_causes({"a": wide}, 4, 4)[1] is not None:
+        failures += fail("a single map's run kept a per-map list")
+    return failures
+
+
 def case_a_per_method_failure_names_its_template_s_rules():
     """`b() > v = 1` is the template `b()` the record decided, so its rules are `b()`'s and
     the failure no longer reads as one the record never saw."""
@@ -4005,7 +4068,8 @@ def case_a_change_known_to_force_takes_the_paired_full_arm_as_its_selected_arm()
               "induced": ["p.A::a()", "p.B::b()"], "missed": [], "status": "checked",
               "timed": False, "ground_truth_from": "paired", "selected_arm_from": "paired",
               "decision_outcome": "full-run", "refusal_kind": "constant-changed",
-              "full_ci": {"job": "shard"}, "gate_seconds": 3.2, "sweep_limit": 7}
+              "full_ci": {"job": "shard"}, "gate_seconds": 3.2, "sweep_limit": 7,
+              "narrowing_cause": "refused:constant-changed", "narrowing_cause_detail": None}
     wrong = {key: row.get(key) for key, value in wanted.items() if row.get(key) != value}
     if wrong:
         failures += fail(f"the forced row carried {wrong}")
@@ -4205,6 +4269,103 @@ def _publish(outcomes):
             (run.run, run.HERE, time.sleep, run.selector_digest, run.yoriwake_checkout.commit,
              run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT) = original
         return refused, len(seen), list(PAUSES), sorted(os.listdir(os.path.join(directory, "logs")))
+
+
+def _adopt(stamp, maven=False):
+    """What `publish_plugin_under_test` does with `stamp` as the published plugin's stamp: (refusal
+    or None, Gradle builds run, the three globals it set)."""
+    builds = []
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, "published.json")
+        if stamp is not None:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(stamp, handle)
+        original = (run.run, run.selector_digest, run.yoriwake_checkout.commit, run.maven_build.digest,
+                    run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT,
+                    os.environ.get(run.PUBLISHED_STAMP_VARIABLE))
+        run.run = lambda argv, *args, **kwargs: builds.append(argv) or (0, 0.0)
+        run.selector_digest, run.yoriwake_checkout.commit = (lambda: "digest"), (lambda short=False: "abc")
+        run.maven_build.digest = lambda source: "maven"
+        os.environ[run.PUBLISHED_STAMP_VARIABLE] = path
+        refused = None
+        try:
+            run.publish_plugin_under_test(maven=maven)
+        except SystemExit as error:
+            refused = str(error)
+        finally:
+            adopted = (run.PUBLISHED_COMMIT, run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST)
+            (run.run, run.selector_digest, run.yoriwake_checkout.commit, run.maven_build.digest,
+             run.PUBLISHED_SELECTOR_DIGEST, run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT,
+             variable) = original
+            if variable is None:
+                os.environ.pop(run.PUBLISHED_STAMP_VARIABLE, None)
+            else:
+                os.environ[run.PUBLISHED_STAMP_VARIABLE] = variable
+        return refused, len(builds), adopted
+
+
+def case_a_plugin_published_by_another_job_is_used_only_when_built_from_this_checkout():
+    failures = 0
+    matching = {"commit": "abc", "selector_digest": "digest", "maven_digest": "maven"}
+    refused, builds, adopted = _adopt(matching, maven=True)
+    if refused or builds or adopted != ("abc", "digest", "maven"):
+        failures += fail(f"a matching stamp should be adopted without a build, got {refused!r}, "
+                         f"{builds} builds, {adopted}")
+    refused, builds, adopted = _adopt(matching)
+    if refused or builds or adopted != ("abc", "digest", None):
+        failures += fail(f"a Gradle project should carry no Maven digest, got {refused!r}, {adopted}")
+    for key in matching:
+        refused, builds, _ = _adopt({**matching, key: "other"}, maven=True)
+        if not refused or key not in refused or builds:
+            failures += fail(f"a stamp whose {key} differs should refuse without a build, got "
+                             f"{refused!r}, {builds} builds")
+    refused, builds, _ = _adopt(None)
+    if not refused or builds:
+        failures += fail(f"a missing stamp should refuse without a build, got {refused!r}, {builds} builds")
+    return failures
+
+
+def case_the_stamp_publish_once_writes_is_the_one_a_job_adopts():
+    import publish_once
+    failures = 0
+    with tempfile.TemporaryDirectory() as directory:
+        repository = os.path.join(directory, "repository")
+        os.makedirs(os.path.join(repository, publish_once.GROUP, "yoriwake-gradle-plugin"))
+        out = os.path.join(directory, "out")
+
+        def publish(maven=False):
+            run.PUBLISHED_COMMIT, run.PUBLISHED_SELECTOR_DIGEST = "abc", "digest"
+            run.PUBLISHED_MAVEN_DIGEST = "maven" if maven else None
+
+        original = (run.publish_plugin_under_test, run.PUBLISHED_SELECTOR_DIGEST,
+                    run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT)
+        run.publish_plugin_under_test = publish
+        try:
+            publish_once.main(["--out", out, "--repository", repository])
+        finally:
+            (run.publish_plugin_under_test, run.PUBLISHED_SELECTOR_DIGEST,
+             run.PUBLISHED_MAVEN_DIGEST, run.PUBLISHED_COMMIT) = original
+        if not os.path.isdir(os.path.join(out, "yoriwake-gradle-plugin")):
+            failures += fail(f"the plugin's group was not handed over: {os.listdir(out)}")
+        with open(os.path.join(out, "published.json"), encoding="utf-8") as handle:
+            stamp = json.load(handle)
+    refused, builds, adopted = _adopt(stamp, maven=True)
+    if refused or builds or adopted != ("abc", "digest", "maven"):
+        failures += fail(f"the stamp publish_once wrote was not adopted: {stamp} gave {refused!r}, "
+                         f"{builds} builds, {adopted}")
+    return failures
+
+
+def case_without_a_published_stamp_the_plugin_is_built_here():
+    saved = os.environ.pop(run.PUBLISHED_STAMP_VARIABLE, None)
+    try:
+        refused, builds, _, _ = _publish([("", 0)])
+    finally:
+        if saved is not None:
+            os.environ[run.PUBLISHED_STAMP_VARIABLE] = saved
+    if refused or builds != 1:
+        return fail(f"without the variable the plugin should be built once, got {refused!r}, {builds} builds")
+    return 0
 
 
 def case_the_publish_of_the_plugin_under_test_reruns_once_on_a_download_failure():
@@ -5937,6 +6098,9 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_the_harness_reads_a_download_failure_as_the_ci_script_does,
          case_a_maven_guest_pauses_longer_after_a_rate_limit,
          case_the_publish_of_the_plugin_under_test_reruns_once_on_a_download_failure,
+         case_a_plugin_published_by_another_job_is_used_only_when_built_from_this_checkout,
+         case_without_a_published_stamp_the_plugin_is_built_here,
+         case_the_stamp_publish_once_writes_is_the_one_a_job_adopts,
          case_staging_and_flags_treat_a_stored_null_oppositely,
          case_a_row_records_the_tree_and_the_flags_it_was_measured_under,
          case_only_the_selector_source_moves_the_digest,
@@ -6020,6 +6184,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_an_old_baseline_cache_weakens_only_a_row_it_can_change,
          case_a_class_the_record_does_not_list_is_shared_on_a_narrowed_row,
          case_the_gap_counts_leaf_ids_not_containers,
+         case_every_selecting_run_names_why_it_narrowed_or_not,
          case_a_per_method_failure_names_its_template_s_rules,
          case_an_identity_hash_is_not_a_missed_test,
          case_a_genuinely_missed_test_is_still_missed,

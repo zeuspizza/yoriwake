@@ -89,8 +89,8 @@ class ExplainMojo : AbstractMojo() {
                 )
             }.getOrNull()
             val fork = Recording.ForkEnvironment(session, root)
-            // An explanation runs outside the build's lifecycle, so it cannot see what ran before a
-            // Failsafe execution: it trusts no Failsafe union, at the cost of a wider answer.
+            // A Failsafe execution trusts no union: integration tests commonly drive an application
+            // another JVM runs, which no union sees.
             val unionFilter = if (each.plugin.artifactId == Recording.FAILSAFE) UnionTrust.UNVETTED else Recording.unionFilterOf(
                 each.execution.configuration as? Xpp3Dom, { fork.resolved(project, it) }, { Declines.property(project, session, it) },
             )

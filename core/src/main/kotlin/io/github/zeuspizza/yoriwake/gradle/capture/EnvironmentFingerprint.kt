@@ -194,6 +194,7 @@ internal object EnvironmentFingerprint {
             }
             val differing = (compared.keys + current.components.keys).sortedWith(ORDER)
                 .filter { compared[it] != current.components[it] }
+                .filterNot { it == JDK_VERSION && sameRelease(compared[it], current.components[it]) }
             val first = differing.firstOrNull() ?: continue
             val others = if (ignorable(first)) differing.drop(1).filter(::ignorable) else emptyList()
             return Check(Verdict.Changed(first, describe(first, compared[first], current.components[first], others)), current.ignored)
@@ -310,6 +311,19 @@ internal object EnvironmentFingerprint {
             " ($also$REMEDY)"
         }
         return "the test JVM's environment differs from the one the map was recorded in: $what$remedy"
+    }
+
+    /**
+     * Whether two runtime versions are builds of one release: the same feature, interim and update
+     * version, neither an early-access build. A vendor's rebuild or patch of a release (21.0.13+9 and
+     * 21.0.13.1+2) keeps a map; an update does not. A string that does not parse as a runtime
+     * version, such as Java 8's, is the same release only as the same string.
+     */
+    private fun sameRelease(recorded: String?, now: String?): Boolean {
+        val a = recorded?.let { runCatching { Runtime.Version.parse(it) }.getOrNull() } ?: return false
+        val b = now?.let { runCatching { Runtime.Version.parse(it) }.getOrNull() } ?: return false
+        if (a.pre().isPresent || b.pre().isPresent) return false
+        return a.feature() == b.feature() && a.interim() == b.interim() && a.update() == b.update()
     }
 
     private const val OTHERS_NAMED = 5

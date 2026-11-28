@@ -37,6 +37,7 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
@@ -52,6 +53,10 @@ public final class SelectionRun {
     private final Map<Selector.Decision.Reason, Integer> tally =
             Collections.synchronizedMap(new EnumMap<>(Selector.Decision.Reason.class));
     private volatile Selector.Decision decision;
+    // Kept so a decision that failed fails each later test at once: reading the map again for
+    // every test cost a large map's run every test (an out-of-memory read, retried per test).
+    private Throwable decisionFailure;
+    private final Supplier<Selector.Decision> decider;
     private volatile UnaryOperator<String> inputs;
     private volatile boolean reported;
 
@@ -95,7 +100,13 @@ public final class SelectionRun {
 
     /** A run whose record is written at JVM exit, after {@code beforeWrite} has added its notes. */
     public SelectionRun(Runnable beforeWrite) {
+        this(beforeWrite, null);
+    }
+
+    /** A run deciding with {@code decider}, or from its inputs and map when null. */
+    SelectionRun(Runnable beforeWrite, Supplier<Selector.Decision> decider) {
         this.beforeWrite = beforeWrite;
+        this.decider = decider != null ? decider : () -> FilterRule.decisionFrom(inputs(), mapDir());
         // Installed at construction: a run that judges no tests must still record why.
         installRecordHook();
     }
@@ -379,14 +390,26 @@ public final class SelectionRun {
         }
     }
 
-    /** The decision, made once: the map must not be parsed for each test. */
+    /**
+     * The decision, made once: the map must not be parsed for each test. One that failed throws
+     * the same failure for every later test without being attempted again.
+     */
     public synchronized Selector.Decision decide() {
+        if (decisionFailure != null) {
+            throw new IllegalStateException("the decision failed earlier in this JVM: " + decisionFailure,
+                    decisionFailure);
+        }
         if (decision == null) {
             reportTallyOnExit();
             for (String input : FilterRule.INPUTS) {
                 decisions.note(AgentContract.INPUT_NOTE_PREFIX + input, orEmpty(inputs().apply(input)));
             }
-            decision = FilterRule.decisionFrom(inputs(), mapDir());
+            try {
+                decision = decider.get();
+            } catch (Throwable failure) {
+                decisionFailure = failure;
+                throw failure;
+            }
         }
         return decision;
     }

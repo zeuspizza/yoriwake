@@ -115,10 +115,12 @@ class Report:
 
 
 class Arm:
-    """One build: its status (`ok`, `build-failed`, `timed-out`), report and seconds."""
+    """One build: its status (`ok`, `build-failed`, `timed-out`), report and seconds. A selecting
+    run's `records` are its decision records per map directory name, None for a missing one."""
 
-    def __init__(self, status, report=None, seconds=None, detail=None):
+    def __init__(self, status, report=None, seconds=None, detail=None, records=None):
         self.status, self.report, self.seconds, self.detail = status, report or Report(), seconds, detail
+        self.records = records
 
 
 def key(case):
@@ -270,6 +272,8 @@ def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain
                 row.update(measure(selected.report, full.report, truth, rerun_alone,
                                    explanations))
                 row["forced"] = selected.detail
+                row.update(cause_fields(selected.records, row["selected_executions"],
+                                        row["full_executions"]))
             if isolated is not None and full.status == OK:
                 row["isolated"] = _isolated(isolated, base, iso_ready, row, full, truth,
                                             rerun_alone)
@@ -282,6 +286,16 @@ def walk(pairs, *, prepare, record, select, rerun_alone, budget_seconds, explain
         print(f"  {pair['sha'][:12]} {row['outcome']} {row.get('reason') or ''}"
               f"{_summary(row)}".rstrip(), flush=True)
     return initial, rows
+
+
+def cause_fields(records, selected, full):
+    """A measured row's `cause` and `cause_detail`, and `causes` per map for a reactor."""
+    import run  # noqa: PLC0415
+    cause, per_map = run.narrowing_causes(records or {}, selected, full)
+    fields = {"cause": cause["cause"], "cause_detail": cause["detail"]}
+    if per_map is not None:
+        fields["causes"] = per_map
+    return fields
 
 
 def _after(full, staged):
@@ -305,6 +319,19 @@ def _isolated(isolated, base, ready, row, full, truth, rerun_alone):
             result["select_status"] = selected.status
     result["recorded"] = isolated["record"]().status == OK
     return result
+
+
+def forced(records):
+    """Per map whose record says it did not narrow: its full-run kind (or refusal kind) and
+    reason. None when none."""
+    result = {}
+    for name, record in (records or {}).items():
+        notes = (record or {}).get("notes") or {}
+        if notes and notes.get("outcome") != "narrowed":
+            result[name] = {"outcome": notes.get("outcome"),
+                            "kind": notes.get("refusal-kind") or notes.get("full-run-kind"),
+                            "reason": (notes.get("full-run-reason") or "")[:300] or None}
+    return result or None
 
 
 def _summary(row):
@@ -484,12 +511,13 @@ class Builds:
             code, seconds = self.run.gradle(self.checkout, self.project, gradle_args, log)
             status = _gradle_status(code, log)
         report = read_reports(self.report_paths(), since, self._module_of)
-        detail = None
+        detail, records = None, None
         if status == BUILD_FAILED:
             detail = os.path.basename(log)
         elif select:
-            detail = self.forced(since)
-        return Arm(status, report, seconds, detail)
+            records = self.records(since)
+            detail = forced(records)
+        return Arm(status, report, seconds, detail, records)
 
     def map_dirs(self):
         if self.reactor:
@@ -500,18 +528,11 @@ class Builds:
                                       self.run.test_task_name(self.project))
         return [directory] if directory else []
 
-    def forced(self, since):
-        """Per map whose selecting run wrote a decision record since `since` and did not narrow:
-        its full-run kind (or refusal kind) and reason, from the record. None when none."""
-        forced = {}
-        for directory in self.map_dirs():
-            notes = (self.run.read_decision_record(directory, since) or {}).get("notes") or {}
-            if notes and notes.get("outcome") != "narrowed":
-                forced[os.path.basename(directory)] = {
-                    "outcome": notes.get("outcome"),
-                    "kind": notes.get("refusal-kind") or notes.get("full-run-kind"),
-                    "reason": (notes.get("full-run-reason") or "")[:300] or None}
-        return forced or None
+    def records(self, since):
+        """Per map directory name, the decision record its selecting run wrote since `since`, or
+        None when it wrote none."""
+        return {os.path.basename(directory): self.run.read_decision_record(directory, since)
+                for directory in self.map_dirs()}
 
     def record(self, isolated=False):
         flags = [self.run.ISOLATED_CAPTURE_FLAG] if isolated else []
@@ -799,6 +820,22 @@ def _share(selected, full):
     return f"{selected:,} / {full:,}" if full else "-"
 
 
+def cause_lines(projects):
+    """The table of why measured pairs did not narrow, per project and cause; a row written
+    before causes were recorded counts as `unrecorded`."""
+    lines = []
+    for name, project in projects.items():
+        causes = Counter(row.get("cause") or "unrecorded" for row in project.get("rows") or []
+                         if row.get("outcome") == MEASURED)
+        causes.pop("narrowed", None)
+        lines += [f"| {name} | `{cause}` | {count} |"
+                  for cause, count in sorted(causes.items(), key=lambda e: (-e[1], e[0]))]
+    if not lines:
+        return []
+    return ["", "### Why pairs did not narrow", "", "| Project | Cause | Pairs |", "|---|---|---:|",
+            *lines]
+
+
 def page(merged):
     """The run page: one row per project, Blastradius's published figures beside its four."""
     lines = ["## Tests run and missed over consecutive real commits", "",
@@ -832,6 +869,7 @@ def page(merged):
                     lines.append(f"| {name} | {arm} | {block[key_count]} | "
                                  f"{_share(block[key_selected], block['full_executions'])} | "
                                  f"{block['missed']} of {block['at_risk']} |")
+    lines += cause_lines(merged["projects"])
     if merged["missing"]:
         lines += ["", f"Missing, so not the planned run: {'; '.join(merged['missing'])}."]
     bad = [name for name, p in merged["projects"].items() if not p["sums"]["sums"]]

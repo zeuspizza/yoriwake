@@ -21,7 +21,11 @@ permissions:
 env:
   GRADLE_ACTIONS_SKIP_BUILD_RESULT_CAPTURE: 'true'
 
-# No concurrency group: each push to main is analysed on its own, as verify.yml checks each.
+# A newer push to main cancels the older analysis. A dispatched run runs on its own.
+concurrency:
+  group: codeql-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: analyze ${{ matrix.language }}

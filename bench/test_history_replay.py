@@ -8,6 +8,7 @@ fixtures in a temporary directory for the window. Cases return a count of failed
 """
 
 import json
+from collections import Counter
 import os
 import shutil
 import sys
@@ -498,6 +499,50 @@ def case_a_project_that_measured_no_commit_is_named():
             or "demo: none of its 2 commits measured" not in hr.page(merged):
         return fail(f"an all-excluded project was not named: {merged['missing']}")
     return 0
+
+
+def _record(outcome="narrowed", included=(), excluded=(), **notes):
+    decided = ([(t, "included/COVERS_CHANGE") for t in included]
+               + [(t, "excluded/NO_EDGE") for t in excluded])
+    return {"notes": {"outcome": outcome, **notes}, "included": list(included),
+            "decided": decided, "rules": None,
+            "verdicts": Counter(verdict for _, verdict in decided)}
+
+
+def case_every_measured_pair_names_why_it_did_not_narrow():
+    failures = 0
+    records = {"c1": {"map": _record(included=SUITE)},
+               "c2": {},
+               "c3": {"a": _record("full-run", included=SUITE, **{"full-run-kind": "setup"}),
+                      "b": _record(included=["T::a"], excluded=["T::b"])}}
+    stubs = Stubs()
+    plain = stubs.select
+
+    def select(base):
+        arm = plain(base)
+        arm.records = records[stubs.at]
+        return arm
+    stubs.select = select
+    _, rows = walk(stubs, pairs("c1", "c2", "c3"))
+    got = [(row.get("cause"), row.get("cause_detail")) for row in rows]
+    wanted = [("wide:COVERS_CHANGE", "4 of 4"), ("no-record", None), ("forced:setup", None)]
+    if got != wanted:
+        failures += fail(f"the pairs' causes were {got}, wanted {wanted}")
+    if sorted(rows[2].get("causes") or {}) != ["a", "b"] or "causes" in rows[0]:
+        failures += fail(f"the reactor's per-map causes: {rows[2].get('causes')}")
+    if rows[2].get("forced") is not None:
+        failures += fail("a stub's detail was read as forced")
+    if hr.forced(records["c3"]) != {"a": {"outcome": "full-run", "kind": "setup", "reason": None}}:
+        failures += fail(f"forced from the records: {hr.forced(records['c3'])}")
+    old = {key: value for key, value in rows[0].items() if key not in ("cause", "cause_detail")}
+    page = hr.page({"projects": {"demo": {"sums": hr.sums(rows + [old]), "first": "c1",
+                                          "last": "c9", "rows": rows + [old]}},
+                    "missing": [], "caveats": []})
+    for line in ("| demo | `forced:setup` | 1 |", "| demo | `unrecorded` | 1 |",
+                 "| demo | `no-record` | 1 |"):
+        if line not in page:
+            failures += fail(f"the page lacks {line!r}:\n{page}")
+    return failures
 
 
 def test_history_replay():

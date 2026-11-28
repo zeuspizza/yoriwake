@@ -209,10 +209,31 @@ failure would save more hours and keep fewer of those rows.
 | `selected_seconds`, `full_seconds` | wall clock per arm | **chart 2** time saved; summary table "time saved" |
 | `selected_arm`, `full_arm` | arm record (below) | fixed overhead; peak memory selecting vs recording |
 | `decision_outcome`, `full_run_kind`, `refusal_kind`, `selected_verdicts`, `decision_included`, `decision_matches_arm`, `decision_writer` | the agent's `decisions.tsv` parts | refusal kinds; classification gate |
+| `narrowing_cause`, `narrowing_cause_detail` | the selected arm's decision record and the two arms' test counts (a complement row's full count is the suite's); on a paired forced row, the explain task's kinds; None in older files | why the row narrowed or not; the sweep page's "Why rows did not narrow" table. Tokens below the table |
 | `rules_basis`, `forcing_kinds`, `rule_counts`, `coverage_only_included`, `coverage_only_digest` | the record's `#+` rule lines and notes | per-rule counts; selection beneath a refusal |
 | `induced_rules` | every induced failure (`class::name`) -> union of rule tokens of the decided tests with that name (a per-method key through its first segment, the template, factory or feature); None = the record never saw it | **optimistic-mode per-rule analysis**: which failures a rule set without X would miss |
 | `shares_jvm_included` | `selected_verdicts["included/SHARES_JVM_WITH_CHANGE"]` | how much the shared-JVM rule widens; shared vs isolated |
 | `decision_write_failures` | count of the agent's `could not write decisions.tsv` lines in the selected arm's log; > 0 makes the record absent | item 2 below: a lost record never reads as the task's answer |
+
+The cause tokens (`narrowing_cause` on a sweep row, `cause` on a history row), one per row:
+
+- `narrowed`: the selected arm skipped at least 5 % of the full arm's tests.
+- `refused:<refusal-kind>`, `forced:<full-run-kind>`: the record's refusal or forcing kind; the
+  detail is its reason, up to 300 characters.
+- `wide:<rule>`: the record narrowed and the arm still skipped under 5 % of the tests; the rule is
+  the `#+` rule the most included tests carry, else the included reason with the most tests; the
+  detail `<n> of <included>` tests.
+- `not-applied`: the record excluded tests and the build ran them all; the detail `<included> of
+  <decided> included`.
+- `not-requested`, `not-decided`, `complemented`: the record's outcome `selection-not-requested`,
+  `not-decided`, `complemented`.
+- `writers-disagree`: the record's parts named different outcomes; the detail lists them.
+- `unknown`: a record with no outcome note.
+- `no-record`: no fresh decision record after the selecting run, including a build the plugin
+  declined (it writes none then).
+
+The sweep page counts only rows that carry decision fields; a row set apart before its record was
+read (`invalid`, `stalled`, a failed build) is not in its cause table.
 | `decision_rows`, `decision_covers_arm` | rows decided vs `selected_distinct`; False = the record describes fewer tests than ran | a silently overwritten record (the case the log line cannot see) |
 | `missed`, `order_dependent`, `nondeterministic`, `undetermined`, `container_failed`, `fails_unmutated`, `ran_but_passed`, `induced` | existing recall pipeline; `class::name` on the row's `result_keys` scheme -- per method, `name` is the template, factory or feature above the test, then its display name, joined by ` > ` (escaped inside a name), and equals the XML key where nothing sits between class and test | **recall / missed failures with cause** |
 | `shared_key` | induced failures the selected arm ran only under a key that may stand for another test (`run.shares_a_key`: no single method named, a class the record did not keep whole, a row that could have narrowed), or in a class the record excluded whole. The baseline, the re-runs and the control arm ask the same rule | neither missed nor clean, like `undetermined`; still in `full_failures` |
@@ -447,6 +468,8 @@ A row:
 | `full_skipped` | skipped entries of the full run |
 | `narrowed` | whether the selecting run ran fewer executions than the full run |
 | `forced` | why the selecting run ran everything, per measured task or execution that did; null when none said so |
+| `cause`, `cause_detail` | why the pair narrowed or not, a token of the sweep rows' `narrowing_cause` (above) from the selecting run's decision records and the two runs' executions; on a reactor, the cause whose maps hold the most included tests; absent in older files |
+| `causes` | on a reactor with more than one map, each map's `{cause, detail}`, by map directory |
 | `failed_at_parent`, `failed_at_commit`, `failed_at_commit_named` | failing tests of the two full runs, and up to 50 of the commit's named |
 | `at_risk` | failing at the commit, passing or absent at the parent |
 | `missed` | at risk and not run by the selecting run, flaky ones taken out |
@@ -467,6 +490,9 @@ The merged file: `projects`, each with `scope`, `first`, `last`, `plugin_commits
 `initial` per shard, `sums`, `rows` and `blastradius` (its published window, pairs and full-suite
 executions, for the four projects it measured); `missing`, planned shards with no readable file,
 never counted as zero, and any row that does not follow the one before it (two shards that walked different windows); `caveats`, what the table may claim.
+
+`history.md` counts the measured pairs that did not narrow per project and `cause`, a row without
+one as `unrecorded`.
 
 ## Raw evidence
 

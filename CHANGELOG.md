@@ -29,6 +29,8 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 ### Changed
 
 - A map table an older yoriwake left behind is ignored, not believed. Map: left alone; the next recording stamps it.
+- A map captured one test class per JVM no longer runs the test JVM out of heap, failing every test. Map: left alone.
+- A JDK rebuild or patch of the same release (21.0.13 -> 21.0.13.1) keeps the map. Map: left alone.
 - A Kotlin file moved, edited or not, runs the tests of the file it moved from, not every test. Map: left alone.
 - `pathIgnore` may name a file under `src` that no source set or Maven module declares as a root, such as `src/changes/changes.xml`, so a broad existing entry (`**/*.json`) now reaches such files too; the defaults never do. Map: left alone.
 - Files the IntelliJ Platform Gradle Plugin writes under `.intellijPlatform/` during a build are build state, not a change. Map: left alone.
@@ -51,7 +53,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 - Contributors: the history replay's optimistic ask answers on Maven projects too. Map: left alone.
 - Contributors: benchmark builds recompile in full what they compile, as a fresh checkout does, so a row no longer sees bytes an earlier incremental compile left. Map: left alone.
 - Reference: names the projects where recording in isolation paid back within ten selecting runs. Map: left alone.
-- A capture under a test filter the build sets (Gradle build script; Maven groups, tags, engines, suite files), with a default-package source, or under Failsafe keeps its loaded-class union; one that keeps none says why. Map: left alone; a union appears at the next full capture.
+- A capture under a test filter the build sets (Gradle build script; Maven groups, tags, engines, suite files), or with a default-package source, keeps its loaded-class union; one that keeps none says why; a Failsafe execution keeps none. Map: left alone; a union appears at the next full capture.
 
 ## [0.6.0] - 2026-11-16
 

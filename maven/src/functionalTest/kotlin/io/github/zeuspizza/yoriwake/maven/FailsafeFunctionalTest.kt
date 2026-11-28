@@ -159,20 +159,12 @@ class FailsafeFunctionalTest {
         assertContains(output, "[yoriwake] $name map updated: ")
     }
 
-    @Test
-    fun `a Failsafe execution records a union`(@TempDir dir: File) {
-        val project = withIntegrationTests(dir)
+    private fun maps(project: File) =
+        File(project, ".yoriwake/yoriwake").listFiles().orEmpty().filter { it.name.startsWith("dev.demo-app-") }
 
-        FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.internal.loaded").succeeded()
-
-        val maps = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().filter { it.name.startsWith("dev.demo-app-") }
-        val integration = maps.single { "failsafe" in it.name }
-        assertTrue(File(integration, "loaded.txt").isFile, "no union in $integration")
-    }
-
-    @Test
-    fun `a class nothing loads narrows the integration tests, unless a mojo that may start a process ran first`(@TempDir dir: File) {
-        val project = withIntegrationTests(dir)
+    /** The demo with a class nothing loads, captured with unions, then a commit that edits it. */
+    private fun withOrphanEdited(dir: File): File = withIntegrationTests(dir).also { project ->
+        // Stands for a server-side class only an application outside Maven's JVMs runs.
         val orphan = File(project, "lib/src/main/java/dev/demo/lib/Orphan.java")
         orphan.writeText("package dev.demo.lib;\n\npublic class Orphan {\n    public int once() { return 1; }\n}\n")
         git(project, "add", ".")
@@ -180,38 +172,46 @@ class FailsafeFunctionalTest {
         FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.internal.loaded").succeeded()
         orphan.edit { it.replace("return 1", "return 2") }
         git(project, "commit", "-q", "-am", "an edit")
-        val select = arrayOf("-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", "-Dyoriwake.internal.loaded")
-
-        val narrowed = FunctionalMaven.run(maven, project, "verify", *select).succeeded().output
-        // A goal typed before the build is a mojo too, which may start a server the tests then call.
-        val forced = FunctionalMaven.run(maven, project, "help:active-profiles", "verify", *select).succeeded().output
-
-        assertFalse("Running dev.demo.app.AppIT" in narrowed.substringAfter("[yoriwake] $name selecting against ", ""), narrowed)
-        assertContains(forced.substringAfter("[yoriwake] $name ", ""), "Running dev.demo.app.AppIT")
     }
 
+    private val select = arrayOf("-Dyoriwake.select", "-Dyoriwake.base=HEAD~1", "-Dyoriwake.internal.loaded")
+
     @Test
-    fun `a Failsafe execution after a mojo that may start a process records no union`(@TempDir dir: File) {
+    fun `a Failsafe execution records no union`(@TempDir dir: File) {
         val project = withIntegrationTests(dir)
-        // Where a build starts the application its integration tests drive, in a JVM no union sees.
-        File(project, "app/pom.xml").edit {
-            it.replace(
-                "      <plugin>\n        <artifactId>maven-failsafe-plugin</artifactId>",
-                "      <plugin>\n        <artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version>\n" +
-                    "        <executions><execution><phase>pre-integration-test</phase><goals><goal>run</goal></goals>" +
-                    "<configuration><target><echo message=\"starting the application\"/></target></configuration>" +
-                    "</execution></executions>\n      </plugin>\n      <plugin>\n        <artifactId>maven-failsafe-plugin</artifactId>",
-            )
-        }
-        git(project, "commit", "-q", "-am", "start the application before the integration tests")
 
         val output = FunctionalMaven.run(maven, project, "verify", "-Dyoriwake.internal.loaded").succeeded().output
 
-        val maps = File(project, ".yoriwake/yoriwake").listFiles().orEmpty().filter { it.name.startsWith("dev.demo-app-") }
-        val integration = maps.single { "failsafe" in it.name }
-        val unit = maps.single { "surefire" in it.name }
+        val integration = maps(project).single { "failsafe" in it.name }
+        val unit = maps(project).single { "surefire" in it.name }
         assertFalse(File(integration, "loaded.txt").exists(), "a union in $integration")
         assertTrue(File(unit, "loaded.txt").isFile, "no union in $unit")
-        assertContains(output, "keeps no loaded-class union: app maven-antrun-plugin:run ran before it")
+        assertContains(
+            output,
+            "[yoriwake] $name keeps no loaded-class union: integration tests commonly drive an application another JVM " +
+                "runs, which no union sees. Changes to code no test executes run its integration tests.",
+        )
+    }
+
+    @Test
+    fun `a class nothing loads still runs the integration tests`(@TempDir dir: File) {
+        val project = withOrphanEdited(dir)
+
+        val output = FunctionalMaven.run(maven, project, "verify", *select).succeeded().output
+
+        assertContains(output.substringAfter("[yoriwake] $name ", ""), "Running dev.demo.app.AppIT")
+    }
+
+    @Test
+    fun `a union in a Failsafe map is not trusted`(@TempDir dir: File) {
+        val project = withOrphanEdited(dir)
+        // A union an earlier build recorded for the integration tests, without the edited class.
+        val integration = maps(project).single { "failsafe" in it.name }
+        val unit = maps(project).single { "surefire" in it.name }
+        listOf("loaded.txt", "loaded-scope", "loaded-provenance").forEach { File(unit, it).copyTo(File(integration, it)) }
+
+        val output = FunctionalMaven.run(maven, project, "verify", *select).succeeded().output
+
+        assertContains(output.substringAfter("[yoriwake] $name ", ""), "Running dev.demo.app.AppIT")
     }
 }

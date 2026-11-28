@@ -346,10 +346,40 @@ jobs:
           for kept in published/evidence/*.tar.gz; do tar -xzf "$kept" -C bench/logs; done
           python3 bench/replay_decisions.py
 
+  # The plugin under test, built and published once for every measuring job (bench/publish_once.py):
+  # each building it drew Maven Central's rate limit on the plugin build's own dependencies. A
+  # failed publish fails the run here, before any project starts.
+  publish:
+    needs: plan
+    if: needs.plan.outputs.projects != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          add-job-summary: on-failure
+      - name: publish the plugin under test
+        run: python3 bench/publish_once.py --out "$RUNNER_TEMP/plugin-under-test"
+      # Every record, slice and replay job of this run restores it into its mavenLocal.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-under-test
+          retention-days: 3
+          path: ${{ runner.temp }}/plugin-under-test/
+          if-no-files-found: error
+
   # Each project's record job and its slices, in a workflow of their own: a project's slices start
   # when its own record job ends, not when the slowest project's does.
   project:
-    needs: plan
+    needs: [plan, publish]
     if: needs.plan.outputs.projects != '[]'
     # A guest may resolve dependencies from GitHub Packages (bitwarden-android's SDK), and a record
     # job reads an earlier sweep's dependency pack; a called workflow can only narrow what this
@@ -374,10 +404,11 @@ jobs:
       budget: ${{ needs.plan.outputs.budget }}
 
   merge:
-    needs: [plan, project]
+    needs: [plan, publish, project]
     # Also when a project's record or shard job failed: it is declared missing, and the merge fails
-    # the run after publishing the rest. Not on a run that planned no project.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.projects != '[]' }}
+    # the run after publishing the rest. Not on a run that planned no project, nor one whose plugin
+    # under test was never published: every project would read as missing for the wrong reason.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.publish.result == 'success' && needs.plan.outputs.projects != '[]' }}
     runs-on: ubuntu-24.04
     # The only job that can write, and it runs no guest code.
     permissions:

@@ -5155,6 +5155,11 @@ MUTATIONS = [
      "        for (fingerprint in recorded) {",
      "        for (fingerprint in recorded.take(0)) {",
      functional_suite, "a map recorded on another JDK runs everything, names both, and records this one"),
+    # A rebuild of the same release keeps the map; an update is a change.
+    ("a JDK update reads as the same release", ENVIRONMENT_FINGERPRINT,
+     "        return a.feature() == b.feature() && a.interim() == b.interim() && a.update() == b.update()",
+     "        return a.feature() == b.feature()",
+     unit_suite, "a JDK update names both versions"),
     ("a map with no fingerprint reads as a match", ENVIRONMENT_FINGERPRINT,
      "            ?: return Check(Verdict.Unrecorded(UNRECORDED), current.ignored)",
      "            ?: return Check(Verdict.Matches, current.ignored)",
@@ -5783,16 +5788,16 @@ MUTATIONS = [
      '            listOfNotNull(listed("suiteXmlFiles", "surefire.suiteXmlFiles").takeIf(List<String>::isNotEmpty)?.let { "suiteXmlFiles $it" })\n',
      '            emptyList<String>()\n',
      maven_suite, "a capture run through a TestNG suite file keys the union to it"),
-    # Code the integration tests reach may run in a JVM a mojo before them started, which no union
-    # lists: only a run after mojos known to start nothing trusts a Failsafe union.
-    ("an unlisted mojo before Failsafe no longer drops its union", MAVEN_UNION_TRUST,
-     '        unvettedMojo?.let { return "$it ran before it and may run code in another JVM, which no union sees" }\n',
-     '',
-     maven_suite, "a Failsafe execution after a mojo that may start a process records no union"),
-    ("a Failsafe selecting run trusts a union after an unlisted mojo", MAVEN_RECORDING,
-     '            unionFilter = failsafeDoubt(execution, classpath)?.let { UnionTrust.UNVETTED } ?: unionFilter,\n',
+    # Integration tests commonly drive an application another JVM runs, which no union lists: a
+    # Failsafe execution neither keeps nor trusts one.
+    ("a Failsafe execution keeps a union", MAVEN_UNION_TRUST,
+     '        if (!failsafe) return null\n',
+     '        return null\n',
+     maven_suite, "a Failsafe execution records no union"),
+    ("a Failsafe selecting run trusts a union", MAVEN_RECORDING,
+     '            unionFilter = failsafeDoubt(execution)?.let { UnionTrust.UNVETTED } ?: unionFilter,\n',
      '            unionFilter = unionFilter,\n',
-     maven_suite, "a class nothing loads narrows the integration tests, unless a mojo that may start a process ran first"),
+     maven_suite, "a union in a Failsafe map is not trusted"),
     # A test that runs a Maven build through maven-verifier runs code in JVMs the agent never sees.
     ("a task that forks a Maven build narrows on absence", TASK_ARTIFACTS,
      '"gradle-testkit", "maven-verifier", ',
@@ -6302,6 +6307,16 @@ MUTATIONS = [
      '            " ($also$REMEDY)"',
      '            ""',
      maven_suite, "another value of a user property runs every test"),
+    # A decision that failed, retried for each test, read a map too large for the heap once per
+    # test: every test of the JVM ran out of memory with it.
+    ("a failed decision is attempted again for every test", SELECTION_RUN,
+     "                decisionFailure = failure;\n", "",
+     agent_suite, "a failed decision is not attempted again for the next test"),
+    # A row per class per JVM is millions of rows in a map captured one class per JVM; held as
+    # strings of their own they do not fit a test JVM's heap.
+    ("touch rows stop sharing their names", MAP_READER,
+     "                indexes.put(name, index);\n", "",
+     agent_suite, "a map with a row per class per JVM reads every touch, in order, sharing repeated names"),
 ]
 # THE TESTS EACH SUITE RUNS, so a change to a test selects the guards that test is what proves.
 SUITE_TESTS = {

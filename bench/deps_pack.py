@@ -5,7 +5,8 @@ project cut into N slices resolved it N + 2 times per sweep, and a sweep's 200 j
 Maven Central. The record job now restores the pack an earlier sweep left for the same project and
 pinned commit, and uploads one holding everything its builds resolved; its slices and replay job
 restore that. A pack holds Gradle's `caches/modules-2` and the Maven local repository, never the
-plugin under test (each job publishes and checks its own), lock files or Maven's failure markers.
+plugin under test (published once per run, checked by each job), lock files or Maven's failure
+markers.
 
     python3 bench/deps_pack.py name bench/projects/kafka.toml
     python3 bench/deps_pack.py find deps-kafka-0123456789ab --repo owner/name --branch main

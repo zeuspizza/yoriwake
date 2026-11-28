@@ -964,8 +964,9 @@ def code_scanning_problems(text):
         problems.append("it runs on pull requests")
     if not re.search(r"^permissions:\n  contents: read\n(?!  )", text, re.M):
         problems.append("its top-level token is not read-only")
-    if "concurrency:" in text:
-        problems.append("a concurrency group can cancel the analysis of a push to main")
+    if not re.search(r"^concurrency:\n  group: codeql-.*github\.run_id.*github\.ref.*\n  cancel-in-progress: true\n",
+                     text, re.M):
+        problems.append("a newer push to main does not cancel the older analysis")
     jobs = re.findall(r"^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[-1], re.M)
     for job in jobs:
         block = _job_block(text, job) or ""
@@ -1002,7 +1003,7 @@ def case_code_scanning_runs_on_main_never_on_pull_requests():
                       "language: python\n            build-mode: manual"), "python is not analysed"),
         (text.replace("      security-events: write\n", "      security-events: write\n      actions: write\n", 1),
          "exactly contents: read and security-events: write"),
-        (text.replace("\njobs:\n", "\nconcurrency: codeql\n\njobs:\n", 1), "concurrency group"),
+        (text.replace("  cancel-in-progress: true\n", "", 1), "does not cancel"),
         (text.replace("  workflow_dispatch:\n", "", 1), "cannot be dispatched"),
         (text.replace("    branches: [main]\n", "    branches: [release]\n", 1), "pushes to main"),
         (re.sub(r"\n +-Dorg\.gradle\.jvmargs=[^\n]*", "", text), "default daemon memory"),
@@ -3030,6 +3031,62 @@ def case_every_corpus_job_starts_from_the_dependency_pack():
     return problems
 
 
+# The jobs that build the plugin under test unless handed it: each restores the run's one publish.
+PUBLISHED_PLUGIN_USERS = ("sweep-project.yml", "history.yml")
+# The job that publishes it, and the job of the same file that must wait for it.
+PUBLISHED_PLUGIN_WAITERS = {"sweep.yml": "project", "history.yml": "shard"}
+
+
+def published_plugin_problems(workflows):
+    """Each job of a sweep or history run that would publish the plugin under test itself: one that
+    runs `bench/run.py`, or `commit_replay.py`/`history_replay.py --publish`, without restoring the
+    `plugin-under-test` artifact before it and pointing `YORIWAKE_PUBLISHED` at its stamp. Hundreds
+    of such publishes in one run drew Maven Central's rate limit and lost projects' rows."""
+    problems = []
+    for name in PUBLISHED_PLUGIN_USERS:
+        for job_name, job in workflows[name].items():
+            steps = _steps(job)
+            builds = [i for i, step in enumerate(steps) if "bench/run.py" in step or (
+                re.search(r"bench/(commit|history)_replay\.py", step) and "--publish" in step)]
+            if not builds:
+                continue
+            restores = [i for i, step in enumerate(steps)
+                        if "actions/download-artifact@" in step and "name: plugin-under-test" in step]
+            if not restores or restores[0] > builds[0]:
+                problems.append(f"{name} {job_name}: does not restore plugin-under-test before its first build")
+            if not re.search(r"^    env:\n(?:      .*\n)*?      YORIWAKE_PUBLISHED: \S", job, re.M):
+                problems.append(f"{name} {job_name}: does not set YORIWAKE_PUBLISHED for the job")
+    for name, waiter in PUBLISHED_PLUGIN_WAITERS.items():
+        jobs = workflows[name]
+        if not any("bench/publish_once.py" in job and "name: plugin-under-test" in job
+                   for job in jobs.values()):
+            problems.append(f"{name}: no job publishes plugin-under-test")
+        if not re.search(r"^    needs: \[[^\]]*\bpublish\b", jobs.get(waiter, ""), re.M):
+            problems.append(f"{name} {waiter}: does not wait for the publish job")
+    return problems
+
+
+def case_every_job_that_measures_restores_the_one_published_plugin():
+    names = set(PUBLISHED_PLUGIN_USERS) | set(PUBLISHED_PLUGIN_WAITERS)
+    workflows = {name: _workflow_jobs(name) for name in names}
+    problems = sum(fail(problem) for problem in published_plugin_problems(workflows))
+    for what, edit in (
+            ("a slice without the restore", lambda w: w["sweep-project.yml"].update(
+                shard=w["sweep-project.yml"]["shard"].replace("name: plugin-under-test", "name: other"))),
+            ("a replay without the stamp", lambda w: w["sweep-project.yml"].update(
+                replay=w["sweep-project.yml"]["replay"].replace("YORIWAKE_PUBLISHED:", "OTHER:"))),
+            ("a history shard without the restore", lambda w: w["history.yml"].update(
+                shard=w["history.yml"]["shard"].replace("name: plugin-under-test", "name: other"))),
+            ("a shard that starts before the publish", lambda w: w["history.yml"].update(
+                shard=w["history.yml"]["shard"].replace("needs: [plan, publish]", "needs: plan"))),
+            ("a sweep without its publish job", lambda w: w["sweep.yml"].pop("publish"))):
+        edited = {name: dict(jobs) for name, jobs in workflows.items()}
+        edit(edited)
+        if not published_plugin_problems(edited):
+            problems += fail(f"{what} passed")
+    return problems
+
+
 FUNCTIONAL_SHARD_JOBS = ("functional-shard", "functional-gradle9-shard")
 
 
@@ -4594,11 +4651,12 @@ def case_each_project_s_slices_follow_its_own_record_and_the_merge_follows_them_
                          "but on the reduced arm, which a failed member makes unpublishable")
     if "needs.plan.outputs.projects != '[]'" not in call:
         problems += fail("the project calls run on a plan with no project")
-    if "needs: [plan, project]" not in merge or "!cancelled()" not in merge \
+    if "needs: [plan, publish, project]" not in merge or "!cancelled()" not in merge \
             or "needs.plan.result == 'success'" not in merge \
+            or "needs.publish.result == 'success'" not in merge \
             or "needs.plan.outputs.projects != '[]'" not in merge:
         problems += fail("the merge does not follow every project, failed ones included, and only "
-                         "a plan that has projects")
+                         "a plan that has projects and a published plugin")
     if re.findall(r"^  ([\w-]+):$", project.split("\njobs:\n", 1)[1], re.M) != ["record", "shard", "replay"]:
         problems += fail("sweep-project.yml is not one record job, its slices and its replay")
     if "    needs: record\n" not in _job(project, "shard"):
@@ -5155,7 +5213,7 @@ def case_a_record_job_leaves_no_untracked_file_in_the_checkout_its_isolated_reco
     for job in ("record", "replay"):
         for path in re.findall(r"^          path: (.*)$", _job(text, job) if f"\n  {job}:\n" in text else "",
                                re.M):
-            if not path.startswith(("${{ runner.temp }}/", "bench/logs/")):
+            if not path.startswith(("${{ runner.temp }}/", "~/", "bench/logs/")):
                 problems += fail(f"the {job} job uploads {path}, inside the checkout")
     return problems
 
@@ -5738,6 +5796,7 @@ CASES = (
     case_a_push_to_main_names_the_run_it_reused_or_why_none,
     case_each_run_ends_in_one_summary_that_waits_for_every_job_and_gates_nothing,
     case_a_run_summary_that_misses_a_job_or_gates_is_reported,
+    case_every_job_that_measures_restores_the_one_published_plugin,
 )
 
 
