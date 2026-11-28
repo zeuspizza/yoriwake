@@ -259,4 +259,34 @@ class MapReaderTest {
         assertEquals(500, entries.size)
         assertContains(entries.first().testId(), "t1()")
     }
+
+    @Test
+    fun `a map with a row per class per JVM reads every touch, in order, sharing repeated names`(
+        @TempDir dir: File,
+    ) {
+        // A map captured one class per JVM holds millions of these rows; holding each as its own
+        // strings ran the test JVM out of heap on every test.
+        map(dir, entry("[class:A]/[method:a()]", classes = "com.acme.A"))
+        val jvms = (1..3).map { "w-$it" }
+        val rows = jvms.flatMap { jvm -> (1..2000).map { "$jvm\t${it % 7}\tcom.acme.C$it" } }
+        File(dir, AgentContract.FIRST_TOUCH_FILE).writeText(rows.joinToString("\n", postfix = "\n"))
+        File(dir, AgentContract.NAMED_TOUCH_FILE).writeText(rows.take(5).joinToString("\n", postfix = "\n"))
+        File(dir, AgentContract.DEBUG_TOUCH_FILE).writeText(
+            "w-1\t0\t${AgentContract.JARS_RECORDED}\nw-1\t4\tcom.acme.C9\n",
+        )
+
+        val result = MapReader.read(dir)
+        val touches = result.firstTouches()
+
+        assertEquals(6000, touches.size)
+        assertEquals(listOf("w-1", "w-1", "w-3"), listOf(touches[0], touches[6], touches[5999]).map { it.jvm() })
+        assertEquals(listOf(1, 0, 5), listOf(touches[0], touches[6], touches[5999]).map { it.sequence() })
+        assertEquals("com.acme.C2000", touches[5999].className())
+        assertEquals(rows.take(5), result.namedTouches().map { "${it.jvm()}\t${it.sequence()}\t${it.className()}" })
+        val debug = result.debugTouches()!!
+        assertTrue(debug.recorded("w-1"))
+        assertEquals(listOf("com.acme.C9"), debug.touches().map { it.className() })
+        assertTrue(touches[0].jvm() === touches[1].jvm(), "a JVM id is held once, not once per row")
+        assertTrue(touches[0].className() === touches[2000].className(), "a name is held once, not once per row")
+    }
 }

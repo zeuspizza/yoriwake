@@ -28,6 +28,7 @@ See [Upgrading and your map](docs/reference.md#upgrading-and-your-map).
 
 ### Changed
 
+- A map captured one test class per JVM no longer runs the test JVM out of heap, failing every test. Map: left alone.
 - A JDK rebuild or patch of the same release (21.0.13 -> 21.0.13.1) keeps the map. Map: left alone.
 - A Kotlin file moved, edited or not, runs the tests of the file it moved from, not every test. Map: left alone.
 - `pathIgnore` may name a file under `src` that no source set or Maven module declares as a root, such as `src/changes/changes.xml`, so a broad existing entry (`**/*.json`) now reaches such files too; the defaults never do. Map: left alone.
