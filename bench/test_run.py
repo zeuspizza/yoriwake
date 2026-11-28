@@ -2579,6 +2579,12 @@ def case_every_selecting_run_names_why_it_narrowed_or_not():
         (cause(_record(included=tests[:2], excluded=tests[2:]), 4, None),
          {"cause": "narrowed", "detail": None}),
     ]
+    torn = _record(included=tests)
+    del torn["notes"]["outcome"]
+    split = _record(included=tests)
+    split["notes"] = {"writer-outcomes": "full-run,narrowed"}
+    cases += [(cause(torn, 4, 4), {"cause": "unknown", "detail": None}),
+              (cause(split, 4, 4), {"cause": "writers-disagree", "detail": "full-run,narrowed"})]
     for number, (got, wanted) in enumerate(cases):
         if got != wanted:
             failures += fail(f"case {number}: {got}, wanted {wanted}")
@@ -2589,6 +2595,10 @@ def case_every_selecting_run_names_why_it_narrowed_or_not():
     if row["cause"] != "wide:shares-jvm:p" or sorted(per_map) != ["a", "b", "c"] \
             or per_map["c"]["cause"] != "no-record":
         failures += fail(f"the reactor's cause was {row}, per map {per_map}")
+    # The run's own counts say it narrowed, whatever the map with the most included tests says.
+    row, per_map = run.narrowing_causes({"a": small, "b": wide}, 1, 4)
+    if row["cause"] != "narrowed" or per_map["a"]["cause"] != "forced:setup":
+        failures += fail(f"a reactor run that skipped 3 of 4 read {row}, per map {per_map}")
     if run.narrowing_causes({}, 0, 4) != ({"cause": "no-record", "detail": None}, None):
         failures += fail("a run with no map read as a cause other than no-record")
     if run.narrowing_causes({"a": wide}, 4, 4)[1] is not None:

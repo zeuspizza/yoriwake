@@ -3340,20 +3340,28 @@ def narrowing_cause(decisions, selected, full):
         if notes.get("refusal-kind") or outcome == "full-run":
             return forced_cause(notes.get("full-run-kind"), notes.get("refusal-kind"),
                                 notes.get("full-run-reason"))
-        return {"cause": OUTCOME_CAUSES.get(outcome, str(outcome)), "detail": None}
+        if outcome is None and notes.get("writer-outcomes"):
+            return {"cause": "writers-disagree", "detail": notes["writer-outcomes"]}
+        return {"cause": OUTCOME_CAUSES.get(outcome, outcome or "unknown"), "detail": None}
     included, decided = len(decisions["included"]), len(decisions["decided"])
     excluded = decided - included
     if full is None:
         skipped_share = 1.0 if excluded else 0.0
     else:
-        skipped_share = (full - selected) / full if full else 0.0
+        skipped_share = skipped(selected, full)
     if skipped_share >= WIDE_SKIPPED_SHARE:
         return {"cause": "narrowed", "detail": None}
-    # Both counts are record ids, so the ids-versus-executions gap cannot blur the two causes.
+    # Whether the record excluded anything is read from its ids, never from the arm's counts, so
+    # the ids-versus-executions gap cannot turn a wide run into one the build ignored.
     if excluded and full is not None and selected >= full:
         return {"cause": "not-applied", "detail": f"{included} of {decided} included"}
     rule, count = widest_rule(decisions)
     return {"cause": f"wide:{rule or 'unknown'}", "detail": f"{count} of {included}" if rule else None}
+
+
+def skipped(selected, full):
+    """The share of the full run's tests the selecting run did not run, 0 for an empty suite."""
+    return (full - selected) / full if full else 0.0
 
 
 def widest_rule(decisions):
@@ -3376,8 +3384,9 @@ def widest_rule(decisions):
 def narrowing_causes(records, selected, full):
     """The cause of a run that wrote one record per map (a Maven reactor), and each map's.
 
-    `records` maps each map directory's name to its record or None. The run's cause is the one
-    whose maps hold the most included tests. Returns `(cause, per_map)`; `per_map` is None for one
+    `records` maps each map directory's name to its record or None. A run that skipped at least
+    5 % of the tests narrowed; otherwise its cause is the one whose maps hold the most included
+    tests. Returns `(cause, per_map)`; `per_map` is None for one
     map or none, and an empty `records` is `no-record`.
     """
     if not records:
@@ -3386,6 +3395,9 @@ def narrowing_causes(records, selected, full):
                for name, record in sorted(records.items())}
     if len(per_map) == 1:
         return next(iter(per_map.values())), None
+    # The run's counts decide whether it narrowed; the maps only say why it did not.
+    if skipped(selected, full) >= WIDE_SKIPPED_SHARE:
+        return {"cause": "narrowed", "detail": None}, per_map
     weight = Counter()
     for name, cause in per_map.items():
         weight[cause["cause"]] += len((records[name] or {}).get("included") or [])

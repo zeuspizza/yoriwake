@@ -515,7 +515,7 @@ def case_every_measured_pair_names_why_it_did_not_narrow():
                "c2": {},
                "c3": {"a": _record("full-run", included=SUITE, **{"full-run-kind": "setup"}),
                       "b": _record(included=["T::a"], excluded=["T::b"])}}
-    stubs = Stubs(selected={"c3": ["T::a"]})
+    stubs = Stubs()
     plain = stubs.select
 
     def select(base):

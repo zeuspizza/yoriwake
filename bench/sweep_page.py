@@ -169,15 +169,18 @@ def project_section(name, path, unpacked_dir):
 
 
 def cause_section(folder, projects):
-    """Per project, how many rows did not narrow for each cause (`narrowing_cause`); a row
-    written before causes were recorded counts as `unrecorded`. A file that cannot be read is left
+    """Per project, how many measured rows did not narrow for each cause (`narrowing_cause`); a
+    row written before causes were recorded counts as `unrecorded`. A file that cannot be read is left
     to its project's section to name."""
     lines = []
     for name in projects:
         try:
             with open(os.path.join(folder, f"{name}.json"), encoding="utf-8") as handle:
                 rows = json.load(handle).get("mutations") or []
-            causes = Counter(row.get("narrowing_cause") or "unrecorded" for row in rows)
+            # Only rows whose selecting arm ran and was read: a row set apart (invalid, stalled,
+            # build-failed) has no decision fields and is not a run that failed to narrow.
+            causes = Counter(row.get("narrowing_cause") or "unrecorded" for row in rows
+                             if "decision_outcome" in row)
         except (OSError, ValueError, TypeError, AttributeError):
             continue
         causes.pop("narrowed", None)

@@ -117,7 +117,9 @@ def case_why_rows_did_not_narrow_is_counted_per_project_and_cause():
                 _row("wide2", narrowing_cause="wide:covers"),
                 _row("refused", outcome="full-run", narrowing_cause="refused:constant-changed"),
                 _row("old")]
-        text = _page(root, _sweep(root, {"demo": _project("demo", rows)}))
+        invalid = _row("invalid", status="invalid")
+        del invalid["decision_outcome"]
+        text = _page(root, _sweep(root, {"demo": _project("demo", rows + [invalid])}))
         table = text[text.index("### Why rows did not narrow"):text.index("### Projects")]
         wanted = ["| demo | `wide:covers` | 2 |", "| demo | `refused:constant-changed` | 1 |",
                   "| demo | `unrecorded` | 1 |"]

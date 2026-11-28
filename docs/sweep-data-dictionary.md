@@ -227,8 +227,13 @@ The cause tokens (`narrowing_cause` on a sweep row, `cause` on a history row), o
   <decided> included`.
 - `not-requested`, `not-decided`, `complemented`: the record's outcome `selection-not-requested`,
   `not-decided`, `complemented`.
+- `writers-disagree`: the record's parts named different outcomes; the detail lists them.
+- `unknown`: a record with no outcome note.
 - `no-record`: no fresh decision record after the selecting run, including a build the plugin
   declined (it writes none then).
+
+The sweep page counts only rows that carry decision fields; a row set apart before its record was
+read (`invalid`, `stalled`, a failed build) is not in its cause table.
 | `decision_rows`, `decision_covers_arm` | rows decided vs `selected_distinct`; False = the record describes fewer tests than ran | a silently overwritten record (the case the log line cannot see) |
 | `missed`, `order_dependent`, `nondeterministic`, `undetermined`, `container_failed`, `fails_unmutated`, `ran_but_passed`, `induced` | existing recall pipeline; `class::name` on the row's `result_keys` scheme -- per method, `name` is the template, factory or feature above the test, then its display name, joined by ` > ` (escaped inside a name), and equals the XML key where nothing sits between class and test | **recall / missed failures with cause** |
 | `shared_key` | induced failures the selected arm ran only under a key that may stand for another test (`run.shares_a_key`: no single method named, a class the record did not keep whole, a row that could have narrowed), or in a class the record excluded whole. The baseline, the re-runs and the control arm ask the same rule | neither missed nor clean, like `undetermined`; still in `full_failures` |
