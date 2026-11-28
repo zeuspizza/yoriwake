@@ -181,6 +181,11 @@ jobs:
         with:
           # A guard that fires fails a build by design; the shard's results tell what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       # The Maven suite's distributions, as in verify: fetched once and kept between runs.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -301,6 +306,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - name: the benchmark's tests pass
         if: always() && needs.changes.outputs.narrow == 'true'
         run: |
@@ -378,6 +388,11 @@ jobs:
         with:
           # A guard that fires fails a build by design; the shard's results tell what failed.
           add-job-summary: never
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       # The Maven suite's distributions, as in verify: fetched once and kept between runs.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

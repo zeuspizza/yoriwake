@@ -52,6 +52,11 @@ jobs:
         with:
           cache-read-only: true
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
 
       # The early-access JDK and the build's own, by path only: a JDK found anywhere else would not
       # be the one this job names.

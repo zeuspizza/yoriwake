@@ -299,6 +299,11 @@ jobs:
         with:
           cache-read-only: true
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - name: sweep the controls
         run: |
           # As in the record and shard steps: no guest build writes to the run page.
@@ -321,6 +326,11 @@ jobs:
         with:
           cache-read-only: true
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - name: replay the last published sweep
         env:
           GH_TOKEN: ${{ github.token }}
@@ -363,9 +373,18 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        # verify's capture job runs the same publish on main and saves what it resolved, the JaCoCo
+        # agent included; this job's own entry once lacked it.
+        env:
+          GRADLE_BUILD_ACTION_CACHE_KEY_JOB: capture
         with:
           cache-read-only: true
           add-job-summary: on-failure
+      # Optional by design: without it, builds resolve from Central as before.
+      - name: Central's mirror first
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python3 .github/ci.py central-mirror
       - name: publish the plugin under test
         run: python3 bench/publish_once.py --out "$RUNNER_TEMP/plugin-under-test"
       # Every record, slice and replay job of this run restores it into its mavenLocal.

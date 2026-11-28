@@ -3087,6 +3087,124 @@ def case_every_job_that_measures_restores_the_one_published_plugin():
     return problems
 
 
+# A step that sets a job up for builds, and one that builds: Gradle, Maven, or a script that runs them.
+SETUP_STEP = re.compile(r"- uses: (?:gradle/actions/setup-gradle|(?:actions|oracle-actions)/setup-java)@")
+BUILD_STEP = re.compile(r"\./gradlew|gradlew\.bat|\bmvn\b|bench/|scripts/|ci\.py (?:gradle-seed|rerun-on-download-failure)")
+# The release builds the shipped jar, which shades third-party code, from Central alone.
+CENTRAL_ONLY_WORKFLOWS = ("release.yml",)
+
+
+def central_mirror_problems(workflows):
+    """Each job, over {file: {job: text}}, that sets up a JDK yet builds before asking Central's
+    mirror first, or whose mirror step could fail it."""
+    problems = []
+    for name, jobs in workflows.items():
+        if name in CENTRAL_ONLY_WORKFLOWS:
+            continue
+        for job_name, job in jobs.items():
+            steps = _steps(job)
+            setups = [i for i, step in enumerate(steps) if SETUP_STEP.search(step)]
+            if not setups:
+                continue
+            mirrors = [i for i, step in enumerate(steps) if ".github/ci.py central-mirror" in step]
+            builds = [i for i, step in enumerate(steps) if BUILD_STEP.search(step) and i not in mirrors]
+            if not mirrors or mirrors[0] < setups[-1] or (builds and builds[0] < mirrors[0]):
+                problems.append(f"{name} {job_name}: builds before asking Central's mirror first, or never")
+            elif "continue-on-error: true" not in steps[mirrors[0]]:
+                problems.append(f"{name} {job_name}: the mirror step can fail the job")
+    return problems
+
+
+def case_every_job_with_a_jdk_asks_central_s_mirror_before_central():
+    names = sorted(os.listdir(WORKFLOWS))
+    workflows = {name: _workflow_jobs(name) for name in names if name.endswith(".yml")}
+    problems = sum(fail(problem) for problem in central_mirror_problems(workflows))
+    unmirrored = "      - uses: actions/setup-java@x\n      - run: ./gradlew build\n"
+    late = unmirrored + "      - continue-on-error: true\n        run: python3 .github/ci.py central-mirror\n"
+    required = ("      - uses: actions/setup-java@x\n      - run: python3 .github/ci.py central-mirror\n"
+                "      - run: ./gradlew build\n")
+    for what, job in (("a job without the step", unmirrored), ("a step after the build", late),
+                      ("a step that can fail the job", required)):
+        if not central_mirror_problems({"x.yml": {"j": "  j:\n    steps:\n" + job}}):
+            problems += fail(f"{what} passed")
+    if central_mirror_problems({"release.yml": {"j": "  j:\n    steps:\n" + unmirrored}}):
+        problems += fail("the release is held to the mirror")
+    return problems
+
+
+def case_the_mirror_step_installs_for_gradle_and_maven_or_nothing():
+    """Reachable, the init script goes into the Gradle home and a settings file into ~/.m2, and the
+    harnesses learn both; unreachable, nothing changes; a settings file already there is kept."""
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        gradle, maven = os.path.join(root, "gradle"), os.path.join(root, "m2")
+        if ci.install_central_mirror(gradle, maven, reachable=lambda: False) or os.path.exists(gradle) \
+                or os.path.exists(maven):
+            problems += fail("an unreachable mirror still installed something")
+        lines = ci.install_central_mirror(gradle, maven, reachable=lambda: True)
+        installed = os.path.join(gradle, "init.d", "yoriwake-central-mirror.gradle")
+        if lines != [f"YORIWAKE_CENTRAL_MIRROR={ci.CENTRAL_MIRROR}", f"YORIWAKE_CENTRAL_MIRROR_INIT={installed}"]:
+            problems += fail(f"the step exported {lines}")
+        with open(installed, encoding="utf-8") as handle, open(ci.CENTRAL_MIRROR_INIT, encoding="utf-8") as source:
+            if handle.read() != source.read():
+                problems += fail("the installed init script is not the repository's")
+        with open(os.path.join(maven, "settings.xml"), encoding="utf-8") as handle:
+            settings = handle.read()
+        if f"<url>{ci.CENTRAL_MIRROR}</url>" not in settings or "<activeProfile>yoriwake-central-mirror<" not in settings:
+            problems += fail(f"the Maven settings do not list the mirror in an active profile: {settings}")
+        with open(os.path.join(maven, "settings.xml"), "w", encoding="utf-8") as handle:
+            handle.write("<settings/>")
+        ci.install_central_mirror(gradle, maven, reachable=lambda: True)
+        with open(os.path.join(maven, "settings.xml"), encoding="utf-8") as handle:
+            if handle.read() != "<settings/>":
+                problems += fail("a settings file already there was replaced")
+        ran = []
+        with open(os.path.join(root, "listing.txt"), "w", encoding="utf-8") as handle:
+            handle.write("")
+        saved = os.environ.get(ci.CENTRAL_MIRROR_INIT_ENV)
+        os.environ[ci.CENTRAL_MIRROR_INIT_ENV] = installed
+        try:
+            ci.gradle_seed(os.path.join(root, "seed"), [os.path.join(root, "listing.txt")], "9.8.0",
+                           run=lambda command, cwd, env: ran.append(command) or 0)
+        finally:
+            if saved is None:
+                os.environ.pop(ci.CENTRAL_MIRROR_INIT_ENV)
+            else:
+                os.environ[ci.CENTRAL_MIRROR_INIT_ENV] = saved
+        command = ran[0] if ran else []
+        if "-I" not in command or command[command.index("-I") + 1] != installed:
+            problems += fail(f"the Gradle seed does not resolve through the mirror: {ran}")
+    return problems
+
+
+def case_the_init_script_and_the_harnesses_agree_with_the_mirror_step():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    expected = {
+        ci.CENTRAL_MIRROR_INIT: f"'{ci.CENTRAL_MIRROR}'",
+        os.path.join(root, "plugin", "src", "functionalTest", "kotlin", "io", "github", "zeuspizza", "yoriwake",
+                     "gradle", "FunctionalCoverage.kt"): f'System.getenv("{ci.CENTRAL_MIRROR_INIT_ENV}")',
+        os.path.join(root, "maven", "src", "functionalTest", "kotlin", "io", "github", "zeuspizza", "yoriwake",
+                     "maven", "FunctionalMaven.kt"): f'System.getenv("{ci.CENTRAL_MIRROR_ENV}")',
+    }
+    problems = 0
+    for path, text in expected.items():
+        with open(path, encoding="utf-8") as handle:
+            if text not in handle.read():
+                problems += fail(f"{os.path.relpath(path, root)} does not read {text}")
+    return problems
+
+
+def case_the_publish_jobs_restore_the_cache_of_the_job_that_publishes_on_main():
+    """The plugin's publish needs what verify's capture job resolves on main, the JaCoCo agent with it."""
+    problems = 0
+    if ":plugin:publishToMavenLocal" not in _workflow_jobs("verify.yml").get("capture", ""):
+        problems += fail("verify.yml capture no longer publishes the plugin")
+    for name in ("history.yml", "sweep.yml"):
+        if "GRADLE_BUILD_ACTION_CACHE_KEY_JOB: capture" not in _workflow_jobs(name).get("publish", ""):
+            problems += fail(f"{name} publish does not restore verify's capture entry")
+    return problems
+
+
 FUNCTIONAL_SHARD_JOBS = ("functional-shard", "functional-gradle9-shard")
 
 
@@ -5797,6 +5915,10 @@ CASES = (
     case_each_run_ends_in_one_summary_that_waits_for_every_job_and_gates_nothing,
     case_a_run_summary_that_misses_a_job_or_gates_is_reported,
     case_every_job_that_measures_restores_the_one_published_plugin,
+    case_every_job_with_a_jdk_asks_central_s_mirror_before_central,
+    case_the_mirror_step_installs_for_gradle_and_maven_or_nothing,
+    case_the_init_script_and_the_harnesses_agree_with_the_mirror_step,
+    case_the_publish_jobs_restore_the_cache_of_the_job_that_publishes_on_main,
 )
 
 

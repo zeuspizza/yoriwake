@@ -77,7 +77,9 @@ object FunctionalCoverage {
 
     /**
      * Writes the TestKit home's `gradle.properties`, every time, so a home left by an earlier run
-     * never starts a daemon that reports to a port nobody listens on any more.
+     * never starts a daemon that reports to a port nobody listens on any more. On CI, also gives the
+     * home the job's init script that asks Central's mirror before Central, and takes it away
+     * elsewhere.
      */
     fun configure(testKitHome: File) {
         testKitHome.mkdirs()
@@ -100,6 +102,14 @@ object FunctionalCoverage {
             "org.gradle.jvmargs=$DAEMON_DEFAULTS\n"
         }
         File(testKitHome, "gradle.properties").writeText(text + REPOSITORY_RETRY)
+        val mirror = File(testKitHome, "init.d/yoriwake-central-mirror.gradle")
+        val init = System.getenv("YORIWAKE_CENTRAL_MIRROR_INIT")?.let(::File)?.takeIf(File::isFile)
+        if (init == null) {
+            mirror.delete()
+        } else if (!mirror.isFile || mirror.readText() != init.readText()) {
+            // Only when it differs: a build of this home may be reading it right now.
+            init.copyTo(mirror, overwrite = true)
+        }
     }
 
     /** Collects what every connected daemon has recorded since the last dump, under [name]. */
