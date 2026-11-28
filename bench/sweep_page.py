@@ -30,6 +30,7 @@ import glob
 import json
 import os
 import sys
+from collections import Counter
 
 # The induced failures the selected arm did not catch, or that count as neither caught nor missed.
 # One test can sit in two of them (a test failing unmutated is also one that ran but passed).
@@ -167,6 +168,27 @@ def project_section(name, path, unpacked_dir):
     return lines
 
 
+def cause_section(folder, projects):
+    """Per project, how many rows did not narrow for each cause (`narrowing_cause`); a row
+    written before causes were recorded counts as `unrecorded`. A file that cannot be read is left
+    to its project's section to name."""
+    lines = []
+    for name in projects:
+        try:
+            with open(os.path.join(folder, f"{name}.json"), encoding="utf-8") as handle:
+                rows = json.load(handle).get("mutations") or []
+            causes = Counter(row.get("narrowing_cause") or "unrecorded" for row in rows)
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+        causes.pop("narrowed", None)
+        lines += [f"| {name} | {_code(cause)} | {count} |"
+                  for cause, count in sorted(causes.items(), key=lambda e: (-e[1], e[0]))]
+    if not lines:
+        return []
+    return ["### Why rows did not narrow", "", "| Project | Cause | Rows |", "|---|---|---:|",
+            *lines, ""]
+
+
 def isolated_section(states):
     """Both arms side by side per project, from `sweep.json`'s `isolated` entry, over the rows both
     arms measured; a project whose isolated arm did not run or finish is a line with its reason."""
@@ -228,8 +250,9 @@ def page(merged_dir, unpacked_dir, run=None):
         lines += isolated_section(sweep.get("isolated"))
     except Exception as error:  # noqa: BLE001 -- an odd entry must not cost the page its rows
         lines += [f"The isolated arm's figures could not be shown ({type(error).__name__}).", ""]
-    lines += [f"### Projects ({len(projects)})", ""]
     folder = os.path.dirname(sweep_path)
+    lines += cause_section(folder, projects)
+    lines += [f"### Projects ({len(projects)})", ""]
     for name in projects:
         path = os.path.join(folder, f"{name}.json")
         try:

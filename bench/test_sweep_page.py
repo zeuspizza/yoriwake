@@ -109,6 +109,23 @@ def case_each_project_is_a_section_in_sweep_order_holding_its_rows():
     return problems
 
 
+def case_why_rows_did_not_narrow_is_counted_per_project_and_cause():
+    problems = 0
+    with tempfile.TemporaryDirectory() as root:
+        rows = [_row("narrow", narrowing_cause="narrowed"),
+                _row("wide", narrowing_cause="wide:covers"),
+                _row("wide2", narrowing_cause="wide:covers"),
+                _row("refused", outcome="full-run", narrowing_cause="refused:constant-changed"),
+                _row("old")]
+        text = _page(root, _sweep(root, {"demo": _project("demo", rows)}))
+        table = text[text.index("### Why rows did not narrow"):text.index("### Projects")]
+        wanted = ["| demo | `wide:covers` | 2 |", "| demo | `refused:constant-changed` | 1 |",
+                  "| demo | `unrecorded` | 1 |"]
+        if [line for line in table.splitlines() if line.startswith("| demo")] != wanted:
+            problems += fail(f"the cause table: {table}")
+    return problems
+
+
 def case_a_skipped_full_arm_shows_the_complement_marked():
     problems = 0
     with tempfile.TemporaryDirectory() as root:
@@ -477,6 +494,7 @@ CASES = (
     case_no_sweep_file_is_said_and_exits_0,
     case_a_target_with_a_pipe_stays_in_its_cell,
     case_a_paired_isolated_arm_is_shown_beside_the_shared_one_or_its_reason_is,
+    case_why_rows_did_not_narrow_is_counted_per_project_and_cause,
 )
 
 

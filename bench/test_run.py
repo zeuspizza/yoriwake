@@ -2543,6 +2543,59 @@ def case_the_gap_counts_leaf_ids_not_containers():
     return failures
 
 
+def case_every_selecting_run_names_why_it_narrowed_or_not():
+    """one cause per record: a refusal or a forcing by kind, the outcome notes as tokens, a
+    run that skipped under 5 % as wide under its most common rule, a record the build ignored
+    as not applied, and no record as its own cause."""
+    failures = 0
+    tests = [_template(_P, f"m{n}()") for n in range(4)]
+
+    def cause(record, selected, full):
+        return run.narrowing_cause(record, selected, full)
+
+    refused = _record(included=tests, outcome="selection-not-requested")
+    refused["notes"].update({"refusal-kind": "constant-changed", "full-run-reason": "x" * 400})
+    forced = _record(included=tests, outcome="full-run")
+    forced["notes"]["full-run-kind"] = "setup"
+    wide = _record(included=tests)
+    wide["rules"] = {tests[0]: ("covers",), tests[1]: ("shares-jvm:p", "covers"),
+                     tests[2]: ("shares-jvm:p",), tests[3]: ("shares-jvm:p",)}
+    by_reason = _record(included=tests)
+    cases = [
+        (cause(None, 3, 4), {"cause": "no-record", "detail": None}),
+        (cause(refused, 4, 4), {"cause": "refused:constant-changed", "detail": "x" * 300}),
+        (cause(forced, 4, 4), {"cause": "forced:setup", "detail": None}),
+        (cause(_record(outcome="selection-not-requested"), 4, 4),
+         {"cause": "not-requested", "detail": None}),
+        (cause(_record(outcome="not-decided"), 4, 4), {"cause": "not-decided", "detail": None}),
+        (cause(_record(outcome="complemented"), 2, 4), {"cause": "complemented", "detail": None}),
+        (cause(_record(included=tests[:1], excluded=tests[1:]), 1, 4),
+         {"cause": "narrowed", "detail": None}),
+        (cause(wide, 4, 4), {"cause": "wide:shares-jvm:p", "detail": "3 of 4"}),
+        (cause(wide, 97, 100), {"cause": "wide:shares-jvm:p", "detail": "3 of 4"}),
+        (cause(by_reason, 4, 4), {"cause": "wide:COVERS_CHANGE", "detail": "4 of 4"}),
+        (cause(_record(included=tests[:2], excluded=tests[2:]), 4, 4),
+         {"cause": "not-applied", "detail": "2 of 4 included"}),
+        (cause(_record(included=tests[:2], excluded=tests[2:]), 4, None),
+         {"cause": "narrowed", "detail": None}),
+    ]
+    for number, (got, wanted) in enumerate(cases):
+        if got != wanted:
+            failures += fail(f"case {number}: {got}, wanted {wanted}")
+    # A reactor's cause is the one whose maps hold the most included tests; each map keeps its own.
+    small = _record(included=tests[:1], outcome="full-run")
+    small["notes"]["full-run-kind"] = "setup"
+    row, per_map = run.narrowing_causes({"a": small, "b": wide, "c": None}, 4, 4)
+    if row["cause"] != "wide:shares-jvm:p" or sorted(per_map) != ["a", "b", "c"] \
+            or per_map["c"]["cause"] != "no-record":
+        failures += fail(f"the reactor's cause was {row}, per map {per_map}")
+    if run.narrowing_causes({}, 0, 4) != ({"cause": "no-record", "detail": None}, None):
+        failures += fail("a run with no map read as a cause other than no-record")
+    if run.narrowing_causes({"a": wide}, 4, 4)[1] is not None:
+        failures += fail("a single map's run kept a per-map list")
+    return failures
+
+
 def case_a_per_method_failure_names_its_template_s_rules():
     """`b() > v = 1` is the template `b()` the record decided, so its rules are `b()`'s and
     the failure no longer reads as one the record never saw."""
@@ -4005,7 +4058,8 @@ def case_a_change_known_to_force_takes_the_paired_full_arm_as_its_selected_arm()
               "induced": ["p.A::a()", "p.B::b()"], "missed": [], "status": "checked",
               "timed": False, "ground_truth_from": "paired", "selected_arm_from": "paired",
               "decision_outcome": "full-run", "refusal_kind": "constant-changed",
-              "full_ci": {"job": "shard"}, "gate_seconds": 3.2, "sweep_limit": 7}
+              "full_ci": {"job": "shard"}, "gate_seconds": 3.2, "sweep_limit": 7,
+              "narrowing_cause": "refused:constant-changed", "narrowing_cause_detail": None}
     wrong = {key: row.get(key) for key, value in wanted.items() if row.get(key) != value}
     if wrong:
         failures += fail(f"the forced row carried {wrong}")
@@ -6120,6 +6174,7 @@ CASES = (case_every_case_in_this_file_is_registered,
          case_an_old_baseline_cache_weakens_only_a_row_it_can_change,
          case_a_class_the_record_does_not_list_is_shared_on_a_narrowed_row,
          case_the_gap_counts_leaf_ids_not_containers,
+         case_every_selecting_run_names_why_it_narrowed_or_not,
          case_a_per_method_failure_names_its_template_s_rules,
          case_an_identity_hash_is_not_a_missed_test,
          case_a_genuinely_missed_test_is_still_missed,
