@@ -845,15 +845,14 @@ CENTRAL_MIRROR = "https://maven-central.storage-download.googleapis.com/maven2/"
 # What the probe asks for: a file Central will always hold.
 CENTRAL_MIRROR_PROBE = "org/apache/maven/apache-maven/3.9.0/apache-maven-3.9.0.pom"
 CENTRAL_MIRROR_INIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "central-mirror.init.gradle")
-# The functional harnesses read these: the URL for the Maven fixtures' settings and distributions,
+# The functional harnesses read these: the URL for the Maven fixtures' settings,
 # the installed init script for each TestKit home and the Gradle seed.
 CENTRAL_MIRROR_ENV = "YORIWAKE_CENTRAL_MIRROR"
 CENTRAL_MIRROR_INIT_ENV = "YORIWAKE_CENTRAL_MIRROR_INIT"
 
 # Maven guests: an active profile that lists the mirror before every repository of the build.
 # Maven tries the next repository when one fails, so Central, from the super POM, stays the fallback.
-CENTRAL_MIRROR_SETTINGS = f"""<settings>
-  <profiles>
+CENTRAL_MIRROR_PROFILE = f"""  <profiles>
     <profile>
       <id>yoriwake-central-mirror</id>
       <repositories>
@@ -873,7 +872,6 @@ CENTRAL_MIRROR_SETTINGS = f"""<settings>
     </profile>
   </profiles>
   <activeProfiles><activeProfile>yoriwake-central-mirror</activeProfile></activeProfiles>
-</settings>
 """
 
 
@@ -891,7 +889,8 @@ def install_central_mirror(gradle_home, maven_home, reachable=mirror_reachable):
     """Points this machine's Gradle and Maven builds at the mirror first; the environment lines the
     job's later steps need, or none when the mirror did not answer and nothing was installed.
 
-    A Maven `settings.xml` already there is left alone: it is someone's own, and Maven reads one."""
+    The profile joins a Maven `settings.xml` already there, as setup-java writes one; a file with
+    profiles of its own is left alone."""
     if not reachable():
         print(f"the Central mirror {CENTRAL_MIRROR} did not answer: builds resolve from Central", file=sys.stderr)
         return []
@@ -900,12 +899,21 @@ def install_central_mirror(gradle_home, maven_home, reachable=mirror_reachable):
     installed = os.path.join(init_dir, "yoriwake-central-mirror.gradle")
     shutil.copyfile(CENTRAL_MIRROR_INIT, installed)
     settings = os.path.join(maven_home, "settings.xml")
-    if os.path.exists(settings):
-        print(f"{settings} exists: Maven builds keep it and resolve as it says", file=sys.stderr)
+    try:
+        with open(settings, encoding="utf-8") as handle:
+            existing = handle.read()
+    except FileNotFoundError:
+        existing = "<settings>\n</settings>\n"
+    if "yoriwake-central-mirror" in existing:
+        pass
+    elif "<profiles>" in existing or "<activeProfiles>" in existing or "</settings>" not in existing:
+        print(f"{settings} has profiles of its own: Maven builds resolve as it says", file=sys.stderr)
     else:
+        # setup-java writes one holding only its <servers>: the profile joins it.
+        at = existing.rindex("</settings>")
         os.makedirs(maven_home, exist_ok=True)
         with open(settings, "w", encoding="utf-8") as handle:
-            handle.write(CENTRAL_MIRROR_SETTINGS)
+            handle.write(existing[:at] + CENTRAL_MIRROR_PROFILE + existing[at:])
     print(f"Gradle and Maven builds ask {CENTRAL_MIRROR} before Central", file=sys.stderr)
     return [f"{CENTRAL_MIRROR_ENV}={CENTRAL_MIRROR}", f"{CENTRAL_MIRROR_INIT_ENV}={installed}"]
 

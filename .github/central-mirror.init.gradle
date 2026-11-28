@@ -16,7 +16,7 @@ class CentralMirror {
     }
 
     static void mirrorFirst(RepositoryHandler repositories) {
-        repositories.withType(MavenArtifactRepository).whenObjectAdded { MavenArtifactRepository repository ->
+        def mirror = { MavenArtifactRepository repository ->
             if (repository.name.startsWith(FALLBACK) || !central(repository.url)) {
                 return
             }
@@ -28,6 +28,10 @@ class CentralMirror {
                 }
             }
         }
+        // Those a root project's `allprojects` block added before this project's callback ran, then
+        // every later one. A copy: the fallback joins the container while it is walked.
+        repositories.withType(MavenArtifactRepository).toList().each(mirror)
+        repositories.withType(MavenArtifactRepository).whenObjectAdded(mirror)
     }
 }
 

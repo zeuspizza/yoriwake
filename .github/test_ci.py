@@ -3134,7 +3134,8 @@ def case_every_job_with_a_jdk_asks_central_s_mirror_before_central():
 
 def case_the_mirror_step_installs_for_gradle_and_maven_or_nothing():
     """Reachable, the init script goes into the Gradle home and a settings file into ~/.m2, and the
-    harnesses learn both; unreachable, nothing changes; a settings file already there is kept."""
+    harnesses learn both; unreachable, nothing changes; setup-java's settings file takes the profile,
+    one with profiles of its own is kept."""
     problems = 0
     with tempfile.TemporaryDirectory() as root:
         gradle, maven = os.path.join(root, "gradle"), os.path.join(root, "m2")
@@ -3152,12 +3153,27 @@ def case_the_mirror_step_installs_for_gradle_and_maven_or_nothing():
             settings = handle.read()
         if f"<url>{ci.CENTRAL_MIRROR}</url>" not in settings or "<activeProfile>yoriwake-central-mirror<" not in settings:
             problems += fail(f"the Maven settings do not list the mirror in an active profile: {settings}")
-        with open(os.path.join(maven, "settings.xml"), "w", encoding="utf-8") as handle:
-            handle.write("<settings/>")
         ci.install_central_mirror(gradle, maven, reachable=lambda: True)
         with open(os.path.join(maven, "settings.xml"), encoding="utf-8") as handle:
-            if handle.read() != "<settings/>":
-                problems += fail("a settings file already there was replaced")
+            if handle.read() != settings:
+                problems += fail("a second run changed the settings again")
+        # What setup-java writes before the step runs: its servers, which the profile joins.
+        java = "<settings>\n  <servers><server><id>github</id></server></servers>\n</settings>\n"
+        with open(os.path.join(maven, "settings.xml"), "w", encoding="utf-8") as handle:
+            handle.write(java)
+        ci.install_central_mirror(gradle, maven, reachable=lambda: True)
+        with open(os.path.join(maven, "settings.xml"), encoding="utf-8") as handle:
+            merged = handle.read()
+        if "<id>github</id>" not in merged or "<activeProfile>yoriwake-central-mirror<" not in merged \
+                or not merged.rstrip().endswith("</settings>"):
+            problems += fail(f"the profile did not join setup-java's settings: {merged}")
+        own = "<settings><profiles><profile><id>mine</id></profile></profiles></settings>"
+        with open(os.path.join(maven, "settings.xml"), "w", encoding="utf-8") as handle:
+            handle.write(own)
+        ci.install_central_mirror(gradle, maven, reachable=lambda: True)
+        with open(os.path.join(maven, "settings.xml"), encoding="utf-8") as handle:
+            if handle.read() != own:
+                problems += fail("a settings file with profiles of its own was changed")
         ran = []
         with open(os.path.join(root, "listing.txt"), "w", encoding="utf-8") as handle:
             handle.write("")
