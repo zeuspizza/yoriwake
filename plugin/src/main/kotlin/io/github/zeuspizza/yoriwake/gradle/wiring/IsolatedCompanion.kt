@@ -127,8 +127,8 @@ internal object IsolatedCompanion {
             val wanted = source.orNull?.let(identity)
             if (fixed != wanted) {
                 throw IllegalStateException(
-                    "${task.path}: the build fixed its $property to $fixed before yoriwake could give it the test task's, " +
-                        "$wanted; configure the two alike, or record without -P${Settings.ISOLATED_CAPTURE_BUDGET}",
+                    "${task.path}: the build fixed its $property to ${fixed ?: "none"} before yoriwake could give it the test task's, " +
+                        "${wanted ?: "none"}; configure the two alike, or record without -P${Settings.ISOLATED_CAPTURE_BUDGET}",
                     alreadyFixed,
                 )
             }
