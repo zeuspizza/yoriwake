@@ -3309,6 +3309,107 @@ def decision_fields(decisions, selected_distinct):
     }
 
 
+# A narrowed record whose run skipped less than this share of the full run's tests counts as wide.
+WIDE_SKIPPED_SHARE = 0.05
+CAUSE_DETAIL_CHARS = 300
+
+# The outcome notes that are a cause as they are, and the token each is counted under.
+OUTCOME_CAUSES = {"selection-not-requested": "not-requested", "not-decided": "not-decided",
+                  "complemented": "complemented"}
+
+
+def forced_cause(full_run_kind, refusal_kind, reason=None):
+    """The cause of a run of everything: which refusal when one is named, else which forcing."""
+    token = f"refused:{refusal_kind}" if refusal_kind else f"forced:{full_run_kind or 'unknown'}"
+    return {"cause": token, "detail": (reason or "")[:CAUSE_DETAIL_CHARS] or None}
+
+
+def narrowing_cause(decisions, selected, full):
+    """Why a selecting run narrowed or not, as `{"cause": <token>, "detail": <str|None>}`.
+
+    From the run's decision record and its selected and full test counts. `full` None means no full
+    run to compare with: the record alone then says whether the run narrowed. A missing record is
+    `no-record`, never folded into another cause. The tokens are listed in
+    docs/sweep-data-dictionary.md under `narrowing_cause`.
+    """
+    if not decisions:
+        return {"cause": "no-record", "detail": None}
+    notes = decisions["notes"]
+    outcome = notes.get("outcome")
+    if outcome != "narrowed":
+        if notes.get("refusal-kind") or outcome == "full-run":
+            return forced_cause(notes.get("full-run-kind"), notes.get("refusal-kind"),
+                                notes.get("full-run-reason"))
+        if outcome is None and notes.get("writer-outcomes"):
+            return {"cause": "writers-disagree", "detail": notes["writer-outcomes"]}
+        return {"cause": OUTCOME_CAUSES.get(outcome, outcome or "unknown"), "detail": None}
+    included, decided = len(decisions["included"]), len(decisions["decided"])
+    excluded = decided - included
+    if full is None:
+        skipped_share = 1.0 if excluded else 0.0
+    else:
+        skipped_share = skipped(selected, full)
+    if skipped_share >= WIDE_SKIPPED_SHARE:
+        return {"cause": "narrowed", "detail": None}
+    # Whether the record excluded anything is read from its ids, never from the arm's counts, so
+    # the ids-versus-executions gap cannot turn a wide run into one the build ignored.
+    if excluded and full is not None and selected >= full:
+        return {"cause": "not-applied", "detail": f"{included} of {decided} included"}
+    rule, count = widest_rule(decisions)
+    return {"cause": f"wide:{rule or 'unknown'}", "detail": f"{count} of {included}" if rule else None}
+
+
+def skipped(selected, full):
+    """The share of the full run's tests the selecting run did not run, 0 for an empty suite."""
+    return (full - selected) / full if full else 0.0
+
+
+def widest_rule(decisions):
+    """`(rule, tests)`: the rule carried by the most included tests, else the included reason with
+    the most tests, else `(None, 0)`. Ties go to the first name in order."""
+    included = set(decisions["included"])
+    rules = decisions.get("rules")
+    counts = Counter()
+    if rules is not None:
+        counts.update(token for test, tokens in rules.items() if test in included
+                      for token in tokens)
+    if not counts:
+        counts.update({verdict.partition("/")[2]: n for verdict, n in decisions["verdicts"].items()
+                       if verdict.partition("/")[0] == "included"})
+    if not counts:
+        return None, 0
+    return min(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def narrowing_causes(records, selected, full):
+    """The cause of a run that wrote one record per map (a Maven reactor), and each map's.
+
+    `records` maps each map directory's name to its record or None. A run that skipped at least
+    5 % of the tests narrowed; otherwise its cause is the one whose maps hold the most included
+    tests. Returns `(cause, per_map)`; `per_map` is None for one
+    map or none, and an empty `records` is `no-record`.
+    """
+    if not records:
+        return narrowing_cause(None, selected, full), None
+    per_map = {name: narrowing_cause(record, selected, full)
+               for name, record in sorted(records.items())}
+    if len(per_map) == 1:
+        return next(iter(per_map.values())), None
+    # The run's counts decide whether it narrowed; the maps only say why it did not.
+    if skipped(selected, full) >= WIDE_SKIPPED_SHARE:
+        return {"cause": "narrowed", "detail": None}, per_map
+    weight = Counter()
+    for name, cause in per_map.items():
+        weight[cause["cause"]] += len((records[name] or {}).get("included") or [])
+    token = min(weight.items(), key=lambda item: (-item[1], item[0]))[0]
+    return next(c for c in per_map.values() if c["cause"] == token), per_map
+
+
+def cause_fields(cause):
+    """A sweep row's cause fields from `narrowing_cause`'s answer."""
+    return {"narrowing_cause": cause["cause"], "narrowing_cause_detail": cause["detail"]}
+
+
 def coverage_only(tokens):
     """Whether a row's rules include one coverage alone applies: not a shared JVM, not a whole class."""
     return any(not token.startswith(SHARES_JVM_RULE_PREFIX)
@@ -3939,6 +4040,7 @@ def sweep_history(checkout, project, module, scratch, map_dir, findings, done, l
             "full_seconds": full_seconds,
             "full_run_reason": full_run_reason(selected_log, test_task_path(project)),
             **decision_fields(decisions, len(selected_ran)),
+            **cause_fields(narrowing_cause(decisions, len(selected_ran), len(full_ran))),
             **map_fields(map_dir),
             **map_facts(window_map),
             "raw_bytes_kept": raw_kept,
@@ -4439,6 +4541,7 @@ def paired_forced_row(paired_row, label, kind, index, forced, limit, gate_second
         "paired_decision": "forced",
         "decision_outcome": "full-run", "decision_source": "explain",
         "full_run_kind": full_run_kind, "refusal_kind": refusal_kind,
+        **cause_fields(forced_cause(full_run_kind, refusal_kind)),
         "missed": [], "order_dependent": [], "undetermined": [], "nondeterministic": [],
         "container_failed": [], "fails_unmutated": [], "shared_key": [], "ran_but_passed": [],
         "result_keys": paired_row.get("result_keys"),
@@ -6790,6 +6893,10 @@ def main():
                 # come from the selector itself and are what a reader should trust.
                 "full_run_reason": seams.full_run_reason(selected_log),
                 **decision_fields(decisions, len(selected_ran)),
+                **cause_fields(narrowing_cause(
+                    decisions, len(selected_ran),
+                    (suite_profile["suite_distinct"] if truth == COMPLEMENT_TRUTH
+                     else len(full_ran)))),
                 **map_fields(map_dir),
                 # Of the map the selecting arm READ: a forced arm re-records it, in shared JVMs.
                 **map_facts(replay_map),
